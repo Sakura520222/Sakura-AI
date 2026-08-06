@@ -1,0 +1,76 @@
+name: Docker 镜像补偿检查
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 每天 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: sakura520222/sakura-ai   # Docker 仓库名必须小写
+
+jobs:
+  detect:
+    name: 查询最新稳定 Release 与镜像状态
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      missing: ${{ steps.check.outputs.missing }}
+    steps:
+      - name: 检出代码（含 tag）
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # 必须查 GitHub 实际最新 Release，不能读 main 的 backend/__init__.py——
+      # main 可能已 bump 到 3.1.0 而最新 Release 仍是 v3.0.0（如 Release 工作流失败）。
+      - name: 查询最新 Release
+        id: release
+        run: |
+          TAG=$(gh release view --json tagName --jq '.tagName')
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "最新 Release: $TAG (version=$VERSION)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 验证 tag 真实存在
+        run: |
+          git rev-parse --verify "refs/tags/${{ steps.release.outputs.tag }}" >/dev/null
+          echo "tag 已验证存在"
+
+      - name: 检查 GHCR 镜像是否存在
+        id: check
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:${IMAGE_NAME}:pull" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://ghcr.io/v2/${IMAGE_NAME}/manifests/v${VERSION}")
+          echo "v${VERSION} manifest 状态: ${STATUS}"
+          # 200 = 镜像已存在；仅 404 视为缺失可补建；
+          # 401/403（鉴权）、429（限流）、5xx（GHCR 故障）均不重建，避免误建或掩盖问题
+          case "${STATUS}" in
+            200) echo "missing=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "missing=true" >> "$GITHUB_OUTPUT" ;;
+            401|403) echo "GHCR 鉴权失败（401/403），跳过本次补偿" >&2; exit 1 ;;
+            429) echo "GHCR 限流（429），跳过本次补偿" >&2; exit 1 ;;
+            5*) echo "GHCR 暂时故障（${STATUS}），跳过本次补偿" >&2; exit 1 ;;
+            *) echo "未知状态 ${STATUS}，跳过本次补偿" >&2; exit 1 ;;
+          esac
+
+  backfill:
+    name: 补建缺失的稳定镜像
+    needs: detect
+    if: needs.detect.outputs.missing == 'true'
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      source_ref: refs/tags/v${{ needs.detect.outputs.version }}
+      channel: stable
+      version: ${{ needs.detect.outputs.version }}
+    secrets: inherit
