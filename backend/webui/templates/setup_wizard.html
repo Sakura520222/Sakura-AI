@@ -564,6 +564,8 @@
 </div>
 
 <script>
+{# 防御：prefill_values 未传入时回退空值，保持原默认行为 #}
+{% set prefill_values = prefill_values | default({'database_url': '', 'redis_url': ''}, true) %}
 const SETUP_I18N = {{ js_i18n | tojson }};
 const I18N = (key, params) => {
     let text = SETUP_I18N[key] || key;
@@ -586,8 +588,8 @@ function setupWizard() {
             { title: I18N('setup.step_admin') },
         ],
         form: {
-            database_url: '',
-            redis_url: 'redis://127.0.0.1:6379/0',
+            database_url: {{ prefill_values.database_url | tojson }},
+            redis_url: {{ prefill_values.redis_url | tojson }},
             github_app_id: '',
             github_private_key: '',
             github_webhook_secret: '',
@@ -666,6 +668,8 @@ function setupWizard() {
         onProviderChange() {},
 
         async init() {
+            // 空 redis_url 回退默认值（无环境变量预填时保持原默认行为）
+            if (!this.form.redis_url) this.form.redis_url = 'redis://127.0.0.1:6379/0';
             try {
                 const providerResp = await fetch('/setup/api/ai-providers');
                 const providerData = await providerResp.json();
