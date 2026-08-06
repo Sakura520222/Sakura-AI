@@ -1,16 +1,13 @@
-# Sakura AI Dockerfile
-FROM python:3.14-slim
+# Sakura AI Dockerfile — multi-stage production build
+# Stage 1: builder — Python 依赖构建（含编译头文件）
+FROM python:3.14-bookworm AS builder
 
-# 设置工作目录
-WORKDIR /app
-
-# 设置环境变量
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装系统依赖（libjpeg62-turbo-dev zlib1g-dev 用于 Pillow/qrcode）
+# Python wheel 构建所需开发包（libjpeg/zlib 用于 Pillow/qrcode，libmariadb 用于 asyncmy）
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -23,11 +20,33 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
+WORKDIR /app
 COPY requirements.txt .
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install -r requirements.txt
 
-# 安装Python依赖
-RUN pip install -r requirements.txt
+# Stage 2: runtime — 只保留运行所需
+FROM python:3.14-slim-bookworm AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH="/opt/venv/bin:/usr/local/go/bin:/root/.cargo/bin:${PATH}"
+
+# 运行期通用编译工具链（Agent Team 编译 C/C++/Rust/CGO Go 项目必需）
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    gcc \
+    g++ \
+    make \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
 
 # ── Agent Team 多语言运行时（2026-05 LTS/最新）──
 
@@ -39,17 +58,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 RUN ARCH=$(dpkg --print-architecture) \
     && curl -fsSL "https://go.dev/dl/go1.26.2.linux-${ARCH}.tar.gz" \
        | tar -C /usr/local -xzf -
-ENV PATH="/usr/local/go/bin:${PATH}"
 
 # Rust stable — rustup 自动检测架构和平台
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
 
-# 复制应用代码
-COPY . .
+# ── 应用代码（显式 COPY，不用 COPY . .）──
+WORKDIR /app
+COPY backend ./backend
+COPY config ./config
+COPY scripts ./scripts
+COPY res ./res
+COPY requirements.txt .
 
-# 创建运行时目录
-RUN mkdir -p logs workplace Skills
+# 运行时目录（Agent 工作区 / Skills 由 compose 卷挂载，此处仅为默认目录）
+RUN mkdir -p logs workplace Skills data/chroma
 
 # 暴露端口
 EXPOSE 8000
