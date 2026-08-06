@@ -8,7 +8,6 @@
 |---|---|---|
 | 显示名 | Sakura AI Reviewer | Sakura AI |
 | Docker 镜像/容器(web) | sakura-ai-reviewer | sakura-ai |
-| Docker 容器(worker) | pr-reviewer-worker | sakura-ai-worker |
 | MySQL 库名 | sakura-pr | sakura_ai |
 | GitHub 主仓库 | Sakura520222/Sakura-AI-Reviewer | Sakura520222/Sakura-AI |
 | GitHub APP 仓库 | Sakura520222/Sakura-AI-Reviewer-APP | Sakura520222/Sakura-AI-APP |
@@ -105,7 +104,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 - `/openapi.json` 的 `info.title` = `Sakura AI`
 - `/health` 返回 `service` = `sakura-ai`(注意:若外部监控断言旧值 `Sakura AI Reviewer`,需同步更新监控规则)
 - WebUI 首页/关于页显示 `Sakura AI`
-- `docker compose -f docker/docker-compose.yml config` 显示 web image/container = `sakura-ai`,worker container = `sakura-ai-worker`
+- `docker compose -f docker/docker-compose.yml config` 显示 web image/container = `sakura-ai`
 - MySQL 库名 = `sakura_ai`
 - 残留搜索(PowerShell,Windows 环境)零命中:
 

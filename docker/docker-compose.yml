@@ -23,25 +23,6 @@ services:
       retries: 3
       start_period: 40s
 
-  # Celery Worker (可选，用于处理异步任务)
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: sakura-ai
-    container_name: sakura-ai-worker
-    restart: unless-stopped
-    network_mode: host  # 使用宿主机网络,可直接访问 localhost
-    command: celery -A backend.workers.celery_app worker --loglevel=info --concurrency=2
-    volumes:
-      - ../logs:/app/logs
-      - ../config:/app/config
-      - ../workplace:/app/workplace  # Agent 专家团队独立工作区
-      - ../Skills:/app/Skills  # Agent Skills 技能目录持久化
-      - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
-    profiles:
-      - with-worker
-
 # ChromaDB 向量数据库持久化卷
 volumes:
   chroma_data:
