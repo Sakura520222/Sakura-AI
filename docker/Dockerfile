@@ -52,7 +52,8 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Node.js 24 LTS — NodeSource 脚本自动检测架构
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 # Go 1.26 — 动态检测架构（支持 amd64/arm64）
 RUN ARCH=$(dpkg --print-architecture) \
