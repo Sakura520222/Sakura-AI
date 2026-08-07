@@ -16,12 +16,20 @@
 
     <!-- 右侧：主题切换 + 用户信息 -->
     <div class="flex items-center gap-2">
-        {# 版本号区域（所有登录用户可见；点击进版本管理器的能力在 Slice 2 提供） #}
-        <div x-data="{ version: '', async loadVersion() { try { const r = await fetch('/version/info', { headers: { 'Accept': 'application/json' } }); if (r.ok) { const d = await r.json(); this.version = d.current_version || ''; } } catch (e) { /* 静默：版本号非关键 */ } } }"
-             x-init="loadVersion()"
-             class="hidden sm:flex items-center px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400"
-             title="Sakura AI 版本">
+        {# 版本区域：所有登录用户可见版本号 + 更新 badge；super_admin 点击进版本管理器 #}
+        <div x-data="{ version: '', updateAvailable: false, latestVersion: '', isAdmin: {% if current_user.role == 'super_admin' %}true{% else %}false{% endif %}, async loadVersion() { try { const r = await fetch('/version/info', { headers: { 'Accept': 'application/json' } }); if (r.ok) { const d = await r.json(); this.version = d.current_version || ''; this.updateAvailable = d.update_available === true; this.latestVersion = d.latest_version || ''; } } catch (e) {} } }"
+             x-init="loadVersion(); setTimeout(() => loadVersion(), 15000); setInterval(() => loadVersion(), 600000)"
+             @click="if (isAdmin) window.location.href = '/version/manager'"
+             :class="isAdmin ? 'cursor-pointer hover:bg-sakura-50 dark:hover:bg-sakura-900/20 rounded-xl' : ''"
+             class="hidden sm:flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 transition-colors"
+             :title="isAdmin ? '点击进入版本管理器' : 'Sakura AI 版本'">
             <span>v<span x-text="version || '...'"></span></span>
+            <template x-if="updateAvailable">
+                <span class="flex items-center gap-1 text-sakura-600 dark:text-sakura-400">
+                    <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
+                    <span x-text="latestVersion"></span>
+                </span>
+            </template>
         </div>
 
         <!-- 主题切换按钮 -->
