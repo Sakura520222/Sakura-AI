@@ -7,6 +7,7 @@
 # 用法:
 #   ./start.sh                # 启动（自动检测是否需要构建）
 #   ./start.sh --rebuild      # 强制重建镜像
+#   ./start.sh --prod         # 生产模式：拉取 GHCR 镜像一键部署（跳过本地构建）
 #   ./start.sh --status       # 查看当前构建/运行状态
 #   ./start.sh --attach       # 附加到正在进行的构建日志
 #   ./start.sh --stop         # 停止正在进行的构建
@@ -19,6 +20,7 @@ set -euo pipefail
 # ============================================================
 
 COMPOSE_FILE="docker/docker-compose.yml"
+PROD_COMPOSE_FILE="docker/docker-compose.prod.yml"
 DEPLOY_DIR=".deploy"
 BUILD_LOG="$DEPLOY_DIR/build.log"
 PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / start / health / done
@@ -164,11 +166,19 @@ cmd_stop() {
 # ============================================================
 
 build_runner() {
-    local rebuild=$1
+    local rebuild=$1 prod=$2
     local need_build=false
     local need_pip=false
     local current_hash=""
     local dockerfile_hash=""
+
+    # 选择 compose 文件：生产模式用生产 compose（runner 进程 source 后变量被重置，
+    # 需在此显式重新指定）；源码模式保持默认开发 compose
+    if $prod; then
+        COMPOSE_FILE="$PROD_COMPOSE_FILE"
+    else
+        COMPOSE_FILE="docker/docker-compose.yml"
+    fi
 
     COMPOSE=$(detect_compose)
     if [[ -z "$COMPOSE" ]]; then
@@ -180,27 +190,33 @@ build_runner() {
     # --- preflight ---
     set_phase "preflight"
 
-    if [[ -f "requirements.txt" ]]; then
-        current_hash=$(md5sum requirements.txt | awk '{print $1}')
-    fi
-    if [[ -f "docker/Dockerfile" ]]; then
-        dockerfile_hash=$(md5sum docker/Dockerfile | awk '{print $1}')
-    fi
-
-    if [[ "$rebuild" == "true" ]]; then
-        info "强制重建模式"
-        need_build=true
-    elif [[ ! -f "$HASH_FILE" ]]; then
-        info "首次部署，需要构建镜像"
-        need_build=true
-    elif [[ -f "$DOCKERFILE_HASH_FILE" ]] && [[ "$dockerfile_hash" != "$(cat "$DOCKERFILE_HASH_FILE")" ]]; then
-        info "检测到 Dockerfile 变更，需要重建镜像"
-        need_build=true
-    elif [[ "$current_hash" != "$(cat "$HASH_FILE")" ]]; then
-        info "检测到依赖变更，将使用临时容器安装新依赖"
-        need_pip=true
+    if $prod; then
+        # 生产模式：镜像不可变，跳过本地构建判定（requirements/Dockerfile 哈希），
+        # 直接拉取 GHCR 已发布镜像；--rebuild 仅表示重新 up -d 拉取最新镜像
+        info "生产模式：跳过本地构建，直接拉取镜像"
     else
-        ok "依赖未变更，跳过构建"
+        if [[ -f "requirements.txt" ]]; then
+            current_hash=$(md5sum requirements.txt | awk '{print $1}')
+        fi
+        if [[ -f "docker/Dockerfile" ]]; then
+            dockerfile_hash=$(md5sum docker/Dockerfile | awk '{print $1}')
+        fi
+
+        if [[ "$rebuild" == "true" ]]; then
+            info "强制重建模式"
+            need_build=true
+        elif [[ ! -f "$HASH_FILE" ]]; then
+            info "首次部署，需要构建镜像"
+            need_build=true
+        elif [[ -f "$DOCKERFILE_HASH_FILE" ]] && [[ "$dockerfile_hash" != "$(cat "$DOCKERFILE_HASH_FILE")" ]]; then
+            info "检测到 Dockerfile 变更，需要重建镜像"
+            need_build=true
+        elif [[ "$current_hash" != "$(cat "$HASH_FILE")" ]]; then
+            info "检测到依赖变更，将使用临时容器安装新依赖"
+            need_pip=true
+        else
+            ok "依赖未变更，跳过构建"
+        fi
     fi
 
     # --- build ---
@@ -256,6 +272,22 @@ build_runner() {
                 set_phase "pip" "fail"
                 return 1
             fi
+        fi
+    # --- prod: 拉取 GHCR 镜像部署 ---
+    elif $prod; then
+        if [[ "$rebuild" == "true" ]]; then
+            info "--rebuild 生产模式：重新拉取最新镜像"
+        fi
+        # 不写本地哈希：镜像版本由 GHCR 发布管理，本地 requirements/Dockerfile 哈希无意义
+        set_phase "start"
+        info "停止现有容器..."
+        $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
+        info "启动服务（拉取最新镜像）..."
+        if $COMPOSE up -d >> "$BUILD_LOG" 2>&1; then
+            ok "服务已启动"
+        else
+            set_phase "start" "fail"
+            return 1
         fi
     else
         # 无需构建
@@ -315,6 +347,7 @@ show_menu() {
     echo -e "  ${BOLD}[5]${RESET} 停止正在进行的构建"
     echo -e "  ${BOLD}[6]${RESET} 查看服务容器状态"
     echo -e "  ${BOLD}[7]${RESET} 停止服务"
+    echo -e "  ${BOLD}[8]${RESET} 生产镜像部署 (--prod)"
     echo -e "  ${BOLD}[0]${RESET} 退出"
     echo ""
 
@@ -328,6 +361,7 @@ show_menu() {
         5) cmd_stop       ;;
         6) do_ps          ;;
         7) do_down        ;;
+        8) do_start false true ;;
         0) info "已退出" ; exit 0 ;;
         *) warn "无效选项: $choice" ; exit 1 ;;
     esac
@@ -361,6 +395,7 @@ do_down() {
 # Actual start logic (called from menu or CLI args)
 do_start() {
     local rebuild=${1:-false}
+    local prod=${2:-false}
 
     echo ""
     echo -e "${BOLD}🚀 Sakura AI 启动脚本${RESET}"
@@ -370,6 +405,12 @@ do_start() {
     if ! command -v docker &>/dev/null; then
         fail "Docker 未安装"
         exit 1
+    fi
+
+    # 生产模式使用生产 compose（跳过本地构建，直接拉取 GHCR 镜像）
+    if $prod; then
+        COMPOSE_FILE="$PROD_COMPOSE_FILE"
+        info "生产模式：使用生产 compose ($PROD_COMPOSE_FILE)"
     fi
 
     # Detect compose
@@ -426,7 +467,8 @@ set -euo pipefail
 export _START_SH_SOURCED=1
 cd "${abs_script_dir}"
 source "${abs_script_dir}/start.sh"
-build_runner "${rebuild}"
+export prod="${prod}"
+build_runner "${rebuild}" "${prod}"
 RUNNER_EOF
     chmod +x "$runner_script"
 
@@ -459,10 +501,12 @@ RUNNER_EOF
 main() {
     # Parse args
     local rebuild=false
+    local prod=false
     local cmd=""
     for arg in "$@"; do
         case "$arg" in
             --rebuild)   rebuild=true ;;
+            --prod)      prod=true ;;
             --status)    cmd=status ;;
             --attach)    cmd=attach ;;
             --stop)      cmd=stop ;;
@@ -474,6 +518,7 @@ main() {
                 echo "选项:"
                 echo "  (无参数)    交互式菜单"
                 echo "  --rebuild   强制重建镜像并启动"
+                echo "  --prod      生产模式：拉取 GHCR 镜像一键部署（跳过本地构建）"
                 echo "  --status    查看当前构建/运行状态"
                 echo "  --attach    附加到正在进行的构建日志"
                 echo "  --stop      停止正在进行的构建"
@@ -504,10 +549,10 @@ main() {
     esac
 
     # No subcommand args -> interactive menu
-    if [[ -z "$cmd" && "$rebuild" == "false" ]]; then
+    if [[ -z "$cmd" && "$rebuild" == "false" && "$prod" == "false" ]]; then
         show_menu
     else
-        do_start "$rebuild"
+        do_start "$rebuild" "$prod"
     fi
 }
 
