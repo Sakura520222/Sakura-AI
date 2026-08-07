@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}版本管理{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-6 space-y-6">
+  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">版本管理</h1>
+
+  {# 当前部署信息卡 / Current deployment card #}
+  <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+    <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">当前部署</h2>
+    <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div><dt class="text-gray-500 dark:text-gray-400">当前版本</dt>
+           <dd class="font-mono font-medium">v{{ version_info.current_version }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">部署方式</dt>
+           <dd>{{ version_info.deployment_type }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">最近检查</dt>
+           <dd>{{ version_info.last_checked or "尚未检查" }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">更新支持</dt>
+           <dd>{{ "是" if version_info.update_supported else "否" }}
+               <span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span></dd></div>
+    </dl>
+
+    {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 显示"尚未检查" #}
+    {% if version_info.check_error %}
+    <div class="mt-4 text-sm text-amber-600 dark:text-amber-400">
+      检查失败：{{ version_info.check_error }}（显示上次缓存结果）
+    </div>
+    {% endif %}
+    {% if version_info.update_available %}
+    <div class="mt-4 flex items-center gap-2 text-sakura-600 dark:text-sakura-400">
+      <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
+      <span class="font-medium">v{{ version_info.latest_version }} 可用</span>
+      <span class="text-xs text-gray-400">（更新功能将在后续版本启用）</span>
+    </div>
+    {% elif version_info.last_checked and not version_info.check_error %}
+    <div class="mt-4 text-sm text-gray-500">已是最新版本。</div>
+    {% elif not version_info.last_checked %}
+    <div class="mt-4 text-sm text-gray-500">尚未完成首次检查，请稍候或点击"重新检查"。</div>
+    {% endif %}
+
+    <div class="mt-4">
+      <button id="recheck-btn"
+              class="px-4 py-2 rounded-xl bg-sakura-500 text-white text-sm font-medium hover:bg-sakura-600 disabled:opacity-50">
+        重新检查
+      </button>
+    </div>
+  </section>
+
+  {# Release 列表 / Release list（已按 SemVer 降序） #}
+  <section class="space-y-4">
+    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Release 历史</h2>
+    {% if not releases %}
+    <div class="text-sm text-gray-500">暂无 Release 信息（尚未完成首次检查，或 GitHub 不可达）。</div>
+    {% endif %}
+    {% for rel in releases %}
+    <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+      <header class="flex items-center justify-between mb-2">
+        <h3 class="font-mono font-semibold text-gray-800 dark:text-gray-100">v{{ rel.version }}</h3>
+        {% if rel.version == version_info.latest_version and version_info.update_available %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">最新</span>
+        {% elif rel.version == version_info.current_version %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">当前</span>
+        {% endif %}
+      </header>
+      <div class="text-xs text-gray-400 mb-3">{{ rel.published_at or "—" }}</div>
+      {# data-markdown：前端 marked + DOMPurify 自动渲染（base.html 管线）。
+         Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
+      <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>
+      {% if rel.html_url %}
+      <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
+         class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">查看完整说明</a>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+</div>
+
+<script>
+// CSRF token 从 template context 注入（navbar restart 同款模式）
+const CSRF_TOKEN = "{{ csrf_token }}";
+document.getElementById('recheck-btn').addEventListener('click', async function() {
+  this.disabled = true;
+  this.textContent = '检查中...';
+  try {
+    const r = await fetch('/version/check', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json' }
+    });
+    if (r.ok) { location.reload(); }
+    else { this.textContent = '失败，点击重试'; this.disabled = false; }
+  } catch (e) { this.textContent = '失败，点击重试'; this.disabled = false; }
+});
+</script>
+{% endblock %}

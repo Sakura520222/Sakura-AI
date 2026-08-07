@@ -152,6 +152,7 @@ async def lifespan(app: FastAPI):
     scan_scheduler = None
     quota_reset_scheduler = None
     star_aid_scheduler = None
+    update_checker = None
 
     if not is_bootstrap_mode():
         # 正常模式：完整启动所有服务
@@ -345,6 +346,17 @@ async def lifespan(app: FastAPI):
                     star_aid_scheduler.start()
                 except Exception as e:
                     logger.error(f"仓库互助调度器启动失败: {e}")
+
+                # 启动更新检查调度器（Slice 2）—— 唯一实例挂 app.state，供手动端点共用
+                try:
+                    from backend.services.update_checker import UpdateChecker
+
+                    update_checker = UpdateChecker()
+                    update_checker.start()
+                    app.state.update_checker = update_checker
+                    logger.info("✅ 更新检查调度器已启动（60min 周期）")
+                except Exception as e:
+                    logger.error(f"❌ 更新检查调度器启动失败: {e}")
             else:
                 logger.warning("🧪 本地开发模式：已跳过后台任务启动")
     else:
@@ -413,6 +425,10 @@ async def lifespan(app: FastAPI):
     # 停止仓库互助调度器
     if star_aid_scheduler:
         star_aid_scheduler.stop()
+
+    # 停止更新检查调度器（async stop：cancel + await + aclose）
+    if update_checker:
+        await update_checker.stop()
 
 
 # 创建FastAPI应用
