@@ -10,6 +10,8 @@ services:
     container_name: sakura-ai
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
+    env_file:
+      - ../.deploy/deployment.env
     volumes:
       - ../logs:/app/logs
       - ../config:/app/config  # 存放 connection.json 和策略/标签配置
