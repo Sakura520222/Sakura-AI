@@ -5,6 +5,7 @@
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -73,7 +74,11 @@ class RuffRunner:
     def _save_log(self, content: str, mode: str) -> Path:
         """保存日志到文件"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = self.logs_dir / f"ruff_{mode}_{timestamp}.log"
+        # 路径分隔符会带出 logs/ 下不存在的父目录链（FileNotFoundError），替换为下划线
+        safe_mode = mode.replace(os.sep, "_")
+        if os.altsep:
+            safe_mode = safe_mode.replace(os.altsep, "_")
+        log_file = self.logs_dir / f"ruff_{safe_mode}_{timestamp}.log"
 
         with open(log_file, "w", encoding="utf-8") as f:
             f.write(content)
