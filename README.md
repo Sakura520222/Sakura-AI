@@ -339,7 +339,10 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 6. 启动服务
+### 6. 启动服务（源码部署 / 开发模式）
+
+> 日常使用推荐 `### 1. Docker 一键部署`（无需源码，一条命令拉起 Web + MySQL + Redis）。
+> 以下为源码部署方式（开发 / 自定义构建场景），也可用 `./start.sh`（开发模式）或 `./start.sh --prod`（生产镜像模式）启动。
 
 ```bash
 cd docker
