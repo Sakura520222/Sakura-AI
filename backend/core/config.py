@@ -84,6 +84,12 @@ class Settings(BaseSettings):
         description="部署模式：image（镜像拉取）/ source（源码）/ unknown",
     )
 
+    # 更新检查目标仓库（owner/repo）。默认官方仓库；fork 部署可覆盖。
+    sakura_update_repo: str = Field(
+        "Sakura520222/Sakura-AI",
+        description="GitHub owner/repo，UpdateChecker 检查此仓库的 Releases",
+    )
+
     # 基础审查任务配置
     max_concurrent_reviews: int = Field(
         5,
