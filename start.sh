@@ -74,14 +74,61 @@ wait_for_pid() {
 }
 
 # ============================================================
+# 部署状态初始化 / Deployment state bootstrap
+# ============================================================
+
+# deployment.env 权威部署状态文件路径（见 auto-update 设计 §9.5）
+DEPLOYMENT_ENV_FILE="$DEPLOY_DIR/deployment.env"
+
+# 首次启动时初始化部署状态：写入部署模式（source/image）与实际镜像引用。
+# - 已存在则不覆盖（updater 或之前初始化已写入）。
+# - 写实际值（非 ${...} 表达式）：deployment.env 记录"当时实际选择的镜像"。
+# - durability：write temp → fsync(sync -d) → atomic mv，满足 spec §9.5。
+# - digest 具体化（:latest → :vX.Y.Z@sha256:...）留给 Slice 4 updater activate。
+init_deployment_env() {
+    local mode="source"
+    if $prod; then
+        mode="image"
+    fi
+
+    if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        return 0
+    fi
+
+    mkdir -p "$DEPLOY_DIR"
+    local tmp
+    tmp="$DEPLOY_DIR/.deployment.env.$$"
+    {
+        echo "# Sakura AI 部署状态（由 start.sh 初始化；updater 接管后以 atomic write 维护）"
+        echo "SAKURA_DEPLOY_MODE=$mode"
+        if $prod; then
+            # 写实际值：解析当前 SAKURA_AI_IMAGE 环境变量，缺省用默认 latest
+            local image="${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}"
+            echo "SAKURA_AI_IMAGE=$image"
+        fi
+    } > "$tmp"
+
+    # durability：fsync 文件数据后再 atomic rename。
+    # sync -d 是 GNU coreutils 的 file-data sync；不支持 -d 时 fallback 全局 sync；
+    # 两者都不可用时静默降级（atomic mv 仍是主保护）。
+    sync -d "$tmp" 2>/dev/null || sync 2>/dev/null || true
+    mv "$tmp" "$DEPLOYMENT_ENV_FILE"
+    info "已初始化部署状态: $DEPLOYMENT_ENV_FILE (mode=$mode)"
+}
+
+# ============================================================
 # 检测 docker compose
 # ============================================================
 
 detect_compose() {
+    local env_file_opt=""
+    if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        env_file_opt="--env-file $DEPLOYMENT_ENV_FILE"
+    fi
     if docker compose version &>/dev/null; then
-        echo "docker compose -f $COMPOSE_FILE"
+        echo "docker compose $env_file_opt -f $COMPOSE_FILE"
     elif command -v docker-compose &>/dev/null; then
-        echo "docker-compose -f $COMPOSE_FILE"
+        echo "docker-compose $env_file_opt -f $COMPOSE_FILE"
     else
         echo ""
     fi
@@ -412,6 +459,10 @@ do_start() {
         COMPOSE_FILE="$PROD_COMPOSE_FILE"
         info "生产模式：使用生产 compose ($PROD_COMPOSE_FILE)"
     fi
+
+    # 先初始化部署状态（detect_compose 依赖 deployment.env 是否存在来决定 --env-file）
+    mkdir -p "$DEPLOY_DIR"
+    init_deployment_env
 
     # Detect compose
     COMPOSE=$(detect_compose)

@@ -16,6 +16,14 @@
 
     <!-- 右侧：主题切换 + 用户信息 -->
     <div class="flex items-center gap-2">
+        {# 版本号区域（所有登录用户可见；点击进版本管理器的能力在 Slice 2 提供） #}
+        <div x-data="{ version: '', async loadVersion() { try { const r = await fetch('/version/info', { headers: { 'Accept': 'application/json' } }); if (r.ok) { const d = await r.json(); this.version = d.current_version || ''; } } catch (e) { /* 静默：版本号非关键 */ } } }"
+             x-init="loadVersion()"
+             class="hidden sm:flex items-center px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400"
+             title="Sakura AI 版本">
+            <span>v<span x-text="version || '...'"></span></span>
+        </div>
+
         <!-- 主题切换按钮 -->
         <button @click="theme = theme === 'light' ? 'dark' : 'light'"
                 class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"

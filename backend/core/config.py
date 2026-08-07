@@ -76,6 +76,13 @@ class Settings(BaseSettings):
         False,
         description="是否跳过 Telegram、SSE、扫描、配额等后台任务",
     )
+    # 部署模式标记。BaseSettings 无 env_prefix + case_sensitive=False，
+    # 故自动从环境变量 SAKURA_DEPLOY_MODE 读取（由 compose env_file 注入）。
+    # 值：image / source / unknown。
+    sakura_deploy_mode: str = Field(
+        "unknown",
+        description="部署模式：image（镜像拉取）/ source（源码）/ unknown",
+    )
 
     # 基础审查任务配置
     max_concurrent_reviews: int = Field(

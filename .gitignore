@@ -82,3 +82,7 @@ Skills/
 *.pyc
 .mypy_cache/
 文件.md
+
+# Sakura AI deploy runtime（仅保留 example 模板；真实 deployment.env 与 updater 运行时文件忽略）
+.deploy/*
+!.deploy/deployment.env.example
