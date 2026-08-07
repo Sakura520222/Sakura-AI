@@ -340,7 +340,10 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 6. Start the Service
+### 6. Start the Service (Source-Code Deployment / Dev Mode)
+
+> For daily use, we recommend `### 1. Docker One-Click Deployment` (no source code required — one command brings up Web + MySQL + Redis).
+> The following is the source-code deployment path (for development / custom-build scenarios). You can also launch via `./start.sh` (dev mode) or `./start.sh --prod` (production image mode).
 
 ```bash
 cd docker
