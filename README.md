@@ -397,18 +397,31 @@ Host updater 是一个独立守护进程，负责管理 Sakura AI 镜像的自�
 
 action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
 
-**生产部署**
+**生产首次安装**
 
-生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`（Slice 3c 才开始构建）。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
+生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`。首次执行 `install` 时，即使宿主机没有 Python 且该 binary 尚不存在，也会由 `start.sh` 完成 binary acquisition；生产路径不依赖宿主机 Python。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
 
 ```bash
-sudo ./start.sh updater install  # 首次安装，创建组和目录
+sudo ./start.sh updater install  # 获取并校验当前版本 binary，创建组和目录
 sudo ./start.sh updater start     # 启动守护进程
+```
+
+安装严格绑定当前本地 Sakura AI 版本，不下载 `latest` updater。版本解析同时读取两个 signal：`.deploy/deployment.env` 中精确的 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest）和 `backend/__init__.py` 中精确的 `__version__ = "X.Y.Z"`。`:latest` 不是具体版本；两个 signal 只有一个存在时使用该 signal，二者冲突或二者都不存在时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
+
+binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。state directory 与最终 binary 均为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
+
+安装失败的保护分为两个阶段：下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
+
+如果 daemon 在安装前已经运行，替换 binary 不会自动重启正在运行的进程。安装成功后请显式执行：
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater start
 ```
 
 **源码开发模式**
 
-开发环境可使用 Python 直接运行 updater：
+开发环境可使用显式 Python override 运行 updater；这不是生产 fallback：
 
 ```bash
 SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start

@@ -780,51 +780,65 @@ updater/
 │       └── backends/
 │           ├── systemd.py
 │           └── daemon.py
-└── build/                     # PyInstaller spec
+└── build/                     # PyInstaller onefile spec 与构建脚本
 ```
+
+每个发布产物必须是 PyInstaller **onefile** executable，而不是 onedir。onefile 启动时会把自身解包到临时目录；daemon 通过受控的 `TMPDIR` 指向 `.deploy/updater/tmp`（目录 `0700`），避免宿主 `/tmp` 使用 `noexec` 时无法启动。受控临时目录只改变 onefile 解包位置，不改变 updater state、PID meta、UDS 或 lock 路径。这个低频启动时的解包成本换取单文件安装、替换和回滚边界清晰。
 
 ### 16.2 构建矩阵
 
 | 产物 | 构建环境 | 说明 |
 | --- | --- | --- |
-| `sakura-ai-updater-linux-amd64` | `debian:bullseye`（老 glibc 基线） | 避免 GLIBC_X.XX not found |
-| `sakura-ai-updater-linux-arm64` | `debian:bullseye`（arm64） | 树莓派 / ARM 服务器 |
+| `sakura-ai-updater-linux-amd64` | native `ubuntu-24.04` runner，使用 `python:3.12-slim-bullseye` 构建容器 | 以 glibc 2.31 为兼容性基线 |
+| `sakura-ai-updater-linux-arm64` | native `ubuntu-24.04-arm` runner，使用 `python:3.12-slim-bullseye` 构建容器 | ARM 服务器；不使用 QEMU 或 cross-PyInstaller |
+
+构建容器固定为 `python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db`。`build.sh` 在构建容器内执行 PyInstaller onefile 构建、构建容器 smoke，并调用 outer onefile ELF/bootloader GLIBC checker；checker 只解析最终 onefile 的 outer ELF/bootloader `GLIBC_X.Y` needs，最大版本必须 `<= 2.31`，不读取 embedded ELF。该 ceiling 只是污染检测，不能替代真实的 old-glibc 构建。
+
+构建容器成功后，每个架构还必须在干净、固定的 `debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792` runtime 中执行 authoritative lifecycle smoke。runtime 以只读 mount 注入 final onefile 与 smoke helper，先复制为 root-owned `0700` `/usr/local/libexec/sakura-ai-updater`，创建 `0700` state/tmp 目录并导出 `TMPDIR=/run/sakura-ai-smoke/tmp`，再用统一 path 参数依次验证 `--version`、`backend install`、`backend start`、`backend status`、`backend is-running`、UDS `/v1/health`、`backend stop`，以及停止后 `backend is-running` 返回 1。不能用 build container 的运行结果替代该 fresh-runtime 证据；任何 runtime harness 失败都阻断资产上传。
 
 **老 glibc 基线是硬要求**——用 Ubuntu 最新版打包会导致 Debian 11 / 老 NAS 上 `GLIBC_X.XX not found`。
 
 ### 16.3 Release Assets
 
-每个 GitHub Release 附带：
+Slice 3c 的 Release assets **仅包含**：
 
 ```
 sakura-ai-updater-linux-amd64
 sakura-ai-updater-linux-arm64
-SHA256SUMS              （含上述两者的 sha256）
-update-manifest.json
+SHA256SUMS              （恰好包含上述两者的 sha256）
 ```
+
+`update-manifest.json` 及其 manifest parsing、compatibility gate、`min_upgrade_from` authoritative policy 属于 Slice 4；3c 不生成、上传或硬编码这些内容。最终 P0 manifest v1 的 schema 仍按 §12.1 执行，但其产生时机延后到 Slice 4。
 
 ### 16.4 安装流程
 
-`start.sh updater install` **默认安装与当前 Sakura AI `__version__` 对应 Release 附带的 updater**——**不从"最新 Release"下载**，避免协议启动悖论（运行 v3.0.0 的应用若下载未来 v4.0.0 的 protocol v2 updater，当前 Web backend 不懂）。updater self-update / 寻找最新兼容 updater 留给 P2。
+`start.sh updater install` **默认安装与当前 Sakura AI `__version__` 对应 Release 附带的 updater**——**不从“最新 Release”下载**，避免协议启动悖论（运行 v3.0.0 的应用若下载未来 v4.0.0 的 protocol v2 updater，当前 Web backend 不懂）。首次 acquisition 属于 `start.sh` host bootstrap：宿主机无 Python 且 binary 尚不存在时，shell 直接通过 HTTPS 下载当前版本对应架构的 binary 与 `SHA256SUMS`，严格校验后再调用已安装 binary 的 `backend install`。Python downloader 与 updater self-update / 寻找最新兼容 updater 留给 P2。
 
 ```
 检测 OS / ARCH
 ↓
-读取当前 app __version__ → 定位 Release v<current_version>
+解析 local app version：优先 concrete `SAKURA_AI_IMAGE=:vX.Y.Z[@sha256:...]`，同时读取精确 package `__version__` signal；`:latest` 不是 concrete signal，两个 signal 冲突则 fail-closed
 ↓
-从该 Release 下载对应 updater 二进制 + SHA256SUMS
+从该 Release 通过 HTTPS 下载对应 updater binary + SHA256SUMS
 ↓
-sha256sum -c 校验
+严格解析 SHA256SUMS，校验目标 asset 恰好一条且 hash 匹配
 ↓
-chmod +x
+chmod 0700、临时文件 fsync、临时文件安全检查
 ↓
-安装到 .deploy/updater/sakura-ai-updater
+同一 state 目录内 `mv -f` 原子替换（commit point）
 ↓
-创建 host sakura-ai 组（固定 GID 9472）
+`sync "$UPDATER_STATE_DIR"` 持久化目录 metadata，再确认 final inode 安全
 ↓
-检测 service backend（P0 仅 daemon；P1 加 systemd）
-↓
-install + start
+创建 host sakura-ai 组（固定 GID 9472）并调用 binary backend install
+```
+
+安装安全不变量：生产 binary、state directory 和 install lock 均为 root-owned；binary/state directory 使用 `0700`，安装锁防并发，同文件系统临时文件保证 rename 原子性；下载、checksum、chmod、临时 fsync、临时 safety 任一 pre-commit 失败时，旧 final binary 必须 byte-for-byte unchanged。commit 后目录 metadata fsync 或 rename 后 final safety confirmation 失败时，不得作“旧 binary 未变”承诺，必须明确说明新 inode 可能已安装，且不得继续调用 `backend install`。checksum 与 binary 使用同一 GitHub Release 信任根，3c 提供 HTTPS 传输与 SHA256 完整性校验，但不抵御 Release 发布凭据整体失陷；独立签名与更强 trust root 留给 P2。
+
+如果 daemon 在 acquisition 前已经运行，安装成功也**不自动重启**：Linux rename 只替换目录项，运行进程继续使用旧 inode。管理员必须显式执行：
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater start
 ```
 
 `.deploy/updater/` 目录结构（持久），与 §7.1 一致：
@@ -843,11 +857,13 @@ install + start
 
 ### 16.5 CI 集成与 atomic publish
 
-新增 `updater-build.yml`：构建 PyInstaller 产物 + 镜像 + `update-manifest.json` + `SHA256SUMS`。
+`updater-build.yml` 是仅接受 `workflow_call(version)` 的 reusable workflow：native amd64/arm64 matrix 分别完成 pinned Python 3.12 bullseye build container 的 onefile 构建、outer ELF/bootloader ceiling gate，以及 pinned clean bullseye runtime 的完整 lifecycle smoke。每个 matrix artifact 只有双门禁均成功后才上传；single-writer publish job fan-in 两个 artifact，固定顺序生成唯一 `SHA256SUMS`，并用一次带 `--clobber` 的 upload 上传两个 binary 与 checksum。
 
-**Release 作为 atomic publish boundary**——先 draft Release → 构建镜像 / updater / manifest → 全部成功 → 最后 publish Release。避免出现"Release 已公开但 manifest / 镜像 / asset 尚未就绪"的窗口期（此时 UpdateChecker 看到了 Release，但 `update_ready=false`，UI 正确地不显示可更新）。
+现有 `release-on-pr-merge.yml` 保持 Release 的唯一 create/edit owner。它先完成 source tar/zip 的定向清理与上传，再由 `generate-release` 和 `build-and-upload-assets` 均成功的 caller job 调用 reusable workflow。`updater-build.yml` 绝不 create/edit Release，只验证 Release 存在并 upload updater assets；stable image job 保持原有 `needs`/`if` 语义并可与 updater caller 并行。并发策略仍为排队执行（`cancel-in-progress: false`）。
 
-与现有 [release-on-pr-merge.yml](.github/workflows/release-on-pr-merge.yml) 的关系：复用其版本号解析与触发链，但将"创建公开 Release"延后到所有构建产物就绪之后。若任何构建步骤失败，Release 保持 draft / 不 publish，保证用户可见的 Release 必定 `update_ready`。
+3c 的 trust model 是同 channel、同一 GitHub Release 的 binary 与 `SHA256SUMS`：这提供传输/存储完整性校验，不提供独立签名信任根；same-channel trust 与更强 P2 signature policy 由后续阶段补足。`update-manifest.json`、`min_upgrade_from` 与 authoritative update readiness gate 延后到 Slice 4。
+
+
 
 ## 17. 交付计划（Delivery Plan）
 

@@ -602,30 +602,28 @@ jobs:
       - name: 检查并清理 Release 附件状态
         id: check_assets
         run: |
+          set -euo pipefail
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
 
-          # 检查是否有附件
-          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
-          echo "现有附件数量: $ASSETS"
-
-          if [ "$ASSETS" -gt 0 ]; then
-            echo "🗑️ 检测到已有附件，正在清理旧附件..."
-
-            # 获取所有附件名称并删除
-            ASSET_NAMES=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name')
-            for asset in $ASSET_NAMES; do
-              echo "  删除附件: $asset"
+          delete_source_asset_if_present() {
+            local asset="$1"
+            if gh release view "$TAG_NAME" --json assets \
+              -q ".assets[] | select(.name == \"$asset\") | .name" \
+              | grep -Fxq "$asset"; then
+              echo "删除现有 source asset: $asset"
               gh release delete-asset "$TAG_NAME" "$asset" -y
-            done
+            else
+              echo "source asset 不存在，跳过: $asset"
+            fi
+          }
 
-            echo "✅ 已删除 $ASSETS 个旧附件"
-          else
-            echo "ℹ️ Release 没有附件"
-          fi
+          # 只清理当前版本的 source archives，保留 updater assets 与其他 Release 文件。
+          delete_source_asset_if_present "Sakura-AI-v${VERSION}.tar.gz"
+          delete_source_asset_if_present "Sakura-AI-v${VERSION}.zip"
 
-          # 无论是否有旧附件，都标记为需要上传（确保附件与代码同步）
-          echo "should_upload=true" >> $GITHUB_OUTPUT
-          echo "ℹ️ 将上传新的发布附件"
+          echo "should_upload=true" >> "$GITHUB_OUTPUT"
+          echo "将上传新的 source archives"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -753,6 +751,21 @@ jobs:
           rm -f "Sakura-AI-v${VERSION}.tar.gz"
           rm -f "Sakura-AI-v${VERSION}.zip"
           echo "✅ 临时文件已清理"
+
+  publish-updater-assets:
+    name: 构建并上传 Host Updater
+    needs:
+      - generate-release
+      - build-and-upload-assets
+    if: >-
+      needs.generate-release.result == 'success' &&
+      needs.build-and-upload-assets.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/updater-build.yml
+    with:
+      version: ${{ needs.generate-release.outputs.version }}
+    secrets: inherit
 
   publish-stable-image:
     name: 发布稳定镜像
