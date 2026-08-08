@@ -1,0 +1,195 @@
+name: Build and publish updater assets
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        type: string
+
+jobs:
+  build-updater:
+    name: Build updater (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            asset: sakura-ai-updater-linux-amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            asset: sakura-ai-updater-linux-arm64
+
+    steps:
+      - name: Checkout caller commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify requested version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            printf 'invalid updater release version: %s\n' "$VERSION" >&2
+            exit 1
+          }
+          actual_version=$(sed -nE \
+            's/^__version__[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' \
+            backend/__init__.py | head -n 1)
+          [[ "$actual_version" == "$VERSION" ]] || {
+            printf 'workflow version %s does not match backend version %s\n' \
+              "$VERSION" "${actual_version:-missing}" >&2
+            exit 1
+          }
+
+      - name: Build onefile with outer GLIBC gate
+        env:
+          BUILD_IMAGE: >-
+            python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db
+          OUTPUT_DIR: ${{ github.workspace }}/dist/updater-${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "$OUTPUT_DIR"
+          mkdir -p -- "$OUTPUT_DIR"
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "$BUILD_IMAGE" \
+            bash updater/build/build.sh "/workspace/dist/updater-${{ matrix.arch }}"
+          test -f "$OUTPUT_DIR/${{ matrix.asset }}"
+          test ! -L "$OUTPUT_DIR/${{ matrix.asset }}"
+          test -s "$OUTPUT_DIR/${{ matrix.asset }}"
+          # build.sh performs file, check_glibc.py outer-ELF gate, and build smoke.
+
+      - name: Run fresh runtime lifecycle smoke
+        env:
+          RUNTIME_IMAGE: >-
+            debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792
+          BINARY_PATH: ${{ github.workspace }}/dist/updater-${{ matrix.arch }}/${{ matrix.asset }}
+          SMOKE_HELPER: ${{ github.workspace }}/updater/build/run-fresh-runtime-smoke.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$BINARY_PATH"
+          test ! -L "$BINARY_PATH"
+          test -x "$BINARY_PATH"
+          test -f "$SMOKE_HELPER"
+          # The helper runs --version, backend lifecycle, and UDS health smoke.
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            -v "$BINARY_PATH:/mnt/sakura-ai-updater:ro" \
+            -v "$SMOKE_HELPER:/usr/local/bin/run-fresh-runtime-smoke.sh:ro" \
+            "$RUNTIME_IMAGE" \
+            bash /usr/local/bin/run-fresh-runtime-smoke.sh /mnt/sakura-ai-updater
+
+      - name: Upload updater artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sakura-ai-updater-${{ matrix.arch }}-${{ github.run_id }}
+          path: dist/updater-${{ matrix.arch }}/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-updater-assets:
+    name: Publish updater assets
+    needs: build-updater
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download amd64 artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: sakura-ai-updater-amd64-${{ github.run_id }}
+          path: release-assets/amd64
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: sakura-ai-updater-arm64-${{ github.run_id }}
+          path: release-assets/arm64
+
+      - name: Verify assets and upload release files
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace="$GITHUB_WORKSPACE"
+          source_root="$workspace/release-assets"
+          release_dir="$source_root/final"
+          rm -rf -- "$release_dir"
+          mkdir -p -- "$release_dir"
+
+          declare -A expected=(
+            [amd64]=sakura-ai-updater-linux-amd64
+            [arm64]=sakura-ai-updater-linux-arm64
+          )
+          for arch in amd64 arm64; do
+            source_dir="$source_root/$arch"
+            asset="${expected[$arch]}"
+            [[ -d "$source_dir" && ! -L "$source_dir" ]] || {
+              printf 'missing artifact directory: %s\n' "$source_dir" >&2
+              exit 1
+            }
+            mapfile -t entries < <(
+              find "$source_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort
+            )
+            [[ "${#entries[@]}" -eq 1 && "${entries[0]}" == "$asset" ]] || {
+              printf 'artifact %s must contain exactly %s and no other file\n' \
+                "$source_dir" "$asset" >&2
+              exit 1
+            }
+            [[ -f "$source_dir/$asset" && ! -L "$source_dir/$asset" && -s "$source_dir/$asset" ]] || {
+              printf 'asset is not a non-empty regular file: %s\n' "$source_dir/$asset" >&2
+              exit 1
+            }
+            install -m 0755 "$source_dir/$asset" "$release_dir/$asset"
+          done
+
+          cd "$release_dir"
+          sha256sum \
+            "sakura-ai-updater-linux-amd64" \
+            "sakura-ai-updater-linux-arm64" > SHA256SUMS
+          [[ "$(wc -l < SHA256SUMS)" -eq 2 ]] || {
+            printf 'SHA256SUMS must contain exactly two lines\n' >&2
+            exit 1
+          }
+          grep -Eq '^[0-9a-f]{64}  sakura-ai-updater-linux-amd64$' SHA256SUMS
+          grep -Eq '^[0-9a-f]{64}  sakura-ai-updater-linux-arm64$' SHA256SUMS
+
+          mapfile -t final_entries < <(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+          [[ "${#final_entries[@]}" -eq 3 ]] || {
+            printf 'final release directory must contain exactly three assets\n' >&2
+            exit 1
+          }
+          for asset in \
+            sakura-ai-updater-linux-amd64 \
+            sakura-ai-updater-linux-arm64 \
+            SHA256SUMS; do
+            [[ -f "$asset" && ! -L "$asset" && -s "$asset" ]] || {
+              printf 'invalid final release asset: %s\n' "$asset" >&2
+              exit 1
+            }
+          done
+
+          gh release view "v${VERSION}" >/dev/null
+          gh release upload "v${VERSION}" \
+            sakura-ai-updater-linux-amd64 \
+            sakura-ai-updater-linux-arm64 \
+            SHA256SUMS \
+            --clobber
