@@ -1,8 +1,8 @@
-"""Durable updater state — atomic+dir-fsync write + fail-closed read.
+"""Durable updater state — atomic+dir-fsync write + fail-closed read + 崩溃恢复 reconcile。
 
-spec §8.4 状态持久化（wrapper schema + error_code + fail-closed + directory fsync）。
-Slice 3a 只交付模型 + atomic write + fail-closed load；崩溃恢复 reconcile 在后续 task；
-实际写入 active job（ImageAdapter 驱动状态机）在 Slice 4。
+spec §8.4 状态持久化（wrapper schema + error_code + fail-closed + directory fsync）
++ §7.6 崩溃恢复（6 条 invariant）。Slice 3a 只交付模型 + atomic write + fail-closed
+load + reconcile；实际写入 active job（ImageAdapter 驱动状态机）在 Slice 4。
 """
 
 from __future__ import annotations
@@ -18,6 +18,10 @@ SCHEMA_VERSION = 1
 # P0 状态机（spec §8.1）。terminal 状态用于 reconcile 判断。
 # INTERRUPTED 不是顶层 state，而是 state="failed" + error_code="interrupted"（§7.6）。
 TERMINAL_STATES = frozenset({"success", "failed", "rolled_back"})
+
+# reconcile 标记中断 job 的 error_code（state="failed" + error_code=interrupted，§7.6）。
+# INTERRUPTED 不是顶层 state，而是 FAILED 子态的诊断码。
+ERROR_CODE_INTERRUPTED = "interrupted"
 
 
 def _utcnow() -> str:
@@ -185,3 +189,60 @@ def save_state(path: str, store: UpdateStateStore) -> None:
         except OSError:
             pass
         raise
+
+
+def reconcile_interrupted_job(
+    store: UpdateStateStore,
+) -> tuple[UpdateStateStore, bool]:
+    """崩溃恢复 reconcile（spec §7.6）。daemon 启动时调用。
+
+    Mutates the passed store in place and returns the same object (with a
+    ``changed`` flag) — callers must not assume a new object is returned.
+
+    Returns:
+        (store, changed)：changed=True 表示发生了清理，调用方应 ``save_state``。
+        损坏（active_job 语义不一致 / 无 gate 却声称执行中）抛 StateCorruptionError，fail-closed。
+
+    6 条 invariant（§7.6）:
+        active_job_id == null AND (current_job == null OR current_job.state terminal)
+            → OK（changed=False；保留历史 terminal job）
+        active_job_id == null AND current_job 非 null AND current_job.state 非 terminal
+            → StateCorruptionError（无 gate 却声称执行中，不可能状态）
+        active_job_id != null AND current_job == null
+            → StateCorruptionError
+        active_job_id != null AND active_job_id != current_job.job_id
+            → StateCorruptionError
+        active_job_id != null AND current_job.state 非 terminal
+            → 中断恢复：state=failed + error_code=interrupted，清 active_job_id，changed=True
+        active_job_id != null AND current_job.state terminal
+            → stale gate：保留 job 终态记录，清 active_job_id，changed=True
+    """
+    if store.active_job_id is None:
+        # 第 2 条 invariant：无 gate 但 current_job 声称执行中 → corruption
+        job = store.current_job
+        if job is not None and not job.is_terminal():
+            raise StateCorruptionError(
+                f"active_job_id is null but current_job {job.job_id!r} is non-terminal "
+                f"(state={job.state!r})"
+            )
+        return store, False
+    job = store.current_job
+    if job is None:
+        raise StateCorruptionError(
+            f"active_job_id={store.active_job_id!r} but current_job is null"
+        )
+    if job.job_id != store.active_job_id:
+        raise StateCorruptionError(
+            f"active_job_id={store.active_job_id!r} != current_job.job_id={job.job_id!r}"
+        )
+    if not job.is_terminal():
+        # 中断恢复（非 terminal → failed + interrupted）
+        job.state = "failed"
+        job.error_code = ERROR_CODE_INTERRUPTED
+        job.error = job.error or "updater process restarted mid-update"
+        job.updated_at = _utcnow()
+        store.active_job_id = None
+        return store, True
+    # terminal + 残留 active_job_id：stale gate，清 active_job_id 保留终态记录
+    store.active_job_id = None
+    return store, True
