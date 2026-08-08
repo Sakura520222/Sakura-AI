@@ -12,9 +12,11 @@ import io
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sakura_ai_updater.backends import daemon as daemon_mod
@@ -124,6 +126,32 @@ def _patch_popen(monkeypatch, child: FakePopen, calls: list | None = None):
 
 def _patch_euid(monkeypatch, uid: int):
     monkeypatch.setattr(os, "geteuid", lambda: uid, raising=False)
+
+
+def _patch_root_owned_lstat(monkeypatch):
+    """所有平台都将被测 inode 模拟为 root-owned；Windows 补充 POSIX mode。"""
+    real_lstat = daemon_mod.os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        mode = result.st_mode if result.st_mode & 0o111 else stat.S_IFREG | 0o700
+        return SimpleNamespace(st_mode=mode, st_uid=0)
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+
+
+def _patch_target_owned_lstat(monkeypatch, target: Path, uid: int):
+    """只将指定目标 inode 显式模拟为给定 owner，保留真实 mode。"""
+    real_lstat = daemon_mod.os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if os.fspath(path) != str(target):
+            return result
+        mode = result.st_mode if result.st_mode & 0o111 else stat.S_IFREG | 0o700
+        return SimpleNamespace(st_mode=mode, st_uid=uid)
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
 
 
 def _patch_same_process_primitives(monkeypatch, *, alive=True, starttime="555666", argv=()):
@@ -366,20 +394,76 @@ def test_is_running_false_when_starttime_mismatch(tmp_path, monkeypatch):
 # =============================================================================
 
 
-def test_resolve_executable_uses_binary_when_executable(tmp_path):
+def test_resolve_executable_uses_binary_when_executable(tmp_path, monkeypatch):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    _patch_root_owned_lstat(monkeypatch)
     backend = _make_backend(tmp_path, binary_path=str(binary))
     argv, identity = backend._resolve_executable()
     assert argv == [str(binary)]
     assert identity == "sakura-ai-updater"
 
 
+def test_resolve_executable_rejects_symlink_even_when_target_is_executable(tmp_path, monkeypatch):
+    target = tmp_path / "real-updater"
+    target.write_text("#!/bin/sh\n")
+    target.chmod(0o755)
+    link = tmp_path / "sakura-ai-updater"
+    link.symlink_to(target)
+    monkeypatch.delenv("SAKURA_UPDATER_DEV", raising=False)
+    backend = _make_backend(tmp_path, binary_path=str(link))
+    with pytest.raises(UpdaterNotInstalledError):
+        backend._resolve_executable()
+
+
+def test_resolve_executable_rejects_group_or_other_writable_binary(tmp_path, monkeypatch):
+    binary = tmp_path / "sakura-ai-updater"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o775)
+    monkeypatch.delenv("SAKURA_UPDATER_DEV", raising=False)
+    backend = _make_backend(tmp_path, binary_path=str(binary))
+    with pytest.raises(UpdaterNotInstalledError):
+        backend._resolve_executable()
+
+
+def test_resolve_executable_rejects_non_root_owner_in_production(tmp_path, monkeypatch):
+    binary = tmp_path / "sakura-ai-updater"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    _patch_target_owned_lstat(monkeypatch, binary, 1000)
+    monkeypatch.delenv("SAKURA_UPDATER_DEV", raising=False)
+    backend = _make_backend(tmp_path, binary_path=str(binary))
+    with pytest.raises(UpdaterNotInstalledError):
+        backend._resolve_executable()
+
+
+def test_resolve_executable_dev_fallback_ignores_unsafe_existing_binary(tmp_path, monkeypatch):
+    binary = tmp_path / "sakura-ai-updater"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    _patch_target_owned_lstat(monkeypatch, binary, 1000)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    backend = _make_backend(tmp_path, binary_path=str(binary))
+    argv, identity = backend._resolve_executable()
+    assert argv == [sys.executable, "-m", "sakura_ai_updater"]
+    assert identity == "sakura_ai_updater"
+
+
+def test_safe_executable_requires_regular_root_owned_private_executable(tmp_path, monkeypatch):
+    binary = tmp_path / "sakura-ai-updater"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o700)
+    _patch_root_owned_lstat(monkeypatch)
+    assert daemon_mod._is_safe_executable(str(binary), require_root_owner=True)
+    assert daemon_mod._is_safe_executable(str(binary), require_root_owner=False)
+
+
 def test_resolve_executable_binary_wins_over_dev_override(tmp_path, monkeypatch):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    _patch_root_owned_lstat(monkeypatch)
     monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
     backend = _make_backend(tmp_path, binary_path=str(binary))
     argv, identity = backend._resolve_executable()
@@ -442,6 +526,7 @@ def test_start_requires_root_for_production_binary(tmp_path, monkeypatch):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    _patch_root_owned_lstat(monkeypatch)
     backend = _make_backend(tmp_path, binary_path=str(binary))
     _patch_euid(monkeypatch, uid=1000)  # 非 root
     with pytest.raises(PrivilegeError, match="root"):
@@ -453,6 +538,7 @@ def test_start_allows_root_for_production_binary(tmp_path, monkeypatch):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    _patch_root_owned_lstat(monkeypatch)
     backend = _make_backend(tmp_path, binary_path=str(binary))
     _patch_euid(monkeypatch, uid=0)  # root
     child = FakePopen(pid=4242)
@@ -804,6 +890,20 @@ def test_ensure_group_creates_when_name_and_gid_absent(tmp_path, monkeypatch):
     ]
 
 
+def test_ensure_group_accepts_getent_rc2_as_not_found(tmp_path, monkeypatch):
+    """Debian getent missing-key rc=2 → both lookups are absent and groupadd runs."""
+    backend = _make_backend(tmp_path)
+    calls = _patch_getent(monkeypatch, gid_rc=2, name_rc=2)
+
+    backend.ensure_group()
+
+    assert calls == [
+        ["getent", "group", str(DEFAULT_GID)],
+        ["getent", "group", DEFAULT_GROUP],
+        ["groupadd", "-g", str(DEFAULT_GID), DEFAULT_GROUP],
+    ]
+
+
 def test_ensure_group_is_idempotent_when_name_and_gid_match(tmp_path, monkeypatch):
     """name=sakura-ai 且 GID=9472 → 幂等成功，不调 groupadd。"""
     backend = _make_backend(tmp_path)
@@ -837,18 +937,18 @@ def test_ensure_group_rejects_name_with_other_gid(tmp_path, monkeypatch):
 
 
 def test_ensure_group_propagates_getent_error(tmp_path, monkeypatch):
-    """getent 非 0/1 退出（NSS 故障）→ 明确 bootstrap error，不静默、不 groupadd。"""
+    """getent 非 0/1/2 退出（NSS 故障）→ 明确 bootstrap error，不静默、不 groupadd。"""
     backend = _make_backend(tmp_path)
-    calls = _patch_getent(monkeypatch, gid_rc=2, gid_err="nsswitch: no such provider")
+    calls = _patch_getent(monkeypatch, gid_rc=3, gid_err="nsswitch: no such provider")
     with pytest.raises(RuntimeError, match="cannot query group"):
         backend.ensure_group()
     assert not any(c[0] == "groupadd" for c in calls)
 
 
 def test_ensure_group_propagates_getent_name_error(tmp_path, monkeypatch):
-    """name 查询 getent rc=2 → RuntimeError 含 'cannot query group'。"""
+    """name 查询 getent 非 0/1/2（NSS 故障）→ RuntimeError。"""
     backend = _make_backend(tmp_path)
-    calls = _patch_getent(monkeypatch, name_rc=2, name_err="no such group")
+    calls = _patch_getent(monkeypatch, name_rc=3, name_err="nss failure")
     with pytest.raises(RuntimeError, match="cannot query group"):
         backend.ensure_group()
     assert not any(c[0] == "groupadd" for c in calls)
@@ -1016,6 +1116,7 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    _patch_root_owned_lstat(monkeypatch)
     backend = _make_backend(tmp_path, binary_path=str(binary))
     _patch_euid(monkeypatch, uid=0)
     child = FakePopen(pid=4242)
