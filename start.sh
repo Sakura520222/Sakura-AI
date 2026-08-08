@@ -123,16 +123,528 @@ init_deployment_env() {
 UPDATER_STATE_DIR="$DEPLOY_DIR/updater"
 UPDATER_BINARY="$UPDATER_STATE_DIR/sakura-ai-updater"
 UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
+UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$DEPLOYMENT_ENV_FILE}"
+UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-backend/__init__.py}"
+UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
+
+# Host metadata helpers are isolated so Linux uses real inode data while Git Bash
+# tests can inject owner/mode values without changing permissions on other directories.
+# Linux 使用真实 inode 元数据；Git Bash 测试可注入 owner/mode，避免 chmod 他人目录。
+updater_current_uid() { id -u; }
+updater_binary_owner_uid() { stat -c '%u' "$1"; }
+updater_binary_mode() { stat -c '%a' "$1"; }
+updater_directory_owner_uid() { stat -c '%u' "$1"; }
+updater_directory_mode() { stat -c '%a' "$1"; }
+updater_path_is_symlink() { [[ -L "$1" ]]; }
+updater_path_exists() { [[ -e "$1" || -L "$1" ]]; }
+updater_chown() { chown "$2:$3" "$1"; }
+updater_chmod() { chmod "$@"; }
+updater_sync_temp() { sync "$1"; }
+updater_sync_state_dir() { sync "$1"; }
+updater_flock() { flock -n "$1"; }
+updater_mv() { mv -f -- "$1" "$2"; }
+
+# Curl is constrained to the fixed HTTPS release endpoint and bounded time.
+# curl 仅允许固定 HTTPS 发布地址，并设置有界超时与重试。
+updater_curl() {
+    local url="$1" output="$2" headers="${3:-}" http_status
+    local -a args=(
+        curl --fail --location
+        --proto '=https' --proto-redir '=https'
+        --connect-timeout 10 --max-time 120
+        --retry 2 --retry-delay 1
+        --output "$output"
+        --write-out '%{http_code}'
+    )
+    if [[ -n "$headers" ]]; then
+        args+=(--dump-header "$headers")
+    fi
+    if ! http_status=$("${args[@]}" "$url"); then
+        return 1
+    fi
+    http_status=${http_status//$'\r'/}
+    [[ "$http_status" =~ ^2[0-9][0-9]$ ]]
+}
+
+updater_sha256() {
+    sha256sum -- "$1" | awk '{print $1}'
+}
+
+updater_mode_has_no_shared_write() {
+    local mode="${1:-}"
+    [[ "$mode" =~ ^[0-7]+$ ]] || return 1
+    (( (8#$mode & 8#022) == 0 ))
+}
+
+updater_mode_is_0700() {
+    local mode="${1:-}"
+    [[ "$mode" =~ ^[0-7]+$ ]] || return 1
+    (( 8#$mode == 8#0700 ))
+}
+
+updater_binary_is_safe() {
+    local binary="$1" owner mode
+    if updater_path_is_symlink "$binary"; then
+        return 1
+    fi
+    [[ -f "$binary" && -x "$binary" ]] || return 1
+    if ! owner=$(updater_binary_owner_uid "$binary"); then
+        return 1
+    fi
+    if ! mode=$(updater_binary_mode "$binary"); then
+        return 1
+    fi
+    [[ "$owner" == "0" ]] || return 1
+    updater_mode_has_no_shared_write "$mode"
+}
+
+updater_directory_is_safe() {
+    local directory="$1" exact_mode="${2:-0}" owner mode
+    if updater_path_is_symlink "$directory"; then
+        return 1
+    fi
+    [[ -d "$directory" ]] || return 1
+    if ! owner=$(updater_directory_owner_uid "$directory"); then
+        return 1
+    fi
+    if ! mode=$(updater_directory_mode "$directory"); then
+        return 1
+    fi
+    [[ "$owner" == "0" ]] || return 1
+    if [[ "$exact_mode" == "1" ]]; then
+        updater_mode_is_0700 "$mode"
+    else
+        updater_mode_has_no_shared_write "$mode"
+    fi
+}
+
+updater_prepare_runtime_tmp() {
+    local runtime_tmp="$1"
+    if updater_path_is_symlink "$runtime_tmp" || [[ -e "$runtime_tmp" && ! -d "$runtime_tmp" ]]; then
+        fail "refusing unsafe updater TMPDIR: $runtime_tmp" >&2
+        return 1
+    fi
+    if [[ ! -e "$runtime_tmp" ]]; then
+        if ! mkdir -p "$runtime_tmp"; then
+            fail "cannot create updater TMPDIR: $runtime_tmp" >&2
+            return 1
+        fi
+        if ! updater_chown "$runtime_tmp" 0 0 || ! updater_chmod 0700 "$runtime_tmp"; then
+            fail "cannot secure updater TMPDIR: $runtime_tmp" >&2
+            return 1
+        fi
+    fi
+    if ! updater_directory_is_safe "$runtime_tmp" 1; then
+        fail "refusing unsafe updater TMPDIR: $runtime_tmp" >&2
+        return 1
+    fi
+}
+
+updater_cleanup_download_temps() {
+    local path
+    for path in "$@"; do
+        if [[ -n "$path" ]]; then
+            rm -f -- "$path" 2>/dev/null || true
+        fi
+    done
+}
+
+updater_close_lock() {
+    local lock_fd="${1:-}"
+    if [[ "$lock_fd" =~ ^[0-9]+$ ]]; then
+        eval "exec ${lock_fd}>&-" 2>/dev/null || true
+    fi
+}
+
+updater_abort_acquisition() {
+    local lock_fd="$1"
+    shift
+    updater_cleanup_download_temps "$@"
+    updater_close_lock "$lock_fd"
+}
+
+updater_validate_content_length() {
+    local payload="$1" headers="$2" expected actual
+    [[ -s "$headers" ]] || return 0
+    expected=$(awk '
+        BEGIN { IGNORECASE = 1 }
+        tolower($1) == "content-length:" {
+            value = $2
+            gsub(/\r/, "", value)
+        }
+        END { if (value != "") print value }
+    ' "$headers") || return 1
+    [[ -z "$expected" ]] && return 0
+    [[ "$expected" =~ ^[0-9]+$ ]] || return 1
+    actual=$(wc -c < "$payload") || return 1
+    actual=${actual//[[:space:]]/}
+    [[ "$actual" == "$expected" ]]
+}
+
+updater_read_expected_checksum() {
+    local sums_file="$1" asset="$2" line filename expected="" count=0
+    [[ -f "$sums_file" ]] || {
+        fail "checksum file is not a regular file" >&2
+        return 1
+    }
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        [[ -n "$line" ]] || {
+            fail "malformed SHA256SUMS line" >&2
+            return 1
+        }
+        if [[ "$line" =~ ^([0-9A-Fa-f]{64})[[:space:]]+\*?([^[:space:]]+)$ ]]; then
+            filename="${BASH_REMATCH[2]}"
+            if [[ "$filename" == "$asset" ]]; then
+                expected="${BASH_REMATCH[1]}"
+                count=$((count + 1))
+            fi
+        else
+            fail "malformed SHA256SUMS line" >&2
+            return 1
+        fi
+    done < "$sums_file"
+    if [[ "$count" -ne 1 ]]; then
+        fail "SHA256SUMS must contain exactly one entry for $asset" >&2
+        return 1
+    fi
+    printf '%s\n' "$expected"
+}
+
+updater_prepare_state_dir() {
+    local state_dir="$UPDATER_STATE_DIR"
+    if updater_path_is_symlink "$state_dir" || [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
+        fail "refusing unsafe updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if [[ ! -e "$state_dir" ]]; then
+        if ! mkdir -p "$state_dir"; then
+            fail "cannot create updater state directory: $state_dir" >&2
+            return 1
+        fi
+        if ! updater_chown "$state_dir" 0 0 || ! updater_chmod 0700 "$state_dir"; then
+            fail "cannot secure updater state directory: $state_dir" >&2
+            return 1
+        fi
+    fi
+    if ! updater_directory_is_safe "$state_dir" 1; then
+        fail "refusing unsafe updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if ! updater_sync_state_dir "$state_dir"; then
+        fail "cannot persist updater state directory metadata: $state_dir" >&2
+        return 1
+    fi
+}
+
+resolve_updater_app_version() {
+    local image_version="" package_version="" line image version
+
+    if [[ -f "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" == SAKURA_AI_IMAGE=* ]] || continue
+            image=${line#SAKURA_AI_IMAGE=}
+            if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
+                image_version="${BASH_REMATCH[1]}"
+            fi
+            break
+        done < "$UPDATER_DEPLOYMENT_ENV_FILE"
+    fi
+
+    if [[ -f "$UPDATER_BACKEND_VERSION_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^__version__[[:space:]]*=[[:space:]]*\"([0-9]+\.[0-9]+\.[0-9]+)\"[[:space:]]*$ ]]; then
+                package_version="${BASH_REMATCH[1]}"
+                break
+            fi
+        done < "$UPDATER_BACKEND_VERSION_FILE"
+    fi
+
+    if [[ -n "$image_version" && -n "$package_version" && "$image_version" != "$package_version" ]]; then
+        fail "updater version signals disagree: image=$image_version package=$package_version" >&2
+        return 1
+    fi
+    version="${image_version:-$package_version}"
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        fail "cannot determine concrete Sakura AI version" >&2
+        return 1
+    fi
+    printf '%s\n' "$version"
+}
+
+updater_uname_s() { uname -s; }
+updater_uname_m() { uname -m; }
+
+resolve_updater_asset() {
+    local system arch
+    if ! system=$(updater_uname_s); then
+        fail "cannot determine updater operating system" >&2
+        return 1
+    fi
+    [[ "$system" == "Linux" ]] || {
+        fail "updater binary install supports Linux only" >&2
+        return 1
+    }
+    if ! arch=$(updater_uname_m); then
+        fail "cannot determine updater architecture" >&2
+        return 1
+    fi
+    case "$arch" in
+        x86_64|amd64) printf '%s\n' 'sakura-ai-updater-linux-amd64' ;;
+        aarch64|arm64) printf '%s\n' 'sakura-ai-updater-linux-arm64' ;;
+        *)
+            fail "unsupported updater architecture: $arch" >&2
+            return 1
+            ;;
+    esac
+}
+
+install_updater_binary() {
+    local binary="$UPDATER_BINARY" lock_path lock_fd=""
+    local version asset binary_url sums_url
+    local binary_tmp="" sums_tmp="" binary_headers_tmp="" sums_headers_tmp=""
+    local expected_hash actual_hash
+
+    # Root gate precedes every filesystem or network operation.
+    # root gate 必须早于任何文件系统或网络操作。
+    if [[ "$(updater_current_uid)" != "0" ]]; then
+        fail "updater binary installation requires root" >&2
+        return 1
+    fi
+    if ! updater_prepare_state_dir; then
+        return 1
+    fi
+    if updater_path_exists "$binary" && ! updater_binary_is_safe "$binary"; then
+        fail "refusing unsafe updater executable: $binary" >&2
+        return 126
+    fi
+
+    lock_path="$UPDATER_STATE_DIR/install.lock"
+    if updater_path_is_symlink "$lock_path"; then
+        fail "refusing symlinked updater install lock: $lock_path" >&2
+        return 1
+    fi
+    if ! exec {lock_fd}>>"$lock_path"; then
+        fail "cannot open updater install lock: $lock_path" >&2
+        return 1
+    fi
+    if ! updater_chmod 0600 "$lock_path"; then
+        updater_close_lock "$lock_fd"
+        fail "cannot secure updater install lock: $lock_path" >&2
+        return 1
+    fi
+    if ! updater_flock "$lock_fd"; then
+        updater_close_lock "$lock_fd"
+        fail "updater install already in progress" >&2
+        return 1
+    fi
+
+    if ! version=$(resolve_updater_app_version); then
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! asset=$(resolve_updater_asset); then
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+
+    if ! binary_tmp=$(mktemp "$UPDATER_STATE_DIR/.updater-download.XXXXXX"); then
+        fail "cannot create updater binary temporary file" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! sums_tmp=$(mktemp "$UPDATER_STATE_DIR/.updater-checksums.XXXXXX"); then
+        fail "cannot create updater checksum temporary file" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! binary_headers_tmp=$(mktemp "$UPDATER_STATE_DIR/.updater-binary-headers.XXXXXX"); then
+        fail "cannot create updater binary header temporary file" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! sums_headers_tmp=$(mktemp "$UPDATER_STATE_DIR/.updater-checksum-headers.XXXXXX"); then
+        fail "cannot create updater checksum header temporary file" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_chmod 0600 "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"; then
+        fail "cannot secure updater temporary files; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+
+    binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
+    sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
+    if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+        fail "updater binary download failed; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_validate_content_length "$binary_tmp" "$binary_headers_tmp"; then
+        fail "updater binary Content-Length mismatch; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_curl "$sums_url" "$sums_tmp" "$sums_headers_tmp"; then
+        fail "updater checksum download failed; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_validate_content_length "$sums_tmp" "$sums_headers_tmp"; then
+        fail "updater checksum Content-Length mismatch; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+
+    if ! expected_hash=$(updater_read_expected_checksum "$sums_tmp" "$asset"); then
+        fail "invalid updater SHA256SUMS; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! actual_hash=$(updater_sha256 "$binary_tmp"); then
+        fail "cannot checksum updater binary; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    actual_hash=${actual_hash//$'\r'/}
+    if [[ ! "$actual_hash" =~ ^[0-9A-Fa-f]{64}$ ]] || [[ "${actual_hash,,}" != "${expected_hash,,}" ]]; then
+        fail "updater checksum mismatch; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+
+    # Pre-commit: secure and fsync the temp inode before touching final path.
+    # 提交前先完成权限、inode 安全检查和临时文件 fsync，绝不触碰 final。
+    if ! updater_chmod 0700 "$binary_tmp"; then
+        fail "cannot make updater temporary binary executable; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_binary_is_safe "$binary_tmp"; then
+        fail "updater temporary binary failed safety validation; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_sync_temp "$binary_tmp"; then
+        fail "updater temporary binary fsync failed; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if updater_path_exists "$binary" && ! updater_binary_is_safe "$binary"; then
+        fail "refusing unsafe updater executable at commit point; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 126
+    fi
+    if ! updater_mv "$binary_tmp" "$binary"; then
+        fail "atomic updater binary install failed; old binary unchanged" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    binary_tmp=""
+
+    # Rename is the commit point; directory metadata durability is a post-commit gate.
+    # rename 是提交点；目录 metadata durability 属于提交后的独立门禁。
+    if ! updater_sync_state_dir "$UPDATER_STATE_DIR"; then
+        fail "updater durability failure: new inode may already be installed; backend install skipped" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if ! updater_binary_is_safe "$binary"; then
+        fail "post-commit final safety failure: new inode may already be installed; backend install skipped" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+
+    updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+    return 0
+}
 
 updater_backend() {
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
-    if [[ -x "$binary" ]]; then
-        "$binary" backend "$@"
+    local runtime_tmp="$UPDATER_STATE_DIR/tmp"
+    if updater_binary_is_safe "$binary"; then
+        if ! updater_prepare_runtime_tmp "$runtime_tmp"; then
+            return 1
+        fi
+        TMPDIR="$runtime_tmp" "$binary" backend "$@"
     elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
         "${SAKURA_UPDATER_PYTHON:-python3}" -m sakura_ai_updater backend "$@"
+    elif updater_path_exists "$binary"; then
+        fail "refusing unsafe updater executable: $binary" >&2
+        return 126
     else
-        fail "updater executable not installed: $binary"
+        fail "updater executable not installed: $binary" >&2
         return 127
+    fi
+}
+
+cmd_updater_install() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    local was_running=0
+    local uid
+
+    # Production entry is gated before any binary/path filesystem inspection.
+    # production 入口先做 root gate，避免非 root 触碰 updater 路径。
+    uid=$(updater_current_uid) || return 1
+    if [[ "$uid" != "0" ]]; then
+        fail "updater install requires root" >&2
+        return 1
+    fi
+
+    if [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
+        if updater_backend install \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            return 0
+        else
+            local dev_install_rc=$?
+            return "$dev_install_rc"
+        fi
+    fi
+
+    if updater_binary_is_safe "$binary"; then
+        if updater_backend is-running \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+            was_running=1
+        fi
+        if install_updater_binary; then
+            :
+        else
+            local install_rc=$?
+            return "$install_rc"
+        fi
+        if updater_backend install \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            :
+        else
+            local existing_backend_rc=$?
+            return "$existing_backend_rc"
+        fi
+    elif updater_path_exists "$binary"; then
+        fail "refusing unsafe updater executable: $binary" >&2
+        return 126
+    else
+        if install_updater_binary; then
+            :
+        else
+            local install_rc=$?
+            return "$install_rc"
+        fi
+        if updater_backend install \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            :
+        else
+            local acquired_backend_rc=$?
+            return "$acquired_backend_rc"
+        fi
+    fi
+
+    if [[ "$was_running" -eq 1 ]]; then
+        warn "updater binary installed while daemon was already running; restart-required (not restarting automatically)" >&2
     fi
 }
 
@@ -143,12 +655,42 @@ ensure_updater_running() {
         return 0
     fi
     warn "updater daemon 未运行，正在拉起..."
-    if ! updater_backend install \
-        --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH"; then
-        fail "updater bootstrap 失败（GID 冲突或权限不足，需 root）"
-        return 1
+
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    local install_rc
+    if updater_binary_is_safe "$binary"; then
+        if updater_backend install \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            :
+        else
+            install_rc=$?
+            fail "updater bootstrap failed; see previous error" >&2
+            return "$install_rc"
+        fi
+    elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
+        if updater_backend install \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            :
+        else
+            install_rc=$?
+            fail "updater bootstrap failed; see previous error" >&2
+            return "$install_rc"
+        fi
+    elif updater_path_exists "$binary"; then
+        fail "refusing unsafe updater executable: $binary" >&2
+        return 126
+    else
+        if cmd_updater_install; then
+            :
+        else
+            install_rc=$?
+            fail "updater bootstrap failed; see previous error" >&2
+            return "$install_rc"
+        fi
     fi
+
     if ! updater_backend start \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH"; then
@@ -163,7 +705,10 @@ cmd_updater() {
     local action="${1:-status}"
     shift || true
     case "$action" in
-        install|start|stop|status|is-running)
+        install)
+            cmd_updater_install "$@"
+            ;;
+        start|stop|status|is-running)
             updater_backend "$action" \
                 --state-dir "$UPDATER_STATE_DIR" \
                 --socket-path "$UPDATER_SOCKET_PATH" "$@"
