@@ -11,6 +11,8 @@ services:
       - "8000:8000"
     env_file:
       - ../.deploy/deployment.env
+    group_add:
+      - "9472"
     environment:
       DATABASE_URL: mysql+asyncmy://sakura:sakura-ai@mysql:3306/sakura_ai
       REDIS_URL: redis://redis:6379/0
@@ -20,6 +22,10 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - type: bind
+        source: /run/sakura-ai
+        target: /run/sakura-ai
+        read_only: true
       - config_data:/app/config
       - chroma_data:/app/data/chroma
       - logs_data:/app/logs
