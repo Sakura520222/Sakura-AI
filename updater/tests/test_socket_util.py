@@ -5,6 +5,7 @@ probe 区分 live/stale socket（绝不 unlink live）。
 """
 
 import os
+import stat
 import sys
 
 import pytest
@@ -107,3 +108,142 @@ def test_cleanup_removes_owned_socket(tmp_path):
     s.close()
     cleanup_owned_socket(path)
     assert not os.path.exists(path)
+
+
+# =============================================================================
+# bind_socket_listener（Task 2）：预绑定 + ownership/mode + 失败清理
+# =============================================================================
+
+
+class _FakeListener:
+    """socket.socket 的 fake（记录 bind/listen/close，跨平台验证调用序列）。"""
+
+    def __init__(self):
+        self.binds = []
+        self.listen_calls = 0
+        self.closed = False
+
+    def bind(self, path):
+        self.binds.append(path)
+
+    def listen(self, backlog):
+        self.listen_calls += 1
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_socket_factory(monkeypatch, listener):
+    """Monkeypatch socket 模块的 socket 构造与常量 → 返回 fake listener（跨平台）。"""
+    import socket as socket_mod
+
+    monkeypatch.setattr(socket_mod, "socket", lambda *a, **kw: listener)
+    monkeypatch.setattr(socket_mod, "AF_UNIX", 1, raising=False)  # Windows 无 AF_UNIX
+    monkeypatch.setattr(socket_mod, "SOMAXCONN", 128, raising=False)
+
+
+def test_bind_socket_listener_sets_owner_mode_before_listen(tmp_path, monkeypatch):
+    """调用序列：prepare → bind → chown(0, 9472) → chmod(0660) → listen。"""
+    from sakura_ai_updater import socket_util
+
+    path = str(tmp_path / "updater.sock")
+    listener = _FakeListener()
+    _patch_socket_factory(monkeypatch, listener)
+    steps = []
+    monkeypatch.setattr(
+        socket_util.os, "chown", lambda p, u, g: steps.append(("chown", p, u, g)) or None,
+        raising=False,  # Windows os 模块无 chown 属性，注入即可
+    )
+    monkeypatch.setattr(
+        socket_util.os, "chmod", lambda p, m: steps.append(("chmod", p, m)) or None,
+        raising=False,
+    )
+    monkeypatch.setattr(socket_util, "prepare_socket_path", lambda p: steps.append(("prepare", p)))
+
+    result = socket_util.bind_socket_listener(path, uid=0, gid=9472, mode=0o660)
+
+    assert result is listener  # 返回同一个已绑定 listener
+    assert steps[0] == ("prepare", path)
+    assert listener.binds == [path]  # bind 在 chown 之前
+    assert steps[1:] == [("chown", path, 0, 9472), ("chmod", path, 0o660)]
+    assert listener.listen_calls == 1  # listen 最后（可接受连接前 ownership/mode 已设）
+    assert listener.closed is False
+
+
+def test_bind_socket_listener_cleans_socket_when_chown_fails(tmp_path, monkeypatch):
+    """chown 抛异常 → listener 关闭 + socket 文件清理 + 异常传播（不吞）。"""
+    from sakura_ai_updater import socket_util
+
+    path = str(tmp_path / "updater.sock")
+    listener = _FakeListener()
+    _patch_socket_factory(monkeypatch, listener)
+
+    def _boom_chown(p, u, g):
+        raise PermissionError("EACCES")
+
+    monkeypatch.setattr(socket_util.os, "chown", _boom_chown, raising=False)
+    cleaned = []
+    monkeypatch.setattr(
+        socket_util, "cleanup_owned_socket", lambda p: cleaned.append(p) or None
+    )
+    with pytest.raises(PermissionError, match="EACCES"):
+        socket_util.bind_socket_listener(path, uid=0, gid=9472, mode=0o660)
+    assert listener.closed is True  # listener 已关闭（不泄漏 fd）
+    assert cleaned == [path]  # socket 文件已清理
+    assert listener.listen_calls == 0  # 失败路径绝不 listen
+
+
+def test_bind_socket_listener_cleans_socket_when_bind_fails(tmp_path, monkeypatch):
+    """bind 抛异常 → listener 关闭 + 清理 + 传播（与 chown 失败同一 fail-closed 路径）。"""
+    from sakura_ai_updater import socket_util
+
+    path = str(tmp_path / "updater.sock")
+
+    class _BindBoom(_FakeListener):
+        def bind(self, p):
+            raise OSError("address in use")
+
+    listener = _BindBoom()
+    _patch_socket_factory(monkeypatch, listener)
+    cleaned = []
+    monkeypatch.setattr(socket_util, "cleanup_owned_socket", lambda p: cleaned.append(p) or None)
+    with pytest.raises(OSError, match="address in use"):
+        socket_util.bind_socket_listener(path)
+    assert listener.closed is True
+    assert cleaned == [path]
+
+
+def test_bind_socket_listener_requires_existing_parent(tmp_path, monkeypatch):
+    """父目录不存在 → SocketPathError（pre-bind 不越界创建 /run/sakura-ai）。
+
+    prepare 失败发生在 listener 创建之前：从不 bind/close（无 socket 需要清理）。
+    """
+    from sakura_ai_updater import socket_util
+
+    path = str(tmp_path / "nonexistent" / "updater.sock")
+    listener = _FakeListener()
+    _patch_socket_factory(monkeypatch, listener)
+    with pytest.raises(SocketPathError):
+        socket_util.bind_socket_listener(path)
+    assert not os.path.exists(tmp_path / "nonexistent")  # 未创建
+    assert listener.binds == []  # prepare 失败 → listener 从未 bind
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket bind is POSIX-only")
+def test_bind_socket_listener_real_uds_sets_owner_mode(tmp_path):
+    """真实 UDS：bind/listen 成功后 stat 验证 mode（chown 用当前 uid/gid，非 root 可跑）。"""
+    from sakura_ai_updater.socket_util import bind_socket_listener
+
+    path = str(tmp_path / "updater.sock")
+    listener = bind_socket_listener(
+        path, uid=os.getuid(), gid=os.getgid(), mode=0o660
+    )
+    try:
+        st = os.stat(path)
+        assert stat.S_ISSOCK(st.st_mode)
+        assert stat.S_IMODE(st.st_mode) == 0o660
+        assert st.st_uid == os.getuid()
+        assert st.st_gid == os.getgid()
+    finally:
+        listener.close()
+        cleanup_owned_socket(path)
