@@ -12,7 +12,13 @@ services:
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     env_file:
       - ../.deploy/deployment.env
+    group_add:
+      - "9472"
     volumes:
+      - type: bind
+        source: /run/sakura-ai
+        target: /run/sakura-ai
+        read_only: true
       - ../logs:/app/logs
       - ../config:/app/config  # 存放 connection.json 和策略/标签配置
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
