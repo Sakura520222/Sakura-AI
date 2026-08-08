@@ -268,24 +268,37 @@ Web 后端在首次连接时校验 `protocol_version` 兼容性，不兼容则�
 
 ### 7.6 崩溃恢复（Interrupted job reconcile）
 
-daemon 启动时读取持久化 state，若发现：
+daemon 启动时读取持久化 state（fail-closed，见 §8.4），按以下 invariant 逐一 reconcile：
 
 ```
-active_job_id != null
-AND state 非 terminal（非 SUCCESS / FAILED / ROLLED_BACK）
+active_job_id == null AND (current_job == null OR current_job.state terminal)
+  → 无 active job，OK（current_job 可能是历史 terminal job，保留）
+
+active_job_id == null AND current_job 非 null AND current_job.state 非 terminal
+  → state corruption，fail-closed（无 gate 却声称执行中，不可能状态）
+
+active_job_id != null AND current_job == null
+  → state corruption，fail-closed（抛异常，拒绝启动）
+
+active_job_id != null AND active_job_id != current_job.job_id
+  → state corruption，fail-closed（抛异常，拒绝启动）
+
+active_job_id != null AND current_job.state 非 terminal
+  → 上次更新执行中被中断（进程崩溃 / 宿主机 reboot / kill）。
+    P0 最安全的行为不是盲目续跑（事务边界可能已破坏，如镜像 pull 到一半、
+    compose up 未完成），而是：
+      current_job.state = "failed"
+      current_job.error_code = "interrupted"
+      current_job.error = "updater process restarted mid-update"
+      清理 active_job_id
+      changed=True（需持久化）
+
+active_job_id != null AND current_job.state terminal
+  → stale gate：上次 job 已写终态（SUCCESS/FAILED）但崩溃发生在清理
+    active_job_id 之前。保留 job 终态记录，清理 active_job_id，changed=True。
 ```
 
-说明上次更新在执行中被中断（进程崩溃 / 宿主机 reboot / kill）。P0 最安全的行为**不是盲目续跑**（事务边界可能已破坏，如镜像 pull 到一半、compose up 未完成），而是：
-
-```
-reconcile：比对当前运行容器/镜像与 state 中的 target
-↓
-将旧 job 标为 INTERRUPTED（FAILED 子态）
-↓
-输出诊断（中断在哪个 step、current vs target）
-↓
-清理 active_job_id，释放任务锁
-```
+`INTERRUPTED` 不是顶层 state，而是 `state="failed"` + `error_code="interrupted"`（FAILED 子态）。状态机只处理正式 P0 state，失败原因由 `error_code` 单独诊断。
 
 真正自动断点续执行留待 P1+。验收标准"daemon 意外退出后自动拉起"只解决**进程恢复**，**更新事务恢复**由 reconcile + 管理员介入处理。
 
@@ -328,28 +341,41 @@ ACTIVATING → RESTARTING → [新容器启动：create_all + _auto_migrate] →
 
 ### 8.4 状态持久化
 
-`update-state.json`，atomic write（write temp → fsync → atomic rename），防断电半截 JSON：
+`update-state.json`，atomic write（write temp → fsync → atomic rename），防断电半截 JSON。采用 **wrapper 结构**：顶层持 `active_job_id`（destructive task gate，见 §7.5）+ `current_job`（当前/最近 job 的完整状态）：
 
 ```json
 {
   "schema_version": 1,
-  "job_id": "upd_019...",
-  "operation": "update",
-  "deployment": "image",
-  "from_version": "3.0.0",
-  "from_image": "ghcr.io/sakura520222/sakura-ai:v3.0.0",
-  "from_digest": "sha256:...",
-  "target_version": "3.1.0",
-  "target_image": "ghcr.io/sakura520222/sakura-ai:v3.1.0",
-  "state": "downloading",
-  "step": "docker_pull",
-  "started_at": "...",
-  "updated_at": "...",
-  "retry_count": 0,
-  "rollback_allowed": false,
-  "error": null
+  "active_job_id": "upd_019...",
+  "current_job": {
+    "job_id": "upd_019...",
+    "operation": "update",
+    "deployment": "image",
+    "from_version": "3.0.0",
+    "from_image": "ghcr.io/sakura520222/sakura-ai:v3.0.0",
+    "from_digest": "sha256:...",
+    "target_version": "3.1.0",
+    "target_image": "ghcr.io/sakura520222/sakura-ai:v3.1.0",
+    "state": "downloading",
+    "step": "docker_pull",
+    "started_at": "...",
+    "updated_at": "...",
+    "retry_count": 0,
+    "rollback_allowed": false,
+    "error_code": null,
+    "error": null
+  }
 }
 ```
+
+`error_code` 是结构化失败原因（与 `state` 正交）：`state="failed"` + `error_code="interrupted"` 表示崩溃中断（§7.6），`error_code="health_check"` 表示健康检查失败。状态机只处理正式 P0 state（IDLE/.../SUCCESS/FAILED），失败原因由 `error_code` 单独诊断，**不新增 `INTERRUPTED` 顶层 state**。
+
+**读取 fail-closed**（关键安全语义）：daemon 启动读取 state 时——
+
+- 文件不存在 → 返回初始空 store（`active_job_id=null`），正常。
+- JSON 损坏 / `schema_version` 不支持 / permission denied → **抛异常，daemon 拒绝启动并拒绝提供 destructive 能力**。
+
+绝不把损坏 state 当空 store（fail-open 会让 daemon 误以为 idle 而 Slice 4 允许新的 destructive update）；绝不把未来 `schema_version=2` 当 v1 静默读完再保存（会抹掉未识别字段）。`active_job_id` 与 `current_job.job_id` 不一致属 state corruption，reconcile 阶段 fail-closed（见 §7.6）。
 
 P0 即便不实现回滚，也必须记录 `from_image` / `from_digest`——用于故障诊断（"更新失败，原版本 3.0.0 / 原镜像 sha256:... / 失败阶段 HEALTH_CHECKING"），并为 P1 RollbackManager 铺路。
 
