@@ -384,6 +384,42 @@ curl http://your-domain.com:8000/health
 
 WebUI: `https://your-domain.com/`
 
+### Host Updater Daemon (Auto-Update)
+
+The host updater is an independent daemon that manages automatic updates for the Sakura AI image (auto-update functionality is rolling out gradually; P0 phase establishes the foundation).
+
+**Management Commands**
+
+Use the `start.sh` script to manage the updater daemon:
+
+```bash
+./start.sh updater install|start|stop|status
+```
+
+action defaults to `status`, so `./start.sh updater` is equivalent to `./start.sh updater status`.
+
+**Production Deployment**
+
+The production updater binary path is `.deploy/updater/sakura-ai-updater` (built starting in Slice 3c). install and start operations require root privileges because they create a system group with fixed GID 9472 and the `/run/sakura-ai` runtime directory:
+
+```bash
+sudo ./start.sh updater install  # First-time installation, creates group and directory
+sudo ./start.sh updater start     # Start the daemon
+```
+
+**Source Development Mode**
+
+For development environments, you can run the updater directly with Python:
+
+```bash
+SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
+```
+
+**Security Boundaries**
+
+- The web container communicates with the updater via a read-only mount of the `/run/sakura-ai` directory (Unix Domain Socket); `docker.sock` is not mounted
+- The updater does not rely on systemd or cron for auto-start; each time `start.sh` is invoked, `ensure_updater_running` provides fallback recovery
+
 ---
 
 ## Usage

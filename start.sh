@@ -117,6 +117,66 @@ init_deployment_env() {
 }
 
 # ============================================================
+# Host Updater daemon management
+# ============================================================
+
+UPDATER_STATE_DIR="$DEPLOY_DIR/updater"
+UPDATER_BINARY="$UPDATER_STATE_DIR/sakura-ai-updater"
+UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
+
+updater_backend() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    if [[ -x "$binary" ]]; then
+        "$binary" backend "$@"
+    elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
+        "${SAKURA_UPDATER_PYTHON:-python3}" -m sakura_ai_updater backend "$@"
+    else
+        fail "updater executable not installed: $binary"
+        return 127
+    fi
+}
+
+ensure_updater_running() {
+    if updater_backend is-running \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+        return 0
+    fi
+    warn "updater daemon 未运行，正在拉起..."
+    if ! updater_backend install \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH"; then
+        fail "updater bootstrap 失败（GID 冲突或权限不足，需 root）"
+        return 1
+    fi
+    if ! updater_backend start \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH"; then
+        fail "updater 启动失败"
+        fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式"
+        return 1
+    fi
+    ok "updater daemon 已运行"
+}
+
+cmd_updater() {
+    local action="${1:-status}"
+    shift || true
+    case "$action" in
+        install|start|stop|status|is-running)
+            updater_backend "$action" \
+                --state-dir "$UPDATER_STATE_DIR" \
+                --socket-path "$UPDATER_SOCKET_PATH" "$@"
+            ;;
+        *)
+            fail "未知 updater 子命令: $action"
+            echo "用法: ./start.sh updater [install|start|stop|status|is-running]" >&2
+            return 1
+            ;;
+    esac
+}
+
+# ============================================================
 # 检测 docker compose
 # ============================================================
 
@@ -139,6 +199,18 @@ detect_compose() {
 # ============================================================
 
 cmd_status() {
+    # host updater daemon 恢复尝试（spec §11.4）
+    ensure_updater_running || warn "host updater daemon 不可用"
+
+    # updater daemon 状态快照
+    if updater_backend is-running \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+        ok "host updater daemon 运行中"
+    else
+        warn "host updater daemon 未运行"
+    fi
+
     if is_running; then
         local pid
         pid=$(cat "$PID_FILE")
@@ -364,6 +436,9 @@ build_runner() {
         warn "服务启动超时 (${HEALTH_TIMEOUT}s)"
     fi
 
+    # host updater daemon 恢复（spec §11.4）
+    ensure_updater_running || warn "updater daemon 未拉起（更新功能不可用，服务不受影响）"
+
     # --- done ---
     set_phase "done"
 
@@ -550,6 +625,13 @@ RUNNER_EOF
 }
 
 main() {
+    # updater 子命令（位置参数，优先于 flag 解析）
+    if [[ "${1:-}" == "updater" ]]; then
+        shift
+        cmd_updater "$@"
+        exit $?
+    fi
+
     # Parse args
     local rebuild=false
     local prod=false
@@ -576,6 +658,7 @@ main() {
                 echo "  --ps        查看服务容器状态"
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
+                echo "  updater [action]  管理 host updater daemon（生产 install/start 需 root；action 默认 status）"
                 echo ""
                 echo "断线续跑:"
                 echo "  构建过程在后台运行，SSH 断开不会中断。"
