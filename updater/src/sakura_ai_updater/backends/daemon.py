@@ -17,6 +17,7 @@ import json
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,25 @@ _SIGKILL = getattr(signal, "SIGKILL", None)
 # identity 常量：dev module 与 production binary 两种进程身份（PID meta identity 字段）。
 IDENTITY_DEV_MODULE = "sakura_ai_updater"
 IDENTITY_BINARY = DEFAULT_BINARY_NAME
+
+
+def _is_safe_executable(path: str, *, require_root_owner: bool) -> bool:
+    """检查 updater executable inode 安全属性；拒绝 symlink 和共享写权限。
+
+    Check the inode itself rather than following a symlink; production additionally
+    requires root ownership so an untrusted host user cannot replace the binary.
+    """
+    try:
+        file_stat = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISREG(file_stat.st_mode):
+        return False
+    if file_stat.st_mode & 0o022:
+        return False
+    if require_root_owner and file_stat.st_uid != 0:
+        return False
+    return bool(file_stat.st_mode & 0o111)
 
 
 class UpdaterNotInstalledError(RuntimeError):
@@ -247,12 +267,12 @@ class DaemonBackend:
     def _resolve_executable(self) -> tuple[list[str], str]:
         """解析启动命令与对应 identity（binary-first，spec §16.4）。
 
-        - binary 存在**且**可执行（isfile + X_OK）→ 只执行 binary（identity binary）。
+        - production binary 必须是 root-owned regular executable，且 group/other 不可写。
         - 否则仅 ``SAKURA_UPDATER_DEV=1`` 才允许 ``python -m sakura_ai_updater``
           （identity dev module）。
         - 否则 UpdaterNotInstalledError（生产绝不隐式 fallback 到 Python）。
         """
-        if os.path.isfile(self.binary_path) and os.access(self.binary_path, os.X_OK):
+        if _is_safe_executable(self.binary_path, require_root_owner=True):
             return [self.binary_path], IDENTITY_BINARY
         if os.environ.get("SAKURA_UPDATER_DEV") == "1":
             return [sys.executable, "-m", "sakura_ai_updater"], IDENTITY_DEV_MODULE
@@ -288,20 +308,21 @@ class DaemonBackend:
     def ensure_group(self) -> None:
         """host bootstrap：group name/GID 双向检测，二者都不存在时 groupadd 创建。
 
-        ``getent group`` 返回码语义：0 = 记录存在；1 = 不存在；其他 = NSS 错误。
+        ``getent group`` 返回码语义：0 = 记录存在；1 或 2 = 未找到（Debian
+        对 missing key 通常返回 2，其他实现可能返回 1）；其他退出码 = NSS 错误。
         顺序（spec §11.4 双向校验，防误配打到宿主已有 group）：
         1. ``getent group <gid>``：存在 → 解析 name，!= self.group → GIDConflictError。
         2. ``getent group <name>``：存在 → 解析 GID，!= self.gid → GIDConflictError。
         3. 两步都"不存在" → ``groupadd -g <gid> <name>``（check=True，失败传播）。
         4. 双向一致（name=sakura-ai 且 GID=9472）→ 幂等返回。
-        getent 非 0/1 退出（NSS 故障）→ 抛明确 bootstrap error，绝不静默或误 groupadd。
+        getent 非 0/1/2 退出（NSS 故障）→ 抛明确 bootstrap error，绝不静默或误 groupadd。
         """
         # 1. GID 是否已被其他 name 占用
         gid_proc = subprocess.run(
             ["getent", "group", str(self.gid)],
             capture_output=True,
             text=True,
-            check=False,  # returncode 0=存在 / 1=不存在 / 其他=NSS 错误，均须自行判定
+            check=False,  # returncode 0=存在 / 1,2=不存在 / 其他=NSS 错误
         )
         if gid_proc.returncode == 0:
             try:
@@ -313,7 +334,7 @@ class DaemonBackend:
                     f"group ID {self.gid} is owned by {name!r}, "
                     f"expected {self.group!r}"
                 )
-        elif gid_proc.returncode != 1:
+        elif gid_proc.returncode not in (1, 2):
             raise RuntimeError(
                 f"cannot query group ID {self.gid}: getent exited "
                 f"{gid_proc.returncode} ({gid_proc.stderr.strip()})"
@@ -323,7 +344,7 @@ class DaemonBackend:
             ["getent", "group", self.group],
             capture_output=True,
             text=True,
-            check=False,  # returncode 0=存在 / 1=不存在 / 其他=NSS 错误，均须自行判定
+            check=False,  # returncode 0=存在 / 1,2=不存在 / 其他=NSS 错误
         )
         if name_proc.returncode == 0:
             try:
@@ -337,7 +358,7 @@ class DaemonBackend:
                     f"expected {self.gid}"
                 )
             return  # 双向一致 → 幂等成功
-        if name_proc.returncode != 1:
+        if name_proc.returncode not in (1, 2):
             raise RuntimeError(
                 f"cannot query group {self.group!r}: getent exited "
                 f"{name_proc.returncode} ({name_proc.stderr.strip()})"
