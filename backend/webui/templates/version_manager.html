@@ -19,6 +19,11 @@
       <div><dt class="text-gray-500 dark:text-gray-400">更新支持</dt>
            <dd>{{ "是" if version_info.update_supported else "否" }}
                <span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span></dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">Host Updater</dt>
+           <dd>{{ "已连接" if version_info.updater_connected else "未连接" }}
+               {% if version_info.updater_connected and version_info.updater_version %}
+               <span class="text-gray-400 text-xs font-mono">v{{ version_info.updater_version }}</span>
+               {% endif %}</dd></div>
     </dl>
 
     {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 显示"尚未检查" #}
