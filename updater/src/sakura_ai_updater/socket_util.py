@@ -105,3 +105,34 @@ def cleanup_owned_socket(socket_path: str) -> None:
         probe.close()
         return  # 探测失败 → 不删（fail-closed 于删除动作）
     probe.close()  # connect 成功 = live，保留
+
+
+def bind_socket_listener(
+    socket_path: str,
+    *,
+    uid: int = 0,
+    gid: int = 9472,
+    mode: int = 0o660,
+) -> socket.socket:
+    """预绑定 UDS listener（ownership/mode 在 listen 前设置，host bootstrap）。
+
+    - ``prepare_socket_path`` 先做 live/stale 检查（**不创建父目录**）。
+    - 顺序：bind → chown(uid, gid) → chmod(mode) → listen —— uvicorn 接受连接前
+      socket 文件已是 ``0o660 root:sakura-ai``（spec §11.4；Web 容器经补充 GID
+      connect，不依赖 umask）。
+    - 任何异常（含 BaseException）→ listener.close() + cleanup_owned_socket +
+      原样 raise（不吞；bind/chown 失败不留脏 socket 文件，不泄漏 fd）。
+    - 返回值由调用方持有：close() 后自行 cleanup_owned_socket。
+    """
+    prepare_socket_path(socket_path)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        listener.bind(socket_path)
+        os.chown(socket_path, uid, gid)
+        os.chmod(socket_path, mode)
+        listener.listen(socket.SOMAXCONN)
+        return listener
+    except BaseException:
+        listener.close()
+        cleanup_owned_socket(socket_path)
+        raise
