@@ -14,6 +14,7 @@ from starlette.requests import Request
 from backend import __version__
 from backend.core.config import get_settings
 from backend.services.update_checker import is_newer_version, read_cache
+from backend.services.updater_client import UpdaterClient
 from backend.webui.deps import (
     get_csrf_serializer,
     get_user_preferences,
@@ -29,26 +30,41 @@ _VALID_MODES = {"image", "source"}
 
 
 def build_version_info(
-    deploy_mode: str, update_info: dict | None = None
+    deploy_mode: str,
+    update_info: dict | None = None,
+    updater_info: dict | None = None,
 ) -> dict:
     """构造版本与部署信息（纯函数）。
 
     Args:
         deploy_mode: 部署模式。非法值归一化为 "unknown"。
         update_info: 可选的更新检查缓存数据。None 时相关字段为 null。
+        updater_info: 可选的 updater /v1/status envelope（连上时）。None 表示未连接。
 
     update_available 即时 derive：is_newer_version(__version__, latest)。
     - 无缓存（update_info=None）→ None
     - 有缓存且 latest 有值 → derive 布尔
     - 有缓存但 latest 为 None（空列表/失败无 last-known-good）→ False
+
+    updater 连接状态：image 模式下 updater 已连但 update 尚未实现（Slice 4）→
+    update_supported 仍 False，reason=update_not_implemented（明确"在线，功能开发中"）。
+    updater_info 的版本字段取自 envelope 顶层（spec §7.2，data 不重复）。
     """
     mode = deploy_mode if deploy_mode in _VALID_MODES else "unknown"
+
+    updater_connected = updater_info is not None
+    updater_version = updater_info.get("updater_version") if updater_info else None
+    updater_protocol_version = (
+        updater_info.get("protocol_version") if updater_info else None
+    )
 
     update_supported = False
     if mode == "source":
         reason = "source_updater_not_available"
     elif mode == "image":
-        reason = "updater_not_connected"  # Slice 4 接入 updater 后改判
+        reason = (
+            "update_not_implemented" if updater_connected else "updater_not_connected"
+        )
     else:
         reason = "unknown_deployment"
 
@@ -67,15 +83,19 @@ def build_version_info(
         "latest_version": latest,
         "last_checked": ui.get("last_checked"),
         "check_error": ui.get("check_error"),
+        "updater_connected": updater_connected,
+        "updater_version": updater_version,
+        "updater_protocol_version": updater_protocol_version,
     }
 
 
 @router.get("/version/info")
 async def get_version_info(user: dict = Depends(require_auth)):
-    """当前版本 + 部署模式 + 更新可用性（所有登录用户，驱动 navbar badge）。"""
+    """当前版本 + 部署模式 + 更新可用性 + updater 连接状态（所有登录用户，驱动 navbar badge）。"""
     mode = get_settings().sakura_deploy_mode or "unknown"
     update_info = await read_cache()
-    info = build_version_info(mode, update_info)
+    updater_info = await UpdaterClient().get_status()
+    info = build_version_info(mode, update_info, updater_info)
     return JSONResponse(
         info,
         headers={"Cache-Control": "no-store, max-age=0"},
@@ -141,7 +161,7 @@ async def version_manager_page(
     """
     mode = get_settings().sakura_deploy_mode or "unknown"
     update_info = await read_cache()
-    info = build_version_info(mode, update_info)
+    info = build_version_info(mode, update_info, await UpdaterClient().get_status())
     return render_template(
         "version_manager.html",
         request,

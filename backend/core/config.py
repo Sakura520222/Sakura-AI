@@ -90,6 +90,13 @@ class Settings(BaseSettings):
         description="GitHub owner/repo，UpdateChecker 检查此仓库的 Releases",
     )
 
+    # Host Updater UDS 路径（spec §7.1）。容器内由 compose 挂载 /run/sakura-ai（Slice 3b）；
+    # dev/源码模式可能指向宿主机路径或测试临时路径。
+    sakura_updater_socket_path: str = Field(
+        "/run/sakura-ai/updater.sock",
+        description="Host Updater UDS 路径，backend 经此连 updater",
+    )
+
     # 基础审查任务配置
     max_concurrent_reviews: int = Field(
         5,
