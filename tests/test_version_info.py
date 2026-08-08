@@ -17,6 +17,7 @@ def test_image_mode_marks_updater_not_connected():
     assert info["update_unsupported_reason"] == "updater_not_connected"
     assert info["update_available"] is None
     assert info["latest_version"] is None
+    assert info["updater_connected"] is False  # 新增：未连接
 
 
 def test_source_mode_marks_updater_not_available():
@@ -100,3 +101,38 @@ def test_is_newer_version_public_helper():
     # 公开比较函数可被 Web 层复用（derived state 的单一真相源）
     assert is_newer_version("3.0.0", "3.1.0") is True
     assert is_newer_version("3.1.0", "3.1.0") is False
+
+
+def test_updater_connected_when_info_provided():
+    info = build_version_info(
+        "image",
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.0",
+            "data": {"state": "idle"},
+        },
+    )
+    assert info["updater_connected"] is True
+    assert info["updater_version"] == "0.1.0"
+    assert info["updater_protocol_version"] == 1
+    assert info["update_supported"] is False  # Slice 4 才启用 update
+    assert info["update_unsupported_reason"] == "update_not_implemented"
+
+
+def test_updater_disconnected_when_none():
+    info = build_version_info("image")
+    assert info["updater_connected"] is False
+    assert info["updater_version"] is None
+    assert info["updater_protocol_version"] is None
+    assert info["update_unsupported_reason"] == "updater_not_connected"
+
+
+def test_source_mode_updater_connected_still_unsupported():
+    """source 模式即使 updater 连着，仍不支持更新（spec §5.2）。"""
+    info = build_version_info(
+        "source",
+        updater_info={"protocol_version": 1, "updater_version": "0.1.0", "data": {}},
+    )
+    assert info["updater_connected"] is True
+    assert info["update_supported"] is False
+    assert info["update_unsupported_reason"] == "source_updater_not_available"
