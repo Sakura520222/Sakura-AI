@@ -398,18 +398,31 @@ Use the `start.sh` script to manage the updater daemon:
 
 action defaults to `status`, so `./start.sh updater` is equivalent to `./start.sh updater status`.
 
-**Production Deployment**
+**Production First Acquisition**
 
-The production updater binary path is `.deploy/updater/sakura-ai-updater` (built starting in Slice 3c). install and start operations require root privileges because they create a system group with fixed GID 9472 and the `/run/sakura-ai` runtime directory:
+The production updater binary path is `.deploy/updater/sakura-ai-updater`. On the first `install`, `start.sh` acquires the binary even when the host has no Python and the binary does not yet exist; the production path does not depend on host Python. Install and start require root privileges because they create a system group with fixed GID 9472 and the `/run/sakura-ai` runtime directory:
 
 ```bash
-sudo ./start.sh updater install  # First-time installation, creates group and directory
+sudo ./start.sh updater install  # Acquire and verify the current-version binary, then bootstrap
 sudo ./start.sh updater start     # Start the daemon
+```
+
+Installation is pinned to the local Sakura AI version and never downloads the `latest` updater. Version resolution reads two signals: the concrete `SAKURA_AI_IMAGE=:vX.Y.Z` entry in `.deploy/deployment.env` (optionally with a digest), and the exact `__version__ = "X.Y.Z"` line in `backend/__init__.py`. `:latest` is not a concrete version; one signal may be used when the other is absent, while conflicting or missing signals fail closed. Only Linux `amd64` and `arm64` are supported; other operating systems or architectures fail explicitly.
+
+The binary and `SHA256SUMS` are downloaded from the matching GitHub Release over HTTPS, with strict verification of the target binary's SHA256 entry. The state directory and final binary are root-owned and `0700`; an install lock prevents concurrent acquisition; download temporary files stay in the same state directory and replace the final binary with an atomic same-filesystem rename only after checksum, temporary-file fsync, and safety checks pass.
+
+Failure protection has two phases: if download, checksum, chmod, temporary-file fsync, or temporary-file safety validation fails before commit, the old binary remains byte-for-byte unchanged. After the atomic rename, a directory metadata fsync or final safety confirmation failure must not be described as leaving the old binary unchanged; the message must state that a new inode may already be installed, and backend install is not continued. Backend bootstrap runs only after all post-commit checks pass.
+
+If the daemon was already running before installation, replacing the binary does not automatically restart the running process. After a successful install, explicitly run:
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater start
 ```
 
 **Source Development Mode**
 
-For development environments, you can run the updater directly with Python:
+Development environments may run the updater through an explicit Python override; this is not a production fallback:
 
 ```bash
 SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
