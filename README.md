@@ -383,6 +383,42 @@ curl http://your-domain.com:8000/health
 
 WebUI：`https://your-domain.com/`
 
+### Host Updater 守护进程（自动更新）
+
+Host updater 是一个独立守护进程，负责管理 Sakura AI 镜像的自动更新（自动更新功能目前逐步上线中，P0 阶段先铺基础）。
+
+**管理命令**
+
+通过 `start.sh` 脚本管理 updater 守护进程：
+
+```bash
+./start.sh updater install|start|stop|status
+```
+
+action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
+
+**生产部署**
+
+生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`（Slice 3c 才开始构建）。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
+
+```bash
+sudo ./start.sh updater install  # 首次安装，创建组和目录
+sudo ./start.sh updater start     # 启动守护进程
+```
+
+**源码开发模式**
+
+开发环境可使用 Python 直接运行 updater：
+
+```bash
+SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
+```
+
+**安全边界**
+
+- Web 容器通过只读挂载 `/run/sakura-ai` 目录（Unix Domain Socket）与 updater 通信，不挂载 `docker.sock`
+- updater 不依赖 systemd 或 cron 自启；每次通过 `start.sh` 时会调用 `ensure_updater_running` 兜底恢复
+
 ---
 
 ## 使用说明
