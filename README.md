@@ -406,9 +406,15 @@ sudo ./start.sh updater install  # 获取并校验当前版本 binary，创建�
 sudo ./start.sh updater start     # 启动守护进程
 ```
 
-安装严格绑定当前本地 Sakura AI 版本，不下载 `latest` updater。版本解析同时读取两个 signal：`.deploy/deployment.env` 中精确的 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest）和 `backend/__init__.py` 中精确的 `__version__ = "X.Y.Z"`。`:latest` 不是具体版本；两个 signal 只有一个存在时使用该 signal，二者冲突或二者都不存在时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
+安装严格绑定当前部署的 Sakura AI 版本，不下载 `latest` updater。版本解析是 **deployment-mode-aware** 的：
 
-binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。state directory 与最终 binary 均为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
+- `SAKURA_DEPLOY_MODE=image`：优先使用 `deployment.env` 中 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest）的镜像版本作为权威来源；镜像为 `:latest` 或无具体 tag 时，回退到 `backend/__init__.py` 的 `__version__`。镜像部署时 host checkout 版本与实际运行版本可能不同，镜像版本始终权威。
+- `SAKURA_DEPLOY_MODE=source`：以 `backend/__init__.py` 的 `__version__ = "X.Y.Z"` 为权威来源。
+- `deployment.env` 缺失或 `SAKURA_DEPLOY_MODE` 不是 `image`/`source` 时 fail-closed，不猜测版本。
+
+`:latest` 不是具体版本。两者都无法确定具体版本时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
+
+state directory 首次创建为 root-owned `0700`。如果目录已存在（如从旧版升级），只要 owner 为 root 且 group/other 无写权限就会自动 harden 到 `0700`；owner 非 root、group/other 可写或目录是 symlink 时 fail-closed。binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。binary 为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
 
 安装失败的保护分为两个阶段：下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
 

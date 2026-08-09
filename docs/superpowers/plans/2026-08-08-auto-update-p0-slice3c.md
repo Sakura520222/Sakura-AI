@@ -63,14 +63,16 @@
 
 ### Version resolution
 
-`resolve_updater_app_version()` 收集两个 signal：
+`resolve_updater_app_version()` 是 **deployment-mode-aware** 的：
 
-1. 如果 `.deploy/deployment.env` 中 `SAKURA_AI_IMAGE` 精确包含 `:vX.Y.Z`（可在其后跟一个 `@sha256:` 加 64 位小写十六进制 digest），提取 `X.Y.Z`；`:latest`、无 tag 或其他 tag 不是 concrete version，忽略该 signal。
-2. 如果 `backend/__init__.py` 存在，只接受精确的 `__version__ = "X.Y.Z"` 行。
-3. 两个 concrete signal 都存在且不同：fail-closed，不下载。
-4. 只有一个 concrete signal：使用它。
-5. 都不存在：fail-closed，不猜测 `latest`。
-6. 最终版本再次用 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验；3c 不支持 prerelease/build metadata，因为当前正式 Release/tag 契约是 `vX.Y.Z`。
+1. 读取 `SAKURA_DEPLOY_MODE`（image/source）；缺失或非 image/source → fail-closed，不下载。
+2. `SAKURA_DEPLOY_MODE=image`：
+   - concrete `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 `@sha256:` + 64 位 hex digest）→ image version 权威。
+   - `:latest` / 无 tag → 回退到 `backend/__init__.py` 的 `__version__`。
+   - 镜像部署时 host checkout 版本与运行版本可能不同，image version 始终权威——二者不构成 conflict。
+3. `SAKURA_DEPLOY_MODE=source`：`backend/__init__.py` 的精确 `__version__ = "X.Y.Z"` 权威。
+4. 最终版本用 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验；3c 不支持 prerelease/build metadata（正式 Release/tag 契约是 `vX.Y.Z`）。
+5. 无法确定具体版本 → fail-closed，不猜测 `latest`。
 
 ### Platform mapping
 
@@ -97,7 +99,7 @@ production shell resolver 在**首次 exec 之前**要求：
 
 ```text
 require root
-→ mkdir/chown/chmod state_dir（root:root 0700）
+→ prepare state_dir：首次 mkdir/chown/chmod（root:root 0700）；已存在则 owner 必须 root + group/other 不可写 → chmod 0700 harden；non-root / group-other-writable / symlink → fail-closed
 → acquire .deploy/updater/install.lock（flock -n）
 → resolve version + architecture
 → mktemp（必须在 state_dir 内，0600）
