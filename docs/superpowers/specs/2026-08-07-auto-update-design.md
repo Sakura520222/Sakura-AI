@@ -812,12 +812,23 @@ SHA256SUMS              （恰好包含上述两者的 sha256）
 
 ### 16.4 安装流程
 
-`start.sh updater install` **默认安装与当前 Sakura AI `__version__` 对应 Release 附带的 updater**——**不从“最新 Release”下载**，避免协议启动悖论（运行 v3.0.0 的应用若下载未来 v4.0.0 的 protocol v2 updater，当前 Web backend 不懂）。首次 acquisition 属于 `start.sh` host bootstrap：宿主机无 Python 且 binary 尚不存在时，shell 直接通过 HTTPS 下载当前版本对应架构的 binary 与 `SHA256SUMS`，严格校验后再调用已安装 binary 的 `backend install`。Python downloader 与 updater self-update / 寻找最新兼容 updater 留给 P2。
+`start.sh updater install` **默认安装与当前部署版本对应 Release 附带的 updater**——**不从"最新 Release"下载**，避免协议启动悖论（运行 v3.0.0 的应用若下载未来 v4.0.0 的 protocol v2 updater，当前 Web backend 不懂）。首次 acquisition 属于 `start.sh` host bootstrap：宿主机无 Python 且 binary 尚不存在时，shell 直接通过 HTTPS 下载当前版本对应架构的 binary 与 `SHA256SUMS`，严格校验后再调用已安装 binary 的 `backend install`。Python downloader 与 updater self-update / 寻找最新兼容 updater 留给 P2。
+
+版本解析是 **deployment-mode-aware** 的：
+
+- `SAKURA_DEPLOY_MODE=image`：concrete `SAKURA_AI_IMAGE=:vX.Y.Z[@sha256:...]` 为权威版本；镜像为 `:latest` 或无具体 tag 时回退到 `backend/__init__.py` 的 `__version__`。镜像部署时 host checkout 版本与实际运行版本可能不同，镜像版本始终权威——二者不冲突，package version 不参与 conflict gate。
+- `SAKURA_DEPLOY_MODE=source`：`backend/__init__.py` 的精确 `__version__ = "X.Y.Z"` 为权威版本。
+- `deployment.env` 缺失或 `SAKURA_DEPLOY_MODE` 非 `image`/`source` → fail-closed，不猜测版本。
 
 ```
 检测 OS / ARCH
 ↓
-解析 local app version：优先 concrete `SAKURA_AI_IMAGE=:vX.Y.Z[@sha256:...]`，同时读取精确 package `__version__` signal；`:latest` 不是 concrete signal，两个 signal 冲突则 fail-closed
+读取 SAKURA_DEPLOY_MODE（image/source），缺失或无效 → fail-closed
+↓
+image 模式：concrete image tag 权威；:latest / 无 tag → 回退 package __version__
+source 模式：package __version__ 权威
+↓
+最终版本用 ^[0-9]+\.[0-9]+\.[0-9]+$ 校验；不支持 prerelease/build metadata
 ↓
 从该 Release 通过 HTTPS 下载对应 updater binary + SHA256SUMS
 ↓
@@ -832,7 +843,9 @@ chmod 0700、临时文件 fsync、临时文件安全检查
 创建 host sakura-ai 组（固定 GID 9472）并调用 binary backend install
 ```
 
-安装安全不变量：生产 binary、state directory 和 install lock 均为 root-owned；binary/state directory 使用 `0700`，安装锁防并发，同文件系统临时文件保证 rename 原子性；下载、checksum、chmod、临时 fsync、临时 safety 任一 pre-commit 失败时，旧 final binary 必须 byte-for-byte unchanged。commit 后目录 metadata fsync 或 rename 后 final safety confirmation 失败时，不得作“旧 binary 未变”承诺，必须明确说明新 inode 可能已安装，且不得继续调用 `backend install`。checksum 与 binary 使用同一 GitHub Release 信任根，3c 提供 HTTPS 传输与 SHA256 完整性校验，但不抵御 Release 发布凭据整体失陷；独立签名与更强 trust root 留给 P2。
+state directory 安全迁移：首次创建为 root-owned `0700`。如果目录已存在（如从 3b 升级，典型 root:root 0755），只要 owner 为 root 且 group/other 无写权限就自动 harden 到 `0700`；owner 非 root、group/other 可写（0770/0775/0777）或 symlink → fail-closed。
+
+安装安全不变量：生产 binary、state directory 和 install lock 均为 root-owned；binary/state directory 使用 `0700`，安装锁防并发，同文件系统临时文件保证 rename 原子性；下载、checksum、chmod、临时 fsync、临时 safety 任一 pre-commit 失败时，旧 final binary 必须 byte-for-byte unchanged。commit 后目录 metadata fsync 或 rename 后 final safety confirmation 失败时，不得作"旧 binary 未变"承诺，必须明确说明新 inode 可能已安装，且不得继续调用 `backend install`。checksum 与 binary 使用同一 GitHub Release 信任根，3c 提供 HTTPS 传输与 SHA256 完整性校验，但不抵御 Release 发布凭据整体失陷；独立签名与更强 trust root 留给 P2。
 
 如果 daemon 在 acquisition 前已经运行，安装成功也**不自动重启**：Linux rename 只替换目录项，运行进程继续使用旧 inode。管理员必须显式执行：
 

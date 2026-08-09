@@ -389,29 +389,181 @@ __version__ = "3.0.0"
 EOF
 updater_uname_s() { printf '%s\n' Linux; }
 updater_uname_m() { printf '%s\n' x86_64; }
-printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0@sha256:%064d\n' 0 > "$UPDATER_DEPLOYMENT_ENV_FILE"
-[ "$(resolve_updater_app_version)" = "3.0.0" ] && report 0 "V1: concrete version signals agree" || report 1 "V1"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:$(printf '%064d' 0)
+EOF
+[ "$(resolve_updater_app_version)" = "3.1.0" ] \
+    && report 0 "V1: image mode concrete image is authoritative" || report 1 "V1"
 [ "$(resolve_updater_asset)" = "sakura-ai-updater-linux-amd64" ] && report 0 "V2: x86_64 asset mapping" || report 1 "V2"
-printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
-[ "$(resolve_updater_app_version)" = "3.0.0" ] && report 0 "V3: latest ignored, package fallback" || report 1 "V3"
-printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest
+EOF
+[ "$(resolve_updater_app_version)" = "3.0.0" ] \
+    && report 0 "V3: image latest falls back to package version" || report 1 "V3"
+rm -f "$UPDATER_BACKEND_VERSION_FILE"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0
+EOF
+[ "$(resolve_updater_app_version)" = "3.1.0" ] \
+    && report 0 "V4: concrete image does not require package version" || report 1 "V4"
+cat > "$UPDATER_BACKEND_VERSION_FILE" <<'EOF'
+__version__ = "3.0.0"
+EOF
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=source
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0
+EOF
+[ "$(resolve_updater_app_version)" = "3.0.0" ] \
+    && report 0 "V5: source mode package version is authoritative" || report 1 "V5"
+printf 'SAKURA_DEPLOY_MODE=unknown\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
 resolve_updater_app_version >/dev/null 2>&1
-[ "$?" -ne 0 ] && report 0 "V4: mismatched concrete signal rejected" || report 1 "V4"
+[ "$?" -ne 0 ] && report 0 "V6: unknown deploy mode rejected" || report 1 "V6"
 : > "$UPDATER_DEPLOYMENT_ENV_FILE"
+resolve_updater_app_version >/dev/null 2>&1
+[ "$?" -ne 0 ] && report 0 "V7: missing deploy mode rejected" || report 1 "V7"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest
+EOF
 cat > "$UPDATER_BACKEND_VERSION_FILE" <<'EOF'
 # no concrete version
 EOF
 resolve_updater_app_version >/dev/null 2>&1
-[ "$?" -ne 0 ] && report 0 "V5: no concrete signal rejected" || report 1 "V5"
+[ "$?" -ne 0 ] && report 0 "V8: image latest without package version rejected" || report 1 "V8"
 updater_uname_s() { printf '%s\n' Linux; }
 updater_uname_m() { printf '%s\n' aarch64; }
-[ "$(resolve_updater_asset)" = "sakura-ai-updater-linux-arm64" ] && report 0 "V6: aarch64 asset mapping" || report 1 "V6"
+[ "$(resolve_updater_asset)" = "sakura-ai-updater-linux-arm64" ] && report 0 "V9: aarch64 asset mapping" || report 1 "V9"
 updater_uname_m() { printf '%s\n' riscv64; }
 resolve_updater_asset >/dev/null 2>&1
-[ "$?" -ne 0 ] && report 0 "V7: unsupported architecture rejected" || report 1 "V7"
+[ "$?" -ne 0 ] && report 0 "V10: unsupported architecture rejected" || report 1 "V10"
 
 # Restore test fixture paths for resolver/ensure tests.
 unset UPDATER_DEPLOYMENT_ENV_FILE UPDATER_BACKEND_VERSION_FILE
+
+# --- state_dir migration tests ---
+# Git Bash cannot provide real root-owned metadata or reliable symlink detection,
+# so migration tests inject owner/mode helpers (same pattern as S1b unsafe cases).
+# Two variants:
+#   M1 expects harden (chmod to 0700 invoked and reported mode becomes 0700)
+#   M1-pass expects pass-through (already 0700, no chmod needed, succeeds)
+run_state_dir_migration_case() {
+    local case_name="$1" existing_mode="$2" expect_chmod="${3:-1}"
+    local case_dir="$TMPDIR/state-mig-$case_name"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        local state_dir="$case_dir/state"
+        mkdir -p "$state_dir"
+        export UPDATER_STATE_DIR="$state_dir"
+        local chmod_called=0 hardened_mode="$existing_mode"
+        updater_path_is_symlink() { return 1; }
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' "$hardened_mode"; }
+        updater_chmod() {
+            if [[ "$1" == 0700 ]]; then
+                chmod_called=1
+                hardened_mode=700
+            fi
+            chmod "$@"
+        }
+        updater_chown() { chown "$@"; }
+        updater_sync_state_dir() { :; }
+        updater_prepare_state_dir >/dev/null 2>&1
+        rc=$?
+        if [[ "$expect_chmod" == 1 ]]; then
+            [[ "$rc" -eq 0 ]] && [[ "$chmod_called" -eq 1 ]] && [[ "$hardened_mode" == 700 ]]
+        else
+            [[ "$rc" -eq 0 ]] && [[ "$hardened_mode" == 700 ]]
+        fi
+    )
+    case_rc=$?
+    [ "$case_rc" -eq 0 ] \
+        && report 0 "M1-$case_name: root-owned $existing_mode handled as 0700" \
+        || report 1 "M1-$case_name"
+}
+run_state_dir_migration_case 0755-to-0700 755 1
+run_state_dir_migration_case 0750-to-0700 750 1
+run_state_dir_migration_case already-0700 700 0
+
+run_state_dir_unsafe_existing_case() {
+    local case_name="$1" existing_mode="$2"
+    local case_dir="$TMPDIR/state-unsafe-$case_name"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        local state_dir="$case_dir/state"
+        mkdir -p "$state_dir"
+        export UPDATER_STATE_DIR="$state_dir"
+        local chmod_called=0
+        updater_path_is_symlink() { return 1; }
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' "$existing_mode"; }
+        updater_chmod() { chmod_called=1; chmod "$@"; }
+        updater_chown() { chown "$@"; }
+        updater_sync_state_dir() { :; }
+        updater_prepare_state_dir >/dev/null 2>&1
+        rc=$?
+        [[ "$rc" -ne 0 ]] && [[ "$chmod_called" -eq 0 ]]
+    )
+    case_rc=$?
+    [ "$case_rc" -eq 0 ] \
+        && report 0 "M2-$case_name: unsafe group/other writable $existing_mode rejected" \
+        || report 1 "M2-$case_name"
+}
+run_state_dir_unsafe_existing_case 0770 770
+run_state_dir_unsafe_existing_case 0775 775
+run_state_dir_unsafe_existing_case 0777 777
+
+# non-root owner rejected without chmod attempt
+NONROOT_STATE_DIR="$TMPDIR/state-mig-nonroot"
+(
+    export _START_SH_SOURCED=1
+    source "$SCRIPT_DIR/start.sh"
+    set +e
+    mkdir -p "$NONROOT_STATE_DIR/state"
+    export UPDATER_STATE_DIR="$NONROOT_STATE_DIR/state"
+    chmod_called=0
+    updater_path_is_symlink() { return 1; }
+    updater_current_uid() { printf '%s\n' 0; }
+    updater_directory_owner_uid() { printf '%s\n' 1000; }
+    updater_directory_mode() { printf '%s\n' 755; }
+    updater_chmod() { chmod_called=1; chmod "$@"; }
+    updater_chown() { chown "$@"; }
+    updater_sync_state_dir() { :; }
+    updater_prepare_state_dir >/dev/null 2>&1
+    rc=$?
+    [[ "$rc" -ne 0 ]] && [[ "$chmod_called" -eq 0 ]]
+)
+[ "$?" -eq 0 ] && report 0 "M3-nonroot: non-root owner rejected without chmod" || report 1 "M3-nonroot"
+
+# symlink state_dir rejected before chmod
+SYMLINK_STATE_DIR="$TMPDIR/state-mig-symlink"
+(
+    export _START_SH_SOURCED=1
+    source "$SCRIPT_DIR/start.sh"
+    set +e
+    mkdir -p "$SYMLINK_STATE_DIR/state"
+    export UPDATER_STATE_DIR="$SYMLINK_STATE_DIR/state"
+    chmod_called=0
+    updater_path_is_symlink() { return 0; }
+    updater_current_uid() { printf '%s\n' 0; }
+    updater_directory_owner_uid() { printf '%s\n' 0; }
+    updater_directory_mode() { printf '%s\n' 700; }
+    updater_chmod() { chmod_called=1; chmod "$@"; }
+    updater_chown() { chown "$@"; }
+    updater_sync_state_dir() { :; }
+    updater_prepare_state_dir >/dev/null 2>&1
+    rc=$?
+    [[ "$rc" -ne 0 ]] && [[ "$chmod_called" -eq 0 ]]
+)
+[ "$?" -eq 0 ] && report 0 "M4-symlink: symlink state_dir rejected before chmod" || report 1 "M4-symlink"
 
 # --- trusted acquisition tests ---
 ACQ_DIR="$TMPDIR/acquisition"
@@ -445,6 +597,7 @@ updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
 updater_uname_s() { printf '%s\n' Linux; }
 updater_uname_m() { printf '%s\n' x86_64; }
 cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=image
 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0
 EOF
 cat > "$UPDATER_BACKEND_VERSION_FILE" <<'EOF'
@@ -610,7 +763,8 @@ run_checksum_failure_case() {
         export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
         export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
         export UPDATER_BACKEND_VERSION_FILE="$case_dir/backend_init.py"
-        printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        printf 'SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
         printf '__version__ = "3.0.0"\n' > "$UPDATER_BACKEND_VERSION_FILE"
         updater_current_uid() { printf '%s\n' 0; }
         updater_binary_owner_uid() { printf '%s\n' 0; }
@@ -689,7 +843,8 @@ run_precommit_failure_case() {
         export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
         export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
         export UPDATER_BACKEND_VERSION_FILE="$case_dir/backend_init.py"
-        printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        printf 'SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
         printf '__version__ = "3.0.0"\n' > "$UPDATER_BACKEND_VERSION_FILE"
         updater_current_uid() { printf '%s\n' 0; }
         updater_binary_owner_uid() { printf '%s\n' 0; }
@@ -794,7 +949,8 @@ run_postcommit_final_safety_failure_case() {
         export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
         export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
         export UPDATER_BACKEND_VERSION_FILE="$case_dir/backend_init.py"
-        printf 'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        printf 'SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
         printf '__version__ = "3.0.0"\n' > "$UPDATER_BACKEND_VERSION_FILE"
         updater_current_uid() { printf '%s\n' 0; }
         updater_directory_owner_uid() { printf '%s\n' 0; }

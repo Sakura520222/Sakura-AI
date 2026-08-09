@@ -312,7 +312,8 @@ updater_read_expected_checksum() {
 }
 
 updater_prepare_state_dir() {
-    local state_dir="$UPDATER_STATE_DIR"
+    local state_dir="$UPDATER_STATE_DIR" owner mode
+    # symlink / non-directory → fail-closed (never chmod or chown a symlink target)
     if updater_path_is_symlink "$state_dir" || [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
         fail "refusing unsafe updater state directory: $state_dir" >&2
         return 1
@@ -326,9 +327,30 @@ updater_prepare_state_dir() {
             fail "cannot secure updater state directory: $state_dir" >&2
             return 1
         fi
+    else
+        # existing directory: must be root-owned with no group/other write.
+        # Hardening permissions on a non-root-owned directory would mask a real
+        # compromise, so owner is verified first and harden only runs on root-owned dirs.
+        if ! owner=$(updater_directory_owner_uid "$state_dir"); then
+            fail "cannot inspect updater state directory owner: $state_dir" >&2
+            return 1
+        fi
+        [[ "$owner" == "0" ]] || {
+            fail "refusing non-root updater state directory (owner=$owner): $state_dir" >&2
+            return 1
+        }
+        if ! updater_directory_is_safe "$state_dir" 0; then
+            fail "refusing unsafe updater state directory (group/other writable): $state_dir" >&2
+            return 1
+        fi
+        if ! updater_chmod 0700 "$state_dir"; then
+            fail "cannot harden updater state directory to 0700: $state_dir" >&2
+            return 1
+        fi
     fi
+    # final invariant: directory must be root-owned and exactly 0700
     if ! updater_directory_is_safe "$state_dir" 1; then
-        fail "refusing unsafe updater state directory: $state_dir" >&2
+        fail "refusing unsafe updater state directory after prepare: $state_dir" >&2
         return 1
     fi
     if ! updater_sync_state_dir "$state_dir"; then
@@ -338,20 +360,37 @@ updater_prepare_state_dir() {
 }
 
 resolve_updater_app_version() {
-    local image_version="" package_version="" line image version
+    local deploy_mode="" image_version="" package_version="" line image version
 
     if [[ -f "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ "$line" == SAKURA_AI_IMAGE=* ]] || continue
-            image=${line#SAKURA_AI_IMAGE=}
-            if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
-                image_version="${BASH_REMATCH[1]}"
-            fi
-            break
+            case "$line" in
+                SAKURA_DEPLOY_MODE=*) deploy_mode=${line#SAKURA_DEPLOY_MODE=} ;;
+                SAKURA_AI_IMAGE=*)
+                    image=${line#SAKURA_AI_IMAGE=}
+                    image_version=""
+                    if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
+                        image_version="${BASH_REMATCH[1]}"
+                    fi
+                    ;;
+            esac
         done < "$UPDATER_DEPLOYMENT_ENV_FILE"
     fi
 
-    if [[ -f "$UPDATER_BACKEND_VERSION_FILE" ]]; then
+    case "$deploy_mode" in
+        image)
+            if [[ -n "$image_version" ]]; then
+                version="$image_version"
+            fi
+            ;;
+        source) ;;
+        *)
+            fail "invalid or missing SAKURA_DEPLOY_MODE in deployment state" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ -z "${version:-}" && -f "$UPDATER_BACKEND_VERSION_FILE" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             if [[ "$line" =~ ^__version__[[:space:]]*=[[:space:]]*\"([0-9]+\.[0-9]+\.[0-9]+)\"[[:space:]]*$ ]]; then
                 package_version="${BASH_REMATCH[1]}"
@@ -360,13 +399,11 @@ resolve_updater_app_version() {
         done < "$UPDATER_BACKEND_VERSION_FILE"
     fi
 
-    if [[ -n "$image_version" && -n "$package_version" && "$image_version" != "$package_version" ]]; then
-        fail "updater version signals disagree: image=$image_version package=$package_version" >&2
-        return 1
+    if [[ "$deploy_mode" == "source" || -z "${version:-}" ]]; then
+        version="$package_version"
     fi
-    version="${image_version:-$package_version}"
     if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        fail "cannot determine concrete Sakura AI version" >&2
+        fail "cannot determine concrete Sakura AI version for $deploy_mode deployment" >&2
         return 1
     fi
     printf '%s\n' "$version"

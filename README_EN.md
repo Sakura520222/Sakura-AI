@@ -407,9 +407,15 @@ sudo ./start.sh updater install  # Acquire and verify the current-version binary
 sudo ./start.sh updater start     # Start the daemon
 ```
 
-Installation is pinned to the local Sakura AI version and never downloads the `latest` updater. Version resolution reads two signals: the concrete `SAKURA_AI_IMAGE=:vX.Y.Z` entry in `.deploy/deployment.env` (optionally with a digest), and the exact `__version__ = "X.Y.Z"` line in `backend/__init__.py`. `:latest` is not a concrete version; one signal may be used when the other is absent, while conflicting or missing signals fail closed. Only Linux `amd64` and `arm64` are supported; other operating systems or architectures fail explicitly.
+Installation is pinned to the currently deployed Sakura AI version and never downloads the `latest` updater. Version resolution is **deployment-mode-aware**:
 
-The binary and `SHA256SUMS` are downloaded from the matching GitHub Release over HTTPS, with strict verification of the target binary's SHA256 entry. The state directory and final binary are root-owned and `0700`; an install lock prevents concurrent acquisition; download temporary files stay in the same state directory and replace the final binary with an atomic same-filesystem rename only after checksum, temporary-file fsync, and safety checks pass.
+- `SAKURA_DEPLOY_MODE=image`: the concrete `SAKURA_AI_IMAGE=:vX.Y.Z` entry in `deployment.env` (optionally with a digest) is the authoritative version; when the image tag is `:latest` or lacks a concrete version, it falls back to `backend/__init__.py`'s `__version__`. In image deployments the host checkout version may differ from the running version; the image version always wins.
+- `SAKURA_DEPLOY_MODE=source`: `backend/__init__.py`'s exact `__version__ = "X.Y.Z"` line is authoritative.
+- If `deployment.env` is missing or `SAKURA_DEPLOY_MODE` is not `image`/`source`, resolution fails closed — no version is guessed.
+
+`:latest` is not a concrete version. When no concrete version can be determined, resolution fails closed. Only Linux `amd64` and `arm64` are supported; other operating systems or architectures fail explicitly.
+
+The state directory is created root-owned `0700` on first use. If it already exists (e.g. upgrading from a prior version), it is automatically hardened to `0700` as long as the owner is root and group/other have no write permission; a non-root owner, group/other-writable permissions, or a symlink directory cause a fail-closed rejection. The binary and `SHA256SUMS` are downloaded from the matching GitHub Release over HTTPS, with strict verification of the target binary's SHA256 entry. The binary is root-owned and `0700`; an install lock prevents concurrent acquisition; download temporary files stay in the same state directory and replace the final binary with an atomic same-filesystem rename only after checksum, temporary-file fsync, and safety checks pass.
 
 Failure protection has two phases: if download, checksum, chmod, temporary-file fsync, or temporary-file safety validation fails before commit, the old binary remains byte-for-byte unchanged. After the atomic rename, a directory metadata fsync or final safety confirmation failure must not be described as leaving the old binary unchanged; the message must state that a new inode may already be installed, and backend install is not continued. Backend bootstrap runs only after all post-commit checks pass.
 
