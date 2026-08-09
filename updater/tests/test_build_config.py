@@ -40,6 +40,13 @@ def test_pyinstaller_build_is_onefile_and_pinned():
     assert "pyinstaller-hooks-contrib==2026.6" in requirements
 
 
+def test_root_ci_installs_updater_before_recursive_tests():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    python_quality = workflow.split("  updater-quality:", maxsplit=1)[0]
+
+    assert "pip install -e './updater[dev]'" in python_quality
+
+
 def test_build_script_has_pinned_bullseye_and_outer_elf_gate():
     script = (BUILD / "build.sh").read_text(encoding="utf-8")
     checker = CHECKER_PATH.read_text(encoding="utf-8")
