@@ -1,7 +1,10 @@
 """供应商协议硬切换的配置 surface 回归测试。"""
 
+from pathlib import Path
+
 import pytest
 
+from backend.api.v1.config import _AI_STRATEGY_RANGES, AIStrategyRequest
 from backend.core import config as config_module
 from backend.core.config import (
     AI_STRATEGY_CONFIG_KEYS,
@@ -101,6 +104,21 @@ def test_ai_strategy_registry_keeps_request_policy_fields():
         AI_STRATEGY_CONFIG_KEYS
     )
     assert {"ai_temperature", "ai_max_tokens"}.isdisjoint(AI_STRATEGY_CONFIG_KEYS)
+
+
+def test_ai_retry_zero_is_valid_in_api_and_webui():
+    """The retry field is a post-initial-failure count, so zero is valid."""
+    request = AIStrategyRequest(ai_api_max_retries=0)
+    assert request.ai_api_max_retries == 0
+    assert _AI_STRATEGY_RANGES["ai_api_max_retries"] == (0, 20)
+
+    template = (
+        Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_ai.html"
+    ).read_text(encoding="utf-8")
+    assert (
+        'min="0" max="20" x-model.number="strategy.ai_api_max_retries"'
+        in template
+    )
 
 
 @pytest.mark.asyncio

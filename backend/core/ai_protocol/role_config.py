@@ -322,6 +322,7 @@ def _build_candidate_from_account(
         credential=account.api_key,
         endpoint=endpoint,
         protocol=family,
+        account_id=str(account.id) if getattr(account, "id", None) else None,
     )
 
 

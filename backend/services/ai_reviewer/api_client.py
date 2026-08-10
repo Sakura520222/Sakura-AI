@@ -192,7 +192,10 @@ class AIApiClient:
                     (candidate.provider.id, candidate.model.model_id)
                     for candidate in chain.candidates
                 ),
-                account_id=str(getattr(primary.provider, "id", "unknown")),
+                account_id=str(
+                    getattr(primary, "account_id", None)
+                    or getattr(primary.provider, "id", "unknown")
+                ),
                 protocol_family=getattr(
                     primary.effective_protocol,
                     "value",

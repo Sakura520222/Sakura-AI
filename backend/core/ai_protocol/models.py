@@ -8,9 +8,11 @@ Adapters translate between these structures and each vendor's wire format.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 # 未发现或未配置单模型元数据时的默认上下文窗口（tokens）。
 # Default context window when a model has no discovered or user-provided metadata.
@@ -680,6 +682,10 @@ class ResolvedModel:
     # An account may override the provider's default protocol family. Legacy
     # constructors that omit it fall back to provider.family via the property.
     protocol: ProtocolFamily | str | None = None
+    # 持久化账号 ID（如果候选来自账号目录）。旧调用方可省略；此字段绝不存储凭据。
+    # Persisted account identity when the candidate came from the account catalog.
+    # Legacy callers may omit it; credentials are deliberately never part of it.
+    account_id: str | None = None
 
     @property
     def effective_protocol(self) -> ProtocolFamily:
@@ -697,6 +703,41 @@ class ResolvedModel:
     def protocol_family(self) -> ProtocolFamily:
         """兼容观测层命名的 effective protocol 别名 / Observability alias."""
         return self.effective_protocol
+
+    @property
+    def sticky_identity(self) -> str:
+        """返回不含凭据的稳定候选身份 / Return a credential-free sticky identity.
+
+        Saved accounts use their real account ID so two accounts that expose the
+        same provider/model pair remain distinct.  Legacy candidates do not
+        carry an account ID, so the endpoint and protocol are included in a
+        SHA-256 fingerprint.  The endpoint is only part of the hash preimage;
+        it is never returned, logged, or persisted in the sticky state.
+        """
+        provider_id = str(self.provider.id)
+        model_id = str(self.model.model_id)
+        account_id = (self.account_id or "").strip()
+        if account_id:
+            return f"account:{account_id}\x1fprovider:{provider_id}\x1fmodel:{model_id}"
+
+        protocol = self.effective_protocol.value
+        parsed_endpoint = urlsplit(self.endpoint.base_url)
+        try:
+            port = f":{parsed_endpoint.port}" if parsed_endpoint.port else ""
+        except ValueError:
+            # Invalid legacy URLs are still represented by a deterministic,
+            # query/userinfo-free path rather than leaking the raw value.
+            port = ""
+        safe_endpoint = (
+            f"{parsed_endpoint.scheme.lower()}://{parsed_endpoint.hostname or ''}"
+            f"{port}{parsed_endpoint.path}"
+        )
+        fingerprint_input = (
+            f"{provider_id}\x1f{model_id}\x1f{protocol}\x1f{safe_endpoint}"
+            f"\x1f{self.endpoint.chat_path}"
+        )
+        fingerprint = hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
+        return f"legacy:{fingerprint}"
 
 
 @dataclass

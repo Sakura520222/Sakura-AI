@@ -68,6 +68,7 @@ def resolve_candidate(
     base_url: str | None = None,
     *,
     metadata_override: ModelMetadata | None = None,
+    account_id: str | None = None,
 ) -> ResolvedModel:
     """构造单个 ResolvedModel / Build a single ResolvedModel."""
     decl = get_builtin_provider(provider_id)
@@ -79,6 +80,7 @@ def resolve_candidate(
         credential=credential,
         endpoint=endpoint,
         protocol=decl.family,
+        account_id=account_id,
     )
 
 

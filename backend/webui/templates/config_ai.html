@@ -39,7 +39,7 @@
                                     <span> · </span>
                                     <span x-text="account.protocol"></span>
                                 </div>
-                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate" x-text="account.default_model || account.models?.[0] || '未选择模型'"></div>
+                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate" x-text="account.default_model || account.models?.[0] || aiText('noModel')"></div>
                             </div>
                             <span class="px-2 py-0.5 rounded-full text-xs"
                                   :class="account.enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'"
@@ -91,7 +91,7 @@
                     </label>
                     <div class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_default_model') }}</span>
-                        <input x-model="form.default_model" type="text" :placeholder="currentProvider()?.default_models?.[0] || 'model-id'" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input x-model="form.default_model" type="text" :placeholder="currentProvider()?.default_models?.[0] || aiText('modelIdPlaceholder')" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                         <div x-show="currentModelOptions().length" class="mt-2 flex flex-wrap gap-1.5">
                             <template x-for="model in currentModelOptions()" :key="model">
                                 <button type="button" @click="form.default_model = model"
@@ -104,17 +104,17 @@
                     </div>
                     <label class="block md:col-span-2">
                         <span class="text-sm font-medium">{{ _('config.ai_api_base') }}</span>
-                        <input x-model="form.api_base" type="url" placeholder="https://api.example.com/v1" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input x-model="form.api_base" type="url" placeholder="{{ _('config.ai_api_base_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_api_base_desc') }}</p>
                     </label>
                     <label class="block md:col-span-2">
                         <span class="text-sm font-medium">{{ _('config.ai_api_key') }}</span>
-                        <input x-model="form.api_key" type="password" autocomplete="new-password" placeholder="sk-..." class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input x-model="form.api_key" type="password" autocomplete="new-password" placeholder="{{ _('config.ai_api_key_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_api_key_keep') }}</p>
                     </label>
                     <label class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_region') }}</span>
-                        <input x-model="form.region" type="text" placeholder="cn-beijing / intl / us" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input x-model="form.region" type="text" placeholder="{{ _('config.ai_region_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_region_desc') }}</p>
                     </label>
                     <label class="flex items-center gap-2 mt-6">
@@ -135,8 +135,8 @@
                 </template>
 
                 <div class="rounded-lg bg-gray-50 dark:bg-gray-900/40 p-3 text-xs text-gray-600 dark:text-gray-300 space-y-1" x-show="currentProvider()">
-                    <div><span class="font-semibold">{{ _('config.ai_context_models') }}:</span> <span x-text="currentProvider()?.default_models?.join(', ') || '—'"></span></div>
-                    <div><span class="font-semibold">{{ _('config.ai_supported_protocols') }}:</span> <span x-text="currentProvider()?.supported_families?.join(', ') || '—'"></span></div>
+                    <div><span class="font-semibold">{{ _('config.ai_context_models') }}:</span> <span x-text="currentProvider()?.default_models?.join(', ') || aiText('notAvailable')"></span></div>
+                    <div><span class="font-semibold">{{ _('config.ai_supported_protocols') }}:</span> <span x-text="currentProvider()?.supported_families?.join(', ') || aiText('notAvailable')"></span></div>
                     <div x-text="currentProvider()?.notes"></div>
                 </div>
 
@@ -169,13 +169,13 @@
                                 <span class="text-xs text-gray-500">{{ _('config.ai_model_effort') }}</span>
                                 <select x-model="modelOverride.effort" :disabled="!modelOverride.effort_enabled" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
                                     <option value="">{{ _('config.ai_model_effort_auto') }}</option>
-                                    <option value="none">none</option>
-                                    <option value="minimal">minimal</option>
-                                    <option value="low">low</option>
-                                    <option value="medium">medium</option>
-                                    <option value="high">high</option>
-                                    <option value="xhigh">xhigh</option>
-                                    <option value="max">max</option>
+                                    <option value="none">{{ _('config.ai_model_effort_none') }}</option>
+                                    <option value="minimal">{{ _('config.ai_model_effort_minimal') }}</option>
+                                    <option value="low">{{ _('config.ai_model_effort_low') }}</option>
+                                    <option value="medium">{{ _('config.ai_model_effort_medium') }}</option>
+                                    <option value="high">{{ _('config.ai_model_effort_high') }}</option>
+                                    <option value="xhigh">{{ _('config.ai_model_effort_xhigh') }}</option>
+                                    <option value="max">{{ _('config.ai_model_effort_max') }}</option>
                                 </select>
                             </label>
                             <label class="block">
@@ -242,7 +242,7 @@
                     </label>
                     <label class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_api_max_retries') }}</span>
-                        <input type="number" min="0" x-model.number="strategy.ai_api_max_retries" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input type="number" min="0" max="20" x-model.number="strategy.ai_api_max_retries" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                     </label>
                     <label class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_api_initial_retry_delay_seconds') }}</span>
@@ -301,11 +301,11 @@
                     </label>
                     <label class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_reasoning_provider_allowlist') }}</span>
-                        <input type="text" x-model="strategy.activity_reasoning_provider_allowlist" placeholder="anthropic,openai" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input type="text" x-model="strategy.activity_reasoning_provider_allowlist" placeholder="{{ _('config.ai_reasoning_provider_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                     </label>
                     <label class="block">
                         <span class="text-sm font-medium">{{ _('config.ai_reasoning_protocol_allowlist') }}</span>
-                        <input type="text" x-model="strategy.activity_reasoning_protocol_allowlist" placeholder="anthropic_native,openai_responses" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <input type="text" x-model="strategy.activity_reasoning_protocol_allowlist" placeholder="{{ _('config.ai_reasoning_protocol_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                     </label>
                     <label class="flex items-center gap-2 md:col-span-2">
                         <input type="checkbox" x-model="strategy.activity_artifact_super_admin_read_enabled" class="rounded border-gray-300 text-sakura-600">
@@ -345,7 +345,7 @@
                         </label>
                         <div class="block">
                             <span class="text-xs text-gray-500">{{ _('config.ai_model') }}</span>
-                            <input x-model="bindings[role].primary.model" type="text" placeholder="follow / model-id" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            <input x-model="bindings[role].primary.model" type="text" placeholder="{{ _('config.ai_model_binding_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
                             <div x-show="accountModels(bindings[role].primary.account).length" class="mt-1 flex flex-wrap gap-1">
                                 <template x-for="m in accountModels(bindings[role].primary.account)" :key="m">
                                     <button type="button" @click="bindings[role].primary.model = m" x-text="m"
@@ -391,6 +391,52 @@
 </div>
 
 <script>
+const AI_LOCALE = {{ {
+    "noModel": _("config.ai_no_model"),
+    "notAvailable": _("config.ai_not_available"),
+    "modelIdPlaceholder": _("config.ai_model_id_placeholder"),
+    "apiBasePlaceholder": _("config.ai_api_base_placeholder"),
+    "apiKeyPlaceholder": _("config.ai_api_key_placeholder"),
+    "regionPlaceholder": _("config.ai_region_placeholder"),
+    "modelBindingPlaceholder": _("config.ai_model_binding_placeholder"),
+    "providerAllowlistPlaceholder": _("config.ai_reasoning_provider_placeholder"),
+    "protocolAllowlistPlaceholder": _("config.ai_reasoning_protocol_placeholder"),
+    "autoValue": _("config.ai_model_auto"),
+    "builtinLabel": _("config.ai_model_builtin"),
+    "builtinValue": _("config.ai_model_builtin_value"),
+    "builtinReference": _("config.ai_model_builtin_reference"),
+    "builtinSupported": _("config.ai_model_builtin_supported"),
+    "capabilitySeparator": _("config.ai_model_capability_separator"),
+    "effort": _("config.ai_model_effort_supported"),
+    "vision": _("config.ai_model_vision"),
+    "thinking": _("config.ai_model_thinking"),
+    "saveError": _("config.save_error"),
+    "accountSaveFailed": _("config.ai_account_save_failed"),
+    "accountSaved": _("config.ai_account_saved"),
+    "accountDeleteConfirm": _("config.ai_account_delete_confirm"),
+    "accountDeleteFailed": _("config.ai_account_delete_failed"),
+    "accountDeleted": _("config.ai_account_deleted"),
+    "accountTestCompleted": _("config.ai_account_test_completed"),
+    "modelsFetched": _("config.ai_models_fetched"),
+    "modelsFetchFailed": _("config.ai_models_fetch_failed"),
+    "bindingsSaveFailed": _("config.ai_bindings_save_failed"),
+    "bindingsSaved": _("config.ai_bindings_saved"),
+    "strategySaveFailed": _("config.ai_strategy_save_failed"),
+    "strategySaved": _("config.ai_strategy_saved"),
+    "modelOverrideSaved": _("config.ai_model_override_saved"),
+    "modelOverrideCleared": _("config.ai_model_override_cleared"),
+    "roles": {
+        "main": _("config.ai_role_main"),
+        "summary": _("config.ai_role_summary"),
+        "agent_team": _("config.ai_role_agent_team"),
+    },
+} | tojson }};
+
+function aiText(key, values = {}) {
+    const template = AI_LOCALE[key] || key;
+    return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
+}
+
 function showAiToast(type, message) {
     const existing = document.getElementById('ai-config-toast');
     if (existing) existing.remove();
@@ -445,7 +491,7 @@ function aiConfigPage() {
         modelOverride: emptyOverride(),
         modelOverrideOpen: false,
         modelOverrideLoading: false,
-        autoValueLabel: "{{ _('config.ai_model_auto') }}",
+        autoValueLabel: AI_LOCALE.autoValue,
         selectedAccount: null,
         form: {},
         async init() {
@@ -494,17 +540,21 @@ function aiConfigPage() {
         },
         modelOverridePlaceholder(field) {
             const value = this.currentBuiltinMeta()?.[field];
-            return value ? `{{ _('config.ai_model_builtin') }} ${value}` : this.autoValueLabel;
+            return value ? aiText('builtinValue', { value }) : this.autoValueLabel;
         },
         builtinModelReference() {
             const meta = this.currentBuiltinMeta();
             if (!meta) return '';
             const capabilities = meta.capabilities || {};
             const supported = [];
-            if (capabilities.vision) supported.push('{{ _('config.ai_model_vision') }}');
-            if (capabilities.thinking) supported.push('{{ _('config.ai_model_thinking') }}');
-            if (capabilities.effort) supported.push('effort');
-            return `{{ _('config.ai_model_builtin') }}: ctx=${meta.context_window_tokens || '—'}, max_out=${meta.max_output_tokens || '—'}${supported.length ? `, ${supported.join(' / ')}` : ''}`;
+            if (capabilities.vision) supported.push(AI_LOCALE.vision);
+            if (capabilities.thinking) supported.push(AI_LOCALE.thinking);
+            if (capabilities.effort) supported.push(AI_LOCALE.effort);
+            return aiText('builtinReference', {
+                context: meta.context_window_tokens || AI_LOCALE.notAvailable,
+                maxOutput: meta.max_output_tokens || AI_LOCALE.notAvailable,
+                supported: supported.length ? aiText('builtinSupported', { capabilities: supported.join(AI_LOCALE.capabilitySeparator) }) : '',
+            });
         },
         currentFamilies() { return this.currentProvider()?.supported_families || ['openai-compatible']; },
         currentModelOptions() {
@@ -549,7 +599,7 @@ function aiConfigPage() {
                 const resp = await fetch(`/api/v1/config/ai/model-override?${query}`);
                 const data = await resp.json();
                 if (!data.success) {
-                    showAiToast('error', data.error || '{{ _('config.save_error') }}');
+                    showAiToast('error', data.error || aiText('saveError'));
                     return;
                 }
                 const payload = data.data || {};
@@ -575,7 +625,7 @@ function aiConfigPage() {
                 };
             } catch (error) {
                 console.error('Failed to load model override', error);
-                showAiToast('error', '{{ _('config.save_error') }}');
+                showAiToast('error', aiText('saveError'));
             } finally {
                 this.modelOverrideLoading = false;
             }
@@ -594,13 +644,13 @@ function aiConfigPage() {
                 });
                 const data = await resp.json();
                 if (!data.success) {
-                    showAiToast('error', data.error || '{{ _('config.save_error') }}');
+                    showAiToast('error', data.error || aiText('saveError'));
                     return;
                 }
-                showAiToast('success', '{{ _('config.ai_model_override_saved') }}');
+                showAiToast('success', aiText('modelOverrideSaved'));
             } catch (error) {
                 console.error('Failed to save model override', error);
-                showAiToast('error', '{{ _('config.save_error') }}');
+                showAiToast('error', aiText('saveError'));
             } finally {
                 this.modelOverrideLoading = false;
             }
@@ -617,14 +667,14 @@ function aiConfigPage() {
                 });
                 const data = await resp.json();
                 if (!data.success) {
-                    showAiToast('error', data.error || '{{ _('config.save_error') }}');
+                    showAiToast('error', data.error || aiText('saveError'));
                     return;
                 }
                 await this.loadModelOverride();
-                showAiToast('success', '{{ _('config.ai_model_override_cleared') }}');
+                showAiToast('success', aiText('modelOverrideCleared'));
             } catch (error) {
                 console.error('Failed to clear model override', error);
-                showAiToast('error', '{{ _('config.save_error') }}');
+                showAiToast('error', aiText('saveError'));
             } finally {
                 this.modelOverrideLoading = false;
             }
@@ -633,18 +683,18 @@ function aiConfigPage() {
             const payload = JSON.parse(JSON.stringify(this.form));
             const resp = await fetch('/api/v1/config/ai/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const data = await resp.json();
-            if (!data.success) { showAiToast('error', data.error || '保存失败'); return; }
-            showAiToast('success', '账号已保存');
+            if (!data.success) { showAiToast('error', data.error || aiText('accountSaveFailed')); return; }
+            showAiToast('success', aiText('accountSaved'));
             await this.loadAccounts();
             this.editAccount(data.data.account);
             if (!this.bindings.main.primary.account && this.accounts[0]) this.bindings = emptyBindings(this.accounts);
         },
         async deleteAccount(id) {
-            if (!confirm('确定删除该账号？')) return;
+            if (!confirm(aiText('accountDeleteConfirm'))) return;
             const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
             const data = await resp.json();
-            if (!data.success) { showAiToast('error', data.error || '删除失败'); return; }
-            showAiToast('success', '账号已删除');
+            if (!data.success) { showAiToast('error', data.error || aiText('accountDeleteFailed')); return; }
+            showAiToast('success', aiText('accountDeleted'));
             await this.loadAccounts();
             await this.loadBindings();
             this.newAccount();
@@ -653,7 +703,7 @@ function aiConfigPage() {
             const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(id)}/test`, { method: 'POST' });
             const data = await resp.json();
             const result = data.data || data;
-            showAiToast(result.success ? 'success' : 'error', result.message || '测试完成');
+            showAiToast(result.success ? 'success' : 'error', result.message || aiText('accountTestCompleted'));
         },
         async discoverModels() {
             if (!this.form.id) { await this.saveAccount(); }
@@ -665,13 +715,13 @@ function aiConfigPage() {
                 this.form.models = result.models || [];
                 if (!this.form.default_model && this.form.models.length) this.form.default_model = this.form.models[0];
                 await this.saveAccount();
-                showAiToast('success', `获取到 ${this.form.models.length} 个模型并已保存`);
+                showAiToast('success', aiText('modelsFetched', { count: this.form.models.length }));
             } else {
-                showAiToast('error', result.message || '获取模型失败');
+                showAiToast('error', result.message || aiText('modelsFetchFailed'));
             }
         },
         roleLabel(role) {
-            return { main: '主模型', summary: '辅助/摘要模型', agent_team: 'Agent Team 模型' }[role] || role;
+            return AI_LOCALE.roles[role] || role;
         },
         addFallback(role) {
             const first = this.accounts[0];
@@ -681,8 +731,8 @@ function aiConfigPage() {
         async saveBindings() {
             const resp = await fetch('/api/v1/config/ai/bindings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bindings: this.bindings }) });
             const data = await resp.json();
-            if (!data.success) { showAiToast('error', data.error || '保存失败'); return; }
-            showAiToast('success', '角色绑定已保存');
+            if (!data.success) { showAiToast('error', data.error || aiText('bindingsSaveFailed')); return; }
+            showAiToast('success', aiText('bindingsSaved'));
         },
         async loadStrategy() {
             const resp = await fetch('/api/v1/config/ai/settings');
@@ -701,8 +751,8 @@ function aiConfigPage() {
         async saveStrategy() {
             const resp = await fetch('/api/v1/config/ai/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.strategy) });
             const data = await resp.json();
-            if (!data.success) { showAiToast('error', data.error || '保存失败'); return; }
-            showAiToast('success', '调用策略已保存');
+            if (!data.success) { showAiToast('error', data.error || aiText('strategySaveFailed')); return; }
+            showAiToast('success', aiText('strategySaved'));
         },
     };
 }

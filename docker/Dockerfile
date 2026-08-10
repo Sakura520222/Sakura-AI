@@ -66,13 +66,17 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 # ── 应用代码（显式 COPY，不用 COPY . .）──
 WORKDIR /app
 COPY backend ./backend
-COPY config ./config
+# Keep immutable defaults outside the persistent /app/config volume.  The
+# entrypoint deep-merges these defaults into missing/new keys while preserving
+# every existing user value (including setup credentials in connection.json).
+COPY config ./config-defaults
 COPY scripts ./scripts
 COPY res ./res
 COPY requirements.txt .
 
 # 运行时目录（Agent 工作区 / Skills 由 compose 卷挂载，此处仅为默认目录）
-RUN mkdir -p logs workplace Skills data/chroma
+RUN mkdir -p logs workplace Skills data/chroma config \
+    && chmod 0755 /app/scripts/docker-entrypoint.sh
 
 # 暴露端口
 EXPOSE 8000
@@ -82,4 +86,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # 启动命令；即使第三方或未知长连接未主动退出，也限制优雅停机等待时间。
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]
