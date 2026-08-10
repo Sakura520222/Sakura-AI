@@ -40,6 +40,55 @@ def test_builtin_provider_allows_declared_endpoint_and_region_variants():
     assert ok is True
     assert message == ""
 
+    ok, message = validate_provider_base_url(
+        "qwen",
+        "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+        protocol="openai-compatible",
+    )
+    assert ok is True
+    assert message == ""
+
+
+def test_builtin_provider_rejects_untrusted_siblings_of_documented_region_host():
+    """A public suffix must never act as an implicit provider allow-list."""
+    for host in (
+        "evil.aliyuncs.com",
+        "attacker.dashscope.aliyuncs.com",
+        "evil.coding.dashscope.aliyuncs.com",
+        "attacker.api.openai.com",
+    ):
+        provider = (
+            "qwen-coding-plan"
+            if "coding" in host
+            else "openai"
+            if "openai" in host
+            else "qwen"
+        )
+        ok, message = validate_provider_base_url(
+            provider,
+            f"https://{host}/v1",
+            protocol="openai-compatible",
+        )
+        assert ok is False, (provider, host, message)
+
+
+def test_builtin_provider_allows_only_documented_regional_aliases():
+    ok, message = validate_provider_base_url(
+        "qwen-coding-plan",
+        "https://coding-intl.dashscope.aliyuncs.com/v1",
+        protocol="openai-compatible",
+    )
+    assert ok is True
+    assert message == ""
+
+    ok, message = validate_provider_base_url(
+        "moonshot",
+        "https://api.moonshot.cn/v1",
+        protocol="openai-compatible",
+    )
+    assert ok is True
+    assert message == ""
+
 
 def test_custom_provider_allows_https_and_local_http_endpoints():
     ok, message = validate_provider_base_url("custom", "https://proxy.example/v1")

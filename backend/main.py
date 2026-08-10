@@ -150,320 +150,325 @@ async def lifespan(app: FastAPI):
         reset_runtime_supervisor,
     )
 
-    # 启动时
-    _startup_started_at = time.time()
-    logger.info("🚀 Sakura AI 启动中...")
-
-    # Install the admission gate before any background task can be created. A
-    # reset request may race startup/shutdown, so the supervisor is always
-    # present on app.state and is replaced after a previous lifespan quiesced.
-    existing_supervisor = getattr(
-        getattr(app, "state", None), "database_reset_runtime_supervisor", None
-    )
-    if existing_supervisor is None or getattr(existing_supervisor, "quiesced", False):
-        existing_supervisor = DatabaseResetRuntimeSupervisor()
-        app.state.database_reset_runtime_supervisor = existing_supervisor
-    runtime_context_token = bind_runtime_supervisor(existing_supervisor)
-    from backend.webui.sse import sse_manager
-
-    sse_manager.resume()
-    # Keep the configured timeout available to the shared quiesce helper. This
-    # also lets isolated lifespan tests override ``main.settings`` safely.
-    app.state.activity_outbox_shutdown_timeout_seconds = (
-        settings.activity_outbox_shutdown_timeout_seconds
-    )
-
-    telegram_task = None
-    redis_listener_task = None
-    outbox_dispatcher = None
-    scan_scheduler = None
-    quota_reset_scheduler = None
-    star_aid_scheduler = None
-    update_checker = None
-
-    if not is_bootstrap_mode():
-        # 正常模式：完整启动所有服务
-        # 1. 从 connection.json 读取 DATABASE_URL 并设置到 Settings
-        conn_config = read_connection_config()
-        database_url = conn_config.get("database_url", "")
-        if database_url:
-            settings.database_url = database_url
-            logger.info("📊 从 connection.json 加载 DATABASE_URL")
-        else:
-            logger.warning(
-                "⚠️ connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载"
-            )
-            database_url = settings.database_url
-
-        if not database_url:
-            logger.error(
-                "❌ 无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
-            )
-            # 无法连接数据库，进入 bootstrap 模式引导用户配置
-            logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
-        else:
-            # 2. 初始化数据库
-            try:
-                from backend.models import init_db
-
-                await init_db()
-                logger.info("✅ 数据库初始化成功")
-            except Exception:
-                logger.exception("❌ 数据库初始化失败，停止启动")
-                raise
-
-            # 3. 从数据库加载全部配置到 Settings 单例
-            try:
-                from backend.core.config import load_dynamic_configs_to_settings
-
-                await load_dynamic_configs_to_settings()
-                logger.info("✅ 配置已从数据库加载到 Settings")
-            except Exception as e:
-                logger.warning(f"⚠️ 加载配置失败: {e}")
-
-            # 打印关键配置（在动态配置加载后，确保显示实际值）
-            logger.info(f"📊 日志级别: {settings.log_level}")
-            logger.info(f"🌐 应用域名: {settings.app_domain}")
-
-            # 检测默认 JWT 密钥（必须在动态配置加载后检查）
-            if settings.webui_secret_key == "change-me-in-production":
-                logger.warning(
-                    "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
-                )
-
-            # 4. 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
-            missing = settings.validate_required_fields()
-            if missing:
-                logger.warning(
-                    f"⚠️ 以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
-                )
-
-            # 知识提取配置自检 / Knowledge extraction config self-check
-            try:
-                ke_enabled = settings.sakura_knowledge_extraction_enabled
-                ke_interval = settings.sakura_extraction_min_reflections
-                logger.info(
-                    f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
-                )
-                if ke_enabled and not ke_interval:
-                    logger.warning(
-                        "⚠️ 知识提取已启用但 extraction_interval 为 0 或空，将使用默认值 10"
-                    )
-            except Exception as e:
-                logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
-
-            if _should_start_background_tasks(settings):
-                # 启动 Telegram Bot（后台任务）
-                try:
-                    telegram_task = create_registered_background_task(
-                        start_telegram_bot(), "telegram_listener"
-                    )
-                    logger.info("✅ Telegram Bot 已启动")
-                except Exception as e:
-                    logger.error(f"❌ Telegram Bot 启动失败: {e}")
-
-                # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
-                try:
-                    from backend.webui.sse import start_redis_listener
-
-                    redis_listener_task = create_registered_background_task(
-                        start_redis_listener(), "sse_redis_listener"
-                    )
-                    logger.info("✅ SSE Redis Pub/Sub 监听已启动")
-                except Exception as e:
-                    logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
-
-                # 自愈活动 cursor signing secret（已部署实例可能 Setup 时未生成）
-                try:
-                    from backend.core.setup_service import (
-                        ensure_activity_cursor_signing_secret,
-                    )
-
-                    await ensure_activity_cursor_signing_secret()
-                except Exception as e:
-                    logger.warning(f"⚠️ 活动 cursor signing secret 自愈失败: {e}")
-
-                # 启动活动观测 Outbox dispatcher（授权器由应用注入）
-                try:
-                    from backend.models import database as db_module
-                    from backend.services.activity_observability.access_service import (
-                        ActivityAccessService,
-                        CursorConfig,
-                    )
-                    from backend.services.activity_observability.outbox_service import (
-                        OutboxDispatcher,
-                        OutboxDispatcherConfig,
-                        OutboxRetryPolicy,
-                    )
-
-                    scope_authorizer = getattr(
-                        app.state, "activity_scope_authorizer", None
-                    )
-                    if scope_authorizer is None:
-                        from backend.services.activity_observability.legacy_scope_authorizer import (
-                            LegacyRepositoryScopeAuthorizer,
-                        )
-
-                        scope_authorizer = LegacyRepositoryScopeAuthorizer()
-                        app.state.activity_scope_authorizer = scope_authorizer
-                    if (
-                        settings.activity_cursor_signing_secret
-                        and db_module.async_session
-                        and scope_authorizer
-                    ):
-                        access_service = ActivityAccessService(
-                            authorizer=scope_authorizer,
-                            cursor_config=CursorConfig(
-                                secret=settings.activity_cursor_signing_secret,
-                                ttl_seconds=settings.activity_cursor_ttl_seconds,
-                                page_size=settings.activity_cursor_page_size,
-                            ),
-                        )
-                        outbox_dispatcher = OutboxDispatcher(
-                            db_module.async_session,
-                            authorizer=scope_authorizer,
-                            config=OutboxDispatcherConfig(
-                                batch_size=settings.activity_outbox_batch_size,
-                                poll_interval_seconds=settings.activity_outbox_poll_interval_seconds,
-                                claim_timeout_seconds=settings.activity_outbox_claim_timeout_seconds,
-                                retry_policy=OutboxRetryPolicy(
-                                    max_attempts=settings.activity_outbox_retry_max_attempts,
-                                    initial_delay_seconds=settings.activity_outbox_retry_initial_delay_seconds,
-                                    backoff_factor=settings.activity_outbox_retry_backoff_factor,
-                                    max_delay_seconds=settings.activity_outbox_retry_max_delay_seconds,
-                                ),
-                            ),
-                        )
-                        app.state.activity_access_service = access_service
-                        app.state.activity_outbox_dispatcher = outbox_dispatcher
-                        app.state.activity_outbox_task = asyncio.create_task(
-                            outbox_dispatcher.run()
-                        )
-                        logger.info("✅ 活动观测 Outbox dispatcher 已启动")
-                    elif not settings.activity_cursor_signing_secret:
-                        logger.warning(
-                            "活动 cursor signing secret 缺失，跳过新版 dispatcher"
-                        )
-                    else:
-                        logger.warning(
-                            "活动 repository scope authorizer 未注入，跳过新版 dispatcher"
-                        )
-                except Exception as e:
-                    logger.error(f"❌ 活动观测 Outbox dispatcher 启动失败: {e}")
-
-                # 启动仓库扫描调度器
-                try:
-                    from backend.services.scan_scheduler import ScanScheduler
-
-                    scan_scheduler = ScanScheduler()
-                    scan_scheduler.start()
-                    app.state.scan_scheduler = scan_scheduler
-                    existing_supervisor.register_scheduler(scan_scheduler)
-                except Exception as e:
-                    logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
-
-                # 启动配额重置调度器
-                try:
-                    from backend.services.quota_scheduler import QuotaResetScheduler
-
-                    quota_reset_scheduler = QuotaResetScheduler()
-                    quota_reset_scheduler.start()
-                    app.state.quota_reset_scheduler = quota_reset_scheduler
-                    existing_supervisor.register_scheduler(quota_reset_scheduler)
-                except Exception as e:
-                    logger.error(f"❌ 配额重置调度器启动失败: {e}")
-
-                # 启动仓库互助调度器
-                try:
-                    from backend.services.star_aid_scheduler import StarAidScheduler
-
-                    star_aid_scheduler = StarAidScheduler()
-                    star_aid_scheduler.start()
-                    app.state.star_aid_scheduler = star_aid_scheduler
-                    existing_supervisor.register_scheduler(star_aid_scheduler)
-                except Exception as e:
-                    logger.error(f"仓库互助调度器启动失败: {e}")
-
-                # 启动更新检查调度器（Slice 2）—— 唯一实例挂 app.state，供手动端点共用
-                try:
-                    from backend.services.update_checker import UpdateChecker
-
-                    update_checker = UpdateChecker()
-                    update_checker.start()
-                    app.state.update_checker = update_checker
-                    existing_supervisor.register_scheduler(update_checker)
-                    logger.info("✅ 更新检查调度器已启动（60min 周期）")
-                except Exception as e:
-                    logger.error(f"❌ 更新检查调度器启动失败: {e}")
-            else:
-                logger.warning("🧪 本地开发模式：已跳过后台任务启动")
-    else:
-        logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
-        logger.info("请访问 /setup 完成初始配置")
-        # 生成 Setup Token：用户需从日志中获取 Token 才能访问 Setup Wizard
-        generate_setup_token()
-
-    # 记录启动完成时间
-    _startup_finished_at = time.time()
-    _startup_duration = _startup_finished_at - _startup_started_at
-    logger.info(
-        "✅ Sakura AI 启动完成，耗时 {}",
-        _format_duration(_startup_duration),
-    )
-
-    yield
-
-    # 关闭时
-    logger.info("👋 Sakura AI 关闭中...")
-
-    # Close admission and await all DB-backed schedulers/workers before the
-    # remaining clients are torn down. The reset path calls the same helper;
-    # it is idempotent after a successful quiesce.
+    runtime_context_token = None
     try:
-        await quiesce_database_reset_runtime(app)
-    except Exception as exc:
-        logger.error(
-            "❌ 运行时静默未完成，应用关闭将继续但数据库重置必须停止: {}",
-            exc,
+        # 启动时
+        _startup_started_at = time.time()
+        logger.info("🚀 Sakura AI 启动中...")
+
+        # Install the admission gate before any background task can be created. A
+        # reset request may race startup/shutdown, so the supervisor is always
+        # present on app.state and is replaced after a previous lifespan quiesced.
+        existing_supervisor = getattr(
+            getattr(app, "state", None), "database_reset_runtime_supervisor", None
+        )
+        if existing_supervisor is None or getattr(existing_supervisor, "quiesced", False):
+            existing_supervisor = DatabaseResetRuntimeSupervisor()
+            app.state.database_reset_runtime_supervisor = existing_supervisor
+        runtime_context_token = bind_runtime_supervisor(existing_supervisor)
+        from backend.webui.sse import sse_manager
+
+        sse_manager.resume()
+        # Keep the configured timeout available to the shared quiesce helper. This
+        # also lets isolated lifespan tests override ``main.settings`` safely.
+        app.state.activity_outbox_shutdown_timeout_seconds = (
+            settings.activity_outbox_shutdown_timeout_seconds
         )
 
-    # 关闭服务客户端（嵌入服务和重排序服务）
-    from backend.services.embedding_service import (
-        close_embedding_service,
-        close_reranker_service,
-    )
+        telegram_task = None
+        redis_listener_task = None
+        outbox_dispatcher = None
+        scan_scheduler = None
+        quota_reset_scheduler = None
+        star_aid_scheduler = None
+        update_checker = None
 
-    try:
-        await close_embedding_service()
-        await close_reranker_service()
-        logger.info("✅ 服务客户端已关闭")
-    except Exception as e:
-        logger.error(f"❌ 关闭服务客户端时出错: {e}")
+        if not is_bootstrap_mode():
+            # 正常模式：完整启动所有服务
+            # 1. 从 connection.json 读取 DATABASE_URL 并设置到 Settings
+            conn_config = read_connection_config()
+            database_url = conn_config.get("database_url", "")
+            if database_url:
+                settings.database_url = database_url
+                logger.info("📊 从 connection.json 加载 DATABASE_URL")
+            else:
+                logger.warning(
+                    "⚠️ connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载"
+                )
+                database_url = settings.database_url
 
-    # 停止 Telegram Bot
-    try:
-        await stop_telegram_bot()
-        if telegram_task:
-            telegram_task.cancel()
+            if not database_url:
+                logger.error(
+                    "❌ 无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
+                )
+                # 无法连接数据库，进入 bootstrap 模式引导用户配置
+                logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
+            else:
+                # 2. 初始化数据库
+                try:
+                    from backend.models import init_db
+
+                    await init_db()
+                    logger.info("✅ 数据库初始化成功")
+                except Exception:
+                    logger.exception("❌ 数据库初始化失败，停止启动")
+                    raise
+
+                # 3. 从数据库加载全部配置到 Settings 单例
+                try:
+                    from backend.core.config import load_dynamic_configs_to_settings
+
+                    await load_dynamic_configs_to_settings()
+                    logger.info("✅ 配置已从数据库加载到 Settings")
+                except Exception as e:
+                    logger.warning(f"⚠️ 加载配置失败: {e}")
+
+                # 打印关键配置（在动态配置加载后，确保显示实际值）
+                logger.info(f"📊 日志级别: {settings.log_level}")
+                logger.info(f"🌐 应用域名: {settings.app_domain}")
+
+                # 检测默认 JWT 密钥（必须在动态配置加载后检查）
+                if settings.webui_secret_key == "change-me-in-production":
+                    logger.warning(
+                        "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
+                    )
+
+                # 4. 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
+                missing = settings.validate_required_fields()
+                if missing:
+                    logger.warning(
+                        f"⚠️ 以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
+                    )
+
+                # 知识提取配置自检 / Knowledge extraction config self-check
+                try:
+                    ke_enabled = settings.sakura_knowledge_extraction_enabled
+                    ke_interval = settings.sakura_extraction_min_reflections
+                    logger.info(
+                        f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
+                    )
+                    if ke_enabled and not ke_interval:
+                        logger.warning(
+                            "⚠️ 知识提取已启用但 extraction_interval 为 0 或空，将使用默认值 10"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
+
+                if _should_start_background_tasks(settings):
+                    # 启动 Telegram Bot（后台任务）
+                    try:
+                        telegram_task = create_registered_background_task(
+                            start_telegram_bot(), "telegram_listener"
+                        )
+                        logger.info("✅ Telegram Bot 已启动")
+                    except Exception as e:
+                        logger.error(f"❌ Telegram Bot 启动失败: {e}")
+
+                    # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
+                    try:
+                        from backend.webui.sse import start_redis_listener
+
+                        redis_listener_task = create_registered_background_task(
+                            start_redis_listener(), "sse_redis_listener"
+                        )
+                        logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+                    except Exception as e:
+                        logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+
+                    # 自愈活动 cursor signing secret（已部署实例可能 Setup 时未生成）
+                    try:
+                        from backend.core.setup_service import (
+                            ensure_activity_cursor_signing_secret,
+                        )
+
+                        await ensure_activity_cursor_signing_secret()
+                    except Exception as e:
+                        logger.warning(f"⚠️ 活动 cursor signing secret 自愈失败: {e}")
+
+                    # 启动活动观测 Outbox dispatcher（授权器由应用注入）
+                    try:
+                        from backend.models import database as db_module
+                        from backend.services.activity_observability.access_service import (
+                            ActivityAccessService,
+                            CursorConfig,
+                        )
+                        from backend.services.activity_observability.outbox_service import (
+                            OutboxDispatcher,
+                            OutboxDispatcherConfig,
+                            OutboxRetryPolicy,
+                        )
+
+                        scope_authorizer = getattr(
+                            app.state, "activity_scope_authorizer", None
+                        )
+                        if scope_authorizer is None:
+                            from backend.services.activity_observability.legacy_scope_authorizer import (
+                                LegacyRepositoryScopeAuthorizer,
+                            )
+
+                            scope_authorizer = LegacyRepositoryScopeAuthorizer()
+                            app.state.activity_scope_authorizer = scope_authorizer
+                        if (
+                            settings.activity_cursor_signing_secret
+                            and db_module.async_session
+                            and scope_authorizer
+                        ):
+                            access_service = ActivityAccessService(
+                                authorizer=scope_authorizer,
+                                cursor_config=CursorConfig(
+                                    secret=settings.activity_cursor_signing_secret,
+                                    ttl_seconds=settings.activity_cursor_ttl_seconds,
+                                    page_size=settings.activity_cursor_page_size,
+                                ),
+                            )
+                            outbox_dispatcher = OutboxDispatcher(
+                                db_module.async_session,
+                                authorizer=scope_authorizer,
+                                config=OutboxDispatcherConfig(
+                                    batch_size=settings.activity_outbox_batch_size,
+                                    poll_interval_seconds=settings.activity_outbox_poll_interval_seconds,
+                                    claim_timeout_seconds=settings.activity_outbox_claim_timeout_seconds,
+                                    artifact_purge_interval_seconds=settings.activity_artifact_purge_interval_seconds,
+                                    retry_policy=OutboxRetryPolicy(
+                                        max_attempts=settings.activity_outbox_retry_max_attempts,
+                                        initial_delay_seconds=settings.activity_outbox_retry_initial_delay_seconds,
+                                        backoff_factor=settings.activity_outbox_retry_backoff_factor,
+                                        max_delay_seconds=settings.activity_outbox_retry_max_delay_seconds,
+                                    ),
+                                ),
+                            )
+                            app.state.activity_access_service = access_service
+                            app.state.activity_outbox_dispatcher = outbox_dispatcher
+                            app.state.activity_outbox_task = asyncio.create_task(
+                                outbox_dispatcher.run()
+                            )
+                            logger.info("✅ 活动观测 Outbox dispatcher 已启动")
+                        elif not settings.activity_cursor_signing_secret:
+                            logger.warning(
+                                "活动 cursor signing secret 缺失，跳过新版 dispatcher"
+                            )
+                        else:
+                            logger.warning(
+                                "活动 repository scope authorizer 未注入，跳过新版 dispatcher"
+                            )
+                    except Exception as e:
+                        logger.error(f"❌ 活动观测 Outbox dispatcher 启动失败: {e}")
+
+                    # 启动仓库扫描调度器
+                    try:
+                        from backend.services.scan_scheduler import ScanScheduler
+
+                        scan_scheduler = ScanScheduler()
+                        scan_scheduler.start()
+                        app.state.scan_scheduler = scan_scheduler
+                        existing_supervisor.register_scheduler(scan_scheduler)
+                    except Exception as e:
+                        logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
+
+                    # 启动配额重置调度器
+                    try:
+                        from backend.services.quota_scheduler import QuotaResetScheduler
+
+                        quota_reset_scheduler = QuotaResetScheduler()
+                        quota_reset_scheduler.start()
+                        app.state.quota_reset_scheduler = quota_reset_scheduler
+                        existing_supervisor.register_scheduler(quota_reset_scheduler)
+                    except Exception as e:
+                        logger.error(f"❌ 配额重置调度器启动失败: {e}")
+
+                    # 启动仓库互助调度器
+                    try:
+                        from backend.services.star_aid_scheduler import StarAidScheduler
+
+                        star_aid_scheduler = StarAidScheduler()
+                        star_aid_scheduler.start()
+                        app.state.star_aid_scheduler = star_aid_scheduler
+                        existing_supervisor.register_scheduler(star_aid_scheduler)
+                    except Exception as e:
+                        logger.error(f"仓库互助调度器启动失败: {e}")
+
+                    # 启动更新检查调度器（Slice 2）—— 唯一实例挂 app.state，供手动端点共用
+                    try:
+                        from backend.services.update_checker import UpdateChecker
+
+                        update_checker = UpdateChecker()
+                        update_checker.start()
+                        app.state.update_checker = update_checker
+                        existing_supervisor.register_scheduler(update_checker)
+                        logger.info("✅ 更新检查调度器已启动（60min 周期）")
+                    except Exception as e:
+                        logger.error(f"❌ 更新检查调度器启动失败: {e}")
+                else:
+                    logger.warning("🧪 本地开发模式：已跳过后台任务启动")
+        else:
+            logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
+            logger.info("请访问 /setup 完成初始配置")
+            # 生成 Setup Token：用户需从日志中获取 Token 才能访问 Setup Wizard
+            generate_setup_token()
+
+        # 记录启动完成时间
+        _startup_finished_at = time.time()
+        _startup_duration = _startup_finished_at - _startup_started_at
+        logger.info(
+            "✅ Sakura AI 启动完成，耗时 {}",
+            _format_duration(_startup_duration),
+        )
+
+        yield
+
+        # 关闭时
+        logger.info("👋 Sakura AI 关闭中...")
+
+        # Close admission and await all DB-backed schedulers/workers before the
+        # remaining clients are torn down. The reset path calls the same helper;
+        # it is idempotent after a successful quiesce.
+        try:
+            await quiesce_database_reset_runtime(app)
+        except Exception as exc:
+            logger.error(
+                "❌ 运行时静默未完成，应用关闭将继续但数据库重置必须停止: {}",
+                exc,
+            )
+
+        # 关闭服务客户端（嵌入服务和重排序服务）
+        from backend.services.embedding_service import (
+            close_embedding_service,
+            close_reranker_service,
+        )
+
+        try:
+            await close_embedding_service()
+            await close_reranker_service()
+            logger.info("✅ 服务客户端已关闭")
+        except Exception as e:
+            logger.error(f"❌ 关闭服务客户端时出错: {e}")
+
+        # 停止 Telegram Bot
+        try:
+            await stop_telegram_bot()
+            if telegram_task:
+                telegram_task.cancel()
+                try:
+                    await telegram_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception as e:
+            logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
+
+        # 停止 SSE Redis Pub/Sub 监听
+        if redis_listener_task:
+            redis_listener_task.cancel()
             try:
-                await telegram_task
+                await redis_listener_task
             except asyncio.CancelledError:
                 pass
-    except Exception as e:
-        logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
 
-    # 停止 SSE Redis Pub/Sub 监听
-    if redis_listener_task:
-        redis_listener_task.cancel()
-        try:
-            await redis_listener_task
-        except asyncio.CancelledError:
-            pass
-
-    # Scheduler/worker/SSE/Outbox handles were stopped by the shared runtime
-    # supervisor above. Keep local variables for startup diagnostics and for
-    # backwards-compatible monkeypatches in isolated lifespan tests.
-    reset_runtime_supervisor(runtime_context_token)
+        # Scheduler/worker/SSE/Outbox handles were stopped by the shared runtime
+        # supervisor above. Keep local variables for startup diagnostics and for
+        # backwards-compatible monkeypatches in isolated lifespan tests.
+    finally:
+        if runtime_context_token is not None:
+            reset_runtime_supervisor(runtime_context_token)
 
 
 # 创建FastAPI应用

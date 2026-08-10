@@ -503,6 +503,57 @@ async def test_hidden_events_advance_cursor_without_returning_or_replaying(db):
 
 
 @pytest.mark.asyncio
+async def test_event_cursor_stops_before_omitted_visible_event(db):
+    """A full page must not consume the first visible row of the next page."""
+
+    session = _session(db)
+    session.session_event_sequence = 4
+    for sequence in range(1, 5):
+        _event(db, session.id, sequence, "public", {"status": str(sequence)})
+    authorizer = ScopeAuthorizer()
+    access = _service(db, authorizer)
+    user = {"user_id": "u", "repo": "owner/repo-1"}
+
+    first_page = await access.list_events_after(session.id, user)
+    assert [row["sequence"] for row in first_page["events"]] == [1, 2]
+    assert first_page["last_scanned_sequence"] == 2
+
+    second_page = await access.list_events_after(
+        session.id,
+        user,
+        cursor=first_page["cursor"],
+    )
+    assert [row["sequence"] for row in second_page["events"]] == [3, 4]
+    assert second_page["last_scanned_sequence"] == 4
+
+
+@pytest.mark.asyncio
+async def test_hidden_events_after_a_full_page_still_advance_before_next_visible_page(db):
+    session = _session(db)
+    session.session_event_sequence = 5
+    _event(db, session.id, 1, "public", {"status": "one"})
+    _event(db, session.id, 2, "public", {"status": "two"})
+    _event(db, session.id, 3, "hidden", {"status": "secret"})
+    _event(db, session.id, 4, "public", {"status": "four"})
+    _event(db, session.id, 5, "public", {"status": "five"})
+    authorizer = ScopeAuthorizer()
+    access = _service(db, authorizer)
+    user = {"user_id": "u", "repo": "owner/repo-1"}
+
+    first_page = await access.list_events_after(session.id, user)
+    assert [row["sequence"] for row in first_page["events"]] == [1, 2]
+    assert first_page["last_scanned_sequence"] == 3
+
+    second_page = await access.list_events_after(
+        session.id,
+        user,
+        cursor=first_page["cursor"],
+    )
+    assert [row["sequence"] for row in second_page["events"]] == [4, 5]
+    assert second_page["last_scanned_sequence"] == 5
+
+
+@pytest.mark.asyncio
 async def test_snapshot_high_water_and_cursor_are_same_sequence(db):
     session = _session(db)
     session.session_event_sequence = 3
@@ -1013,6 +1064,134 @@ async def test_session_list_projects_current_phase_model_thinking_and_fallback(d
     )
     assert snapshot["session"]["status"] == "completed"
     assert snapshot["session"]["session_status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_session_list_scans_past_unauthorized_newer_rows_until_page_is_full(db):
+    """Authorization filtering must not make older visible sessions disappear."""
+
+    class AllowListAuthorizer:
+        async def authorize_session(self, db, *, session, user):
+            return session.resource_identity.repo_full_name in user["repos"]
+
+        async def authorization_version(self, db, *, user):
+            return "v1"
+
+    base = datetime(2026, 7, 20, tzinfo=UTC)
+    for offset, number in enumerate(range(1, 5), start=4):
+        row = _session(db, number=number)
+        row.last_active_at = base + timedelta(days=offset)
+    visible_one = _session(db, number=100)
+    visible_one.last_active_at = base + timedelta(days=1)
+    visible_two = _session(db, number=101)
+    visible_two.last_active_at = base + timedelta(days=1)
+    db.session.commit()
+
+    user = {
+        "user_id": "u",
+        "repos": {"owner/repo-100", "owner/repo-101"},
+    }
+    result = await ActivityAccessService(
+        db,
+        authorizer=AllowListAuthorizer(),
+    ).list_sessions(user, limit=2, scan_buffer=1, db=db)
+
+    resources = [item["resource_number"] for item in result["sessions"]]
+    assert resources == ["101", "100"]
+    assert len(resources) == len(set(resources))
+
+
+@pytest.mark.asyncio
+async def test_session_list_scans_beyond_thousand_rows_and_null_keyset_tail(db):
+    """The per-batch limit must not become a global authorization cutoff."""
+
+    base = datetime(2026, 7, 20, tzinfo=UTC)
+    identities = []
+    # These rows are newer than the authorized session and force more than
+    # 1,000 unauthorized rows before the first visible result.
+    for number in range(1, 1002):
+        identities.append(
+            ActivityResourceIdentity(
+                source_system_instance="github.com",
+                repository_external_id=str(number),
+                resource_type="pr",
+                resource_number=str(number),
+                repo_full_name=f"owner/repo-{number}",
+            )
+        )
+    # Keep the authorized NULL timestamp older in the NULLS LAST/id DESC tail.
+    identities.append(
+        ActivityResourceIdentity(
+            source_system_instance="github.com",
+            repository_external_id="allowed",
+            resource_type="pr",
+            resource_number="allowed",
+            repo_full_name="owner/repo-allowed",
+        )
+    )
+    for number in range(1002, 1102):
+        identities.append(
+            ActivityResourceIdentity(
+                source_system_instance="github.com",
+                repository_external_id=f"null-{number}",
+                resource_type="pr",
+                resource_number=f"null-{number}",
+                repo_full_name=f"owner/repo-null-{number}",
+            )
+        )
+    db.session.add_all(identities)
+    db.session.flush()
+    sessions = []
+    for index, identity in enumerate(identities[:1001]):
+        sessions.append(
+            ActivityObservabilitySession(
+                resource_identity_id=identity.id,
+                session_kind="long_lived",
+                status="open",
+                session_event_sequence=0,
+                last_active_at=base + timedelta(days=1001 - index),
+            )
+        )
+    sessions.append(
+        ActivityObservabilitySession(
+            resource_identity_id=identities[1001].id,
+            session_kind="long_lived",
+            status="open",
+            session_event_sequence=0,
+            last_active_at=None,
+        )
+    )
+    for identity in identities[1002:]:
+        sessions.append(
+            ActivityObservabilitySession(
+                resource_identity_id=identity.id,
+                session_kind="long_lived",
+                status="open",
+                session_event_sequence=0,
+                last_active_at=None,
+            )
+        )
+    db.session.add_all(sessions)
+    db.session.flush()
+
+    access = ActivityAccessService(db)
+
+    async def project_batch(rows, user, db, projected, page_size):
+        for row in rows:
+            if row.resource_identity.repo_full_name in user["repos"]:
+                projected.append({"session_id": row.id})
+                if len(projected) >= page_size:
+                    return
+
+    access._project_session_batch = project_batch
+    result = await access.list_sessions(
+        {"repos": {"owner/repo-allowed"}},
+        limit=1,
+        scan_buffer=10,
+        db=db,
+    )
+
+    assert result["sessions"] == [{"session_id": sessions[1001].id}]
 
 
 @pytest.mark.asyncio

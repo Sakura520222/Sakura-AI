@@ -16,6 +16,11 @@ from backend.services.activity_observability.integration_service import (
     ObservedExecutionBundle,
 )
 from backend.services.comment_service import CommentService
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeSupervisor,
+    bind_runtime_supervisor,
+    reset_runtime_supervisor,
+)
 from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewDecision,
@@ -23,6 +28,17 @@ from backend.workers.review_worker import (
     _run_review_task_with_timeout,
     submit_review_task,
 )
+
+
+@pytest.fixture(autouse=True)
+def bound_runtime_supervisor():
+    """Direct worker tests explicitly model the lifespan runtime binding."""
+
+    token = bind_runtime_supervisor(DatabaseResetRuntimeSupervisor())
+    try:
+        yield
+    finally:
+        reset_runtime_supervisor(token)
 
 
 class _NoOpToolService:

@@ -190,14 +190,15 @@ class Settings(BaseSettings):
         description="允许采集 reasoning 的协议族，逗号分隔；为空表示不额外限制",
     )
     activity_artifact_retention_days: int = Field(7, ge=1)
+    activity_artifact_purge_interval_seconds: float = Field(3600.0, ge=1)
     activity_artifact_encryption_key_id: str = Field("app-fernet-v1")
     activity_artifact_super_admin_read_enabled: bool = Field(True)
     activity_outbox_batch_size: int = Field(50, ge=1)
     activity_outbox_poll_interval_seconds: float = Field(1.0, ge=0)
     activity_outbox_claim_timeout_seconds: float | None = Field(
-        None,
+        300.0,
         ge=0,
-        description="声明超时秒数；为空时不回收已声明 outbox",
+        description="声明超时秒数；默认 300 秒，显式为空时禁用超时回收",
     )
     activity_outbox_shutdown_timeout_seconds: float = Field(
         10.0,
@@ -2093,6 +2094,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "enable_findings_check",
         "analysis_min_interval_sec",
         "activity_outbox_claim_timeout_seconds",
+        "activity_artifact_purge_interval_seconds",
         "activity_outbox_shutdown_timeout_seconds",
         "web_search_enabled",
         "web_search_provider",

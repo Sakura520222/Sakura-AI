@@ -51,6 +51,14 @@ def test_activity_outbox_shutdown_timeout_is_database_configurable():
     assert required_key in get_all_db_config_keys()
 
 
+def test_activity_artifact_purge_interval_is_database_configurable():
+    required_key = "activity_artifact_purge_interval_seconds"
+
+    assert required_key in Settings.model_fields
+    assert required_key in BASIC_CONFIG_KEYS
+    assert required_key in get_all_db_config_keys()
+
+
 def test_mobile_oauth_allowed_redirect_uris_is_available_in_core_config_paths():
     required_key = "mobile_oauth_allowed_redirect_uris"
 

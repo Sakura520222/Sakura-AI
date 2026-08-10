@@ -5,9 +5,10 @@
 等待已经开始的后台任务，最后清理 SSE 与 activity outbox。任何未能完成的
 步骤都会抛出异常，因此调用方不会在运行时仍可能访问数据库时继续 DROP。
 
-Worker 模块不持有 FastAPI ``app``，所以 admission supervisor 通过当前进程的
-active instance 暴露。应用 lifespan 会在启动最早阶段安装 instance；测试及
-没有 lifespan 的调用默认获得一个开放的 supervisor。
+Worker 模块不持有 FastAPI ``app``，所以 admission supervisor 通过当前
+asyncio context 暴露。应用 lifespan 或 HTTP middleware 会在启动/请求最早
+阶段绑定 app supervisor；没有绑定时拒绝创建后台任务，以免产生
+无法被清库流程看到的孤儿 task。
 """
 
 from __future__ import annotations
@@ -31,6 +32,10 @@ class DatabaseResetRuntimeError(RuntimeError):
 
 class DatabaseResetRuntimeAdmissionClosed(DatabaseResetRuntimeError):
     """数据库重置已经开始，新的数据库后台工作被拒绝。"""
+
+
+class DatabaseResetRuntimeBindingError(DatabaseResetRuntimeError):
+    """当前 task 没有绑定 app runtime supervisor。"""
 
 
 class DatabaseResetRuntimeQuiesceError(DatabaseResetRuntimeError):
@@ -314,7 +319,7 @@ def reset_runtime_supervisor(
 
 
 def get_runtime_supervisor(app: Any | None = None) -> DatabaseResetRuntimeSupervisor:
-    """获取 app 绑定的 supervisor；无 app 时使用当前进程 instance。"""
+    """获取 app 绑定的 supervisor；无 app 时必须已绑定当前 context。"""
 
     if app is not None:
         state = getattr(app, "state", None)
@@ -326,8 +331,10 @@ def get_runtime_supervisor(app: Any | None = None) -> DatabaseResetRuntimeSuperv
         return supervisor
     supervisor = _runtime_supervisor_context.get()
     if supervisor is None:
-        supervisor = DatabaseResetRuntimeSupervisor()
-        _runtime_supervisor_context.set(supervisor)
+        raise DatabaseResetRuntimeBindingError(
+            "database reset runtime supervisor is not bound; "
+            "bind the app supervisor before creating database background work"
+        )
     return supervisor
 
 
@@ -352,7 +359,7 @@ def create_registered_background_task(awaitable: Any, source: str) -> asyncio.Ta
 
     try:
         ensure_background_admission(source)
-    except DatabaseResetRuntimeAdmissionClosed:
+    except (DatabaseResetRuntimeAdmissionClosed, DatabaseResetRuntimeBindingError):
         close = getattr(awaitable, "close", None)
         if callable(close):
             close()

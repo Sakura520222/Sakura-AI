@@ -290,6 +290,112 @@ async def test_restore_matches_user_and_remaps_related_records(monkeypatch):
     assert session.rolled_back is False
 
 
+@pytest.mark.asyncio
+async def test_restore_skips_nonportable_recovery_codes_and_preserves_existing(
+    monkeypatch,
+):
+    target = _user()
+    session = _RestoreSession([target])
+    existing = UserRecoveryCode(
+        id=9,
+        user_id=target.id,
+        code_hash="e" * 64,
+        used_at=None,
+        created_at=datetime(2026, 7, 1, 0, 0, 0),
+    )
+    session.recoveries.append(existing)
+    monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "d" * 64)
+    document = _minimal_document(
+        two_factor={
+            "mfa_required": False,
+            "totp_enabled": False,
+            "totp_secret": None,
+            "totp_enabled_at": None,
+            "totp_last_used_step": None,
+            "recovery_codes": [
+                {"code_hash": "f" * 64, "used_at": None, "created_at": None}
+            ],
+        }
+    )
+
+    result = await restore_user_backup(
+        session, parse_user_backup(serialize_user_backup(document))
+    )
+
+    assert result.recovery_codes_portable is False
+    assert result.recovery_codes_imported == 0
+    assert result.recovery_codes_deleted == 0
+    assert result.recovery_codes_skipped == 1
+    assert session.recoveries == [existing]
+
+
+@pytest.mark.asyncio
+async def test_restore_same_secret_replaces_recovery_codes_and_merges_passkey_sign_count(
+    monkeypatch,
+):
+    target = _user()
+    session = _RestoreSession([target])
+    existing_recovery = UserRecoveryCode(
+        id=9,
+        user_id=target.id,
+        code_hash="e" * 64,
+        used_at=None,
+        created_at=datetime(2026, 7, 1, 0, 0, 0),
+    )
+    existing_passkey = _passkey(user_id=target.id)
+    session.recoveries.append(existing_recovery)
+    session.passkeys.append(existing_passkey)
+    monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "c" * 64)
+    second_hash = credential_id_hash("credential-2")
+    document = _minimal_document(
+        two_factor={
+            "mfa_required": False,
+            "totp_enabled": False,
+            "totp_secret": None,
+            "totp_enabled_at": None,
+            "totp_last_used_step": None,
+            "recovery_codes": [
+                {"code_hash": "f" * 64, "used_at": None, "created_at": None}
+            ],
+        },
+        passkeys=[
+            {
+                "credential_id": "credential-1",
+                "credential_id_hash": credential_id_hash("credential-1"),
+                "public_key": "new-public-key",
+                "sign_count": 2,
+                "transports": "internal",
+                "device_name": "Laptop",
+                "backed_up": True,
+                "created_at": None,
+                "last_used_at": None,
+            },
+            {
+                "credential_id": "credential-2",
+                "credential_id_hash": second_hash,
+                "public_key": "second-public-key",
+                "sign_count": 7,
+                "transports": None,
+                "device_name": None,
+                "backed_up": False,
+                "created_at": None,
+                "last_used_at": None,
+            },
+        ],
+    )
+
+    result = await restore_user_backup(
+        session, parse_user_backup(serialize_user_backup(document))
+    )
+
+    assert result.recovery_codes_portable is True
+    assert result.recovery_codes_imported == 1
+    assert result.recovery_codes_deleted == 1
+    assert result.passkeys_updated == 1
+    assert result.passkeys_created == 1
+    assert existing_passkey.sign_count == 4
+
+
 def _route(path: str, method: str) -> APIRoute:
     for route in router.routes:
         if (
