@@ -10,7 +10,7 @@ cryptography>=44.0.2
 
 # AI集成
 openai>=1.10.0
-httpx>=0.27.0
+httpx>=0.28.1
 
 # 数据库
 sqlalchemy>=2.0.28,<2.1
