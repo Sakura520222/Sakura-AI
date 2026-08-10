@@ -11,6 +11,9 @@
 #   ./start.sh --status       # 查看当前构建/运行状态
 #   ./start.sh --attach       # 附加到正在进行的构建日志
 #   ./start.sh --stop         # 停止正在进行的构建
+#   ./start.sh --ps           # 查看服务容器状态
+#   ./start.sh --down         # 停止服务
+#   ./start.sh updater [action]  # 管理 host updater daemon（install/start/stop/status）
 #   ./start.sh --help         # 显示帮助
 
 set -euo pipefail
@@ -1157,6 +1160,7 @@ show_menu() {
     echo -e "  ${BOLD}[6]${RESET} 查看服务容器状态"
     echo -e "  ${BOLD}[7]${RESET} 停止服务"
     echo -e "  ${BOLD}[8]${RESET} 生产镜像部署 (--prod)"
+    echo -e "  ${BOLD}[9]${RESET} Updater daemon 管理"
     echo -e "  ${BOLD}[0]${RESET} 退出"
     echo ""
 
@@ -1171,8 +1175,35 @@ show_menu() {
         6) do_ps          ;;
         7) do_down        ;;
         8) do_start false true ;;
+        9) do_updater_menu ;;
         0) info "已退出" ; exit 0 ;;
         *) warn "无效选项: $choice" ; exit 1 ;;
+    esac
+}
+
+# Updater daemon 管理子菜单（host updater CLI 的交互入口）
+# 复用 cmd_updater：install/start/stop/status 对应底层同名子命令。
+do_updater_menu() {
+    echo ""
+    echo -e "${BOLD}Updater daemon 管理${RESET}"
+    echo -e "${BOLD}--------------------------${RESET}"
+    echo ""
+    echo -e "  ${BOLD}[1]${RESET} 安装 updater (需 root)"
+    echo -e "  ${BOLD}[2]${RESET} 启动 updater daemon"
+    echo -e "  ${BOLD}[3]${RESET} 停止 updater daemon"
+    echo -e "  ${BOLD}[4]${RESET} 查看 updater daemon 状态"
+    echo -e "  ${BOLD}[0]${RESET} 返回"
+    echo ""
+
+    local choice
+    read -rp "  请选择操作: " choice
+    case "$choice" in
+        1) cmd_updater install ;;
+        2) cmd_updater start  ;;
+        3) cmd_updater stop   ;;
+        4) cmd_updater status ;;
+        0) return 0 ;;
+        *) warn "无效选项: $choice" ; return 1 ;;
     esac
 }
 
