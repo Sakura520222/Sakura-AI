@@ -54,7 +54,10 @@ SIGKILL = getattr(signal, "SIGKILL", 9)
 def _patch_proc_open(monkeypatch, pid: int, *, stat: str | None = None, cmdline: bytes | None = None):
     """Serve fake /proc/{pid}/stat and /proc/{pid}/cmdline via builtins.open.
 
-    只劫持匹配 ``/proc/<pid>/`` 的路径；其余委托给真实 open（tests 自身文件读写不受影响）。
+    命中 ``/proc/<pid>/stat`` 或 ``/proc/<pid>/cmdline`` 时：有数据则返回 mock，
+    未提供数据则显式抛 ``FileNotFoundError``——绝不 fall through 到真实 /proc，
+    避免 Linux CI runner 上低 PID（如 1234 被 ``(sd-pam)`` 占用）读到真实进程。
+    其余路径委托给真实 open（tests 自身文件读写不受影响）。
     """
 
     real_open = open
@@ -63,9 +66,13 @@ def _patch_proc_open(monkeypatch, pid: int, *, stat: str | None = None, cmdline:
 
     def _fake_open(file, *args, **kwargs):
         file_str = str(file)
-        if stat is not None and file_str == stat_path:
+        if file_str == stat_path:
+            if stat is None:
+                raise FileNotFoundError(2, "No such file or directory", file_str)
             return io.StringIO(stat)
-        if cmdline is not None and file_str == cmdline_path:
+        if file_str == cmdline_path:
+            if cmdline is None:
+                raise FileNotFoundError(2, "No such file or directory", file_str)
             return io.BytesIO(cmdline)
         return real_open(file, *args, **kwargs)
 
@@ -219,8 +226,9 @@ def test_read_proc_starttime_handles_comm_with_spaces_and_parens(monkeypatch):
 
 
 def test_read_proc_starttime_returns_none_on_error(monkeypatch):
-    _patch_proc_open(monkeypatch, 1234, stat=STAT_LINE)  # 只 serve pid 1234
-    assert _read_proc_starttime(9999) is None  # pid 9999 → 真实 open → FileNotFoundError
+    # patch pid 1234 但不提供 stat → /proc/1234/stat 显式 FileNotFoundError（不依赖真实 /proc）
+    _patch_proc_open(monkeypatch, 1234)
+    assert _read_proc_starttime(1234) is None
 
 
 # =============================================================================
