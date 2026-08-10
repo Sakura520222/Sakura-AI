@@ -1,7 +1,8 @@
 # Sakura AI 生产部署 — Web + MySQL 8.4 + Redis 一键启动
 # 凭据固定为内部默认值（仅容器网络内可见）。如需自定义：
 #   修改 web.environment.DATABASE_URL 与 mysql.environment.MYSQL_PASSWORD / MYSQL_USER / MYSQL_DATABASE（需保持同步）。
-# 固定镜像版本：SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 docker compose -f docker-compose.prod.yml up -d
+# 固定镜像版本由 .deploy/deployment.env 中的 SAKURA_AI_IMAGE 指定：
+#   docker compose --env-file <deployment_env> -f docker-compose.prod.yml up -d
 services:
   web:
     image: ${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}

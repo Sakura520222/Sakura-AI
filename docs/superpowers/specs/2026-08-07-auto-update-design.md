@@ -18,7 +18,7 @@
 
 本设计**只检查、不自动安装**——后台 60 分钟检查仅用于提示，不触发自动更新（参考 Coolify 将 `check_frequency` 与 `auto_update` 分离的成熟做法）。其余按阶段排除：
 
-- **P0 不做**：源码模式自动更新、downgrade、rollback、历史版本切换、beta channel、自动备份、自动更新安装。
+- **P0 明确不做**：Source 自动更新、downgrade、rollback、历史版本切换、beta channel、自动备份、自动更新安装。
 - **P1 不做**：beta channel、数据库 schema 回滚、自动备份。
 - **永久不做**：数据库 schema 降级（应用迁移由新版本启动时自动执行，单向不可逆，参考 Nextcloud / Open WebUI 的明确警告）。
 
@@ -58,7 +58,7 @@
 │ Release / Manifest / SemVer 校验                  │
 │ Adapter Orchestrator                              │
 │                                                   │
-│ SourceAdapter            ImageAdapter             │
+│ SourceAdapter (P1)       ImageAdapter (Slice 4)   │
 │ ├─ git fetch --tags      ├─ docker pull           │
 │ ├─ checkout tag          ├─ update image ref      │
 │ ├─ install deps          ├─ compose up -d         │
@@ -66,12 +66,14 @@
 │ └─ health check          └─ rollback（P1）        │
 │                                                   │
 │ update-state.json   update.log                    │
-└──────────────────────┬────────────────────────────┘
-                       │ argv 化子进程
-                       ▼
-               start.sh internal <primitive>
-               （deployment bootstrap / host primitives）
+└───────────────────────────────────────────────────┘
 ```
+
+ImageAdapter（Slice 4）在 updater 内直接以
+`asyncio.create_subprocess_exec` 的 argv 调用执行 `docker` / `docker compose`，不依赖
+`start.sh` 的 `update`/`apply` 子命令或 shell 侧状态机。`start.sh` 只负责部署引导、daemon
+生命周期和宿主机原语。SourceAdapter（P1）仍可调用 `start.sh internal <primitive>` 等
+已存在的宿主机原语。
 
 ## 4. 信任边界与架构决策（Trust Boundary / ADR）
 
@@ -88,7 +90,7 @@ start.sh     不实现更新状态机
 
 > Updater owns update orchestration; `start.sh` owns deployment bootstrap and host primitives; WebUI owns presentation and authorization only.
 
-**Why：** 若 `start.sh` 保留另一套状态机（如 `start.sh update-internal vX.Y.Z` 一口气吃掉整个更新），实际会出现两套 updater——rollback 归 Python 还是 shell、进度归谁、超时归谁都无法回答。Python 层只编排（orchestration），实际 git/docker 动作通过细粒度原语（`start.sh internal image-pull vX.Y.Z`）执行。
+`start.sh` 仅提供部署引导、updater daemon 生命周期及经批准的宿主机原语，不承载完整更新流程或状态机。
 
 **ADR-2　业务容器永远不获得 Docker socket 访问权限。**
 
@@ -98,7 +100,7 @@ start.sh     不实现更新状态机
 
 **ADR-3　Updater 进程独立于 Sakura AI Web 生命周期。**
 
-Updater 作为宿主机独立服务运行（systemd 或自管理 daemon）。更新进入 RESTARTING 阶段时，Web 容器被销毁完全不影响 Updater 继续完成更新与拉起新版本。
+Updater 作为宿主机独立服务运行（systemd 或自管理 daemon）。更新进入 restarting 阶段时，Web 容器被销毁完全不影响 Updater 继续完成更新与拉起新版本。
 
 **Why：** 避免"WebUI 后端执行 `docker compose down` → 杀掉自己 → 执行更新的进程也死了 → 新容器无人启动"的经典死锁（CasaOS 文档专门警告此场景）。
 
@@ -148,7 +150,7 @@ P0 不实现 SourceAdapter，但**必须识别**源码部署。Version Manager �
 存在两个"接触 Release 数据"的组件，必须冻结唯一真相源：
 
 - **Backend UpdateChecker**（容器内）：只负责 **discovery / UI 展示**——扫描 Release、缓存、驱动 navbar badge。其数据可能过期或缓存被污染，**不是 destructive operation 的 gate**。
-- **Updater PREFLIGHT**（宿主机）：执行 destructive operation 前**必须重新获取并验证**指定 target Release + manifest。**Updater 的验证结果才是 authoritative gate。**
+- **Updater preflight**（宿主机）：执行 destructive operation 前**必须重新获取并验证**指定 target Release + manifest。**Updater 的验证结果才是 authoritative gate。**
 
 即使 UI 缓存过期或被污染，也无法绕过 host-side validation。
 
@@ -207,8 +209,8 @@ HTTP over Unix Domain Socket（FastAPI/Starlette + `uvicorn`，`uds=` 参数）�
 持久（跨 reboot 保留）：
 .deploy/updater/
 ├── sakura-ai-updater          # 二进制
-├── updater.pid                # daemon 模式 PID
-├── updater.log                # 日志
+├── daemon-meta.json          # daemon PID meta
+├── updater.log               # 日志
 ├── update-state.json          # 持久化状态
 └── updater.lock               # OS-level flock
 
@@ -250,7 +252,7 @@ Web 后端在首次连接时校验 `protocol_version` 兼容性，不兼容则�
 
 ### 7.4 Job 模型
 
-`POST /v1/update` / `/v1/rollback` 立即返回 `job_id`（`upd_019...`），Web 后端轮询 `GET /v1/jobs/{job_id}`。HTTP 请求**绝不挂着等更新完成**——RESTARTING 阶段 Web 后端会消失，长连接必然断开。
+`POST /v1/update` / `/v1/rollback` 立即返回 `job_id`（`upd_019...`），Web 后端轮询 `GET /v1/jobs/{job_id}`。HTTP 请求**绝不挂着等更新完成**——restarting 阶段 Web 后端会消失，长连接必然断开。
 
 ### 7.5 全局更新锁（P0 correctness）
 
@@ -264,7 +266,7 @@ Web 后端在首次连接时校验 `protocol_version` 兼容性，不兼容则�
 { "error": "update_in_progress", "job_id": "upd_xxx" }
 ```
 
-覆盖所有入口：浏览器 A、浏览器 B、`start.sh update apply` 同时触发均被串行化。
+覆盖所有入口：浏览器 A、浏览器 B 同时触发均被串行化。
 
 ### 7.6 崩溃恢复（Interrupted job reconcile）
 
@@ -294,11 +296,11 @@ active_job_id != null AND current_job.state 非 terminal
       changed=True（需持久化）
 
 active_job_id != null AND current_job.state terminal
-  → stale gate：上次 job 已写终态（SUCCESS/FAILED）但崩溃发生在清理
+  → stale gate：上一任务已写终态（`success`/`failed`）但崩溃发生在清理
     active_job_id 之前。保留 job 终态记录，清理 active_job_id，changed=True。
 ```
 
-`INTERRUPTED` 不是顶层 state，而是 `state="failed"` + `error_code="interrupted"`（FAILED 子态）。状态机只处理正式 P0 state，失败原因由 `error_code` 单独诊断。
+`interrupted` 不是顶层 state，而是 `state="failed"` + `error_code="interrupted"`（failed 子态）。状态机只处理正式 P0 state，失败原因由 `error_code` 单独诊断。
 
 真正自动断点续执行留待 P1+。验收标准"daemon 意外退出后自动拉起"只解决**进程恢复**，**更新事务恢复**由 reconcile + 管理员介入处理。
 
@@ -306,38 +308,44 @@ active_job_id != null AND current_job.state terminal
 
 ### 8.1 P0 状态
 
+P0 顶层状态 token 使用小写 `snake_case`，冻结集合如下：
+
 ```
-IDLE
-CHECKING
-UPDATE_AVAILABLE
-PREFLIGHT
-DOWNLOADING
-ACTIVATING
-RESTARTING
-HEALTH_CHECKING
-SUCCESS
-FAILED
+idle
+checking
+update_available
+preflight
+downloading
+activating
+restarting
+health_checking
+success
+failed
 ```
+
+`rolled_back` 不是 P0 顶层状态，而是现有代码保留的 P1 terminal token；
+`interrupted` 仍表示 `state="failed"` + `error_code="interrupted"`，不新增顶层
+`interrupted` 状态。
 
 ### 8.2 P1 追加
 
 ```
-BACKING_UP
-ROLLING_BACK
-ROLLED_BACK
+backing_up
+rolling_back
+rolled_back
 ```
 
-### 8.3 不设 MIGRATING 状态
+### 8.3 不设 migrating 状态
 
-应用没有 updater-controlled migration step——schema 迁移由新版本容器启动时 `migrate_schema_async()` 自动执行（[database.py](backend/models/database.py)）。Updater 既不控制也无法感知迁移的起止，凭空声称 `MIGRATING` 是不真实的。
+应用没有 updater-controlled migration step——schema 迁移由新版本容器启动时 `migrate_schema_async()` 自动执行（[database.py](backend/models/database.py)）。Updater 既不控制也无法感知迁移的起止，凭空声称 `migrating` 是不真实的。
 
 实际流程：
 
 ```
-ACTIVATING → RESTARTING → [新容器启动：create_all + _auto_migrate] → HEALTH_CHECKING
+activating → restarting → [新容器启动：create_all + _auto_migrate] → health_checking
 ```
 
-若未来应用在 `/health/ready` 暴露 `{ "phase": "database_migration" }`，Version Manager 可在 `HEALTH_CHECKING` 阶段显示"正在执行数据库迁移…"，但 Updater 状态机本身不增加 `MIGRATING`。
+若未来应用在 `/health/ready` 暴露 `{ "phase": "database_migration" }`，Version Manager 可在 `health_checking` 阶段显示"正在执行数据库迁移…"，但 Updater 状态机本身不增加 `migrating`。
 
 ### 8.4 状态持久化
 
@@ -368,7 +376,7 @@ ACTIVATING → RESTARTING → [新容器启动：create_all + _auto_migrate] →
 }
 ```
 
-`error_code` 是结构化失败原因（与 `state` 正交）：`state="failed"` + `error_code="interrupted"` 表示崩溃中断（§7.6），`error_code="health_check"` 表示健康检查失败。状态机只处理正式 P0 state（IDLE/.../SUCCESS/FAILED），失败原因由 `error_code` 单独诊断，**不新增 `INTERRUPTED` 顶层 state**。
+`error_code` 是结构化失败原因（与 `state` 正交）：`state="failed"` + `error_code="interrupted"` 表示崩溃中断（§7.6），`error_code="health_check"` 表示健康检查失败。状态机只处理正式 P0 state（`idle`/`checking`/`update_available`/`preflight`/`downloading`/`activating`/`restarting`/`health_checking`/`success`/`failed`），失败原因由 `error_code` 单独诊断，**不新增 `interrupted` 顶层 state**。
 
 **读取 fail-closed**（关键安全语义）：daemon 启动读取 state 时——
 
@@ -377,7 +385,7 @@ ACTIVATING → RESTARTING → [新容器启动：create_all + _auto_migrate] →
 
 绝不把损坏 state 当空 store（fail-open 会让 daemon 误以为 idle 而 Slice 4 允许新的 destructive update）；绝不把未来 `schema_version=2` 当 v1 静默读完再保存（会抹掉未识别字段）。`active_job_id` 与 `current_job.job_id` 不一致属 state corruption，reconcile 阶段 fail-closed（见 §7.6）。
 
-P0 即便不实现回滚，也必须记录 `from_image` / `from_digest`——用于故障诊断（"更新失败，原版本 3.0.0 / 原镜像 sha256:... / 失败阶段 HEALTH_CHECKING"），并为 P1 RollbackManager 铺路。
+P0 即便不实现回滚，也必须记录 `from_image` / `from_digest`——用于故障诊断（"更新失败，原版本 3.0.0 / 原镜像 sha256:... / 失败阶段 health_checking"），并为 P1 RollbackManager 铺路。
 
 ## 9. 镜像适配器（Image Adapter）— P0
 
@@ -386,51 +394,58 @@ P0 即便不实现回滚，也必须记录 `from_image` / `from_digest`——用
 ### 9.1 接口
 
 ```python
-class ImageDeploymentAdapter:
-    async def preflight(self, target_version: str) -> PreflightResult
-    async def prepare(self, target_version: str) -> None       # docker pull
-    async def activate(self, target_version: str) -> None      # 更新 image ref + compose up -d
-    async def restart(self) -> None                            # 已包含在 activate
-    async def health_check(self) -> HealthResult
+class ImageAdapter:
+    async def preflight_image(self, target_image: str) -> None  # docker manifest inspect
+    async def pull(self, target_image: str) -> None             # docker pull；不改 env
+    async def activate(self, target_image: str) -> None         # 原子写 env + compose up
+    async def health_check(self, target_version: str) -> None   # /health.version gate
 ```
+
+Slice 4 的 ImageAdapter 直接在 updater 内使用 `asyncio.create_subprocess_exec`，以 argv
+化调用执行 `docker` / `docker compose`；不依赖 `start.sh` 的 update/apply 子命令或
+`start.sh` 状态机。`start.sh` 只负责部署引导、daemon 生命周期和宿主机原语。
 
 ### 9.2 失败 SLA（关键原则）
 
 更新失败的恢复保证按阶段划分：
 
-- **PREFLIGHT / DOWNLOADING 失败**：当前运行版本**完全不受影响**（prepare 阶段不触碰运行容器——抄 Coolify 原则，`docker pull` 失败绝不碰正在运行的容器）。
-- **ACTIVATING 之后失败**（如 compose up 失败、health check 超时）：记录 `FAILED` + `from_version` / `from_image` / `from_digest` / 失败阶段。**P0 不承诺自动恢复服务**——旧容器已被替换，若新容器起不来则服务不可用，管理员依据诊断信息手动恢复（P1 RollbackManager 自动化）。
+- **preflight / downloading 失败**：当前运行版本**完全不受影响**（prepare 阶段不触碰运行容器——抄 Coolify 原则，`docker pull` 失败绝不碰正在运行的容器）。
+- **activating 之后失败**（如 compose up 失败、health check 超时）：记录 `failed` + `from_version` / `from_image` / `from_digest` / 失败阶段。**P0 不承诺自动恢复服务**——旧容器已被替换，若新容器起不来则服务不可用，管理员依据诊断信息手动恢复（P1 RollbackManager 自动化）。
 
 ### 9.3 流程
 
+Slice 4 的镜像更新由 updater 内的 ImageAdapter 直接编排 `docker` / `docker compose`。
+`start.sh` 不承载 `update`/`apply` 状态机；其职责仅限部署引导、daemon 生命周期和宿主机
+原语。
+
 ```
-PREFLIGHT
+checking → update_available → preflight
   ├─ 解析目标 Release v3.1.0
   ├─ 校验 ghcr.io/.../sakura-ai:v3.1.0 manifest 存在
   ├─ manifest.v1 校验通过（见 §12）
   ├─ 磁盘空间充足
   └─ 当前无其他 update job（全局锁）
 
-DOWNLOADING
+downloading
   └─ docker pull ghcr.io/sakura520222/sakura-ai:v3.1.0
 
-ACTIVATING
+activating
   ├─ 记录 from_image / from_digest
   ├─ 写 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0
-  └─ docker compose -f docker-compose.prod.yml up -d（force-recreate web）
+  └─ docker compose --env-file <deployment_env> -f <compose_file> up -d（force-recreate web）
 
-RESTARTING
+restarting
   └─ 等待旧容器退出、新容器就绪（新容器启动时自动 migrate）
 
-HEALTH_CHECKING
-  ├─ 轮询 GET /health（复用 start.sh 的 HEALTH_TIMEOUT 机制）
+health_checking
+  ├─ 轮询 GET /health（使用 ImageAdapter 自身的配置化 health timeout；不依赖 start.sh 状态机）
   └─ **版本验证 gate**（仅 /health 200 不足证明更新成功）：
      readiness == healthy
      AND reported_app_version == target_version
      ——/health 返回的 version 来自新容器 __version__，必须 == target；
-     否则标记 FAILED（如 compose 拉起旧镜像 / target 镜像 __version__ 与 tag 不一致）
+     否则标记 `failed`（如 compose 拉起旧镜像 / target 镜像 __version__ 与 tag 不一致）
 
-SUCCESS / FAILED
+success / failed
 ```
 
 ### 9.4 所有外部命令 argv 化
@@ -479,7 +494,7 @@ class SourceDeploymentAdapter:
 **P1 默认采用 git worktree / releases 目录 staging，不原地 detached checkout。** 原因：源码 compose 挂载的是当前源码目录（[docker-compose.yml](docker/docker-compose.yml) 的 `../backend:/app/backend`），in-place checkout 等于直接改 live deployment；而且目标版本代码在 checkout 前不在工作树，无法满足 §10.4 的"依赖停服前完成"。
 
 ```
-PREFLIGHT
+preflight
   ├─ 工作区是否干净（本地修改检测）
   ├─ git remote 可达
   └─ 磁盘空间（容纳新 release worktree）
@@ -490,12 +505,12 @@ PREPARING（当前版本正常运行，不动 live deployment）
   ├─ git worktree add releases/3.1.0 v3.1.0
   └─ 针对 releases/3.1.0 安装/验证依赖（pip install / uv sync）← 关键：停服前完成
 
-ACTIVATING
+activating
   ├─ 切换 current 软链 -> releases/3.1.0
   ├─ 更新 .deploy/deployment.env（source root 指向新 release）
-  └─ docker compose -f docker-compose.yml up -d（force-recreate web）
+  └─ docker compose --env-file <deployment_env> -f <compose_file> up -d（force-recreate web）
 
-RESTARTING → HEALTH_CHECKING（含版本验证 gate）→ SUCCESS / FAILED
+restarting → health_checking（含版本验证 gate）→ success / failed
 ```
 
 ### 10.3 版本切换策略
@@ -519,7 +534,7 @@ RESTARTING → HEALTH_CHECKING（含版本验证 gate）→ SUCCESS / FAILED
 
 ### 10.4 依赖在停服前安装
 
-**依赖必须在新版本启动前尽可能安装完成。** 否则"停掉服务 → pip 下载失败 → 服务彻底挂着"。当前 dev-compose 挂载了 `requirements.txt` 并在容器内安装，SourceAdapter 复用 [start.sh](start.sh) 现有的 pip-install-in-temp-container 逻辑（通过 `start.sh internal source-prepare` 原语）。
+**依赖必须在新版本启动前尽可能安装完成。** 否则"停掉服务 → pip 下载失败 → 服务彻底挂着"。当前 dev-compose 挂载了 `requirements.txt` 并在容器内安装；P1 SourceAdapter 可通过经批准的宿主机依赖准备原语完成停服前 staging，但该原语名称与实现不属于 Slice 4。
 
 ## 11. 服务后端（Service Backend）
 
@@ -571,7 +586,7 @@ WantedBy=multi-user.target
 
 `nohup` + PID 文件只能解决 SSH 断开 / shell 退出 / Sakura AI 容器重启，**不能解决宿主机 reboot**。兜底策略：
 
-- `start.sh start` / `start.sh restart` / `start.sh status` / `start.sh update check` 均调用 `ensure_updater_running()`，发现 daemon 死亡即拉起。
+- `start.sh start` / `start.sh restart` / `start.sh status` 均调用 `ensure_updater_running()`，发现 daemon 死亡即拉起。
 - 文档明示：非 systemd 模式下，用户若绕过 `start.sh`、只靠 Docker `restart: unless-stopped` 在 reboot 后恢复 Sakura AI，则 updater daemon 不一定恢复。
 - **禁止偷写 `@reboot` cron**（cron 不是所有环境都有）。
 
@@ -586,7 +601,7 @@ WantedBy=multi-user.target
   "schema_version": 1,
   "version": "3.1.0",
   "channel": "stable",
-  "min_upgrade_from": "3.0.0",
+  "min_upgrade_from": "0.0.0",
   "image": "ghcr.io/sakura520222/sakura-ai:v3.1.0",
   "updater": {
     "protocol_version": 1,
@@ -677,12 +692,12 @@ v2.13.0             [不兼容，禁止切换]
 
 ### 13.4 更新进度展示与 reconnect
 
-RESTARTING 期间 Web 后端消失，**浏览器无法继续轮询**（后端没了请求必失败），更不能直接访问宿主机 UDS。实际流程：
+`restarting` 期间 Web 后端消失，**浏览器无法继续轮询**（后端没了请求必失败），更不能直接访问宿主机 UDS。实际流程：
 
 ```
 浏览器将 job_id 存入 sessionStorage
 ↓
-RESTARTING 导致轮询请求 connection error
+restarting 导致轮询请求 connection error
 ↓
 前端进入 reconnecting 状态，指数退避重试
 ↓
@@ -690,7 +705,7 @@ RESTARTING 导致轮询请求 connection error
 ↓
 前端经 Web 后端 proxy 继续查询同一 job_id（Web 后端再走 UDS 问 updater）
 ↓
-显示最终 SUCCESS / FAILED
+显示最终 success / failed
 ```
 
 - 新 Web 后端恢复前：显示"更新进行中，正在重启服务…"
@@ -704,11 +719,11 @@ RESTARTING 导致轮询请求 connection error
 ```
 无更新：     v3.0.0
 有更新：     v3.0.0  ● v3.1.0 可用
-更新中：     v3.0.0  更新中 · HEALTH_CHECKING
+更新中：     v3.0.0  更新中 · health_checking
 失败：       v3.0.0  更新失败
 ```
 
-P0 显示当前状态名（如 `更新中 · DOWNLOADING`），**不显示无数学依据的百分比**；百分比留到 P1 进度阶段细化。
+P0 显示当前状态名（如 `更新中 · downloading`），**不显示无数学依据的百分比**；百分比留到 P1 进度阶段细化。
 
 点击整个版本区域进入版本管理器（不额外塞巨大"更新"按钮）。
 
@@ -729,14 +744,14 @@ P0 显示当前状态名（如 `更新中 · DOWNLOADING`），**不显示无数
 ### 14.2 P1 回滚流程
 
 ```
-BACKING_UP
+backing_up
   └─ 备份 from_image digest / from_version（P0 已记录）
-ROLLING_BACK
+rolling_back
   ├─ 校验 rollback_safe（manifest v2，P2）/ P1 用简单规则
   ├─ docker pull from_image（确保旧镜像本地存在）
   └─ 写回 SAKURA_AI_IMAGE + compose up -d
-HEALTH_CHECKING
-ROLLED_BACK / FAILED
+health_checking
+rolled_back / failed
 ```
 
 ### 14.3 P0 仅保留诊断信息
@@ -771,15 +786,15 @@ updater/
 │       ├── __main__.py        # --serve / --one-shot
 │       ├── ipc.py             # HTTP over UDS
 │       ├── state.py           # 状态机 + atomic write
-│       ├── jobs.py            # job 队列 + 全局锁
-│       ├── manifest.py        # Release manifest 解析校验
-│       ├── semver.py
+│       ├── jobs.py            # Slice 4 交付：job 队列 + 全局锁
+│       ├── manifest.py        # Slice 4 交付：Release manifest 解析校验
+│       ├── semver.py          # Slice 4 交付
 │       ├── adapters/
-│       │   ├── image.py
-│       │   └── source.py
+│       │   ├── image.py       # Slice 4 交付
+│       │   └── source.py      # P1 交付
 │       └── backends/
-│           ├── systemd.py
-│           └── daemon.py
+│           ├── systemd.py     # P1 交付
+│           └── daemon.py      # Slice 3b 冻结
 └── build/                     # PyInstaller onefile spec 与构建脚本
 ```
 
@@ -859,8 +874,8 @@ sudo ./start.sh updater start
 ```
 .deploy/updater/
 ├── sakura-ai-updater          # 二进制
-├── updater.pid                # daemon 模式 PID
-├── updater.log                # 日志
+├── daemon-meta.json          # daemon PID meta
+├── updater.log               # 日志
 ├── update-state.json          # 持久化状态
 └── updater.lock               # OS-level flock
 
@@ -904,21 +919,21 @@ P0 / P1 / P2 是同一份设计的分阶段交付，**不是三套独立设计**
 - UDS IPC（HTTP over UDS，协议 v1 + body envelope）
 - durable job state（atomic write）
 - 全局更新锁两层（OS-level flock + 任务锁 + 409 Conflict）
-- 崩溃恢复 reconcile（interrupted job 标 INTERRUPTED + 清理）
+- 崩溃恢复 reconcile（interrupted job 标 `failed` + `error_code=interrupted` + 清理）
 - preflight
 - 状态机（P0 子集）
 - 结构化日志
 
 **Deployment**
 - 部署模式检测（`SAKURA_DEPLOY_MODE`）
-- ImageAdapter（pull → activate → restart → health check）
+- ImageAdapter（`docker pull` → activate → restart → health check；updater 内直接 argv 调用 `docker` / `docker compose`）
 - Source 模式识别但 apply 禁用（`update_supported: false`）
 - pull before touching current container
 
 **Bootstrap**
 - DaemonBackend（零依赖先跑通）
 - `ensure_updater_running()` 兜底
-- start.sh CLI（`updater install/start/stop/status` + `update check/apply` + 隐藏 `internal` 原语）
+- start.sh CLI（`updater install/start/stop/status`；仅负责部署引导、daemon 生命周期及必要宿主机原语，不承载 update/apply 状态机）
 
 **发布工程（提前到 P0）**
 - PyInstaller amd64 / arm64
@@ -933,13 +948,13 @@ P0 / P1 / P2 是同一份设计的分阶段交付，**不是三套独立设计**
 - `min_upgrade_from` 门禁
 - updater protocol_version 协商
 
-**P0 明确不做**：Source 自动更新、downgrade、rollback、历史版本切换、beta channel、自动更新、SystemdBackend、BACKING_UP/ROLLING_BACK 状态。
+**P0 明确不做**：Source 自动更新、downgrade、rollback、历史版本切换、beta channel、自动更新、SystemdBackend、backing_up/rolling_back 状态。
 
 ### 17.2 P1 — Source + Recovery
 
 - SourceAdapter（`git fetch --tags` + worktree/releases staging + 依赖预安装 + current 切换 + restart，见 §10.2）
 - SystemdBackend（严格检测 PID 1 == systemd + `systemctl is-system-running`）
-- BACKING_UP / ROLLING_BACK / ROLLED_BACK 状态
+- backing_up / rolling_back / rolled_back 状态
 - 安全 rollback（受 compatibility gate 控制）
 - 版本管理器首次支持 `[切换到此版本]`
 - 进度阶段细化
@@ -959,10 +974,10 @@ P0 / P1 / P2 是同一份设计的分阶段交付，**不是三套独立设计**
 1. 镜像模式部署后，`./start.sh start` 自动安装 updater daemon，navbar 右上角常驻 `v3.0.0`。
 2. GitHub 发新 Release `v3.1.0`（含 `update-manifest.json`），60 分钟内或手动刷新后 navbar 显示更新提示。
 3. super_admin 点击进入版本管理器，看到 v3.1.0 的 Release Notes，`[更新到此版本]` 按钮启用（门禁通过）。
-4. 点击更新，updater 经 PREFLIGHT → DOWNLOADING（docker pull）→ ACTIVATING → RESTARTING → HEALTH_CHECKING → SUCCESS。HEALTH_CHECKING 含版本验证 gate（`reported_app_version == target_version`）。Web 后端消失期间浏览器进入 reconnecting 指数退避，新版本恢复后从 sessionStorage 取回 job_id，显示"已更新至 3.1.0"。
-5. 失败 SLA 按阶段：PREFLIGHT / DOWNLOADING 失败时当前版本**完全不受影响**、仍正常服务；ACTIVATING 之后失败（如 health check 超时 / 版本验证 gate 不通过）时显示 FAILED + 原版本 / 原镜像 digest / 失败阶段诊断信息，**P0 不承诺自动恢复服务**（管理员手动恢复，P1 RollbackManager 自动化）。
+4. 点击更新，updater 经 preflight → downloading（docker pull）→ activating → restarting → health_checking → success。health_checking 含版本验证 gate（`reported_app_version == target_version`）。Web 后端消失期间浏览器进入 reconnecting 指数退避，新版本恢复后从 sessionStorage 取回 job_id，显示"已更新至 3.1.0"。
+5. 失败 SLA 按阶段：preflight / downloading 失败时当前版本**完全不受影响**、仍正常服务；activating 之后失败（如 health check 超时 / 版本验证 gate 不通过）时显示 failed + 原版本 / 原镜像 digest / 失败阶段诊断信息，**P0 不承诺自动恢复服务**（管理员手动恢复，P1 RollbackManager 自动化）。
 6. 源码模式部署时，版本管理器显示 `update_supported: false`，更新按钮禁用并提示原因。
-7. 两个浏览器 / `start.sh update apply` 并发触发更新时，第二个返回 409 Conflict。
+7. 两个浏览器并发触发更新时，第二个返回 409 Conflict。`start.sh` 不提供 update/apply 更新状态机；更新编排只由 updater 处理。
 8. 宿主机无 Python 环境时，updater 二进制仍可正常安装运行。
 9. `min_upgrade_from` 门禁生效：当前版本低于要求时按钮禁用并显示原因。
 10. updater daemon 意外退出后，`start.sh start` / `status` 等操作通过 `ensure_updater_running()` 自动拉起。

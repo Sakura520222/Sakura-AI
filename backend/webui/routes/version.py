@@ -9,20 +9,28 @@ update_available 是 derived state：必须用当前进程 __version__ + cached 
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from backend import __version__
 from backend.core.config import get_settings
 from backend.services.update_checker import is_newer_version, read_cache
-from backend.services.updater_client import UpdaterClient
+from backend.services.updater_client import (
+    UpdaterActionError,
+    UpdaterClient,
+    UpdaterProtocolError,
+    UpdaterUnavailableError,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
+    get_db,
     get_user_preferences,
     render_template,
     require_auth,
     require_csrf_header,
     require_super_admin,
 )
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(tags=["Version"])
 
@@ -46,8 +54,9 @@ def build_version_info(
     - 有缓存且 latest 有值 → derive 布尔
     - 有缓存但 latest 为 None（空列表/失败无 last-known-good）→ False
 
-    updater 连接状态：image 模式下 updater 已连但 update 尚未实现（Slice 4）→
-    update_supported 仍 False，reason=update_not_implemented（明确"在线，功能开发中"）。
+    updater 连接状态：image 模式下 updater 已连且 protocol v1 兼容时，
+    ``update_supported`` 为真；``update_available`` 仍只代表 Backend GitHub
+    discovery，Host readiness 由 ``update_ready`` 单独表示。
     updater_info 的版本字段取自 envelope 顶层（spec §7.2，data 不重复）。
     """
     mode = deploy_mode if deploy_mode in _VALID_MODES else "unknown"
@@ -58,13 +67,24 @@ def build_version_info(
         updater_info.get("protocol_version") if updater_info else None
     )
 
-    update_supported = False
+    updater_data = (
+        updater_info.get("data", {})
+        if isinstance(updater_info, dict)
+        else {}
+    )
+    if not isinstance(updater_data, dict):
+        updater_data = {}
+    protocol_compatible = updater_protocol_version == 1
+    update_supported = mode == "image" and updater_connected and protocol_compatible
     if mode == "source":
         reason = "source_updater_not_available"
     elif mode == "image":
-        reason = (
-            "update_not_implemented" if updater_connected else "updater_not_connected"
-        )
+        if not updater_connected:
+            reason = "updater_not_connected"
+        elif not protocol_compatible:
+            reason = "updater_protocol_incompatible"
+        else:
+            reason = None
     else:
         reason = "unknown_deployment"
 
@@ -77,6 +97,7 @@ def build_version_info(
     return {
         "current_version": __version__,
         "deployment_type": mode,
+        "deployment_mode": mode,
         "update_supported": update_supported,
         "update_unsupported_reason": reason,
         "update_available": available,
@@ -86,6 +107,17 @@ def build_version_info(
         "updater_connected": updater_connected,
         "updater_version": updater_version,
         "updater_protocol_version": updater_protocol_version,
+        "updater_state": updater_data.get("state"),
+        "has_active_job": bool(updater_data.get("has_active_job", False)),
+        "active_job_id": updater_data.get("active_job_id"),
+        "updater_deployment": updater_data.get("deployment"),
+        "update_ready": bool(updater_data.get("update_ready", False)),
+        # Host readiness is authoritative only when supplied by the updater's
+        # most recent read-only check/preflight snapshot.  Keep the structured
+        # checks and target available to callers instead of reducing readiness
+        # to a permanently-false boolean when the daemon is freshly restarted.
+        "readiness": updater_data.get("readiness"),
+        "target": updater_data.get("target"),
     }
 
 
@@ -147,6 +179,138 @@ async def trigger_check(
         data,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+def _updater_error(exc: Exception) -> JSONResponse:
+    """Map typed updater client errors to Backend proxy responses."""
+
+    if isinstance(exc, UpdaterUnavailableError):
+        return JSONResponse({"error": "updater_unavailable"}, status_code=503)
+    if isinstance(exc, UpdaterProtocolError):
+        return JSONResponse({"error": "updater_protocol_error"}, status_code=502)
+    if isinstance(exc, UpdaterActionError):
+        if exc.status_code >= 500:
+            return JSONResponse({"error": "updater_internal_error"}, status_code=502)
+        body = exc.body if isinstance(exc.body, dict) else {"error": "updater_error"}
+        return JSONResponse(body, status_code=exc.status_code)
+    return JSONResponse({"error": "updater_internal_error"}, status_code=502)
+
+
+async def _read_action_body(request: Request) -> dict:
+    try:
+        data = await request.json()
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _validate_target(target: object) -> bool:
+    # Reuse the strict discovery parser; it accepts only X.Y.Z (no v prefix,
+    # prerelease, or build metadata in P0).
+    from backend.services.update_checker import _parse_semver
+
+    return isinstance(target, str) and _parse_semver(target) is not None
+
+
+@router.post("/version/readiness")
+async def updater_readiness(
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """Read-only host readiness (distinct from GitHub discovery state)."""
+
+    try:
+        return JSONResponse(await UpdaterClient().check(), headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        return _updater_error(exc)
+
+
+@router.post("/version/preflight")
+async def updater_preflight(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    body = await _read_action_body(request)
+    target = body.get("target_version")
+    if not _validate_target(target):
+        return JSONResponse({"error": "invalid_target_version"}, status_code=422)
+    try:
+        return JSONResponse(
+            await UpdaterClient().preflight(target),
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as exc:
+        return _updater_error(exc)
+
+
+@router.post("/version/update")
+async def updater_update(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    body = await _read_action_body(request)
+    target = body.get("target_version")
+    if target is not None and not _validate_target(target):
+        return JSONResponse({"error": "invalid_target_version"}, status_code=422)
+    try:
+        payload = await UpdaterClient().update(target)
+        response = JSONResponse(
+            payload,
+            headers={"Cache-Control": "no-store"},
+            status_code=202,
+        )
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        job_id = data.get("job_id") if isinstance(data, dict) else None
+        try:
+            await log_admin_action(
+                db,
+                user["user_id"],
+                "update_apply",
+                "deployment",
+                job_id,
+                {
+                    "target_version": target,
+                    "job_id": job_id,
+                    "deployment_mode": get_settings().sakura_deploy_mode or "unknown",
+                },
+            )
+        except Exception:
+            # Audit failure must never roll back or mask a host updater job.
+            pass
+        return response
+    except Exception as exc:
+        return _updater_error(exc)
+
+
+@router.get("/version/jobs/{job_id}")
+async def updater_job(
+    job_id: str,
+    user: dict = Depends(require_super_admin),
+):
+    try:
+        return JSONResponse(
+            await UpdaterClient().get_job(job_id),
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as exc:
+        return _updater_error(exc)
+
+
+@router.get("/version/jobs/{job_id}/logs")
+async def updater_job_logs(
+    job_id: str,
+    user: dict = Depends(require_super_admin),
+):
+    try:
+        return JSONResponse(
+            await UpdaterClient().get_job_logs(job_id),
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as exc:
+        return _updater_error(exc)
 
 
 @router.get("/version/manager")

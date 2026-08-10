@@ -57,6 +57,26 @@ def test_status_reflects_active_job(tmp_path):
     assert body["data"]["state"] == "downloading"
 
 
+def test_status_merges_orchestrator_readiness_snapshot_without_io(tmp_path):
+    class _Orchestrator:
+        readiness_snapshot = {
+            "update_ready": True,
+            "readiness": {"manifest_valid": True, "target_newer": True},
+            "target": {
+                "version": "3.1.0",
+                "image": "ghcr.io/example/app:v3.1.0",
+                "channel": "stable",
+            },
+        }
+
+    state_path = str(tmp_path / "update-state.json")
+    client = TestClient(create_app(state_path, orchestrator=_Orchestrator()))
+    body = client.get("/v1/status").json()["data"]
+    assert body["update_ready"] is True
+    assert body["readiness"]["manifest_valid"] is True
+    assert body["target"]["version"] == "3.1.0"
+
+
 def test_health_returns_envelope(tmp_path):
     app = create_app(str(tmp_path / "update-state.json"))
     client = TestClient(app)
