@@ -215,11 +215,11 @@
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
-| WebUI 配置管理（Setup Wizard 第 3 步） | `telegram_bot_token` | Bot Token |
-| WebUI 配置管理 | `telegram_admin_user_ids` | 超级管理员 Telegram ID（逗号分隔多个） |
-| WebUI 配置管理 | `telegram_default_chat_id` | 默认通知聊天 ID |
+| Setup Wizard 第 3 步 / WebUI「系统核心配置」 | `telegram_bot_token` | Bot Token；**修改后需重启服务生效**（Bot 实例在服务启动时构造） |
+| 环境变量（启动默认值） | `TELEGRAM_ADMIN_USER_IDS` | 超级管理员 Telegram ID（逗号分隔多个） |
+| 环境变量（启动默认值） | `TELEGRAM_DEFAULT_CHAT_ID` | 默认通知聊天 ID |
 
-> 数据库中的动态配置优先于启动环境变量。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
+> 注意：`telegram_admin_user_ids` / `telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
 
 ## 国际化
 

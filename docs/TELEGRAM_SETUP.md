@@ -44,7 +44,7 @@ Sakura AI 现已集成 Telegram Bot，提供以下功能：
 
 ```
 👑 超级管理员 (SUPER_ADMIN)
-   ↓ 由环境变量 TELEGRAM_ADMIN_USER_IDS 定义（唯一）
+   ↓ 由环境变量 TELEGRAM_ADMIN_USER_IDS 定义（启动默认值）
    
 👤 管理员 (ADMIN)
    ↓ 由超级管理员通过 /admin_add 添加
@@ -92,9 +92,9 @@ Sakura AI 现已集成 Telegram Bot，提供以下功能：
 
 ### 3. 配置 Bot 信息
 
-**推荐路径（Setup Wizard / WebUI）**：在首次部署的 Setup Wizard 第 3 步「AI 模型与通知」填写 Bot Token；部署后在 WebUI 配置管理中设置动态配置键 `telegram_bot_token` / `telegram_admin_user_ids` / `telegram_default_chat_id`，修改即时生效。
+**推荐路径（Setup Wizard）**：在首次部署的 Setup Wizard 第 3 步「AI 模型与通知」填写 Bot Token；部署后可在 WebUI「系统核心配置」中修改 `telegram_bot_token`。注意：Telegram Bot 实例在服务启动时构造，**修改 Bot Token 后需重启服务才能生效**。
 
-**启动默认值路径（`.env` 文件）**：环境变量作为启动默认值来源，可在 `.env` 中添加：
+**超级管理员 ID**：由环境变量 `TELEGRAM_ADMIN_USER_IDS`（逗号分隔多个 Telegram ID）定义，作为启动默认值；该键不是 WebUI 动态配置键。可在 `.env` 中添加：
 
 ```env
 # Telegram Bot配置（启动默认值）

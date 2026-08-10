@@ -1821,7 +1821,7 @@ Issue 分析详情。
 
 #### POST /config/ai-providers/{provider}/models
 
-按厂商获取模型列表。若请求体未提供 `api_key` 或 `api_base`，服务端会尝试回退使用数据库中保存的 ~~`openai_api_key` / `openai_api_base`~~ **（已废弃，回退已停用）**。
+按厂商获取模型列表。凭据通过已保存账号解析：请求体必须提供 `account_id`，服务端使用该账号的 `api_base` / `api_key` 获取模型列表。旧式扁平凭据回退（`openai_api_key` / `openai_api_base`）已停用。
 
 **认证级别**：super_admin
 
@@ -1837,8 +1837,7 @@ Issue 分析详情。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `api_key` | string | 否 | API Key；为空时尝试读取已保存配置 |
-| `api_base` | string | 否 | API Base URL；为空时使用 provider 默认地址或已保存配置 |
+| `account_id` | string | 是 | 已保存 AI 账号 ID（在 WebUI「AI 配置」中创建）；凭据从该账号解析 |
 
 **响应示例**：
 

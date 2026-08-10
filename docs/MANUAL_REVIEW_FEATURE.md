@@ -34,7 +34,7 @@
 ## 权限要求
 
 - **仅超级管理员可用** (SUPER_ADMIN)
-- 超级管理员在 WebUI 配置管理的 `telegram_admin_user_ids` 动态键中配置（环境变量仅作启动默认值）
+- 超级管理员由环境变量 `TELEGRAM_ADMIN_USER_IDS` 定义（启动默认值；该键不是 WebUI 动态配置键）
 - 超级管理员可以审查任何仓库，不受仓库白名单限制
 - 超级管理员不受配额限制
 
@@ -251,7 +251,7 @@ task_id = await submit_review_task(pr_info)
 
 2. **超级管理员配置**
 
-   在 WebUI 配置管理中设置动态配置键 `telegram_admin_user_ids`（逗号分隔多个 Telegram ID，如 `123456789,987654321`）；环境变量仅作启动默认值。
+   在 `.env` 中设置 `TELEGRAM_ADMIN_USER_IDS=123456789,987654321`（逗号分隔多个 Telegram ID，启动默认值；该键不是 WebUI 动态配置键）。
 
 3. **Telegram Bot 配置**
    - Bot Token 已配置
