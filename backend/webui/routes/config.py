@@ -202,14 +202,10 @@ async def save_strategies_section(
                         max_lines = int(form.get(f"strategy_{key}_max_lines", 99999999))
                     except (ValueError, TypeError) as e:
                         raise ValueError(f"[{key}] 数值格式错误: {e}")
-                    if not 1 <= max_files <= 100000:
-                        raise ValueError(
-                            f"[{key}] max_files 须在 1-100000 之间: {max_files}"
-                        )
-                    if not 1 <= max_lines <= 10000000:
-                        raise ValueError(
-                            f"[{key}] max_lines 须在 1-10000000 之间: {max_lines}"
-                        )
+                    if max_files < 1:
+                        raise ValueError(f"[{key}] max_files 必须至少为 1: {max_files}")
+                    if max_lines < 1:
+                        raise ValueError(f"[{key}] max_lines 必须至少为 1: {max_lines}")
                     prompt = form.get(f"strategy_{key}_prompt", "")
                     strategies[key] = {
                         "name": name,
