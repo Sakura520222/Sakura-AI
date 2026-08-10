@@ -5,8 +5,8 @@ strategies:
   quick:
     name: "⚡️ 快速审查"
     conditions:
-      max_files: 5
-      max_lines: 2000
+      max_files: 10
+      max_lines: 5000
     prompt: |
       Focus on syntax errors, obvious functional bugs, confirmed security issues,
       and regressions in the changed behavior. Keep the review concise and evidence-based.
@@ -15,8 +15,8 @@ strategies:
   standard:
     name: "🔍 标准审查"
     conditions:
-      max_files: 20
-      max_lines: 5000
+      max_files: 50
+      max_lines: 20000
     prompt: |
       Review correctness, security, error handling, compatibility, performance,
       and maintainability. Prioritize concrete defects over stylistic preferences.
@@ -25,8 +25,8 @@ strategies:
   deep:
     name: "🔬 深度审查"
     conditions:
-      max_files: 100
-      max_lines: 20000
+      max_files: 500
+      max_lines: 100000
     prompt: |
       Perform a deep architectural and behavioral review. Trace cross-file effects,
       concurrency and data-flow risks, security boundaries, failure handling, and regressions.
@@ -112,16 +112,16 @@ context_enhancement:
   enable_ai_tools: true
   
   # AI工具的最大调用次数（防止无限循环）
-  max_tool_iterations: 200
+  max_tool_iterations: 500
   
   # 单个文件最大读取大小（字节）
   max_file_size: 500000  # 500KB
 
   # deep 策略下包含的最大文件数（按变更量排序取前 N 个）
-  max_files_for_deep_strategy: 20
+  max_files_for_deep_strategy: 500
 
   # 单文件最大读取行数（超过则截断并提示AI使用行范围读取）
-  max_file_lines: 1000
+  max_file_lines: 3000
 
   # 搜索匹配时的默认上下文行数（匹配行前后各显示多少行）
   default_context_lines: 20
