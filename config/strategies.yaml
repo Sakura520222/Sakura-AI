@@ -136,6 +136,7 @@ context_enhancement:
     default_max_results: 20        # 默认最大结果数
     skip_binary: true              # 是否跳过二进制文件
     max_files_to_search: 100       # 回退模式下最大扫描文件数
+    concurrency: 8                 # 并发获取文件内容的线程数（过高可能触发 GitHub 次级速率限制）
 
   # Git 工具配置
   git_tools:
