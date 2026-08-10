@@ -1182,10 +1182,7 @@ async def test_sticky_winner_does_not_change_requested_primary_candidate(monkeyp
         ),
         logical_call_factory=lambda: "sticky-call",
     )
-    client._last_successful["reviewer"] = (
-        fallback.provider.id,
-        fallback.model.model_id,
-    )
+    client._last_successful["reviewer"] = fallback.sticky_identity
 
     await client.call_with_retry(
         [primary, fallback],

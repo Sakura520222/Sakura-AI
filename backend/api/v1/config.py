@@ -310,7 +310,7 @@ class AIStrategyRequest(BaseModel):
     """AI 调用策略保存请求 / AI call-strategy save request."""
 
     ai_api_timeout_seconds: float | None = None
-    ai_api_max_retries: int | None = None
+    ai_api_max_retries: int | None = Field(default=None, ge=0, le=20)
     ai_api_initial_retry_delay_seconds: float | None = None
     ai_api_total_timeout_seconds: float | None = None
     ai_fallback_enabled: bool | None = None

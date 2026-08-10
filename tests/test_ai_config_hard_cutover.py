@@ -105,6 +105,7 @@ async def test_explicit_follow_binding_uses_main_candidates(monkeypatch, role):
     assert [candidate.model.model_id for candidate in chain.candidates] == [
         "gpt-5.6-sol"
     ]
+    assert chain.candidates[0].account_id == "main-account"
 
 
 @pytest.mark.asyncio

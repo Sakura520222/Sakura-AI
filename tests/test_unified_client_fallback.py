@@ -7,10 +7,13 @@
 """
 
 import asyncio
+import time
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from backend.core.ai_protocol import registry as registry_module
 from backend.core.ai_protocol.errors import AIError, AllCandidatesFailedError
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
@@ -25,6 +28,7 @@ from backend.core.ai_protocol.models import (
     StopReason,
     UnifiedMessage,
     UnifiedResponse,
+    UnifiedStreamEvent,
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
@@ -41,6 +45,8 @@ def _candidate(
     *,
     context_window_tokens: int = 128000,
     protocol: ProtocolFamily | str | None = None,
+    account_id: str | None = None,
+    credential: str = "key",
 ) -> ResolvedModel:
     decl = ProviderDeclaration(
         id=f"prov-{model_id}",
@@ -63,9 +69,10 @@ def _candidate(
     return ResolvedModel(
         provider=decl,
         model=metadata,
-        credential="key",
+        credential=credential,
         endpoint=endpoint,
         protocol=protocol,
+        account_id=account_id,
     )
 
 
@@ -343,9 +350,10 @@ async def test_concurrent_retry_keeps_each_call_on_its_own_observer(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_recoverable_failure_exhausts_then_falls_back(monkeypatch):
-    # 候选 1 连续 3 次 rate_limited → 重试耗尽 → 候选 2 成功
+    # 候选 1 初次请求 + 3 次失败后重试 → 重试耗尽 → 候选 2 成功
     primary_stub = _StubAdapter(
         fail_categories=[
+            AIErrorCategory.RATE_LIMITED,
             AIErrorCategory.RATE_LIMITED,
             AIErrorCategory.RATE_LIMITED,
             AIErrorCategory.RATE_LIMITED,
@@ -392,6 +400,7 @@ async def test_recoverable_failure_exhausts_then_falls_back(monkeypatch):
         role="main",
     )
     assert response.content == "fallback"
+    assert primary_stub.calls == 4
     assert response.meta.served_by.endswith("/fallback")
     await client.aclose()
 
@@ -418,7 +427,7 @@ class _NonJsonThenSuccessAdapter(_StubAdapter):
 async def test_non_json_response_exhausts_then_falls_back(monkeypatch):
     """非 JSON 的 2xx 响应属于可恢复错误，重试后必须切换备用模型。"""
     primary_stub = _NonJsonThenSuccessAdapter(
-        fail_categories=[AIErrorCategory.UNKNOWN],
+        fail_categories=[AIErrorCategory.UNKNOWN, AIErrorCategory.UNKNOWN],
     )
     fallback_stub = _StubAdapter(content="fallback")
 
@@ -454,7 +463,7 @@ async def test_non_json_response_exhausts_then_falls_back(monkeypatch):
     )
 
     assert response.content == "fallback"
-    assert primary_stub.calls == 1
+    assert primary_stub.calls == 2
     assert fallback_stub.calls == 1
     await client.aclose()
 
@@ -576,6 +585,394 @@ async def test_sticky_candidate_promotes_last_successful(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_zero_max_retries_sends_one_chat_and_stream_attempt_then_falls_back(
+    monkeypatch,
+):
+    """max_retries=0 means one initial request, for both chat and stream paths."""
+
+    class _StreamAdapter(_StubAdapter):
+        def __init__(self, *, fail_first: bool = False, content: str = "ok"):
+            super().__init__(content=content)
+            self._fail_first = fail_first
+
+        async def stream(self, *args, **kwargs):
+            self.calls += 1
+            if self._fail_first:
+                raise AIError(AIErrorCategory.SERVER_ERROR, "stream failed")
+            yield UnifiedStreamEvent(type="text_delta", text=self._content)
+            yield UnifiedStreamEvent(type="done")
+
+    primary_chat = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    fallback_chat = _StubAdapter(content="chat-fallback")
+    primary_stream = _StreamAdapter(fail_first=True)
+    fallback_stream = _StreamAdapter(content="stream-fallback")
+    call_mode = "chat"
+
+    def fake_get_adapter(family):
+        if family == ProtocolFamily.OPENAI_COMPATIBLE:
+            return primary_chat if call_mode == "chat" else primary_stream
+        return fallback_chat if call_mode == "chat" else fallback_stream
+
+    monkeypatch.setattr(registry_module, "get_adapter", fake_get_adapter)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=0,
+            total_timeout=10,
+            initial_retry_delay=0,
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary"),
+        _candidate(ProtocolFamily.ANTHROPIC_NATIVE, "fallback"),
+    ]
+
+    response = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hello")],
+        model="primary",
+        role="main",
+    )
+    assert response.content == "chat-fallback"
+    assert primary_chat.calls == 1
+    assert fallback_chat.calls == 1
+
+    call_mode = "stream"
+    events = [
+        event
+        async for event in client.stream_with_retry(
+            candidates,
+            [UnifiedMessage(role="user", content="hello")],
+            model="primary",
+            role="stream",
+        )
+    ]
+    assert [event.text for event in events if event.type == "text_delta"] == [
+        "stream-fallback"
+    ]
+    assert primary_stream.calls == 1
+    assert fallback_stream.calls == 1
+    await client.aclose()
+
+
+class _SlowFailStreamAdapter:
+    def __init__(self, delay: float = 0.05):
+        self.delay = delay
+        self.calls = 0
+        self.closed = 0
+
+    async def stream(self, *_args, **_kwargs):
+        self.calls += 1
+        try:
+            await asyncio.sleep(self.delay)
+            raise AIError(AIErrorCategory.SERVER_ERROR, "slow stream failure")
+        finally:
+            self.closed += 1
+        if False:  # pragma: no cover - keeps this method an async generator
+            yield None
+
+
+class _HangingStreamAdapter:
+    def __init__(self):
+        self.calls = 0
+        self.closed = 0
+
+    async def stream(self, *_args, **_kwargs):
+        self.calls += 1
+        try:
+            while True:
+                await asyncio.sleep(1)
+                yield UnifiedStreamEvent(type="text_delta", text="never")
+        finally:
+            self.closed += 1
+
+
+class _DelayedSuccessStreamAdapter:
+    def __init__(self, delay: float = 0.01):
+        self.delay = delay
+
+    async def stream(self, *_args, **_kwargs):
+        await asyncio.sleep(self.delay)
+        yield UnifiedStreamEvent(type="text_delta", text="ok")
+        yield UnifiedStreamEvent(type="done")
+
+
+@pytest.mark.asyncio
+async def test_stream_total_timeout_stops_retry_and_fallback(monkeypatch):
+    """A slow failure cannot consume retry/fallback slots past total_timeout."""
+    primary = _SlowFailStreamAdapter()
+    fallback = _SlowFailStreamAdapter()
+    monkeypatch.setattr(
+        registry_module,
+        "get_adapter",
+        lambda family: primary if family == ProtocolFamily.OPENAI_COMPATIBLE else fallback,
+    )
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=0.01,
+            initial_retry_delay=0,
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary"),
+        _candidate(ProtocolFamily.ANTHROPIC_NATIVE, "fallback"),
+    ]
+
+    started = time.monotonic()
+    with pytest.raises(AllCandidatesFailedError):
+        async for _event in client.stream_with_retry(
+            candidates,
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+        ):
+            pass
+
+    assert time.monotonic() - started < 0.2
+    assert primary.calls == 1
+    assert primary.closed == 1
+    assert fallback.calls == 0
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_hanging_attempt_is_closed_at_total_timeout(monkeypatch):
+    hanging = _HangingStreamAdapter()
+    monkeypatch.setattr(registry_module, "get_adapter", lambda _family: hanging)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=0,
+            total_timeout=0.01,
+        )
+    )
+
+    with pytest.raises(AllCandidatesFailedError):
+        async for _event in client.stream_with_retry(
+            [_candidate(ProtocolFamily.OPENAI_COMPATIBLE, "hanging")],
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+        ):
+            pass
+
+    assert hanging.calls == 1
+    assert hanging.closed == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_backoff_checks_remaining_total_budget(monkeypatch):
+    failing = _SlowFailStreamAdapter(delay=0)
+    monkeypatch.setattr(registry_module, "get_adapter", lambda _family: failing)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=1,
+            total_timeout=0.01,
+            initial_retry_delay=1,
+        )
+    )
+
+    with pytest.raises(AllCandidatesFailedError):
+        async for _event in client.stream_with_retry(
+            [_candidate(ProtocolFamily.OPENAI_COMPATIBLE, "backoff")],
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+        ):
+            pass
+
+    assert failing.calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("total_timeout", [None, 0, -1])
+async def test_stream_non_positive_total_timeout_keeps_unlimited_legacy_behavior(
+    monkeypatch, total_timeout
+):
+    adapter = _DelayedSuccessStreamAdapter(delay=0.01)
+    monkeypatch.setattr(registry_module, "get_adapter", lambda _family: adapter)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=0,
+            total_timeout=total_timeout,
+        )
+    )
+
+    events = [
+        event
+        async for event in client.stream_with_retry(
+            [_candidate(ProtocolFamily.OPENAI_COMPATIBLE, "unlimited")],
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+        )
+    ]
+    assert [event.type for event in events] == ["text_delta", "done"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_timeout", [None, 0, -1])
+async def test_stream_non_positive_request_timeout_keeps_legacy_adapter_behavior(
+    monkeypatch, request_timeout
+):
+    adapter = _DelayedSuccessStreamAdapter(delay=0.01)
+    monkeypatch.setattr(registry_module, "get_adapter", lambda _family: adapter)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=0,
+            total_timeout=0.1,
+        )
+    )
+
+    events = [
+        event
+        async for event in client.stream_with_retry(
+            [_candidate(ProtocolFamily.OPENAI_COMPATIBLE, "request-timeout")],
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+            timeout=request_timeout,
+        )
+    ]
+    assert [event.type for event in events] == ["text_delta", "done"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_task_cancellation_closes_hanging_attempt(monkeypatch):
+    hanging = _HangingStreamAdapter()
+    monkeypatch.setattr(registry_module, "get_adapter", lambda _family: hanging)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=0,
+            total_timeout=1,
+        )
+    )
+
+    async def consume():
+        async for _event in client.stream_with_retry(
+            [_candidate(ProtocolFamily.OPENAI_COMPATIBLE, "cancel")],
+            [UnifiedMessage(role="user", content="hello")],
+            role="main",
+        ):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert hanging.closed == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sticky_identity_distinguishes_same_provider_model_accounts(monkeypatch):
+    """Two accounts with the same provider/model must not share sticky state."""
+
+    class _AccountRouter:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        async def chat(self, _client, _endpoint, credential, _request, *, timeout=None):
+            self.calls.append(credential)
+            if credential == "account-a-secret":
+                raise AIError(AIErrorCategory.SERVER_ERROR, "account A failed")
+            return UnifiedResponse(
+                content="account-b",
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=1, output_tokens=1),
+            )
+
+    router = _AccountRouter()
+    _install_router(monkeypatch, router)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=0,
+            total_timeout=10,
+            initial_retry_delay=0,
+            sticky_candidate=True,
+        )
+    )
+    candidates = [
+        _candidate(
+            ProtocolFamily.OPENAI_COMPATIBLE,
+            "same-model",
+            account_id="account-a",
+            credential="account-a-secret",
+        ),
+        _candidate(
+            ProtocolFamily.OPENAI_COMPATIBLE,
+            "same-model",
+            account_id="account-b",
+            credential="account-b-secret",
+        ),
+    ]
+
+    first = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hello")],
+        model="same-model",
+        role="main",
+    )
+    assert first.content == "account-b"
+    assert router.calls == ["account-a-secret", "account-b-secret"]
+    assert "account-a-secret" not in client._last_successful["main"]
+    assert "account-b-secret" not in client._last_successful["main"]
+
+    router.calls.clear()
+    second = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="again")],
+        model="same-model",
+        role="main",
+    )
+    assert second.content == "account-b"
+    assert router.calls == ["account-b-secret"]
+    await client.aclose()
+
+
+def test_legacy_sticky_identity_is_credential_free():
+    candidate = _candidate(
+        ProtocolFamily.OPENAI_COMPATIBLE,
+        "same-model",
+        credential="super-secret-api-key",
+    )
+
+    assert candidate.sticky_identity.startswith("legacy:")
+    assert "super-secret-api-key" not in candidate.sticky_identity
+
+    safe_endpoint = replace(
+        candidate.endpoint,
+        base_url="https://example.test/v1/",
+        extra_headers={},
+    )
+    unsafe_endpoint = replace(
+        candidate.endpoint,
+        base_url="https://user:password@example.test/v1/?api_key=secret",
+        extra_headers={"Authorization": "Bearer secret"},
+    )
+    assert replace(candidate, endpoint=safe_endpoint).sticky_identity == replace(
+        candidate,
+        endpoint=unsafe_endpoint,
+    ).sticky_identity
+
+
+@pytest.mark.asyncio
 async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
     """调用日志必须记录实际候选，才能关联 Issue/记忆合并与故障转移结果。"""
 
@@ -589,7 +986,9 @@ async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
         def warning(self, *args, **kwargs):
             pass
 
-    primary = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    primary = _StubAdapter(
+        fail_categories=[AIErrorCategory.SERVER_ERROR, AIErrorCategory.SERVER_ERROR]
+    )
     fallback = _StubAdapter(content="fallback")
     router = _ModelRoutingAdapter({"primary": primary, "fallback": fallback})
     _install_router(monkeypatch, router)
@@ -752,7 +1151,9 @@ async def test_call_with_retry_records_winner_context_window(monkeypatch):
     失败后 fallback 到 1M 窗口的候选，response.meta.context_window_tokens 必须是
     1M，否则调用方只能拿到首选的 258K，导致上下文预算被低估、过早触发告警。
     """
-    primary = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    primary = _StubAdapter(
+        fail_categories=[AIErrorCategory.SERVER_ERROR, AIErrorCategory.SERVER_ERROR]
+    )
     fallback = _StubAdapter(content="ok")
     router = _ModelRoutingAdapter({"primary": primary, "fallback": fallback})
     _install_router(monkeypatch, router)

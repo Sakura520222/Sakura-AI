@@ -62,6 +62,7 @@ class FallbackConfig:
 
     enabled: bool = True
     max_candidates: int = 3
+    # Number of retries after the initial request (0 still sends one request).
     max_retries: int = 3
     total_timeout: float = 600.0
     initial_retry_delay: float = 1.0
@@ -308,10 +309,12 @@ class UnifiedAIClient:
         self._logical_call_factory = logical_call_factory
         self._usage_recorder = usage_recorder
         self._logical_attempt_counts: dict[str, int] = {}
-        # role -> (provider_id, model_id)，记忆上次成功候选
+        # role -> credential-free candidate identity，记忆上次成功候选。
+        # The identity includes account_id when available and an endpoint
+        # fingerprint for legacy candidates; API keys never enter this state.
         # remember last-winning candidate per role so subsequent calls in the
         # same review skip the failed-first fallback chain.
-        self._last_successful: dict[str, tuple[str, str]] = {}
+        self._last_successful: dict[str, str] = {}
 
     def _mark_logical_attempt(self, logical_call_id: str) -> None:
         self._logical_attempt_counts[logical_call_id] = (
@@ -506,7 +509,7 @@ class UnifiedAIClient:
         if self.fallback_config.sticky_candidate and role in self._last_successful:
             sticky_key = self._last_successful[role]
             for i, c in enumerate(selected):
-                if (c.provider.id, c.model.model_id) == sticky_key:
+                if c.sticky_identity == sticky_key:
                     if i > 0:
                         selected = [selected[i], *selected[:i], *selected[i + 1 :]]
                     break
@@ -635,10 +638,7 @@ class UnifiedAIClient:
                     candidate.model.context_window_tokens
                 )
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
-                self._last_successful[role] = (
-                    candidate.provider.id,
-                    candidate.model.model_id,
-                )
+                self._last_successful[role] = candidate.sticky_identity
                 logger.info(
                     "AI 调用成功 [{}/{}]: role={} served_by={}",
                     idx + 1,
@@ -738,10 +738,7 @@ class UnifiedAIClient:
                             candidate.model.context_window_tokens
                         )
                         # 压缩重试成功仍属于该候选，记录 sticky
-                        self._last_successful[role] = (
-                            candidate.provider.id,
-                            candidate.model.model_id,
-                        )
+                        self._last_successful[role] = candidate.sticky_identity
                         await self._record_successful_usage(
                             logical_call_id=logical_call_id,
                             call_kind="chat",
@@ -836,7 +833,7 @@ class UnifiedAIClient:
         if self.fallback_config.sticky_candidate and role in self._last_successful:
             sticky_key = self._last_successful[role]
             for index, item in enumerate(selected):
-                if (item.provider.id, item.model.model_id) == sticky_key:
+                if item.sticky_identity == sticky_key:
                     if index:
                         selected = [
                             selected[index],
@@ -847,10 +844,30 @@ class UnifiedAIClient:
 
         logical_call_id = str(active_logical_call_factory())
         logical_call_started = time.monotonic()
+        # ``total_timeout`` is a logical-call budget.  Non-positive values have
+        # historically meant that the streaming path has no total deadline;
+        # keep that behavior while enforcing positive configured budgets.
+        configured_total_timeout = self.fallback_config.total_timeout
+        stream_deadline = (
+            logical_call_started + configured_total_timeout
+            if configured_total_timeout is not None and configured_total_timeout > 0
+            else None
+        )
         last_error: AIError | None = None
         previous_attempt_id: int | None = None
         final_usage = None
+        budget_exhausted = False
+        initial_attempt_admitted = False
         for candidate_index, candidate in enumerate(selected):
+            remaining = self._remaining_budget(stream_deadline)
+            if (
+                candidate_index > 0
+                and remaining is not None
+                and remaining <= 0
+            ):
+                last_error = self._stream_timeout_error(candidate, configured_total_timeout)
+                budget_exhausted = True
+                break
             fallback_from_id = previous_attempt_id
             params = _filter_params_by_capability(
                 candidate.model,
@@ -878,7 +895,8 @@ class UnifiedAIClient:
                 requested_thinking=thinking,
                 requested_effort=effort,
             )
-            for retry_index in range(self.fallback_config.max_retries):
+            # max_retries counts failures after the initial request.
+            for retry_index in range(self.fallback_config.max_retries + 1):
                 if cancel_event is not None and cancel_event.is_set():
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
@@ -889,8 +907,36 @@ class UnifiedAIClient:
                         outcome="cancelled",
                     )
                     raise ReviewCancelledError()
+                remaining = self._remaining_budget(stream_deadline)
+                if not initial_attempt_admitted:
+                    # An async-generator caller can be descheduled between
+                    # creating the logical stream and its first ``__anext__``.
+                    # Admit that initial request, then start its positive
+                    # budget at the actual admission boundary rather than
+                    # dropping it with zero observed attempts.
+                    initial_attempt_admitted = True
+                    if (
+                        remaining is not None
+                        and remaining <= 0
+                        and configured_total_timeout is not None
+                        and configured_total_timeout > 0
+                    ):
+                        stream_deadline = (
+                            time.monotonic() + configured_total_timeout
+                        )
+                        remaining = self._remaining_budget(stream_deadline)
+                if remaining is not None and remaining <= 0:
+                    last_error = self._stream_timeout_error(
+                        candidate, configured_total_timeout
+                    )
+                    budget_exhausted = True
+                    break
                 emitted = False
+                stream_done = False
                 sender = active_observer
+                events = None
+                attempt_timeout = self._stream_attempt_timeout(timeout, remaining)
+                iteration_timeout = self._stream_iteration_timeout(timeout, remaining)
                 try:
                     adapter = _get_adapter(candidate.effective_protocol)
                     if sender is None:
@@ -899,7 +945,7 @@ class UnifiedAIClient:
                             candidate.endpoint,
                             candidate.credential,
                             request,
-                            timeout=timeout,
+                            timeout=attempt_timeout,
                         )
                     else:
                         events = sender.send_stream(
@@ -907,7 +953,7 @@ class UnifiedAIClient:
                             self.http_client,
                             candidate,
                             request,
-                            timeout=timeout,
+                            timeout=attempt_timeout,
                             logical_call_id=logical_call_id,
                             purpose=role,
                             attempt_kind=(
@@ -925,17 +971,29 @@ class UnifiedAIClient:
                             reasoning_snapshot=reasoning_snapshot,
                         )
                     self._mark_logical_attempt(logical_call_id)
-                    async for event in events:
-                        emitted = True
-                        if getattr(event, "type", None) == "done":
-                            final_usage = getattr(event, "usage", None)
-                        yield event
+                    try:
+                        async with asyncio.timeout(iteration_timeout):
+                            async for event in events:
+                                emitted = True
+                                if getattr(event, "type", None) == "done":
+                                    stream_done = True
+                                    final_usage = getattr(event, "usage", None)
+                                yield event
+                            remaining_after_stream = self._remaining_budget(
+                                stream_deadline
+                            )
+                            if (
+                                not stream_done
+                                and
+                                remaining_after_stream is not None
+                                and remaining_after_stream <= 0
+                            ):
+                                raise TimeoutError
+                    finally:
+                        await self._close_stream_iterator(events)
                     if sender is not None:
                         previous_attempt_id = sender.last_attempt_id
-                    self._last_successful[role] = (
-                        candidate.provider.id,
-                        candidate.model.model_id,
-                    )
+                    self._last_successful[role] = candidate.sticky_identity
                     await self._record_successful_usage(
                         logical_call_id=logical_call_id,
                         call_kind="chat_stream",
@@ -962,6 +1020,59 @@ class UnifiedAIClient:
                         outcome="cancelled",
                     )
                     raise
+                except TimeoutError as exc:
+                    timeout_error = self._stream_timeout_error(
+                        candidate,
+                        configured_total_timeout
+                        if stream_deadline is not None
+                        else attempt_timeout,
+                        cause=exc,
+                    )
+                    last_error = timeout_error
+                    if sender is not None:
+                        previous_attempt_id = sender.last_attempt_id
+                    remaining = self._remaining_budget(stream_deadline)
+                    budget_exhausted = remaining is not None and remaining <= 0
+                    if emitted or budget_exhausted:
+                        self._log_logical_call_summary(
+                            logical_call_id=logical_call_id,
+                            role=role,
+                            started=logical_call_started,
+                            winner=None,
+                            success=False,
+                        )
+                        if emitted:
+                            raise timeout_error
+                        break
+                    if retry_index < self.fallback_config.max_retries:
+                        try:
+                            delay = self._calculate_delay(retry_index)
+                            remaining = self._remaining_budget(stream_deadline)
+                            if remaining is not None and remaining <= 0:
+                                budget_exhausted = True
+                                break
+                            await self._abortable_sleep(
+                                delay
+                                if remaining is None
+                                else min(delay, remaining),
+                                cancel_event,
+                            )
+                            remaining = self._remaining_budget(stream_deadline)
+                            if remaining is not None and remaining <= 0:
+                                budget_exhausted = True
+                                break
+                        except asyncio.CancelledError, ReviewCancelledError:
+                            self._log_logical_call_summary(
+                                logical_call_id=logical_call_id,
+                                role=role,
+                                started=logical_call_started,
+                                winner=None,
+                                success=False,
+                                outcome="cancelled",
+                            )
+                            raise
+                        continue
+                    break
                 except AIError as exc:
                     last_error = exc
                     if sender is not None:
@@ -977,12 +1088,23 @@ class UnifiedAIClient:
                             success=False,
                         )
                         raise
-                    if retry_index < self.fallback_config.max_retries - 1:
+                    if retry_index < self.fallback_config.max_retries:
                         try:
+                            delay = self._calculate_delay(retry_index)
+                            remaining = self._remaining_budget(stream_deadline)
+                            if remaining is not None and remaining <= 0:
+                                budget_exhausted = True
+                                break
                             await self._abortable_sleep(
-                                self._calculate_delay(retry_index),
+                                delay
+                                if remaining is None
+                                else min(delay, remaining),
                                 cancel_event,
                             )
+                            remaining = self._remaining_budget(stream_deadline)
+                            if remaining is not None and remaining <= 0:
+                                budget_exhausted = True
+                                break
                         except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
@@ -995,6 +1117,8 @@ class UnifiedAIClient:
                             raise
                         continue
                     break
+            if budget_exhausted:
+                break
         if last_error is not None:
             self._log_logical_call_summary(
                 logical_call_id=logical_call_id,
@@ -1046,7 +1170,8 @@ class UnifiedAIClient:
         start = time.monotonic()
 
         last_exc: AIError | None = None
-        for attempt in range(cfg.max_retries):
+        # max_retries counts failures after the initial request.
+        for attempt in range(cfg.max_retries + 1):
             # 取消信号：退避中途被取消时立即抛出 / honor cancel between retries
             if cancel_event is not None and cancel_event.is_set():
                 raise ReviewCancelledError()
@@ -1102,7 +1227,7 @@ class UnifiedAIClient:
                 last_exc = exc
                 if exc.is_terminal or not exc.is_retryable:
                     raise
-                if attempt < cfg.max_retries - 1:
+                if attempt < cfg.max_retries:
                     delay = self._calculate_delay(attempt)
                     logger.warning(
                         "AI 调用失败 [{}]: {}，{:.1f}s 后重试 ({}/{}) role={} model={}",
@@ -1110,7 +1235,7 @@ class UnifiedAIClient:
                         str(exc)[:160],
                         delay,
                         attempt + 1,
-                        cfg.max_retries,
+                        cfg.max_retries + 1,
                         role,
                         candidate.model.model_id,
                     )
@@ -1119,6 +1244,79 @@ class UnifiedAIClient:
                     raise
         # 不可达 / unreachable
         raise last_exc  # type: ignore[misc]
+
+    @staticmethod
+    def _remaining_budget(deadline: float | None) -> float | None:
+        """Return remaining logical stream budget, or ``None`` when unlimited."""
+        if deadline is None:
+            return None
+        return deadline - time.monotonic()
+
+    @staticmethod
+    def _stream_attempt_timeout(
+        request_timeout: float | None,
+        remaining: float | None,
+    ) -> float | None:
+        """Combine caller and logical deadlines without changing non-positive input.
+
+        A positive caller timeout is capped by the remaining logical budget.
+        ``None`` uses the logical budget, while a non-positive caller value is
+        passed through unchanged for compatibility with existing adapters.
+        """
+        if request_timeout is not None and request_timeout <= 0:
+            return request_timeout
+        if remaining is None:
+            return request_timeout
+        if request_timeout is None:
+            return remaining
+        return min(request_timeout, remaining)
+
+    @staticmethod
+    def _stream_iteration_timeout(
+        request_timeout: float | None,
+        remaining: float | None,
+    ) -> float | None:
+        """Return the local iterator guard without treating non-positive input as a deadline."""
+        if remaining is None:
+            return request_timeout if request_timeout is not None and request_timeout > 0 else None
+        if request_timeout is None or request_timeout <= 0:
+            return remaining
+        return min(request_timeout, remaining)
+
+    @staticmethod
+    def _stream_timeout_error(
+        candidate: ResolvedModel,
+        timeout: float | None,
+        *,
+        cause: BaseException | None = None,
+    ) -> AIError:
+        label = (
+            f"AI 流式调用总超时（{timeout}s）"
+            if timeout is not None and timeout > 0
+            else "AI 流式请求超时"
+        )
+        return AIError(
+            AIErrorCategory.UNKNOWN,
+            label,
+            provider=candidate.provider.id,
+            model=candidate.model.model_id,
+            cause=cause,
+        )
+
+    @staticmethod
+    async def _close_stream_iterator(events: Any) -> None:
+        """Close a stream iterator after timeout/cancellation without leaking it."""
+        if events is None:
+            return
+        close = getattr(events, "aclose", None)
+        if not callable(close):
+            return
+        try:
+            await close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("关闭 AI 流迭代器失败（忽略）: {}", type(exc).__name__)
 
     @staticmethod
     async def _abortable_sleep(

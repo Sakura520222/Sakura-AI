@@ -307,6 +307,8 @@ docker run -d `
 
 已有旧部署若 `.deploy/deployment.env` 没有 `SAKURA_DB_PASSWORD`，`start.sh` 不会猜测或静默轮换（否则会与已有 `mysql_data` 凭据不一致）。请先停 Web、生成新的十六进制密码并在 MySQL 中执行 `ALTER USER 'sakura'@'%' IDENTIFIED BY '<同一密码>'`，确认连接成功后再把同一值写入 `.deploy/deployment.env`（权限 0600），然后用上面的 `--env-file` 命令启动。
 
+生产镜像的 `config_data:/app/config` 卷会持久化 Setup 生成的 `connection.json` 以及 WebUI 可编辑的 `strategies.yaml`、`labels.yaml`。镜像内置的新版基线放在独立的 `/app/config-defaults`，容器会在卷内保存上一版 packaged baseline，并在每次启动时对这两个 YAML 做三路深度合并：自上次 baseline 以来未修改的值跟随新默认（包括 scalar/list），管理员改过的值和自定义键始终保留；新默认键会补入，已从默认删除且未被修改的键会删除，被管理员改过的删除键仍保留。首次升级旧卷时没有 baseline，会保守保留现有值并补入新键，然后写入 baseline。`connection.json` 和其它运行时文件不会被触碰。合并采用同目录原子替换并在批次失败时回滚，YAML 解析失败或无法安全处理的类型冲突会 fail-closed，既有文件不会被覆盖。这样升级镜像既能获得默认策略/标签变化，又不会丢失管理员修改；请将 YAML 文件纳入你自己的备份流程（配置备份接口主要覆盖数据库 `app_config`）。
+
 ### 2. 环境要求
 
 - Linux 服务器（推荐 Ubuntu 20.04+）

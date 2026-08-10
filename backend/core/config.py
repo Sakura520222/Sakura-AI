@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     )
     ai_api_max_retries: int = Field(
         5,
-        description="AI API 最大重试次数",
+        description="AI API 首次请求失败后的重试次数（不含首次请求）",
     )
     ai_api_initial_retry_delay_seconds: float = Field(
         1.0,
