@@ -43,7 +43,10 @@ from backend.models.activity_observability_models import (
     ActivityToolExecution,
 )
 from backend.models.database import Base
-from backend.services.activity_observability.attempt_service import AttemptService
+from backend.services.activity_observability.attempt_service import (
+    AttemptService,
+    _candidate_parts,
+)
 from backend.services.activity_observability.context_service import ContextService
 from backend.services.activity_observability.contracts import (
     InvocationContext,
@@ -1018,6 +1021,26 @@ def _stream_candidate():
         credential="credential",
         endpoint=resolve_endpoint(provider, None),
     )
+
+
+def test_candidate_parts_uses_effective_protocol_without_snapshot():
+    candidate = replace(
+        _stream_candidate(),
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+    )
+
+    assert _candidate_parts(candidate)["protocol"] == ProtocolFamily.ANTHROPIC_NATIVE.value
+
+
+def test_artifact_identity_uses_effective_protocol_without_snapshot():
+    candidate = replace(
+        _stream_candidate(),
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+    )
+
+    identity = ObservedModelSender._artifact_identity(candidate, None)
+
+    assert identity["protocol_family"] == ProtocolFamily.ANTHROPIC_NATIVE.value
 
 
 @pytest.mark.asyncio

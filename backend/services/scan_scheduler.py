@@ -58,11 +58,21 @@ class ScanScheduler:
     def stop(self):
         """停止调度器"""
         if self._scheduler and self._scheduler.running:
-            self._scheduler.shutdown(wait=False)
+            # APScheduler's AsyncIO executor cancels pending jobs when shutdown
+            # is requested. ``wait=True`` is required here so a reset cannot
+            # cross into DROP while an already-started scan still owns a DB
+            # session; the runtime supervisor then awaits the coroutine task.
+            self._scheduler.shutdown(wait=True)
             logger.info("✅ 仓库扫描调度器已停止")
 
     async def _run_scheduled_scan(self):
         """定时扫描入口"""
+        from backend.services.database_reset_runtime_service import (
+            register_current_background_task,
+        )
+
+        if register_current_background_task("scan_scheduler") is None:
+            return
         try:
             logger.info("🕐 定时扫描任务触发")
             result = await self._worker.get_scan_candidates()

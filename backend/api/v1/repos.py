@@ -1,13 +1,14 @@
 """API v1 仓库管理端点"""
 
-import asyncio
-
 from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.v1.deps import require_api_admin, require_api_super_admin
 from backend.api.v1.responses import error_response, success_response
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.webui.deps import get_db
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.routes.repos import (
@@ -56,7 +57,9 @@ async def index_docs(
             f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
         )
 
-    task = asyncio.create_task(_run_docs_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_docs_index(repo_name, user["user_id"]), "repo_docs_index"
+    )
     _active_index_tasks[f"{repo_name}:docs"] = task
 
     logger.info(f"API 触发文档索引: {repo_name}, by={user['sub']}")
@@ -82,7 +85,9 @@ async def index_code(
             f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
         )
 
-    task = asyncio.create_task(_run_code_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_code_index(repo_name, user["user_id"]), "repo_code_index"
+    )
     _active_index_tasks[f"{repo_name}:code"] = task
 
     logger.info(f"API 触发代码索引: {repo_name}, by={user['sub']}")
@@ -108,7 +113,9 @@ async def index_issues(
             f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
         )
 
-    task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_issues_index(repo_name, user["user_id"]), "repo_issues_index"
+    )
     _active_index_tasks[f"{repo_name}:issues"] = task
 
     logger.info(f"API 触发 Issues 索引: {repo_name}, by={user['sub']}")
@@ -128,7 +135,9 @@ async def trigger_repo_scan(
             f"仓库 {repo_name} 正在扫描中，请稍后再试", status_code=409
         )
 
-    task = asyncio.create_task(_run_repo_scan(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_repo_scan(repo_name, user["user_id"]), "repo_manual_scan"
+    )
     _active_index_tasks[f"{repo_name}:scan"] = task
 
     logger.info(f"API 触发仓库扫描: {repo_name}, by={user['sub']}")

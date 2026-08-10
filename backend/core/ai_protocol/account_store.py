@@ -133,7 +133,7 @@ def _safe_json_loads(raw: str | None) -> Any:
         return None
     try:
         return json.loads(raw)
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         return None
 
 

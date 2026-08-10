@@ -6,6 +6,9 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.webui.deps import (
     error_page,
     get_csrf_serializer,
@@ -214,8 +217,6 @@ async def trigger_scan(
     _csrf: str = Depends(require_csrf_header),
 ):
     """手动触发扫描"""
-    import asyncio
-
     from fastapi.responses import JSONResponse
 
     from backend.workers.scan_worker import ScanWorker
@@ -248,7 +249,9 @@ async def trigger_scan(
                     trigger_type="manual",
                     triggered_by=user.get("username", "webui"),
                 )
-                asyncio.create_task(worker.process_scan(scan_id))
+                create_registered_background_task(
+                    worker.process_scan(scan_id), "scan_manual_webui"
+                )
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
             except Exception as e:
                 from loguru import logger

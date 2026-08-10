@@ -127,6 +127,40 @@ UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$DEPLOYMENT_ENV_FILE
 UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-backend/__init__.py}"
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
 
+# 依据持久化部署模式选择 updater 使用的 Compose 定义。
+#
+# deployment.env 是 updater 的权威运行时状态。这里仅逐行读取精确的
+# SAKURA_DEPLOY_MODE=... 字段，绝不 source/eval runtime 文件，避免把其中的
+# 值当作 shell 代码执行。历史 source/缺失状态继续使用开发 Compose；image
+# 状态必须选择生产 Compose，不能因 start.sh 新进程默认值而回落到开发定义。
+select_compose_from_deployment_mode() {
+    local mode="" line
+    if [[ -r "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            case "$line" in
+                SAKURA_DEPLOY_MODE=*) mode="${line#SAKURA_DEPLOY_MODE=}" ;;
+            esac
+        done < "$UPDATER_DEPLOYMENT_ENV_FILE"
+    fi
+
+    case "$mode" in
+        image)
+            COMPOSE_FILE="$PROD_COMPOSE_FILE"
+            ;;
+        source)
+            COMPOSE_FILE="docker/docker-compose.yml"
+            ;;
+        "")
+            COMPOSE_FILE="docker/docker-compose.yml"
+            warn "SAKURA_DEPLOY_MODE missing; using development compose"
+            ;;
+        *)
+            COMPOSE_FILE="docker/docker-compose.yml"
+            warn "unknown SAKURA_DEPLOY_MODE='$mode'; using development compose"
+            ;;
+    esac
+}
+
 # Host metadata helpers are isolated so Linux uses real inode data while Git Bash
 # tests can inject owner/mode values without changing permissions on other directories.
 # Linux 使用真实 inode 元数据；Git Bash 测试可注入 owner/mode，避免 chmod 他人目录。
@@ -728,6 +762,7 @@ ensure_updater_running() {
         fi
     fi
 
+    select_compose_from_deployment_mode
     if ! updater_backend start \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" \
@@ -748,6 +783,7 @@ cmd_updater() {
             cmd_updater_install "$@"
             ;;
         start)
+            select_compose_from_deployment_mode
             updater_backend start \
                 --state-dir "$UPDATER_STATE_DIR" \
                 --socket-path "$UPDATER_SOCKET_PATH" \

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.routing import APIRoute
@@ -310,6 +311,118 @@ async def test_system_restore_marks_restart_required_and_stays_in_scope():
     assert result.requires_restart is True
     assert (result.created, result.updated, result.deleted) == (1, 1, 1)
     assert session.deleted == [redis]
+
+
+@pytest.mark.asyncio
+async def test_runtime_restore_rejects_database_url_with_setup_guidance():
+    session = _FakeSession(
+        [
+            AppConfig(
+                key_name="database_url",
+                key_value="mysql+asyncmy://old/db",
+                description="database_url",
+            )
+        ]
+    )
+    sections = {
+        SYSTEM_SECTION: [
+            BackupRecord(
+                "database_url",
+                "mysql+asyncmy://new/db",
+                "database_url",
+            )
+        ]
+    }
+
+    with pytest.raises(ConfigBackupError, match="Setup") as exc_info:
+        await restore_config_backup(
+            session,
+            sections,
+            allow_database_url=False,
+        )
+
+    assert "mysql+asyncmy://new/db" not in str(exc_info.value)
+    assert session.committed is False
+    assert session.rolled_back is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it():
+    database = AppConfig(
+        key_name="database_url",
+        key_value="mysql+asyncmy://current/db",
+        description="database_url",
+    )
+    redis = AppConfig(
+        key_name="redis_url",
+        key_value="redis://old:6379/0",
+        description="redis_url",
+    )
+    session = _FakeSession([database, redis])
+    sections = {
+        SYSTEM_SECTION: [BackupRecord("redis_url", "redis://new:6379/0", "redis_url")]
+    }
+
+    result = await restore_config_backup(
+        session,
+        sections,
+        allow_database_url=False,
+    )
+
+    assert result.updated == 1
+    assert session.deleted == []
+    assert database.key_value == "mysql+asyncmy://current/db"
+
+
+class _BackupUpload:
+    filename = "backup.json"
+
+    async def read(self, _limit):
+        return b"backup"
+
+    async def close(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_runtime_backup_route_passes_database_url_guard(monkeypatch):
+    sections = {
+        SYSTEM_SECTION: [
+            BackupRecord(
+                "database_url",
+                "mysql+asyncmy://new/db",
+                "database_url",
+            )
+        ]
+    }
+    restore = AsyncMock(
+        side_effect=ConfigBackupError(
+            "database_url restore database_url through Setup"
+        )
+    )
+    monkeypatch.setattr(config_routes, "parse_config_backup", lambda _content: sections)
+    monkeypatch.setattr(config_routes, "restore_config_backup", restore)
+    monkeypatch.setattr(config_routes, "detect_language", lambda: "en")
+    monkeypatch.setattr(
+        config_routes,
+        "toast_redirect",
+        lambda *_args, **kwargs: kwargs,
+    )
+
+    db = object()
+    result = await config_routes.upload_config_backup(
+        _BackupUpload(),
+        db=db,
+        user={"user_id": 1, "sub": "admin"},
+        csrf_token="csrf",
+    )
+
+    restore.assert_awaited_once_with(
+        db,
+        sections,
+        allow_database_url=False,
+    )
+    assert "Setup" in result["reason"]
 
 
 def _route(path: str, method: str) -> APIRoute:

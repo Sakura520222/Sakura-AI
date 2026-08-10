@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 import time
 from datetime import UTC, datetime
 from http.cookies import SimpleCookie
@@ -53,6 +54,33 @@ def read_connection_config() -> dict:
         return {}
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort directory fsync after replacing a config file.
+
+    ``os.replace`` is atomic for readers, while syncing the containing
+    directory makes the replacement durable across a sudden POSIX reboot.
+    Windows and filesystems without ``O_DIRECTORY`` simply skip this optional
+    durability step.
+    """
+
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    if not directory_flag:
+        return
+
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY | directory_flag)
+        os.fsync(directory_fd)
+    except (OSError, ValueError):
+        logger.debug("无法同步 connection.json 所在目录（当前平台可忽略）")
+    finally:
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except (OSError, ValueError):
+                logger.debug("无法关闭 connection.json 所在目录句柄")
+
+
 def write_connection_config(
     database_url: str,
     setup_completed: bool = False,
@@ -70,13 +98,39 @@ def write_connection_config(
     if setup_completed:
         config["completed_at"] = datetime.now(UTC).isoformat()
 
-    # 确保 config 目录存在
+    # 在同一目录中先写临时文件，再用 os.replace 原子替换目标。这样即使
+    # 进程在写入过程中崩溃，启动时也只会看到完整的旧文件或完整的新文件，
+    # 不会读到截断 JSON。临时文件与目标同目录也保证 replace 不跨文件系统。
     config_path = get_connection_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    temp_path: Path | None = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{config_path.name}.",
+            suffix=".tmp",
+            dir=config_path.parent,
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as temp_file:
+            temp_file.write(json.dumps(config, indent=2, ensure_ascii=False))
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        # 限制临时文件权限后再替换，避免凭证在短暂窗口内继承宽松权限。
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            logger.debug("无法设置临时 connection.json 文件权限（Windows 可忽略）")
+        os.replace(temp_path, config_path)
+        temp_path = None
+        _fsync_directory(config_path.parent)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
     # 限制文件权限为仅所有者可读写（包含数据库凭证等敏感信息）
     try:
         os.chmod(config_path, 0o600)

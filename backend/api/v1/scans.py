@@ -14,6 +14,9 @@ from backend.api.v1.responses import (
     success_response,
 )
 from backend.models.scan_models import RepoScan, ScanFinding
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.webui.deps import get_db, paginate
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
@@ -209,7 +212,9 @@ async def trigger_scan(
                     trigger_type="manual_api",
                     triggered_by=f"api:{user['sub']}",
                 )
-                task = asyncio.create_task(worker.process_scan(scan_id))
+                task = create_registered_background_task(
+                    worker.process_scan(scan_id), "scan_manual_api"
+                )
                 _active_scan_tasks[scan_id] = task
                 task.add_done_callback(
                     lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None)
@@ -250,7 +255,9 @@ async def retry_scan(
 
     try:
         worker = ScanWorker()
-        task = asyncio.create_task(worker.process_scan(scan_id))
+        task = create_registered_background_task(
+            worker.process_scan(scan_id), "scan_retry_api"
+        )
         _active_scan_tasks[scan_id] = task
         task.add_done_callback(lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None))
         return success_response(message="扫描已重新触发")

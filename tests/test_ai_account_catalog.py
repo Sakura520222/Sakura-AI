@@ -96,6 +96,27 @@ def test_build_candidate_from_account_uses_builtin_model_metadata():
     assert candidate.credential == "sk-test"
 
 
+def test_build_candidate_from_account_preserves_effective_protocol():
+    """账号协议覆盖 provider 默认族时，candidate 必须保留该协议。"""
+    account = ProviderAccount(
+        id="acc_deepseek_anthropic",
+        name="DeepSeek Anthropic",
+        provider_id="deepseek",
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE.value,
+        api_key="sk-test",
+        default_model="deepseek-v4-pro",
+    )
+
+    candidate = _build_candidate_from_account(account, "deepseek-v4-pro")
+
+    assert candidate is not None
+    assert candidate.provider.family == ProtocolFamily.OPENAI_COMPATIBLE
+    assert candidate.protocol == ProtocolFamily.ANTHROPIC_NATIVE
+    assert candidate.effective_protocol == ProtocolFamily.ANTHROPIC_NATIVE
+    assert candidate.endpoint.chat_path == "messages"
+    assert candidate.endpoint.auth_scheme.value == "x_api_key"
+
+
 def test_provider_catalog_serializes_model_capabilities():
     catalog = {p["id"]: p for p in list_provider_catalog()}
     claude = catalog["anthropic"]["models"][0]

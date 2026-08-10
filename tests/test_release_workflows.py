@@ -10,6 +10,7 @@ ROOT = Path(__file__).parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "updater-build.yml"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_PATH = ROOT / ".github" / "workflows" / "release-on-pr-merge.yml"
+DOCKER_PUBLISH_PATH = ROOT / ".github" / "workflows" / "docker-publish.yml"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
 BUILD_IMAGE = (
     "python:3.12-slim-bullseye@"
@@ -206,6 +207,23 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert stable["with"]["channel"] == "stable"
     assert stable["with"]["version"] == "${{ needs.generate-release.outputs.version }}"
     assert release["concurrency"]["cancel-in-progress"] is False
+
+
+def test_docker_hub_stable_sync_tags_the_copied_docker_hub_image():
+    workflow, _ = _load(DOCKER_PUBLISH_PATH)
+    sync = workflow["jobs"]["sync-dockerhub"]
+    run_text = _job_run_text(sync)
+
+    assert (
+        'crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:v${{ inputs.version }}"'
+        in run_text
+    )
+    assert (
+        'crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest'
+        in run_text
+    )
+    assert 'crane tag "$SOURCE" latest' not in run_text
+    assert 'crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"' in run_text
 
 
 def test_publish_update_manifest_waits_for_release_assets_and_stable_image():

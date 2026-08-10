@@ -552,8 +552,17 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
 async def restore_config_backup(
     db: AsyncSession,
     sections: dict[str, list[BackupRecord]],
+    *,
+    allow_database_url: bool = True,
 ) -> ConfigImportResult:
-    """事务式精确恢复所选分类，删除备份中不存在的同分类旧项。"""
+    """事务式精确恢复所选分类。
+
+    ``database_url`` is allowed for Setup restores, where the final
+    ``mark_setup_completed`` call writes the same value to ``connection.json``.
+    A running deployment must opt out: a database transaction and a filesystem
+    replacement cannot be made one atomic operation, so silently importing a
+    new URL would leave the next restart pointed at the wrong database.
+    """
     if not sections or not set(sections).issubset(
         {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION}
     ):
@@ -589,6 +598,15 @@ async def restore_config_backup(
             for section_records in sections.values()
             for record in section_records
         }
+        if not allow_database_url and "database_url" in imported:
+            raise ConfigBackupError(
+                "database_url 只能通过 Setup 恢复，以同步 connection.json；"
+                " restore database_url through Setup so connection.json stays in sync"
+            )
+
+        # Exact section restore must not delete the live connection anchor when
+        # a normal runtime backup intentionally omits database_url.
+        protected_keys = set() if allow_database_url else {"database_url"}
 
         created = 0
         updated = 0
@@ -597,7 +615,7 @@ async def restore_config_backup(
         deleted_keys: set[str] = set()
 
         for key, row in existing.items():
-            if key not in imported:
+            if key not in imported and key not in protected_keys:
                 await db.delete(row)
                 deleted += 1
                 deleted_keys.add(key)

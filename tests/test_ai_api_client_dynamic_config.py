@@ -1,5 +1,7 @@
 """AI API client dynamic configuration coverage."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
@@ -18,6 +20,10 @@ from backend.core.ai_protocol.models import (
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.core.ai_protocol.resolver import ResolvedChain
+from backend.services.activity_observability.contracts import (
+    InvocationContext,
+    RoleConfigSnapshot,
+)
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.unified_client import FallbackConfig, UnifiedAIClient
 
@@ -36,7 +42,12 @@ class _CapturingAdapter:
         )
 
 
-def _resolved_chain(model_id: str, context_window_tokens: int) -> ResolvedChain:
+def _resolved_chain(
+    model_id: str,
+    context_window_tokens: int,
+    *,
+    protocol: ProtocolFamily | str | None = None,
+) -> ResolvedChain:
     provider = ProviderDeclaration(
         id="test-provider",
         label="Test Provider",
@@ -59,8 +70,29 @@ def _resolved_chain(model_id: str, context_window_tokens: int) -> ResolvedChain:
         model=metadata,
         credential="test-key",
         endpoint=resolve_endpoint(provider, None),
+        protocol=protocol,
     )
     return ResolvedChain(role="main", candidates=[candidate])
+
+
+def _invocation_context() -> InvocationContext:
+    return InvocationContext(
+        invocation_id=1,
+        work_unit_id=2,
+        thread_id=3,
+        role_snapshot=RoleConfigSnapshot(
+            role="main",
+            requested_provider="test-provider",
+            requested_model="gpt-5.6-sol",
+            requested_thinking_mode=None,
+            candidate_chain=(("test-provider", "gpt-5.6-sol"),),
+            account_id="test-provider",
+            protocol_family="openai-compatible",
+            endpoint_fingerprint="a" * 64,
+            config_snapshot_version=1,
+            captured_at=datetime.now(UTC),
+        ),
+    )
 
 
 def test_client_rejects_legacy_endpoint_and_credential_constructor():
@@ -166,3 +198,49 @@ async def test_call_with_retry_uses_primary_model_in_unified_request(monkeypatch
     assert response.choices[0].message.content == "ok"
     assert response.usage.prompt_tokens == 5
     assert adapter.requests[0].model == "gpt-5.6-sol"
+
+
+@pytest.mark.asyncio
+async def test_role_snapshots_use_effective_account_protocol(monkeypatch):
+    """公开 role 快照应与实际非默认协议 adapter 保持一致。"""
+    api_client = AIApiClient()
+    chain = _resolved_chain(
+        "gpt-5.6-sol",
+        512000,
+        protocol=ProtocolFamily.OPENAI_RESPONSES,
+    )
+
+    async def resolve_chain(_role):
+        return chain
+
+    monkeypatch.setattr(api_client, "_resolve_role_chain", resolve_chain)
+
+    snapshot = await api_client.resolve_role_config_snapshot("main")
+    assert snapshot.protocol_family == ProtocolFamily.OPENAI_RESPONSES.value
+
+    captured: dict[str, object] = {}
+
+    class _CapturingUnifiedClient:
+        async def call_with_retry(self, *args, **kwargs):
+            captured["context"] = kwargs["context"]
+            return UnifiedResponse(
+                content="ok",
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=1, output_tokens=1),
+            )
+
+    api_client._unified_client = _CapturingUnifiedClient()
+    context = _invocation_context()
+    await api_client.call_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+        model="",
+        role="main",
+        context=context,
+    )
+    captured_context = captured["context"]
+    assert isinstance(captured_context, InvocationContext)
+    assert (
+        captured_context.role_snapshot.protocol_family
+        == ProtocolFamily.OPENAI_RESPONSES.value
+    )

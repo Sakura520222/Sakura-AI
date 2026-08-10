@@ -15,7 +15,6 @@ README 原文不会展示给用户；传给 AI 时按 ``star_aid_summary_readme_
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 
@@ -290,7 +289,20 @@ async def refresh_repository_summary(
 
 def trigger_summary_refresh(repository_id: int) -> None:
     """异步触发摘要刷新（fire-and-forget，内部新开 DB session）。"""
-    asyncio.create_task(_refresh_in_background(int(repository_id)))
+    from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeAdmissionClosed,
+        create_registered_background_task,
+    )
+
+    try:
+        create_registered_background_task(
+            _refresh_in_background(int(repository_id)), "star_aid_summary_refresh"
+        )
+    except DatabaseResetRuntimeAdmissionClosed:
+        logger.info(
+            "跳过清库静默期内的 star_aid 摘要刷新: repository_id={}",
+            repository_id,
+        )
 
 
 async def _refresh_in_background(repository_id: int) -> None:

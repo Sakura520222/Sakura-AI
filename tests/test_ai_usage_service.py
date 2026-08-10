@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from backend.core.ai_protocol.models import UnifiedUsage
+from backend.core.ai_protocol.models import ProtocolFamily, UnifiedUsage
 from backend.models.ai_usage_models import AIUsageRecord
-from backend.services import dashboard_stats_service
+from backend.services import ai_usage_service, dashboard_stats_service
 from backend.services.ai_usage_service import (
     ACCOUNTED_CALL_KINDS,
     GlobalTokenTotals,
@@ -26,6 +27,64 @@ class _AsyncExecuteAdapter:
 
     async def execute(self, statement):
         return self._session.execute(statement)
+
+
+@pytest.mark.asyncio
+async def test_unified_usage_uses_candidate_effective_protocol(monkeypatch):
+    captured = {}
+
+    async def capture(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(ai_usage_service, "record_ai_usage_best_effort", capture)
+    candidate = SimpleNamespace(
+        provider=SimpleNamespace(
+            id="provider-default",
+            family=ProtocolFamily.OPENAI_COMPATIBLE,
+        ),
+        effective_protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+        model=SimpleNamespace(model_id="model-1"),
+    )
+
+    assert await ai_usage_service.record_unified_ai_usage_best_effort(
+        logical_call_id="call-1",
+        call_kind="chat",
+        role="main",
+        candidate=candidate,
+        usage=UnifiedUsage(input_tokens=1, output_tokens=2),
+    )
+
+    assert captured["protocol_family"] == ProtocolFamily.ANTHROPIC_NATIVE.value
+
+
+@pytest.mark.asyncio
+async def test_unified_usage_uses_legacy_candidate_protocol_family(monkeypatch):
+    captured = {}
+
+    async def capture(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(ai_usage_service, "record_ai_usage_best_effort", capture)
+    candidate = SimpleNamespace(
+        provider=SimpleNamespace(
+            id="provider-default",
+            family=ProtocolFamily.OPENAI_COMPATIBLE,
+        ),
+        protocol_family=ProtocolFamily.GEMINI_NATIVE,
+        model=SimpleNamespace(model_id="model-legacy"),
+    )
+
+    assert await ai_usage_service.record_unified_ai_usage_best_effort(
+        logical_call_id="legacy-call",
+        call_kind="chat",
+        role="main",
+        candidate=candidate,
+        usage=UnifiedUsage(input_tokens=1, output_tokens=2),
+    )
+
+    assert captured["protocol_family"] == ProtocolFamily.GEMINI_NATIVE.value
 
 
 def test_extract_provider_usage_preserves_missing_fields_and_dimensions():

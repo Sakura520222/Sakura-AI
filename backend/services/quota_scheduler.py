@@ -46,11 +46,17 @@ class QuotaResetScheduler:
     def stop(self):
         """停止配额重置调度器。"""
         if self._scheduler and self._scheduler.running:
-            self._scheduler.shutdown(wait=False)
+            self._scheduler.shutdown(wait=True)
             logger.info("✅ 配额重置调度器已停止")
 
     async def _run_quota_reset(self):
         """定时批量重置入口。"""
+        from backend.services.database_reset_runtime_service import (
+            register_current_background_task,
+        )
+
+        if register_current_background_task("quota_reset_scheduler") is None:
+            return
         try:
             # 延迟导入：main 启动时导入 quota_scheduler，此时 database 可能尚未完成引导；
             # 运行任务时再取 async_session / QuotaService，避免初始化阶段循环依赖。

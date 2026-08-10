@@ -220,25 +220,19 @@ class ObservedModelSender:
     ) -> dict[str, str]:
         provider = str(getattr(getattr(candidate, "provider", None), "id", "unknown"))
         model = str(getattr(getattr(candidate, "model", None), "model_id", "unknown"))
-        protocol = (
-            reasoning_snapshot.protocol_family
-            if reasoning_snapshot is not None
-            else str(
-                getattr(
-                    getattr(
-                        getattr(candidate, "provider", None),
-                        "family",
-                        "unknown",
-                    ),
-                    "value",
-                    getattr(
-                        getattr(candidate, "provider", None),
-                        "family",
-                        "unknown",
-                    ),
+        if reasoning_snapshot is not None:
+            protocol = reasoning_snapshot.protocol_family
+        else:
+            effective_protocol = getattr(candidate, "effective_protocol", None)
+            if effective_protocol in (None, ""):
+                effective_protocol = getattr(candidate, "protocol_family", None)
+            if effective_protocol in (None, ""):
+                effective_protocol = getattr(
+                    getattr(candidate, "provider", None),
+                    "family",
+                    "unknown",
                 )
-            )
-        )
+            protocol = str(getattr(effective_protocol, "value", effective_protocol))
         endpoint = getattr(
             getattr(candidate, "endpoint", None),
             "base_url",

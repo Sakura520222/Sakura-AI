@@ -321,6 +321,7 @@ def _build_candidate_from_account(
         model=metadata,
         credential=account.api_key,
         endpoint=endpoint,
+        protocol=family,
     )
 
 

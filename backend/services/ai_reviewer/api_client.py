@@ -194,7 +194,9 @@ class AIApiClient:
                 ),
                 account_id=str(getattr(primary.provider, "id", "unknown")),
                 protocol_family=getattr(
-                    primary.provider.family, "value", str(primary.provider.family)
+                    primary.effective_protocol,
+                    "value",
+                    str(primary.effective_protocol),
                 ),
                 endpoint_fingerprint=hashlib.sha256(
                     primary_endpoint.encode("utf-8")
@@ -291,7 +293,9 @@ class AIApiClient:
             ),
             account_id=str(getattr(primary, "account_id", None) or primary.provider.id),
             protocol_family=getattr(
-                primary.provider.family, "value", str(primary.provider.family)
+                primary.effective_protocol,
+                "value",
+                str(primary.effective_protocol),
             ),
             endpoint_fingerprint=hashlib.sha256(endpoint.encode("utf-8")).hexdigest(),
             config_snapshot_version=1,

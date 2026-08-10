@@ -8,7 +8,6 @@ which transport (WebUI / API) the attempt comes from.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -74,8 +73,19 @@ async def record_mfa_failure(user_id: int) -> int:
                 count,
                 lock_ttl,
             )
-            # Fire-and-forget Telegram notification for lockout event
-            asyncio.create_task(_notify_lockout(user_id))
+            # Fire-and-forget notification owns a short-lived DB session; keep
+            # it in the reset supervisor so DROP cannot race its commit.
+            from backend.services.database_reset_runtime_service import (
+                DatabaseResetRuntimeAdmissionClosed,
+                create_registered_background_task,
+            )
+
+            try:
+                create_registered_background_task(
+                    _notify_lockout(user_id), "mfa_lockout_notification"
+                )
+            except DatabaseResetRuntimeAdmissionClosed:
+                logger.info("跳过清库静默期内的 MFA lockout 通知: user_id={}", user_id)
         return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
@@ -115,11 +125,19 @@ def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) ->
         logger.warning(
             "MFA account locked (fallback): user_id={}, failures={}", user_id, count_val
         )
-        # Fire-and-forget Telegram notification (best-effort in fallback)
+        # The fallback still sends a notification through a short-lived DB
+        # session; register it so reset quiesce can reject/await it as well.
+        from backend.services.database_reset_runtime_service import (
+            DatabaseResetRuntimeAdmissionClosed,
+            create_registered_background_task,
+        )
+
         try:
-            asyncio.get_running_loop().create_task(_notify_lockout(user_id))
-        except RuntimeError:
-            pass
+            create_registered_background_task(
+                _notify_lockout(user_id), "mfa_lockout_notification"
+            )
+        except DatabaseResetRuntimeAdmissionClosed:
+            logger.info("跳过清库静默期内的 MFA fallback 通知: user_id={}", user_id)
     return count_val
 
 
