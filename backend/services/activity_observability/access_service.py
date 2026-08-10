@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import and_, desc, func, nullslast, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -679,7 +679,7 @@ class ActivityAccessService:
                 select(ActivityObservabilitySession)
                 .options(selectinload(ActivityObservabilitySession.resource_identity))
                 .order_by(
-                    nullslast(desc(ActivityObservabilitySession.last_active_at)),
+                    desc(ActivityObservabilitySession.last_active_at),
                     desc(ActivityObservabilitySession.id),
                 )
                 .limit(current_limit)
