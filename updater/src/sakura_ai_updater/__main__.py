@@ -55,6 +55,10 @@ def serve(
     *,
     socket_uid: int = 0,
     socket_gid: int = DEFAULT_GID,
+    compose_file: str | None = None,
+    deployment_env: str | None = None,
+    health_url: str = "http://localhost:8000/health",
+    disk_space_threshold: int = 2 * 1024 * 1024 * 1024,
 ) -> None:
     """启动 updater daemon：flock → reconcile → pre-bind listener → uvicorn serve。
 
@@ -99,8 +103,40 @@ def serve(
                 file=sys.stderr,
             )
 
-        # 4. host 预绑定 UDS（0o660 root:socket_gid，listen 前设好）→ 交给 uvicorn
-        app = create_app(state_path)
+        # 4. 构造 host-side orchestration dependencies.  The paths are explicit
+        # CLI values; no component resolves compose/deployment files from the
+        # daemon's current working directory.
+        orchestrator = None
+        if compose_file is not None and deployment_env is not None:
+            from sakura_ai_updater.adapters.image import ImageAdapter
+            from sakura_ai_updater.deployment import DeploymentStateProvider
+            from sakura_ai_updater.jobs import JobOrchestrator
+            from sakura_ai_updater.release_client import ReleaseClient
+
+            adapter = ImageAdapter(
+                compose_file=compose_file,
+                deployment_env=deployment_env,
+                health_url=health_url,
+            )
+            deployment = DeploymentStateProvider(
+                deployment_env=deployment_env,
+                health_url=health_url,
+            )
+            orchestrator = JobOrchestrator(
+                state_path=state_path,
+                adapter=adapter,
+                release_client=ReleaseClient(),
+                deployment=deployment,
+                disk_space_threshold=disk_space_threshold,
+            )
+
+        # Keep the legacy one-argument call when no host paths were configured;
+        # this preserves status/health-only development mode and old callers.
+        app = (
+            create_app(state_path, orchestrator=orchestrator)
+            if orchestrator is not None
+            else create_app(state_path)
+        )
         listener = bind_socket_listener(
             socket_path, uid=socket_uid, gid=socket_gid, mode=0o660
         )
@@ -126,6 +162,8 @@ def create_backend(
     socket_path: str = DEFAULT_SOCKET_PATH,
     binary_path: str | None = None,
     startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
+    compose_file: str | None = None,
+    deployment_env: str | None = None,
 ) -> DaemonBackend:
     """构造 backend（模块级工厂：CLI 与测试共用，便于 monkeypatch 注入）。"""
     return DaemonBackend(
@@ -133,6 +171,8 @@ def create_backend(
         socket_path=socket_path,
         binary_path=binary_path,
         startup_timeout=startup_timeout,
+        compose_file=compose_file,
+        deployment_env=deployment_env,
     )
 
 
@@ -144,6 +184,8 @@ def _run_backend(args: argparse.Namespace) -> None:
             socket_path=args.socket_path,
             binary_path=args.binary_path,
             startup_timeout=args.startup_timeout,
+            compose_file=args.compose_file,
+            deployment_env=args.deployment_env,
         )
         if args.action == "install":
             backend.install()
@@ -178,6 +220,8 @@ def _main_backend(argv: list[str]) -> None:
         default=DEFAULT_STARTUP_TIMEOUT,
         help="start readiness 总超时（秒）",
     )
+    parser.add_argument("--compose-file", default=None)
+    parser.add_argument("--deployment-env", default=None)
     _run_backend(parser.parse_args(argv))
 
 
@@ -211,6 +255,27 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="default: <state-dir>/updater.lock",
     )
+    parser.add_argument(
+        "--compose-file",
+        default=None,
+        help="absolute production Compose file used by host updater",
+    )
+    parser.add_argument(
+        "--deployment-env",
+        default=None,
+        help="absolute authoritative .deploy/deployment.env path",
+    )
+    parser.add_argument(
+        "--health-url",
+        default="http://localhost:8000/health",
+        help="application /health endpoint used for version/health gates",
+    )
+    parser.add_argument(
+        "--disk-space-threshold",
+        type=int,
+        default=2 * 1024 * 1024 * 1024,
+        help="minimum free Docker-root bytes required by preflight",
+    )
     args = parser.parse_args(argv)
 
     if not args.serve:
@@ -218,7 +283,17 @@ def main(argv: list[str] | None = None) -> None:
 
     state_path = os.path.join(args.state_dir, "update-state.json")
     lock_path = args.lock_path or os.path.join(args.state_dir, "updater.lock")
-    serve(args.socket_path, state_path, lock_path, socket_uid=args.socket_uid, socket_gid=args.socket_gid)
+    serve(
+        args.socket_path,
+        state_path,
+        lock_path,
+        socket_uid=args.socket_uid,
+        socket_gid=args.socket_gid,
+        compose_file=args.compose_file,
+        deployment_env=args.deployment_env,
+        health_url=args.health_url,
+        disk_space_threshold=args.disk_space_threshold,
+    )
 
 
 if __name__ == "__main__":

@@ -781,3 +781,82 @@ jobs:
       version: ${{ needs.generate-release.outputs.version }}
       sync_dockerhub: true
     secrets: inherit
+
+  publish-update-manifest:
+    name: 发布更新清单
+    needs:
+      - generate-release
+      - publish-updater-assets
+      - publish-stable-image
+    if: >-
+      always() &&
+      needs.generate-release.result == 'success' &&
+      needs.publish-updater-assets.result == 'success' &&
+      (
+        needs.publish-stable-image.result == 'success' ||
+        needs.publish-stable-image.result == 'skipped'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: 生成并上传 update-manifest.json
+        env:
+          VERSION: ${{ needs.generate-release.outputs.version }}
+          RELEASE_ACTION: ${{ needs.generate-release.outputs.release_action }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Release workflow versions are generated from backend/__init__.py.
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          }
+
+          actual=$(sed -nE 's/^__version__[^=]*=[^"]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/__init__.py | head -n1)
+          [[ "$actual" == "$VERSION" ]] || {
+            echo "version mismatch: workflow=$VERSION backend=$actual" >&2
+            exit 1
+          }
+
+          proto=$(sed -nE 's/^PROTOCOL_VERSION[^=]*=[^0-9]*([0-9]+).*/\1/p' updater/src/sakura_ai_updater/__init__.py | head -n1)
+          [[ "$proto" == "1" ]] || {
+            echo "unsupported or missing PROTOCOL_VERSION: ${proto:-<empty>}" >&2
+            exit 1
+          }
+
+          # Created and refresh releases both require the concrete stable image
+          # tag to exist before the manifest can become authoritative.
+          image="ghcr.io/sakura520222/sakura-ai:v${VERSION}"
+          docker manifest inspect "$image" >/dev/null || {
+            echo "stable image not found: $image (release_action=$RELEASE_ACTION)" >&2
+            exit 1
+          }
+
+          cat > update-manifest.json <<JSON
+          {"schema_version":1,"version":"${VERSION}","channel":"stable","min_upgrade_from":"0.0.0","image":"${image}","updater":{"protocol_version":${proto},"asset_linux_amd64":"sakura-ai-updater-linux-amd64","asset_linux_arm64":"sakura-ai-updater-linux-arm64"}}
+          JSON
+
+          jq -e '
+            .schema_version == 1
+            and (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and .channel == "stable"
+            and .min_upgrade_from == "0.0.0"
+            and (.image | test("^ghcr\\.io/sakura520222/sakura-ai:v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and (.updater | type == "object")
+            and (.updater.protocol_version | type == "number")
+            and .updater.asset_linux_amd64 == "sakura-ai-updater-linux-amd64"
+            and .updater.asset_linux_arm64 == "sakura-ai-updater-linux-arm64"
+          ' update-manifest.json >/dev/null
+
+          TAG_NAME="v${VERSION}"
+          gh release view "$TAG_NAME" >/dev/null
+          gh release upload "$TAG_NAME" update-manifest.json --clobber

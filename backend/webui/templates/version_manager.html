@@ -1,29 +1,34 @@
 {% extends "base.html" %}
 
-{% block title %}版本管理{% endblock %}
+{% block title %}{{ _("version_manager.title") }}{% endblock %}
 
 {% block content %}
 <div class="max-w-4xl mx-auto px-4 py-6 space-y-6">
-  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">版本管理</h1>
+  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">{{ _("version_manager.title") }}</h1>
 
   {# 当前部署信息卡 / Current deployment card #}
   <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
-    <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">当前部署</h2>
+    <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ _("version_manager.deployment") }}</h2>
     <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-      <div><dt class="text-gray-500 dark:text-gray-400">当前版本</dt>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_version") }}</dt>
            <dd class="font-mono font-medium">v{{ version_info.current_version }}</dd></div>
-      <div><dt class="text-gray-500 dark:text-gray-400">部署方式</dt>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.deployment_mode") }}</dt>
            <dd>{{ version_info.deployment_type }}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">最近检查</dt>
            <dd>{{ version_info.last_checked or "尚未检查" }}</dd></div>
-      <div><dt class="text-gray-500 dark:text-gray-400">更新支持</dt>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.update_supported") }}</dt>
            <dd>{{ "是" if version_info.update_supported else "否" }}
-               <span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span></dd></div>
+               {% if version_info.update_unsupported_reason %}<span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span>{% endif %}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">Host Updater</dt>
            <dd>{{ "已连接" if version_info.updater_connected else "未连接" }}
                {% if version_info.updater_connected and version_info.updater_version %}
                <span class="text-gray-400 text-xs font-mono">v{{ version_info.updater_version }}</span>
                {% endif %}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater_state") }}</dt>
+           <dd id="updater-state" data-state="{{ version_info.updater_state or 'idle' }}">
+             {{ version_info.updater_state or "idle" }}
+             {% if version_info.has_active_job %}<span class="text-xs text-sakura-500">（任务 {{ version_info.active_job_id }}）</span>{% endif %}
+           </dd></div>
     </dl>
 
     {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 显示"尚未检查" #}
@@ -36,7 +41,7 @@
     <div class="mt-4 flex items-center gap-2 text-sakura-600 dark:text-sakura-400">
       <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
       <span class="font-medium">v{{ version_info.latest_version }} 可用</span>
-      <span class="text-xs text-gray-400">（更新功能将在后续版本启用）</span>
+      <span class="text-xs text-gray-400">（{{ _("version_manager.update_available_hint") }}）</span>
     </div>
     {% elif version_info.last_checked and not version_info.check_error %}
     <div class="mt-4 text-sm text-gray-500">已是最新版本。</div>
@@ -47,9 +52,25 @@
     <div class="mt-4">
       <button id="recheck-btn"
               class="px-4 py-2 rounded-xl bg-sakura-500 text-white text-sm font-medium hover:bg-sakura-600 disabled:opacity-50">
-        重新检查
+        {{ _("common.refresh") }}
       </button>
+      <button id="preflight-btn" type="button"
+              class="ml-2 px-4 py-2 rounded-xl border border-sakura-300 text-sakura-700 text-sm font-medium hover:bg-sakura-50 disabled:opacity-50">
+        {{ _("version_manager.preflight") }}
+      </button>
+      <button id="update-btn" type="button"
+              class="ml-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+              disabled>
+        {{ _("version_manager.start_update") }}
+      </button>
+      <div id="update-status" class="mt-3 text-sm text-gray-500" role="status" aria-live="polite"></div>
     </div>
+  </section>
+
+  <section id="readiness-card" class="hidden bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+    <h2 class="text-lg font-semibold mb-3 text-gray-700 dark:text-gray-200">{{ _("version_manager.readiness") }}</h2>
+    <div id="readiness-target" class="font-mono text-sm text-gray-600 dark:text-gray-300"></div>
+    <ul id="readiness-checks" class="mt-3 space-y-1 text-xs text-gray-500"></ul>
   </section>
 
   {# Release 列表 / Release list（已按 SemVer 降序） #}
@@ -82,19 +103,206 @@
 </div>
 
 <script>
-// CSRF token 从 template context 注入（navbar restart 同款模式）
+// CSRF token 从 template context 注入（navbar restart 同款模式）。所有更新请求
+// 只走 Backend proxy；浏览器永远不接触 UDS 或宿主 Docker。
 const CSRF_TOKEN = "{{ csrf_token }}";
-document.getElementById('recheck-btn').addEventListener('click', async function() {
+const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
+const recheckButton = document.getElementById('recheck-btn');
+const preflightButton = document.getElementById('preflight-btn');
+const updateButton = document.getElementById('update-btn');
+const statusNode = document.getElementById('update-status');
+const readinessCard = document.getElementById('readiness-card');
+const readinessTarget = document.getElementById('readiness-target');
+const readinessChecks = document.getElementById('readiness-checks');
+const VM_I18N = {
+  checking: {{ _("version_manager.checking") | tojson }},
+  preflight: {{ _("version_manager.preflight_running") | tojson }},
+  submitting: {{ _("version_manager.update_submitting") | tojson }},
+  reconnecting: {{ _("version_manager.reconnecting") | tojson }},
+  notConnected: {{ _("version_manager.updater_not_connected") | tojson }},
+  healthMismatch: {{ _("version_manager.health_mismatch") | tojson }},
+  target: {{ _("version_manager.target") | tojson }},
+  noTarget: {{ _("version_manager.no_target") | tojson }},
+  readinessFailed: {{ _("version_manager.readiness_failed") | tojson }},
+  preflightPassed: {{ _("version_manager.preflight_passed") | tojson }},
+  preflightFailed: {{ _("version_manager.preflight_failed") | tojson }},
+  preflightError: {{ _("version_manager.preflight_error") | tojson }},
+  updateStatus: {{ _("version_manager.update_status") | tojson }},
+  updateSuccess: {{ _("version_manager.update_success") | tojson }},
+  updateFailed: {{ _("version_manager.update_failed") | tojson }},
+  updateSubmitFailed: {{ _("version_manager.update_submit_failed") | tojson }},
+  unknownState: {{ _("version_manager.unknown_state") | tojson }},
+  emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
+  missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
+  httpError: {{ _("version_manager.http_error") | tojson }},
+  success: {{ _("common.success") | tojson }},
+  error: {{ _("common.error") | tojson }}
+};
+
+function vmFormat(template, values) {
+  return Object.entries(values || {}).reduce(
+    (text, [key, value]) => text.replaceAll('{' + key + '}', String(value)),
+    template
+  );
+}
+
+function setStatus(message, kind) {
+  statusNode.textContent = message || '';
+  statusNode.className = 'mt-3 text-sm ' + (kind === 'error' ? 'text-red-600' : kind === 'ok' ? 'text-emerald-600' : 'text-gray-500');
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
+  let body = null;
+  try { body = await response.json(); } catch (_) { body = {}; }
+  if (!response.ok) {
+    const error = new Error((body && body.error) || vmFormat(VM_I18N.httpError, {status: response.status}));
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+  return body;
+}
+
+function showReadiness(data) {
+  const payload = data && data.data ? data.data : data || {};
+  readinessCard.classList.remove('hidden');
+  const target = payload.target || {};
+  readinessTarget.textContent = target.version
+    ? vmFormat(VM_I18N.target, {version: target.version}) + (target.image ? ' · ' + target.image : '')
+    : VM_I18N.noTarget;
+  readinessChecks.innerHTML = '';
+  const checks = payload.readiness || payload.checks || {};
+  (Array.isArray(checks) ? checks : Object.entries(checks).map(([name, passed]) => ({name, passed}))).forEach((check) => {
+    const item = document.createElement('li');
+    item.textContent = (check.passed ? '✓ ' : '✗ ') + check.name + (check.detail ? ': ' + check.detail : '');
+    item.className = check.passed ? 'text-emerald-600' : 'text-amber-600';
+    readinessChecks.appendChild(item);
+  });
+  updateButton.disabled = payload.update_ready === false || payload.update_available === false;
+  return payload;
+}
+
+async function loadReadiness() {
+  try {
+    const data = await requestJson('/version/readiness', { method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'} });
+    showReadiness(data);
+    return data && data.data ? data.data : data;
+  } catch (error) {
+    if (error.status === 503) setStatus(VM_I18N.notConnected, 'error');
+    else setStatus(VM_I18N.readinessFailed, 'error');
+    updateButton.disabled = true;
+    return null;
+  }
+}
+
+recheckButton.addEventListener('click', async function() {
   this.disabled = true;
-  this.textContent = '检查中...';
+  this.textContent = VM_I18N.checking;
   try {
     const r = await fetch('/version/check', {
       method: 'POST',
       headers: { 'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json' }
     });
     if (r.ok) { location.reload(); }
-    else { this.textContent = '失败，点击重试'; this.disabled = false; }
-  } catch (e) { this.textContent = '失败，点击重试'; this.disabled = false; }
+    else { this.textContent = VM_I18N.error; this.disabled = false; }
+  } catch (e) { this.textContent = VM_I18N.error; this.disabled = false; }
 });
+
+preflightButton.addEventListener('click', async function() {
+  const readiness = await loadReadiness();
+  const target = readiness && readiness.target && readiness.target.version;
+  if (!target) return;
+  this.disabled = true;
+  setStatus(VM_I18N.preflight, null);
+  try {
+    const data = await requestJson('/version/preflight', {
+      method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: JSON.stringify({target_version: target})
+    });
+    const result = data && data.data ? data.data : data;
+    showReadiness({data: {target: {version: target}, checks: result.checks, update_ready: result.can_update}});
+    setStatus(result.can_update ? VM_I18N.preflightPassed : VM_I18N.preflightFailed, result.can_update ? 'ok' : 'error');
+  } catch (error) {
+    setStatus(vmFormat(VM_I18N.preflightError, {error: (error.body && error.body.error) || error.message}), 'error');
+  }
+  finally { this.disabled = false; }
+});
+
+async function verifyHealth(targetVersion) {
+  try {
+    const response = await fetch('/health', {headers: {'Accept': 'application/json'}, cache: 'no-store'});
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body && (body.version === targetVersion || (body.data && body.data.version === targetVersion));
+  } catch (_) { return false; }
+}
+
+async function pollJob(jobId) {
+  setStatus(VM_I18N.reconnecting + ' (' + jobId + ')', null);
+  while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
+    try {
+      const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
+      const job = body && body.data ? body.data : body;
+      if (!job) throw new Error(VM_I18N.emptyJobResponse);
+      const state = job.state || VM_I18N.unknownState;
+      setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + job.step : ''), null);
+      if (job.state === 'success') {
+        const target = job.target_version;
+        if (target && await verifyHealth(target)) {
+          setStatus(vmFormat(VM_I18N.updateSuccess, {version: target}), 'ok');
+        } else {
+          setStatus(VM_I18N.healthMismatch, 'error');
+        }
+        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        updateButton.disabled = false;
+        return;
+      }
+      if (job.state === 'failed') {
+        setStatus(vmFormat(VM_I18N.updateFailed, {error: job.error || job.error_code || VM_I18N.unknownState}), 'error');
+        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        updateButton.disabled = false;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    } catch (error) {
+      // Web container restarts are expected during activation.  Keep the job id
+      // and retry; only the host's terminal failed state is rendered as failed.
+      setStatus(VM_I18N.reconnecting, null);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+}
+
+updateButton.addEventListener('click', async function() {
+  const readiness = await loadReadiness();
+  const target = readiness && readiness.target && readiness.target.version;
+  if (!target || updateButton.disabled) return;
+  updateButton.disabled = true;
+  setStatus(VM_I18N.submitting, null);
+  try {
+    const body = await requestJson('/version/update', {
+      method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: JSON.stringify({target_version: target})
+    });
+    const data = body && body.data ? body.data : body;
+    if (!data.job_id) throw new Error(VM_I18N.missingJobId);
+    sessionStorage.setItem(JOB_STORAGE_KEY, data.job_id);
+    await pollJob(data.job_id);
+  } catch (error) {
+    if (error.status === 409 && error.body && error.body.job_id) {
+      sessionStorage.setItem(JOB_STORAGE_KEY, error.body.job_id);
+      await pollJob(error.body.job_id);
+    } else {
+      setStatus(vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message}), 'error');
+      updateButton.disabled = false;
+    }
+  }
+});
+
+// A page reload after Web container restart resumes the same host job.
+const persistedJobId = sessionStorage.getItem(JOB_STORAGE_KEY);
+if (persistedJobId) pollJob(persistedJobId);
+loadReadiness();
 </script>
 {% endblock %}

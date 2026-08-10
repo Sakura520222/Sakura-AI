@@ -208,6 +208,51 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert release["concurrency"]["cancel-in-progress"] is False
 
 
+def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
+    release, text = _load(RELEASE_PATH)
+    manifest = release["jobs"]["publish-update-manifest"]
+
+    assert manifest["needs"] == [
+        "generate-release",
+        "publish-updater-assets",
+        "publish-stable-image",
+    ]
+    condition = manifest["if"].strip()
+    assert condition.startswith("always()")
+    assert "needs.generate-release.result == 'success'" in condition
+    assert "needs.publish-updater-assets.result == 'success'" in condition
+    assert "needs.publish-stable-image.result == 'success'" in condition
+    assert "needs.publish-stable-image.result == 'skipped'" in condition
+
+    checkout = next(
+        step
+        for step in manifest["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["uses"] == "actions/checkout@v7"
+    assert checkout["with"]["ref"] == "main"
+
+    run_text = _job_run_text(manifest)
+    assert 'VERSION: ${{ needs.generate-release.outputs.version }}' in text
+    assert "docker manifest inspect" in run_text
+    assert "update-manifest.json" in run_text
+    assert 'gh release upload "$TAG_NAME" update-manifest.json --clobber' in run_text
+    assert "gh release create" not in run_text
+    assert "gh release edit" not in run_text
+    assert "${{ inputs.version }}" not in text
+
+    # The generated manifest is owned by this job; source archives and the
+    # reusable updater workflow must not accidentally package or upload it.
+    for job_id, job in release["jobs"].items():
+        if job_id == "publish-update-manifest":
+            continue
+        assert "update-manifest.json" not in _job_run_text(job)
+
+    assert '"updater":{"protocol_version"' in run_text
+    assert '"asset_linux_amd64"' in run_text
+    assert '"asset_linux_arm64"' in run_text
+
+
 def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     ci, _ = _load(CI_PATH)
     jobs = ci["jobs"]

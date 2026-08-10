@@ -115,8 +115,8 @@ def test_updater_connected_when_info_provided():
     assert info["updater_connected"] is True
     assert info["updater_version"] == "0.1.0"
     assert info["updater_protocol_version"] == 1
-    assert info["update_supported"] is False  # Slice 4 才启用 update
-    assert info["update_unsupported_reason"] == "update_not_implemented"
+    assert info["update_supported"] is True  # image + connected + protocol v1
+    assert info["update_unsupported_reason"] is None
 
 
 def test_updater_disconnected_when_none():
@@ -136,3 +136,33 @@ def test_source_mode_updater_connected_still_unsupported():
     assert info["updater_connected"] is True
     assert info["update_supported"] is False
     assert info["update_unsupported_reason"] == "source_updater_not_available"
+
+
+def test_host_readiness_snapshot_is_mapped_from_updater_status():
+    readiness = {
+        "manifest_found": True,
+        "manifest_valid": True,
+        "image_pullable": True,
+        "protocol_compatible": True,
+        "target_newer": True,
+    }
+    target = {
+        "version": "3.1.0",
+        "image": "ghcr.io/example/app:v3.1.0",
+        "channel": "stable",
+    }
+    info = build_version_info(
+        "image",
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.0",
+            "data": {
+                "update_ready": True,
+                "readiness": readiness,
+                "target": target,
+            },
+        },
+    )
+    assert info["update_ready"] is True
+    assert info["readiness"] == readiness
+    assert info["target"] == target
