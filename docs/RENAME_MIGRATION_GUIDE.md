@@ -1,6 +1,12 @@
-# Sakura-AI 重命名迁移指南
+# Sakura AI 重命名迁移指南
 
-本指南面向已部署 Sakura-AI-Reviewer 的维护者,说明项目重命名为 Sakura-AI 后的运维步骤。本版本不提供自动数据库迁移脚本。
+> 项目从 Sakura-AI-Reviewer 重命名为 Sakura AI 的运维步骤。改名已完成，本文档面向从旧版升级的维护者保留作历史参考。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
+> 改名已完成。如果你是新部署，无需阅读本文档；仅当从旧版 `Sakura-AI-Reviewer` 升级时参考。本版本不提供自动数据库迁移脚本。
 
 ## 1. 改名内容总览
 
@@ -113,15 +119,13 @@ $files = git ls-files |
   Where-Object {
     $_ -notmatch '^\.sakura/' -and
     $_ -notmatch '^\.understand-anything/' -and
-    $_ -ne 'docs/RENAME_MIGRATION_GUIDE.md' -and
-    $_ -ne 'docs/superpowers/specs/2026-07-07-rename-to-sakura-ai-design.md' -and
-    $_ -ne 'docs/superpowers/plans/2026-07-07-rename-to-sakura-ai.md'
+    $_ -ne 'docs/RENAME_MIGRATION_GUIDE.md'
   }
 
 Select-String -Path $files -Pattern 'Sakura AI Reviewer','Sakura-AI-Reviewer','sakura-ai-reviewer','sakura-pr','pr-reviewer-worker','pr_reviewer'
 ```
 
-预期零命中(仅扫描 git 跟踪文件,自动避开本地 `.env`、日志、缓存、虚拟环境等未跟踪/忽略文件;额外排除 `.sakura/`、`.understand-anything/` 历史快照以及本次设计/计划/迁移指南自身)。
+预期零命中(仅扫描 git 跟踪文件,自动避开本地 `.env`、日志、缓存、虚拟环境等未跟踪/忽略文件;额外排除 `.sakura/`、`.understand-anything/` 历史快照以及本迁移指南自身)。
 
 ## 9. 回滚步骤
 
@@ -130,3 +134,7 @@ Select-String -Path $files -Pattern 'Sakura AI Reviewer','Sakura-AI-Reviewer','s
 - **数据库**:若已迁移到 `sakura_ai`,可从迁移前的 `mysqldump` 备份恢复 `sakura-pr`。
 - **Docker**:`docker rmi sakura-ai`,保留或重建 `sakura-ai-reviewer`。
 - **GitHub App**:若新建了 App,切回旧 App 凭证(保留旧 App 安装可快速回退)。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
