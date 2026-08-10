@@ -1,5 +1,11 @@
 # PR Review Output Protocol
 
+> `<SAKURA_REVIEW>` tagged review output contract: envelope, validation, multi-round repair, and safe degradation.
+
+← [Documentation Index](README.md) · [README](../README.md)
+
+---
+
 The main PR reviewer uses a line-oriented tagged protocol instead of JSON,
 Markdown headings, score regexes, or severity emoji.
 
@@ -77,8 +83,25 @@ The required output shape remains line-oriented block tags for
 As a compatibility measure, the parser also accepts provider-style single-line
 text fields such as `<SUGGESTION>NONE</SUGGESTION>`.
 
-An invalid first response triggers one format-only retry at temperature zero,
-without tools. The original assistant response is included so the model can
-reformat the same conclusions. A second invalid response produces a safe
-`comment` result with no score or findings, preventing automatic approval or an
-accidental low-score rejection.
+### Multi-round Repair Loop
+
+An invalid response triggers a multi-round repair loop governed by
+`protocol_repair_max_attempts` (configurable via WebUI, default 3). Each repair
+round injects the specific validation error and preserves the full dialogue
+history so the model can reformat the same conclusions. After each successful
+repair, an `on_repaired` consistency check warns (without blocking) if the
+finding count diverges from the original `<FINDING>` tag count. When all
+attempts are exhausted, the loop degrades safely to a `comment` result with no
+score or findings, preventing automatic approval or an accidental low-score
+rejection.
+
+The entire repair process is observable end-to-end via transcript / SSE /
+observer attempts on the `review:protocol_repair` channel. The shared repair
+loop (`backend/services/protocol_repair.py` → `run_protocol_repair_loop`) is
+also reused by the Issue analysis protocol (`<SAKURA_ISSUE_ANALYSIS>`), so both
+review and analysis share the same configurable attempt budget and degradation
+semantics.
+
+---
+
+*Last updated: 2026-8-10 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

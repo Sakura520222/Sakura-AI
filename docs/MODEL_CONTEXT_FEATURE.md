@@ -1,5 +1,11 @@
 # 模型上下文管理
 
+> AI 模型上下文窗口识别、安全预算、大型 PR compact diff 与对话历史自动压缩。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 Sakura AI 会根据模型上下文窗口、当前 PR 内容和多轮工具调用历史，动态控制发送给 AI 的上下文大小。目标是在不截断关键代码信息的前提下，提升大型 PR 审查的稳定性和成本可控性。
 
 ## 功能概览
@@ -36,7 +42,7 @@ UserConfig > app_config > Settings 默认值
 | `enable_context_compression` | 是否启用对话历史自动压缩 |
 | `context_compression_threshold` | 压缩触发阈值：当前历史 tokens 超过安全上下文的该比例时触发 |
 | `context_compression_keep_rounds` | 压缩时保留最近对话轮数的配置项 |
-| `summary_model` / `summary_api_base` / `summary_api_key` | 辅助模型配置，用于摘要、压缩、标签推荐等轻量任务 |
+| summary 角色绑定（WebUI「AI 配置」） | 辅助模型配置，用于摘要、压缩、标签推荐等轻量任务；历史 `summary_model` / `summary_api_base` / `summary_api_key` 键已废弃，不再被读取 |
 | `ai_api_timeout_seconds` | AI API 单次 HTTP 请求超时 |
 | `ai_api_total_timeout_seconds` | 一次 AI 调用在重试循环中的总耗时上限 |
 
@@ -188,3 +194,7 @@ AI 可按需调用：
 - ✅ 支持预定义模型映射表。
 - ✅ 支持 Token 估算功能。
 - ✅ 集成到 AI 审查器。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

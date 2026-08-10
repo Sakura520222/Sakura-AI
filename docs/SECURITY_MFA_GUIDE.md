@@ -1,5 +1,11 @@
 # 安全与 MFA 指南
 
+> Sakura AI 多因素认证（MFA）、Passkeys/WebAuthn、安全中心与安全审计能力的使用与管理指南。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 本文介绍 Sakura AI 的多因素认证（MFA）、Passkeys/WebAuthn、安全中心和安全审计能力。适用于部署管理员、超级管理员和需要启用二次验证的普通用户。
 
 ---
@@ -191,3 +197,7 @@ API v1 现已支持 Passkey 二次验证（`POST /auth/2fa/passkey/options` + `P
 ### 强制 MFA 后用户无法访问普通页面怎么办？
 
 当全局或单用户 MFA 要求开启后，未注册任何 MFA 方法的用户会被引导到个人设置完成注册。API 请求可能返回 `428 MFA enrollment required`。超级管理员可在安全中心取消该用户的强制要求或协助重置 MFA。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

@@ -1,5 +1,11 @@
 # 🤖 Telegram Bot 集成指南
 
+> Telegram Bot 通知与用户权限管理配置说明。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 ## 📋 功能概述
 
 Sakura AI 现已集成 Telegram Bot，提供以下功能：
@@ -57,14 +63,16 @@ Sakura AI 现已集成 Telegram Bot，提供以下功能：
 
 ### 配额类型
 
-- **每日配额**：每天 00:00 重置（默认：10次）
-- **每周配额**：每周一 00:00 重置（默认：50次）
-- **每月配额**：每月 1 日 00:00 重置（默认：200次）
+- **每日配额**：每天 00:00 重置（注册基础值：10 次）
+- **每周配额**：每周一 00:00 重置（注册基础值：50 次）
+- **每月配额**：每月 1 日 00:00 重置（注册基础值：200 次）
+
+> 上述为注册基础值，实际授予额按注册配额倍率折算；PR / Issue / Agent 三类用量分别记录与重置。详见 [配额系统指南](QUOTA_SYSTEM_GUIDE.md)。
 
 ### 配额规则
 
 - 超级管理员和管理员不受配额限制
-- 普通用户每次审查消耗 1 次所有配额
+- 普通用户每次审查按 PR / Issue / Agent 维度分别消耗对应配额
 - 配额不足时自动拒绝审查并发送通知
 
 ## 🚀 快速开始
@@ -82,16 +90,20 @@ Sakura AI 现已集成 Telegram Bot，提供以下功能：
 2. 发送任意消息获取你的 **Telegram ID**
 3. 记录这个 ID（你将作为超级管理员）
 
-### 3. 配置环境变量
+### 3. 配置 Bot 信息
 
-在 `.env` 文件中添加：
+**推荐路径（Setup Wizard / WebUI）**：在首次部署的 Setup Wizard 第 3 步「AI 模型与通知」填写 Bot Token；部署后在 WebUI 配置管理中设置动态配置键 `telegram_bot_token` / `telegram_admin_user_ids` / `telegram_default_chat_id`，修改即时生效。
+
+**启动默认值路径（`.env` 文件）**：环境变量作为启动默认值来源，可在 `.env` 中添加：
 
 ```env
-# Telegram Bot配置
+# Telegram Bot配置（启动默认值）
 TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_ADMIN_USER_IDS=你的_Telegram_ID
 TELEGRAM_DEFAULT_CHAT_ID=你的_Telegram_ID
 ```
+
+> 数据库中的动态配置优先级高于环境变量。完整部署流程见 [部署指南](DEPLOYMENT.md)。
 
 ### 4. 启动应用
 
@@ -294,3 +306,7 @@ A: 检查以下几点：
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
 </div>
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

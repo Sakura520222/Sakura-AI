@@ -1,5 +1,11 @@
 # 🧠 Sakura 项目记忆系统使用指南
 
+> 基于 `.sakura/` 目录的自我反思、知识合并、结构化提取与上下文注入。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 ## 概述
 
 Sakura AI 内置项目记忆系统，通过 `.sakura/` 目录实现自我反思和知识积累。系统会在每次 PR 审查和 Issue 分析后自动记录经验，随审查次数增加，AI 对你的项目理解越来越深，审查质量持续提升。
@@ -154,11 +160,7 @@ chore(sakura): consolidate memory (reflection #5)
 
 提取 Agent 可以读取反思历史，但不允许写入 `memory/` 目录，避免覆盖原始审查记录。知识提取会按照间隔周期性自动执行；超级管理员也可以在 WebUI 中手动触发。
 
-知识提取模型可通过 `sakura_extraction_provider` 选择凭据来源：
-
-- `main`：使用主 AI 配置
-- `summary`：使用辅助模型配置
-- `custom`：使用 `sakura_extraction_api_base` 与 `sakura_extraction_api_key`
+知识提取的账号和模型由 `main` 或 `summary` 角色绑定决定（WebUI「AI 配置」），不支持在本功能中另配凭据或模型。
 
 ### 5. 注入（下次审查前）
 
@@ -281,27 +283,21 @@ Sakura 为 AI 提供了三个专用工具来访问 `.sakura/` 下的文档和反
 |--------|------|--------|------|
 | `sakura_memory_enabled` | bool | `true` | 启用/禁用整个记忆系统 |
 | `sakura_reflection_enabled` | bool | `true` | 启用/禁用审查后反思 |
-| `sakura_reflection_model` | string | `""` | 反思使用的模型（空值 = 使用审查模型） |
 | `sakura_consolidation_interval` | int | `5` | 累计多少次反思后触发合并 |
-| `sakura_consolidation_model` | string | `""` | 合并使用的模型（空值 = 使用审查模型） |
 | `sakura_max_sakura_chars` | int | `5000` | SAKURA.md 最大字符数 |
 | `sakura_max_memory_chars` | int | `2000` | memory.md 最大字符数 |
 | `sakura_auto_init` | bool | `true` | 新仓库首次审查时自动初始化 `.sakura/` |
 | `sakura_auto_create_subdirs` | bool | `true` | 初始化时自动创建 `rules/`、`docs/`、`plans/` 子目录占位文档 |
 | `sakura_consolidation_partial_commit` | bool | `false` | 合并时单个文件失败后是否仍提交其他成功生成的文件 |
 | `sakura_issue_reflection_enabled` | bool | `true` | 启用 Issue 分析后的反思 |
-| `sakura_issue_reflection_model` | string | `""` | Issue 反思使用的模型 |
-| `sakura_use_summary_model` | bool | `false` | 使用辅助（低成本）模型执行反思/合并任务 |
 | `sakura_knowledge_extraction_enabled` | bool | `true` | 启用自动结构化知识提取 |
 | `sakura_extraction_min_reflections` | int | `10` | 知识提取间隔，每积累指定轮数反思后自动触发一次提取 |
-| `sakura_extraction_provider` | string | `"main"` | 知识提取 AI 凭据来源：`main` / `summary` / `custom` |
-| `sakura_extraction_api_base` | string | `""` | `custom` 模式下的知识提取 API Base |
-| `sakura_extraction_api_key` | string | `""` | `custom` 模式下的知识提取 API Key |
-| `sakura_extraction_model` | string | `""` | 知识提取模型名称（空值 = 按 provider 推导） |
 | `sakura_extraction_max_iterations` | int | `15` | 知识提取 Agent 最大工具调用轮数 |
 | `sakura_consolidation_max_iterations` | int | `20` | 合并 Agent 每个目标文件的最大工具调用轮数 |
 
-> 💡 **成本优化提示**：开启 `sakura_use_summary_model` 可使用更便宜的模型执行反思和合并任务，适合审查量大的场景。你也可以通过 `sakura_reflection_model` 和 `sakura_consolidation_model` 分别指定不同的模型。
+> 反思、合并与知识提取的实际账号和模型由 `main` 或 `summary` 角色绑定决定（WebUI「AI 配置」），不支持在本功能中另配凭据或模型。历史 `sakura_reflection_model`、`sakura_issue_reflection_model`、`sakura_consolidation_model`、`sakura_use_summary_model`、`sakura_extraction_provider`、`sakura_extraction_api_base`、`sakura_extraction_api_key`、`sakura_extraction_model` 键已废弃，仅保留用于数据库迁移兼容，不再被业务读取。
+
+> 💡 **成本优化提示**：在 WebUI「AI 配置」中将 `summary` 角色绑定到更便宜的模型，即可让反思、合并与知识提取任务使用辅助模型，适合审查量大的场景。
 
 ---
 
@@ -343,3 +339,7 @@ Sakura 为 AI 提供了三个专用工具来访问 `.sakura/` 下的文档和反
 
 - [PR 功能指南](PR_FEATURES_GUIDE.md) — PR 审查相关配置
 - [模型上下文管理](MODEL_CONTEXT_FEATURE.md) — AI 上下文窗口和压缩功能
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

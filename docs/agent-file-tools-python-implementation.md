@@ -1,5 +1,11 @@
 # Agent 文件编辑与操作工具实现提取（Python 版参考）
 
+> Claude Code Agent 工具系统的 Python 实现参考与最佳实践。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 本文档提取自当前仓库中 Claude Code Agent 的工具系统，重点覆盖文件读取、文件写入、精确编辑、搜索、命令执行等能力，并整理为可迁移到 Python 项目的完整实现思路与参考代码。
 
 > Sakura 当前实现补充：本项目的 Agent Team 已在 `backend/services/agent_team/tools/` 下实现一组工作区受控工具，供全栈修复 Agent 与专业审查 Agent 使用。所有路径必须限制在隔离工作区内，shell 命令采用黑名单安全策略，Skills 只提供说明，不会扩大工具权限。
@@ -1415,3 +1421,7 @@ print(executor.execute(
 - 大输出持久化完整协议。
 
 如果 Python 项目需要达到接近 Claude Code 的工程强度，建议按第 16 节继续补齐。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
