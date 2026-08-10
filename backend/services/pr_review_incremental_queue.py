@@ -11,6 +11,9 @@ from sqlalchemy import desc, select
 from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
+from backend.services.activity_observability.integration_service import (
+    ActivityIntegrationService,
+)
 
 
 @dataclass
@@ -18,6 +21,8 @@ class PreparedIncrementalMessage:
     message: dict[str, Any]
     queue_ids: list[int]
     head_sha: str | None = None
+    observability_session_id: int | None = None
+    observability_trigger_ids: list[int] | None = None
 
 
 class PRReviewIncrementalQueueService:
@@ -108,6 +113,24 @@ class PRReviewIncrementalQueueService:
 
         repo_full_name = self._repo_full_name(pr_info)
         pr_number = int(pr_info["pr_number"])
+        observability_session_id = None
+        observability_trigger_id = None
+        if (
+            pr_info.get("repository_external_id")
+            and pr_info.get("source_system_instance")
+            and delivery_id
+        ):
+            try:
+                admission = await ActivityIntegrationService().admit_synchronize(
+                    pr_info,
+                    delivery_id=delivery_id,
+                    base_sha=pr_info.get("before") or pr_info.get("base_sha"),
+                    head_sha=head_sha,
+                )
+                observability_session_id = admission.session_id
+                observability_trigger_id = admission.trigger_id
+            except Exception as exc:
+                logger.warning("PR 增量 observability admission skipped: {}", exc)
         async with db_module.async_session() as db:
             if delivery_id:
                 existing_result = await db.execute(
@@ -139,6 +162,8 @@ class PRReviewIncrementalQueueService:
                 base_sha=pr_info.get("before") or pr_info.get("base_sha"),
                 head_sha=head_sha,
                 delivery_id=delivery_id,
+                observability_session_id=observability_session_id,
+                observability_trigger_id=observability_trigger_id,
                 status="pending",
                 active_review_id=active_review.id,
             )
@@ -260,6 +285,16 @@ class PRReviewIncrementalQueueService:
                 message=message,
                 queue_ids=[int(item.id) for item in pending if item.id is not None],
                 head_sha=str(head_sha),
+                observability_session_id=(
+                    int(pending[0].observability_session_id)
+                    if pending[0].observability_session_id is not None
+                    else None
+                ),
+                observability_trigger_ids=[
+                    int(item.observability_trigger_id)
+                    for item in pending
+                    if item.observability_trigger_id is not None
+                ],
             )
 
     async def mark_consumed(

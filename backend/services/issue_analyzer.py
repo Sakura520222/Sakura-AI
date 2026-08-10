@@ -15,8 +15,10 @@ from backend.core.config import (
 )
 from backend.core.model_context import get_model_context_manager
 from backend.models.database import AppConfig, async_session
+from backend.services.activity_observability.publication_service import (
+    coordinate_publication,
+)
 from backend.services.ai_reviewer.api_client import AIApiClient
-from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
@@ -32,6 +34,7 @@ from backend.services.issue_protocol import (
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
+from backend.services.protocol_repair import run_protocol_repair_loop
 
 ISSUE_ANALYSIS_REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_ISSUE_ANALYSIS protocol.
 Reformat the same Issue analysis conclusions only. Do not add, remove, or reconsider recommendations.
@@ -88,8 +91,7 @@ class IssueAnalyzer:
 
     def __init__(self):
         settings = get_settings()
-        self._ai_client_config = None
-        self._refresh_ai_client()
+        self.api_client = AIApiClient()
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
         git_tool = GitToolHandler()
@@ -115,16 +117,8 @@ class IssueAnalyzer:
         self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_client(self) -> None:
-        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
-        settings = get_settings()
-        config = (settings.openai_api_base, settings.openai_api_key)
-        if self._ai_client_config == config:
-            return
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base,
-            api_key=settings.openai_api_key,
-        )
-        self._ai_client_config = config
+        """保留刷新入口以兼容长生命周期 Worker；账号与角色绑定按请求解析。"""
+        return
 
     def _build_system_prompt(
         self,
@@ -343,50 +337,85 @@ class IssueAnalyzer:
         messages: list[dict[str, Any]],
         tracker: TokenTracker,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
-        """解析最终 Issue 分析，失败时进行一次仅格式修复。"""
-        try:
-            return self._parse_analysis_result(response_text)
-        except IssueProtocolError as first_error:
-            stripped = response_text.strip()
-            logger.warning(
-                "Issue 分析协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
-                first_error,
-                len(response_text),
-                stripped[:80],
-                stripped[-80:],
-            )
+        """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
+        # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
+        if event_callback is not None:
+            try:
+                await event_callback(
+                    "message", {"role": "assistant", "content": response_text}
+                )
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
 
-        system_message = next(
-            (message for message in messages if message.get("role") == "system"),
-            None,
-        )
-        repair_messages = [
-            *([system_message] if system_message else []),
-            {"role": "assistant", "content": response_text},
-            {"role": "user", "content": self.REPAIR_INSTRUCTION},
-        ]
         try:
-            settings = get_settings()
-            response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
-                messages=repair_messages,
-                temperature=0,
+            max_attempts = int(
+                await get_dynamic_config("protocol_repair_max_attempts") or 3
             )
-            tracker.accumulate(response)
-            repaired_text = response.choices[0].message.content or ""
-            if event_callback:
-                try:
-                    await event_callback(
-                        "message",
-                        {"role": "assistant", "content": repaired_text},
-                    )
-                except Exception as exc:
-                    logger.warning("event_callback failed: {}", exc)
-            return self._parse_analysis_result(repaired_text)
-        except Exception as repair_error:
-            logger.error("Issue 分析协议修复失败，降级为人工复核: {}", repair_error)
-            return safe_issue_protocol_failure(repair_error)
+        except ValueError, TypeError:
+            max_attempts = 3
+
+        return await run_protocol_repair_loop(
+            parse_fn=self._parse_analysis_result,
+            error_type=IssueProtocolError,
+            base_messages=messages,
+            final_text=response_text,
+            repair_instruction=self.REPAIR_INSTRUCTION,
+            api_client=self.api_client,
+            tracker=tracker,
+            max_attempts=max_attempts,
+            fallback_result_fn=safe_issue_protocol_failure,
+            log_label="Issue 分析",
+            sse_channel="issue:protocol_repair",
+            invocation_context=invocation_context,
+            observer=observer,
+            event_callback=event_callback,
+        )
+
+    @staticmethod
+    def _resolve_safe_context(response: Any, current_safe_context: int) -> int:
+        """按实际服务模型（winner）的上下文窗口重算安全阈值 / Recompute budget.
+
+        fallback 可能切换到与角色首选窗口不同的模型。若响应携带了 winner 的
+        上下文窗口，按 ×0.8 重算 safe_context；否则保持现有阈值，兼容未填充
+        该字段的旧客户端或异常路径。
+
+        Args:
+            response: ``call_with_retry`` 返回的响应（含 ``meta.context_window_tokens``）。
+            current_safe_context: 现有安全阈值（tokens），winner 窗口缺失时原样返回。
+
+        Returns:
+            重算后的安全阈值（tokens）。
+        """
+        winner_window = getattr(
+            getattr(response, "meta", None), "context_window_tokens", None
+        )
+        if winner_window and winner_window > 0:
+            return int(winner_window * 0.8)
+        return current_safe_context
+
+    @staticmethod
+    def _resolve_served_model(response: Any, current_model: str | None) -> str | None:
+        """从响应 meta 提取实际服务模型名 / Extract the winning model id.
+
+        fallback 可能切换到与角色首选不同的模型；``reasoning_content`` 等模型
+        相关判断应基于实际 winner。``meta.served_by`` 形如 ``"provider/model"``，
+        取末段作为模型名；缺失或格式异常时保持原值。
+
+        Args:
+            response: ``call_with_retry`` 返回的响应（含 ``meta.served_by``）。
+            current_model: 现有模型名（角色首选），winner 缺失时原样返回。
+
+        Returns:
+            实际服务模型名，或原 ``current_model``。
+        """
+        served_by = getattr(getattr(response, "meta", None), "served_by", "")
+        if served_by and "/" in served_by:
+            return served_by.rsplit("/", 1)[-1]
+        return current_model
 
     async def analyze_issue(
         self,
@@ -395,6 +424,9 @@ class IssueAnalyzer:
         repo_name: str,
         repo: Any = None,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """分析 Issue
 
@@ -508,6 +540,12 @@ class IssueAnalyzer:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
+        if event_callback:
+            for initial_message in messages:
+                try:
+                    await event_callback("message", initial_message)
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
 
         # 获取启用的工具
         enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)
@@ -538,18 +576,30 @@ class IssueAnalyzer:
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
-        safe_context = model_ctx_mgr.calculate_safe_context(settings.openai_model, 0.8)
+        (
+            role_model,
+            role_context_window,
+        ) = await self.api_client.resolve_role_model_context("main")
+        context_model = role_model
+        safe_context = (
+            int(role_context_window * 0.8)
+            if role_context_window
+            else model_ctx_mgr.calculate_safe_context(context_model, 0.8)
+        )
 
         while iteration < max_iterations:
             iteration += 1
 
             try:
                 response = await self.api_client.call_with_retry(
-                    model=settings.openai_model,
+                    model="",
                     messages=messages,
                     tools=enabled_tools,
                     tool_choice="auto",
-                    temperature=settings.openai_temperature,
+                    temperature=settings.ai_temperature,
+                    role="main",
+                    context=invocation_context,
+                    observer=observer,
                 )
             except Exception as e:
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
@@ -593,6 +643,12 @@ class IssueAnalyzer:
             # 累积 token 使用
             tracker.accumulate(response)
 
+            # fallback 可能切换到不同窗口/能力的模型，按实际 winner 更新上下文预算
+            # 与模型名，避免 reasoning_content 判断和日志百分比基于角色首选失真
+            safe_context = self._resolve_safe_context(response, safe_context)
+            context_model = self._resolve_served_model(response, context_model)
+            tracker.log_context_usage(response, role_context_window, iteration)
+
             # 检查是否有工具调用
             tool_calls = (
                 response.choices[0].message.tool_calls if response.choices else None
@@ -605,7 +661,10 @@ class IssueAnalyzer:
                     review_text,
                     messages,
                     tracker,
-                    event_callback,
+                    event_callback=event_callback,
+                    publication_coordinator=publication_coordinator,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
 
                 # 计算成本
@@ -616,6 +675,16 @@ class IssueAnalyzer:
                     settings.issue_price_per_1k_prompt,
                     settings.issue_price_per_1k_completion,
                 )
+                if (
+                    publication_coordinator is not None
+                    and invocation_context is not None
+                ):
+                    result = await coordinate_publication(
+                        publication_coordinator,
+                        kind="issue_analysis",
+                        result=result,
+                        context=invocation_context,
+                    )
 
                 logger.info(
                     "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
@@ -641,7 +710,7 @@ class IssueAnalyzer:
             ):
                 strategy_config = get_strategy_config()
                 if strategy_config.is_model_supports_reasoning_content(
-                    settings.openai_model
+                    context_model or ""
                 ):
                     assistant_msg_dict["reasoning_content"] = (
                         assistant_message.reasoning_content
@@ -710,10 +779,6 @@ class IssueAnalyzer:
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
 
-            # 每轮工具调用处理后记录上下文使用率
-            current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)
-            tracker.log_context_usage(current_tokens, safe_context, iteration)
-
         # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
         logger.warning(
             f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
@@ -726,9 +791,18 @@ class IssueAnalyzer:
         )
         try:
             final_response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
                 temperature=0.3,
+                role="main",
+                context=invocation_context,
+                observer=observer,
+            )
+            tracker.accumulate(final_response)
+            tracker.log_context_usage(
+                final_response,
+                role_context_window,
+                max_iterations + 1,
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:
@@ -740,7 +814,10 @@ class IssueAnalyzer:
                 last_content,
                 messages,
                 tracker,
-                event_callback,
+                event_callback=event_callback,
+                publication_coordinator=publication_coordinator,
+                invocation_context=invocation_context,
+                observer=observer,
             )
         else:
             result = safe_issue_protocol_failure(
@@ -754,4 +831,11 @@ class IssueAnalyzer:
             settings.issue_price_per_1k_prompt,
             settings.issue_price_per_1k_completion,
         )
+        if publication_coordinator is not None and invocation_context is not None:
+            result = await coordinate_publication(
+                publication_coordinator,
+                kind="issue_analysis",
+                result=result,
+                context=invocation_context,
+            )
         return result

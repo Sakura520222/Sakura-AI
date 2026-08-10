@@ -1,0 +1,760 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('config.ai_title') }} - Sakura AI{% endblock %}
+
+{% block content %}
+<div x-data="aiConfigPage()" x-init="init()" class="space-y-5">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+            <h1 class="text-2xl font-bold">{{ _('config.ai_title') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.ai_subtitle') }}</p>
+        </div>
+        <button @click="newAccount()"
+                class="px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium shadow-sm transition-colors">
+            {{ _('config.ai_add_account') }}
+        </button>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <!-- 账号列表 / Account list -->
+        <section class="xl:col-span-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <h2 class="font-semibold">{{ _('config.ai_accounts') }}</h2>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_accounts_desc') }}</p>
+            </div>
+            <div class="divide-y divide-gray-100 dark:divide-gray-700 max-h-[560px] overflow-y-auto">
+                <template x-if="accounts.length === 0">
+                    <div class="p-5 text-sm text-gray-500 dark:text-gray-400">{{ _('config.ai_no_accounts') }}</div>
+                </template>
+                <template x-for="account in accounts" :key="account.id">
+                    <button type="button"
+                            @click="editAccount(account)"
+                            class="w-full text-left p-4 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
+                            :class="selectedAccount?.id === account.id ? 'bg-sakura-50 dark:bg-sakura-900/20' : ''">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="font-medium truncate" x-text="account.name"></div>
+                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    <span x-text="providerLabel(account.provider_id)"></span>
+                                    <span> · </span>
+                                    <span x-text="account.protocol"></span>
+                                </div>
+                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate" x-text="account.default_model || account.models?.[0] || aiText('noModel')"></div>
+                            </div>
+                            <span class="px-2 py-0.5 rounded-full text-xs"
+                                  :class="account.enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'"
+                                  x-text="account.enabled ? '{{ _('common.enabled') }}' : '{{ _('common.disabled') }}'"></span>
+                        </div>
+                    </button>
+                </template>
+            </div>
+        </section>
+
+        <!-- 编辑账号 / Account editor -->
+        <section class="xl:col-span-2 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <div>
+                    <h2 class="font-semibold">{{ _('config.ai_account_editor') }}</h2>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_account_editor_desc') }}</p>
+                </div>
+                <div class="flex gap-2" x-show="form.id">
+                    <button @click="testAccount(form.id)" class="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50 dark:hover:bg-gray-700">
+                        {{ _('config.ai_test') }}
+                    </button>
+                    <button @click="deleteAccount(form.id)" class="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-900/20">
+                        {{ _('common.delete') }}
+                    </button>
+                </div>
+            </div>
+
+            <form @submit.prevent="saveAccount" class="p-5 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_account_name') }}</span>
+                        <input x-model="form.name" required type="text" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_provider') }}</span>
+                        <select x-model="form.provider_id" @change="applyProviderDefaults" required class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            <template x-for="provider in catalog" :key="provider.id">
+                                <option :value="provider.id" x-text="provider.label"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_protocol') }}</span>
+                        <select x-model="form.protocol" @change="applyProtocolDefaultBase" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            <template x-for="family in currentFamilies()" :key="family">
+                                <option :value="family" x-text="family"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <div class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_default_model') }}</span>
+                        <input x-model="form.default_model" type="text" :placeholder="currentProvider()?.default_models?.[0] || aiText('modelIdPlaceholder')" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <div x-show="currentModelOptions().length" class="mt-2 flex flex-wrap gap-1.5">
+                            <template x-for="model in currentModelOptions()" :key="model">
+                                <button type="button" @click="form.default_model = model"
+                                        class="px-2 py-1 text-xs rounded-md border transition-colors"
+                                        :class="form.default_model === model ? 'bg-sakura-100 dark:bg-sakura-900/30 border-sakura-400 text-sakura-700 dark:text-sakura-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:border-sakura-400'"
+                                        x-text="model"></button>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_default_model_desc') }}</p>
+                    </div>
+                    <label class="block md:col-span-2">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_base') }}</span>
+                        <input x-model="form.api_base" type="url" placeholder="{{ _('config.ai_api_base_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_api_base_desc') }}</p>
+                    </label>
+                    <label class="block md:col-span-2">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_key') }}</span>
+                        <input x-model="form.api_key" type="password" autocomplete="new-password" placeholder="{{ _('config.ai_api_key_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_api_key_keep') }}</p>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_region') }}</span>
+                        <input x-model="form.region" type="text" placeholder="{{ _('config.ai_region_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_region_desc') }}</p>
+                    </label>
+                    <label class="flex items-center gap-2 mt-6">
+                        <input x-model="form.enabled" type="checkbox" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('common.enabled') }}</span>
+                    </label>
+                    <label class="block md:col-span-2">
+                        <span class="text-sm font-medium">{{ _('config.ai_notes') }}</span>
+                        <textarea x-model="form.notes" rows="2" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700"></textarea>
+                    </label>
+                </div>
+
+                <template x-if="currentProvider()?.usage_scope !== 'general_api'">
+                    <div class="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 text-sm text-amber-800 dark:text-amber-200">
+                        <div class="font-semibold" x-text="currentProvider()?.billing_mode + ' · ' + currentProvider()?.usage_scope"></div>
+                        <div class="mt-1" x-text="currentProvider()?.usage_scope_note"></div>
+                    </div>
+                </template>
+
+                <div class="rounded-lg bg-gray-50 dark:bg-gray-900/40 p-3 text-xs text-gray-600 dark:text-gray-300 space-y-1" x-show="currentProvider()">
+                    <div><span class="font-semibold">{{ _('config.ai_context_models') }}:</span> <span x-text="currentProvider()?.default_models?.join(', ') || aiText('notAvailable')"></span></div>
+                    <div><span class="font-semibold">{{ _('config.ai_supported_protocols') }}:</span> <span x-text="currentProvider()?.supported_families?.join(', ') || aiText('notAvailable')"></span></div>
+                    <div x-text="currentProvider()?.notes"></div>
+                </div>
+
+                <!-- 单模型高级配置 / Per-model advanced override -->
+                <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4" x-show="form.provider_id && form.default_model">
+                    <button type="button" @click="modelOverrideOpen = !modelOverrideOpen" class="flex items-center justify-between w-full">
+                        <span class="text-sm font-semibold">{{ _('config.ai_model_advanced') }}</span>
+                        <svg class="w-4 h-4 transition-transform text-gray-500" :class="modelOverrideOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_model_advanced_desc') }}</p>
+                    <div x-show="modelOverrideOpen" x-transition class="mt-3 space-y-4" x-cloak>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_ctx') }}</span>
+                                <input type="number" min="0" x-model.number="modelOverride.context_window_tokens" :placeholder="modelOverridePlaceholder('context_window_tokens')" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_max_output') }}</span>
+                                <input type="number" min="0" x-model.number="modelOverride.max_output_tokens" :placeholder="modelOverridePlaceholder('max_output_tokens')" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_thinking_mode') }}</span>
+                                <select x-model="modelOverride.thinking_mode" :disabled="!modelOverride.thinking" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
+                                    <option value="">{{ _('config.ai_model_auto') }}</option>
+                                    <option value="adaptive">{{ _('config.ai_model_thinking_adaptive') }}</option>
+                                    <option value="disabled">{{ _('config.ai_model_thinking_disabled') }}</option>
+                                </select>
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_effort') }}</span>
+                                <select x-model="modelOverride.effort" :disabled="!modelOverride.effort_enabled" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
+                                    <option value="">{{ _('config.ai_model_effort_auto') }}</option>
+                                    <option value="none">{{ _('config.ai_model_effort_none') }}</option>
+                                    <option value="minimal">{{ _('config.ai_model_effort_minimal') }}</option>
+                                    <option value="low">{{ _('config.ai_model_effort_low') }}</option>
+                                    <option value="medium">{{ _('config.ai_model_effort_medium') }}</option>
+                                    <option value="high">{{ _('config.ai_model_effort_high') }}</option>
+                                    <option value="xhigh">{{ _('config.ai_model_effort_xhigh') }}</option>
+                                    <option value="max">{{ _('config.ai_model_effort_max') }}</option>
+                                </select>
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_temperature') }}</span>
+                                <input type="number" step="0.1" x-model.number="modelOverride.temperature" :disabled="!modelOverride.temperature_enabled" :placeholder="autoValueLabel" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_top_p') }}</span>
+                                <input type="number" step="0.01" x-model.number="modelOverride.top_p" :disabled="!modelOverride.top_p_enabled" :placeholder="autoValueLabel" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs text-gray-500">{{ _('config.ai_model_top_k') }}</span>
+                                <input type="number" min="0" x-model.number="modelOverride.top_k" :disabled="!modelOverride.top_k_enabled" :placeholder="autoValueLabel" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 disabled:opacity-50">
+                            </label>
+                        </div>
+                        <fieldset class="border-t border-gray-100 dark:border-gray-700 pt-3">
+                            <legend class="text-xs font-medium text-gray-500 px-0">{{ _('config.ai_model_capabilities') }}</legend>
+                            <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.vision" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_vision') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.thinking" @change="if (!modelOverride.thinking) modelOverride.thinking_mode = ''" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_thinking') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.effort_enabled" @change="if (!modelOverride.effort_enabled) modelOverride.effort = ''" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_effort_supported') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.reasoning_content" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_reasoning_content') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.temperature_enabled" @change="if (!modelOverride.temperature_enabled) modelOverride.temperature = null" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_temperature_supported') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.top_p_enabled" @change="if (!modelOverride.top_p_enabled) modelOverride.top_p = null" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_top_p_supported') }}</label>
+                                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="modelOverride.top_k_enabled" @change="if (!modelOverride.top_k_enabled) modelOverride.top_k = null" class="rounded border-gray-300 text-sakura-600"> {{ _('config.ai_model_top_k_supported') }}</label>
+                            </div>
+                        </fieldset>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button" @click="saveModelOverride" :disabled="modelOverrideLoading" class="px-3 py-1.5 rounded-lg bg-sakura-600 hover:bg-sakura-700 disabled:opacity-50 text-white text-sm">{{ _('config.ai_model_save_override') }}</button>
+                            <button type="button" @click="clearModelOverride" :disabled="modelOverrideLoading" class="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">{{ _('config.ai_model_clear_override') }}</button>
+                            <span class="text-xs text-gray-500" x-show="currentBuiltinMeta()" x-text="builtinModelReference()"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2 pt-2">
+                    <button type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium">
+                        {{ _('common.save') }}
+                    </button>
+                    <button type="button" @click="discoverModels" class="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50 dark:hover:bg-gray-700">
+                        {{ _('config.ai_fetch_models') }}
+                    </button>
+                    <button type="button" @click="newAccount" class="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50 dark:hover:bg-gray-700">
+                        {{ _('common.reset') }}
+                    </button>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <!-- AI 调用策略 + 上下文管理 / Call strategy & context management -->
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="font-semibold">{{ _('config.ai_strategy') }}</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_strategy_desc') }}</p>
+        </div>
+        <div class="p-5 space-y-5">
+            <div>
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">{{ _('config.ai_call_strategy') }}</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_timeout_seconds') }}</span>
+                        <input type="number" step="0.1" min="1" x-model.number="strategy.ai_api_timeout_seconds" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_max_retries') }}</span>
+                        <input type="number" min="0" max="20" x-model.number="strategy.ai_api_max_retries" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_initial_retry_delay_seconds') }}</span>
+                        <input type="number" step="0.1" min="0" x-model.number="strategy.ai_api_initial_retry_delay_seconds" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_api_total_timeout_seconds') }}</span>
+                        <input type="number" step="0.1" min="1" x-model.number="strategy.ai_api_total_timeout_seconds" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_fallback_max_candidates') }}</span>
+                        <input type="number" min="1" x-model.number="strategy.ai_fallback_max_candidates" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="flex items-center gap-2 mt-6">
+                        <input type="checkbox" x-model="strategy.ai_fallback_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_fallback_enabled') }}</span>
+                    </label>
+                    <label class="flex items-center gap-2 mt-2">
+                        <input type="checkbox" x-model="strategy.ai_fallback_sticky_candidate" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_fallback_sticky_candidate') }}</span>
+                    </label>
+                </div>
+            </div>
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">{{ _('config.ai_context_management') }}</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_context_compression_threshold') }}</span>
+                        <input type="number" step="0.01" min="0.1" max="1.0" x-model.number="strategy.context_compression_threshold" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="flex items-center gap-2 mt-6">
+                        <input type="checkbox" x-model="strategy.enable_context_compression" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_enable_context_compression') }}</span>
+                    </label>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ _('config.ai_context_management_desc') }}</p>
+            </div>
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">{{ _('config.ai_observability_capture') }}</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" x-model="strategy.activity_reasoning_capture_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_capture_reasoning') }}</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" x-model="strategy.activity_request_response_capture_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_capture_request_response') }}</span>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_artifact_retention_days') }}</span>
+                        <input type="number" min="1" max="3650" x-model.number="strategy.activity_artifact_retention_days" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_artifact_key_id') }}</span>
+                        <input type="text" x-model="strategy.activity_artifact_encryption_key_id" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_reasoning_provider_allowlist') }}</span>
+                        <input type="text" x-model="strategy.activity_reasoning_provider_allowlist" placeholder="{{ _('config.ai_reasoning_provider_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_reasoning_protocol_allowlist') }}</span>
+                        <input type="text" x-model="strategy.activity_reasoning_protocol_allowlist" placeholder="{{ _('config.ai_reasoning_protocol_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="flex items-center gap-2 md:col-span-2">
+                        <input type="checkbox" x-model="strategy.activity_artifact_super_admin_read_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_super_admin_artifact_access') }}</span>
+                    </label>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ _('config.ai_observability_capture_desc') }}</p>
+            </div>
+            <button @click="saveStrategy" class="px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium">
+                {{ _('config.ai_save_strategy') }}
+            </button>
+        </div>
+    </section>
+
+    <!-- 角色绑定 / Role bindings -->
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="font-semibold">{{ _('config.ai_role_bindings') }}</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ _('config.ai_role_bindings_desc') }}</p>
+        </div>
+        <div class="p-5 space-y-4">
+            <template x-for="role in roles" :key="role">
+                <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-medium" x-text="roleLabel(role)"></h3>
+                        <button @click="addFallback(role)" class="text-sm text-sakura-600 hover:text-sakura-700">{{ _('config.ai_add_fallback') }}</button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label class="block">
+                            <span class="text-xs text-gray-500">{{ _('config.ai_primary_account') }}</span>
+                            <select x-model="bindings[role].primary.account" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                                <option value="main" x-show="role !== 'main'">{{ _('config.ai_follow_main') }}</option>
+                                <template x-for="account in accounts" :key="account.id">
+                                    <option :value="account.id" x-text="account.name"></option>
+                                </template>
+                            </select>
+                        </label>
+                        <div class="block">
+                            <span class="text-xs text-gray-500">{{ _('config.ai_model') }}</span>
+                            <input x-model="bindings[role].primary.model" type="text" placeholder="{{ _('config.ai_model_binding_placeholder') }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                            <div x-show="accountModels(bindings[role].primary.account).length" class="mt-1 flex flex-wrap gap-1">
+                                <template x-for="m in accountModels(bindings[role].primary.account)" :key="m">
+                                    <button type="button" @click="bindings[role].primary.model = m" x-text="m"
+                                            class="px-1.5 py-0.5 text-xs rounded border transition-colors"
+                                            :class="bindings[role].primary.model === m ? 'bg-sakura-100 dark:bg-sakura-900/30 border-sakura-400 text-sakura-700 dark:text-sakura-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'"></button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3 space-y-2" x-show="bindings[role].fallback.length">
+                        <template x-for="(fb, idx) in bindings[role].fallback" :key="idx">
+                            <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                                <label class="block">
+                                    <span class="text-xs text-gray-500">{{ _('config.ai_fallback_account') }}</span>
+                                    <select x-model="fb.account" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                                        <template x-for="account in accounts" :key="account.id">
+                                            <option :value="account.id" x-text="account.name"></option>
+                                        </template>
+                                    </select>
+                                </label>
+                                <div class="block">
+                                    <span class="text-xs text-gray-500">{{ _('config.ai_model') }}</span>
+                                    <input x-model="fb.model" type="text" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                                    <div x-show="accountModels(fb.account).length" class="mt-1 flex flex-wrap gap-1">
+                                        <template x-for="m in accountModels(fb.account)" :key="m">
+                                            <button type="button" @click="fb.model = m" x-text="m"
+                                                    class="px-1.5 py-0.5 text-xs rounded border transition-colors"
+                                                    :class="fb.model === m ? 'bg-sakura-100 dark:bg-sakura-900/30 border-sakura-400 text-sakura-700 dark:text-sakura-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'"></button>
+                                        </template>
+                                    </div>
+                                </div>
+                                <button @click="removeFallback(role, idx)" class="px-3 py-2 rounded-lg border border-red-300 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-900/20">{{ _('common.delete') }}</button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <button @click="saveBindings" class="px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium">
+                {{ _('config.ai_save_bindings') }}
+            </button>
+        </div>
+    </section>
+</div>
+
+<script>
+const AI_LOCALE = {{ {
+    "noModel": _("config.ai_no_model"),
+    "notAvailable": _("config.ai_not_available"),
+    "modelIdPlaceholder": _("config.ai_model_id_placeholder"),
+    "apiBasePlaceholder": _("config.ai_api_base_placeholder"),
+    "apiKeyPlaceholder": _("config.ai_api_key_placeholder"),
+    "regionPlaceholder": _("config.ai_region_placeholder"),
+    "modelBindingPlaceholder": _("config.ai_model_binding_placeholder"),
+    "providerAllowlistPlaceholder": _("config.ai_reasoning_provider_placeholder"),
+    "protocolAllowlistPlaceholder": _("config.ai_reasoning_protocol_placeholder"),
+    "autoValue": _("config.ai_model_auto"),
+    "builtinLabel": _("config.ai_model_builtin"),
+    "builtinValue": _("config.ai_model_builtin_value"),
+    "builtinReference": _("config.ai_model_builtin_reference"),
+    "builtinSupported": _("config.ai_model_builtin_supported"),
+    "capabilitySeparator": _("config.ai_model_capability_separator"),
+    "effort": _("config.ai_model_effort_supported"),
+    "vision": _("config.ai_model_vision"),
+    "thinking": _("config.ai_model_thinking"),
+    "saveError": _("config.save_error"),
+    "accountSaveFailed": _("config.ai_account_save_failed"),
+    "accountSaved": _("config.ai_account_saved"),
+    "accountDeleteConfirm": _("config.ai_account_delete_confirm"),
+    "accountDeleteFailed": _("config.ai_account_delete_failed"),
+    "accountDeleted": _("config.ai_account_deleted"),
+    "accountTestCompleted": _("config.ai_account_test_completed"),
+    "modelsFetched": _("config.ai_models_fetched"),
+    "modelsFetchFailed": _("config.ai_models_fetch_failed"),
+    "bindingsSaveFailed": _("config.ai_bindings_save_failed"),
+    "bindingsSaved": _("config.ai_bindings_saved"),
+    "strategySaveFailed": _("config.ai_strategy_save_failed"),
+    "strategySaved": _("config.ai_strategy_saved"),
+    "modelOverrideSaved": _("config.ai_model_override_saved"),
+    "modelOverrideCleared": _("config.ai_model_override_cleared"),
+    "roles": {
+        "main": _("config.ai_role_main"),
+        "summary": _("config.ai_role_summary"),
+        "agent_team": _("config.ai_role_agent_team"),
+    },
+} | tojson }};
+
+function aiText(key, values = {}) {
+    const template = AI_LOCALE[key] || key;
+    return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
+}
+
+function showAiToast(type, message) {
+    const existing = document.getElementById('ai-config-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.id = 'ai-config-toast';
+    toast.className = 'fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg ' +
+        (type === 'error' ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' :
+         'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300');
+    const p = document.createElement('p');
+    p.className = 'text-sm';
+    p.textContent = message;
+    toast.appendChild(p);
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+}
+
+function emptyBindings(accounts) {
+    const first = accounts[0]?.id || '';
+    return {
+        main: { primary: { account: first, model: accounts[0]?.default_model || '' }, fallback: [] },
+        summary: { primary: { account: 'main', model: 'follow' }, fallback: [] },
+        agent_team: { primary: { account: first, model: accounts[0]?.default_model || '' }, fallback: [] },
+    };
+}
+
+function emptyOverride() {
+    return {
+        context_window_tokens: null,
+        max_output_tokens: null,
+        vision: false,
+        thinking: false,
+        thinking_mode: '',
+        effort_enabled: false,
+        reasoning_content: false,
+        temperature_enabled: true,
+        top_p_enabled: true,
+        top_k_enabled: false,
+        effort: '',
+        temperature: null,
+        top_p: null,
+        top_k: null,
+    };
+}
+
+function aiConfigPage() {
+    return {
+        catalog: [],
+        accounts: [],
+        roles: ['main', 'summary', 'agent_team'],
+        bindings: emptyBindings([]),
+        strategy: {},
+        modelOverride: emptyOverride(),
+        modelOverrideOpen: false,
+        modelOverrideLoading: false,
+        autoValueLabel: AI_LOCALE.autoValue,
+        selectedAccount: null,
+        form: {},
+        async init() {
+            await this.loadCatalog();
+            await this.loadAccounts();
+            await this.loadBindings();
+            await this.loadStrategy();
+            this.newAccount();
+            this.$watch('form.provider_id', () => this.loadModelOverride());
+            this.$watch('form.default_model', () => this.loadModelOverride());
+            await this.loadModelOverride();
+        },
+        async loadCatalog() {
+            const resp = await fetch('/api/v1/config/ai/catalog');
+            const data = await resp.json();
+            this.catalog = data.data?.providers || [];
+        },
+        async loadAccounts() {
+            const resp = await fetch('/api/v1/config/ai/accounts');
+            const data = await resp.json();
+            this.accounts = data.data?.accounts || [];
+        },
+        async loadBindings() {
+            const resp = await fetch('/api/v1/config/ai/bindings');
+            const data = await resp.json();
+            this.bindings = Object.assign(emptyBindings(this.accounts), data.data?.bindings || {});
+            for (const role of this.roles) {
+                if (!this.bindings[role]) this.bindings[role] = emptyBindings(this.accounts)[role];
+                if (!this.bindings[role].fallback) this.bindings[role].fallback = [];
+            }
+        },
+        providerLabel(id) { return this.catalog.find(p => p.id === id)?.label || id; },
+        accountModels(accountId) {
+            if (!accountId || accountId === 'main') return [];
+            const acct = this.accounts.find(a => a.id === accountId);
+            return (acct && acct.models) || [];
+        },
+        currentProvider() { return this.catalog.find(p => p.id === this.form.provider_id); },
+        currentBuiltinMeta() {
+            const provider = this.currentProvider();
+            if (!provider || !this.form.default_model) return null;
+            return (provider.models || []).find(item =>
+                item.model_id === this.form.default_model ||
+                (item.aliases || []).includes(this.form.default_model)
+            ) || null;
+        },
+        modelOverridePlaceholder(field) {
+            const value = this.currentBuiltinMeta()?.[field];
+            return value ? aiText('builtinValue', { value }) : this.autoValueLabel;
+        },
+        builtinModelReference() {
+            const meta = this.currentBuiltinMeta();
+            if (!meta) return '';
+            const capabilities = meta.capabilities || {};
+            const supported = [];
+            if (capabilities.vision) supported.push(AI_LOCALE.vision);
+            if (capabilities.thinking) supported.push(AI_LOCALE.thinking);
+            if (capabilities.effort) supported.push(AI_LOCALE.effort);
+            return aiText('builtinReference', {
+                context: meta.context_window_tokens || AI_LOCALE.notAvailable,
+                maxOutput: meta.max_output_tokens || AI_LOCALE.notAvailable,
+                supported: supported.length ? aiText('builtinSupported', { capabilities: supported.join(AI_LOCALE.capabilitySeparator) }) : '',
+            });
+        },
+        currentFamilies() { return this.currentProvider()?.supported_families || ['openai-compatible']; },
+        currentModelOptions() {
+            const p = this.currentProvider();
+            if (!p) return [];
+            return [...new Set([...(this.form.models || []), ...(p.default_models || []), ...((p.models || []).map(m => m.model_id))])];
+        },
+        emptyForm() {
+            const p = this.catalog[0] || { id: 'openai', family: 'openai-compatible', base_url: '', default_models: [] };
+            return { id: '', name: '', provider_id: p.id, protocol: p.family, api_base: p.base_url, api_key: '', region: '', models: [], default_model: p.default_models?.[0] || '', enabled: true, notes: '' };
+        },
+        newAccount() {
+            this.selectedAccount = null;
+            this.form = this.emptyForm();
+        },
+        editAccount(account) {
+            this.selectedAccount = account;
+            this.form = JSON.parse(JSON.stringify(account));
+        },
+        applyProviderDefaults() {
+            const p = this.currentProvider();
+            if (!p) return;
+            this.form.protocol = p.family;
+            this.form.api_base = p.base_url || '';
+            this.form.default_model = p.default_models?.[0] || '';
+        },
+        applyProtocolDefaultBase() {
+            const p = this.currentProvider();
+            if (!p) return;
+            this.form.api_base = p.endpoints?.[this.form.protocol] || p.base_url || '';
+        },
+        async loadModelOverride() {
+            const provider = this.form.provider_id;
+            const model = this.form.default_model;
+            if (!provider || !model) {
+                this.modelOverride = emptyOverride();
+                return;
+            }
+            this.modelOverrideLoading = true;
+            try {
+                const query = new URLSearchParams({ provider, model });
+                const resp = await fetch(`/api/v1/config/ai/model-override?${query}`);
+                const data = await resp.json();
+                if (!data.success) {
+                    showAiToast('error', data.error || aiText('saveError'));
+                    return;
+                }
+                const payload = data.data || {};
+                const meta = this.currentBuiltinMeta() || {};
+                const caps = payload.capabilities || meta.capabilities || {};
+                const params = payload.reasoning_params || meta.reasoning_params || {};
+                this.modelOverride = {
+                    ...emptyOverride(),
+                    context_window_tokens: payload.context_window_tokens || null,
+                    max_output_tokens: payload.max_output_tokens || null,
+                    vision: Boolean(caps.vision),
+                    thinking: Boolean(caps.thinking),
+                    thinking_mode: params.thinking?.type || '',
+                    effort_enabled: Boolean(caps.effort),
+                    reasoning_content: Boolean(caps.reasoning_content),
+                    temperature_enabled: caps.temperature !== false,
+                    top_p_enabled: caps.top_p !== false,
+                    top_k_enabled: Boolean(caps.top_k),
+                    effort: params.effort || '',
+                    temperature: params.temperature ?? null,
+                    top_p: params.top_p ?? null,
+                    top_k: params.top_k ?? null,
+                };
+            } catch (error) {
+                console.error('Failed to load model override', error);
+                showAiToast('error', aiText('saveError'));
+            } finally {
+                this.modelOverrideLoading = false;
+            }
+        },
+        async saveModelOverride() {
+            const provider = this.form.provider_id;
+            const model = this.form.default_model;
+            if (!provider || !model) return;
+            this.modelOverrideLoading = true;
+            try {
+                const payload = { provider, model, ...this.modelOverride };
+                const resp = await fetch('/api/v1/config/ai/model-override', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showAiToast('error', data.error || aiText('saveError'));
+                    return;
+                }
+                showAiToast('success', aiText('modelOverrideSaved'));
+            } catch (error) {
+                console.error('Failed to save model override', error);
+                showAiToast('error', aiText('saveError'));
+            } finally {
+                this.modelOverrideLoading = false;
+            }
+        },
+        async clearModelOverride() {
+            const provider = this.form.provider_id;
+            const model = this.form.default_model;
+            if (!provider || !model) return;
+            this.modelOverrideLoading = true;
+            try {
+                const query = new URLSearchParams({ provider, model });
+                const resp = await fetch(`/api/v1/config/ai/model-override?${query}`, {
+                    method: 'DELETE',
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showAiToast('error', data.error || aiText('saveError'));
+                    return;
+                }
+                await this.loadModelOverride();
+                showAiToast('success', aiText('modelOverrideCleared'));
+            } catch (error) {
+                console.error('Failed to clear model override', error);
+                showAiToast('error', aiText('saveError'));
+            } finally {
+                this.modelOverrideLoading = false;
+            }
+        },
+        async saveAccount() {
+            const payload = JSON.parse(JSON.stringify(this.form));
+            const resp = await fetch('/api/v1/config/ai/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await resp.json();
+            if (!data.success) { showAiToast('error', data.error || aiText('accountSaveFailed')); return; }
+            showAiToast('success', aiText('accountSaved'));
+            await this.loadAccounts();
+            this.editAccount(data.data.account);
+            if (!this.bindings.main.primary.account && this.accounts[0]) this.bindings = emptyBindings(this.accounts);
+        },
+        async deleteAccount(id) {
+            if (!confirm(aiText('accountDeleteConfirm'))) return;
+            const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            const data = await resp.json();
+            if (!data.success) { showAiToast('error', data.error || aiText('accountDeleteFailed')); return; }
+            showAiToast('success', aiText('accountDeleted'));
+            await this.loadAccounts();
+            await this.loadBindings();
+            this.newAccount();
+        },
+        async testAccount(id) {
+            const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(id)}/test`, { method: 'POST' });
+            const data = await resp.json();
+            const result = data.data || data;
+            showAiToast(result.success ? 'success' : 'error', result.message || aiText('accountTestCompleted'));
+        },
+        async discoverModels() {
+            if (!this.form.id) { await this.saveAccount(); }
+            if (!this.form.id) return;
+            const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(this.form.id)}/models`, { method: 'POST' });
+            const data = await resp.json();
+            const result = data.data || data;
+            if (result.success) {
+                this.form.models = result.models || [];
+                if (!this.form.default_model && this.form.models.length) this.form.default_model = this.form.models[0];
+                await this.saveAccount();
+                showAiToast('success', aiText('modelsFetched', { count: this.form.models.length }));
+            } else {
+                showAiToast('error', result.message || aiText('modelsFetchFailed'));
+            }
+        },
+        roleLabel(role) {
+            return AI_LOCALE.roles[role] || role;
+        },
+        addFallback(role) {
+            const first = this.accounts[0];
+            this.bindings[role].fallback.push({ account: first?.id || '', model: first?.default_model || '' });
+        },
+        removeFallback(role, idx) { this.bindings[role].fallback.splice(idx, 1); },
+        async saveBindings() {
+            const resp = await fetch('/api/v1/config/ai/bindings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bindings: this.bindings }) });
+            const data = await resp.json();
+            if (!data.success) { showAiToast('error', data.error || aiText('bindingsSaveFailed')); return; }
+            showAiToast('success', aiText('bindingsSaved'));
+        },
+        async loadStrategy() {
+            const resp = await fetch('/api/v1/config/ai/settings');
+            const data = await resp.json();
+            this.strategy = data.data || {};
+            const numericKeys = ['ai_api_timeout_seconds','ai_api_max_retries','ai_api_initial_retry_delay_seconds','ai_api_total_timeout_seconds','ai_fallback_max_candidates','context_compression_threshold','activity_artifact_retention_days'];
+            for (const k of numericKeys) {
+                if (this.strategy[k] != null) this.strategy[k] = Number(this.strategy[k]);
+            }
+            for (const bk of ['ai_fallback_enabled','ai_fallback_sticky_candidate','enable_context_compression','activity_reasoning_capture_enabled','activity_request_response_capture_enabled','activity_artifact_super_admin_read_enabled']) {
+                if (typeof this.strategy[bk] === 'string') {
+                    this.strategy[bk] = this.strategy[bk] === 'true';
+                }
+            }
+        },
+        async saveStrategy() {
+            const resp = await fetch('/api/v1/config/ai/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.strategy) });
+            const data = await resp.json();
+            if (!data.success) { showAiToast('error', data.error || aiText('strategySaveFailed')); return; }
+            showAiToast('success', aiText('strategySaved'));
+        },
+    };
+}
+</script>
+{% endblock %}

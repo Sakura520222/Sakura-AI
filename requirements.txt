@@ -19,7 +19,6 @@ asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.18.5
 
 # 任务队列
-celery>=5.3.6
 redis>=5.0.1
 APScheduler>=3.11.3
 
@@ -57,8 +56,9 @@ webauthn>=3.0.0
 # API 限流
 slowapi>=0.1.10
 
-# URL 抓取工具
+# URL 抓取与网络搜索工具
 beautifulsoup4>=4.12.0
+duckduckgo-search>=8.1.1
 
 # Agent 专家团队常用验证工具
 ruff>=0.8.0

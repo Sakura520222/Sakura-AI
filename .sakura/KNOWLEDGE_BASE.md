@@ -67,7 +67,7 @@
 - 第4轮未修复：自动生成issue
 
 ## 项目信息
-- 仓库名: Sakura520222/Sakura-AI-Reviewer
+- 仓库名: Sakura520222/Sakura-AI
 - 后端语言: Python 3.14+
 - Web框架: FastAPI
 - 前端界面: HTML、Alpine.js、HTMX

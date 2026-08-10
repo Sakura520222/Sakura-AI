@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.constants import DIFF_TOOLS, TOOL_NAME_TO_DEFINITION
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -40,13 +39,11 @@ def review_context():
     }
 
 
-def test_api_client_recognizes_prompt_exceeds_max_length():
-    error = Exception(
-        "Error code: 400 - {'error': {'code': '1261', "
-        "'message': 'Prompt exceeds max length'}}"
-    )
+def test_unified_client_handles_context_overflow_by_category():
+    """统一客户端通过协议层 CONTEXT_OVERFLOW 分类处理上下文超限。"""
+    from backend.core.ai_protocol.models import AIErrorCategory
 
-    assert AIApiClient._is_context_overflow_error(error) is True
+    assert AIErrorCategory.CONTEXT_OVERFLOW.value == "context_overflow"
 
 
 def test_prompt_builder_compact_mode_omits_diff(review_context):
@@ -148,11 +145,27 @@ def test_diff_tools_have_valid_definitions():
 def test_token_tracker_logs_context_usage():
     tracker = TokenTracker()
 
-    tracker.log_context_usage(5000, 10000, 1)
-    tracker.log_context_usage(8000, 10000, 2)
-    tracker.log_context_usage(9500, 10000, 3)
+    def response(input_tokens, *, window=None, reported=True):
+        return SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=input_tokens,
+                reported_fields=(
+                    frozenset({"input_tokens"}) if reported else frozenset()
+                ),
+            ),
+            meta=SimpleNamespace(context_window_tokens=window),
+        )
+
+    assert tracker.log_context_usage(response(5000), 10000, 1) == 5000
+    assert tracker.log_context_usage(response(8000), 10000, 2) == 8000
+    # Winner metadata is authoritative when fallback selects a different model.
+    assert tracker.log_context_usage(response(9500, window=20000), 10000, 3) == 9500
 
     assert len(tracker.context_usage_log) == 3
     assert tracker.context_usage_log[0].percentage == 50.0
     assert tracker.context_usage_log[1].percentage == 80.0
-    assert tracker.context_usage_log[2].percentage == 95.0
+    assert tracker.context_usage_log[2].percentage == 47.5
+    assert tracker.context_usage_log[2].context_window_tokens == 20000
+
+    assert tracker.log_context_usage(response(0, reported=False), 10000, 4) is None
+    assert len(tracker.context_usage_log) == 3

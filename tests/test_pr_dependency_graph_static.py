@@ -9,12 +9,18 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SELECT_OPTIONS,
 )
 from backend.services.ai_reviewer.pr_dependency_graph import PRDependencyGraphService
+from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
 
 @pytest.fixture
 def service():
     return PRDependencyGraphService(api_client=AsyncMock(), model="test-model")
+
+
+@pytest.fixture
+def summary_service():
+    return PRSummaryService(api_client=AsyncMock(), model="test-model")
 
 
 def make_file(path: str, status: str = "modified", changes: int = 1) -> PRFileInfo:
@@ -162,6 +168,58 @@ def test_build_prompts_uses_cumulative_file_counts(service):
         )
 
     assert user_message == "8/6/4\nimports"
+
+
+@pytest.mark.asyncio
+async def test_summary_calls_summary_role_without_model_override(summary_service):
+    summary_service._build_prompts = MagicMock(return_value=("system", "user"))
+    summary_service.api_client.call_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="summary"))]
+        )
+    )
+
+    await summary_service.generate_summary(make_analysis([]), {"body": ""})
+
+    call = summary_service.api_client.call_with_retry.await_args.kwargs
+    assert call["role"] == "summary"
+    assert call["model"] == ""
+
+
+@pytest.mark.asyncio
+async def test_dependency_graph_calls_summary_role_without_model_override(service):
+    file_info = make_file("src/new.py")
+    analysis = make_analysis([file_info])
+    settings = SimpleNamespace(
+        pr_dependency_graph_max_files=50,
+        pr_dependency_graph_max_nodes=25,
+    )
+    service._get_graph_files_sync = MagicMock(return_value=([file_info], 1))
+    service._fetch_file_contents_sync = MagicMock(
+        return_value={"src/new.py": "from src.old import helper\n"}
+    )
+    service._get_graph_mode = AsyncMock(return_value="ai")
+    service._build_import_context = MagicMock(return_value="full import context")
+    service._build_prompts = MagicMock(return_value=("system", "user"))
+    service._validate_mermaid = MagicMock(return_value="graph TD\nN1 --> N2")
+    service.update_pr_body_with_graph = AsyncMock()
+    service.api_client.call_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="graph TD\nN1 --> N2"))
+            ]
+        )
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.get_settings",
+        return_value=settings,
+    ):
+        await service.generate_dependency_graph(analysis, {"body": ""}, MagicMock())
+
+    call = service.api_client.call_with_retry.await_args.kwargs
+    assert call["role"] == "summary"
+    assert call["model"] == ""
 
 
 @pytest.mark.asyncio

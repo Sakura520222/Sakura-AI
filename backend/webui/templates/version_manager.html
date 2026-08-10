@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _("version_manager.title") }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-6 space-y-6">
+  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">{{ _("version_manager.title") }}</h1>
+
+  {# 当前部署信息卡 / Current deployment card #}
+  <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+    <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ _("version_manager.deployment") }}</h2>
+    <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_version") }}</dt>
+           <dd class="font-mono font-medium">v{{ version_info.current_version }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.deployment_mode") }}</dt>
+           {% set deployment_code = version_info.deployment_type or "unknown" %}
+           <dd>{{ _("version_manager.deployment_" ~ deployment_code) if deployment_code in ["image", "source"] else _("version_manager.unknown_deployment") }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.last_checked") }}</dt>
+           <dd>{{ version_info.last_checked or _("version_manager.not_checked") }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.update_supported") }}</dt>
+           <dd>{{ _("version_manager.supported_yes") if version_info.update_supported else _("version_manager.supported_no") }}
+               {% if version_info.update_unsupported_reason %}<span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span>{% endif %}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater") }}</dt>
+           <dd>{{ _("version_manager.connected") if version_info.updater_connected else _("version_manager.disconnected") }}
+               {% if version_info.updater_connected and version_info.updater_version %}
+               <span class="text-gray-400 text-xs font-mono">v{{ version_info.updater_version }}</span>
+               {% endif %}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater_state") }}</dt>
+           {% set state_code = version_info.updater_state or "idle" %}
+           <dd id="updater-state" data-state="{{ state_code }}">
+             {{ _("version_manager.state_" ~ state_code) if state_code in ["idle", "checking", "update_available", "preflight", "downloading", "activating", "restarting", "health_checking", "success", "failed"] else _("version_manager.unknown_state") }}
+             {% if version_info.has_active_job %}<span class="text-xs text-sakura-500">（{{ _("version_manager.job", id=version_info.active_job_id) }}）</span>{% endif %}
+           </dd></div>
+    </dl>
+
+    {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 使用本地化占位 #}
+    {% if version_info.check_error %}
+    <div class="mt-4 text-sm text-amber-600 dark:text-amber-400">
+      {{ _("version_manager.check_failed_cached") | replace("{error}", version_info.check_error|string) }}
+    </div>
+    {% endif %}
+    {% if version_info.update_available %}
+    <div class="mt-4 flex items-center gap-2 text-sakura-600 dark:text-sakura-400">
+      <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
+      <span class="font-medium">v{{ version_info.latest_version }} {{ _("version_manager.available") }}</span>
+      <span class="text-xs text-gray-400">（{{ _("version_manager.update_available_hint") }}）</span>
+    </div>
+    {% elif version_info.last_checked and not version_info.check_error %}
+    <div class="mt-4 text-sm text-gray-500">{{ _("version_manager.up_to_date") }}</div>
+    {% elif not version_info.last_checked %}
+    <div class="mt-4 text-sm text-gray-500">{{ _("version_manager.initial_check_pending") }}</div>
+    {% endif %}
+
+    <div class="mt-4">
+      <button id="recheck-btn"
+              class="px-4 py-2 rounded-xl bg-sakura-500 text-white text-sm font-medium hover:bg-sakura-600 disabled:opacity-50">
+        {{ _("common.refresh") }}
+      </button>
+      <button id="preflight-btn" type="button"
+              class="ml-2 px-4 py-2 rounded-xl border border-sakura-300 text-sakura-700 text-sm font-medium hover:bg-sakura-50 disabled:opacity-50">
+        {{ _("version_manager.preflight") }}
+      </button>
+      <button id="update-btn" type="button"
+              class="ml-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+              disabled>
+        {{ _("version_manager.start_update") }}
+      </button>
+      <div id="update-status" class="mt-3 text-sm text-gray-500" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section id="readiness-card" class="hidden bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+    <h2 class="text-lg font-semibold mb-3 text-gray-700 dark:text-gray-200">{{ _("version_manager.readiness") }}</h2>
+    <div id="readiness-target" class="font-mono text-sm text-gray-600 dark:text-gray-300"></div>
+    <ul id="readiness-checks" class="mt-3 space-y-1 text-xs text-gray-500"></ul>
+  </section>
+
+  {# Release 列表 / Release list（已按 SemVer 降序） #}
+  <section class="space-y-4">
+    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.release_history") }}</h2>
+    {% if not releases %}
+    <div class="text-sm text-gray-500">{{ _("version_manager.no_releases") }}</div>
+    {% endif %}
+    {% for rel in releases %}
+    <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
+      <header class="flex items-center justify-between mb-2">
+        <h3 class="font-mono font-semibold text-gray-800 dark:text-gray-100">v{{ rel.version }}</h3>
+        {% if rel.version == version_info.latest_version and version_info.update_available %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">{{ _("version_manager.latest") }}</span>
+        {% elif rel.version == version_info.current_version %}
+        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _("version_manager.current") }}</span>
+        {% endif %}
+      </header>
+      <div class="text-xs text-gray-400 mb-3">{{ rel.published_at or "—" }}</div>
+      {# data-markdown：前端 marked + DOMPurify 自动渲染（base.html 管线）。
+         Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
+      <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>
+      {% if rel.html_url %}
+       <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
+         class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">{{ _("version_manager.view_release") }}</a>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+</div>
+
+<script>
+// CSRF token 从 template context 注入（navbar restart 同款模式）。所有更新请求
+// 只走 Backend proxy；浏览器永远不接触 UDS 或宿主 Docker。
+const CSRF_TOKEN = "{{ csrf_token }}";
+const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
+const recheckButton = document.getElementById('recheck-btn');
+const preflightButton = document.getElementById('preflight-btn');
+const updateButton = document.getElementById('update-btn');
+const statusNode = document.getElementById('update-status');
+const readinessCard = document.getElementById('readiness-card');
+const readinessTarget = document.getElementById('readiness-target');
+const readinessChecks = document.getElementById('readiness-checks');
+const VM_I18N = {
+  checking: {{ _("version_manager.checking") | tojson }},
+  preflight: {{ _("version_manager.preflight_running") | tojson }},
+  submitting: {{ _("version_manager.update_submitting") | tojson }},
+  reconnecting: {{ _("version_manager.reconnecting") | tojson }},
+  notConnected: {{ _("version_manager.updater_not_connected") | tojson }},
+  healthMismatch: {{ _("version_manager.health_mismatch") | tojson }},
+  target: {{ _("version_manager.target") | tojson }},
+  noTarget: {{ _("version_manager.no_target") | tojson }},
+  readinessFailed: {{ _("version_manager.readiness_failed") | tojson }},
+  preflightPassed: {{ _("version_manager.preflight_passed") | tojson }},
+  preflightFailed: {{ _("version_manager.preflight_failed") | tojson }},
+  preflightError: {{ _("version_manager.preflight_error") | tojson }},
+  updateStatus: {{ _("version_manager.update_status") | tojson }},
+  updateSuccess: {{ _("version_manager.update_success") | tojson }},
+  updateFailed: {{ _("version_manager.update_failed") | tojson }},
+  updateSubmitFailed: {{ _("version_manager.update_submit_failed") | tojson }},
+  unknownState: {{ _("version_manager.unknown_state") | tojson }},
+  emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
+  missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
+  httpError: {{ _("version_manager.http_error") | tojson }},
+  reconnectingJob: {{ _("version_manager.reconnecting_job") | tojson }},
+  stateLabels: {
+    idle: {{ _("version_manager.state_idle") | tojson }},
+    checking: {{ _("version_manager.state_checking") | tojson }},
+    update_available: {{ _("version_manager.state_update_available") | tojson }},
+    preflight: {{ _("version_manager.state_preflight") | tojson }},
+    downloading: {{ _("version_manager.state_downloading") | tojson }},
+    activating: {{ _("version_manager.state_activating") | tojson }},
+    restarting: {{ _("version_manager.state_restarting") | tojson }},
+    health_checking: {{ _("version_manager.state_health_checking") | tojson }},
+    success: {{ _("version_manager.state_success") | tojson }},
+    failed: {{ _("version_manager.state_failed") | tojson }}
+  },
+  stepLabels: {
+    checking: {{ _("version_manager.step_checking") | tojson }},
+    update_available: {{ _("version_manager.step_update_available") | tojson }},
+    preflight: {{ _("version_manager.step_preflight") | tojson }},
+    materialize_current_anchor: {{ _("version_manager.step_materialize_current_anchor") | tojson }},
+    downloading: {{ _("version_manager.step_downloading") | tojson }},
+    activating: {{ _("version_manager.step_activating") | tojson }},
+    restarting: {{ _("version_manager.step_restarting") | tojson }},
+    health_checking: {{ _("version_manager.step_health_checking") | tojson }},
+    complete: {{ _("version_manager.step_complete") | tojson }},
+    failed: {{ _("version_manager.step_failed") | tojson }}
+  },
+  checkLabels: {
+    manifest_found: {{ _("version_manager.check_manifest_found") | tojson }},
+    manifest_valid: {{ _("version_manager.check_manifest_valid") | tojson }},
+    deployment_mode_image: {{ _("version_manager.check_deployment_mode_image") | tojson }},
+    protocol_compatible: {{ _("version_manager.check_protocol_compatible") | tojson }},
+    target_newer: {{ _("version_manager.check_target_newer") | tojson }},
+    min_upgrade_from: {{ _("version_manager.check_min_upgrade_from") | tojson }},
+    image_manifest_exists: {{ _("version_manager.check_image_manifest_exists") | tojson }},
+    disk_space_sufficient: {{ _("version_manager.check_disk_space_sufficient") | tojson }},
+    updater_asset_present: {{ _("version_manager.check_updater_asset_present") | tojson }}
+  },
+  unknownCheck: {{ _("version_manager.unknown_check") | tojson }},
+  unknownStep: {{ _("version_manager.unknown_step") | tojson }},
+  success: {{ _("common.success") | tojson }},
+  error: {{ _("common.error") | tojson }}
+};
+
+function vmFormat(template, values) {
+  return Object.entries(values || {}).reduce(
+    (text, [key, value]) => text.replaceAll('{' + key + '}', String(value)),
+    template
+  );
+}
+
+function vmStateLabel(state) {
+  return VM_I18N.stateLabels[state] || VM_I18N.unknownState;
+}
+
+function vmStepLabel(step) {
+  return VM_I18N.stepLabels[step] || (step ? vmFormat(VM_I18N.unknownStep, {step: step}) : '');
+}
+
+function vmCheckLabel(name) {
+  return VM_I18N.checkLabels[name] || vmFormat(VM_I18N.unknownCheck, {name: name});
+}
+
+function setStatus(message, kind) {
+  statusNode.textContent = message || '';
+  statusNode.className = 'mt-3 text-sm ' + (kind === 'error' ? 'text-red-600' : kind === 'ok' ? 'text-emerald-600' : 'text-gray-500');
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
+  let body = null;
+  try { body = await response.json(); } catch (_) { body = {}; }
+  if (!response.ok) {
+    const error = new Error((body && body.error) || vmFormat(VM_I18N.httpError, {status: response.status}));
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+  return body;
+}
+
+function showReadiness(data) {
+  const payload = data && data.data ? data.data : data || {};
+  readinessCard.classList.remove('hidden');
+  const target = payload.target || {};
+  readinessTarget.textContent = target.version
+    ? vmFormat(VM_I18N.target, {version: target.version}) + (target.image ? ' · ' + target.image : '')
+    : VM_I18N.noTarget;
+  readinessChecks.innerHTML = '';
+  const checks = payload.readiness || payload.checks || {};
+  (Array.isArray(checks) ? checks : Object.entries(checks).map(([name, passed]) => ({name, passed}))).forEach((check) => {
+    const item = document.createElement('li');
+    item.textContent = (check.passed ? '✓ ' : '✗ ') + vmCheckLabel(check.name) + (check.detail ? ': ' + check.detail : '');
+    item.className = check.passed ? 'text-emerald-600' : 'text-amber-600';
+    readinessChecks.appendChild(item);
+  });
+  updateButton.disabled = payload.update_ready === false || payload.update_available === false;
+  return payload;
+}
+
+async function loadReadiness() {
+  try {
+    const data = await requestJson('/version/readiness', { method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'} });
+    showReadiness(data);
+    return data && data.data ? data.data : data;
+  } catch (error) {
+    if (error.status === 503) setStatus(VM_I18N.notConnected, 'error');
+    else setStatus(VM_I18N.readinessFailed, 'error');
+    updateButton.disabled = true;
+    return null;
+  }
+}
+
+recheckButton.addEventListener('click', async function() {
+  this.disabled = true;
+  this.textContent = VM_I18N.checking;
+  try {
+    const r = await fetch('/version/check', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json' }
+    });
+    if (r.ok) { location.reload(); }
+    else { this.textContent = VM_I18N.error; this.disabled = false; }
+  } catch (e) { this.textContent = VM_I18N.error; this.disabled = false; }
+});
+
+preflightButton.addEventListener('click', async function() {
+  const readiness = await loadReadiness();
+  const target = readiness && readiness.target && readiness.target.version;
+  if (!target) return;
+  this.disabled = true;
+  setStatus(VM_I18N.preflight, null);
+  try {
+    const data = await requestJson('/version/preflight', {
+      method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: JSON.stringify({target_version: target})
+    });
+    const result = data && data.data ? data.data : data;
+    showReadiness({data: {target: {version: target}, checks: result.checks, update_ready: result.can_update}});
+    setStatus(result.can_update ? VM_I18N.preflightPassed : VM_I18N.preflightFailed, result.can_update ? 'ok' : 'error');
+  } catch (error) {
+    setStatus(vmFormat(VM_I18N.preflightError, {error: (error.body && error.body.error) || error.message}), 'error');
+  }
+  finally { this.disabled = false; }
+});
+
+async function verifyHealth(targetVersion) {
+  try {
+    const response = await fetch('/health', {headers: {'Accept': 'application/json'}, cache: 'no-store'});
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body && (body.version === targetVersion || (body.data && body.data.version === targetVersion));
+  } catch (_) { return false; }
+}
+
+async function pollJob(jobId) {
+  setStatus(vmFormat(VM_I18N.reconnectingJob, {job_id: jobId}), null);
+  while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
+    try {
+      const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
+      const job = body && body.data ? body.data : body;
+      if (!job) throw new Error(VM_I18N.emptyJobResponse);
+      const state = vmStateLabel(job.state);
+      setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
+      if (job.state === 'success') {
+        const target = job.target_version;
+        if (target && await verifyHealth(target)) {
+          setStatus(vmFormat(VM_I18N.updateSuccess, {version: target}), 'ok');
+        } else {
+          setStatus(VM_I18N.healthMismatch, 'error');
+        }
+        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        updateButton.disabled = false;
+        return;
+      }
+      if (job.state === 'failed') {
+        setStatus(vmFormat(VM_I18N.updateFailed, {error: job.error || job.error_code || VM_I18N.unknownState}), 'error');
+        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        updateButton.disabled = false;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    } catch (error) {
+      // Web container restarts are expected during activation.  Keep the job id
+      // and retry; only the host's terminal failed state is rendered as failed.
+      setStatus(VM_I18N.reconnecting, null);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+}
+
+updateButton.addEventListener('click', async function() {
+  const readiness = await loadReadiness();
+  const target = readiness && readiness.target && readiness.target.version;
+  if (!target || updateButton.disabled) return;
+  updateButton.disabled = true;
+  setStatus(VM_I18N.submitting, null);
+  try {
+    const body = await requestJson('/version/update', {
+      method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: JSON.stringify({target_version: target})
+    });
+    const data = body && body.data ? body.data : body;
+    if (!data.job_id) throw new Error(VM_I18N.missingJobId);
+    sessionStorage.setItem(JOB_STORAGE_KEY, data.job_id);
+    await pollJob(data.job_id);
+  } catch (error) {
+    if (error.status === 409 && error.body && error.body.job_id) {
+      sessionStorage.setItem(JOB_STORAGE_KEY, error.body.job_id);
+      await pollJob(error.body.job_id);
+    } else {
+      setStatus(vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message}), 'error');
+      updateButton.disabled = false;
+    }
+  }
+});
+
+// A page reload after Web container restart resumes the same host job.
+const persistedJobId = sessionStorage.getItem(JOB_STORAGE_KEY);
+if (persistedJobId) pollJob(persistedJobId);
+loadReadiness();
+</script>
+{% endblock %}

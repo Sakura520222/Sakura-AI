@@ -2,13 +2,13 @@
 
 # 🌸 Sakura AI
 
-<img src="res/cover.png" alt="Sakura AI Cover" width="100%">
+<img src="res/cover_1.png" alt="Sakura AI Cover" width="100%">
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.0.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -44,10 +44,11 @@
 - **运行中增量入队**：审查进行中收到新的 `synchronize` 提交时不会并行启动新审查；新增变化会入队，并在下一次 AI 请求前合并成一条 user message
 - **按需 diff 控制**：增量队列不引入硬编码 diff 截断，内容量控制继续依赖工具按需读取、现有配置和上下文压缩
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
-- **严格审查输出契约**：审查器输出受严格信封协议约束并经字段校验与严重等级分数上限保护，无效响应自动修复或安全降级，杜绝误批准与误低分拒绝
+- **严格审查输出契约**：审查器输出受 `<SAKURA_REVIEW>` 信封协议约束，经字段校验与严重等级分数上限保护；非法响应将进行累积式多轮修复（repaired up to `protocol_repair_max_attempts` 次，可配置，默认 3），每轮携带具体错误并保留完整对话历史，全部失败则安全降级，杜绝误批准与误低分拒绝。修复过程通过 transcript / SSE / observer attempt 全链路可观测
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图；增量审查基于上一轮依赖图叠加更新，保留历史依赖节点与边
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
+- **新版实时监控**：`/activity/observability/` 采用对话优先的 AI 审查控制台，为每个 PR/Issue 维护长期 Session 与独立角色 Thread；中央时间线统一呈现完整 assistant 回复、真实 Provider HTTP Attempt（retry/fallback/模型切换）、工具状态、上下文 revision、压缩时点和当前阶段，右侧诊断区显示 effective 模型、最终思考模式/等级、Token 与上下文来源。system/user/tool 内容、工具参数与结果、最终请求/响应投影及可读 reasoning 均与 Canonical Transcript 分离并加密保存；普通用户只看安全投影，admin 查看元数据，super_admin 也必须具备仓库与 trace 权限且显式点击后才会产生审计解密，响应强制 `no-store`。Provider 未暴露可展示 reasoning 时仅显示确定性状态，不伪造内容或永久 spinner；同一 PR 多次触发复用同一会话，user-scoped SSE 只发送 `{event_id, sequence, projection_version}` 并驱动授权 REST 增量刷新；新版不读取或兼容旧 Activity 历史数据
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
 - **辅助模型支持**：独立配置轻量级模型处理摘要、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
@@ -79,10 +80,11 @@
 ### Issue 分析
 
 - **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
-- **严格 Issue 输出契约**：Issue 分析输出使用 `<SAKURA_ISSUE_ANALYSIS>` 信封协议并进行字段校验，无效响应会自动进行一次格式修复或安全降级
+- **严格 Issue 输出契约**：Issue 分析使用 `<SAKURA_ISSUE_ANALYSIS>` 信封协议与字段校验；非法响应将进行累积式多轮修复（repaired up to `protocol_repair_max_attempts` 次，可配置，默认 3），每轮携带具体错误并保留完整对话历史，全部失败则安全降级为人工复核。修复过程通过 transcript / SSE / observer attempt 全链路可观测
 - **Issue 自动打标**：AI 自动分类并推荐标签，高置信度自动应用
 - **Issue 自动指派**：AI 分析内容并自动指派给合适的仓库协作者
 - **Issue 标题改写**：AI 自动优化模糊或不够准确的 Issue 标题
+- **分析评论发布**：分析完成后自动发布结果评论，并通过用户级活动事件报告发布状态；基于仓库权限解析与显式收件人配置保持互斥
 - **PR-Issue 关联**：自动解析 Issue 引用，注入上下文增强审查精度
 - **语义 Issue 关联**：基于向量语义相似度发现并关联相关 Issue
 
@@ -90,7 +92,7 @@
 
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
 - **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
-- **Issue 评论委派**：仓库管理员 / 写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent` 创建修复任务，可附加 `base:<branch>` 指定基础分支
+- **Issue 评论委派**：仓库管理员 / 写权限协作者可在任意 Issue 中评论 `/agent` 创建修复任务（无需预先分析，自动获取 Issue 标题、正文与评论上下文），可附加 `base:<branch>` 指定基础分支
 - **PR 评论一键修复**：在 PR 审查评论中发送 `/agent`，基于该 PR 的审查意见自动创建 Agent 修复任务，新开独立修复分支并提交修复 PR；同一 PR 仅允许一个 `/agent` 任务（支持多轮迭代），可附加 `base:<branch>` 指定基础分支
 - **多分支并行工作区**：每个 Agent 任务使用独立 Git worktree 隔离，支持同一仓库多个任务并行执行，互不干扰
 - **普通用户仓库权限控制**：非管理员只能操作自己名下仓库，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建、重试和 `/agent` 委派均消耗独立 Agent 配额
@@ -138,7 +140,11 @@
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
 - **AI API 超时治理**：通过 `ai_api_timeout_seconds` 和 `ai_api_total_timeout_seconds` 分别控制单次请求超时与重试循环总耗时
 - **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
-- **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
+- **AI Provider 注册表**：内置 OpenAI（GPT-5.6 系列）、Anthropic Claude（Fable 5 / Sonnet 5 / Opus 4.8 / Haiku 4.5，原生 Messages API）、Google Gemini 3.5、xAI Grok 4.5、Mistral、DeepSeek V4、Qwen 3.7、GLM 5.2、MiniMax M3、Kimi K2.7、Doubao、Hunyuan、OpenRouter、SiliconFlow、Together、Groq、Fireworks、Perplexity、Ollama、vLLM、LM Studio、Coding Plan / Token Plan 与自定义 OpenAI/Anthropic 兼容厂商，支持按协议族自动获取模型列表与上下文窗口
+- **AI 账号持久化配置页**：超级管理员可在 WebUI 的「AI 配置」中保存多个厂商账号（provider、protocol、region、base URL、API Key、默认模型），主模型/辅助模型/Agent Team 可随时切换账号并配置回退链；每个模型可独立覆盖上下文窗口、最大输出、图片多模态、思考模式/等级和采样参数能力；内置远程厂商仅接受官方 HTTPS 地址，`custom` / `custom-anthropic` 允许连接 HTTPS 公网服务，以及 HTTP/HTTPS 本机或私有网络兼容服务；Coding Plan 会明确标注交互式编程专用限制
+- **多协议适配层**：统一运行时覆盖 OpenAI Chat Completions、Anthropic Messages、Gemini 原生协议与兼容端点，归一化请求/响应、鉴权头、工具调用映射与错误语义；新增厂商只需声明协议族与端点
+- **跨协议故障转移**：单次调用先按退避策略重试，重试耗尽后跨协议/跨厂商切换备用模型；上下文超限时先经当前模型 AI 摘要恢复，仍超限才回退到容量足够的候选模型
+- **按模型上下文窗口**：上下文窗口作为模型级元数据（自动发现优先，可手动覆盖），替代旧的全局单值；推理参数按模型能力动态过滤
 - **GitHub App 安装管理**：自动处理 GitHub App 安装 / 卸载事件，同步仓库授权状态
 - **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局 / 单用户强制 MFA、管理员重置 MFA 与安全事件审计、MFA 失败锁定（动态阈值与锁定时长）、API Passkey 二次验证；移动端 OAuth 支持自定义回调 URI 白名单，WebAuthn 支持多个允许 Origin 与 Android App Links
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
@@ -209,7 +215,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis (队列/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · 可选 Celery Worker
+**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis (队列/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose
 
 ### 客户端
 
@@ -220,7 +226,90 @@
 
 ## 快速开始
 
-### 1. 环境要求
+### 1. Docker 一键部署（推荐，无需拉取源码）
+
+**方式一：全量部署（MySQL + Redis 一并拉起）**
+
+Linux / macOS：
+
+```bash
+mkdir sakura-ai && cd sakura-ai
+mkdir -p docker .deploy
+curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  -o docker/docker-compose.prod.yml
+umask 077
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
+  "$(openssl rand -hex 32)" > .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+```
+
+PowerShell（Windows）：
+
+```powershell
+New-Item -ItemType Directory -Force sakura-ai | Out-Null
+Set-Location sakura-ai
+New-Item -ItemType Directory -Force docker, .deploy | Out-Null
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
+  -OutFile "docker/docker-compose.prod.yml"
+$bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+$dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
+@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "SAKURA_DB_PASSWORD=$dbPassword") |
+  Set-Content -Encoding ascii .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+```
+
+固定版本部署（无需编辑 compose 文件）：
+
+```bash
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
+  docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+```
+
+PowerShell：
+
+```powershell
+$env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+Remove-Item Env:SAKURA_AI_IMAGE
+```
+
+首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。更多配置见下方"快速开始"。
+
+**方式二：仅运行 Web 镜像（MySQL/Redis 自备）**
+
+Linux / macOS：
+
+```bash
+docker run -d -p 8000:8000 \
+  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
+  -e REDIS_URL=redis://host:6379/0 \
+  -v $(pwd)/config:/app/config \
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+PowerShell（Windows）：
+
+```powershell
+$ConfigPath = Join-Path (Get-Location) "config"
+New-Item -ItemType Directory -Force $ConfigPath | Out-Null
+docker run -d `
+  --name sakura-ai `
+  --restart unless-stopped `
+  -p 8000:8000 `
+  -e "DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai" `
+  -e "REDIS_URL=redis://host:6379/0" `
+  -v "${ConfigPath}:/app/config" `
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+> 镜像地址：主镜像 `ghcr.io/sakura520222/sakura-ai`；Docker Hub 替代镜像 `sakura520222/sakura-ai`（内容与 GHCR 完全一致）。Tag 说明：`latest` 最新稳定版，`vX.Y.Z` 固定版本，`edge` 开发预览（不保证稳定）。生产 compose 不再内置数据库密码：首次部署必须将强随机的 64 位十六进制 `SAKURA_DB_PASSWORD` 保存到权限为 0600 的 `.deploy/deployment.env`，并始终通过 `--env-file .deploy/deployment.env` 启动；文件缺失或变量缺失时 Compose 会 fail-closed。使用仓库中的 `./start.sh --prod` 会自动完成生成、持久化和复用，切勿提交该运行时文件。
+
+已有旧部署若 `.deploy/deployment.env` 没有 `SAKURA_DB_PASSWORD`，`start.sh` 不会猜测或静默轮换（否则会与已有 `mysql_data` 凭据不一致）。请先停 Web、生成新的十六进制密码并在 MySQL 中执行 `ALTER USER 'sakura'@'%' IDENTIFIED BY '<同一密码>'`，确认连接成功后再把同一值写入 `.deploy/deployment.env`（权限 0600），然后用上面的 `--env-file` 命令启动。
+
+生产镜像的 `config_data:/app/config` 卷会持久化 Setup 生成的 `connection.json` 以及 WebUI 可编辑的 `strategies.yaml`、`labels.yaml`。镜像内置的新版基线放在独立的 `/app/config-defaults`，容器会在卷内保存上一版 packaged baseline，并在每次启动时对这两个 YAML 做三路深度合并：自上次 baseline 以来未修改的值跟随新默认（包括 scalar/list），管理员改过的值和自定义键始终保留；新默认键会补入，已从默认删除且未被修改的键会删除，被管理员改过的删除键仍保留。首次升级旧卷时没有 baseline，会保守保留现有值并补入新键，然后写入 baseline。`connection.json` 和其它运行时文件不会被触碰。合并采用同目录原子替换并在批次失败时回滚，YAML 解析失败或无法安全处理的类型冲突会 fail-closed，既有文件不会被覆盖。这样升级镜像既能获得默认策略/标签变化，又不会丢失管理员修改；请将 YAML 文件纳入你自己的备份流程（配置备份接口主要覆盖数据库 `app_config`）。
+
+### 2. 环境要求
 
 - Linux 服务器（推荐 Ubuntu 20.04+）
 - Docker 和 Docker Compose
@@ -228,7 +317,7 @@
 - GitHub 账号
 - DeepSeek API Key（或其他 OpenAI 兼容 API）
 
-### 2. 克隆项目
+### 3. 克隆项目
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
@@ -237,7 +326,7 @@ cd Sakura-AI
 
 > 所有配置（GitHub App、AI 模型、数据库等）通过首次启动后的 Setup Wizard 在 Web 界面完成，无需手动编辑配置文件。
 
-### 3. 创建 GitHub App
+### 4. 创建 GitHub App
 
 1. 访问 [GitHub Apps 设置](https://github.com/settings/apps)，点击 **New GitHub App**
 2. 填写名称、Homepage URL
@@ -251,7 +340,7 @@ cd Sakura-AI
 >
 > 启用仓库互助功能时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**，并赋予 **Starring** 写权限；仓库互助回调地址为 `https://your-domain.com/star-aid/auth/callback`。
 
-### 4. 准备数据库
+### 5. 准备数据库
 
 在宿主机安装并启动 MySQL 和 Redis：
 
@@ -264,22 +353,33 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 5. 启动服务
+### 6. 启动服务（源码部署 / 开发模式）
+
+> 日常使用推荐 `### 1. Docker 一键部署`（无需源码，一条命令拉起 Web + MySQL + Redis）。
+> 以下为源码部署方式（开发 / 自定义构建场景），也可用 `./start.sh`（开发模式）或 `./start.sh --prod`（生产镜像模式）启动。
 
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-如需启用可选的 Celery Worker（处理异步任务）：
+### 7. Setup Wizard 引导配置
 
-```bash
-docker-compose --profile with-worker up -d
+首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）。
+
+**安全验证**：首次启动时应用会生成一个随机 Token 并打印到启动日志中。访问 `/setup` 前需先在 `/setup/verify` 页面输入此 Token 完成验证：
+
+```
+============================================================
+Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
+  Token: <随机字符串>
+请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。
+============================================================
 ```
 
-### 6. Setup Wizard 引导配置
+> Token 在每次应用启动时重新生成，仅当前部署会话有效。
 
-首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）：
+验证通过后进入向导，分步完成配置：
 
 1. **数据库配置**：填写 MySQL 和 Redis 连接地址，提供在线连接测试
 2. **GitHub App 配置**：填写 App ID、私钥和 Webhook Secret，自动验证 App 连接
@@ -288,7 +388,7 @@ docker-compose --profile with-worker up -d
 
 > Setup Wizard 内置 RAG 嵌入与重排序模型配置（可折叠），可跳过后续在 WebUI 中配置。
 
-### 7. 验证部署
+### 8. 验证部署
 
 ```bash
 curl http://your-domain.com:8000/health
@@ -296,6 +396,61 @@ curl http://your-domain.com:8000/health
 ```
 
 WebUI：`https://your-domain.com/`
+
+### Host Updater 守护进程（自动更新）
+
+Host updater 是一个独立守护进程，负责管理 Sakura AI 镜像的自动更新（自动更新功能目前逐步上线中，P0 阶段先铺基础）。
+
+**管理命令**
+
+通过 `start.sh` 脚本管理 updater 守护进程：
+
+```bash
+./start.sh updater install|start|stop|status
+```
+
+action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
+
+**生产首次安装**
+
+生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`。首次执行 `install` 时，即使宿主机没有 Python 且该 binary 尚不存在，也会由 `start.sh` 完成 binary acquisition；生产路径不依赖宿主机 Python。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
+
+```bash
+sudo ./start.sh updater install  # 获取并校验当前版本 binary，创建组和目录
+sudo ./start.sh updater start     # 启动守护进程
+```
+
+安装严格绑定当前部署的 Sakura AI 版本，不下载 `latest` updater。版本解析是 **deployment-mode-aware** 的：
+
+- `SAKURA_DEPLOY_MODE=image`：优先使用 `deployment.env` 中 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest）的镜像版本作为权威来源；镜像为 `:latest` 或无具体 tag 时，回退到 `backend/__init__.py` 的 `__version__`。镜像部署时 host checkout 版本与实际运行版本可能不同，镜像版本始终权威。
+- `SAKURA_DEPLOY_MODE=source`：以 `backend/__init__.py` 的 `__version__ = "X.Y.Z"` 为权威来源。
+- `deployment.env` 缺失或 `SAKURA_DEPLOY_MODE` 不是 `image`/`source` 时 fail-closed，不猜测版本。
+
+`:latest` 不是具体版本。两者都无法确定具体版本时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
+
+state directory 首次创建为 root-owned `0700`。如果目录已存在（如从旧版升级），只要 owner 为 root 且 group/other 无写权限就会自动 harden 到 `0700`；owner 非 root、group/other 可写或目录是 symlink 时 fail-closed。binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。binary 为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
+
+安装失败的保护分为两个阶段：下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
+
+如果 daemon 在安装前已经运行，替换 binary 不会自动重启正在运行的进程。安装成功后请显式执行：
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater start
+```
+
+**源码开发模式**
+
+开发环境可使用显式 Python override 运行 updater；这不是生产 fallback：
+
+```bash
+SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
+```
+
+**安全边界**
+
+- Web 容器通过只读挂载 `/run/sakura-ai` 目录（Unix Domain Socket）与 updater 通信，不挂载 `docker.sock`
+- updater 不依赖 systemd 或 cron 自启；每次通过 `start.sh` 时会调用 `ensure_updater_running` 兜底恢复
 
 ---
 
@@ -313,7 +468,7 @@ WebUI：`https://your-domain.com/`
 - **自动分析**：Issue opened/edited/reopened 时自动触发，发布分类、优先级、标签建议
 - **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
-- **Agent 委派**：仓库管理员或写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理；可使用 `/agent base:develop` 指定基础分支
+- **Agent 委派**：仓库管理员或写权限协作者可在任意 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理（无需预先分析，自动获取 Issue 对话上下文）；可使用 `/agent base:develop` 指定基础分支
 - **PR /agent 一键修复**：在 PR 审查页面评论 `/agent`，基于该 PR 审查意见创建 Agent 修复任务，自动新开修复分支并提交修复 PR；同一源 PR 仅允许一个 `/agent` 任务（支持多轮迭代闭环）
 - **重复检测**：自动识别重复 Issue 并关联已有 Issue
 
@@ -342,10 +497,10 @@ WebUI：`https://your-domain.com/`
 
 所有全局配置遵循优先级：**数据库 app_config（WebUI 管理） > Settings 默认值**，用户级偏好配置遵循 **UserConfig > app_config > Settings 默认值**。YAML 配置文件（`config/strategies.yaml`、`config/labels.yaml`）管理审查策略和标签定义。
 
-> **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、辅助模型、RAG、Web 搜索、代码索引、仓库互助等多个配置分组。
+> **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。AI 运行时的账号、端点、凭据与模型仅由「AI 配置」中的账号和角色绑定提供；调用策略、RAG、Web 搜索、代码索引和仓库互助仍由各自配置分组管理。
 
-- **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
-- **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、标签推荐等轻量任务，留空则自动回退到主模型
+- **AI 账号与角色绑定**：先在 WebUI「AI 配置」保存 OpenAI、Anthropic、Gemini、DeepSeek、Qwen、GLM、MiniMax、Kimi、Grok、Mistral、聚合网关、本地模型或自定义兼容账号，再为 `main`、`summary`、`agent_team` 配置主账号与故障转移链。模型列表可被发现并持久化，标签可快速选择；每个模型的高级配置可单独设置上下文窗口、最大输出、图片多模态、思考模式/等级与 temperature、top_p、top_k 能力/默认值。内置远程账号仅允许官方 HTTPS endpoint，`custom` / `custom-anthropic` 可配置 HTTPS 公网 endpoint，以及 HTTP/HTTPS 本机或私网兼容 endpoint。`summary` 与 `agent_team` 仅在绑定明确为 `account="main"` 或 `model="follow"` 时跟随主角色；缺少绑定、禁用账号、无效 endpoint 或空候选链会明确失败，不会回退到旧配置
+- **历史旧键**：历史 `openai_*`、`summary_*`、`ai_provider` 和旧 Agent Team 供应商键可保留在数据库中，但系统不会读取、写入、迁移或将其作为回退来源
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
 - **Check Runs 可视化**：WebUI 配置管理中 `enable_check_runs` 控制是否将审查进度同步到 GitHub Checks 面板（默认开启，需 GitHub App 授予 `checks:write` 权限）；`enable_analysis_check` / `enable_findings_check` 分别控制副 Analysis / Findings Check 是否创建，`analysis_min_interval_sec` 控制 Analysis 快照写入最小间隔（避免高频更新烧 API 配额）；三个 Check 的 external_id 形如 `sakura-ai:v1:<review_job_id>:<check_kind>`，跨进程恢复优先读 DB 持久化的 check_run_id，缺失时按 head_sha + name 列举兜底
 - **外部 CI 失败注入**：`config/strategies.yaml` 的 `context_enhancement.ci_failure_injection` 控制是否注入外部 CI 失败、记录保留天数、单次审查最多失败记录数和每条失败最多 annotations 数；该功能依赖 GitHub App 订阅 `check_run` / `workflow_job` webhook，并授予 Checks 与 Actions 读取权限
@@ -358,7 +513,7 @@ WebUI：`https://your-domain.com/`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
 - **PR 变更总结**：WebUI 配置管理中 `enable_pr_summary`
 - **PR 依赖图**：WebUI 配置管理中 `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files`；`ai` 模式使用模型分析依赖，`static` 模式使用静态 import 解析降低成本
-- **大型 PR 上下文治理**：WebUI 配置管理中 `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds`；当初始 diff 过大时会自动使用 compact diff 工具模式
+- **大型 PR 上下文治理**：WebUI「AI 配置」中按模型设置上下文窗口，并通过 `enable_context_compression` / `context_compression_threshold` 配置自动压缩；当初始 diff 过大时会自动使用 compact diff 工具模式，历史上下文由当前候选模型 AI 摘要压缩，不再使用全局上下文窗口或“保留对话轮数”
 - **Token 成本追踪**：WebUI 配置管理中 `review_price_per_1k_prompt` / `review_price_per_1k_completion`，追踪审查 Token 消耗与成本
 - **支付网关**：WebUI 配置管理中 `payment_enabled` 启用付费配额系统，按需配置 `stripe_*`、`paddle_*`、`alipay_*`、`nowpayments_*`、`tron_*` 网关参数；支持外部支付订单、回调验签、退款申请和超级管理员退款审核
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
@@ -369,12 +524,12 @@ WebUI：`https://your-domain.com/`
 - **语义 Issue 关联**：WebUI 配置管理中 `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold`
 - **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
 - **行内评论开关**：WebUI 配置管理中 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，默认开启
-- **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
+- **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）；DuckDuckGo 提供商使用 `duckduckgo-search`
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
-- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI / 辅助AI / 独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
-- **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈 / 审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans）。反思、合并与知识提取由 `main` 或 `summary` 角色绑定决定实际账号和模型，不支持在该功能中另配凭据或模型。WebUI 提供「Sakura 记忆管理」页面，支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
+- **模型上下文**：在 WebUI「AI 配置」的每个模型高级配置中设置上下文窗口、最大输出与能力；自动压缩策略同页配置，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist` 与护栏参数；其 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，不支持独立 endpoint、API Key 或模型配置。支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈 / 审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **仓库互助**：WebUI 配置管理中 `star_aid_enabled` 为全局入口开关（关闭后页面只读），`star_aid_auto_star_enabled` 控制是否执行自动点星（关闭后仅保留手动点星与展示），`star_aid_scheduler_enabled` 控制后台调度器，`star_aid_min_interval_minutes` / `star_aid_max_interval_minutes` 设置单成员两次自动点星的随机间隔区间，`star_aid_batch_size` 每轮调度最大处理成员数，`star_aid_user_daily_limit` / `star_aid_repo_daily_limit` 分别为每用户 / 每仓库每日上限，`star_aid_summary_enabled` / `star_aid_summary_language` / `star_aid_summary_readme_budget` / `star_aid_summary_max_tokens` 控制展示仓库 AI 摘要；`star_aid_github_app_client_id` / `star_aid_github_app_client_secret` / `star_aid_github_app_callback_url` 配置仓库互助 GitHub App user-to-server 凭据（可复用审查 App），`star_aid_token_encryption_key` 设置 token 加密密钥
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
@@ -429,6 +584,8 @@ python run_ruff.py          # 检查 + 修复 + 格式化
 python run_ruff.py --check  # 只读检查，不修改文件
 ```
 
+脚本遵循 `.gitignore` 跳过工具临时目录；任一 Ruff 阶段失败或发生目录遍历错误时，脚本会返回非零退出码。
+
 ### 测试
 
 ```bash
@@ -467,8 +624,7 @@ Sakura-AI/
 │   │   ├── scan_scheduler.py         # 扫描调度器
 │   │   ├── history_context_service.py     # 增量审查历史
 │   │   ├── pr_review_incremental_queue.py # 增量审查入队
-│   │   ├── activity_event_service.py      # Agent Live View 事件
-│   │   ├── activity_checkpoint_service.py # Agent 会话检查点
+│   │   ├── activity_observability/    # Activity 可观测性、Canonical Transcript、Outbox 与 SSE
 │   │   ├── sakura_memory_service.py          # .sakura/ 项目记忆服务
 │   │   ├── sakura_consolidation_agent.py     # .sakura/ 记忆合并 Agent
 │   │   ├── sakura_knowledge_extractor.py     # .sakura/ 知识提取 Agent

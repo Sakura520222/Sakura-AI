@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -150,7 +151,10 @@ class PRReview(Base):
     __tablename__ = "pr_reviews"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # ``pr_id`` is GitHub's global pull_request.id.  Keep the repository-local
+    # number separately; UI/resource identities use this value (for example #15).
     pr_id = Column(BigInteger, nullable=False, index=True)
+    pr_number = Column(BigInteger, nullable=True, index=True)
     repo_name = Column(String(255), nullable=False, index=True)
     repo_owner = Column(String(100), nullable=False)
     author = Column(String(100))
@@ -205,7 +209,11 @@ class PRReview(Base):
     )
 
     def __repr__(self):
-        return f"<PRReview(id={self.id}, pr_id={self.pr_id}, repo={self.repo_name}, strategy={self.strategy})>"
+        return (
+            f"<PRReview(id={self.id}, pr_id={self.pr_id}, "
+            f"pr_number={self.pr_number}, repo={self.repo_name}, "
+            f"strategy={self.strategy})>"
+        )
 
 
 class PRReviewIncrementalQueue(Base):
@@ -221,6 +229,10 @@ class PRReviewIncrementalQueue(Base):
     base_sha = Column(String(64), nullable=True)
     head_sha = Column(String(64), nullable=False, index=True)
     delivery_id = Column(String(128), nullable=True, index=True)
+    # New activity-observability bridge fields. Nullable for pre-migration rows.
+    observability_session_id = Column(Integer, nullable=True, index=True)
+    observability_trigger_id = Column(Integer, nullable=True, unique=True, index=True)
+    observability_revision_id = Column(Integer, nullable=True, index=True)
     status = Column(String(50), default="pending", nullable=False, index=True)
     active_review_id = Column(
         Integer,
@@ -656,6 +668,35 @@ class IssueAnalysisQueue(Base):
         return f"<IssueAnalysisQueue(id={self.id}, issue={self.issue_number}, status={self.status})>"
 
 
+async def migrate_schema_async() -> None:
+    """Run all idempotent async schema upgrades after tables exist."""
+    if async_engine is None:
+        raise RuntimeError("异步数据库引擎未初始化,请先调用 init_async_db()")
+    await _auto_migrate()
+
+
+_LEGACY_ACTIVITY_TABLES = (
+    "activity_tool_calls",
+    "activity_messages",
+    "activity_events",
+    "activity_sessions",
+)
+
+
+def _drop_legacy_activity_tables(sync_conn) -> tuple[str, ...]:
+    """Drop only the retired activity-v1 tables, in foreign-key-safe order."""
+    from sqlalchemy import MetaData, Table, inspect
+
+    existing = set(inspect(sync_conn).get_table_names())
+    dropped: list[str] = []
+    for table_name in _LEGACY_ACTIVITY_TABLES:
+        if table_name not in existing:
+            continue
+        Table(table_name, MetaData()).drop(sync_conn, checkfirst=True)
+        dropped.append(table_name)
+    return tuple(dropped)
+
+
 async def create_tables_async():
     """异步创建所有数据库表"""
     import logging
@@ -671,8 +712,11 @@ async def create_tables_async():
         # 在异步上下文中创建表
         async with async_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            dropped = await conn.run_sync(_drop_legacy_activity_tables)
 
         logger.info("✅ 数据库表创建成功")
+        if dropped:
+            logger.info("✅ 已移除旧版实时监控表: %s", ", ".join(dropped))
 
     except Exception as e:
         logger.error(f"❌ 数据库表创建失败: {e}")
@@ -681,10 +725,10 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
-    import backend.models.activity_conversation_models
-    import backend.models.activity_event_models
+    import backend.models.activity_observability_models
     import backend.models.agent_skill_models
     import backend.models.agent_team_models
+    import backend.models.ai_usage_models
     import backend.models.payment_models
     import backend.models.star_aid_models  # noqa: F401
 
@@ -727,7 +771,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.13.1", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="3.0.0", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -735,7 +779,7 @@ async def insert_default_configs_async():
         ),
         AppConfig(
             key_name="review_timeout_seconds",
-            key_value="300",
+            key_value="600",
             description="审查任务整体超时时间（秒）",
         ),
         AppConfig(
@@ -855,6 +899,10 @@ def init_database(database_url: str):
 
         # 创建所有表
         Base.metadata.create_all(engine)
+        with engine.begin() as connection:
+            dropped = _drop_legacy_activity_tables(connection)
+        if dropped:
+            logger.info("已移除旧版实时监控表: %s", ", ".join(dropped))
 
         logger.info("数据库表初始化完成")
 
@@ -869,7 +917,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.13.1", description="应用版本号"
+                    key_name="app_version", key_value="3.0.0", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -996,7 +1044,7 @@ def init_async_db(database_url: str):
     try:
         database_url = normalize_database_url(database_url)
 
-        logger.info(f"初始化异步数据库引擎: {database_url}")
+        logger.info("初始化异步数据库引擎")
 
         # 创建异步引擎
         # aiomysql 的 ping() 签名与 SQLAlchemy 的 pool_pre_ping 不兼容，
@@ -1112,11 +1160,13 @@ class SchemaMigration(Base):
     )
 
 
-def _get_default_sql(col) -> str | None:
+def _get_default_sql(col, dialect=None) -> str | None:
     """获取列的默认值 SQL / Get default value SQL for a column"""
     if col.default is not None and col.default.is_scalar:
         val = col.default.arg
         if isinstance(val, bool):
+            if getattr(dialect, "name", None) == "postgresql":
+                return "TRUE" if val else "FALSE"
             return "1" if val else "0"
         if isinstance(val, (int, float)):
             return str(val)
@@ -1131,7 +1181,175 @@ def _get_default_sql(col) -> str | None:
     return None
 
 
+_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME = (
+    "uq_pr_review_incremental_queue_observability_trigger_id"
+)
+
+
+def _build_add_column_sql(dialect, table_name: str, col) -> str:
+    """Build an ``ALTER TABLE ... ADD COLUMN`` statement for one dialect.
+
+    The auto-migrator runs against both MySQL and PostgreSQL.  Identifiers must
+    therefore be quoted by the active dialect instead of using MySQL-only
+    backticks.  Column types are compiled with that same dialect so custom
+    types (for example PostgreSQL JSON/array types) retain their native SQL.
+    """
+
+    quote = dialect.identifier_preparer.quote
+    sql = (
+        f"ALTER TABLE {quote(table_name)} ADD COLUMN {quote(col.name)} "
+        f"{col.type.compile(dialect=dialect)}"
+    )
+    if col.nullable:
+        return f"{sql} NULL"
+
+    default = _get_default_sql(col, dialect)
+    if default:
+        return f"{sql} NOT NULL DEFAULT {default}"
+    return f"{sql} NOT NULL"
+
+
+async def _ensure_observability_trigger_unique_index(conn, logger) -> bool:
+    """Ensure the incremental queue trigger bridge is unique on old schemas.
+
+    ``Column(unique=True, index=True)`` is applied automatically only when a
+    table is created from scratch.  Existing installations need an explicit,
+    idempotent index migration.  We refuse to guess how to repair duplicate
+    non-NULL trigger IDs: failing before creating the index keeps the database
+    intact and gives operators a concrete value to reconcile.
+    """
+
+    from sqlalchemy import inspect
+
+    table_name = PRReviewIncrementalQueue.__tablename__
+    column_name = "observability_trigger_id"
+
+    def _ensure(sync_conn) -> bool:
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table_name):
+            return False
+
+        column_names = {column["name"] for column in inspector.get_columns(table_name)}
+        if column_name not in column_names:
+            # The caller adds missing model columns first.  Keep this helper
+            # defensive for partially imported model metadata.
+            return False
+
+        indexes = inspector.get_indexes(table_name)
+        unique_columns = {
+            tuple(index.get("column_names") or ())
+            for index in indexes
+            if index.get("unique")
+        }
+        unique_constraints = inspector.get_unique_constraints(table_name)
+        unique_columns.update(
+            tuple(constraint.get("column_names") or ())
+            for constraint in unique_constraints
+        )
+        if (column_name,) in unique_columns:
+            return False
+
+        # A non-NULL trigger ID is an observability identity.  Never silently
+        # delete or merge rows merely to make the new constraint fit.
+        quote = sync_conn.dialect.identifier_preparer.quote
+        quoted_table = quote(table_name)
+        quoted_column = quote(column_name)
+        duplicate_rows = sync_conn.execute(
+            text(
+                f"SELECT {quoted_column}, COUNT(*) AS duplicate_count "
+                f"FROM {quoted_table} "
+                f"WHERE {quoted_column} IS NOT NULL "
+                f"GROUP BY {quoted_column} "
+                f"HAVING COUNT(*) > 1"
+            )
+        ).all()
+        if duplicate_rows:
+            examples = ", ".join(
+                f"{row[0]} ({row[1]} rows)" for row in duplicate_rows[:20]
+            )
+            if len(duplicate_rows) > 20:
+                examples += f", ... ({len(duplicate_rows) - 20} more groups)"
+            raise RuntimeError(
+                "cannot create unique index "
+                f"{_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME}: "
+                "duplicate non-NULL observability_trigger_id values exist; "
+                f"reconcile these queue rows before retrying the migration: {examples}"
+            )
+
+        for index in indexes:
+            if index.get("name") == _OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME:
+                raise RuntimeError(
+                    "cannot create unique index "
+                    f"{_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME}: an index with "
+                    "the same name already exists but is not unique"
+                )
+
+        unique_index = Index(
+            _OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME,
+            PRReviewIncrementalQueue.__table__.c[column_name],
+            unique=True,
+        )
+        unique_index.create(sync_conn, checkfirst=True)
+        return True
+
+    created = await conn.run_sync(_ensure)
+    if created:
+        logger.info(
+            "[auto-migrate] 已创建唯一索引: %s.%s",
+            table_name,
+            column_name,
+        )
+    return created
+
+
+def _activity_publication_marker_upgrade_sql(
+    dialect_name: str, current_length: int | None
+) -> str | None:
+    """Return the idempotent legacy marker-column upgrade SQL."""
+    if (current_length or 0) >= 128 or dialect_name != "mysql":
+        return None
+    return (
+        "ALTER TABLE `activity_observability_publications` "
+        "MODIFY COLUMN `marker` VARCHAR(128) COLLATE ascii_bin NOT NULL"
+    )
+
+
+async def _ensure_activity_publication_marker_column(conn, logger) -> None:
+    """Upgrade legacy publication markers from VARCHAR(64) to VARCHAR(128)."""
+    from sqlalchemy import inspect
+
+    def _marker_column(sync_conn):
+        inspector = inspect(sync_conn)
+        table_name = "activity_observability_publications"
+        if table_name not in inspector.get_table_names():
+            return None
+        return next(
+            (
+                column
+                for column in inspector.get_columns(table_name)
+                if column["name"] == "marker"
+            ),
+            None,
+        )
+
+    marker = await conn.run_sync(_marker_column)
+    if marker is None:
+        return
+    sql = _activity_publication_marker_upgrade_sql(
+        conn.dialect.name, getattr(marker.get("type"), "length", None)
+    )
+    if sql is None:
+        return
+    await conn.execute(text(sql))
+    logger.info(
+        "[auto-migrate] 扩展列为 VARCHAR(128): "
+        "activity_observability_publications.marker"
+    )
+
+
 async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
+    if conn.dialect.name != "mysql":
+        return
     from sqlalchemy import inspect
 
     def _existing_tables(sync_conn):
@@ -1158,7 +1376,9 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
                 )
             )
             logger.info(
-                f"[auto-migrate] 扩展列为 LONGTEXT: {table_name}.{column_name}",
+                "[auto-migrate] 扩展列为 LONGTEXT: %s.%s",
+                table_name,
+                column_name,
             )
 
 
@@ -1189,6 +1409,9 @@ async def _auto_migrate():
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True)
         )
+        dropped = await conn.run_sync(_drop_legacy_activity_tables)
+        if dropped:
+            _logger.info("[auto-migrate] 已移除旧版实时监控表: %s", ", ".join(dropped))
 
         # 用 Inspector 逐表检测缺失列
         def _get_missing_columns(sync_conn):
@@ -1209,24 +1432,21 @@ async def _auto_migrate():
         missing = await conn.run_sync(_get_missing_columns)
 
         await _ensure_agent_message_longtext_columns(conn, _logger)
+        await _ensure_activity_publication_marker_column(conn, _logger)
 
-        if not missing:
-            return
-
-        # 执行 ALTER TABLE ADD COLUMN
+        # 执行 ALTER TABLE ADD COLUMN。标识符与类型均使用当前连接的方言，
+        # 不能把 MySQL 反引号带到 PostgreSQL 等其他数据库。
         for table_name, col in missing:
-            col_type = col.type.compile(dialect=async_engine.dialect)
-            sql = f"ALTER TABLE `{table_name}` ADD COLUMN `{col.name}` {col_type}"
-            if col.nullable:
-                sql += " NULL"
-            else:
-                default = _get_default_sql(col)
-                if default:
-                    sql += f" NOT NULL DEFAULT {default}"
-                else:
-                    sql += " NOT NULL"
+            sql = _build_add_column_sql(conn.dialect, table_name, col)
             await conn.execute(text(sql))
-            _logger.info(f"[auto-migrate] 添加列: {table_name}.{col.name}")
+            _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
+
+        unique_index_created = await _ensure_observability_trigger_unique_index(
+            conn, _logger
+        )
+
+        if not missing and not unique_index_created:
+            return
 
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -1237,4 +1457,4 @@ async def _auto_migrate():
             ),
             {"v": version},
         )
-        _logger.info(f"[auto-migrate] 迁移完成, version={version}")
+        _logger.info("[auto-migrate] 迁移完成, version=%s", version)

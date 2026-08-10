@@ -59,7 +59,6 @@ class AgentTeamWorker:
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         config = await load_agent_team_ai_config()
-        config.validate()
 
         # 注册取消信号
         cancel_event = _cancel_events.get(task_id)
@@ -169,6 +168,7 @@ class AgentTeamWorker:
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
             )
 
             # 提前计算 estimated_cost（供成功/失败两分支共用）
@@ -461,8 +461,7 @@ class AgentTeamWorker:
         self, task_id: int, review_id: int
     ) -> int:
         """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
-        config = await load_agent_team_ai_config()
-        config.validate()
+        await load_agent_team_ai_config()
 
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
@@ -558,6 +557,7 @@ class AgentTeamWorker:
                 sakura_ref=sakura_info["sakura_ref"],
                 initial_feedback=review_feedback,
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
                 skip_internal_review=True,
             )
@@ -717,8 +717,7 @@ class AgentTeamWorker:
 
         由 submit_user_prompt 在可续跑终态时调度。
         """
-        config = await load_agent_team_ai_config()
-        config.validate()
+        await load_agent_team_ai_config()
 
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
@@ -811,6 +810,7 @@ class AgentTeamWorker:
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
                 skip_internal_review=True,
             )

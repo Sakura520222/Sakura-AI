@@ -5,8 +5,8 @@ strategies:
   quick:
     name: "⚡️ 快速审查"
     conditions:
-      max_files: 5
-      max_lines: 2000
+      max_files: 10
+      max_lines: 5000
     prompt: |
       Focus on syntax errors, obvious functional bugs, confirmed security issues,
       and regressions in the changed behavior. Keep the review concise and evidence-based.
@@ -15,8 +15,8 @@ strategies:
   standard:
     name: "🔍 标准审查"
     conditions:
-      max_files: 20
-      max_lines: 5000
+      max_files: 50
+      max_lines: 20000
     prompt: |
       Review correctness, security, error handling, compatibility, performance,
       and maintainability. Prioritize concrete defects over stylistic preferences.
@@ -25,8 +25,8 @@ strategies:
   deep:
     name: "🔬 深度审查"
     conditions:
-      max_files: 100
-      max_lines: 20000
+      max_files: 500
+      max_lines: 100000
     prompt: |
       Perform a deep architectural and behavioral review. Trace cross-file effects,
       concurrency and data-flow risks, security boundaries, failure handling, and regressions.
@@ -88,6 +88,17 @@ file_filters:
     - .html
     - .vue
     - .svelte
+    # 文档与配置类文本文件（3.0.0 重构起长期纳入审查范围）
+    - .yaml
+    - .yml
+    - .md
+    - .json
+    - .toml
+    - .cfg
+    - .ini
+    - .txt
+    - Dockerfile
+    - Makefile
 
 # 上下文增强配置
 context_enhancement:
@@ -101,16 +112,16 @@ context_enhancement:
   enable_ai_tools: true
   
   # AI工具的最大调用次数（防止无限循环）
-  max_tool_iterations: 200
+  max_tool_iterations: 500
   
   # 单个文件最大读取大小（字节）
   max_file_size: 500000  # 500KB
 
   # deep 策略下包含的最大文件数（按变更量排序取前 N 个）
-  max_files_for_deep_strategy: 20
+  max_files_for_deep_strategy: 500
 
   # 单文件最大读取行数（超过则截断并提示AI使用行范围读取）
-  max_file_lines: 1000
+  max_file_lines: 3000
 
   # 搜索匹配时的默认上下文行数（匹配行前后各显示多少行）
   default_context_lines: 20
@@ -125,11 +136,12 @@ context_enhancement:
     default_max_results: 20        # 默认最大结果数
     skip_binary: true              # 是否跳过二进制文件
     max_files_to_search: 100       # 回退模式下最大扫描文件数
+    concurrency: 8                 # 并发获取文件内容的线程数（过高可能触发 GitHub 次级速率限制）
 
   # Git 工具配置
   git_tools:
     default_branch_count: 20    # 默认返回分支数量
-    default_commit_count: 10    # 默认返回提交数量
+    default_commit_count: 30    # 默认返回提交数量
 
   # 外部 CI 失败注入配置 / External CI failure injection config
   # 由 check_run.completed / workflow_job.completed webhook 采集，审查时注入上下文
@@ -187,7 +199,7 @@ context_enhancement:
       # 一个文件失败时是否仍提交另一个 / Commit partial results on failure
       partial_commit: true
       # 每个文件合并时工具调用最大轮数 / Max tool-call iterations per file consolidation
-      max_iterations: 50
+      max_iterations: 200
 
     # 知识提取配置 / Knowledge extraction config
     knowledge_extraction:
@@ -196,7 +208,7 @@ context_enhancement:
       # 触发提取的最低反思轮数 / Minimum reflections before extraction
       min_reflections: 15
       # 每个分类提取时工具调用最大轮数 / Max tool-call iterations per category
-      max_iterations: 100
+      max_iterations: 200
 
     # 初始化配置 / Initialization config
     initialization:

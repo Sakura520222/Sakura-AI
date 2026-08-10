@@ -1,11 +1,13 @@
 """API v1 配置管理端点"""
 
 import asyncio
+import json
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,9 +20,12 @@ from backend.api.v1.schemas import (
     ConfigStrategyUpdateRequest,
 )
 from backend.core.config import (
+    AI_STRATEGY_CONFIG_KEYS,
     get_label_config,
+    get_settings,
     reload_label_config,
     reload_strategy_config,
+    update_settings_field,
 )
 from backend.core.setup_service import setup_service
 from backend.models.database import AppConfig
@@ -37,12 +42,9 @@ _LABELS_PATH = _CONFIG_DIR / "labels.yaml"
 
 
 class AIModelsRequest(BaseModel):
-    """AI 模型列表请求。"""
+    """AI 模型列表请求。使用已保存账号 ID，不接受旧扁平凭据。"""
 
-    api_key: str | None = None
-    api_base: str | None = None
-    # 配置项名（openai_api_key / summary_api_key），用于回退数据库读取真实 Key
-    key_name: str | None = None
+    account_id: str
 
 
 def _mask_sensitive(value: str, key: str) -> str:
@@ -53,51 +55,6 @@ def _mask_sensitive(value: str, key: str) -> str:
             return value[:4] + "****" + value[-4:]
         return "****"
     return value
-
-
-def _is_masked_value(value: str) -> bool:
-    """判断配置值是否为脱敏后的占位值（前端配置页回显的掩码）。
-
-    掩码标记 ``****`` 与前端 ``config_general.html`` 的 ``apiKey.includes('****')``
-    判断保持一致；若修改 ``_mask_sensitive`` 的掩码格式，前端需同步更新。
-    """
-    return "****" in value
-
-
-# 获取模型列表允许回退读取的凭据配置项白名单
-_PROVIDER_KEY_NAMES = frozenset({"openai_api_key", "summary_api_key"})
-
-
-async def _resolve_provider_credentials(
-    api_key: str,
-    api_base: str,
-    key_name: str | None,
-    db: AsyncSession,
-) -> tuple[str, str]:
-    """解析获取模型列表所需的真实 api_key / api_base。
-
-    配置页表单回显的敏感字段为脱敏占位值（含 ``****``），不可直接用于请求；
-    当传入空值或脱敏占位值时，回退读取数据库中的真实值。
-    ``key_name`` 限 openai_api_key / summary_api_key，用于定位正确的配置项，默认 openai_api_key。
-    """
-    # 白名单校验：合法 key_name 仅 openai_api_key / summary_api_key，
-    # 避免任意 endswith("_api_key") 的值（如 openai_api_key___api_key）绕过
-    key_name = (key_name or "").strip()
-    if key_name not in _PROVIDER_KEY_NAMES:
-        key_name = "openai_api_key"
-    base_name = key_name.removesuffix("_api_key") + "_api_base"
-
-    if not api_key or _is_masked_value(api_key):
-        result = await db.execute(
-            select(AppConfig.key_value).where(AppConfig.key_name == key_name)
-        )
-        api_key = result.scalar_one_or_none() or ""
-    if not api_base:
-        result = await db.execute(
-            select(AppConfig.key_value).where(AppConfig.key_name == base_name)
-        )
-        api_base = result.scalar_one_or_none() or ""
-    return api_key, api_base
 
 
 @router.get("/ai-providers")
@@ -115,20 +72,451 @@ async def get_ai_provider_models(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """按厂商获取模型列表。
+    """按已保存账号获取模型列表，不读取旧 AppConfig provider/key/base 键。"""
+    account_id = body.account_id.strip()
+    account = await account_store.get_account(account_id)
+    if account is None:
+        return error_response("AI 账号不存在")
+    if provider.strip().lower() != account.provider_id:
+        return error_response("请求厂商与账号不匹配")
 
-    配置页表单回显的 API Key 为脱敏占位值，故空值或脱敏值时回退数据库真实值；
-    ``body.key_name`` 指定配置项（openai_api_key / summary_api_key）。
+    result = await probe_account(
+        provider_id=account.provider_id,
+        protocol=account.protocol,
+        api_base=account.api_base,
+        api_key=account.api_key,
+        model=account.default_model,
+    )
+    return success_response(data=result)
+
+
+# =========================================================================
+# AI 账号管理（多厂商持久化）/ AI account management (multi-vendor persistence)
+# =========================================================================
+
+
+from backend.core.ai_protocol import account_store
+from backend.core.ai_protocol.account_probe import probe_account
+from backend.core.ai_protocol.endpoint_security import (
+    validate_provider_base_url,
+)
+from backend.core.ai_providers import (
+    list_builtin_providers,
+    list_provider_catalog,
+)
+
+
+class AccountSaveRequest(BaseModel):
+    """创建/更新账号请求 / Account create-or-update request."""
+
+    id: str | None = None
+    name: str
+    provider_id: str
+    protocol: str = "openai-compatible"
+    api_base: str = ""
+    api_key: str = ""  # 空值或含 **** 表示不更新现有 key / empty keeps existing
+    region: str = ""
+    models: list[str] = Field(default_factory=list)
+    default_model: str = ""
+    enabled: bool = True
+    notes: str = ""
+
+
+class RoleBindingSaveRequest(BaseModel):
+    """角色绑定保存请求 / Role-binding save request."""
+
+    bindings: dict  # {main: {primary: {account, model}, fallback: [...]}, ...}
+
+
+@router.get("/ai/catalog")
+async def get_ai_catalog(user: dict = Depends(require_api_super_admin)):
+    """返回完整提供商目录（含模型元数据）/ Return the full provider catalog."""
+    return success_response(data={"providers": list_provider_catalog()})
+
+
+@router.get("/ai/accounts")
+async def list_ai_accounts(user: dict = Depends(require_api_super_admin)):
+    """列出所有已保存的 AI 账号（API Key 脱敏）/ List saved accounts."""
+    accounts = await account_store.list_accounts()
+    return success_response(data={"accounts": [a.to_public_dict() for a in accounts]})
+
+
+@router.post("/ai/accounts")
+async def save_ai_account(
+    body: AccountSaveRequest,
+    user: dict = Depends(require_api_super_admin),
+):
+    """创建或更新一个 AI 账号 / Create or update an account.
+
+    ``api_key`` 为空或含 ``****`` 时保留数据库中原有 key 不覆盖。
     """
-    api_key, api_base = await _resolve_provider_credentials(
-        (body.api_key or "").strip(),
-        (body.api_base or "").strip(),
-        body.key_name,
-        db,
+    from backend.core.ai_protocol.models import ProtocolFamily
+    from backend.core.ai_providers import get_builtin_provider
+
+    # 校验协议族 / validate protocol family
+    try:
+        ProtocolFamily(body.protocol)
+    except ValueError:
+        return error_response(f"未知的协议族 / unknown protocol: {body.protocol}")
+
+    provider_id = body.provider_id.strip().lower()
+    if provider_id not in {provider.id for provider in list_builtin_providers()}:
+        return error_response(
+            f"未知的 AI 厂商 / unknown AI provider: {body.provider_id}"
+        )
+
+    decl = get_builtin_provider(provider_id)
+    if ProtocolFamily(body.protocol) not in decl.supported_families():
+        return error_response(
+            f"厂商 {decl.id} 不支持协议 / unsupported protocol: {body.protocol}"
+        )
+
+    ok, message = validate_provider_base_url(
+        decl.id,
+        body.api_base.strip(),
+        protocol=body.protocol,
+    )
+    if not ok:
+        return error_response(message)
+
+    account_id = (body.id or "").strip()
+    existing = await account_store.get_account(account_id) if account_id else None
+
+    # API key 处理：空或脱敏 → 保留原值 / keep existing when blank or masked
+    api_key = body.api_key
+    if (not api_key or "****" in api_key) and existing is not None:
+        api_key = existing.api_key
+
+    account = account_store.ProviderAccount(
+        id=account_id,
+        name=body.name.strip(),
+        provider_id=decl.id,
+        protocol=body.protocol,
+        api_base=body.api_base.strip(),
+        api_key=api_key,
+        region=body.region.strip(),
+        models=list(body.models),
+        default_model=body.default_model.strip(),
+        enabled=body.enabled,
+        notes=body.notes.strip(),
+        created_at=existing.created_at if existing else 0.0,
+    )
+    saved = await account_store.save_account(account)
+    logger.info(
+        f"AI 账号已保存 / account saved: {saved.id} ({saved.name}), by={user['sub']}"
+    )
+    return success_response(data={"account": saved.to_public_dict()})
+
+
+@router.delete("/ai/accounts/{account_id}")
+async def delete_ai_account(
+    account_id: str,
+    user: dict = Depends(require_api_super_admin),
+):
+    """删除一个 AI 账号（若被角色引用则拒绝）/ Delete an account."""
+    ok = await account_store.delete_account(account_id)
+    if not ok:
+        return error_response("账号不存在或正被角色绑定引用，无法删除")
+    logger.info(f"AI 账号已删除 / account deleted: {account_id}, by={user['sub']}")
+    return success_response(data={"deleted": account_id})
+
+
+@router.post("/ai/accounts/{account_id}/test")
+@limiter.limit("10/minute")
+async def test_ai_account(
+    request: Request,
+    account_id: str,
+    user: dict = Depends(require_api_super_admin),
+):
+    """测试已保存账号的连接 / Test a saved account's connection."""
+    account = await account_store.get_account(account_id)
+    if account is None:
+        return error_response("账号不存在")
+    result = await probe_account(
+        provider_id=account.provider_id,
+        protocol=account.protocol,
+        api_base=account.api_base,
+        api_key=account.api_key,
+        model=account.default_model,
+    )
+    return success_response(data=result)
+
+
+@router.post("/ai/accounts/{account_id}/models")
+@limiter.limit("10/minute")
+async def discover_ai_account_models(
+    request: Request,
+    account_id: str,
+    user: dict = Depends(require_api_super_admin),
+):
+    """发现账号可用模型列表 / Discover models available to an account."""
+    account = await account_store.get_account(account_id)
+    if account is None:
+        return error_response("账号不存在")
+    result = await probe_account(
+        provider_id=account.provider_id,
+        protocol=account.protocol,
+        api_base=account.api_base,
+        api_key=account.api_key,
+    )
+    return success_response(data=result)
+
+
+@router.get("/ai/bindings")
+async def get_ai_bindings(user: dict = Depends(require_api_super_admin)):
+    """读取角色→账号绑定 / Read role→account bindings."""
+    raw = await account_store.get_role_bindings_raw()
+    accounts = await account_store.list_accounts()
+    return success_response(
+        data={
+            "bindings": raw,
+            "accounts": [a.to_public_dict() for a in accounts],
+            "roles": ["main", "summary", "agent_team"],
+        }
     )
 
-    result = await setup_service.fetch_provider_models(provider, api_key, api_base)
-    return success_response(data=result)
+
+@router.put("/ai/bindings")
+async def save_ai_bindings(
+    body: RoleBindingSaveRequest,
+    user: dict = Depends(require_api_super_admin),
+):
+    """保存角色→账号绑定 / Persist role→account bindings."""
+    if not isinstance(body.bindings, dict):
+        return error_response("bindings 必须是对象")
+    await account_store.save_role_bindings_raw(body.bindings)
+    logger.info(f"AI 角色绑定已更新 / role bindings saved, by={user['sub']}")
+    return success_response(data={"bindings": body.bindings})
+
+
+# =========================================================================
+# AI 调用策略（超时/重试/故障转移）/ AI call-strategy settings
+# =========================================================================
+
+AI_STRATEGY_KEYS: list[str] = list(AI_STRATEGY_CONFIG_KEYS)
+
+_AI_STRATEGY_RANGES = {
+    "ai_api_timeout_seconds": (1.0, 3600.0),
+    "ai_api_max_retries": (0, 20),
+    "ai_api_initial_retry_delay_seconds": (0.0, 60.0),
+    "ai_api_total_timeout_seconds": (1.0, 7200.0),
+    "ai_fallback_max_candidates": (1, 10),
+    "context_compression_threshold": (0.1, 1.0),
+    "activity_artifact_retention_days": (1, 3650),
+}
+
+
+class AIStrategyRequest(BaseModel):
+    """AI 调用策略保存请求 / AI call-strategy save request."""
+
+    ai_api_timeout_seconds: float | None = None
+    ai_api_max_retries: int | None = Field(default=None, ge=0, le=20)
+    ai_api_initial_retry_delay_seconds: float | None = None
+    ai_api_total_timeout_seconds: float | None = None
+    ai_fallback_enabled: bool | None = None
+    ai_fallback_max_candidates: int | None = None
+    ai_fallback_sticky_candidate: bool | None = None
+    enable_context_compression: bool | None = None
+    context_compression_threshold: float | None = None
+    activity_reasoning_capture_enabled: bool | None = None
+    activity_request_response_capture_enabled: bool | None = None
+    activity_reasoning_provider_allowlist: str | None = None
+    activity_reasoning_protocol_allowlist: str | None = None
+    activity_artifact_retention_days: int | None = None
+    activity_artifact_encryption_key_id: str | None = None
+    activity_artifact_super_admin_read_enabled: bool | None = None
+
+
+@router.get("/ai/settings")
+async def get_ai_strategy_settings(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """读取 AI 调用策略（超时/重试/故障转移）/ Read AI call-strategy settings."""
+    settings = get_settings()
+    result = await db.execute(
+        select(AppConfig).where(AppConfig.key_name.in_(AI_STRATEGY_KEYS))
+    )
+    db_map = {c.key_name: c.key_value for c in result.scalars().all()}
+    data = {}
+    for key in AI_STRATEGY_KEYS:
+        val = db_map.get(key)
+        if val is None:
+            val = str(getattr(settings, key))
+        data[key] = val
+    return success_response(data=data)
+
+
+@router.put("/ai/settings")
+async def put_ai_strategy_settings(
+    body: AIStrategyRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """保存 AI 调用策略，即时生效 / Persist AI call-strategy settings live.
+
+    写入 AppConfig 并即时更新 Settings 单例，无需重启。
+    """
+    payload = body.model_dump(exclude_none=True)
+    if not payload:
+        return error_response("没有需要更新的调用策略参数")
+
+    for key, value in payload.items():
+        if key in _AI_STRATEGY_RANGES:
+            lo, hi = _AI_STRATEGY_RANGES[key]
+            try:
+                numeric = float(value)
+            except TypeError, ValueError:
+                return error_response(f"{key} 取值无效")
+            if not (lo <= numeric <= hi):
+                return error_response(f"{key} 取值需在 {lo}~{hi} 之间")
+        str_val = (
+            "true" if value is True else ("false" if value is False else str(value))
+        )
+        result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
+        cfg = result.scalar_one_or_none()
+        if cfg is None:
+            db.add(AppConfig(key_name=key, key_value=str_val, description=key))
+        else:
+            cfg.key_value = str_val
+        update_settings_field(key, str_val)
+
+    await db.commit()
+    logger.info(
+        f"AI 调用策略已更新 / ai strategy saved: {list(payload.keys())}, by={user['sub']}"
+    )
+    return success_response(data=payload)
+
+
+# =========================================================================
+# 单模型高级覆盖 / Per-model capability & reasoning override
+# =========================================================================
+
+_VALID_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+
+def _model_override_key(provider: str, model: str) -> str:
+    return f"ai_model_override.{provider}.{model}"
+
+
+class ModelOverrideRequest(BaseModel):
+    """单模型高级覆盖请求 / Per-model override request."""
+
+    provider: str
+    model: str
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
+    vision: bool | None = None
+    thinking: bool | None = None
+    thinking_mode: str | None = None
+    effort_enabled: bool | None = None
+    reasoning_content: bool | None = None
+    temperature_enabled: bool | None = None
+    top_p_enabled: bool | None = None
+    top_k_enabled: bool | None = None
+    effort: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+
+
+@router.get("/ai/model-override")
+async def get_model_override(
+    provider: str,
+    model: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """读取单个模型的用户覆盖 / Read a single model override."""
+    result = await db.execute(
+        select(AppConfig.key_value).where(
+            AppConfig.key_name == _model_override_key(provider, model)
+        )
+    )
+    raw = result.scalar_one_or_none()
+    data = json.loads(raw) if raw else {}
+    return success_response(data=data)
+
+
+@router.put("/ai/model-override")
+async def put_model_override(
+    body: ModelOverrideRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """保存单个模型的用户覆盖 / Persist a single model override.
+
+    覆盖键为 ai_model_override.<provider>.<model>，role_config 解析时优先于
+    内置目录元数据生效。
+    """
+    if body.effort and body.effort not in _VALID_EFFORTS:
+        return error_response(f"无效的思考等级 / invalid effort: {body.effort}")
+    if body.thinking_mode and body.thinking_mode not in {"adaptive", "disabled"}:
+        return error_response(
+            f"无效的思考模式 / invalid thinking mode: {body.thinking_mode}"
+        )
+    if body.thinking_mode and not body.thinking:
+        return error_response("启用思考模式前必须启用 thinking 能力")
+
+    payload: dict[str, Any] = {
+        "context_window_tokens": int(body.context_window_tokens or 0),
+        "max_output_tokens": int(body.max_output_tokens or 0),
+        "capabilities": {
+            "vision": bool(body.vision),
+            "tools": True,
+            "streaming": True,
+            "reasoning_content": bool(body.reasoning_content),
+            "thinking": bool(body.thinking),
+            "effort": bool(body.effort_enabled),
+            "temperature": body.temperature_enabled
+            if body.temperature_enabled is not None
+            else True,
+            "top_p": body.top_p_enabled if body.top_p_enabled is not None else True,
+            "top_k": bool(body.top_k_enabled),
+        },
+        "reasoning_params": {
+            "max_output_tokens": int(body.max_output_tokens or 4096),
+        },
+    }
+    if body.effort:
+        payload["reasoning_params"]["effort"] = body.effort
+    if body.thinking_mode:
+        payload["reasoning_params"]["thinking"] = {"type": body.thinking_mode}
+    if body.temperature is not None:
+        payload["reasoning_params"]["temperature"] = body.temperature
+    if body.top_p is not None:
+        payload["reasoning_params"]["top_p"] = body.top_p
+    if body.top_k is not None:
+        payload["reasoning_params"]["top_k"] = body.top_k
+
+    key = _model_override_key(body.provider, body.model)
+    result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
+    cfg = result.scalar_one_or_none()
+    serialized = json.dumps(payload, ensure_ascii=False)
+    if cfg is None:
+        db.add(AppConfig(key_name=key, key_value=serialized, description=key))
+    else:
+        cfg.key_value = serialized
+    await db.commit()
+    logger.info(f"模型覆盖已保存 / model override saved: {key}, by={user['sub']}")
+    return success_response(data=payload)
+
+
+@router.delete("/ai/model-override")
+async def delete_model_override(
+    provider: str,
+    model: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """清除单个模型的用户覆盖，回退到内置/自动元数据 / Clear a model override."""
+    from sqlalchemy import delete as sa_delete
+
+    key = _model_override_key(provider, model)
+    await db.execute(sa_delete(AppConfig).where(AppConfig.key_name == key))
+    await db.commit()
+    logger.info(f"模型覆盖已清除 / model override cleared: {key}, by={user['sub']}")
+    return success_response(data={"deleted": key})
 
 
 @router.get("/general")

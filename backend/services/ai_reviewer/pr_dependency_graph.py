@@ -106,9 +106,8 @@ class PRDependencyGraphService:
     # import 语句通常出现在文件顶部，只扫描前 N 行以提升性能
     _IMPORT_SCAN_LINES: int = 150
 
-    def __init__(self, api_client: AIApiClient, model: str):
+    def __init__(self, api_client: AIApiClient, model: str = ""):
         self.api_client = api_client
-        self.model = model
 
     # ==================== 公开接口 ====================
 
@@ -192,13 +191,14 @@ class PRDependencyGraphService:
         )
 
         response = await self.api_client.call_with_retry(
-            model=self.model,
+            model="",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
             max_tokens=16000,
+            role="summary",
         )
 
         if (

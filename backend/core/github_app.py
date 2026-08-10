@@ -82,9 +82,6 @@ class GitHubAppClient:
                 logger.debug(f"私钥结尾检查: '{private_key[-50:]}'")
                 raise ValueError("私钥格式无效：缺少END标记")
 
-            # 输出调试信息（脱敏）
-            logger.debug(f"私钥预览: {private_key[:50]}...{private_key[-50:]}")
-
             # 创建 GithubIntegration 实例（app_id保持为字符串）
             logger.info("正在创建GithubIntegration实例...")
             integration = GithubIntegration(
@@ -896,7 +893,8 @@ class GitHubAppClient:
         inline_comments: list | None = None,
         bot_username: str | None = None,
         enable_idempotency_check: bool = True,
-    ) -> bool:
+        raise_on_error: bool = False,
+    ) -> bool | dict[str, object]:
         """提交审查决定到GitHub（包含行内评论）
 
         Args:
@@ -908,6 +906,7 @@ class GitHubAppClient:
             inline_comments: 行内评论列表，格式：[{"path": str, "line": int, "body": str}]
             bot_username: 机器人用户名（用于幂等性检查）
             enable_idempotency_check: 是否启用幂等性检查
+            raise_on_error: 将异常交给调用方分类（用于 Publication 状态机）
 
         Returns:
             是否成功提交
@@ -965,17 +964,28 @@ class GitHubAppClient:
                     comments.append(comment_dict)
 
             # 提交Review（包含行内评论）
-            pr.create_review(event=event, body=body, comments=comments)
+            created_review = pr.create_review(
+                event=event,
+                body=body,
+                comments=comments,
+            )
 
             logger.info(
                 f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                 f"event={event}, body_length={len(body)}, inline_comments={len(comments)}"
             )
-            return {
+            result = {
                 "success": True,
                 "inline_published": len(comments),
                 "fallback_body_only": False,
             }
+            review_id = getattr(created_review, "id", None)
+            review_url = getattr(created_review, "html_url", None)
+            if isinstance(review_id, (str, int)) and not isinstance(review_id, bool):
+                result["id"] = str(review_id)
+            if isinstance(review_url, str) and review_url:
+                result["html_url"] = review_url
+            return result
 
         except Exception as e:
             # 安全提取错误信息，避免PyGithub内部的KeyError导致信息丢失
@@ -1025,22 +1035,39 @@ class GitHubAppClient:
                         "422 行号/路径无法解析，尝试降级为无行内评论的 Review..."
                     )
                     try:
-                        pr.create_review(event=event, body=body, comments=[])
+                        created_review = pr.create_review(
+                            event=event,
+                            body=body,
+                            comments=[],
+                        )
                         logger.info(
                             f"✅ 降级成功: 已提交无行内评论的 Review "
                             f"({repo_owner}/{repo_name}#{pr_number})"
                         )
-                        return {
+                        result = {
                             "success": True,
                             "inline_published": 0,
                             "fallback_body_only": True,
                         }
+                        review_id = getattr(created_review, "id", None)
+                        review_url = getattr(created_review, "html_url", None)
+                        if isinstance(review_id, (str, int)) and not isinstance(
+                            review_id, bool
+                        ):
+                            result["id"] = str(review_id)
+                        if isinstance(review_url, str) and review_url:
+                            result["html_url"] = review_url
+                        return result
                     except Exception as fallback_error:
                         logger.error(f"降级提交也失败: {fallback_error}")
+                        if raise_on_error:
+                            raise fallback_error from e
             else:
                 logger.error(f"提交Review失败: {error_type}: {e!s}")
 
             logger.debug("完整异常信息:", exc_info=True)
+            if raise_on_error:
+                raise
             return {
                 "success": False,
                 "inline_published": 0,
@@ -1123,7 +1150,7 @@ class GitHubAppClient:
         summary: str | None,
         text: str | None,
     ) -> dict | None:
-        """构建 Check Run output dict，仅包含非空字段。
+        """构建 Check Run output dict。
 
         GitHub API 要求 output 必须同时包含 title 与 summary，缺失任一会触发
         422 校验失败。本方法在 title 或 summary 缺失时返回 None（跳过 output）
@@ -1523,18 +1550,33 @@ class GitHubAppClient:
             return []
 
     def create_issue_comment(
-        self, repo_owner: str, repo_name: str, issue_number: int, body: str
-    ) -> bool:
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        body: str,
+        *,
+        raise_on_error: bool = False,
+    ) -> bool | dict[str, object]:
         """在 Issue 上创建评论"""
         client = self.get_repo_client(repo_owner, repo_name)
         repo = client.get_repo(f"{repo_owner}/{repo_name}")
         try:
-            repo.get_issue(issue_number).create_comment(body)
-            return True
+            comment = repo.get_issue(issue_number).create_comment(body)
+            result: dict[str, object] = {"success": True}
+            comment_id = getattr(comment, "id", None)
+            comment_url = getattr(comment, "html_url", None)
+            if isinstance(comment_id, (str, int)) and not isinstance(comment_id, bool):
+                result["id"] = str(comment_id)
+            if isinstance(comment_url, str) and comment_url:
+                result["html_url"] = comment_url
+            return result
         except Exception as e:
             logger.error(
                 f"创建 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
             )
+            if raise_on_error:
+                raise
             return False
 
     def add_labels_to_issue(
@@ -1674,6 +1716,14 @@ def extract_pr_info_from_webhook(payload: dict[str, Any]) -> dict[str, Any] | No
             "repo_owner": repository["owner"]["login"],
             "repo_name": repository["name"],
             "repo_full_name": repository["full_name"],
+            # Provider-owned immutable repository identity.  The observability
+            # admission layer rejects payloads where this is absent; owner/name
+            # remains display metadata only.
+            "repository_external_id": repository.get("id"),
+            "source_system_instance": repository.get("html_url", "https://github.com")
+            .split("://")[-1]
+            .split("/", 1)[0]
+            .lower(),
             "installation_id": installation["id"],
             "author": pull_request["user"]["login"],
             "title": pull_request["title"],
@@ -1722,6 +1772,11 @@ def extract_issue_info_from_webhook(
         "repo_owner": repository.get("owner", {}).get("login", ""),
         "repo_name": repository.get("name", ""),
         "repo_full_name": repository.get("full_name", ""),
+        "repository_external_id": repository.get("id"),
+        "source_system_instance": repository.get("html_url", "https://github.com")
+        .split("://")[-1]
+        .split("/", 1)[0]
+        .lower(),
         "installation_id": payload.get("installation", {}).get("id"),
         "author": issue.get("user", {}).get("login", ""),
         "title": issue.get("title", ""),
@@ -1802,6 +1857,11 @@ async def get_pr_info_from_url(pr_url: str) -> dict[str, Any] | None:
             "repo_owner": repo_owner,
             "repo_name": repo_name,
             "repo_full_name": repo_full_name,
+            "repository_external_id": getattr(repo, "id", None),
+            "source_system_instance": getattr(repo, "html_url", "https://github.com")
+            .split("://")[-1]
+            .split("/", 1)[0]
+            .lower(),
             "installation_id": installation_id,
             "author": pr.user.login,
             "title": pr.title,

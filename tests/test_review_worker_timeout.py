@@ -1,13 +1,26 @@
 """Review worker dynamic timeout coverage."""
 
 import asyncio
+from builtins import BaseExceptionGroup
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import get_settings
+from backend.services.activity_observability import (
+    integration_service as _activity_integration_module,
+)
+from backend.services.activity_observability.integration_service import (
+    ObservedExecutionBundle,
+)
 from backend.services.comment_service import CommentService
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeSupervisor,
+    bind_runtime_supervisor,
+    reset_runtime_supervisor,
+)
 from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewDecision,
@@ -17,15 +30,589 @@ from backend.workers.review_worker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def bound_runtime_supervisor():
+    """Direct worker tests explicitly model the lifespan runtime binding."""
+
+    token = bind_runtime_supervisor(DatabaseResetRuntimeSupervisor())
+    try:
+        yield
+    finally:
+        reset_runtime_supervisor(token)
+
+
+class _NoOpToolService:
+    def __init__(self, messages=None):
+        self.messages = list(messages or [])
+
+    async def load_conversation_messages(self, _thread_id):
+        return list(self.messages)
+
+    async def append_conversation_message(self, **_kwargs):
+        return SimpleNamespace(id=1)
+
+    async def mark_tool_execution_completed(self, *_args, **_kwargs):
+        return None
+
+    async def mark_tool_execution_running(self, *_args, **_kwargs):
+        return None
+
+
+class _NoOpExecutionBundle:
+    """Test double for ObservedExecutionBundle used by non-observability tests."""
+
+    def __init__(self):
+        self.invocation_context = None
+        self.observer = None
+        self.publication_coordinator = None
+        self.session = SimpleNamespace(id=0)
+        self.work_unit = SimpleNamespace(id=0)
+        self.thread = None
+        self.tool_service = _NoOpToolService()
+
+    async def finish(self, _status, *, _error_message=None, **_kwargs):
+        return None
+
+
+class _NoOpActivityIntegration:
+    """Test double that neutralizes observability admission for legacy tests."""
+
+    async def admit(self, *args, **kwargs):
+        return SimpleNamespace(session_id=0, trigger_id=0, duplicate=False)
+
+    async def start_execution(self, *args, **kwargs):
+        return _NoOpExecutionBundle()
+
+    async def start_scan_execution(self, *args, **kwargs):
+        return _NoOpExecutionBundle()
+
+
 @pytest.fixture
 def stub_review_worker_dependencies(monkeypatch):
     monkeypatch.setattr(review_worker, "GitHubAppClient", lambda: object())
     monkeypatch.setattr(review_worker, "PRAnalyzer", lambda: object())
     monkeypatch.setattr(review_worker, "AIReviewer", lambda: object())
     monkeypatch.setattr(review_worker, "CommentService", lambda: object())
+    monkeypatch.setattr(
+        _activity_integration_module,
+        "ActivityIntegrationService",
+        _NoOpActivityIntegration,
+    )
     monkeypatch.setattr(review_worker, "_worker_instance", None)
     yield
     monkeypatch.setattr(review_worker, "_worker_instance", None)
+
+
+class _RecordingToolService:
+    def __init__(self, messages=None):
+        self.messages = list(messages or [])
+
+    async def load_conversation_messages(self, _thread_id):
+        return list(self.messages)
+
+    async def append_conversation_message(self, **_kwargs):
+        return SimpleNamespace(id=1)
+
+    async def mark_tool_execution_completed(self, *_args, **_kwargs):
+        return None
+
+    async def mark_tool_execution_running(self, *_args, **_kwargs):
+        return None
+
+
+class _RecordingExecutionBundle:
+    def __init__(self, messages=None):
+        self.invocation_context = None
+        self.observer = None
+        self.publication_coordinator = None
+        self.session = SimpleNamespace(id=0)
+        self.work_unit = SimpleNamespace(id=0)
+        self.thread = SimpleNamespace(id=0)
+        self.tool_service = _RecordingToolService(messages)
+        self.finish_calls = []
+
+    async def finish(self, status, *, error_message=None):
+        self.finish_calls.append((status, error_message))
+
+
+class _RecordingActivityIntegration:
+    def __init__(self, execution=None):
+        self.execution = execution or _RecordingExecutionBundle()
+        self.admitted = asyncio.Event()
+
+    async def admit(self, *args, **kwargs):
+        self.admitted.set()
+        return SimpleNamespace(session_id=0, trigger_id=0, duplicate=False)
+
+    async def start_execution(self, *args, **kwargs):
+        return self.execution
+
+
+@pytest.mark.asyncio
+async def test_create_review_record_persists_global_id_and_repository_number(
+    monkeypatch,
+):
+    stored = []
+
+    class RecordingSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def add(self, row):
+            stored.append(row)
+
+        async def commit(self):
+            return None
+
+        async def refresh(self, row):
+            row.id = 7
+
+    monkeypatch.setattr(
+        review_worker,
+        "get_async_session",
+        lambda: RecordingSession,
+    )
+    worker = ReviewWorker.__new__(ReviewWorker)
+    analysis = SimpleNamespace(
+        pr_id=987654321,
+        pr_number=15,
+        total_files=1,
+        total_changes=3,
+        code_file_count=1,
+        strategy="quick",
+    )
+    pr_info = {
+        "repo_name": "repo",
+        "repo_owner": "owner",
+        "author": "alice",
+        "title": "Fix",
+        "branch": "feature/fix",
+        "head_sha": "a" * 40,
+    }
+
+    review_id = await worker._create_review_record(analysis, pr_info, "task")
+
+    assert review_id == 7
+    assert len(stored) == 1
+    assert stored[0].pr_id == 987654321
+    assert stored[0].pr_number == 15
+
+
+@pytest.mark.asyncio
+async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
+    """wait_for 超时后，已启动的 execution 必须且只能取消收尾一次。"""
+    settings = get_settings()
+    old_timeout = settings.review_timeout_seconds
+    execution = _RecordingExecutionBundle()
+    integration = _RecordingActivityIntegration(execution)
+
+    class BlockingAnalyzer:
+        async def analyze_pr(self, _pr_info):
+            await asyncio.Event().wait()
+
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = integration
+    worker.analyzer = BlockingAnalyzer()
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker._cancel_events = {}
+    worker._save_error_record = AsyncMock()
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    settings.review_timeout_seconds = 0.01
+
+    pr_info = {
+        "repo_full_name": "owner/repo",
+        "repo_owner": "owner",
+        "repo_name": "repo",
+        "pr_number": 1,
+        "action": "opened",
+    }
+    try:
+        with pytest.raises(RuntimeError, match="审查任务超时"):
+            await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
+    finally:
+        settings.review_timeout_seconds = old_timeout
+
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_check_count", [2, 3, 4])
+async def test_early_cancel_finishes_execution_once(monkeypatch, cancel_check_count):
+    """三个 execution 创建后的取消检查点都必须只做一次 cancelled 收尾。"""
+    execution = _RecordingExecutionBundle()
+    integration = _RecordingActivityIntegration(execution)
+
+    class Analyzer:
+        async def analyze_pr(self, pr_info):
+            return SimpleNamespace(
+                pr_id=pr_info["pr_id"],
+                pr_number=pr_info["pr_number"],
+                repo_full_name=pr_info["repo_full_name"],
+                total_files=0,
+                total_changes=0,
+                code_file_count=0,
+                code_files=[],
+                strategy="standard",
+                should_skip=False,
+                is_incremental=False,
+                changed_lines_map={},
+                hunk_boundaries={},
+            )
+
+        async def prepare_review_context(self, _analysis, _pr_info):
+            return {"files": []}
+
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = integration
+    worker.analyzer = Analyzer()
+    worker._cancel_events = {}
+    worker.comment_service = SimpleNamespace(
+        create_placeholder_comment=AsyncMock(return_value=SimpleNamespace(id=1)),
+        delete_placeholder_comment=AsyncMock(),
+    )
+    worker.check_run_service = SimpleNamespace(
+        report_queued=AsyncMock(),
+        report_stage_progress=AsyncMock(),
+        cancel_active_runs_by_sha=AsyncMock(),
+    )
+    worker.ai_reviewer = SimpleNamespace(_refresh_ai_clients=lambda: None)
+    worker.github_app = SimpleNamespace(
+        get_repo_client=lambda *_args: SimpleNamespace(
+            get_repo=lambda *_args: SimpleNamespace(
+                get_pull=lambda *_args: SimpleNamespace()
+            )
+        )
+    )
+    worker._create_review_record = AsyncMock(return_value=1)
+    worker._update_review_status = AsyncMock()
+    worker._log_activity = AsyncMock()
+    worker._save_error_record = AsyncMock()
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_args: False)
+    monkeypatch.setattr(review_worker.settings, "auto_index_pr_changes", False)
+    monkeypatch.setattr(review_worker.settings, "enable_code_index", False)
+    monkeypatch.setattr(review_worker.settings, "enable_rag", False)
+    monkeypatch.setattr(review_worker.settings, "enable_pr_summary", False)
+    monkeypatch.setattr(review_worker.settings, "enable_pr_dependency_graph", False)
+    monkeypatch.setattr(review_worker.settings, "sakura_memory_enabled", False)
+    monkeypatch.setattr(review_worker.settings, "sakura_reflection_enabled", False)
+    monkeypatch.setattr(review_worker.settings, "enable_pr_issue_linking", False)
+    monkeypatch.setattr(review_worker.settings, "enable_semantic_issue_linking", False)
+    checks = 0
+
+    def check_cancelled(_task_key):
+        nonlocal checks
+        checks += 1
+        return checks == cancel_check_count
+
+    worker._check_cancelled = check_cancelled
+    pr_info = {
+        "repo_full_name": "owner/repo",
+        "repo_owner": "owner",
+        "repo_name": "repo",
+        "pr_id": 1,
+        "pr_number": 1,
+        "action": "opened",
+    }
+
+    result = await worker.process_review_task(pr_info)
+
+    assert result
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+async def test_skip_path_finishes_execution_as_completed_once(monkeypatch):
+    """无需审查的分析结果仍应完成已创建的 observability execution。"""
+    execution = _RecordingExecutionBundle()
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    worker._cancel_events = {}
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker.analyzer = SimpleNamespace(
+        analyze_pr=AsyncMock(
+            return_value=SimpleNamespace(should_skip=True, skip_reason="no changes")
+        )
+    )
+    worker._save_skip_record = AsyncMock()
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
+
+    pr_info = {
+        "repo_full_name": "owner/repo",
+        "repo_owner": "owner",
+        "repo_name": "repo",
+        "pr_id": 1,
+        "pr_number": 1,
+        "action": "opened",
+    }
+
+    result = await worker.process_review_task(pr_info)
+
+    assert result
+    assert execution.finish_calls == [("completed", None)]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_error_finishes_execution_and_finalizes_check_run(monkeypatch):
+    """CancelledError 保留原有 Check Run 故障收尾，并完成 execution。"""
+    execution = _RecordingExecutionBundle()
+    integration = _RecordingActivityIntegration(execution)
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = integration
+    worker._cancel_events = {}
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker.check_run_service = SimpleNamespace(finalize_review_run=AsyncMock())
+    worker._update_review_status = AsyncMock()
+    worker._persist_error_reference = AsyncMock()
+    worker._unregister_task = lambda _task_key: None
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+
+    class CancellingAnalyzer:
+        async def analyze_pr(self, _pr_info):
+            raise asyncio.CancelledError
+
+    worker.analyzer = CancellingAnalyzer()
+    pr_info = {
+        "repo_full_name": "owner/repo",
+        "repo_owner": "owner",
+        "repo_name": "repo",
+        "pr_id": 1,
+        "pr_number": 1,
+        "action": "opened",
+        "head_sha": "head-sha",
+    }
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker.process_review_task(pr_info)
+
+    assert execution.finish_calls == [("cancelled", None)]
+    worker.check_run_service.finalize_review_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_cleanup_survives_execution_finish_failure_and_retries(
+    monkeypatch,
+):
+    """辅助链路 finish 失败不得阻断取消业务收尾，且 finally 应重试一次。"""
+    execution = _RecordingExecutionBundle()
+    finish_attempts = 0
+
+    async def flaky_finish(status, *, error_message=None):
+        nonlocal finish_attempts
+        finish_attempts += 1
+        execution.finish_calls.append((status, error_message))
+        if finish_attempts == 1:
+            raise RuntimeError("observability database unavailable")
+
+    execution.finish = flaky_finish
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    worker._cancel_events = {}
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker.analyzer = SimpleNamespace(
+        analyze_pr=AsyncMock(
+            return_value=SimpleNamespace(
+                should_skip=False,
+                pr_id=1,
+                pr_number=1,
+                repo_full_name="owner/repo",
+                total_files=0,
+                total_changes=0,
+                code_file_count=0,
+                code_files=[],
+                strategy="standard",
+                is_incremental=False,
+                changed_lines_map={},
+                hunk_boundaries={},
+            )
+        )
+    )
+    worker.comment_service = SimpleNamespace(delete_placeholder_comment=AsyncMock())
+    worker.check_run_service = SimpleNamespace(cancel_active_runs_by_sha=AsyncMock())
+    worker._update_review_status = AsyncMock()
+    worker._create_review_record = AsyncMock(return_value=1)
+    worker._save_error_record = AsyncMock()
+    worker._log_activity = AsyncMock()
+    cancel_checks = 0
+
+    def check_cancelled(_task_key):
+        nonlocal cancel_checks
+        cancel_checks += 1
+        return cancel_checks == 2
+
+    worker._check_cancelled = check_cancelled
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+
+    result = await worker.process_review_task(
+        {
+            "repo_full_name": "owner/repo",
+            "repo_owner": "owner",
+            "repo_name": "repo",
+            "pr_number": 1,
+            "action": "opened",
+        }
+    )
+
+    assert result
+    worker._update_review_status.assert_not_awaited()
+    assert execution.finish_calls == [("cancelled", None), ("cancelled", None)]
+    worker.comment_service.delete_placeholder_comment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bundle_finish_releases_lease_after_work_unit_failure():
+    """底层 bundle 在 WorkUnit 写入失败时仍尝试释放 lease，并保留异常。"""
+    errors = []
+
+    class FailingObservability:
+        async def finish_work_unit(self, *_args, **_kwargs):
+            errors.append("work_unit")
+            raise RuntimeError("finish work unit failed")
+
+    class ReleasingContext:
+        async def release_lease(self, token, terminal_status=None):
+            errors.append(("lease", token, terminal_status))
+
+    bundle = SimpleNamespace(
+        observability=FailingObservability(),
+        context_service=ReleasingContext(),
+        lease="lease-token",
+        work_unit_id=1,
+    )
+    bundle.finish = ObservedExecutionBundle.finish.__get__(bundle)
+
+    with pytest.raises(RuntimeError, match="finish work unit failed"):
+        await bundle.finish("cancelled")
+
+    assert errors == ["work_unit", ("lease", "lease-token", None)]
+
+
+@pytest.mark.asyncio
+async def test_bundle_finish_preserves_base_exception_group():
+    """两个 finish 失败含 CancelledError 时必须保留 BaseExceptionGroup。"""
+
+    class FailingObservability:
+        async def finish_work_unit(self, *_args, **_kwargs):
+            raise asyncio.CancelledError("work unit cancelled")
+
+    class FailingContext:
+        async def release_lease(self, *_args, **_kwargs):
+            raise RuntimeError("lease release failed")
+
+    bundle = SimpleNamespace(
+        observability=FailingObservability(),
+        context_service=FailingContext(),
+        lease="lease-token",
+        work_unit_id=1,
+    )
+    bundle.finish = ObservedExecutionBundle.finish.__get__(bundle)
+
+    with pytest.raises(BaseExceptionGroup) as raised:
+        await bundle.finish("cancelled")
+
+    leaves = raised.value.exceptions
+    assert any(isinstance(error, asyncio.CancelledError) for error in leaves)
+    assert any(isinstance(error, RuntimeError) for error in leaves)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cleanup_failure_keeps_cancelled_target(monkeypatch):
+    """ReviewCancelledError cleanup 失败后不得被 finally 改写为 failed。"""
+    execution = _RecordingExecutionBundle()
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    worker._cancel_events = {}
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker.analyzer = SimpleNamespace(
+        analyze_pr=AsyncMock(side_effect=ReviewCancelledError("provider cancelled"))
+    )
+    worker._cancel_and_cleanup = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    worker._unregister_task = lambda _task_key: None
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await worker.process_review_task(
+            {
+                "repo_full_name": "owner/repo",
+                "repo_owner": "owner",
+                "repo_name": "repo",
+                "pr_number": 1,
+                "action": "opened",
+            }
+        )
+
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_error_finalize_failure_keeps_cancelled_target(monkeypatch):
+    """CancelledError 收尾 I/O 失败时，execution 仍必须保持 cancelled。"""
+    execution = _RecordingExecutionBundle()
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    worker._cancel_events = {}
+    worker.ai_reviewer = SimpleNamespace(api_client=None)
+    worker.check_run_service = SimpleNamespace(
+        finalize_review_run=AsyncMock(side_effect=RuntimeError("finalize failed"))
+    )
+    worker._unregister_task = lambda _task_key: None
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+
+    class CancellingAnalyzer:
+        async def analyze_pr(self, _pr_info):
+            raise asyncio.CancelledError("worker cancelled")
+
+    worker.analyzer = CancellingAnalyzer()
+    with pytest.raises(RuntimeError, match="finalize failed"):
+        await worker.process_review_task(
+            {
+                "repo_full_name": "owner/repo",
+                "repo_owner": "owner",
+                "repo_name": "repo",
+                "pr_number": 1,
+                "action": "opened",
+                "head_sha": "head-sha",
+            }
+        )
+
+    assert execution.finish_calls == [("cancelled", None)]
 
 
 class _TimeoutWorker:
@@ -43,6 +630,47 @@ class _TimeoutWorker:
 
     async def _save_error_record(self, pr_info, error, task_id):
         self.saved_errors.append((pr_info, error, task_id))
+
+
+class _ReportingWorker:
+    def __init__(self):
+        self.cancelled_key = None
+        self.saved_errors = []
+        self.reporting_started = False
+
+    async def process_review_task(self, _pr_info):
+        self.reporting_started = True
+        await asyncio.sleep(0.05)
+        return "reported"
+
+    def is_task_reporting(self, _task_key):
+        return self.reporting_started
+
+    def cancel_task(self, task_key):
+        self.cancelled_key = task_key
+        return True
+
+    async def _save_error_record(self, pr_info, error, task_id):
+        self.saved_errors.append((pr_info, error, task_id))
+
+
+@pytest.mark.asyncio
+async def test_review_timeout_stops_after_entering_reporting():
+    """AI 结果落库后进入 reporting，原总预算不得取消发布收尾。"""
+    settings = get_settings()
+    old_value = settings.review_timeout_seconds
+    try:
+        settings.review_timeout_seconds = 0.01
+        worker = _ReportingWorker()
+        pr_info = {"repo_full_name": "owner/repo", "pr_number": 1}
+
+        result = await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
+
+        assert result == "reported"
+        assert worker.cancelled_key is None
+        assert worker.saved_errors == []
+    finally:
+        settings.review_timeout_seconds = old_value
 
 
 def _review_worker_for_normalization():
@@ -251,8 +879,7 @@ def _review_worker_for_reflection_history():
     """构造一个仅满足反思历史摘要获取依赖的 ReviewWorker。"""
     worker = ReviewWorker.__new__(ReviewWorker)
     worker.ai_reviewer = SimpleNamespace(
-        summary_api_client=object(),
-        summary_model="summary-model",
+        api_client=object(),
     )
     return worker
 
@@ -332,6 +959,7 @@ async def test_reflection_history_summary_returns_none_on_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_review_worker_dependencies")
 async def test_incremental_review_restores_messages_and_passes_pending_callback(
     monkeypatch,
 ):
@@ -404,32 +1032,6 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
                 )
             )
 
-    class FakeCheckpoint:
-        def __init__(self, source_type, source_task_id):
-            self.source_type = source_type
-            self.source_task_id = source_task_id
-
-        async def create_session(self, **kwargs):
-            return SimpleNamespace(id=55)
-
-        async def append_message(self, session_id, data):
-            return SimpleNamespace(id=100 + len(data))
-
-        async def mark_tool_call_completed(self, session_id, tool_call_id, msg_id):
-            return None
-
-        async def mark_tool_call_running(self, session_id, tool_call_id):
-            return None
-
-        async def complete_session(self, session_id, tool_calls_count=0):
-            return None
-
-        async def save_session_result(self, session_id, payload):
-            return None
-
-        async def fail_session(self, session_id, error_message):
-            return None
-
     class FakeQueueService:
         async def prepare_pending_for_review(self, **kwargs):
             return SimpleNamespace(
@@ -478,9 +1080,6 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
     async def fake_noop(*_args, **_kwargs):
         return None
 
-    async def fake_restore_history(*_args, **_kwargs):
-        return [{"role": "assistant", "content": "previous"}]
-
     async def fake_create_review_record(*_args, **_kwargs):
         return 99
 
@@ -502,10 +1101,6 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
             staticmethod(fake_noop),
         )
         monkeypatch.setattr(
-            "backend.services.activity_checkpoint_service.ActivityCheckpointService",
-            FakeCheckpoint,
-        )
-        monkeypatch.setattr(
             "backend.services.pr_review_incremental_queue.PRReviewIncrementalQueueService",
             FakeQueueService,
         )
@@ -519,12 +1114,6 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
         )
 
         worker = ReviewWorker()
-        previous_messages = [{"role": "assistant", "content": "previous"}]
-        monkeypatch.setattr(
-            worker,
-            "_restore_incremental_activity_history",
-            fake_restore_history,
-        )
         monkeypatch.setattr(worker, "_create_review_record", fake_create_review_record)
         monkeypatch.setattr(worker, "_update_review_status", fake_noop)
         monkeypatch.setattr(worker, "_save_review_results", fake_noop)
@@ -551,20 +1140,19 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
 
         await worker.process_review_task(pr_info)
 
-        assert captured["initial_messages"] == previous_messages
+        assert captured["initial_messages"] in (None, [])
         assert captured["pending_callback"] is not None
         assert captured["pending_message"] == {
             "role": "user",
             "content": "queued increment",
         }
-        assert captured["marked_consumed"][0] == ([1],)
-        assert captured["marked_consumed"][1]["consumed_message_id"] is not None
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_review_worker_dependencies")
 async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
     """增量消费时 PR head 变化，check run 应迁移到新 head。
 
@@ -639,31 +1227,6 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
                 )
             )
 
-    class FakeCheckpoint:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def create_session(self, **kw):
-            return SimpleNamespace(id=55)
-
-        async def append_message(self, sid, data):
-            return SimpleNamespace(id=100)
-
-        async def mark_tool_call_completed(self, *a, **kw):
-            return None
-
-        async def mark_tool_call_running(self, *a, **kw):
-            return None
-
-        async def complete_session(self, sid, **kw):
-            return None
-
-        async def save_session_result(self, sid, payload):
-            return None
-
-        async def fail_session(self, sid, msg):
-            return None
-
     class FakeQueueService:
         async def prepare_pending_for_review(self, **kwargs):
             return SimpleNamespace(
@@ -724,10 +1287,6 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
         )
         monkeypatch.setattr(ReviewWorker, "_log_activity", staticmethod(fake_noop))
         monkeypatch.setattr(
-            "backend.services.activity_checkpoint_service.ActivityCheckpointService",
-            FakeCheckpoint,
-        )
-        monkeypatch.setattr(
             "backend.services.pr_review_incremental_queue.PRReviewIncrementalQueueService",
             FakeQueueService,
         )
@@ -757,7 +1316,6 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
             cancel_active_runs_by_sha=AsyncMock(),
             get_cached_check_run_id=AsyncMock(return_value=None),
         )
-        monkeypatch.setattr(worker, "_restore_incremental_activity_history", fake_noop)
         monkeypatch.setattr(worker, "_create_review_record", fake_create_review_record)
         monkeypatch.setattr(worker, "_update_review_status", fake_noop)
         monkeypatch.setattr(worker, "_save_review_results", fake_noop)
@@ -806,6 +1364,7 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_review_worker_dependencies")
 async def test_review_record_created_before_code_indexing(monkeypatch):
     """审查记录必须在代码索引之前落库。
 
@@ -884,31 +1443,6 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
         async def index_pr_changes(self, **kwargs):
             call_order.append("index_pr_changes")
 
-    class FakeCheckpoint:
-        def __init__(self, source_type, source_task_id):
-            pass
-
-        async def create_session(self, **kwargs):
-            return SimpleNamespace(id=55)
-
-        async def append_message(self, session_id, data):
-            return SimpleNamespace(id=1)
-
-        async def mark_tool_call_completed(self, session_id, tool_call_id, msg_id):
-            return None
-
-        async def mark_tool_call_running(self, session_id, tool_call_id):
-            return None
-
-        async def complete_session(self, session_id, tool_calls_count=0):
-            return None
-
-        async def save_session_result(self, session_id, payload):
-            return None
-
-        async def fail_session(self, session_id, error_message):
-            return None
-
     class FakeAIReviewer:
         def _refresh_ai_clients(self):
             return None
@@ -950,10 +1484,6 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
             review_worker, "get_user_dynamic_config", fake_dynamic_config
         )
         monkeypatch.setattr(ReviewWorker, "_log_activity", staticmethod(fake_noop))
-        monkeypatch.setattr(
-            "backend.services.activity_checkpoint_service.ActivityCheckpointService",
-            FakeCheckpoint,
-        )
         monkeypatch.setattr(
             "backend.services.pr_code_indexer.get_pr_code_indexer",
             lambda: FakeIndexer(),

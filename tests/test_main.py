@@ -1,13 +1,18 @@
 """Main app helper tests"""
 
+import asyncio
+import contextvars
 import time
-from unittest.mock import patch
+from datetime import datetime
+from unittest.mock import Mock, call, patch
 
 import pytest
+from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend import main
+from backend.core import logging_bridge
 from backend.core.config import Settings
 from backend.main import (
     _format_duration,
@@ -17,6 +22,63 @@ from backend.main import (
     get_startup_info,
     get_system_info_dict,
 )
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeBindingError,
+    get_runtime_supervisor,
+)
+
+
+def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
+    startup_time = datetime(2026, 8, 1, 12, 34, 56, 123456)
+
+    first_log = logging_bridge._create_startup_log_file(
+        tmp_path,
+        started_at=startup_time,
+        process_id=4321,
+    )
+    second_log = logging_bridge._create_startup_log_file(
+        tmp_path,
+        started_at=startup_time,
+        process_id=4321,
+    )
+
+    assert first_log.name == "app_20260801_123456_123456_pid4321.log"
+    assert second_log.name == "app_20260801_123456_123456_pid4321_1.log"
+    assert first_log.is_file()
+    assert second_log.is_file()
+
+
+def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path):
+    remove = Mock()
+    add = Mock()
+    install_standard_bridge = Mock()
+    app_log_path = tmp_path / "app_20260801_123456_123456_pid4321.log"
+    cleanup = Mock()
+    monkeypatch.setattr(logging_bridge.logger, "remove", remove)
+    monkeypatch.setattr(logging_bridge.logger, "add", add)
+    monkeypatch.setattr(
+        logging_bridge,
+        "install_standard_logging_bridge",
+        install_standard_bridge,
+    )
+    monkeypatch.setattr(logging_bridge, "_cleanup_expired_app_logs", cleanup)
+    monkeypatch.setattr(
+        logging_bridge,
+        "_create_startup_log_file",
+        Mock(return_value=app_log_path),
+    )
+
+    logging_bridge.configure_logging()
+
+    assert add.call_args_list[1] == call(
+        str(app_log_path),
+        rotation="500 MB",
+        retention=cleanup,
+        level="DEBUG",
+    )
+    install_standard_bridge.assert_called_once()
+    remove.assert_called_once()
+    cleanup.assert_called_once()
 
 
 class RequestStub:
@@ -81,6 +143,90 @@ def test_background_tasks_can_be_skipped_for_local_development():
     assert _should_start_background_tasks(settings) is False
     assert _should_start_background_tasks(Settings(sakura_dev_bootstrap=True)) is False
     assert _should_start_background_tasks(Settings()) is True
+
+
+@pytest.mark.anyio
+async def test_lifespan_does_not_yield_when_database_initialization_fails(monkeypatch):
+    database_url = "mysql+asyncmy://db/app"
+
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main, "_should_start_background_tasks", lambda _: False)
+
+    async def fail_init_db():
+        raise RuntimeError("migration failed")
+
+    monkeypatch.setattr("backend.models.init_db", fail_init_db)
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        async with main.lifespan(main.app):
+            pytest.fail("lifespan yielded after database initialization failed")
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+def _patch_minimal_lifespan_shutdown(monkeypatch):
+    from backend.webui.sse import sse_manager
+
+    async def no_op_quiesce(_app):
+        return None
+
+    async def no_op_close():
+        return None
+
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
+    monkeypatch.setattr(main, "_should_start_background_tasks", lambda _: False)
+    monkeypatch.setattr(main, "generate_setup_token", lambda: None)
+    monkeypatch.setattr(sse_manager, "resume", lambda: None)
+    monkeypatch.setattr(
+        "backend.services.database_reset_runtime_service.quiesce_database_reset_runtime",
+        no_op_quiesce,
+    )
+    monkeypatch.setattr(main, "stop_telegram_bot", no_op_close)
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_embedding_service", no_op_close
+    )
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_reranker_service", no_op_close
+    )
+
+
+@pytest.mark.anyio
+async def test_lifespan_resets_runtime_binding_after_normal_shutdown(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        supervisor = get_runtime_supervisor()
+        assert supervisor is app.state.database_reset_runtime_supervisor
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+@pytest.mark.anyio
+async def test_lifespan_resets_runtime_binding_when_cancelled_at_yield(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    app = FastAPI()
+
+    with pytest.raises(asyncio.CancelledError):
+        async with main.lifespan(app):
+            assert get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+            raise asyncio.CancelledError
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+def test_unbound_runtime_check_uses_an_empty_context():
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        contextvars.Context().run(get_runtime_supervisor)
 
 
 @pytest.mark.anyio

@@ -99,6 +99,11 @@ class ScanWorker:
         from backend.core.github_app import GitHubAppClient
 
         self.github_app = GitHubAppClient()
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+
+        self.activity_integration = ActivityIntegrationService()
 
     @staticmethod
     async def _log_activity(
@@ -106,14 +111,14 @@ class ScanWorker:
         event_type: str,
         content: dict[str, Any] | None = None,
     ) -> None:
-        """记录扫描活动事件（持久化 + SSE 推送）。"""
-        try:
-            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
-            from backend.services.activity_event_service import ActivityEventService
+        """Legacy activity event hook — now a no-op.
 
-            await ActivityEventService.log_event("scan", scan_id, event_type, content)
-        except Exception as exc:
-            logger.debug("扫描活动事件记录失败: {}", exc)
+        The new observability system (ActivityOutbox + user-scoped SSE, driven by
+        ``execution.finish`` and the Attempt observer) replaces the legacy
+        ``activity_events`` table and global ``activity:*`` SSE channel. Retained
+        as a shim so existing call sites remain harmless; it writes nothing.
+        """
+        return
 
     async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
@@ -217,6 +222,21 @@ class ScanWorker:
 
             logger.info(f"开始扫描仓库: {repo_name} (scan_id={scan_id})")
 
+            execution = None
+            try:
+                execution = await self.activity_integration.start_scan_execution(
+                    {
+                        "task_id": str(scan_id),
+                        "delivery_id": str(scan_id),
+                        "repo_full_name": repo_name,
+                    },
+                    task_id=scan_id,
+                )
+            except Exception as observability_exc:
+                logger.warning(
+                    "扫描 observability admission skipped: {}", observability_exc
+                )
+
             # 2. 更新状态为 INDEXING
             await self._update_scan(
                 scan_id,
@@ -255,6 +275,11 @@ class ScanWorker:
                         "message": "克隆仓库失败",
                     },
                 )
+                if execution is not None:
+                    await execution.finish(
+                        "failed",
+                        error_message="克隆仓库失败",
+                    )
                 return
 
             # 获取 commit SHA
@@ -411,9 +436,16 @@ class ScanWorker:
                 aggregated["total_findings"],
                 aggregated["health_score"],
             )
+            if execution is not None:
+                await execution.finish("completed")
 
         except Exception as e:
             logger.error(f"扫描 {scan_id} 执行失败: {e}", exc_info=True)
+            if execution is not None:
+                try:
+                    await execution.finish("failed", error_message=str(e))
+                except Exception as finish_exc:
+                    logger.warning("扫描 observability finish 失败: {}", finish_exc)
             await self._update_scan(
                 scan_id,
                 status=ScanStatus.FAILED.value,
@@ -682,18 +714,30 @@ class ScanWorker:
         from backend.core.config import get_settings
 
         settings = get_settings()
-        scan_model = settings.scan_model or settings.openai_model
+        # 扫描模型由 main 角色绑定解析；旧 scan/openai 模型配置不得参与请求。
         max_iterations = settings.scan_max_iterations
         scan_temperature = settings.scan_temperature
 
         tracker = TokenTracker()
-        safe_context = (
-            reviewer.model_context_mgr.calculate_safe_context(
-                scan_model,
+        (
+            role_model,
+            role_context_tokens,
+        ) = await reviewer.api_client.resolve_role_model_context("main")
+        if role_context_tokens and role_context_tokens > 0:
+            safe_context = int(
+                role_context_tokens * settings.scan_context_safety_threshold
+            )
+        elif reviewer.model_context_mgr:
+            safe_context = reviewer.model_context_mgr.calculate_safe_context(
+                None,
                 settings.scan_context_safety_threshold,
             )
-            if reviewer.model_context_mgr
-            else 0
+        else:
+            safe_context = 0
+        logger.info(
+            "扫描使用 main 角色绑定: model={}, context_tokens={}",
+            role_model or "<role metadata>",
+            role_context_tokens or "<conservative fallback>",
         )
 
         iteration = 0
@@ -704,7 +748,7 @@ class ScanWorker:
 
             iteration += 1
             logger.info(
-                f"全仓扫描 第 {iteration}/{max_iterations} 轮 AI 调用 (模型: {scan_model})..."
+                f"全仓扫描 第 {iteration}/{max_iterations} 轮 AI 调用 (模型: main role)..."
             )
 
             # 记录 AI 思考事件
@@ -719,14 +763,20 @@ class ScanWorker:
 
             try:
                 response = await reviewer.api_client.call_with_retry(
-                    model=scan_model,
+                    model="",
                     messages=messages,
                     tools=enabled_tools,
                     tool_choice="auto",
                     temperature=scan_temperature,
+                    role="main",
                 )
 
                 tracker.accumulate(response)
+                tracker.log_context_usage(
+                    response,
+                    role_context_tokens,
+                    iteration,
+                )
                 usage = getattr(response, "usage", None)
                 if usage and budget:
                     budget.consume(
@@ -847,12 +897,11 @@ class ScanWorker:
                             },
                         )
 
-                # 每轮记录上下文使用率
+                # 本地估算仅用于决定下一轮发送前是否压缩。
                 try:
                     current_tokens = (
                         reviewer.context_compressor.estimate_messages_tokens(messages)
                     )
-                    tracker.log_context_usage(current_tokens, safe_context, iteration)
                 except Exception:
                     logger.warning("token estimation failed, skipping", exc_info=True)
                     current_tokens = 0
@@ -876,57 +925,10 @@ class ScanWorker:
 
             except Exception as e:
                 logger.error(f"全仓扫描 AI 调用失败: {e}")
-                break
+                raise
 
         logger.warning(f"全仓扫描达到最大轮次 ({max_iterations})，停止")
         return [], None, iteration
-
-    async def _call_ai(
-        self, messages: list[dict], budget: ScanTokenBudget | None = None
-    ) -> tuple[str, dict]:
-        """调用 AI API
-
-        Args:
-            messages: OpenAI 消息列表
-            budget: Token 预算管理器，用于限制 max_tokens
-        """
-        try:
-            from openai import AsyncOpenAI
-
-            settings = get_settings()
-            client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
-            )
-
-            # 根据剩余预算计算 completion 上限
-            # 预留 prompt 空间后，剩余为 completion 可用额度
-            completion_cap = 4000  # 默认上限
-            if budget and not budget.unlimited:
-                remaining = budget.remaining()
-                if remaining <= 0:
-                    return "", {}
-                completion_cap = min(4000, remaining)
-
-            response = await client.chat.completions.create(
-                model=settings.scan_model or settings.openai_model,
-                messages=messages,
-                temperature=settings.scan_temperature,
-                max_tokens=completion_cap,
-            )
-
-            text = response.choices[0].message.content or ""
-            usage = {}
-            if response.usage:
-                usage = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                }
-            return text, usage
-
-        except Exception as e:
-            logger.error(f"调用 AI 失败: {e}")
-            return "", {}
 
     def _aggregate_findings(
         self, all_findings: list[dict], ai_health_score: int | None = None

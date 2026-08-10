@@ -5,10 +5,21 @@ Telegram Bot、WebUI 安全等。这些配置通常在 Setup Wizard 首次部署
 此页面允许超级管理员在运行时修改。
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.services.database_reset_runtime_service import (
+    quiesce_database_reset_runtime,
+)
+from backend.services.database_reset_service import (
+    DATABASE_RESET_CONFIRMATION,
+    DatabaseResetError,
+    database_reset_service,
+)
 from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
     SYSTEM_SENSITIVE_KEYS,
@@ -25,7 +36,7 @@ from backend.webui.deps import (
     toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import detect_language, make_translation_func
 
 router = APIRouter(prefix="/system-config", tags=["WebUI System Config"])
 
@@ -48,6 +59,7 @@ async def system_config_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="system_config",
         groups=groups,
+        database_reset_confirmation=DATABASE_RESET_CONFIRMATION,
     )
 
 
@@ -216,3 +228,125 @@ async def test_connection(
         }
 
     return {"success": False, "message": "Unsupported test type"}
+
+
+def _schedule_application_restart(delay_seconds: float = 2.0) -> None:
+    """响应发出后复用 Setup 的 SIGTERM 重启机制。"""
+
+    from backend.core.setup_service import setup_service
+
+    asyncio.get_running_loop().call_later(
+        delay_seconds,
+        setup_service.trigger_restart,
+    )
+
+
+@router.post("/restart")
+async def restart_application(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """由超级管理员请求重启当前应用进程。"""
+
+    logger.warning(
+        "超级管理员请求重启应用: user_id={}, username={}",
+        user["user_id"],
+        user["sub"],
+    )
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "application_restart",
+        "system_core",
+        detail={"trigger": "webui"},
+    )
+    _schedule_application_restart()
+    return JSONResponse(
+        {"success": True, "restarting": True},
+        status_code=202,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+@router.post("/reset-database")
+async def reset_database(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """彻底清空数据库，重置 Setup 状态并安排应用重启。"""
+
+    no_store_headers = {"Cache-Control": "no-store, max-age=0"}
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    requested_language = body.get("language") if isinstance(body, dict) else None
+    language = (
+        requested_language
+        if requested_language in {"zh-CN", "en"}
+        else detect_language()
+    )
+    translate = make_translation_func(language)
+    if (
+        not isinstance(body, dict)
+        or body.get("confirmation") != DATABASE_RESET_CONFIRMATION
+    ):
+        return JSONResponse(
+            {
+                "success": False,
+                "restarting": False,
+                "message": translate(
+                    "system_config.database_reset_invalid_confirmation"
+                ),
+            },
+            status_code=400,
+            headers=no_store_headers,
+        )
+
+    logger.info(
+        "超级管理员请求彻底清空数据库: user_id={}, username={}",
+        user["user_id"],
+        user["sub"],
+    )
+    try:
+        result = await database_reset_service.reset(
+            before_drop=lambda: quiesce_database_reset_runtime(request.app),
+        )
+    except DatabaseResetError as exc:
+        if exc.setup_state_reset:
+            _schedule_application_restart()
+        return JSONResponse(
+            {
+                "success": False,
+                "restarting": exc.setup_state_reset,
+                "message": translate(
+                    "system_config.database_reset_failed_restarting"
+                    if exc.setup_state_reset
+                    else "system_config.database_reset_failed"
+                ),
+            },
+            status_code=500,
+            headers=no_store_headers,
+        )
+
+    _schedule_application_restart()
+    return JSONResponse(
+        {
+            "success": True,
+            "restarting": True,
+            "message": translate(
+                "system_config.database_reset_success",
+                count=result.total_dropped,
+            ),
+            "dropped": {
+                "tables": result.tables_dropped,
+                "views": result.views_dropped,
+                "materialized_views": result.materialized_views_dropped,
+                "sequences": result.sequences_dropped,
+            },
+        },
+        headers=no_store_headers,
+    )

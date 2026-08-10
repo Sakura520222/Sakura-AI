@@ -437,8 +437,9 @@ class PaddleGateway(PaymentGateway):
         try:
             # 延迟导入：paddle_billing SDK 为可选依赖，避免未安装时 import 失败
             from paddle_billing import Client, Environment, Options
-            from paddle_billing.Resources.Transactions.TransactionCancel import (
-                TransactionCancel,
+            from paddle_billing.Entities.Shared import TransactionStatus
+            from paddle_billing.Resources.Transactions.Operations import (
+                UpdateTransaction,
             )
 
             env = (
@@ -448,7 +449,9 @@ class PaddleGateway(PaymentGateway):
             )
             paddle = Client(self._api_key, options=Options(env))
             await asyncio.to_thread(
-                paddle.transactions.cancel, provider_tx_id, TransactionCancel()
+                paddle.transactions.update,
+                provider_tx_id,
+                UpdateTransaction(status=TransactionStatus.Canceled),
             )
             logger.info(
                 "Paddle transaction cancelled: tx_id={}",
@@ -459,14 +462,10 @@ class PaddleGateway(PaymentGateway):
                 status="cancelled",
             )
         except ImportError:
-            # SDK 不可用时直接标记成功（Paddle 未支付的订单会自动过期）
-            logger.info(
-                "Paddle SDK not installed, marking as cancelled: {}",
-                provider_tx_id,
-            )
+            logger.error("paddle-python-sdk is not installed")
             return RefundResult(
-                success=True,
-                status="cancelled",
+                success=False,
+                error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
             logger.error("Paddle cancel failed: {}", e)

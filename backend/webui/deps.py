@@ -1,7 +1,9 @@
 """WebUI FastAPI 依赖注入"""
 
+import asyncio
 import time
 from collections import OrderedDict
+from collections.abc import AsyncGenerator
 from functools import lru_cache
 from typing import Any
 
@@ -144,10 +146,28 @@ async def require_payment_enabled():
 
 
 # ========== 数据库会话 ==========
-async def get_db() -> AsyncSession:
+async def _close_db_session(session: AsyncSession) -> None:
+    close_task = asyncio.create_task(session.close())
+    original_cancelled = None
+    while not close_task.done():
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as exc:
+            if original_cancelled is None:
+                original_cancelled = exc
+    if original_cancelled is not None:
+        await close_task
+        raise original_cancelled
+    await close_task
+
+
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """获取异步数据库会话"""
-    async with db_module.async_session() as session:
+    session = db_module.async_session()
+    try:
         yield session
+    finally:
+        await _close_db_session(session)
 
 
 async def mark_webui_request(request: Request):
@@ -427,7 +447,7 @@ async def get_current_user(request: Request) -> dict:
 async def require_auth(request: Request) -> dict:
     """需要登录的页面路由依赖"""
     user = await get_current_user(request)
-    async for db in get_db():
+    async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
     return user
 

@@ -6,7 +6,7 @@
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.sakura_agent_base import (
     EDIT_FILE_TOOL,
@@ -27,6 +27,18 @@ EXTRACTION_TOOLS = [
 
 # 禁止写入的路径前缀（反思文件由系统管理）
 _WRITE_BLOCKED_PREFIXES = ("memory/",)
+
+
+class _SummaryRoleClient:
+    """Force Sakura extraction calls through the summary role."""
+
+    def __init__(self, client):
+        self._client = client
+
+    async def call_with_retry(self, **kwargs):
+        kwargs["model"] = ""
+        kwargs["role"] = "summary"
+        return await self._client.call_with_retry(**kwargs)
 
 
 # ── 统一 system prompt ─────────────────────────────────────────────────
@@ -92,31 +104,9 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         return None
 
     def _ensure_client(self):
-        if self._api_client is not None:
-            return
-
-        settings = get_settings()
-        provider = settings.sakura_extraction_provider
-
-        if provider == "custom":
-            base_url = settings.sakura_extraction_api_base or settings.openai_api_base
-            api_key = settings.sakura_extraction_api_key or settings.openai_api_key
-        elif provider == "summary":
-            base_url = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-        else:
-            base_url = settings.openai_api_base
-            api_key = settings.openai_api_key
-
-        self._api_client = AIApiClient(base_url=base_url, api_key=api_key)
-
-        model = settings.sakura_extraction_model
-        if not model:
-            if provider == "summary":
-                model = settings.summary_model or settings.openai_model
-            else:
-                model = settings.openai_model
-        self._default_model = model
+        if self._api_client is None:
+            self._api_client = _SummaryRoleClient(AIApiClient())
+        self._default_model = ""
 
     async def extract_knowledge(
         self,
@@ -135,10 +125,7 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         ext_config = config.get("knowledge_extraction", {})
         consolidation_config = config.get("consolidation", {})
 
-        settings = get_settings()
-        max_iterations = settings.sakura_extraction_max_iterations or ext_config.get(
-            "max_iterations", 15
-        )
+        max_iterations = ext_config.get("max_iterations", 15)
         max_chars = consolidation_config.get("max_sakura_chars", 5000)
 
         self._repo = repo

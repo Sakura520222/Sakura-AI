@@ -4,10 +4,12 @@ import asyncio
 import re
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +25,24 @@ from backend.core.config import (
     reload_strategy_config,
 )
 from backend.models.database import AppConfig
+from backend.services.config_backup_service import (
+    BACKUP_MAX_BYTES,
+    ConfigBackupError,
+    export_config_backup,
+    parse_config_backup,
+    refresh_imported_runtime_config,
+    restore_config_backup,
+    serialize_config_backup,
+)
 from backend.services.label_service import label_service
+from backend.services.user_backup_service import (
+    USER_BACKUP_MAX_BYTES,
+    UserBackupError,
+    export_user_backup,
+    parse_user_backup,
+    restore_user_backup,
+    serialize_user_backup,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -183,14 +202,10 @@ async def save_strategies_section(
                         max_lines = int(form.get(f"strategy_{key}_max_lines", 99999999))
                     except (ValueError, TypeError) as e:
                         raise ValueError(f"[{key}] 数值格式错误: {e}")
-                    if not 1 <= max_files <= 100000:
-                        raise ValueError(
-                            f"[{key}] max_files 须在 1-100000 之间: {max_files}"
-                        )
-                    if not 1 <= max_lines <= 10000000:
-                        raise ValueError(
-                            f"[{key}] max_lines 须在 1-10000000 之间: {max_lines}"
-                        )
+                    if max_files < 1:
+                        raise ValueError(f"[{key}] max_files 必须至少为 1: {max_files}")
+                    if max_lines < 1:
+                        raise ValueError(f"[{key}] max_lines 必须至少为 1: {max_lines}")
                     prompt = form.get(f"strategy_{key}_prompt", "")
                     strategies[key] = {
                         "name": name,
@@ -632,6 +647,384 @@ def _validate_label_name(name: str):
         raise ValueError(f"标签名称包含非法字符: {name}")
 
 
+# ========== GET: AI 账号配置页 ==========
+
+
+@router.get("/ai")
+async def ai_config_page(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """AI 提供商账号配置页（多厂商持久化、随时切换、故障转移链）."""
+    from backend.webui.routes.auth import APP_VERSION
+
+    return render_template(
+        "config_ai.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_ai",
+        app_version=APP_VERSION,
+    )
+
+
+# ========== 配置备份与恢复 ==========
+
+
+@router.get("/backup")
+async def config_backup_page(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """配置备份页面。"""
+    return render_template(
+        "config_backup.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_backup",
+    )
+
+
+@router.post("/backup/export/users")
+async def download_user_backup(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """下载全部用户及个人配置、两步验证和通行密钥的 JSON 备份。"""
+    try:
+        document = await export_user_backup(db)
+        content = serialize_user_backup(document)
+        counts = {
+            "users": document.get("user_count", len(document.get("users", []))),
+            "personal_configs": sum(
+                len(item.get("personal_config", {}).get("dynamic_overrides", []))
+                for item in document.get("users", [])
+            ),
+            "recovery_codes": sum(
+                len(item.get("two_factor", {}).get("recovery_codes", []))
+                for item in document.get("users", [])
+            ),
+            "passkeys": sum(
+                len(item.get("passkeys", [])) for item in document.get("users", [])
+            ),
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "user_export",
+            "users",
+            "all",
+            {"scope": "users", "counts": counts},
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"sakura-ai-users-{timestamp}.json"
+        logger.info(
+            "用户信息备份已导出, by={}, counts={}",
+            user["sub"],
+            counts,
+        )
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except UserBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("用户信息备份导出失败: {}", exc, exc_info=True)
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason="internal error",
+        )
+
+
+@router.post("/backup/export/{scope}")
+async def download_config_backup(
+    scope: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """下载全局、AI、系统配置或完整的版本化 JSON 备份。"""
+    try:
+        document = await export_config_backup(db, scope)
+        content = serialize_config_backup(document)
+        counts = {
+            section: data["count"] for section, data in document["sections"].items()
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "config_export",
+            "config",
+            scope,
+            {"scope": scope, "counts": counts},
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"sakura-ai-config-{scope}-{timestamp}.json"
+        logger.info(
+            "配置备份已导出, by={}, scope={}, counts={}",
+            user["sub"],
+            scope,
+            counts,
+        )
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except ConfigBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("配置备份导出失败: {}", exc, exc_info=True)
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason="internal error",
+        )
+
+
+@router.post("/backup/import")
+async def upload_config_backup(
+    backup_file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """校验并精确恢复备份中包含的配置分类。"""
+    result = None
+    try:
+        content = await backup_file.read(BACKUP_MAX_BYTES + 1)
+        sections = parse_config_backup(content)
+        # A running deployment cannot atomically commit a new database URL to
+        # both AppConfig and connection.json.  Keep the live restore scoped to
+        # runtime-safe settings and direct database moves through Setup.
+        result = await restore_config_backup(
+            db,
+            sections,
+            allow_database_url=False,
+        )
+        runtime_refresh_ok = True
+        try:
+            refresh_imported_runtime_config(result)
+        except Exception as exc:
+            runtime_refresh_ok = False
+            logger.error(
+                "配置已导入，但运行时配置刷新失败，需重启应用: {}",
+                exc,
+                exc_info=True,
+            )
+
+        safe_filename = Path(backup_file.filename or "backup.json").name[:255]
+        detail = {
+            "filename": safe_filename,
+            "sections": list(result.sections),
+            "created": result.created,
+            "updated": result.updated,
+            "deleted": result.deleted,
+            "unchanged": result.unchanged,
+            "runtime_refresh_ok": runtime_refresh_ok,
+            "requires_restart": result.requires_restart,
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "config_import",
+            "config",
+            ",".join(result.sections),
+            detail,
+        )
+        logger.info(
+            "配置备份已导入, by={}, sections={}, created={}, updated={}, deleted={}",
+            user["sub"],
+            result.sections,
+            result.created,
+            result.updated,
+            result.deleted,
+        )
+        lang = detect_language()
+        from backend.webui.i18n import i18n as _i18n
+
+        section_names = ", ".join(
+            _i18n.t(f"config.backup_{section}", lang=lang)
+            for section in result.sections
+        )
+        return toast_redirect(
+            "/config/backup",
+            (
+                "toast.config_backup_imported_restart"
+                if not runtime_refresh_ok
+                else (
+                    "toast.config_backup_imported_restart_required"
+                    if result.requires_restart
+                    else "toast.config_backup_imported"
+                )
+            ),
+            lang=lang,
+            sections=section_names,
+            created=result.created,
+            updated=result.updated,
+            deleted=result.deleted,
+            unchanged=result.unchanged,
+        )
+    except ConfigBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_invalid",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("配置备份导入失败: {}", exc, exc_info=True)
+        if result is not None:
+            return toast_redirect(
+                "/config/backup",
+                "toast.config_backup_imported_restart",
+                "error",
+                lang=detect_language(),
+                sections=", ".join(result.sections),
+                created=result.created,
+                updated=result.updated,
+                deleted=result.deleted,
+                unchanged=result.unchanged,
+            )
+        await db.rollback()
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_import_failed",
+            "error",
+            lang=detect_language(),
+        )
+    finally:
+        await backup_file.close()
+
+
+@router.post("/backup/users/import")
+async def upload_user_backup(
+    backup_file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """校验并合并全部用户及其受支持的安全信息。"""
+    try:
+        content = await backup_file.read(USER_BACKUP_MAX_BYTES + 1)
+        document = parse_user_backup(content)
+        result = await restore_user_backup(db, document)
+
+        safe_filename = Path(backup_file.filename or "users.json").name[:255]
+        detail = {
+            "filename": safe_filename,
+            "users_created": result.users_created,
+            "users_updated": result.users_updated,
+            "users_unchanged": result.users_unchanged,
+            "user_configs_created": result.user_configs_created,
+            "user_configs_updated": result.user_configs_updated,
+            "user_configs_deleted": result.user_configs_deleted,
+            "webui_configs_created": result.webui_configs_created,
+            "webui_configs_updated": result.webui_configs_updated,
+            "webui_configs_deleted": result.webui_configs_deleted,
+            "recovery_codes_imported": result.recovery_codes_imported,
+            "passkeys_created": result.passkeys_created,
+            "passkeys_updated": result.passkeys_updated,
+            "recovery_codes_portable": result.recovery_codes_portable,
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "user_import",
+            "users",
+            "all",
+            detail,
+        )
+        from backend.webui.deps import invalidate_user_prefs_cache
+
+        for user_id in result.affected_user_ids:
+            invalidate_user_prefs_cache(user_id)
+
+        logger.info(
+            "用户信息备份已导入, by={}, users_created={}, users_updated={}, passkeys={}, recovery_codes_portable={}",
+            user["sub"],
+            result.users_created,
+            result.users_updated,
+            result.passkeys_imported,
+            result.recovery_codes_portable,
+        )
+        lang = detect_language()
+        message_key = (
+            "toast.user_backup_imported"
+            if result.recovery_codes_portable
+            else "toast.user_backup_imported_warning"
+        )
+        return toast_redirect(
+            "/config/backup",
+            message_key,
+            "success",
+            lang=lang,
+            users_created=result.users_created,
+            users_updated=result.users_updated,
+            configs_created=result.user_configs_created,
+            configs_updated=result.user_configs_updated,
+            passkeys=result.passkeys_imported,
+            recovery_codes=result.recovery_codes_imported,
+        )
+    except UserBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_invalid",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("用户信息备份导入失败: {}", exc, exc_info=True)
+        await db.rollback()
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_import_failed",
+            "error",
+            lang=detect_language(),
+        )
+    finally:
+        await backup_file.close()
+
+
 # ========== GET: 全局配置页 ==========
 
 
@@ -922,6 +1315,36 @@ async def save_general_config(
                 }
             elif cfg.key_value != str(val):
                 changed["analysis_min_interval_sec"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
+                cfg.key_value = str(val)
+
+        # protocol_repair_max_attempts (number)
+        raw = form.get("protocol_repair_max_attempts")
+        if raw is not None:
+            val = _parse_positive_int_config(raw)
+            # 上限 10，避免误输入导致无意义的超长修复
+            val = min(max(val, 1), 10)
+            result = await db.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "protocol_repair_max_attempts"
+                )
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="protocol_repair_max_attempts",
+                    key_value=str(val),
+                    description="协议信封修复最大次数",
+                )
+                db.add(cfg)
+                changed["protocol_repair_max_attempts"] = {
+                    "old": "(无)",
+                    "new": str(val),
+                }
+            elif cfg.key_value != str(val):
+                changed["protocol_repair_max_attempts"] = {
                     "old": cfg.key_value,
                     "new": str(val),
                 }

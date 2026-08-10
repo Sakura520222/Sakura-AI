@@ -197,7 +197,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *系统状态*\n\n"
             f"👥 注册用户: {len(users)} 人\n"
             f"📦 授权仓库: {len(repos)} 个\n"
-            f"🤖 AI模型: {settings.openai_model}\n"
             f"🌐 应用域名: {settings.app_domain}/\n"
         )
 
@@ -575,7 +574,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     select(PRReview).where(
                         and_(
                             PRReview.repo_name == pr_info["repo_name"],
-                            PRReview.pr_id == pr_info["pr_number"],
+                            PRReview.pr_number == pr_info["pr_number"],
                         )
                     )
                 )

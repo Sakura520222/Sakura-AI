@@ -4,16 +4,18 @@
 - SiliconFlow (默认): BAAI/bge-m3
 - OpenAI: text-embedding-3-small/large
 - Ollama: 本地模型
-- HuggingFace: 本地模型
 """
 
 import threading
+from typing import Any
+from uuid import uuid4
 
 import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
 from backend.core.config import get_settings
+from backend.services.activity_observability.contracts import InvocationContext
 
 # 嵌入文本最大字符数（防御性兜底，确保不超过 BGE-M3 的 8192 token 限制）
 # 中文约 1 token ≈ 1.5 字符，8000 字符 ≈ 5300 tokens，留足余量
@@ -26,21 +28,23 @@ class EmbeddingService:
     将文本转换为向量嵌入，支持多种提供商。
     """
 
-    def __init__(self):
-        """初始化嵌入服务"""
+    def __init__(
+        self, *, observer: Any = None, context: InvocationContext | None = None
+    ):
+        """初始化服务；observer/context 仅用于可选真实发送观察。"""
         self.provider = ""
+        self._observer = observer
+        self._context = context
         self.client = None
         self._client_config = None
         self._retired_clients = []
-        self._hf_model = None
         self._refresh_client()
 
     def _refresh_client(self):
         """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。
 
         本方法被 async 的 ``embed_texts`` 同步调用，须保持轻量：当前仅做配置
-        比较与客户端对象构造（AsyncOpenAI 构造不建连），HuggingFace 模型在
-        ``_embed_via_huggingface`` 中懒加载，故不阻塞事件循环；若未来
+        比较与客户端对象构造（AsyncOpenAI 构造不建连）；若未来
         ``_init_client`` 引入耗时初始化需改用 ``asyncio.to_thread``。
         """
         settings = get_settings()
@@ -57,7 +61,6 @@ class EmbeddingService:
             self._retired_clients.append(self.client)
         self.provider = config[0]
         self.client = None
-        self._hf_model = None
         self._init_client(settings)
         self._client_config = config
 
@@ -69,6 +72,7 @@ class EmbeddingService:
                 self.client = AsyncOpenAI(
                     base_url=settings.embedding_base_url,
                     api_key=settings.embedding_api_key,
+                    max_retries=0,
                 )
                 logger.info(
                     f"✅ 嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
@@ -79,6 +83,7 @@ class EmbeddingService:
                 self.client = AsyncOpenAI(
                     base_url=settings.embedding_base_url,
                     api_key=settings.embedding_api_key,
+                    max_retries=0,
                 )
                 logger.info(
                     f"✅ 嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
@@ -89,21 +94,25 @@ class EmbeddingService:
                 self.client = AsyncOpenAI(
                     base_url=settings.embedding_base_url,
                     api_key=settings.embedding_api_key or "ollama",  # Ollama 不需要 key
+                    max_retries=0,
                 )
                 logger.info("✅ 嵌入服务初始化成功: {}", self.provider)
-
-            elif self.provider == "hf" or self.provider == "huggingface":
-                # HuggingFace 本地模型（使用 sentence-transformers）
-                logger.info("🔄 嵌入服务使用 HuggingFace 本地模型（按需加载）")
 
             else:
                 raise ValueError(f"不支持的嵌入提供商: {self.provider}")
 
         except Exception as e:
-            logger.error("❌ 嵌入服务初始化失败: {}", e)
+            logger.error("❌ 嵌入服务初始化失败: type={}", type(e).__name__)
             raise
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_id: str | None = None,
+    ) -> list[list[float]]:
         """批量生成文本嵌入向量
 
         Args:
@@ -115,21 +124,26 @@ class EmbeddingService:
         if not texts:
             return []
 
+        active_context = context or self._context
+        active_observer = observer or self._observer
+        active_logical_call_id = logical_call_id or str(uuid4())
+        if active_context is not None and active_observer is None:
+            raise ValueError("InvocationContext requires an observer")
+        if active_observer is not None:
+            active_observer.context = active_context
         self._refresh_client()
         try:
             if self.provider in ["siliconflow", "openai", "ollama"]:
                 # 使用 OpenAI 兼容 API
-                return await self._embed_via_openai_api(texts)
-
-            elif self.provider in ["hf", "huggingface"]:
-                # 使用 HuggingFace 本地模型
-                return await self._embed_via_huggingface(texts)
-
-            else:
-                raise ValueError(f"不支持的嵌入提供商: {self.provider}")
-
+                return await self._embed_via_openai_api(
+                    texts,
+                    observer=active_observer,
+                    context=active_context,
+                    logical_call_id=active_logical_call_id,
+                )
+            raise ValueError(f"不支持的嵌入提供商: {self.provider}")
         except Exception as e:
-            logger.error("❌ 生成嵌入向量失败: {}", e)
+            logger.error("❌ 生成嵌入向量失败: type={}", type(e).__name__)
             raise
 
     @staticmethod
@@ -143,7 +157,14 @@ class EmbeddingService:
             truncated = truncated[:last_break]
         return truncated
 
-    async def _embed_via_openai_api(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_via_openai_api(
+        self,
+        texts: list[str],
+        *,
+        observer: Any = None,
+        context: InvocationContext | None = None,
+        logical_call_id: str | None = None,
+    ) -> list[list[float]]:
         """通过 OpenAI 兼容 API 生成嵌入（支持批处理）
 
         支持：SiliconFlow、OpenAI、Ollama
@@ -163,9 +184,49 @@ class EmbeddingService:
                     f"正在处理批次 {batch_num}/{total_batches}: {len(batch)} 个文本"
                 )
 
-                response = await self.client.embeddings.create(
-                    model=settings.embedding_model,
-                    input=batch,
+                if observer is not None and context is not None:
+                    response, _ = await observer.send_embedding(
+                        lambda batch=batch: self.client.embeddings.create(
+                            model=settings.embedding_model,
+                            input=batch,
+                        ),
+                        logical_call_id=logical_call_id or str(uuid4()),
+                        requested={
+                            "provider_id": self.provider,
+                            "model_id": settings.embedding_model,
+                            "protocol_family": "openai-compatible",
+                            "endpoint_url": settings.embedding_base_url,
+                        },
+                        effective={
+                            "provider_id": self.provider,
+                            "model_id": settings.embedding_model,
+                            "protocol_family": "openai-compatible",
+                            "endpoint_url": settings.embedding_base_url,
+                        },
+                    )
+                else:
+                    response = await self.client.embeddings.create(
+                        model=settings.embedding_model,
+                        input=batch,
+                    )
+
+                from backend.services.ai_usage_service import (
+                    build_usage_record_key,
+                    record_ai_usage_best_effort,
+                )
+
+                await record_ai_usage_best_effort(
+                    record_key=build_usage_record_key(
+                        "embedding",
+                        f"{logical_call_id or uuid4()}:{batch_num}",
+                    ),
+                    call_kind="embedding",
+                    role="embedding",
+                    provider_id=self.provider,
+                    model_id=settings.embedding_model,
+                    protocol_family="openai-compatible",
+                    usage=getattr(response, "usage", None),
+                    input_only=True,
                 )
 
                 # 提取嵌入向量
@@ -177,54 +238,37 @@ class EmbeddingService:
 
         except Exception as e:
             logger.error(
-                "❌ Embedding API 请求失败 ({}): {}: {}",
-                settings.embedding_base_url,
+                "❌ Embedding API 请求失败 (provider={}, model={}): type={}",
+                self.provider,
+                settings.embedding_model,
                 type(e).__name__,
-                e,
             )
             raise
 
-    async def _embed_via_huggingface(self, texts: list[str]) -> list[list[float]]:
-        """通过 HuggingFace 本地模型生成嵌入
-
-        使用 sentence-transformers 库。
-        """
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            # 懒加载模型（只在第一次使用时加载）
-            settings = get_settings()
-            if self._hf_model is None:
-                logger.info("🔄 加载 HuggingFace 模型: {}", settings.embedding_model)
-                self._hf_model = SentenceTransformer(settings.embedding_model)
-                logger.info("✅ HuggingFace 模型加载完成")
-
-            # 生成嵌入
-            embeddings = self._hf_model.encode(texts, convert_to_numpy=True)
-            embeddings = embeddings.tolist()
-
-            logger.debug("✅ 成功生成 {} 个嵌入向量", len(embeddings))
-            return embeddings
-
-        except ImportError:
-            logger.error(
-                "❌ sentence-transformers 未安装，请运行: pip install sentence-transformers"
-            )
-            raise RuntimeError("sentence-transformers 未安装")
-        except Exception as e:
-            logger.error("❌ HuggingFace 嵌入失败: {}", e)
-            raise
-
-    async def embed_query(self, query: str) -> list[float]:
+    async def embed_query(
+        self,
+        query: str,
+        *,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_id: str | None = None,
+    ) -> list[float]:
         """生成查询文本的嵌入向量
 
         Args:
             query: 查询文本
+            context: 可选的无 transcript InvocationContext
+            observer: 可选的真实发送观察器
 
         Returns:
             嵌入向量
         """
-        embeddings = await self.embed_texts([query])
+        embeddings = await self.embed_texts(
+            [query],
+            context=context,
+            observer=observer,
+            logical_call_id=logical_call_id,
+        )
         return embeddings[0] if embeddings else []
 
     async def close(self):
@@ -357,6 +401,7 @@ class RerankerService:
             texts = [doc["content"] for doc in docs]
 
             # 调用 Rerank API
+            logical_call_id = str(uuid4())
             response = await self.client.post(
                 "",
                 json={
@@ -369,6 +414,22 @@ class RerankerService:
 
             response.raise_for_status()
             results = response.json()
+
+            from backend.services.ai_usage_service import (
+                build_usage_record_key,
+                record_ai_usage_best_effort,
+            )
+
+            await record_ai_usage_best_effort(
+                record_key=build_usage_record_key("rerank", logical_call_id),
+                call_kind="rerank",
+                role="rerank",
+                provider_id=self.provider,
+                model_id=settings.rerank_model,
+                protocol_family="siliconflow-rerank",
+                usage=results,
+                input_only=True,
+            )
 
             # 解析结果
             if "results" not in results:

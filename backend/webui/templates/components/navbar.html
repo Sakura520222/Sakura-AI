@@ -16,6 +16,22 @@
 
     <!-- 右侧：主题切换 + 用户信息 -->
     <div class="flex items-center gap-2">
+        {# 版本区域：所有登录用户可见版本号 + 更新 badge；super_admin 点击进版本管理器 #}
+        <div x-data="{ version: '', updateAvailable: false, latestVersion: '', isAdmin: {% if current_user.role == 'super_admin' %}true{% else %}false{% endif %}, async loadVersion() { try { const r = await fetch('/version/info', { headers: { 'Accept': 'application/json' } }); if (r.ok) { const d = await r.json(); this.version = d.current_version || ''; this.updateAvailable = d.update_available === true; this.latestVersion = d.latest_version || ''; } } catch (e) {} } }"
+             x-init="loadVersion(); setTimeout(() => loadVersion(), 15000); setInterval(() => loadVersion(), 600000)"
+             @click="if (isAdmin) window.location.href = '/version/manager'"
+             :class="isAdmin ? 'cursor-pointer hover:bg-sakura-50 dark:hover:bg-sakura-900/20 rounded-xl' : ''"
+             class="hidden sm:flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 transition-colors"
+             :title="isAdmin ? '点击进入版本管理器' : 'Sakura AI 版本'">
+            <span>v<span x-text="version || '...'"></span></span>
+            <template x-if="updateAvailable">
+                <span class="flex items-center gap-1 text-sakura-600 dark:text-sakura-400">
+                    <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
+                    <span x-text="latestVersion"></span>
+                </span>
+            </template>
+        </div>
+
         <!-- 主题切换按钮 -->
         <button @click="theme = theme === 'light' ? 'dark' : 'light'"
                 class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
@@ -30,6 +46,27 @@
                 <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
             </svg>
         </button>
+
+        {% if current_user.get('role') == 'super_admin' %}
+        <!-- 应用重启（超级管理员专用） -->
+        <button type="button"
+                id="application-restart-button"
+                class="p-2 rounded-xl text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20 transition-colors"
+                title="{{ _('nav.restart_service') }}"
+                aria-label="{{ _('nav.restart_service') }}"
+                data-csrf-token="{{ csrf_token }}"
+                data-confirm-message="{{ _('nav.restart_confirm') }}"
+                data-confirm-warning="{{ _('nav.restart_warning') }}"
+                data-confirm-text="{{ _('nav.restart_action') }}"
+                data-restarting-label="{{ _('nav.restarting') }}"
+                data-success-message="{{ _('nav.restart_request_sent') }}"
+                data-failure-message="{{ _('nav.restart_failed') }}"
+                data-timeout-message="{{ _('nav.restart_timeout') }}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8 8 0 004.582 9m0 0H9m11 11v-5h-.581m0 0A8 8 0 014.582 15m15.356 0H15"/>
+            </svg>
+        </button>
+        {% endif %}
 
         <!-- 用户信息 -->
         <div class="flex items-center gap-2 ml-2">
@@ -61,3 +98,88 @@
         </form>
     </div>
 </nav>
+
+{% if current_user.get('role') == 'super_admin' %}
+<script>
+    (function () {
+        var restartButton = document.getElementById('application-restart-button');
+        if (!restartButton) return;
+
+        async function getHealth() {
+            var response = await fetch('/health', { cache: 'no-store' });
+            if (!response.ok) throw new Error('health check failed');
+            return response.json();
+        }
+
+        async function waitForApplicationRestart(previousStartupTime) {
+            var observedOffline = false;
+            var maxAttempts = 60;
+
+            for (var attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise(function (resolve) { window.setTimeout(resolve, 1000); });
+                try {
+                    var health = await getHealth();
+                    var startupChanged = Boolean(health.startup_time)
+                        && health.startup_time !== previousStartupTime;
+                    if (observedOffline || startupChanged) {
+                        window.location.reload();
+                        return;
+                    }
+                } catch (_error) {
+                    observedOffline = true;
+                }
+            }
+
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: { message: restartButton.dataset.timeoutMessage, type: 'warning', duration: 0 },
+            }));
+        }
+
+        restartButton.addEventListener('click', async function () {
+            var dialogEl = document.querySelector('[x-data="confirmDialog()"]');
+            if (!dialogEl || !window.Alpine) return;
+
+            var dialogData = Alpine.$data(dialogEl);
+            var confirmed = await dialogData.ask({
+                message: restartButton.dataset.confirmMessage,
+                warning: restartButton.dataset.confirmWarning,
+                confirmText: restartButton.dataset.confirmText,
+            });
+            if (!confirmed) return;
+
+            var originalHtml = restartButton.innerHTML;
+            restartButton.disabled = true;
+            restartButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                var previousHealth = await getHealth().catch(function () { return null; });
+                var response = await fetch('/system-config/restart', {
+                    method: 'POST',
+                    headers: { 'X-CSRF-Token': restartButton.dataset.csrfToken },
+                });
+                var result = await response.json().catch(function () { return {}; });
+                if (!response.ok || !result.success || !result.restarting) {
+                    throw new Error('restart request rejected');
+                }
+
+                restartButton.title = restartButton.dataset.restartingLabel;
+                restartButton.setAttribute('aria-label', restartButton.dataset.restartingLabel);
+                restartButton.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4Z"></path></svg>';
+                window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: { message: restartButton.dataset.successMessage, type: 'info', duration: 8000 },
+                }));
+                void waitForApplicationRestart(
+                    previousHealth ? previousHealth.startup_time : null,
+                );
+            } catch (_error) {
+                restartButton.disabled = false;
+                restartButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                restartButton.innerHTML = originalHtml;
+                window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: { message: restartButton.dataset.failureMessage, type: 'error', duration: 8000 },
+                }));
+            }
+        });
+    })();
+</script>
+{% endif %}

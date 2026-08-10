@@ -14,6 +14,7 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -217,15 +218,20 @@ class ProfessionalReviewAgent:
         user_guidance: str = "",
         cancel_check: Callable[[], bool] | None = None,
         guidance_callback: Callable[[], Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
+        model, context_window_tokens = await client.resolve_role_model_context(
+            config.agent_role
+        )
+        model = model or ""
         ctx = self._build_context(
             skills_context,
             github_repo=github_repo,
             sakura_ref=sakura_ref,
         )
-        tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
+        tool_schemas = get_tool_definitions("reviewer")
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_reviewer_max_tool_rounds",
         )
@@ -259,12 +265,6 @@ class ProfessionalReviewAgent:
 
         tool_calls_count = 0
         token_tracker = TokenTracker()
-
-        # 延迟导入：避免 agent_team → ai_reviewer → model_context 循环依赖
-        from backend.core.model_context import get_model_context_manager
-        from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
-
-        model_ctx_mgr = get_model_context_manager()
 
         for round_num in range(1, max_tool_rounds + 1):
             if cancel_check and cancel_check():
@@ -314,8 +314,8 @@ class ProfessionalReviewAgent:
                     pass
 
             model_messages = await AgentTeamContextCompressor(
-                target_model=config.review_model,
-                compressor_model=config.summary_model,
+                target_model=model,
+                context_window_tokens=context_window_tokens,
             ).build_model_messages(self.messages, token_tracker)
             await _publish_review_ai_request(
                 round_num,
@@ -324,19 +324,19 @@ class ProfessionalReviewAgent:
             )
             response = await client.call_with_retry(
                 messages=model_messages,
-                model=config.review_model,
-                temperature=max(config.temperature - 0.1, 0.0),
-                max_tokens=config.max_tokens,
+                model="",
                 timeout=config.timeout_seconds,
                 tools=tool_schemas,
                 tool_choice="auto",
+                role="agent_team",
+                cancel_event=cancel_event,
             )
             token_tracker.accumulate(response)
-
-            # 每轮记录上下文使用率
-            safe_ctx = model_ctx_mgr.calculate_safe_context(config.review_model, 0.8)
-            current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
-            token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
+            token_tracker.log_context_usage(
+                response,
+                context_window_tokens,
+                round_num,
+            )
 
             if not response.choices:
                 return ReviewResult(

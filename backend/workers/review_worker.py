@@ -8,9 +8,9 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import desc, select
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
     get_settings,
@@ -36,6 +36,11 @@ from backend.services.check_run_service import (
     ReviewRunKey,
 )
 from backend.services.comment_service import CommentService
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeAdmissionClosed,
+    ensure_background_admission,
+    register_background_task,
+)
 from backend.services.decision_engine import get_decision_engine
 from backend.services.label_service import label_service
 from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
@@ -82,6 +87,36 @@ def _get_label_rec_setting(key: str, default=None):
     except (OSError, AttributeError) as e:
         logger.debug("读取标签推荐配置 [{}] 失败，使用降级值: {}", key, e)
         return default
+
+
+def _make_label_event_callback(label_execution, task_id):
+    """构造标签推荐可观测回调，把请求/响应消息写入辅助 summary Thread。
+
+    Build a best-effort callback that persists label-recommendation message
+    events onto the auxiliary summary thread so the live activity monitor can
+    surface distinguishable "label recommendation request/response" cards.
+    Only ``message`` events are forwarded; observability write failures are
+    swallowed so they never break the label recommendation flow.
+    """
+    thread = label_execution.thread
+    work_unit = label_execution.work_unit
+    tool_service = label_execution.tool_service
+    lease = label_execution.lease
+
+    async def _callback(event_type, data):
+        if event_type != "message":
+            return
+        try:
+            await tool_service.append_conversation_message(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                message=data,
+                lease=lease,
+            )
+        except Exception as exc:
+            logger.debug("[{}] 标签推荐可观测回调失败: {}", task_id, exc)
+
+    return _callback
 
 
 def get_async_session():
@@ -136,6 +171,16 @@ class ReviewWorker:
         # Thread-safety: dict operations are atomic under GIL; asyncio.Event
         # is signal-only (set/check), safe for concurrent async coroutines.
         self._cancel_events: dict[str, asyncio.Event] = {}
+        # 任务阶段仅用于将 AI 审查预算与 GitHub reporting 收尾隔离：一旦审查
+        # 结果已落库并进入 reporting，整体 AI 审查预算不再中断发布收尾。
+        self._task_stages: dict[str, str] = {}
+        # The new observability admission/orchestration boundary is injected at
+        # the worker edge; legacy checkpoint objects remain compatibility-only.
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+
+        self.activity_integration = ActivityIntegrationService()
 
     def _normalize_review_result_for_diff(
         self,
@@ -179,16 +224,14 @@ class ReviewWorker:
         event_type: str,
         content: dict[str, Any] | None = None,
     ) -> None:
-        """记录审查活动事件（持久化 + SSE 推送）。review_id 为 None 时静默跳过。"""
-        if not review_id:
-            return
-        try:
-            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
-            from backend.services.activity_event_service import ActivityEventService
+        """Legacy activity event hook — now a no-op.
 
-            await ActivityEventService.log_event("pr", review_id, event_type, content)
-        except Exception as exc:
-            logger.debug("审查活动事件记录失败: {}", exc)
+        The new observability system (ActivityOutbox + user-scoped SSE, driven by
+        ``execution.finish`` and the Attempt observer) replaces the legacy
+        ``activity_events`` table and global ``activity:*`` SSE channel. Retained
+        as a shim so existing call sites remain harmless; it writes nothing.
+        """
+        return
 
     @staticmethod
     def _make_task_key(pr_info: dict[str, Any]) -> str:
@@ -245,9 +288,12 @@ class ReviewWorker:
                        submit_review_task to ensure a clean state before
                        the coroutine starts executing).
         """
+        if not hasattr(self, "_task_stages"):
+            self._task_stages = {}
         if force_new:
             event = asyncio.Event()
             self._cancel_events[task_key] = event
+            self._task_stages[task_key] = "reviewing"
             return event
         existing = self._cancel_events.get(task_key)
         if existing and not existing.is_set():
@@ -255,11 +301,23 @@ class ReviewWorker:
         # Always create a fresh event (covers: no existing, or stale set event)
         event = asyncio.Event()
         self._cancel_events[task_key] = event
+        self._task_stages[task_key] = "reviewing"
         return event
 
     def _unregister_task(self, task_key: str):
-        """Remove cancel event after task completes or fails"""
+        """Remove task state after task completes or fails."""
         self._cancel_events.pop(task_key, None)
+        getattr(self, "_task_stages", {}).pop(task_key, None)
+
+    def _mark_task_reporting(self, task_key: str) -> None:
+        """Mark that AI review results are durable and GitHub publication began."""
+        if not hasattr(self, "_task_stages"):
+            self._task_stages = {}
+        self._task_stages[task_key] = "reporting"
+
+    def is_task_reporting(self, task_key: str) -> bool:
+        """Return whether a task has entered the post-analysis reporting stage."""
+        return getattr(self, "_task_stages", {}).get(task_key) == "reporting"
 
     def cancel_task(self, task_key: str) -> bool:
         """Signal cancellation for a PR's review task(s). Called from webhook.
@@ -410,12 +468,35 @@ class ReviewWorker:
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
+        execution = None
+        execution_status = None
+        execution_target_status = None
         output_language = None  # 用户级输出语言；异常路径会复用该值
         head_sha = pr_info.get("head_sha")  # 审查绑定的 head；增量消费后切换到新 commit
         # try 外预初始化，防止异常路径（analyze_pr / _create_review_record 等早期失败）
         # 引用未定义的 check_run_stages，UnboundLocalError 会掩盖原始异常并跳过
         # 失败 Check Run / error_reference 收敛
         check_run_stages: list[str] = []
+
+        async def _finish_execution(
+            status: str, *, error_message: str | None = None
+        ) -> None:
+            """Best-effort finish; retain the status until the operation succeeds."""
+            nonlocal execution_status, execution_target_status
+            if execution is None or execution_status == status:
+                return
+            execution_target_status = status
+            try:
+                await execution.finish(status, error_message=error_message)
+            except Exception as exc:
+                logger.warning(
+                    "[{}] observability execution finish failed (status={}): {}",
+                    task_id,
+                    status,
+                    exc,
+                )
+                return
+            execution_status = status
 
         # Cancel event was already registered in submit_review_task
         # before asyncio.create_task, so cancel_task works immediately
@@ -441,6 +522,48 @@ class ReviewWorker:
                         output_language=output_language,
                         head_sha=head_sha,
                     )
+
+                # Admit and immediately start the new invocation lane.  Once
+                # admission succeeds, observability failures are fail-closed;
+                # never continue the external GitHub publication path as legacy.
+                admission = await self.activity_integration.admit(
+                    pr_info,
+                    trigger_kind=(
+                        "synchronize"
+                        if pr_info.get("action") == "synchronize"
+                        else "manual"
+                    ),
+                    delivery_id=pr_info.get("delivery_id"),
+                    actor_id=str(
+                        pr_info.get("user_id") or pr_info.get("sender") or "worker"
+                    ),
+                    manual_nonce=task_id,
+                    base_sha=pr_info.get("before") or pr_info.get("base_sha"),
+                    head_sha=pr_info.get("after") or head_sha,
+                )
+                role_snapshot = None
+                resolver = getattr(
+                    getattr(self.ai_reviewer, "api_client", None),
+                    "resolve_role_config_snapshot",
+                    None,
+                )
+                if resolver is not None:
+                    role_snapshot = await resolver("main")
+                execution = await self.activity_integration.start_execution(
+                    session_id=admission.session_id,
+                    trigger_ids=[admission.trigger_id],
+                    role_snapshot=role_snapshot,
+                    role="main",
+                    task_type="pr",
+                    task_id=None,
+                )
+                if getattr(execution, "merged", False):
+                    logger.info(
+                        "[{}] Trigger 已合并到正在运行的 Invocation {}，当前 Worker 不重复执行",
+                        task_id,
+                        execution.invocation_id,
+                    )
+                    return task_id
 
                 # 1. 分析PR
                 analysis = await self.analyzer.analyze_pr(pr_info)
@@ -492,10 +615,10 @@ class ReviewWorker:
                             reason=analysis.skip_reason or "",
                             output_language=skip_lang,
                         )
+                    await _finish_execution("completed")
                     return task_id
-
-                # Cancel checkpoint: before code indexing
                 if self._check_cancelled(task_key):
+                    await _finish_execution("cancelled")
                     return await self._cancel_and_cleanup(
                         task_id,
                         task_key,
@@ -695,6 +818,7 @@ class ReviewWorker:
 
                 # Cancel checkpoint: before PR summary and AI review
                 if self._check_cancelled(task_key):
+                    await _finish_execution("cancelled")
                     return await self._cancel_and_cleanup(
                         task_id,
                         task_key,
@@ -706,19 +830,7 @@ class ReviewWorker:
                         head_sha=head_sha,
                     )
 
-                # Refresh AI clients before auxiliary tasks that run ahead of
-                # review_pr_with_tools — the only internal refresh point of
-                # AIReviewer. PR summary / dependency graph / history-context
-                # services read self.ai_reviewer.summary_api_client directly,
-                # so without an explicit refresh here they reuse the client
-                # left over from the previous review. Changing the auxiliary
-                # (summary) provider/model in the WebUI then has no effect on
-                # these tasks: they keep calling the stale provider and the
-                # new model name is rejected as "model not found".
-                # 刷新 AI 客户端：辅助任务在 review_pr_with_tools 之前执行，
-                # 必须在此显式刷新，否则会复用上一次审查遗留的 summary_api_client
-                # （旧辅助模型 provider），导致 WebUI 即时修改辅助 AI 配置后，
-                # PR 总结 / 依赖图 / 历史上下文仍使用旧 provider 并报“找不到模型”。
+                # 保留刷新步骤以兼容长生命周期 AIReviewer，但不读取旧辅助配置。
                 self.ai_reviewer._refresh_ai_clients()
 
                 # 4.5 PR 变更总结（如果启用）
@@ -730,8 +842,8 @@ class ReviewWorker:
                         )
 
                         summary_service = PRSummaryService(
-                            self.ai_reviewer.summary_api_client,
-                            model=self.ai_reviewer.summary_model,
+                            self.ai_reviewer.api_client,
+                            model="",
                         )
                         if head_sha:
                             await self.check_run_service.report_stage_progress(
@@ -758,8 +870,8 @@ class ReviewWorker:
                         )
 
                         depgraph_service = PRDependencyGraphService(
-                            self.ai_reviewer.summary_api_client,
-                            model=self.ai_reviewer.summary_model,
+                            self.ai_reviewer.api_client,
+                            model="",
                         )
                         await depgraph_service.generate_dependency_graph(
                             analysis, pr_info, pr
@@ -966,6 +1078,7 @@ class ReviewWorker:
 
                 # Cancel checkpoint: before AI review (critical — most expensive step)
                 if self._check_cancelled(task_key):
+                    await _finish_execution("cancelled")
                     return await self._cancel_and_cleanup(
                         task_id,
                         task_key,
@@ -992,26 +1105,34 @@ class ReviewWorker:
                     )
                     check_run_stages.append("reviewing")
 
-                # 创建 activity checkpoint session（和 Agent Team 相同模式）
-                from backend.services.activity_checkpoint_service import (
-                    ActivityCheckpointService,
-                )
-
-                checkpoint = ActivityCheckpointService("pr", review_id)
-                act_session = await checkpoint.create_session(
-                    iteration_number=1,
-                    role_name="reviewer",
-                    model=settings.openai_model,
-                )
+                # 增量审查复用同一 PR 的长期 reviewer Thread：上一轮的 Canonical
+                # Message 天然累积在同一 Thread 中，本轮直接读取即可恢复完整对话
+                # 历史，无需再创建 per-run session 或跨 session 复制消息。
                 initial_messages: list[dict[str, Any]] = []
-                if analysis.is_incremental:
-                    initial_messages = await self._restore_incremental_activity_history(
-                        checkpoint,
-                        act_session,
-                        pr_info,
-                        review_id,
-                        task_id,
-                    )
+                if (
+                    execution is not None
+                    and execution.thread is not None
+                    and analysis.is_incremental
+                ):
+                    try:
+                        initial_messages = (
+                            await execution.tool_service.load_conversation_messages(
+                                execution.thread.id
+                            )
+                        )
+                        if initial_messages:
+                            logger.info(
+                                "[{}] 已恢复 reviewer Thread 历史: thread_id={} messages={}",
+                                task_id,
+                                execution.thread.id,
+                                len(initial_messages),
+                            )
+                    except Exception as restore_exc:
+                        logger.warning(
+                            "[{}] 恢复 reviewer 历史失败（继续当前增量上下文）: {}",
+                            task_id,
+                            restore_exc,
+                        )
 
                 from backend.services.pr_review_incremental_queue import (
                     PRReviewIncrementalQueueService,
@@ -1032,6 +1153,30 @@ class ReviewWorker:
                     )
                     if pending_incremental is None:
                         return None
+                    trigger_ids = list(
+                        getattr(
+                            pending_incremental,
+                            "observability_trigger_ids",
+                            None,
+                        )
+                        or []
+                    )
+                    pending_session_id = getattr(
+                        pending_incremental,
+                        "observability_session_id",
+                        None,
+                    )
+                    if trigger_ids:
+                        if pending_session_id is not None and int(
+                            pending_session_id
+                        ) != int(execution.session.id):
+                            raise RuntimeError(
+                                "pending incremental triggers belong to another session"
+                            )
+                        await execution.observability.merge_invocation_triggers(
+                            execution.invocation.id,
+                            trigger_ids,
+                        )
                     # 增量消费：PR head 已推进到新 commit。GitHub 不允许修改已创建
                     # check run 的 head_sha，因此收尾旧 head 的 check run（标注为被
                     # 增量取代），后续 report 切换到新 head，使审查完成 conclusion
@@ -1064,9 +1209,10 @@ class ReviewWorker:
                         )
                     return pending_incremental.message
 
-                # 构造事件回调：将 AI 审查过程中的消息通过 checkpoint 持久化
+                # 构造事件回调：将 AI 审查过程中的消息持久化到新可观测性 Canonical
+                # Transcript（同一 PR 的长期 reviewer Thread），替代旧 checkpoint 表。
                 async def _review_event_callback(event_type, data):
-                    """Mirrors ConversationCheckpointService usage pattern.
+                    """Persist reviewer dialogue onto the canonical thread.
 
                     额外处理 "progress" 事件（reviewer._run_tool_loop 每轮快照），
                     桥接到 Analysis Check；并累计 AI 工具调用次数。
@@ -1075,16 +1221,36 @@ class ReviewWorker:
                         pending_incremental, \
                         analysis_tool_call_count, \
                         last_analysis_snapshot
+                    if execution is None or execution.thread is None:
+                        return
                     try:
                         if event_type == "message":
-                            # data is the full message dict (assistant with tool_calls, or tool result)
-                            msg = await checkpoint.append_message(act_session.id, data)
-                            # For tool messages, mark the corresponding tool call
-                            if data.get("role") == "tool" and data.get("tool_call_id"):
-                                await checkpoint.mark_tool_call_completed(
-                                    act_session.id, data["tool_call_id"], msg.id
+                            origin_attempt_id = (
+                                getattr(
+                                    execution.observer,
+                                    "last_attempt_id",
+                                    None,
                                 )
-                            # 累计 AI 调用工具次数（assistant 带 tool_calls）
+                                if data.get("role") in {"assistant", "tool"}
+                                else None
+                            )
+                            msg = await execution.tool_service.append_conversation_message(
+                                thread_id=execution.thread.id,
+                                work_unit_id=execution.work_unit.id,
+                                message=data,
+                                origin_attempt_id=origin_attempt_id,
+                                lease=execution.lease,
+                            )
+                            if data.get("role") == "tool" and data.get("tool_call_id"):
+                                if execution.tool_service.is_failed_tool_result(data):
+                                    await execution.tool_service.mark_tool_execution_failed(
+                                        execution.work_unit.id,
+                                        data["tool_call_id"],
+                                    )
+                                else:
+                                    await execution.tool_service.mark_tool_execution_completed(
+                                        execution.work_unit.id, data["tool_call_id"]
+                                    )
                             if data.get("role") == "assistant" and data.get(
                                 "tool_calls"
                             ):
@@ -1097,7 +1263,7 @@ class ReviewWorker:
                                     await queue_service.mark_consumed(
                                         pending_incremental.queue_ids,
                                         review_id=review_id,
-                                        session_id=act_session.id,
+                                        session_id=execution.session.id,
                                         consumed_message_id=msg.id,
                                     )
                                     pending_incremental = None
@@ -1109,9 +1275,8 @@ class ReviewWorker:
                                     pending_incremental = None
                             return msg
                         elif event_type == "tool_running":
-                            # data is the tool_call_id string
-                            await checkpoint.mark_tool_call_running(
-                                act_session.id, data
+                            await execution.tool_service.mark_tool_execution_running(
+                                execution.work_unit.id, data
                             )
                         elif event_type == "progress":
                             # reviewer._run_tool_loop 本轮快照 → Analysis Check
@@ -1138,6 +1303,27 @@ class ReviewWorker:
 
                 # 检查是否启用标签推荐功能
                 enable_label_recommendation = _get_label_rec_setting("enabled", True)
+                label_execution = None
+                if enable_label_recommendation:
+                    try:
+                        summary_snapshot = (
+                            await resolver("summary") if resolver is not None else None
+                        )
+                        label_execution = (
+                            await self.activity_integration.start_auxiliary_execution(
+                                session_id=execution.session.id,
+                                invocation_id=execution.invocation.id,
+                                role="summary",
+                                role_snapshot=summary_snapshot,
+                                requirement="detached",
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[{}] 标签推荐可观测通道创建失败，继续执行但不记录该通道: {}",
+                            task_id,
+                            exc,
+                        )
 
                 # 根据配置决定是否使用AI工具
                 enable_tools = (
@@ -1164,17 +1350,31 @@ class ReviewWorker:
                                 else None
                             ),
                             initial_messages=initial_messages or None,
+                            cancel_event=self._cancel_events.get(task_key),
+                            invocation_context=execution.invocation_context,
+                            observer=execution.observer,
+                            publication_coordinator=execution.publication_coordinator,
                         )
                     )
                 else:
                     logger.info("[{}] 使用标准模式进行审查", task_id)
-                    tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
+                    tasks.append(
+                        self.ai_reviewer.review_pr(
+                            context,
+                            analysis.strategy,
+                            cancel_event=self._cancel_events.get(task_key),
+                            invocation_context=execution.invocation_context,
+                            observer=execution.observer,
+                            publication_coordinator=execution.publication_coordinator,
+                        )
+                    )
 
-                # 任务2: AI标签推荐（并行）
+                # 任务2: AI标签推荐
                 if enable_label_recommendation:
                     logger.info("[{}] 并行启动AI标签推荐...", task_id)
 
                     async def run_label_recommendation():
+                        label_status = "completed"
                         try:
                             # 获取仓库可用标签
                             available_labels = await label_service.get_repo_labels(
@@ -1190,12 +1390,34 @@ class ReviewWorker:
                                 )
                             )
 
+                            # 构造标签推荐可观测回调，把请求/响应写入辅助 summary
+                            # Thread，使实时监控可区分"标签推荐请求/响应"卡片。
+                            # Build a callback so the label recommendation
+                            # request/response land on the summary thread.
+                            label_callback = (
+                                _make_label_event_callback(label_execution, task_id)
+                                if label_execution is not None
+                                else None
+                            )
+
                             # AI推荐标签（传入已有标签）
                             recommendations = await self.ai_reviewer.recommend_labels(
                                 context,
                                 available_labels,
                                 pr_info,
                                 existing_labels=pr_existing_labels,
+                                invocation_context=(
+                                    label_execution.invocation_context
+                                    if label_execution is not None
+                                    else None
+                                ),
+                                observer=(
+                                    label_execution.observer
+                                    if label_execution is not None
+                                    else None
+                                ),
+                                event_callback=label_callback,
+                                propagate_errors=True,
                             )
 
                             if recommendations:
@@ -1228,13 +1450,34 @@ class ReviewWorker:
                                 logger.info("[{}] AI未推荐任何标签", task_id)
                                 return None
 
+                        except asyncio.CancelledError:
+                            label_status = "cancelled"
+                            raise
                         except Exception as label_error:
+                            label_status = "failed"
                             logger.warning(
                                 "[{}] 标签推荐失败（不影响审查）: {}",
                                 task_id,
                                 str(label_error),
                             )
                             return None
+                        finally:
+                            if label_execution is not None:
+                                try:
+                                    await label_execution.finish(
+                                        label_status,
+                                        error_message=(
+                                            "label recommendation failed"
+                                            if label_status == "failed"
+                                            else None
+                                        ),
+                                    )
+                                except Exception as finish_error:
+                                    logger.warning(
+                                        "[{}] 标签推荐可观测通道收尾失败: {}",
+                                        task_id,
+                                        finish_error,
+                                    )
 
                     tasks.append(run_label_recommendation())
 
@@ -1251,19 +1494,10 @@ class ReviewWorker:
                     )
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
-                    # 完成 checkpoint session
-                    await checkpoint.complete_session(act_session.id)
-                    await checkpoint.save_session_result(
-                        act_session.id,
-                        {
-                            "overall_score": review_result.get("overall_score"),
-                            "verdict": review_result.get("verdict", ""),
-                            "summary": str(review_result.get("summary", "")),
-                        },
-                    )
+                    # WorkUnit 终态由 execution.finish("completed") 统一收敛（见下方
+                    # 成功路径），审查结果摘要持久化在 PRReview 记录中。
                 else:
                     logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
-                    await checkpoint.fail_session(act_session.id, str(review_result))
                     raise review_result
 
                 # 获取标签推荐结果
@@ -1277,6 +1511,7 @@ class ReviewWorker:
                         label_results = results[1]
 
                 # 9. 【第二阶段】删除占位评论，准备创建最终Review
+                self._mark_task_reporting(task_key)
                 if review_obj:
                     logger.info("[{}] 删除占位评论...", task_id)
                     await self.comment_service.delete_placeholder_comment(review_obj)
@@ -1290,6 +1525,7 @@ class ReviewWorker:
                         completed_stages=list(check_run_stages),
                         output_language=output_language,
                     )
+                    check_run_stages.append("reporting")
                     # Analysis Check 定格（success）：进入 reporting 即审查分析完成。
                     # 仅工具模式（有 progress 快照）才 finalize；标准模式无 Analysis Check，
                     # 避免误建一个空壳 completed Analysis。
@@ -1351,6 +1587,7 @@ class ReviewWorker:
                     analysis,
                     label_results,
                     output_language=output_language,
+                    execution=execution,
                 )
 
                 # 11. 更新状态为完成
@@ -1464,7 +1701,17 @@ class ReviewWorker:
                                 review_id=review_id,
                             )
 
+                        ensure_background_admission("review_reflection")
                         task = asyncio.create_task(_reflect_with_history())
+                        try:
+                            register_background_task(task, "review_reflection")
+                        except DatabaseResetRuntimeAdmissionClosed:
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
+                            raise
                         self._background_tasks.add(task)
                         task.add_done_callback(self._background_tasks.discard)
                         logger.info("[{}] 已触发 .sakura/ 反思任务", task_id)
@@ -1478,12 +1725,32 @@ class ReviewWorker:
                 # 12. 发送Telegram审查完成通知
                 await self._send_review_complete_notification(pr_info, review_result)
 
+                await _finish_execution("completed")
+
                 logger.info(
                     f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
                     f"decision={decision.value if decision else 'N/A'}"
                 )
                 return task_id
 
+            except ReviewCancelledError:
+                # AI 工具循环 / 退避等待响应了外部取消信号（如 PR 关闭）：
+                # 复用 _cancel_and_cleanup 走 CANCELLED 收尾（删占位评论 +
+                # 状态置 CANCELLED + Check Run 置 cancelled），避免被通用
+                # except Exception 当作 FAILED 处理。
+                execution_target_status = "cancelled"
+                await self._cancel_and_cleanup(
+                    task_id,
+                    task_key,
+                    review_obj,
+                    review_id,
+                    "AI 审查被外部取消",
+                    pr_info=pr_info,
+                    output_language=output_language,
+                    head_sha=head_sha,
+                )
+                await _finish_execution("cancelled")
+                return task_id
             except Exception as e:
                 logger.error(
                     "[{}] 处理审查任务时出错: {}",
@@ -1562,10 +1829,12 @@ class ReviewWorker:
                     await self._save_error_record(pr_info, str(e), task_id)
                 except Exception as save_error:
                     logger.error("保存错误记录失败: {}", str(save_error))
+                await _finish_execution("failed", error_message=str(e))
                 raise
             except asyncio.CancelledError:
                 # 超时（_run_review_task_with_timeout 的 wait_for）或外部取消：
                 # except Exception 不接 CancelledError，需单独收尾 review 状态，防止僵尸。
+                execution_target_status = "cancelled"
                 if review_id:
                     try:
                         await self._update_review_status(review_id, PRStatus.FAILED)
@@ -1603,80 +1872,20 @@ class ReviewWorker:
                     )
                     if review_id:
                         await self._persist_error_reference(review_id, _error_reference)
+                await _finish_execution("cancelled")
                 raise
             finally:
+                if execution is not None and execution_status is None:
+                    await _finish_execution(
+                        execution_target_status or "failed",
+                        error_message=(
+                            "execution terminated without a terminal status"
+                            if execution_target_status is None
+                            else None
+                        ),
+                    )
                 # Always unregister task to clean up cancel event
                 self._unregister_task(task_key)
-
-    async def _find_previous_completed_review(
-        self,
-        pr_info: dict[str, Any],
-        current_review_id: int,
-    ) -> PRReview | None:
-        pr_id = pr_info.get("pr_id")
-        if pr_id is None:
-            return None
-
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            result = await session.execute(
-                select(PRReview)
-                .where(
-                    PRReview.repo_owner == pr_info["repo_owner"],
-                    PRReview.repo_name == pr_info["repo_name"],
-                    PRReview.pr_id == pr_id,
-                    PRReview.id != current_review_id,
-                    PRReview.status == PRStatus.COMPLETED.value,
-                )
-                .order_by(desc(PRReview.completed_at), desc(PRReview.id))
-            )
-            return result.scalars().first()
-
-    async def _restore_incremental_activity_history(
-        self,
-        checkpoint,
-        act_session,
-        pr_info: dict[str, Any],
-        review_id: int,
-        task_id: str,
-    ) -> list[dict[str, Any]]:
-        previous_review = await self._find_previous_completed_review(
-            pr_info,
-            review_id,
-        )
-        if previous_review is None:
-            logger.info(
-                "[{}] 增量审查未找到上一轮已完成 PRReview，使用当前增量上下文",
-                task_id,
-            )
-            return []
-
-        source_session = await checkpoint.get_latest_completed_session(
-            source_task_id=previous_review.id,
-            role_name="reviewer",
-        )
-        if source_session is None:
-            logger.info(
-                "[{}] 上一轮 PRReview({}) 没有 completed reviewer session",
-                task_id,
-                previous_review.id,
-            )
-            return []
-
-        messages = await checkpoint.load_messages(source_session.id)
-        copied = await checkpoint.copy_messages_to_session(
-            source_session.id,
-            act_session.id,
-            messages=messages,
-        )
-        logger.info(
-            "[{}] 已恢复上一轮 reviewer 会话: review_id={} session_id={} messages={}",
-            task_id,
-            previous_review.id,
-            source_session.id,
-            copied,
-        )
-        return messages
 
     async def _fetch_reflection_history_summary(
         self,
@@ -1696,8 +1905,8 @@ class ReviewWorker:
             from backend.services.history_context_service import HistoryContextService
 
             history_service = HistoryContextService(
-                self.ai_reviewer.summary_api_client,
-                model=self.ai_reviewer.summary_model,
+                self.ai_reviewer.api_client,
+                model="",
             )
             return await history_service.fetch_history_summary(
                 pr_id=analysis.pr_id,
@@ -1753,6 +1962,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=analysis.pr_id,
+                    pr_number=analysis.pr_number,
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],
@@ -1891,6 +2101,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=analysis.pr_id,
+                    pr_number=analysis.pr_number,
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],
@@ -1919,6 +2130,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=pr_info["pr_id"],
+                    pr_number=pr_info["pr_number"],
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],
@@ -1948,7 +2160,8 @@ class ReviewWorker:
         analysis: PRAnalysis,
         label_results: dict[str, Any] | None = None,
         output_language: str | None = None,
-    ) -> tuple[ReviewDecision | None, str | None]:
+        execution: Any = None,
+    ) -> tuple[ReviewDecision | None, str | None, dict[str, Any] | None]:
         """做出审查决定并提交到GitHub（包含行内评论）
 
         Args:
@@ -2066,62 +2279,81 @@ class ReviewWorker:
                 )
                 review_event = "COMMENT"
 
-            for attempt in range(max_retries + 1):
-                _submit_result = await asyncio.to_thread(
-                    self.github_app.submit_review_with_inline_comments,
-                    repo_owner=pr_info["repo_owner"],
-                    repo_name=pr_info["repo_name"],
-                    pr_number=pr_info["pr_number"],
-                    event=review_event,
-                    body=review_body,
+            activity_result_id = review_result.get("_activity_result_id")
+            if execution is not None and isinstance(activity_result_id, int):
+                success, _submit_result = await self._publish_review_with_observability(
+                    execution=execution,
+                    result_id=activity_result_id,
+                    pr_info=pr_info,
+                    review_event=review_event,
+                    review_body=review_body,
                     inline_comments=inline_comments,
                     bot_username=bot_username,
-                    enable_idempotency_check=enable_idempotency,
                 )
-                # 兼容旧 bool 返回
-                if isinstance(_submit_result, bool):
-                    _submit_result = {
-                        "success": _submit_result,
-                        "inline_published": len(inline_comments)
-                        if _submit_result
-                        else 0,
-                        "fallback_body_only": False,
-                    }
-                success = _submit_result["success"]
-
-                if success:
-                    break  # 成功，退出重试循环
-
-                if attempt < max_retries:
-                    logger.warning(
-                        f"[{task_id}] 第 {attempt + 1} 次提交Review失败，1秒后重试..."
+            else:
+                for attempt in range(max_retries + 1):
+                    _submit_result = await asyncio.to_thread(
+                        self.github_app.submit_review_with_inline_comments,
+                        repo_owner=pr_info["repo_owner"],
+                        repo_name=pr_info["repo_name"],
+                        pr_number=pr_info["pr_number"],
+                        event=review_event,
+                        body=review_body,
+                        inline_comments=inline_comments,
+                        bot_username=bot_username,
+                        enable_idempotency_check=enable_idempotency,
                     )
-                    await asyncio.sleep(1)
+                    # 兼容旧 bool 返回
+                    if isinstance(_submit_result, bool):
+                        _submit_result = {
+                            "success": _submit_result,
+                            "inline_published": len(inline_comments)
+                            if _submit_result
+                            else 0,
+                            "fallback_body_only": False,
+                        }
+                    success = _submit_result["success"]
 
-            # 最终兜底：带行内评论的 Review 提交失败时，尝试仅提交 Review Body
-            if not success and inline_comments:
-                logger.warning(
-                    f"[{task_id}] 带行内评论的Review提交失败，尝试仅提交Review Body..."
-                )
-                success = self.github_app.submit_review(
-                    repo_owner=pr_info["repo_owner"],
-                    repo_name=pr_info["repo_name"],
-                    pr_number=pr_info["pr_number"],
-                    event=review_event,
-                    body=review_body,
-                    bot_username=bot_username,
-                    enable_idempotency_check=enable_idempotency,
-                )
-                if success:
-                    # submit_review 仅提交 body，inline 评论未发布 → fallback 语义
-                    _submit_result = {
-                        "success": True,
-                        "inline_published": 0,
-                        "fallback_body_only": True,
-                    }
-                    logger.info("[{}] ✅ 降级成功: 已提交无行内评论的Review", task_id)
-                else:
-                    logger.error("[{}] 重试 {} 次后仍然失败", task_id, max_retries)
+                    if success:
+                        break  # 成功，退出重试循环
+
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"[{task_id}] 第 {attempt + 1} 次提交Review失败，1秒后重试..."
+                        )
+                        await asyncio.sleep(1)
+
+                # 最终兜底：带行内评论的 Review 提交失败时，尝试仅提交 Review Body
+                if not success and inline_comments:
+                    logger.warning(
+                        f"[{task_id}] 带行内评论的Review提交失败，尝试仅提交Review Body..."
+                    )
+                    success = self.github_app.submit_review(
+                        repo_owner=pr_info["repo_owner"],
+                        repo_name=pr_info["repo_name"],
+                        pr_number=pr_info["pr_number"],
+                        event=review_event,
+                        body=review_body,
+                        bot_username=bot_username,
+                        enable_idempotency_check=enable_idempotency,
+                    )
+                    if success:
+                        # submit_review 仅提交 body，inline 评论未发布 → fallback 语义
+                        _submit_result = {
+                            "success": True,
+                            "inline_published": 0,
+                            "fallback_body_only": True,
+                        }
+                        logger.info(
+                            "[{}] ✅ 降级成功: 已提交无行内评论的Review",
+                            task_id,
+                        )
+                    else:
+                        logger.error(
+                            "[{}] 重试 {} 次后仍然失败",
+                            task_id,
+                            max_retries,
+                        )
 
             if success:
                 if inline_comments:
@@ -2163,6 +2395,85 @@ class ReviewWorker:
             logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {e!s}", None
+
+    async def _publish_review_with_observability(
+        self,
+        *,
+        execution: Any,
+        result_id: int,
+        pr_info: dict[str, Any],
+        review_event: str,
+        review_body: str,
+        inline_comments: list[dict[str, Any]],
+        bot_username: str | None,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Publish exactly once under the authoritative Publication state machine."""
+        external_key = (
+            f"pr-review-{execution.session.id}-"
+            f"{execution.invocation.id}-{execution.work_unit.id}"
+        )
+        publication = await execution.publication_service.create_pending(
+            result_id,
+            "pr_review",
+            external_key,
+        )
+        resource_identity = {
+            "source_system_instance": pr_info.get(
+                "source_system_instance", "github.com"
+            ),
+            "repository_external_id": pr_info.get(
+                "repository_external_id", pr_info.get("repo_full_name", "")
+            ),
+            "resource_type": "pr",
+            "resource_number": str(pr_info["pr_number"]),
+        }
+        captured: dict[str, Any] = {}
+
+        async def _sender(
+            _kind: str,
+            body_with_marker: str,
+            _resource_identity: dict[str, Any],
+        ) -> Any:
+            response = await asyncio.to_thread(
+                self.github_app.submit_review_with_inline_comments,
+                repo_owner=pr_info["repo_owner"],
+                repo_name=pr_info["repo_name"],
+                pr_number=pr_info["pr_number"],
+                event=review_event,
+                body=body_with_marker,
+                inline_comments=inline_comments,
+                bot_username=bot_username,
+                # The Publication marker and state machine are authoritative.
+                enable_idempotency_check=False,
+                raise_on_error=True,
+            )
+            if isinstance(response, dict):
+                captured.update(response)
+            elif isinstance(response, bool):
+                captured["success"] = response
+            return response
+
+        terminal = await execution.publication_service.send(
+            publication.id,
+            body=review_body,
+            sender=_sender,
+            resource_identity=resource_identity,
+        )
+        succeeded = terminal.status == "succeeded"
+        if succeeded and not captured:
+            captured.update(
+                {
+                    "success": True,
+                    "inline_published": len(inline_comments),
+                    "fallback_body_only": False,
+                    "skipped_existing": True,
+                }
+            )
+        else:
+            captured.setdefault("success", succeeded)
+            captured.setdefault("inline_published", 0)
+            captured.setdefault("fallback_body_only", False)
+        return succeeded, captured
 
     async def _send_review_complete_notification(
         self, pr_info: dict[str, Any], review_result: dict[str, Any]
@@ -2239,13 +2550,22 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
         str: Task key in format "owner/repo#pr_number", used for cancellation.
              The internal task_id (short UUID) is logged by process_review_task.
     """
+    ensure_background_admission("review")
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
 
-    # 在生产环境中，这里应该提交到Celery队列
-    # 为了简化，我们直接异步执行，并保留后台任务引用避免被 GC。
+    # 直接异步执行，并保留后台任务引用避免被 GC。
     task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    try:
+        register_background_task(task, "review")
+    except DatabaseResetRuntimeAdmissionClosed:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise
     worker._background_tasks.add(task)
     task.add_done_callback(worker._background_tasks.discard)
 
@@ -2253,43 +2573,66 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
     return task_key
 
 
-async def process_review_task_sync(pr_info: dict[str, Any]) -> str:
-    """同步处理审查任务（用于Celery Worker）"""
-    worker = get_worker()
-    task_key = ReviewWorker._make_task_key(pr_info)
-    worker._register_task(task_key, force_new=True)
-    return await _run_review_task_with_timeout(worker, pr_info, task_key)
-
-
 async def _run_review_task_with_timeout(
     worker: ReviewWorker,
     pr_info: dict[str, Any],
     task_key: str,
 ) -> str:
-    """按配置限制单个审查任务的整体执行时间"""
+    """按配置限制 AI 审查阶段，允许已开始的 reporting 完成收尾。"""
     timeout_seconds = get_settings().review_timeout_seconds
+    review_task = asyncio.create_task(worker.process_review_task(pr_info))
+    try:
+        register_background_task(review_task, "review_process")
+    except DatabaseResetRuntimeAdmissionClosed:
+        review_task.cancel()
+        try:
+            await review_task
+        except asyncio.CancelledError:
+            pass
+        raise
     try:
         result = await asyncio.wait_for(
-            worker.process_review_task(pr_info),
+            asyncio.shield(review_task),
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:
-        worker.cancel_task(task_key)
-        task_id = "timeout"
-        message = f"审查任务超时（{timeout_seconds}秒）"
-        logger.error(
-            "{}: {}",
-            message,
-            task_key,
-        )
-        try:
-            await worker._save_error_record(pr_info, message, task_id)
-        except Exception as save_error:
-            logger.error(
-                "保存超时错误记录失败: {}",
-                str(save_error),
+        is_reporting = getattr(worker, "is_task_reporting", lambda _key: False)
+        if is_reporting(task_key):
+            logger.warning(
+                "审查 AI 阶段已在 {} 秒预算内完成，继续等待 reporting 收尾: {}",
+                timeout_seconds,
+                task_key,
             )
-        raise RuntimeError(f"{message}: {task_key}") from exc
+            result = await review_task
+        else:
+            worker.cancel_task(task_key)
+            review_task.cancel()
+            try:
+                await review_task
+            except asyncio.CancelledError:
+                pass
+            task_id = "timeout"
+            message = f"审查任务超时（{timeout_seconds}秒）"
+            logger.error(
+                "{}: {}",
+                message,
+                task_key,
+            )
+            try:
+                await worker._save_error_record(pr_info, message, task_id)
+            except Exception as save_error:
+                logger.error(
+                    "保存超时错误记录失败: {}",
+                    str(save_error),
+                )
+            raise RuntimeError(f"{message}: {task_key}") from exc
+    except asyncio.CancelledError:
+        review_task.cancel()
+        try:
+            await review_task
+        except asyncio.CancelledError:
+            pass
+        raise
 
     # 兜底：非增量审查顺利完成后，若仍有 pending 增量（审查期间到达的新提交，
     # 本次未消费），触发一个增量审查去消费。此时 process_review_task 的 finally

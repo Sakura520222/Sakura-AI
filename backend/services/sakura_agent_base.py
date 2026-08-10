@@ -9,6 +9,7 @@ import json
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 # ── 共享工具定义（OpenAI Function Calling 格式） ──────────────────────────
@@ -140,6 +141,7 @@ class SakuraAgentBase:
         model: str,
         max_iterations: int,
         initial_user_message: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
         messages: list = [{"role": "system", "content": system_prompt}]
         if initial_user_message:
@@ -147,15 +149,22 @@ class SakuraAgentBase:
         tools = self._get_tools()
 
         for i in range(max_iterations):
+            # 取消信号：外部取消已触发时立即中止 Agent 会话
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
             try:
                 response = await self._api_client.call_with_retry(
                     messages=messages,
-                    model=model,
+                    model="",
                     tools=tools,
                     tool_choice="auto",
                     temperature=0.3,
                     max_tokens=4096,
+                    role="main",
+                    cancel_event=cancel_event,
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as e:
                 logger.error(
                     "{} LLM 调用失败 (iteration {}): {}", self.log_prefix, i, e
@@ -166,12 +175,16 @@ class SakuraAgentBase:
                 logger.warning("{} LLM 返回空响应 (iteration {})", self.log_prefix, i)
                 return
 
-            choice = response.choices[0]
-            msg = choice.message
-
-            if choice.finish_reason == "tool_calls" and msg.tool_calls:
-                messages.append(msg)
-                for tc in msg.tool_calls:
+            if response.tool_calls:
+                assistant_message = {
+                    "role": "assistant",
+                    "content": response.content,
+                    "tool_calls": response.tool_calls,
+                }
+                if response.reasoning_content:
+                    assistant_message["reasoning_content"] = response.reasoning_content
+                messages.append(assistant_message)
+                for tc in response.tool_calls:
                     tool_name = tc.function.name
                     try:
                         args_raw = (
@@ -208,7 +221,12 @@ class SakuraAgentBase:
                     )
 
                     messages.append(
-                        {"role": "tool", "content": result, "tool_call_id": tc.id}
+                        {
+                            "role": "tool",
+                            "content": result,
+                            "tool_call_id": tc.id,
+                            "name": tool_name,
+                        }
                     )
                 continue
 
@@ -216,7 +234,7 @@ class SakuraAgentBase:
                 "{} 会话结束 (iteration {}): {}",
                 self.log_prefix,
                 i,
-                (msg.content or "")[:200],
+                (response.content or "")[:200],
             )
             return
 
