@@ -27,7 +27,7 @@ APScheduler>=3.11.3
 typing-extensions>=4.5.0
 pyyaml>=6.0.1
 pydantic>=2.5.3
-pydantic-settings>=2.1.0
+pydantic-settings>=2.14.2
 
 # 日志
 loguru>=0.7.3
