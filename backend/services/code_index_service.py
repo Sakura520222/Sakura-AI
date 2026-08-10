@@ -148,7 +148,8 @@ class CodeIndexService:
                         await self._cleanup_stale_file_chunks(repo_full_name, file_path)
 
                     # 解析代码
-                    chunks = self.parser.parse_code_file(
+                    chunks = await asyncio.to_thread(
+                        self.parser.parse_code_file,
                         file_path=file_path,
                         content=content,
                         repo_full_name=repo_full_name,
@@ -271,7 +272,11 @@ class CodeIndexService:
             for file_path in code_files:
                 try:
                     full_path = repo_path_obj / file_path
-                    content = full_path.read_text(encoding="utf-8", errors="ignore")
+                    content = await asyncio.to_thread(
+                        full_path.read_text,
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
 
                     # 计算文件Hash
                     file_hash = hashlib.sha256(content.encode()).hexdigest()
@@ -295,7 +300,8 @@ class CodeIndexService:
                         )
 
                     # 解析代码
-                    chunks = self.parser.parse_code_file(
+                    chunks = await asyncio.to_thread(
+                        self.parser.parse_code_file,
                         file_path=str(file_path),
                         content=content,
                         repo_full_name=repo_full_name,
@@ -531,7 +537,11 @@ class CodeIndexService:
                         skipped_count += 1
                         continue
 
-                    content = full_path.read_text(encoding="utf-8", errors="ignore")
+                    content = await asyncio.to_thread(
+                        full_path.read_text,
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
                     file_hash = hashlib.sha256(content.encode()).hexdigest()
 
                     # 检查是否需要索引
@@ -551,7 +561,8 @@ class CodeIndexService:
                         await self._cleanup_stale_file_chunks(repo_full_name, file_path)
 
                     # 解析代码
-                    chunks = self.parser.parse_code_file(
+                    chunks = await asyncio.to_thread(
+                        self.parser.parse_code_file,
                         file_path=file_path,
                         content=content,
                         repo_full_name=repo_full_name,

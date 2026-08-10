@@ -4,6 +4,7 @@
 类似于 grep 搜索，返回所有匹配的文件和行内容。
 """
 
+import asyncio
 from typing import Any
 from urllib.parse import urlencode
 
@@ -64,6 +65,37 @@ BINARY_EXTENSIONS = frozenset(
 )
 
 
+def _scan_content(
+    file_path: str,
+    decoded_content: bytes,
+    keyword_lower: str,
+    context_lines: int,
+) -> dict[str, Any] | None:
+    """同步解码并搜索关键词匹配（纯 CPU，线程安全，供 to_thread 调用）。
+
+    Args:
+        file_path: 文件路径
+        decoded_content: 原始字节内容
+        keyword_lower: 小写关键词
+        context_lines: 上下文行数
+
+    Returns:
+        匹配结果字典；无匹配返回 None
+    """
+    decoded = decoded_content.decode("utf-8")
+    lines = decoded.split("\n")
+    matches = [idx for idx, line in enumerate(lines) if keyword_lower in line.lower()]
+    if not matches:
+        return None
+    numbered_content = format_search_results(lines, matches, context_lines)
+    return {
+        "file_path": file_path,
+        "content": numbered_content,
+        "match_count": len(matches),
+        "total_lines": len(lines),
+    }
+
+
 class SearchFilesToolHandler:
     """跨文件搜索工具处理器
 
@@ -85,6 +117,7 @@ class SearchFilesToolHandler:
             "skip_binary": search_config.get("skip_binary", True),
             "use_search_api": search_config.get("use_search_api", True),
             "max_files_to_search": int(search_config.get("max_files_to_search", 100)),
+            "concurrency": max(1, int(search_config.get("concurrency", 8))),
         }
 
     async def search_in_files(
@@ -350,72 +383,71 @@ class SearchFilesToolHandler:
         # COMPAT: repo._requester 是 PyGithub 私有 API，升级 PyGithub 时需验证兼容性
         encoded_query = urlencode({"q": query})
         requester = repo._requester
-        _, data = requester.requestJsonAndCheck("GET", f"/search/code?{encoded_query}")
+        # 同步 HTTP 调用放入线程池，避免阻塞事件循环
+        _, data = await asyncio.to_thread(
+            requester.requestJsonAndCheck,
+            "GET",
+            f"/search/code?{encoded_query}",
+        )
 
-        all_results: list[dict[str, Any]] = []
         keyword_lower = keyword.lower()
-        files_searched = 0
-        fetch_failures = 0
 
+        # 过滤候选文件（skip_paths / 二进制）/ Filter candidates
+        candidates: list[str] = []
         for item in data.get("items", []):
-            if len(all_results) >= effective_max_results:
-                break
-
             file_path = item.get("path", "")
-
-            # 跳过 skip_paths / Skip paths in skip list
             if path_matches_skip(file_path, skip_paths):
                 continue
-
-            # 跳过二进制文件 / Skip binary files
             if skip_binary:
                 _, ext = (
                     file_path.rsplit(".", 1) if "." in file_path else (file_path, "")
                 )
                 if f".{ext}" in BINARY_EXTENSIONS:
                     continue
+            candidates.append(file_path)
 
-            files_searched += 1
+        # 并发 get_contents + 搜索；信号量限流避免触发 GitHub 次级速率限制
+        # Concurrent fetch + search; semaphore caps in-flight requests
+        concurrency = self._get_config()["concurrency"]
+        sem = asyncio.Semaphore(concurrency)
 
-            try:
-                # 获取文件内容 / Fetch file content
-                content_file = repo.get_contents(file_path, ref)
+        async def _fetch_and_match(
+            file_path: str,
+        ) -> tuple[str, dict[str, Any] | None, bool]:
+            """返回 (file_path, 匹配结果或 None, 是否读取失败)。"""
+            async with sem:
+                try:
+                    content_file = await asyncio.to_thread(
+                        repo.get_contents, file_path, ref
+                    )
+                except Exception as e:
+                    logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
+                    return (file_path, None, True)
 
-                if content_file.size > MAX_FILE_SIZE_BYTES:
-                    continue
+            if content_file.size > MAX_FILE_SIZE_BYTES:
+                return (file_path, None, False)
+            decoded_content = content_file.decoded_content
+            if decoded_content is None:
+                return (file_path, None, False)
 
-                decoded_content = content_file.decoded_content
-                if decoded_content is None:
-                    continue
-                decoded = decoded_content.decode("utf-8")
-                lines = decoded.split("\n")
+            result = await asyncio.to_thread(
+                _scan_content,
+                file_path,
+                decoded_content,
+                keyword_lower,
+                effective_context_lines,
+            )
+            return (file_path, result, False)
 
-                # 搜索匹配行 / Search for matching lines
-                matches: list[int] = []
-                for idx, line in enumerate(lines):
-                    if keyword_lower in line.lower():
-                        matches.append(idx)
+        raw_results = await asyncio.gather(
+            *[_fetch_and_match(fp) for fp in candidates]
+        )
 
-                if not matches:
-                    continue
-
-                numbered_content = format_search_results(
-                    lines, matches, effective_context_lines
-                )
-
-                all_results.append(
-                    {
-                        "file_path": file_path,
-                        "content": numbered_content,
-                        "match_count": len(matches),
-                        "total_lines": len(lines),
-                    }
-                )
-
-            except Exception as e:
-                logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
-                fetch_failures += 1
-                continue
+        files_searched = len(candidates)
+        fetch_failures = sum(1 for _, _, failed in raw_results if failed)
+        all_results: list[dict[str, Any]] = [
+            r for _, r, _ in raw_results if r is not None
+        ]
 
         # ref 不可访问检测 / Ref-inaccessible detection
         # Search API 找到匹配文件但全部 get_contents 失败，通常意味着 ref 无效，
@@ -490,9 +522,11 @@ class SearchFilesToolHandler:
         Returns:
             搜索结果字典
         """
-        # 获取完整文件树 / Get full file tree
+        # 获取完整文件树 / Get full file tree（同步调用放入线程池）
         try:
-            tree = repo.get_git_tree(sha=ref, recursive=True)
+            tree = await asyncio.to_thread(
+                repo.get_git_tree, sha=ref, recursive=True
+            )
         except Exception as e:
             logger.error(f"获取仓库文件树失败: {e}", exc_info=True)
             return {
@@ -532,62 +566,54 @@ class SearchFilesToolHandler:
 
             candidate_files.append(path)
 
+        # 截断到 max_files_to_search / Cap candidates before concurrent fetch
+        if len(candidate_files) > max_files_to_search:
+            logger.debug(
+                f"候选文件 {len(candidate_files)} 超过 "
+                f"max_files_to_search={max_files_to_search}，截断"
+            )
+            candidate_files = candidate_files[:max_files_to_search]
+
         logger.debug(f"跨文件搜索 '{keyword}': 候选文件 {len(candidate_files)} 个")
 
-        # 逐文件搜索，带总数限制 / Per-file search with total limit
-        all_results: list[dict[str, Any]] = []
+        # 并发 get_contents + 搜索 / Concurrent fetch + search
         keyword_lower = keyword.lower()
-        files_scanned = 0
+        concurrency = self._get_config()["concurrency"]
+        sem = asyncio.Semaphore(concurrency)
 
-        for file_path in candidate_files:
-            if len(all_results) >= effective_max_results:
-                break
-            if files_scanned >= max_files_to_search:
-                logger.debug(
-                    f"已达到 max_files_to_search={max_files_to_search} 限制，停止扫描"
-                )
-                break
+        async def _fetch_and_match(
+            file_path: str,
+        ) -> dict[str, Any] | None:
+            """返回匹配结果字典；无匹配或读取失败返回 None。"""
+            async with sem:
+                try:
+                    content_file = await asyncio.to_thread(
+                        repo.get_contents, file_path, ref
+                    )
+                except Exception as e:
+                    logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
+                    return None
 
-            files_scanned += 1
+            if content_file.size > MAX_FILE_SIZE_BYTES:
+                return None
+            decoded_content = content_file.decoded_content
+            if decoded_content is None:
+                return None
 
-            try:
-                content_file = repo.get_contents(file_path, ref)
+            return await asyncio.to_thread(
+                _scan_content,
+                file_path,
+                decoded_content,
+                keyword_lower,
+                effective_context_lines,
+            )
 
-                # 跳过大文件 / Skip large files
-                if content_file.size > MAX_FILE_SIZE_BYTES:
-                    continue
+        raw_results = await asyncio.gather(
+            *[_fetch_and_match(fp) for fp in candidate_files]
+        )
 
-                decoded_content = content_file.decoded_content
-                if decoded_content is None:
-                    continue
-                content = decoded_content.decode("utf-8")
-                lines = content.split("\n")
-
-                # 搜索匹配行 / Search for matching lines
-                matches: list[int] = []
-                for idx, line in enumerate(lines):
-                    if keyword_lower in line.lower():
-                        matches.append(idx)
-
-                if not matches:
-                    continue
-
-                numbered_content = format_search_results(
-                    lines, matches, effective_context_lines
-                )
-
-                all_results.append(
-                    {
-                        "file_path": file_path,
-                        "content": numbered_content,
-                        "match_count": len(matches),
-                        "total_lines": len(lines),
-                    }
-                )
-
-            except Exception as e:
-                logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
-                continue
+        files_scanned = len(candidate_files)
+        all_results: list[dict[str, Any]] = [r for r in raw_results if r is not None]
 
         # 截断到 max_results / Truncate to max_results
         total_matches = sum(r["match_count"] for r in all_results)

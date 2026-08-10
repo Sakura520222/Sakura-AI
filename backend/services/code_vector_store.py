@@ -4,6 +4,7 @@
 与文档向量存储分离，使用独立的 Collection（添加 _code 后缀）
 """
 
+import asyncio
 import hashlib
 import re
 from pathlib import Path
@@ -112,7 +113,8 @@ class CodeVectorStore:
         try:
             collection_name = self._get_code_collection_name(repo_full_name)
 
-            collection = self.client.get_or_create_collection(
+            collection = await asyncio.to_thread(
+                self.client.get_or_create_collection,
                 name=collection_name,
                 metadata={
                     "repo_full_name": repo_full_name,
@@ -159,8 +161,9 @@ class CodeVectorStore:
             if all(e is None for e in embeddings):
                 embeddings = None
 
-            # 添加代码块
-            collection.add(
+            # 添加代码块（同步调用放入线程池）
+            await asyncio.to_thread(
+                collection.add,
                 ids=ids,
                 embeddings=embeddings,
                 documents=documents_text,
@@ -201,8 +204,9 @@ class CodeVectorStore:
         try:
             collection = await self.get_or_create_collection(repo_full_name)
 
-            # 执行检索
-            results = collection.query(
+            # 执行检索（同步调用放入线程池）
+            results = await asyncio.to_thread(
+                collection.query,
                 query_embeddings=[query_embedding],
                 n_results=top_k,
                 where=where,
@@ -244,20 +248,21 @@ class CodeVectorStore:
         try:
             collection = await self.get_or_create_collection(repo_full_name)
 
-            # 查询该文件的所有代码块ID
-            results = collection.get(
-                where={"file_path": file_path},
-                include=["documents"],
-            )
-
-            if results and results["ids"]:
-                collection.delete(ids=results["ids"])
-                logger.info(
-                    f"✅ 已删除文件 {file_path} 的 {len(results['ids'])} 个代码块"
+            # 查询并删除该文件的所有代码块（同步，合并到单次线程池调用）
+            def _delete_by_file() -> int:
+                results = collection.get(
+                    where={"file_path": file_path},
+                    include=["documents"],
                 )
-                return len(results["ids"])
+                if results and results["ids"]:
+                    collection.delete(ids=results["ids"])
+                    return len(results["ids"])
+                return 0
 
-            return 0
+            deleted = await asyncio.to_thread(_delete_by_file)
+            if deleted:
+                logger.info(f"✅ 已删除文件 {file_path} 的 {deleted} 个代码块")
+            return deleted
 
         except Exception as e:
             logger.error(
@@ -280,19 +285,20 @@ class CodeVectorStore:
         try:
             collection = await self.get_or_create_collection(repo_full_name)
 
-            results = collection.get(
-                where={"pr_number": str(pr_number)},
-                include=["documents"],
-            )
-
-            if results and results["ids"]:
-                collection.delete(ids=results["ids"])
-                logger.info(
-                    f"✅ 已删除 PR #{pr_number} 的 {len(results['ids'])} 个代码块"
+            def _delete_by_pr() -> int:
+                results = collection.get(
+                    where={"pr_number": str(pr_number)},
+                    include=["documents"],
                 )
-                return len(results["ids"])
+                if results and results["ids"]:
+                    collection.delete(ids=results["ids"])
+                    return len(results["ids"])
+                return 0
 
-            return 0
+            deleted = await asyncio.to_thread(_delete_by_pr)
+            if deleted:
+                logger.info(f"✅ 已删除 PR #{pr_number} 的 {deleted} 个代码块")
+            return deleted
 
         except Exception as e:
             logger.error(
@@ -313,7 +319,9 @@ class CodeVectorStore:
             collection_name = self._get_code_collection_name(repo_full_name)
 
             try:
-                self.client.delete_collection(name=collection_name)
+                await asyncio.to_thread(
+                    self.client.delete_collection, name=collection_name
+                )
                 await self.get_or_create_collection(repo_full_name)
                 logger.info(f"✅ 已清空代码Collection: {collection_name}")
                 return True
@@ -336,7 +344,7 @@ class CodeVectorStore:
         """
         try:
             collection = await self.get_or_create_collection(repo_full_name)
-            return collection.count()
+            return await asyncio.to_thread(collection.count)
         except Exception as e:
             logger.error(f"❌ 获取代码块数量失败 (repo: {repo_full_name}): {e}")
             return 0
@@ -366,8 +374,9 @@ class CodeVectorStore:
             if all(e is None for e in embeddings):
                 embeddings = None
 
-            # 使用 upsert 而非 add
-            collection.upsert(
+            # 使用 upsert 而非 add（同步调用放入线程池）
+            await asyncio.to_thread(
+                collection.upsert,
                 ids=ids,
                 embeddings=embeddings,
                 documents=documents_text,
