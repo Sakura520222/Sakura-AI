@@ -406,6 +406,11 @@ class PromptBuilder:
             "DESCRIPTION instead.",
             "- Do not include line numbers, code fences, context outside the range, "
             "or explanation inside SUGGESTION.",
+            "- Put the raw replacement code directly inside "
+            "<SUGGESTION>...</SUGGESTION>. Never wrap it in nested tags such as "
+            "<CONTENT>, <START_LINE>, or <END_LINE>; those are reserved protocol "
+            "field names, not suggestion containers, and their text would be "
+            "inserted verbatim into the code when the suggestion is applied.",
             "- Close every SUGGESTION block with </SUGGESTION> on its own line. When "
             "SUGGESTION holds multi-line replacement code, verify the closing tag is "
             "present before starting the next FINDING.",

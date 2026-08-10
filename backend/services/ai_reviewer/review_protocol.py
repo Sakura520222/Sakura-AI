@@ -71,6 +71,17 @@ class TaggedReviewParser:
         "DESCRIPTION",
         "SUGGESTION",
     }
+    # Some models wrap the SUGGESTION payload in a nested
+    # START_LINE/END_LINE/CONTENT block instead of raw replacement code. The
+    # reserved-tag guard in _consume_field only blocks bare tag lines, so the
+    # wrapped form leaks through verbatim and is rendered inside the GitHub
+    # suggestion block. Match the exact three-tag form and keep only CONTENT.
+    _nested_content_re = re.compile(
+        r"^\s*<START_LINE>[^\n]*</START_LINE>\s*\n"
+        r"\s*<END_LINE>[^\n]*</END_LINE>\s*\n"
+        r"\s*<CONTENT>(.*)</CONTENT>\s*$",
+        re.DOTALL,
+    )
 
     def parse(self, text: str) -> dict[str, Any]:
         if not isinstance(text, str) or not text.strip():
@@ -235,6 +246,14 @@ class TaggedReviewParser:
         if not title or not description:
             raise ReviewProtocolError("finding title and description must not be empty")
 
+        if suggestion_value.strip() == "NONE":
+            suggestion: str | None = None
+        else:
+            # Tolerate the model wrapping the code in a nested
+            # START_LINE/END_LINE/CONTENT block; unwrap to the CONTENT payload
+            # so the nested tags do not leak into the GitHub suggestion block.
+            suggestion = self._unwrap_nested_suggestion(suggestion_value)
+
         return TaggedFinding(
             severity=severity,
             file_path=file_path,
@@ -242,7 +261,7 @@ class TaggedReviewParser:
             end_line=end_line,
             title=title,
             description=description,
-            suggestion=None if suggestion_value.strip() == "NONE" else suggestion_value,
+            suggestion=suggestion,
         )
 
     def _consume_field(
@@ -380,6 +399,26 @@ class TaggedReviewParser:
         while body and not body[-1].strip():
             body.pop()
         return "\n".join(body)
+
+    @classmethod
+    def _unwrap_nested_suggestion(cls, value: str) -> str:
+        """Extract CONTENT payload when the model wraps SUGGESTION in nested tags.
+
+        Some models emit the replacement as ``<START_LINE>..<END_LINE>..<CONTENT>
+        code</CONTENT>`` instead of raw code. The guard in ``_consume_field`` only
+        blocks bare reserved-tag lines, so the wrapped form would survive verbatim
+        and be rendered inside the GitHub suggestion block (the START_LINE /
+        END_LINE / CONTENT tags showing up as literal text). When the exact
+        three-tag shape is present, keep only the CONTENT payload, preserving its
+        indentation so the one-click suggestion still aligns with the source.
+        """
+        match = cls._nested_content_re.match(value)
+        if not match:
+            return value
+        logger.warning(
+            "unwrapped nested START_LINE/END_LINE/CONTENT tags from SUGGESTION"
+        )
+        return cls._strip_blank_lines(match.group(1).splitlines())
 
     @staticmethod
     def _consume_block(
