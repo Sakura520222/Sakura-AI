@@ -78,6 +78,35 @@ def test_parses_complete_tagged_review(parser):
     )
 
 
+def test_unwraps_nested_start_end_content_tags_in_suggestion(parser):
+    """模型把代码包在 START_LINE/END_LINE/CONTENT 标签里时，提取 CONTENT。
+
+    回归真实部署场景：AI 在 <SUGGESTION> 内部嵌套 <START_LINE>/<END_LINE>/<CONTENT>，
+    解析器应提取 CONTENT 作为建议代码，不得让嵌套标签泄漏进 GitHub suggestion 块。
+    """
+    nested = (
+        "<START_LINE>1108</START_LINE>\n"
+        "<END_LINE>1108</END_LINE>\n"
+        "<CONTENT>"
+        "                        except (asyncio.CancelledError, ReviewCancelledError):"
+        "</CONTENT>"
+    )
+    result = parser.parse_review_result(
+        _review(findings=_finding(suggestion=nested)), "standard"
+    )
+
+    body = result["inline_comments"][0]["body"]
+    assert (
+        "```suggestion\n"
+        "                        except (asyncio.CancelledError, ReviewCancelledError):\n```"
+        in body
+    )
+    # 嵌套标签不得泄漏到 suggestion 块里
+    assert "<START_LINE>" not in body
+    assert "<END_LINE>" not in body
+    assert "<CONTENT>" not in body
+
+
 def test_accepts_single_line_text_fields_from_provider_xml_style(parser):
     text = """<SAKURA_REVIEW>
 <VERSION>1</VERSION>
