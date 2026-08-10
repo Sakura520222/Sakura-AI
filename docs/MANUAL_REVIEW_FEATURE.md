@@ -1,5 +1,11 @@
 # 手动触发审查功能说明
 
+> 超级管理员通过 Telegram Bot 手动触发 GitHub PR 的 AI 代码审查功能说明。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 ## 功能概述
 
 超级管理员可以通过 Telegram Bot 手动触发对任意 GitHub Pull Request 的 AI 代码审查。
@@ -28,7 +34,7 @@
 ## 权限要求
 
 - **仅超级管理员可用** (SUPER_ADMIN)
-- 超级管理员在 `.env` 文件的 `TELEGRAM_ADMIN_USER_IDS` 中配置
+- 超级管理员在 WebUI 配置管理的 `telegram_admin_user_ids` 动态键中配置（环境变量仅作启动默认值）
 - 超级管理员可以审查任何仓库，不受仓库白名单限制
 - 超级管理员不受配额限制
 
@@ -245,9 +251,7 @@ task_id = await submit_review_task(pr_info)
 
 2. **超级管理员配置**
 
-   ```env
-   TELEGRAM_ADMIN_USER_IDS=123456789,987654321
-   ```
+   在 WebUI 配置管理中设置动态配置键 `telegram_admin_user_ids`（逗号分隔多个 Telegram ID，如 `123456789,987654321`）；环境变量仅作启动默认值。
 
 3. **Telegram Bot 配置**
    - Bot Token 已配置
@@ -333,7 +337,7 @@ task_id = await submit_review_task(pr_info)
 
 - [Telegram Bot 设置](./TELEGRAM_SETUP.md)
 - [审查策略配置](../config/strategies.yaml)
-- [API 文档](../README.md)
+- [API v1 参考文档](api-v1-reference.md)
 
 ## 更新历史
 
@@ -342,3 +346,7 @@ task_id = await submit_review_task(pr_info)
   - 支持 URL 解析和 PR 信息获取
   - 完整的错误处理和用户反馈
   - 异步执行和 Telegram 通知
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

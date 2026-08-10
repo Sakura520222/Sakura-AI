@@ -1,5 +1,11 @@
 # Agent Skills 系统实现提取（Python 版参考）
 
+> 从 Claude Code Skills 系统提取的设计说明与 Python 参考实现，覆盖 Skill 加载、调用、搜索、权限与安全边界。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
 本文档提取当前仓库中 Claude Code 的 **Skills** 系统实现方式，并整理为适合 Python Agent 项目复刻的设计说明与参考代码。
 
 Skills 的本质不是“普通 prompt 模板文件”，而是一套建立在 `Command` 与 `Tool` 系统之上的可发现、可授权、可延迟加载、可动态激活、可作为子 Agent 执行的能力扩展机制。
@@ -1732,3 +1738,7 @@ SKILL.md -> SkillCommand -> SkillRegistry -> SkillTool -> meta user message -> A
 ```
 
 只要这条链路稳定，再逐步补上 bundled、MCP、hooks、fork、prefetch 等增强能力即可。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
