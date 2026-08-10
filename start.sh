@@ -80,33 +80,93 @@ wait_for_pid() {
 # deployment.env 权威部署状态文件路径（见 auto-update 设计 §9.5）
 DEPLOYMENT_ENV_FILE="$DEPLOY_DIR/deployment.env"
 
-# 首次启动时初始化部署状态：写入部署模式（source/image）与实际镜像引用。
-# - 已存在则不覆盖（updater 或之前初始化已写入）。
+# 首次启动时初始化部署状态：写入部署模式（source/image）、实际镜像引用
+# 与生产 MySQL 密码。密码只在首次创建 image deployment.env 时生成；
+# 已存在但缺密码的生产状态拒绝猜测/轮换，避免与已有 mysql_data 脱节。
+# - 已存在且包含密码则不覆盖（updater 或之前初始化已写入）。
 # - 写实际值（非 ${...} 表达式）：deployment.env 记录"当时实际选择的镜像"。
 # - durability：write temp → fsync(sync -d) → atomic mv，满足 spec §9.5。
 # - digest 具体化（:latest → :vX.Y.Z@sha256:...）留给 Slice 4 updater activate。
+generate_deployment_db_password() {
+    local generated=""
+    if command -v openssl >/dev/null 2>&1; then
+        generated="$(openssl rand -hex 32 2>/dev/null || true)"
+    elif command -v python3 >/dev/null 2>&1; then
+        generated="$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || true)"
+    elif command -v python >/dev/null 2>&1; then
+        generated="$(python -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || true)"
+    fi
+
+    if [[ ! "$generated" =~ ^[0-9a-f]{64}$ ]]; then
+        fail "无法生成 64 位十六进制 SAKURA_DB_PASSWORD；请安装 openssl 或 Python 3" >&2
+        return 1
+    fi
+    printf '%s' "$generated"
+}
+
 init_deployment_env() {
     local mode="source"
-    if $prod; then
+    if ${prod:-false}; then
         mode="image"
     fi
 
     if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        local persisted_mode=""
+        local persisted_password=""
+        local line
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            case "$line" in
+                SAKURA_DEPLOY_MODE=*) persisted_mode="${line#SAKURA_DEPLOY_MODE=}" ;;
+                SAKURA_DB_PASSWORD=*) persisted_password="${line#SAKURA_DB_PASSWORD=}" ;;
+            esac
+        done < "$DEPLOYMENT_ENV_FILE"
+
+        if [[ -n "$persisted_password" ]]; then
+            if [[ ! "$persisted_password" =~ ^[0-9a-f]{64}$ ]]; then
+                fail "deployment.env 中的 SAKURA_DB_PASSWORD 格式无效；拒绝启动以避免数据库凭据不一致" >&2
+                return 1
+            fi
+            chmod 600 "$DEPLOYMENT_ENV_FILE" || {
+                fail "无法将 deployment.env 权限收紧为 0600；拒绝启动以保护数据库凭据" >&2
+                return 1
+            }
+            return 0
+        fi
+
+        # source compose 不创建内置 MySQL，旧 source 状态可以继续运行。
+        # image/--prod 状态必须由管理员完成一次显式密码迁移，不能在已有
+        # mysql_data 上静默生成新密码，否则应用和数据库会立即失联。
+        if [[ "$persisted_mode" == "image" || "${prod:-false}" == "true" ]]; then
+            fail "现有 deployment.env 缺少 SAKURA_DB_PASSWORD；请先按 README 的 legacy 密码迁移步骤 ALTER USER，再写入同一 64 位十六进制密码" >&2
+            return 1
+        fi
         return 0
     fi
 
     mkdir -p "$DEPLOY_DIR"
     local tmp
     tmp="$DEPLOY_DIR/.deployment.env.$$"
+    local db_password=""
+    if [[ "$mode" == "image" ]]; then
+        db_password="$(generate_deployment_db_password)"
+    fi
     {
         echo "# Sakura AI 部署状态（由 start.sh 初始化；updater 接管后以 atomic write 维护）"
         echo "SAKURA_DEPLOY_MODE=$mode"
-        if $prod; then
+        if [[ "$mode" == "image" ]]; then
             # 写实际值：解析当前 SAKURA_AI_IMAGE 环境变量，缺省用默认 latest
             local image="${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}"
             echo "SAKURA_AI_IMAGE=$image"
+            # 仅写入由本函数生成的 URL-safe hex secret；绝不记录到日志。
+            echo "SAKURA_DB_PASSWORD=$db_password"
         fi
     } > "$tmp"
+
+    chmod 600 "$tmp" || {
+        rm -f "$tmp"
+        fail "无法将 deployment.env 权限设置为 0600；拒绝写入数据库凭据" >&2
+        return 1
+    }
 
     # durability：fsync 文件数据后再 atomic rename。
     # sync -d 是 GNU coreutils 的 file-data sync；不支持 -d 时 fallback 全局 sync；

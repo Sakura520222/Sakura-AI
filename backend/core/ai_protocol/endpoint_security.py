@@ -21,6 +21,29 @@ from backend.core.ai_providers import get_builtin_provider
 _CUSTOM_PROVIDER_IDS = {"custom", "custom-anthropic"}
 _LOCAL_PROVIDER_IDS = {"ollama", "vllm", "lmstudio"}
 
+# Provider endpoints are deliberately allow-listed by their complete hostname.
+# Do not derive a rule from a public suffix (for example ``aliyuncs.com``):
+# doing so would allow an attacker-controlled sibling such as
+# ``evil.aliyuncs.com`` to receive a built-in provider's API key.  Regional
+# aliases are recorded here only when the provider catalog documents the
+# exact hostname.
+_PROVIDER_HOSTS: dict[str, frozenset[str]] = {
+    "qwen": frozenset(
+        {
+            "dashscope.aliyuncs.com",  # CN/default
+            "dashscope-intl.aliyuncs.com",
+            "dashscope-us.aliyuncs.com",
+        }
+    ),
+    "qwen-coding-plan": frozenset(
+        {
+            "coding.dashscope.aliyuncs.com",
+            "coding-intl.dashscope.aliyuncs.com",
+        }
+    ),
+    "moonshot": frozenset({"api.moonshot.ai", "api.moonshot.cn"}),
+}
+
 
 def _parse_family(value: str | ProtocolFamily | None) -> ProtocolFamily | None:
     if isinstance(value, ProtocolFamily):
@@ -62,24 +85,16 @@ def _allowed_hosts_for(decl: ProviderDeclaration) -> set[str]:
     return {_host(url) for url in _declared_base_urls(decl) if _host(url)}
 
 
-def _same_or_subdomain(host: str, allowed: str) -> bool:
-    return host == allowed or host.endswith(f".{allowed}")
+def _provider_allowed_hosts(provider_id: str, declared_hosts: set[str]) -> set[str]:
+    """Return the exact hostnames documented for ``provider_id``.
 
+    Most providers have no regional aliases and therefore use the hosts from
+    their declaration verbatim.  Entries in ``_PROVIDER_HOSTS`` replace that
+    set with an explicit, reviewed list so that no arbitrary subdomain or
+    public-suffix match can pass validation.
+    """
 
-def _is_allowed_provider_host(host: str, allowed_hosts: set[str]) -> bool:
-    if not host:
-        return False
-    for allowed in allowed_hosts:
-        if _same_or_subdomain(host, allowed):
-            return True
-        # 常见区域变体：dashscope-intl.aliyuncs.com / dashscope-us.aliyuncs.com
-        # 允许同一二级域下的区域前缀，避免为每个区域硬编码列表。
-        parts = allowed.split(".")
-        if len(parts) >= 3:
-            suffix = ".".join(parts[-2:])
-            if host.endswith(f".{suffix}"):
-                return True
-    return False
+    return set(_PROVIDER_HOSTS.get(provider_id, frozenset(declared_hosts)))
 
 
 def validate_provider_base_url(
@@ -127,11 +142,12 @@ def validate_provider_base_url(
     family = _parse_family(protocol)
     # 若指定协议且目录有对应 endpoint，优先限定该协议 endpoint 的 host。
     if family is not None and family in decl.endpoints:
-        allowed_hosts = {_host(decl.endpoints[family])}
+        declared_hosts = {_host(decl.endpoints[family])}
     else:
-        allowed_hosts = _allowed_hosts_for(decl)
+        declared_hosts = _allowed_hosts_for(decl)
+    allowed_hosts = _provider_allowed_hosts(decl.id, declared_hosts)
 
-    if _is_allowed_provider_host(host, allowed_hosts):
+    if host in allowed_hosts:
         return True, ""
 
     allowed = ", ".join(sorted(allowed_hosts)) or decl.base_url

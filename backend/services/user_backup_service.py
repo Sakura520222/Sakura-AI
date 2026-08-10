@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -143,6 +144,7 @@ class UserImportResult:
     passkeys_updated: int
     recovery_codes_portable: bool
     affected_user_ids: tuple[int, ...]
+    recovery_codes_skipped: int = 0
 
     @property
     def created(self) -> int:
@@ -840,6 +842,23 @@ async def restore_user_backup(
     if not isinstance(users_payload, list):
         raise UserBackupError("用户备份缺少 users 列表")
 
+    recovery_count = sum(
+        len(raw_user.get("two_factor", {}).get("recovery_codes", []))
+        for raw_user in users_payload
+    )
+    source_fingerprint = document.get("recovery_code_hash_key_fingerprint")
+    current_fingerprint = _recovery_code_hash_key_fingerprint()
+    recovery_codes_portable = recovery_count == 0 or (
+        isinstance(source_fingerprint, str)
+        and source_fingerprint.lower() == current_fingerprint
+    )
+    recovery_codes_skipped = 0 if recovery_codes_portable else recovery_count
+    if recovery_codes_skipped:
+        logger.warning(
+            "恢复码哈希密钥指纹不匹配，保留现有恢复码并跳过导入: skipped={}",
+            recovery_codes_skipped,
+        )
+
     try:
         existing_users = _count_query_rows(
             await db.execute(select(TelegramUser).order_by(TelegramUser.id))
@@ -1119,25 +1138,28 @@ async def restore_user_backup(
                 existing_webui.items_per_page = webui["items_per_page"]
                 webui_configs_updated += 1
 
-            for row in recovery_by_user.get(user_id, []):
-                await db.delete(row)
-                recovery_codes_deleted += 1
-            recovery_codes = raw_user.get("two_factor", {}).get("recovery_codes", [])
-            for code in recovery_codes:
-                db.add(
-                    UserRecoveryCode(
-                        user_id=user_id,
-                        code_hash=code["code_hash"],
-                        used_at=_parse_datetime(
-                            code.get("used_at"), "recovery used_at"
-                        ),
-                        created_at=_parse_datetime(
-                            code.get("created_at"), "recovery created_at"
-                        )
-                        or datetime.now(UTC).replace(tzinfo=None),
-                    )
+            if recovery_codes_portable:
+                for row in recovery_by_user.get(user_id, []):
+                    await db.delete(row)
+                    recovery_codes_deleted += 1
+                recovery_codes = raw_user.get("two_factor", {}).get(
+                    "recovery_codes", []
                 )
-                recovery_codes_imported += 1
+                for code in recovery_codes:
+                    db.add(
+                        UserRecoveryCode(
+                            user_id=user_id,
+                            code_hash=code["code_hash"],
+                            used_at=_parse_datetime(
+                                code.get("used_at"), "recovery used_at"
+                            ),
+                            created_at=_parse_datetime(
+                                code.get("created_at"), "recovery created_at"
+                            )
+                            or datetime.now(UTC).replace(tzinfo=None),
+                        )
+                    )
+                    recovery_codes_imported += 1
 
             for passkey in raw_user.get("passkeys", []):
                 key = passkey["credential_id_hash"]
@@ -1167,7 +1189,10 @@ async def restore_user_backup(
                     existing_passkey.credential_id_hash = key
                     existing_passkey.credential_id = passkey["credential_id"]
                     existing_passkey.public_key = passkey["public_key"]
-                    existing_passkey.sign_count = passkey["sign_count"]
+                    existing_passkey.sign_count = max(
+                        int(existing_passkey.sign_count or 0),
+                        passkey["sign_count"],
+                    )
                     existing_passkey.transports = passkey.get("transports")
                     existing_passkey.device_name = passkey.get("device_name")
                     existing_passkey.backed_up = passkey.get("backed_up", False)
@@ -1189,15 +1214,6 @@ async def restore_user_backup(
         await db.rollback()
         raise UserBackupError("用户备份导入失败，当前数据已回滚") from exc
 
-    recovery_count = sum(
-        len(raw_user.get("two_factor", {}).get("recovery_codes", []))
-        for raw_user in users_payload
-    )
-    source_fingerprint = document.get("recovery_code_hash_key_fingerprint")
-    recovery_codes_portable = recovery_count == 0 or (
-        bool(source_fingerprint)
-        and source_fingerprint.lower() == _recovery_code_hash_key_fingerprint()
-    )
     return UserImportResult(
         users_created=users_created,
         users_updated=users_updated,
@@ -1210,6 +1226,7 @@ async def restore_user_backup(
         webui_configs_deleted=webui_configs_deleted,
         recovery_codes_imported=recovery_codes_imported,
         recovery_codes_deleted=recovery_codes_deleted,
+        recovery_codes_skipped=recovery_codes_skipped,
         passkeys_created=passkeys_created,
         passkeys_updated=passkeys_updated,
         recovery_codes_portable=recovery_codes_portable,

@@ -90,8 +90,9 @@ class OutboxDispatcherConfig:
 
     batch_size: int = 50
     poll_interval_seconds: float = 1.0
-    claim_timeout_seconds: float | None = None
+    claim_timeout_seconds: float | None = 300.0
     retry_policy: OutboxRetryPolicy = OutboxRetryPolicy()
+    artifact_purge_interval_seconds: float = 3600.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +372,33 @@ class OutboxDispatcher:
         self.config = config or OutboxDispatcherConfig()
         self.publisher = publisher
         self._stop_event = asyncio.Event()
+        self._next_artifact_purge_at = 0.0
+
+    async def _purge_expired_artifacts(self) -> int:
+        """Run the retention purge through the dispatcher's DB factory."""
+        from backend.services.activity_observability.tool_service import ToolService
+
+        async with self.session_factory() as db:
+            return await ToolService(db).purge_expired_artifacts()
+
+    async def _maybe_purge_expired_artifacts(self, *, force: bool = False) -> int:
+        now = asyncio.get_running_loop().time()
+        if not force and now < self._next_artifact_purge_at:
+            return 0
+        try:
+            purged = await self._purge_expired_artifacts()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "activity artifact retention purge failed: {}", type(exc).__name__
+            )
+            purged = 0
+        interval = max(float(self.config.artifact_purge_interval_seconds), 1.0)
+        self._next_artifact_purge_at = now + interval
+        if purged:
+            logger.info("activity artifact retention purge removed {} rows", purged)
+        return purged
 
     async def _call_authorizer(
         self, db: AsyncSession, *, user_id: str, session_id: int
@@ -594,8 +622,10 @@ class OutboxDispatcher:
         """Run until ``stop``; tests can call ``dispatch_once`` without a task."""
         self._stop_event.clear()
         try:
+            await self._maybe_purge_expired_artifacts(force=True)
             while not self._stop_event.is_set():
                 await self.dispatch_once()
+                await self._maybe_purge_expired_artifacts()
                 try:
                     await asyncio.wait_for(
                         self._stop_event.wait(),

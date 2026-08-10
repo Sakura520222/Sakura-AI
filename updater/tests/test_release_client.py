@@ -35,6 +35,54 @@ async def test_release_client_paginates_and_selects_stable_release(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_release_client_latest_uses_max_strict_stable_semver_not_timestamp(
+    monkeypatch,
+):
+    client = ReleaseClient(api_url="https://example.invalid/releases")
+    releases = [
+        {
+            "tag_name": "v3.1.0",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-12-01T00:00:00Z",
+        },
+        {
+            "tag_name": "v3.2.0",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "tag_name": "v9.0.0-rc.1",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-12-31T00:00:00Z",
+        },
+        {
+            "tag_name": "not-a-version",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2027-01-01T00:00:00Z",
+        },
+        {
+            "tag_name": "v4.0.0",
+            "draft": True,
+            "prerelease": False,
+            "published_at": "2027-01-02T00:00:00Z",
+        },
+    ]
+
+    async def fake_fetch(_url):
+        return releases
+
+    monkeypatch.setattr(client, "_fetch_json", fake_fetch)
+
+    release = await client.latest_release()
+
+    assert release and release["tag_name"] == "v3.2.0"
+
+
+@pytest.mark.asyncio
 async def test_release_client_uses_previous_result_when_github_is_unavailable(monkeypatch):
     client = ReleaseClient(api_url="https://example.invalid/releases")
     previous = [{"tag_name": "v3.0.0", "draft": False, "prerelease": False}]

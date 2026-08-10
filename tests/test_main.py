@@ -1,10 +1,13 @@
 """Main app helper tests"""
 
+import asyncio
+import contextvars
 import time
 from datetime import datetime
 from unittest.mock import Mock, call, patch
 
 import pytest
+from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -18,6 +21,10 @@ from backend.main import (
     _should_start_background_tasks,
     get_startup_info,
     get_system_info_dict,
+)
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeBindingError,
+    get_runtime_supervisor,
 )
 
 
@@ -159,6 +166,67 @@ async def test_lifespan_does_not_yield_when_database_initialization_fails(monkey
     with pytest.raises(RuntimeError, match="migration failed"):
         async with main.lifespan(main.app):
             pytest.fail("lifespan yielded after database initialization failed")
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+def _patch_minimal_lifespan_shutdown(monkeypatch):
+    from backend.webui.sse import sse_manager
+
+    async def no_op_quiesce(_app):
+        return None
+
+    async def no_op_close():
+        return None
+
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
+    monkeypatch.setattr(main, "_should_start_background_tasks", lambda _: False)
+    monkeypatch.setattr(main, "generate_setup_token", lambda: None)
+    monkeypatch.setattr(sse_manager, "resume", lambda: None)
+    monkeypatch.setattr(
+        "backend.services.database_reset_runtime_service.quiesce_database_reset_runtime",
+        no_op_quiesce,
+    )
+    monkeypatch.setattr(main, "stop_telegram_bot", no_op_close)
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_embedding_service", no_op_close
+    )
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_reranker_service", no_op_close
+    )
+
+
+@pytest.mark.anyio
+async def test_lifespan_resets_runtime_binding_after_normal_shutdown(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        supervisor = get_runtime_supervisor()
+        assert supervisor is app.state.database_reset_runtime_supervisor
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+@pytest.mark.anyio
+async def test_lifespan_resets_runtime_binding_when_cancelled_at_yield(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    app = FastAPI()
+
+    with pytest.raises(asyncio.CancelledError):
+        async with main.lifespan(app):
+            assert get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+            raise asyncio.CancelledError
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+def test_unbound_runtime_check_uses_an_empty_context():
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        contextvars.Context().run(get_runtime_supervisor)
 
 
 @pytest.mark.anyio

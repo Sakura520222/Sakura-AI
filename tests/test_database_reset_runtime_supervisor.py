@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from fastapi import FastAPI, Request
 
 from backend.services.database_reset_runtime_service import (
     DatabaseResetRuntimeAdmissionClosed,
+    DatabaseResetRuntimeBindingError,
     DatabaseResetRuntimeQuiesceError,
     DatabaseResetRuntimeSupervisor,
     bind_runtime_supervisor,
@@ -208,6 +212,146 @@ async def test_main_request_middleware_binds_the_app_supervisor():
 
     assert result == "ok"
     assert observed == [supervisor, supervisor]
+
+
+@pytest.mark.asyncio
+async def test_real_asgi_request_registers_task_on_app_supervisor_and_quiesces():
+    """The actual ASGI middleware must bind the same supervisor seen by a route."""
+
+    from backend import main
+    from backend.services.database_reset_runtime_service import (
+        create_registered_background_task,
+    )
+
+    app = FastAPI()
+    app.middleware("http")(main.bind_database_reset_runtime)
+    state: dict[str, object] = {
+        "finished": asyncio.Event(),
+        "task": None,
+        "seen": None,
+    }
+
+    async def worker():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            state["finished"].set()
+
+    @app.get("/probe")
+    async def probe(_request: Request):
+        state["seen"] = get_runtime_supervisor()
+        state["task"] = create_registered_background_task(worker(), "asgi_probe")
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/probe")
+
+    supervisor = get_runtime_supervisor(app)
+    task = state["task"]
+    assert response.status_code == 200
+    assert state["seen"] is supervisor
+    assert task in supervisor.tasks
+
+    await quiesce_database_reset_runtime(app)
+
+    assert task.done()
+    assert state["finished"].is_set()
+    assert supervisor.quiesced
+
+
+@pytest.mark.asyncio
+async def test_real_asgi_requests_keep_two_app_supervisors_isolated():
+    """Concurrent requests on two apps must not cross-register DB tasks."""
+
+    from backend import main
+    from backend.services.database_reset_runtime_service import (
+        create_registered_background_task,
+    )
+
+    def build_app(label: str):
+        app = FastAPI()
+        app.middleware("http")(main.bind_database_reset_runtime)
+        state: dict[str, object] = {
+            "finished": asyncio.Event(),
+            "label": label,
+            "task": None,
+            "seen": None,
+        }
+
+        async def worker():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                state["finished"].set()
+
+        @app.get("/probe")
+        async def probe(_request: Request):
+            state["seen"] = get_runtime_supervisor()
+            state["task"] = create_registered_background_task(
+                worker(), f"asgi_{label}"
+            )
+            return {"label": label}
+
+        return app, state
+
+    app_a, state_a = build_app("a")
+    app_b, state_b = build_app("b")
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app_a), base_url="http://a"
+        ) as client_a,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app_b), base_url="http://b"
+        ) as client_b,
+    ):
+        response_a, response_b = await asyncio.gather(
+            client_a.get("/probe"), client_b.get("/probe")
+        )
+
+    supervisor_a = get_runtime_supervisor(app_a)
+    supervisor_b = get_runtime_supervisor(app_b)
+    task_a = state_a["task"]
+    task_b = state_b["task"]
+    assert response_a.status_code == response_b.status_code == 200
+    assert supervisor_a is not supervisor_b
+    assert state_a["seen"] is supervisor_a
+    assert state_b["seen"] is supervisor_b
+    assert task_a in supervisor_a.tasks
+    assert task_b in supervisor_b.tasks
+
+    await quiesce_database_reset_runtime(app_a)
+
+    assert task_a.done()
+    assert state_a["finished"].is_set()
+    assert not task_b.done()
+    assert supervisor_b.accepting
+
+    await quiesce_database_reset_runtime(app_b)
+    assert task_b.done()
+    assert state_b["finished"].is_set()
+
+
+@pytest.mark.asyncio
+async def test_unbound_background_helper_fails_closed_without_coroutine_leak():
+    """No context binding means no orphan coroutine/task may be created."""
+
+    from backend.services.database_reset_runtime_service import (
+        create_registered_background_task,
+    )
+
+    async def invoke_without_binding():
+        async def worker():
+            await asyncio.Event().wait()
+
+        awaitable = worker()
+        with pytest.raises(DatabaseResetRuntimeBindingError, match="not bound"):
+            create_registered_background_task(awaitable, "unbound_probe")
+        assert awaitable.cr_frame is None
+
+    await asyncio.create_task(invoke_without_binding(), context=contextvars.Context())
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,7 @@ from backend.services.activity_observability.event_service import append_lifecyc
 from backend.services.activity_observability.reasoning import (
     REASONING_ENCRYPTED_OPAQUE,
     REASONING_PROVIDER_EXPOSED,
+    REASONING_UNAVAILABLE,
     VALID_AVAILABILITY,
     ReasoningCapturePolicy,
     build_compatibility_key,
@@ -355,6 +356,8 @@ class ToolService:
         self,
         artifact: ActivityNativeArtifact,
     ) -> str | None:
+        if self._retention_expired(artifact):
+            return None
         decrypt = getattr(self._encryption_provider, "decrypt", None)
         if decrypt is None or not artifact.payload_ciphertext:
             return None
@@ -371,6 +374,70 @@ class ToolService:
                 artifact.artifact_kind,
             )
             return None
+
+    def _retention_expired(self, artifact: ActivityNativeArtifact) -> bool:
+        expires_at = artifact.retention_expires_at
+        if expires_at is None:
+            return False
+        now = self._clock()
+        if expires_at.tzinfo is None and now.tzinfo is not None:
+            expires_at = expires_at.replace(tzinfo=now.tzinfo)
+        elif expires_at.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=expires_at.tzinfo)
+        return expires_at <= now
+
+    async def purge_expired_artifacts(self, *, limit: int | None = None) -> int:
+        """Clear expired artifact ciphertexts and mark rows unavailable.
+
+        The operation is idempotent: a second run finds no material left to
+        purge.  Artifacts without an expiry or whose expiry is still in the
+        future are never touched.
+        """
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
+        ):
+            raise ValueError("limit must be a positive integer or None")
+        async with self._session_scope() as db:
+            async with db.begin():
+                query = (
+                    select(ActivityNativeArtifact)
+                    .where(
+                        ActivityNativeArtifact.retention_expires_at.is_not(None),
+                        ActivityNativeArtifact.retention_expires_at <= self._clock(),
+                    )
+                    .order_by(ActivityNativeArtifact.id)
+                )
+                if limit is not None:
+                    query = query.limit(limit)
+                artifacts = (await db.execute(query)).scalars().all()
+                purged = 0
+                for artifact in artifacts:
+                    if not self._retention_expired(artifact):
+                        continue
+                    changed = any(
+                        (
+                            artifact.payload_ciphertext,
+                            artifact.payload_nonce,
+                            artifact.encryption_key_id,
+                            artifact.payload_safe_summary,
+                            artifact.availability != REASONING_UNAVAILABLE,
+                            artifact.capture_mode != "metadata_only",
+                            artifact.capture_error != "retention_expired",
+                            bool(artifact.replay_allowed),
+                        )
+                    )
+                    if not changed:
+                        continue
+                    artifact.payload_ciphertext = None
+                    artifact.payload_nonce = None
+                    artifact.encryption_key_id = None
+                    artifact.payload_safe_summary = None
+                    artifact.availability = REASONING_UNAVAILABLE
+                    artifact.capture_mode = "metadata_only"
+                    artifact.capture_error = "retention_expired"
+                    artifact.replay_allowed = False
+                    purged += 1
+                return purged
 
     @staticmethod
     async def _get_parent_chain(db, work_unit_id: int, thread_id: int | None):
@@ -1511,9 +1578,13 @@ class ToolService:
                     db, artifact.id, actor, decision.authorization_scope, "allowed"
                 )
                 payload = None
-                unavailable_reason = artifact.capture_error
+                expired = self._retention_expired(artifact)
+                unavailable_reason = (
+                    "retention_expired" if expired else artifact.capture_error
+                )
                 if (
-                    decision.can_display
+                    not expired
+                    and decision.can_display
                     and artifact.payload_ciphertext
                     and artifact.availability != REASONING_ENCRYPTED_OPAQUE
                 ):
@@ -1539,19 +1610,24 @@ class ToolService:
                 return AuthorizedArtifactView(
                     artifact_id=artifact.id,
                     artifact_kind=artifact.artifact_kind,
-                    availability=artifact.availability,
+                    availability=(
+                        REASONING_UNAVAILABLE if expired else artifact.availability
+                    ),
                     provider_family=artifact.provider_family,
                     protocol_family=artifact.protocol_family,
                     compatibility_key=artifact.compatibility_key,
-                    capture_mode=artifact.capture_mode,
+                    capture_mode=(
+                        "metadata_only" if expired else artifact.capture_mode
+                    ),
                     visibility=artifact.visibility,
                     payload_safe_summary=artifact.payload_safe_summary
-                    if decision.can_display
+                    if not expired
+                    and decision.can_display
                     and artifact.availability != REASONING_ENCRYPTED_OPAQUE
                     else None,
                     payload=payload,
                     payload_unavailable_reason=unavailable_reason,
-                    replay_allowed=artifact.replay_allowed,
+                    replay_allowed=False if expired else artifact.replay_allowed,
                     retention_expires_at=artifact.retention_expires_at,
                 )
         raise RuntimeError("unreachable")

@@ -1,6 +1,7 @@
 # Sakura AI 生产部署 — Web + MySQL 8.4 + Redis 一键启动
-# 凭据固定为内部默认值（仅容器网络内可见）。如需自定义：
-#   修改 web.environment.DATABASE_URL 与 mysql.environment.MYSQL_PASSWORD / MYSQL_USER / MYSQL_DATABASE（需保持同步）。
+# SAKURA_DB_PASSWORD 必须来自 .deploy/deployment.env（由 start.sh 首次 --prod
+# 原子生成并以 0600 保存）。缺失时 Compose 直接 fail-closed；不要把运行时
+# deployment.env 提交到 Git。
 # 固定镜像版本由 .deploy/deployment.env 中的 SAKURA_AI_IMAGE 指定：
 #   docker compose --env-file <deployment_env> -f docker-compose.prod.yml up -d
 services:
@@ -15,7 +16,7 @@ services:
     group_add:
       - "9472"
     environment:
-      DATABASE_URL: mysql+asyncmy://sakura:sakura-ai@mysql:3306/sakura_ai
+      DATABASE_URL: mysql+asyncmy://sakura:${SAKURA_DB_PASSWORD:?SAKURA_DB_PASSWORD must be set}@mysql:3306/sakura_ai
       REDIS_URL: redis://redis:6379/0
     depends_on:
       mysql:
@@ -46,7 +47,7 @@ services:
     environment:
       MYSQL_DATABASE: sakura_ai
       MYSQL_USER: sakura
-      MYSQL_PASSWORD: sakura-ai
+      MYSQL_PASSWORD: ${SAKURA_DB_PASSWORD:?SAKURA_DB_PASSWORD must be set}
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"   # 应用只用普通用户，root 密码随机生成并输出到容器日志
     volumes:
       - mysql_data:/var/lib/mysql

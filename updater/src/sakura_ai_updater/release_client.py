@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from sakura_ai_updater.semver import SemVer, parse_semver
+
 
 class ReleaseClientError(RuntimeError):
     """Base class for Release API and manifest failures."""
@@ -107,16 +109,32 @@ class ReleaseClient:
     def _stable_release(release: Mapping[str, Any]) -> bool:
         return not bool(release.get("draft")) and not bool(release.get("prerelease"))
 
+    @staticmethod
+    def _stable_release_version(release: Mapping[str, Any]) -> SemVer | None:
+        """Return a stable release's strict SemVer tag, if it is valid."""
+        if not ReleaseClient._stable_release(release):
+            return None
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or not tag:
+            return None
+        parsed = parse_semver(tag.removeprefix("v"))
+        if parsed is None or parsed.prerelease:
+            return None
+        return parsed
+
     async def latest_release(self) -> dict[str, Any] | None:
         releases = await self.list_releases()
-        stable = [item for item in releases if self._stable_release(item)]
+        stable = [
+            (version, item)
+            for item in releases
+            if (version := self._stable_release_version(item)) is not None
+        ]
         if not stable:
             return None
-        # GitHub returns newest first; sorting by published_at is safer for
-        # mocked/reordered API responses while retaining deterministic output.
-        stable.sort(key=lambda item: str(item.get("published_at") or item.get("created_at") or ""), reverse=True)
-        self._last_release = dict(stable[0])
-        return dict(stable[0])
+        # GitHub's API ordering and timestamps are not version precedence.
+        stable.sort(key=lambda item: item[0], reverse=True)
+        self._last_release = dict(stable[0][1])
+        return dict(stable[0][1])
 
     async def get_release(self, version: str) -> dict[str, Any]:
         """Find a stable release by SemVer, accepting either ``3.1.0`` or ``v3.1.0``."""

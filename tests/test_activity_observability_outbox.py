@@ -526,6 +526,69 @@ def test_claim_query_compiles_actual_claim_statement_for_mysql_skip_locked(db):
     assert "?" not in sql
 
 
+def test_outbox_claim_timeout_has_finite_safe_default():
+    from backend.core.config import Settings
+
+    assert OutboxDispatcherConfig().claim_timeout_seconds == 300.0
+    assert Settings().activity_outbox_claim_timeout_seconds == 300.0
+    assert OutboxDispatcherConfig().artifact_purge_interval_seconds == 3600.0
+    assert Settings().activity_artifact_purge_interval_seconds == 3600.0
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_purges_on_start_and_throttles_until_interval():
+    calls = 0
+
+    class Dispatcher(OutboxDispatcher):
+        async def _purge_expired_artifacts(self):
+            nonlocal calls
+            calls += 1
+            return 1
+
+        async def dispatch_once(self):
+            self.stop()
+            return 0
+
+    dispatcher = Dispatcher(
+        lambda: None,
+        authorizer=lambda **_kwargs: True,
+        config=OutboxDispatcherConfig(artifact_purge_interval_seconds=60),
+    )
+
+    await dispatcher.run()
+    assert calls == 1
+    assert await dispatcher._maybe_purge_expired_artifacts() == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_purge_failure_is_isolated_but_cancellation_propagates():
+    class FailingDispatcher(OutboxDispatcher):
+        async def _purge_expired_artifacts(self):
+            raise RuntimeError("purge unavailable")
+
+        async def dispatch_once(self):
+            self.stop()
+            return 0
+
+    dispatcher = FailingDispatcher(
+        lambda: None,
+        authorizer=lambda **_kwargs: True,
+        config=OutboxDispatcherConfig(artifact_purge_interval_seconds=60),
+    )
+    await dispatcher.run()
+
+    class CancelledDispatcher(OutboxDispatcher):
+        async def _purge_expired_artifacts(self):
+            raise asyncio.CancelledError
+
+    cancelled = CancelledDispatcher(
+        lambda: None,
+        authorizer=lambda **_kwargs: True,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled._maybe_purge_expired_artifacts(force=True)
+
+
 @pytest.mark.parametrize("user_id", ["", "a\nb", "a\rb", "a\tb", "a" * 256])
 def test_outbox_recipient_rejects_control_or_oversized_identifiers(db, user_id):
     activity_session = _seed_session(db)

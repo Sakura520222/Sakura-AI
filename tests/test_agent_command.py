@@ -5,6 +5,22 @@ import json
 import pytest
 
 from backend.api import webhook
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeSupervisor,
+    bind_runtime_supervisor,
+    reset_runtime_supervisor,
+)
+
+
+@pytest.fixture(autouse=True)
+def bound_runtime_supervisor():
+    """Direct handler tests model the app middleware's explicit binding."""
+
+    token = bind_runtime_supervisor(DatabaseResetRuntimeSupervisor())
+    try:
+        yield
+    finally:
+        reset_runtime_supervisor(token)
 
 
 def _base_payload(body="/agent"):

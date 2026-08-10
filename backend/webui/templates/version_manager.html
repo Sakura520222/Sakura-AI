@@ -13,40 +13,42 @@
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_version") }}</dt>
            <dd class="font-mono font-medium">v{{ version_info.current_version }}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.deployment_mode") }}</dt>
-           <dd>{{ version_info.deployment_type }}</dd></div>
-      <div><dt class="text-gray-500 dark:text-gray-400">最近检查</dt>
-           <dd>{{ version_info.last_checked or "尚未检查" }}</dd></div>
+           {% set deployment_code = version_info.deployment_type or "unknown" %}
+           <dd>{{ _("version_manager.deployment_" ~ deployment_code) if deployment_code in ["image", "source"] else _("version_manager.unknown_deployment") }}</dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.last_checked") }}</dt>
+           <dd>{{ version_info.last_checked or _("version_manager.not_checked") }}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.update_supported") }}</dt>
-           <dd>{{ "是" if version_info.update_supported else "否" }}
+           <dd>{{ _("version_manager.supported_yes") if version_info.update_supported else _("version_manager.supported_no") }}
                {% if version_info.update_unsupported_reason %}<span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span>{% endif %}</dd></div>
-      <div><dt class="text-gray-500 dark:text-gray-400">Host Updater</dt>
-           <dd>{{ "已连接" if version_info.updater_connected else "未连接" }}
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater") }}</dt>
+           <dd>{{ _("version_manager.connected") if version_info.updater_connected else _("version_manager.disconnected") }}
                {% if version_info.updater_connected and version_info.updater_version %}
                <span class="text-gray-400 text-xs font-mono">v{{ version_info.updater_version }}</span>
                {% endif %}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater_state") }}</dt>
-           <dd id="updater-state" data-state="{{ version_info.updater_state or 'idle' }}">
-             {{ version_info.updater_state or "idle" }}
-             {% if version_info.has_active_job %}<span class="text-xs text-sakura-500">（任务 {{ version_info.active_job_id }}）</span>{% endif %}
+           {% set state_code = version_info.updater_state or "idle" %}
+           <dd id="updater-state" data-state="{{ state_code }}">
+             {{ _("version_manager.state_" ~ state_code) if state_code in ["idle", "checking", "update_available", "preflight", "downloading", "activating", "restarting", "health_checking", "success", "failed"] else _("version_manager.unknown_state") }}
+             {% if version_info.has_active_job %}<span class="text-xs text-sakura-500">（{{ _("version_manager.job", id=version_info.active_job_id) }}）</span>{% endif %}
            </dd></div>
     </dl>
 
-    {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 显示"尚未检查" #}
+    {# 状态分支：check_error 始终可见（即使有 update）；last_checked None 使用本地化占位 #}
     {% if version_info.check_error %}
     <div class="mt-4 text-sm text-amber-600 dark:text-amber-400">
-      检查失败：{{ version_info.check_error }}（显示上次缓存结果）
+      {{ _("version_manager.check_failed_cached") | replace("{error}", version_info.check_error|string) }}
     </div>
     {% endif %}
     {% if version_info.update_available %}
     <div class="mt-4 flex items-center gap-2 text-sakura-600 dark:text-sakura-400">
       <span class="w-2 h-2 rounded-full bg-sakura-500 animate-pulse"></span>
-      <span class="font-medium">v{{ version_info.latest_version }} 可用</span>
+      <span class="font-medium">v{{ version_info.latest_version }} {{ _("version_manager.available") }}</span>
       <span class="text-xs text-gray-400">（{{ _("version_manager.update_available_hint") }}）</span>
     </div>
     {% elif version_info.last_checked and not version_info.check_error %}
-    <div class="mt-4 text-sm text-gray-500">已是最新版本。</div>
+    <div class="mt-4 text-sm text-gray-500">{{ _("version_manager.up_to_date") }}</div>
     {% elif not version_info.last_checked %}
-    <div class="mt-4 text-sm text-gray-500">尚未完成首次检查，请稍候或点击"重新检查"。</div>
+    <div class="mt-4 text-sm text-gray-500">{{ _("version_manager.initial_check_pending") }}</div>
     {% endif %}
 
     <div class="mt-4">
@@ -75,18 +77,18 @@
 
   {# Release 列表 / Release list（已按 SemVer 降序） #}
   <section class="space-y-4">
-    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Release 历史</h2>
+    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.release_history") }}</h2>
     {% if not releases %}
-    <div class="text-sm text-gray-500">暂无 Release 信息（尚未完成首次检查，或 GitHub 不可达）。</div>
+    <div class="text-sm text-gray-500">{{ _("version_manager.no_releases") }}</div>
     {% endif %}
     {% for rel in releases %}
     <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
       <header class="flex items-center justify-between mb-2">
         <h3 class="font-mono font-semibold text-gray-800 dark:text-gray-100">v{{ rel.version }}</h3>
         {% if rel.version == version_info.latest_version and version_info.update_available %}
-        <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">最新</span>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">{{ _("version_manager.latest") }}</span>
         {% elif rel.version == version_info.current_version %}
-        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">当前</span>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _("version_manager.current") }}</span>
         {% endif %}
       </header>
       <div class="text-xs text-gray-400 mb-3">{{ rel.published_at or "—" }}</div>
@@ -94,8 +96,8 @@
          Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
       <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>
       {% if rel.html_url %}
-      <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
-         class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">查看完整说明</a>
+       <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
+         class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">{{ _("version_manager.view_release") }}</a>
       {% endif %}
     </article>
     {% endfor %}
@@ -135,6 +137,44 @@ const VM_I18N = {
   emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
   missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
   httpError: {{ _("version_manager.http_error") | tojson }},
+  reconnectingJob: {{ _("version_manager.reconnecting_job") | tojson }},
+  stateLabels: {
+    idle: {{ _("version_manager.state_idle") | tojson }},
+    checking: {{ _("version_manager.state_checking") | tojson }},
+    update_available: {{ _("version_manager.state_update_available") | tojson }},
+    preflight: {{ _("version_manager.state_preflight") | tojson }},
+    downloading: {{ _("version_manager.state_downloading") | tojson }},
+    activating: {{ _("version_manager.state_activating") | tojson }},
+    restarting: {{ _("version_manager.state_restarting") | tojson }},
+    health_checking: {{ _("version_manager.state_health_checking") | tojson }},
+    success: {{ _("version_manager.state_success") | tojson }},
+    failed: {{ _("version_manager.state_failed") | tojson }}
+  },
+  stepLabels: {
+    checking: {{ _("version_manager.step_checking") | tojson }},
+    update_available: {{ _("version_manager.step_update_available") | tojson }},
+    preflight: {{ _("version_manager.step_preflight") | tojson }},
+    materialize_current_anchor: {{ _("version_manager.step_materialize_current_anchor") | tojson }},
+    downloading: {{ _("version_manager.step_downloading") | tojson }},
+    activating: {{ _("version_manager.step_activating") | tojson }},
+    restarting: {{ _("version_manager.step_restarting") | tojson }},
+    health_checking: {{ _("version_manager.step_health_checking") | tojson }},
+    complete: {{ _("version_manager.step_complete") | tojson }},
+    failed: {{ _("version_manager.step_failed") | tojson }}
+  },
+  checkLabels: {
+    manifest_found: {{ _("version_manager.check_manifest_found") | tojson }},
+    manifest_valid: {{ _("version_manager.check_manifest_valid") | tojson }},
+    deployment_mode_image: {{ _("version_manager.check_deployment_mode_image") | tojson }},
+    protocol_compatible: {{ _("version_manager.check_protocol_compatible") | tojson }},
+    target_newer: {{ _("version_manager.check_target_newer") | tojson }},
+    min_upgrade_from: {{ _("version_manager.check_min_upgrade_from") | tojson }},
+    image_manifest_exists: {{ _("version_manager.check_image_manifest_exists") | tojson }},
+    disk_space_sufficient: {{ _("version_manager.check_disk_space_sufficient") | tojson }},
+    updater_asset_present: {{ _("version_manager.check_updater_asset_present") | tojson }}
+  },
+  unknownCheck: {{ _("version_manager.unknown_check") | tojson }},
+  unknownStep: {{ _("version_manager.unknown_step") | tojson }},
   success: {{ _("common.success") | tojson }},
   error: {{ _("common.error") | tojson }}
 };
@@ -144,6 +184,18 @@ function vmFormat(template, values) {
     (text, [key, value]) => text.replaceAll('{' + key + '}', String(value)),
     template
   );
+}
+
+function vmStateLabel(state) {
+  return VM_I18N.stateLabels[state] || VM_I18N.unknownState;
+}
+
+function vmStepLabel(step) {
+  return VM_I18N.stepLabels[step] || (step ? vmFormat(VM_I18N.unknownStep, {step: step}) : '');
+}
+
+function vmCheckLabel(name) {
+  return VM_I18N.checkLabels[name] || vmFormat(VM_I18N.unknownCheck, {name: name});
 }
 
 function setStatus(message, kind) {
@@ -175,7 +227,7 @@ function showReadiness(data) {
   const checks = payload.readiness || payload.checks || {};
   (Array.isArray(checks) ? checks : Object.entries(checks).map(([name, passed]) => ({name, passed}))).forEach((check) => {
     const item = document.createElement('li');
-    item.textContent = (check.passed ? '✓ ' : '✗ ') + check.name + (check.detail ? ': ' + check.detail : '');
+    item.textContent = (check.passed ? '✓ ' : '✗ ') + vmCheckLabel(check.name) + (check.detail ? ': ' + check.detail : '');
     item.className = check.passed ? 'text-emerald-600' : 'text-amber-600';
     readinessChecks.appendChild(item);
   });
@@ -239,14 +291,14 @@ async function verifyHealth(targetVersion) {
 }
 
 async function pollJob(jobId) {
-  setStatus(VM_I18N.reconnecting + ' (' + jobId + ')', null);
+  setStatus(vmFormat(VM_I18N.reconnectingJob, {job_id: jobId}), null);
   while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
     try {
       const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
       const job = body && body.data ? body.data : body;
       if (!job) throw new Error(VM_I18N.emptyJobResponse);
-      const state = job.state || VM_I18N.unknownState;
-      setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + job.step : ''), null);
+      const state = vmStateLabel(job.state);
+      setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
       if (job.state === 'success') {
         const target = job.target_version;
         if (target && await verifyHealth(target)) {

@@ -235,8 +235,13 @@ Linux / macOS:
 
 ```bash
 mkdir sakura-ai && cd sakura-ai
-curl -LO https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml
-docker compose -f docker-compose.prod.yml up -d
+mkdir -p docker .deploy
+curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  -o docker/docker-compose.prod.yml
+umask 077
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
+  "$(openssl rand -hex 32)" > .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 PowerShell (Windows):
@@ -244,24 +249,29 @@ PowerShell (Windows):
 ```powershell
 New-Item -ItemType Directory -Force sakura-ai | Out-Null
 Set-Location sakura-ai
+New-Item -ItemType Directory -Force docker, .deploy | Out-Null
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
-  -OutFile "docker-compose.prod.yml"
-docker compose -f docker-compose.prod.yml up -d
+  -OutFile "docker/docker-compose.prod.yml"
+$bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+$dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
+@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "SAKURA_DB_PASSWORD=$dbPassword") |
+  Set-Content -Encoding ascii .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 Pin a specific version (no compose file editing needed):
 
 ```bash
 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
-  docker compose -f docker-compose.prod.yml up -d
+  docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 PowerShell:
 
 ```powershell
 $env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
-docker compose -f docker-compose.prod.yml up -d
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 Remove-Item Env:SAKURA_AI_IMAGE
 ```
 
@@ -294,7 +304,9 @@ docker run -d `
   ghcr.io/sakura520222/sakura-ai:latest
 ```
 
-> Image locations: primary image `ghcr.io/sakura520222/sakura-ai`; Docker Hub mirror `sakura520222/sakura-ai` (identical content to GHCR). Tags: `latest` — latest stable release, `vX.Y.Z` — pinned version, `edge` — development preview (stability not guaranteed). In the production compose, the MySQL/Redis password is fixed to `sakura-ai` (only visible inside containers). To change it, update both the `DATABASE_URL` of the web service and the `MYSQL_PASSWORD` / `MYSQL_USER` / `MYSQL_DATABASE` of the mysql service in `docker-compose.prod.yml`.
+> Image locations: primary image `ghcr.io/sakura520222/sakura-ai`; Docker Hub mirror `sakura520222/sakura-ai` (identical content to GHCR). Tags: `latest` — latest stable release, `vX.Y.Z` — pinned version, `edge` — development preview (stability not guaranteed). The production compose no longer contains a built-in database password: the first deployment must save a strong 64-character hexadecimal `SAKURA_DB_PASSWORD` in a permission-0600 `.deploy/deployment.env` and always start with `--env-file .deploy/deployment.env`; a missing file or variable fails closed. `./start.sh --prod` performs generation, persistence, and reuse automatically. Never commit this runtime file.
+
+For an existing deployment whose `.deploy/deployment.env` has no `SAKURA_DB_PASSWORD`, `start.sh` refuses to guess or silently rotate it (that would disconnect an existing `mysql_data` volume). Stop the web service, generate a new hexadecimal password, run `ALTER USER 'sakura'@'%' IDENTIFIED BY '<the same password>'` in MySQL, verify connectivity, then write that same value to `.deploy/deployment.env` (permission 0600) and start with the `--env-file` command above.
 
 ### 2. Requirements
 

@@ -63,6 +63,7 @@ from backend.services.activity_observability.reasoning import (
     REASONING_ENCRYPTED_OPAQUE,
     REASONING_PROVIDER_EXPOSED,
     REASONING_SUMMARIZED,
+    REASONING_UNAVAILABLE,
     ReasoningCapturePolicy,
     safe_summary_or_none,
 )
@@ -505,6 +506,95 @@ async def test_admin_scoped_trace_returns_safe_view_and_opaque_never_displays(
     )
     view = await service.read_artifact_with_audit(artifact.id, reader="admin")
     assert view is not None and view.payload_safe_summary is None
+
+
+@pytest.mark.asyncio
+async def test_expired_artifact_read_never_decrypts_or_returns_ciphertext(
+    db_session, chain
+):
+    _, _, _, attempt = chain
+    fixed = datetime(2026, 7, 23, tzinfo=UTC)
+
+    class _NoDecrypt(_FakeEncryption):
+        def decrypt(self, *_args, **_kwargs):
+            raise AssertionError("expired artifact must not be decrypted")
+
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_NoDecrypt(),
+        artifact_authorizer=_Allow(),
+        clock=lambda: fixed,
+    )
+    artifact = await service.capture_reasoning_artifact(
+        attempt_id=attempt.id,
+        availability=REASONING_PROVIDER_EXPOSED,
+        payload="expired secret",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
+        policy=ReasoningCapturePolicy(capture_mode=CAPTURE_ARTIFACT, retention_days=1),
+    )
+    artifact.retention_expires_at = fixed - timedelta(seconds=1)
+    db_session.commit()
+
+    view = await service.read_artifact_with_audit(artifact.id, reader="admin")
+
+    assert view is not None
+    assert view.payload is None
+    assert view.availability == REASONING_UNAVAILABLE
+    assert view.payload_unavailable_reason == "retention_expired"
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_artifacts_is_idempotent_and_preserves_future_or_unbounded(
+    db_session,
+):
+    fixed = datetime(2026, 7, 23, tzinfo=UTC)
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FakeEncryption(),
+        clock=lambda: fixed,
+    )
+    expired = await service.capture_sensitive_artifact(
+        artifact_kind="request_projection",
+        payload="expired",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="expired",
+        retention_days=1,
+    )
+    expired.retention_expires_at = fixed - timedelta(seconds=1)
+    future = await service.capture_sensitive_artifact(
+        artifact_kind="request_projection",
+        payload="future",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="future",
+        retention_days=2,
+    )
+    unbounded = await service.capture_sensitive_artifact(
+        artifact_kind="request_projection",
+        payload="unbounded",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="unbounded",
+    )
+    db_session.commit()
+
+    assert await service.purge_expired_artifacts() == 1
+    assert expired.payload_ciphertext is None
+    assert expired.payload_nonce is None
+    assert expired.encryption_key_id is None
+    assert expired.availability == REASONING_UNAVAILABLE
+    assert expired.capture_error == "retention_expired"
+    assert expired.replay_allowed is False
+    assert future.payload_ciphertext is not None
+    assert unbounded.payload_ciphertext is not None
+    assert await service.purge_expired_artifacts() == 0
 
 
 @pytest.mark.asyncio

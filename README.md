@@ -234,8 +234,13 @@ Linux / macOS：
 
 ```bash
 mkdir sakura-ai && cd sakura-ai
-curl -LO https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml
-docker compose -f docker-compose.prod.yml up -d
+mkdir -p docker .deploy
+curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  -o docker/docker-compose.prod.yml
+umask 077
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
+  "$(openssl rand -hex 32)" > .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 PowerShell（Windows）：
@@ -243,24 +248,29 @@ PowerShell（Windows）：
 ```powershell
 New-Item -ItemType Directory -Force sakura-ai | Out-Null
 Set-Location sakura-ai
+New-Item -ItemType Directory -Force docker, .deploy | Out-Null
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
-  -OutFile "docker-compose.prod.yml"
-docker compose -f docker-compose.prod.yml up -d
+  -OutFile "docker/docker-compose.prod.yml"
+$bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+$dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
+@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "SAKURA_DB_PASSWORD=$dbPassword") |
+  Set-Content -Encoding ascii .deploy/deployment.env
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 固定版本部署（无需编辑 compose 文件）：
 
 ```bash
 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
-  docker compose -f docker-compose.prod.yml up -d
+  docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 ```
 
 PowerShell：
 
 ```powershell
 $env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
-docker compose -f docker-compose.prod.yml up -d
+docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
 Remove-Item Env:SAKURA_AI_IMAGE
 ```
 
@@ -293,7 +303,9 @@ docker run -d `
   ghcr.io/sakura520222/sakura-ai:latest
 ```
 
-> 镜像地址：主镜像 `ghcr.io/sakura520222/sakura-ai`；Docker Hub 替代镜像 `sakura520222/sakura-ai`（内容与 GHCR 完全一致）。Tag 说明：`latest` 最新稳定版，`vX.Y.Z` 固定版本，`edge` 开发预览（不保证稳定）。生产 compose 中 MySQL/Redis 密码固定为 `sakura-ai`（仅容器内可见），如需修改请同步修改 `docker-compose.prod.yml` 中 web 服务的 `DATABASE_URL` 与 mysql 服务的 `MYSQL_PASSWORD` / `MYSQL_USER` / `MYSQL_DATABASE`。
+> 镜像地址：主镜像 `ghcr.io/sakura520222/sakura-ai`；Docker Hub 替代镜像 `sakura520222/sakura-ai`（内容与 GHCR 完全一致）。Tag 说明：`latest` 最新稳定版，`vX.Y.Z` 固定版本，`edge` 开发预览（不保证稳定）。生产 compose 不再内置数据库密码：首次部署必须将强随机的 64 位十六进制 `SAKURA_DB_PASSWORD` 保存到权限为 0600 的 `.deploy/deployment.env`，并始终通过 `--env-file .deploy/deployment.env` 启动；文件缺失或变量缺失时 Compose 会 fail-closed。使用仓库中的 `./start.sh --prod` 会自动完成生成、持久化和复用，切勿提交该运行时文件。
+
+已有旧部署若 `.deploy/deployment.env` 没有 `SAKURA_DB_PASSWORD`，`start.sh` 不会猜测或静默轮换（否则会与已有 `mysql_data` 凭据不一致）。请先停 Web、生成新的十六进制密码并在 MySQL 中执行 `ALTER USER 'sakura'@'%' IDENTIFIED BY '<同一密码>'`，确认连接成功后再把同一值写入 `.deploy/deployment.env`（权限 0600），然后用上面的 `--env-file` 命令启动。
 
 ### 2. 环境要求
 

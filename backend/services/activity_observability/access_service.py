@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, nullslast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -46,6 +46,8 @@ _INVOCATION_TERMINAL_STATUSES = {
     "failed",
     "cancelled",
 }
+
+_SESSION_LIST_BATCH_MAX = 100
 
 
 class ActivityNotFoundError(LookupError):
@@ -484,39 +486,15 @@ class ActivityAccessService:
             value = f"user:{user.get('user_id', user.get('sub', ''))}"
         return str(value)
 
-    async def list_sessions(
+    async def _project_session_batch(
         self,
+        rows: list[ActivityObservabilitySession],
         user: dict[str, Any],
-        *,
-        limit: int = 20,
-        scan_buffer: int = 3,
-        db: AsyncSession | None = None,
-    ) -> dict[str, Any]:
-        """Return sessions the user is authorised to see, most recent first.
-
-        ``scan_buffer`` multiplies ``limit`` so the authorizer can filter without
-        dropping below the requested page size; both bounds come from the caller
-        rather than a hardcoded constant.
-        """
-        db = db or self.db
-        if db is None:
-            raise RuntimeError("db is required")
-        page_size = max(1, min(int(limit), 100))
-        buffer = max(page_size, int(scan_buffer)) * max(1, int(scan_buffer))
-        rows = (
-            (
-                await db.execute(
-                    select(ActivityObservabilitySession)
-                    .options(
-                        selectinload(ActivityObservabilitySession.resource_identity)
-                    )
-                    .order_by(desc(ActivityObservabilitySession.last_active_at))
-                    .limit(buffer)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        db: AsyncSession,
+        projected: list[dict[str, Any]],
+        page_size: int,
+    ) -> None:
+        """Project one bounded session batch after repository authorization."""
         session_ids = [int(item.id) for item in rows]
         invocation_rows = (
             list(
@@ -595,8 +573,10 @@ class ActivityAccessService:
         latest_attempt_by_work_unit: dict[int, ActivityModelAttempt] = {}
         for attempt in attempts:
             latest_attempt_by_work_unit.setdefault(int(attempt.work_unit_id), attempt)
-        projected: list[dict[str, Any]] = []
+
         for session in rows:
+            if len(projected) >= page_size:
+                return
             try:
                 await self.require_session_access(session.id, user, db)
             except ActivityNotFoundError:
@@ -661,8 +641,87 @@ class ActivityAccessService:
                 }
             )
             projected.append(item)
-            if len(projected) >= page_size:
+
+    async def list_sessions(
+        self,
+        user: dict[str, Any],
+        *,
+        limit: int = 20,
+        scan_buffer: int = 3,
+        db: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """Return authorised sessions, most recent first.
+
+        Authorization is deliberately evaluated after each bounded batch rather
+        than after one global ``LIMIT``. Keyset scanning uses the timestamp/id
+        pair for deterministic ordering and stops at the page size or data
+        exhaustion. Each query is independently bounded; the scanner must
+        continue through arbitrarily many unauthorized rows so an authorized
+        session cannot be hidden behind a fixed global limit.
+        """
+        db = db or self.db
+        if db is None:
+            raise RuntimeError("db is required")
+        page_size = max(1, min(int(limit), 100))
+        scan_multiplier = max(1, min(int(scan_buffer), 10))
+        batch_size = min(
+            _SESSION_LIST_BATCH_MAX,
+            max(page_size, page_size * scan_multiplier),
+        )
+        projected: list[dict[str, Any]] = []
+        has_cursor = False
+        last_active_value: datetime | None = None
+        last_id: int | None = None
+
+        while len(projected) < page_size:
+            current_limit = batch_size
+            statement = (
+                select(ActivityObservabilitySession)
+                .options(selectinload(ActivityObservabilitySession.resource_identity))
+                .order_by(
+                    nullslast(desc(ActivityObservabilitySession.last_active_at)),
+                    desc(ActivityObservabilitySession.id),
+                )
+                .limit(current_limit)
+            )
+            if has_cursor:
+                if last_active_value is None:
+                    statement = statement.where(
+                        and_(
+                            ActivityObservabilitySession.last_active_at.is_(None),
+                            ActivityObservabilitySession.id < last_id,
+                        )
+                    )
+                else:
+                    statement = statement.where(
+                        or_(
+                            ActivityObservabilitySession.last_active_at
+                            < last_active_value,
+                            and_(
+                                ActivityObservabilitySession.last_active_at
+                                == last_active_value,
+                                ActivityObservabilitySession.id < last_id,
+                            ),
+                            ActivityObservabilitySession.last_active_at.is_(None),
+                        )
+                    )
+            rows = list((await db.execute(statement)).scalars())
+            if not rows:
                 break
+            await self._project_session_batch(
+                rows,
+                user,
+                db,
+                projected,
+                page_size,
+            )
+            tail = rows[-1]
+            last_active_value = tail.last_active_at
+            last_id = int(tail.id)
+            has_cursor = True
+            if len(rows) < current_limit:
+                break
+
         return {"sessions": projected}
 
     async def require_session_access(
@@ -1151,13 +1210,21 @@ class ActivityAccessService:
         visible: list[dict[str, Any]] = []
         scanned = last_sequence
         for event in rows:
-            scanned = max(scanned, int(event.event_sequence))
+            sequence = int(event.event_sequence)
             if event.visibility == "hidden" or (
                 event.visibility in {"internal", "admin_only"} and not _is_admin(user)
             ):
+                # Hidden rows may advance the cursor. They are not part of the
+                # visible page, so consuming them here cannot make a visible
+                # row disappear from a later page.
+                scanned = max(scanned, sequence)
                 continue
-            if len(visible) < config.page_size:
-                visible.append(project_event(event, user))
+            if len(visible) >= config.page_size:
+                # Do not advance past the first omitted visible event. The
+                # next request must be able to return it using this cursor.
+                break
+            visible.append(project_event(event, user))
+            scanned = max(scanned, sequence)
         return {
             "events": visible,
             "cursor": self.create_cursor(
