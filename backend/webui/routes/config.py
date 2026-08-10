@@ -831,7 +831,14 @@ async def upload_config_backup(
     try:
         content = await backup_file.read(BACKUP_MAX_BYTES + 1)
         sections = parse_config_backup(content)
-        result = await restore_config_backup(db, sections)
+        # A running deployment cannot atomically commit a new database URL to
+        # both AppConfig and connection.json.  Keep the live restore scoped to
+        # runtime-safe settings and direct database moves through Setup.
+        result = await restore_config_backup(
+            db,
+            sections,
+            allow_database_url=False,
+        )
         runtime_refresh_ok = True
         try:
             refresh_imported_runtime_config(result)

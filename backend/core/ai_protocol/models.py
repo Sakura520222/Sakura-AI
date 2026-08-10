@@ -560,11 +560,12 @@ def safe_provider_event_metadata(value: Any) -> dict[str, Any] | None:
             continue
         if (
             isinstance(item, bool)
-            or isinstance(item, int)
-            and not isinstance(item, bool)
-            and 0 <= item <= 1_000_000
-            or isinstance(item, str)
-            and len(item) <= 128
+            or (
+                isinstance(item, int)
+                and not isinstance(item, bool)
+                and 0 <= item <= 1_000_000
+            )
+            or (isinstance(item, str) and len(item) <= 128)
         ):
             result[key] = item
         elif key == "usage_fields" and isinstance(item, (list, tuple, set, frozenset)):
@@ -674,6 +675,28 @@ class ResolvedModel:
     model: ModelMetadata
     credential: str  # 明文凭据（API key），由上层从 AppConfig 解析
     endpoint: ResolvedEndpoint
+    # 账号可覆盖 provider 的默认协议族；旧 resolver/测试构造未提供时，
+    # 通过 effective_protocol 回退到 provider.family。
+    # An account may override the provider's default protocol family. Legacy
+    # constructors that omit it fall back to provider.family via the property.
+    protocol: ProtocolFamily | str | None = None
+
+    @property
+    def effective_protocol(self) -> ProtocolFamily:
+        """返回本候选实际发送所用的协议族 / Return the effective protocol family."""
+        if self.protocol is None:
+            return self.provider.family
+        if isinstance(self.protocol, ProtocolFamily):
+            return self.protocol
+        try:
+            return ProtocolFamily(self.protocol)
+        except (TypeError, ValueError):
+            return self.provider.family
+
+    @property
+    def protocol_family(self) -> ProtocolFamily:
+        """兼容观测层命名的 effective protocol 别名 / Observability alias."""
+        return self.effective_protocol
 
 
 @dataclass

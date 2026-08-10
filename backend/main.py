@@ -142,9 +142,36 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global _startup_started_at, _startup_finished_at, _startup_duration
 
+    from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeSupervisor,
+        bind_runtime_supervisor,
+        create_registered_background_task,
+        quiesce_database_reset_runtime,
+        reset_runtime_supervisor,
+    )
+
     # 启动时
     _startup_started_at = time.time()
     logger.info("🚀 Sakura AI 启动中...")
+
+    # Install the admission gate before any background task can be created. A
+    # reset request may race startup/shutdown, so the supervisor is always
+    # present on app.state and is replaced after a previous lifespan quiesced.
+    existing_supervisor = getattr(
+        getattr(app, "state", None), "database_reset_runtime_supervisor", None
+    )
+    if existing_supervisor is None or getattr(existing_supervisor, "quiesced", False):
+        existing_supervisor = DatabaseResetRuntimeSupervisor()
+        app.state.database_reset_runtime_supervisor = existing_supervisor
+    runtime_context_token = bind_runtime_supervisor(existing_supervisor)
+    from backend.webui.sse import sse_manager
+
+    sse_manager.resume()
+    # Keep the configured timeout available to the shared quiesce helper. This
+    # also lets isolated lifespan tests override ``main.settings`` safely.
+    app.state.activity_outbox_shutdown_timeout_seconds = (
+        settings.activity_outbox_shutdown_timeout_seconds
+    )
 
     telegram_task = None
     redis_listener_task = None
@@ -228,7 +255,9 @@ async def lifespan(app: FastAPI):
             if _should_start_background_tasks(settings):
                 # 启动 Telegram Bot（后台任务）
                 try:
-                    telegram_task = asyncio.create_task(start_telegram_bot())
+                    telegram_task = create_registered_background_task(
+                        start_telegram_bot(), "telegram_listener"
+                    )
                     logger.info("✅ Telegram Bot 已启动")
                 except Exception as e:
                     logger.error(f"❌ Telegram Bot 启动失败: {e}")
@@ -237,7 +266,9 @@ async def lifespan(app: FastAPI):
                 try:
                     from backend.webui.sse import start_redis_listener
 
-                    redis_listener_task = asyncio.create_task(start_redis_listener())
+                    redis_listener_task = create_registered_background_task(
+                        start_redis_listener(), "sse_redis_listener"
+                    )
                     logger.info("✅ SSE Redis Pub/Sub 监听已启动")
                 except Exception as e:
                     logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
@@ -326,6 +357,8 @@ async def lifespan(app: FastAPI):
 
                     scan_scheduler = ScanScheduler()
                     scan_scheduler.start()
+                    app.state.scan_scheduler = scan_scheduler
+                    existing_supervisor.register_scheduler(scan_scheduler)
                 except Exception as e:
                     logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
 
@@ -335,6 +368,8 @@ async def lifespan(app: FastAPI):
 
                     quota_reset_scheduler = QuotaResetScheduler()
                     quota_reset_scheduler.start()
+                    app.state.quota_reset_scheduler = quota_reset_scheduler
+                    existing_supervisor.register_scheduler(quota_reset_scheduler)
                 except Exception as e:
                     logger.error(f"❌ 配额重置调度器启动失败: {e}")
 
@@ -344,6 +379,8 @@ async def lifespan(app: FastAPI):
 
                     star_aid_scheduler = StarAidScheduler()
                     star_aid_scheduler.start()
+                    app.state.star_aid_scheduler = star_aid_scheduler
+                    existing_supervisor.register_scheduler(star_aid_scheduler)
                 except Exception as e:
                     logger.error(f"仓库互助调度器启动失败: {e}")
 
@@ -354,6 +391,7 @@ async def lifespan(app: FastAPI):
                     update_checker = UpdateChecker()
                     update_checker.start()
                     app.state.update_checker = update_checker
+                    existing_supervisor.register_scheduler(update_checker)
                     logger.info("✅ 更新检查调度器已启动（60min 周期）")
                 except Exception as e:
                     logger.error(f"❌ 更新检查调度器启动失败: {e}")
@@ -377,6 +415,17 @@ async def lifespan(app: FastAPI):
 
     # 关闭时
     logger.info("👋 Sakura AI 关闭中...")
+
+    # Close admission and await all DB-backed schedulers/workers before the
+    # remaining clients are torn down. The reset path calls the same helper;
+    # it is idempotent after a successful quiesce.
+    try:
+        await quiesce_database_reset_runtime(app)
+    except Exception as exc:
+        logger.error(
+            "❌ 运行时静默未完成，应用关闭将继续但数据库重置必须停止: {}",
+            exc,
+        )
 
     # 关闭服务客户端（嵌入服务和重排序服务）
     from backend.services.embedding_service import (
@@ -411,24 +460,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-    # 停止仓库扫描调度器
-    if scan_scheduler:
-        scan_scheduler.stop()
-
-    # 停止活动观测 Outbox dispatcher
-    await _shutdown_activity_outbox(app)
-
-    # 停止配额重置调度器
-    if quota_reset_scheduler:
-        quota_reset_scheduler.stop()
-
-    # 停止仓库互助调度器
-    if star_aid_scheduler:
-        star_aid_scheduler.stop()
-
-    # 停止更新检查调度器（async stop：cancel + await + aclose）
-    if update_checker:
-        await update_checker.stop()
+    # Scheduler/worker/SSE/Outbox handles were stopped by the shared runtime
+    # supervisor above. Keep local variables for startup diagnostics and for
+    # backwards-compatible monkeypatches in isolated lifespan tests.
+    reset_runtime_supervisor(runtime_context_token)
 
 
 # 创建FastAPI应用
@@ -438,6 +473,34 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def bind_database_reset_runtime(request: Request, call_next):
+    """将每个请求绑定到自己的 app supervisor。
+
+    Worker submission functions不携带 ``Request``，但它们在请求创建的
+    asyncio task 中运行，因此会继承此 contextvars binding。多 app 测试/嵌入
+    场景不会再依赖 module-global active supervisor。
+    """
+
+    from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeSupervisor,
+        bind_runtime_supervisor,
+        reset_runtime_supervisor,
+    )
+
+    supervisor = getattr(
+        request.app.state, "database_reset_runtime_supervisor", None
+    )
+    if supervisor is None:
+        supervisor = DatabaseResetRuntimeSupervisor()
+        request.app.state.database_reset_runtime_supervisor = supervisor
+    token = bind_runtime_supervisor(supervisor)
+    try:
+        return await call_next(request)
+    finally:
+        reset_runtime_supervisor(token)
 
 # 配置CORS
 app.add_middleware(

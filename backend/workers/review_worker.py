@@ -36,6 +36,11 @@ from backend.services.check_run_service import (
     ReviewRunKey,
 )
 from backend.services.comment_service import CommentService
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeAdmissionClosed,
+    ensure_background_admission,
+    register_background_task,
+)
 from backend.services.decision_engine import get_decision_engine
 from backend.services.label_service import label_service
 from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
@@ -1696,7 +1701,17 @@ class ReviewWorker:
                                 review_id=review_id,
                             )
 
+                        ensure_background_admission("review_reflection")
                         task = asyncio.create_task(_reflect_with_history())
+                        try:
+                            register_background_task(task, "review_reflection")
+                        except DatabaseResetRuntimeAdmissionClosed:
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
+                            raise
                         self._background_tasks.add(task)
                         task.add_done_callback(self._background_tasks.discard)
                         logger.info("[{}] 已触发 .sakura/ 反思任务", task_id)
@@ -2535,12 +2550,22 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
         str: Task key in format "owner/repo#pr_number", used for cancellation.
              The internal task_id (short UUID) is logged by process_review_task.
     """
+    ensure_background_admission("review")
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
 
     # 直接异步执行，并保留后台任务引用避免被 GC。
     task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    try:
+        register_background_task(task, "review")
+    except DatabaseResetRuntimeAdmissionClosed:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise
     worker._background_tasks.add(task)
     task.add_done_callback(worker._background_tasks.discard)
 
@@ -2556,6 +2581,15 @@ async def _run_review_task_with_timeout(
     """按配置限制 AI 审查阶段，允许已开始的 reporting 完成收尾。"""
     timeout_seconds = get_settings().review_timeout_seconds
     review_task = asyncio.create_task(worker.process_review_task(pr_info))
+    try:
+        register_background_task(review_task, "review_process")
+    except DatabaseResetRuntimeAdmissionClosed:
+        review_task.cancel()
+        try:
+            await review_task
+        except asyncio.CancelledError:
+            pass
+        raise
     try:
         result = await asyncio.wait_for(
             asyncio.shield(review_task),

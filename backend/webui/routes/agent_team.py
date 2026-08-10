@@ -59,6 +59,10 @@ from backend.services.agent_team.submission_context import (
     load_skills_context,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+    register_current_background_task,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -1664,6 +1668,8 @@ async def clean_orphan_worktrees(
 
 async def _run_agent_task_background(task_id: int) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
+    if register_current_background_task("agent_team_webui") is None:
+        return
     try:
         from backend.workers.agent_team_worker import submit_agent_team_task
 
@@ -1676,6 +1682,8 @@ async def _run_agent_task_background(task_id: int) -> None:
 
 async def _resume_agent_task_background(task_id: int) -> None:
     """后台续跑 Agent 任务，避免阻塞 WebUI 请求。"""
+    if register_current_background_task("agent_team_webui_resume") is None:
+        return
     try:
         from backend.workers.agent_team_worker import resume_agent_team_task
 
@@ -2197,7 +2205,9 @@ async def submit_user_prompt(
                 submit_agent_team_human_followup,
             )
 
-            asyncio.create_task(submit_agent_team_human_followup(task_id))
+            create_registered_background_task(
+                submit_agent_team_human_followup(task_id), "agent_team_human_followup"
+            )
         except Exception as exc:
             logger.warning("调度 Agent follow-up iteration 失败: {}", exc)
 

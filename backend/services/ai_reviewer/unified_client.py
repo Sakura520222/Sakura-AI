@@ -164,7 +164,11 @@ def _effective_reasoning_snapshot(
     requested_effort_value = (
         requested_effort if requested_effort is not None else configured.effort
     )
-    protocol = getattr(candidate.provider.family, "value", candidate.provider.family)
+    protocol = getattr(
+        candidate.effective_protocol,
+        "value",
+        candidate.effective_protocol,
+    )
     return EffectiveReasoningSnapshot(
         requested_thinking_mode=_reasoning_mode(
             requested_thinking_value,
@@ -715,6 +719,7 @@ class UnifiedAIClient:
                             logical_call_id=logical_call_id,
                             retry_of_attempt_id=call_state.last_attempt_id,
                             call_state=call_state,
+                            reasoning_snapshot=reasoning_snapshot,
                         )
                     except asyncio.CancelledError, ReviewCancelledError:
                         self._log_logical_call_summary(
@@ -887,7 +892,7 @@ class UnifiedAIClient:
                 emitted = False
                 sender = active_observer
                 try:
-                    adapter = _get_adapter(candidate.provider.family)
+                    adapter = _get_adapter(candidate.effective_protocol)
                     if sender is None:
                         events = adapter.stream(
                             self.http_client,
@@ -1035,7 +1040,7 @@ class UnifiedAIClient:
         reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
         call_state: _CallState,
     ) -> UnifiedResponse:
-        adapter = _get_adapter(candidate.provider.family)
+        adapter = _get_adapter(candidate.effective_protocol)
         cfg = self.fallback_config
         total_timeout = timeout or cfg.total_timeout
         start = time.monotonic()
@@ -1168,6 +1173,7 @@ class UnifiedAIClient:
         logical_call_id: str,
         retry_of_attempt_id: int | None,
         call_state: _CallState,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> UnifiedResponse | None:
         """压缩后同候选重试；仍超限则返回 None 交由上层回退.
@@ -1182,6 +1188,7 @@ class UnifiedAIClient:
                 candidate=candidate,
                 messages=messages,
                 system=request.system,
+                max_output_tokens=request.max_tokens,
             )
         except Exception as exc:
             logger.warning("压缩恢复失败: {}", exc)
@@ -1229,6 +1236,7 @@ class UnifiedAIClient:
                 initial_attempt_kind="compression_retry",
                 initial_retry_of=retry_of_attempt_id,
                 call_state=call_state,
+                reasoning_snapshot=reasoning_snapshot,
             )
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(
@@ -1272,7 +1280,7 @@ class UnifiedAIClient:
         candidate: ResolvedModel,
     ) -> list[Any]:
         """通过适配器列出模型（供 Setup/config 调用）/ List models via adapter."""
-        adapter = _get_adapter(candidate.provider.family)
+        adapter = _get_adapter(candidate.effective_protocol)
         return await adapter.list_models(
             self.http_client, candidate.endpoint, candidate.credential
         )
@@ -1283,7 +1291,7 @@ class UnifiedAIClient:
         model_id: str,
     ) -> Any | None:
         """通过适配器获取单个模型元数据 / Fetch one model via adapter."""
-        adapter = _get_adapter(candidate.provider.family)
+        adapter = _get_adapter(candidate.effective_protocol)
         return await adapter.fetch_model_metadata(
             self.http_client, candidate.endpoint, candidate.credential, model_id
         )

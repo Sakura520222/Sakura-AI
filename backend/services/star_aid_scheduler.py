@@ -63,10 +63,16 @@ class StarAidScheduler:
 
     def stop(self) -> None:
         if self._scheduler and self._scheduler.running:
-            self._scheduler.shutdown(wait=False)
+            self._scheduler.shutdown(wait=True)
             logger.info("star_aid 调度器已停止")
 
     async def _run_tick(self) -> None:
+        from backend.services.database_reset_runtime_service import (
+            register_current_background_task,
+        )
+
+        if register_current_background_task("star_aid_scheduler") is None:
+            return
         if self._worker is None:
             return
         # 运行时再次校验动态配置（WebUI 可能在运行中关闭功能）

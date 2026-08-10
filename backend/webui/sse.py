@@ -20,17 +20,36 @@ class SSEManager:
     def __init__(self, queue_size: int = 100):
         self._queue_size = queue_size
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
+        self._accepting = True
 
     def subscribe(self, channel: str) -> asyncio.Queue:
         """订阅频道，返回消息队列"""
+        queue = asyncio.Queue(maxsize=self._queue_size)
+        if not self._accepting:
+            # Reset/shutdown closes admission synchronously before waiting for
+            # existing generators. A late request receives the shutdown
+            # sentinel immediately and cannot re-enter ``_subscribers``.
+            queue.put_nowait(_SSE_SHUTDOWN)
+            logger.debug("SSE 订阅被 runtime quiesce 拒绝: {}", channel)
+            return queue
         if channel not in self._subscribers:
             self._subscribers[channel] = []
-        queue = asyncio.Queue(maxsize=self._queue_size)
         self._subscribers[channel].append(queue)
         logger.debug(
             f"SSE 客户端订阅频道: {channel}, 当前订阅数: {len(self._subscribers[channel])}"
         )
         return queue
+
+    def begin_quiesce(self) -> int:
+        """关闭新订阅 admission，并唤醒已有流。"""
+
+        self._accepting = False
+        return self.close_all()
+
+    def resume(self) -> None:
+        """在新的应用 lifespan 启动时重新允许订阅。"""
+
+        self._accepting = True
 
     def unsubscribe(self, channel: str, queue: asyncio.Queue):
         """取消订阅"""
@@ -228,4 +247,10 @@ async def start_redis_listener(_attempt: int = 1):
             f"{delay:.1f}秒后重连 (第 {_attempt}/{_RECONNECT_MAX_ATTEMPTS} 次)"
         )
         await asyncio.sleep(delay)
-        _reconnect_task = asyncio.create_task(start_redis_listener(_attempt + 1))
+        from backend.services.database_reset_runtime_service import (
+            create_registered_background_task,
+        )
+
+        _reconnect_task = create_registered_background_task(
+            start_redis_listener(_attempt + 1), "sse_redis_listener_reconnect"
+        )

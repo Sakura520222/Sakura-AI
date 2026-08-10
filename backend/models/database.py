@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -1159,11 +1160,13 @@ class SchemaMigration(Base):
     )
 
 
-def _get_default_sql(col) -> str | None:
+def _get_default_sql(col, dialect=None) -> str | None:
     """获取列的默认值 SQL / Get default value SQL for a column"""
     if col.default is not None and col.default.is_scalar:
         val = col.default.arg
         if isinstance(val, bool):
+            if getattr(dialect, "name", None) == "postgresql":
+                return "TRUE" if val else "FALSE"
             return "1" if val else "0"
         if isinstance(val, (int, float)):
             return str(val)
@@ -1176,6 +1179,127 @@ def _get_default_sql(col) -> str | None:
             return str(arg)
         return None
     return None
+
+
+_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME = (
+    "uq_pr_review_incremental_queue_observability_trigger_id"
+)
+
+
+def _build_add_column_sql(dialect, table_name: str, col) -> str:
+    """Build an ``ALTER TABLE ... ADD COLUMN`` statement for one dialect.
+
+    The auto-migrator runs against both MySQL and PostgreSQL.  Identifiers must
+    therefore be quoted by the active dialect instead of using MySQL-only
+    backticks.  Column types are compiled with that same dialect so custom
+    types (for example PostgreSQL JSON/array types) retain their native SQL.
+    """
+
+    quote = dialect.identifier_preparer.quote
+    sql = (
+        f"ALTER TABLE {quote(table_name)} ADD COLUMN {quote(col.name)} "
+        f"{col.type.compile(dialect=dialect)}"
+    )
+    if col.nullable:
+        return f"{sql} NULL"
+
+    default = _get_default_sql(col, dialect)
+    if default:
+        return f"{sql} NOT NULL DEFAULT {default}"
+    return f"{sql} NOT NULL"
+
+
+async def _ensure_observability_trigger_unique_index(conn, logger) -> bool:
+    """Ensure the incremental queue trigger bridge is unique on old schemas.
+
+    ``Column(unique=True, index=True)`` is applied automatically only when a
+    table is created from scratch.  Existing installations need an explicit,
+    idempotent index migration.  We refuse to guess how to repair duplicate
+    non-NULL trigger IDs: failing before creating the index keeps the database
+    intact and gives operators a concrete value to reconcile.
+    """
+
+    from sqlalchemy import inspect
+
+    table_name = PRReviewIncrementalQueue.__tablename__
+    column_name = "observability_trigger_id"
+
+    def _ensure(sync_conn) -> bool:
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table_name):
+            return False
+
+        column_names = {column["name"] for column in inspector.get_columns(table_name)}
+        if column_name not in column_names:
+            # The caller adds missing model columns first.  Keep this helper
+            # defensive for partially imported model metadata.
+            return False
+
+        indexes = inspector.get_indexes(table_name)
+        unique_columns = {
+            tuple(index.get("column_names") or ())
+            for index in indexes
+            if index.get("unique")
+        }
+        unique_constraints = inspector.get_unique_constraints(table_name)
+        unique_columns.update(
+            tuple(constraint.get("column_names") or ())
+            for constraint in unique_constraints
+        )
+        if (column_name,) in unique_columns:
+            return False
+
+        # A non-NULL trigger ID is an observability identity.  Never silently
+        # delete or merge rows merely to make the new constraint fit.
+        quote = sync_conn.dialect.identifier_preparer.quote
+        quoted_table = quote(table_name)
+        quoted_column = quote(column_name)
+        duplicate_rows = sync_conn.execute(
+            text(
+                f"SELECT {quoted_column}, COUNT(*) AS duplicate_count "
+                f"FROM {quoted_table} "
+                f"WHERE {quoted_column} IS NOT NULL "
+                f"GROUP BY {quoted_column} "
+                f"HAVING COUNT(*) > 1"
+            )
+        ).all()
+        if duplicate_rows:
+            examples = ", ".join(
+                f"{row[0]} ({row[1]} rows)" for row in duplicate_rows[:20]
+            )
+            if len(duplicate_rows) > 20:
+                examples += f", ... ({len(duplicate_rows) - 20} more groups)"
+            raise RuntimeError(
+                "cannot create unique index "
+                f"{_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME}: "
+                "duplicate non-NULL observability_trigger_id values exist; "
+                f"reconcile these queue rows before retrying the migration: {examples}"
+            )
+
+        for index in indexes:
+            if index.get("name") == _OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME:
+                raise RuntimeError(
+                    "cannot create unique index "
+                    f"{_OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME}: an index with "
+                    "the same name already exists but is not unique"
+                )
+
+        unique_index = Index(
+            _OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME,
+            PRReviewIncrementalQueue.__table__.c[column_name],
+            unique=True,
+        )
+        unique_index.create(sync_conn, checkfirst=True)
+        return True
+
+    created = await conn.run_sync(_ensure)
+    if created:
+        logger.info(
+            "[auto-migrate] 已创建唯一索引: %s.%s",
+            table_name,
+            column_name,
+        )
+    return created
 
 
 def _activity_publication_marker_upgrade_sql(
@@ -1310,23 +1434,19 @@ async def _auto_migrate():
         await _ensure_agent_message_longtext_columns(conn, _logger)
         await _ensure_activity_publication_marker_column(conn, _logger)
 
-        if not missing:
-            return
-
-        # 执行 ALTER TABLE ADD COLUMN
+        # 执行 ALTER TABLE ADD COLUMN。标识符与类型均使用当前连接的方言，
+        # 不能把 MySQL 反引号带到 PostgreSQL 等其他数据库。
         for table_name, col in missing:
-            col_type = col.type.compile(dialect=async_engine.dialect)
-            sql = f"ALTER TABLE `{table_name}` ADD COLUMN `{col.name}` {col_type}"
-            if col.nullable:
-                sql += " NULL"
-            else:
-                default = _get_default_sql(col)
-                if default:
-                    sql += f" NOT NULL DEFAULT {default}"
-                else:
-                    sql += " NOT NULL"
+            sql = _build_add_column_sql(conn.dialect, table_name, col)
             await conn.execute(text(sql))
             _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
+
+        unique_index_created = await _ensure_observability_trigger_unique_index(
+            conn, _logger
+        )
+
+        if not missing and not unique_index_created:
+            return
 
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")

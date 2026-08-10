@@ -235,7 +235,13 @@ class UpdateChecker:
 
     def start(self) -> None:
         if self._task is None:
-            self._task = asyncio.create_task(self._run())
+            from backend.services.database_reset_runtime_service import (
+                create_registered_background_task,
+            )
+
+            self._task = create_registered_background_task(
+                self._run(), "update_checker"
+            )
 
     async def stop(self) -> None:
         """干净关闭：cancel + await task + 关 client。"""

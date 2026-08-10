@@ -199,7 +199,11 @@ def _candidate_parts(candidate: Any) -> dict[str, Any]:
         if isinstance(model, str)
         else _field(model, "model_id", _field(candidate, "model_id", ""))
     )
-    family = _field(provider, "family", _field(candidate, "protocol_family", ""))
+    family = _field(candidate, "effective_protocol")
+    if family in (None, ""):
+        family = _field(candidate, "protocol_family")
+    if family in (None, ""):
+        family = _field(provider, "family", "")
     if hasattr(family, "value"):
         family = family.value
     thinking = _field(candidate, "thinking_mode")

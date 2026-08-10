@@ -78,6 +78,7 @@ def resolve_candidate(
         model=metadata,
         credential=credential,
         endpoint=endpoint,
+        protocol=decl.family,
     )
 
 

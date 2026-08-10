@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from backend.core.ai_protocol.errors import AIError
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
     AuthScheme,
@@ -25,9 +26,11 @@ from backend.core.ai_protocol.models import (
     StopReason,
     UnifiedMessage,
     UnifiedResponse,
+    UnifiedToolCall,
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
+from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.compression.unified_compressor import (
     UnifiedContextCompressor,
 )
@@ -41,11 +44,13 @@ def _candidate(
     model_id: str,
     *,
     context_window_tokens: int = 128000,
+    provider_family: ProtocolFamily = ProtocolFamily.OPENAI_COMPATIBLE,
+    protocol: ProtocolFamily | str | None = None,
 ) -> ResolvedModel:
     decl = ProviderDeclaration(
         id=f"prov-{model_id}",
         label=model_id,
-        family=ProtocolFamily.OPENAI_COMPATIBLE,
+        family=provider_family,
         base_url="https://example.test/v1/",
         auth_scheme=AuthScheme.BEARER,
     )
@@ -61,7 +66,11 @@ def _candidate(
         source=MetadataSource.FALLBACK,
     )
     return ResolvedModel(
-        provider=decl, model=metadata, credential="key", endpoint=endpoint
+        provider=decl,
+        model=metadata,
+        credential="key",
+        endpoint=endpoint,
+        protocol=protocol,
     )
 
 
@@ -102,6 +111,54 @@ class _RecordingAdapter:
 
     def build_headers(self, credential, endpoint):
         return {}
+
+
+class _OverflowBudgetAdapter(_RecordingAdapter):
+    """首个主请求超限，且拒绝超出窗口的摘要请求。"""
+
+    def __init__(self, *, context_window_tokens: int):
+        super().__init__(content="recovered")
+        self.context_window_tokens = context_window_tokens
+        self.summary_totals: list[int] = []
+
+    async def chat(self, client, endpoint, credential, request, *, timeout=None):
+        self.calls += 1
+        self.requests.append(request)
+        estimator = get_model_context_manager()
+        input_tokens = sum(
+            estimator.estimate_tokens(message.content or "")
+            for message in request.messages
+        )
+        is_summary = bool(
+            request.messages
+            and request.messages[0].role == "system"
+            and "compress" in (request.messages[0].content or "").lower()
+        )
+        if is_summary:
+            total = input_tokens + request.max_tokens
+            self.summary_totals.append(total)
+            if total > self.context_window_tokens:
+                raise AIError(
+                    AIErrorCategory.CONTEXT_OVERFLOW,
+                    "summary request exceeds context window",
+                )
+            return UnifiedResponse(
+                content="summary",
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=input_tokens, output_tokens=4),
+            )
+        if self.calls == 1:
+            raise AIError(
+                AIErrorCategory.CONTEXT_OVERFLOW,
+                "main request exceeds context window",
+            )
+        return UnifiedResponse(
+            content="recovered",
+            tool_calls=[],
+            stop_reason=StopReason.END_TURN,
+            usage=UnifiedUsage(input_tokens=input_tokens, output_tokens=4),
+        )
 
 
 def _install_stub(monkeypatch, adapter):
@@ -147,6 +204,36 @@ async def test_maybe_compress_budget_uses_candidate_context_window(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_compression_summary_uses_effective_candidate_protocol(monkeypatch):
+    """摘要请求也必须尊重账号的协议覆盖，而非 provider 默认族。"""
+    adapter = _RecordingAdapter()
+    _install_stub(monkeypatch, adapter)
+    from backend.services.ai_reviewer.compression import unified_compressor as uc_module
+
+    seen_families: list[ProtocolFamily] = []
+
+    def fake_get_adapter(family):
+        seen_families.append(family)
+        return adapter
+
+    monkeypatch.setattr(uc_module, "get_adapter", fake_get_adapter)
+    candidate = _candidate(
+        "protocol-summary",
+        context_window_tokens=10_000,
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+    )
+    compressor = UnifiedContextCompressor(threshold=0.8)
+
+    compressed, _messages = await compressor.maybe_compress(
+        candidate,
+        [UnifiedMessage(role="user", content="x" * 50_000)],
+    )
+
+    assert compressed is True
+    assert seen_families == [ProtocolFamily.ANTHROPIC_NATIVE]
+
+
+@pytest.mark.asyncio
 async def test_maybe_compress_skips_within_budget(monkeypatch):
     """预算内不压缩。"""
     adapter = _RecordingAdapter()
@@ -187,6 +274,75 @@ async def test_call_with_retry_compresses_when_over_budget(monkeypatch):
     assert adapter.calls == 2
     main_texts = _message_texts(adapter.requests[1])
     assert any(t.startswith("## 已压缩的历史上下文") for t in main_texts)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_overflow_recovery_bounds_summary_request_to_candidate_window(monkeypatch):
+    """provider overflow recovery must not retry the full oversized history."""
+    adapter = _OverflowBudgetAdapter(context_window_tokens=10_000)
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate("overflow-recovery", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    response = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="x" * 30_000)],
+        model="",
+        max_tokens=4096,
+        role="main",
+    )
+
+    assert response.content == "recovered"
+    assert adapter.calls == 3  # overflow + bounded summary + compressed retry
+    assert adapter.summary_totals
+    assert all(total <= 10_000 for total in adapter.summary_totals)
+    compressed_request = adapter.requests[-1]
+    assert any(
+        message.content and message.content.startswith("## 已压缩的历史上下文")
+        for message in compressed_request.messages
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_overflow_recovery_reuses_reasoning_snapshot(monkeypatch):
+    """compressed retry keeps the original protocol/thinking observation snapshot."""
+    adapter = _OverflowBudgetAdapter(context_window_tokens=10_000)
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate(
+        "overflow-snapshot",
+        context_window_tokens=10_000,
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+    )
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    observer = _SnapshotObserver()
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    response = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="x" * 30_000)],
+        model="",
+        max_tokens=4096,
+        thinking={"type": "enabled"},
+        effort="high",
+        role="main",
+        observer=observer,
+    )
+
+    assert response.content == "recovered"
+    assert len(observer.snapshots) == 2
+    assert observer.snapshots[0] is observer.snapshots[1]
+    assert observer.snapshots[1].protocol_family == ProtocolFamily.ANTHROPIC_NATIVE.value
+    assert observer.snapshots[1].effective_thinking_mode == "unsupported"
+    assert observer.snapshots[1].effective_effort == "unsupported"
     await client.aclose()
 
 
@@ -293,6 +449,66 @@ class _RecordingObserver:
             timeout=timeout,
         )
         return response, self._attempt
+
+
+class _SnapshotObserver(_RecordingObserver):
+    def __init__(self):
+        super().__init__()
+        self.snapshots = []
+
+    async def send_chat(self, *args, **kwargs):
+        self.snapshots.append(kwargs.get("reasoning_snapshot"))
+        return await super().send_chat(*args, **kwargs)
+
+
+def test_split_message_blocks_keeps_non_adjacent_tool_results_in_order():
+    messages = [
+        UnifiedMessage(
+            role="assistant",
+            content="",
+            tool_calls=[UnifiedToolCall(id="call-1", name="lookup", arguments="{}")],
+        ),
+        UnifiedMessage(role="user", content="intervening"),
+        UnifiedMessage(role="tool", tool_call_id="call-1", content="result"),
+        UnifiedMessage(role="user", content="latest"),
+    ]
+
+    blocks = UnifiedContextCompressor._split_message_blocks(messages)
+    flattened = [message for block in blocks for message in block]
+
+    assert flattened == messages
+    assert len(blocks) == 2
+    assert [message.role for message in blocks[0]] == ["assistant", "user", "tool"]
+    assert sum(
+        message.tool_call_id == "call-1"
+        for message in flattened
+        if message.role == "tool"
+    ) == 1
+
+
+def test_fit_message_blocks_keeps_non_adjacent_tool_pair_within_budget():
+    messages = [
+        UnifiedMessage(role="user", content="older"),
+        UnifiedMessage(
+            role="assistant",
+            content="",
+            tool_calls=[UnifiedToolCall(id="call-1", name="lookup", arguments="{}")],
+        ),
+        UnifiedMessage(role="user", content="intervening"),
+        UnifiedMessage(role="tool", tool_call_id="call-1", content="result"),
+    ]
+    compressor = UnifiedContextCompressor()
+    blocks = compressor._split_message_blocks(messages)
+    pair_budget = compressor._estimate(blocks[-1])
+
+    fitted = compressor._fit_message_blocks(messages, pair_budget)
+
+    assert [message.role for message in fitted] == ["assistant", "user", "tool"]
+    assert sum(
+        message.tool_call_id == "call-1"
+        for message in fitted
+        if message.role == "tool"
+    ) == 1
 
 
 @pytest.mark.asyncio

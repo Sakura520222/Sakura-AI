@@ -224,7 +224,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         if message.role == "tool":
             try:
                 parsed = json.loads(message.content or "{}")
-            except json.JSONDecodeError, TypeError:
+            except (json.JSONDecodeError, TypeError):
                 parsed = {"result": message.content or ""}
             return {
                 "role": "user",
@@ -245,7 +245,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             for tc in message.tool_calls:
                 try:
                     args = json.loads(tc.arguments) if tc.arguments else {}
-                except json.JSONDecodeError, TypeError:
+                except (json.JSONDecodeError, TypeError):
                     args = {"raw": tc.arguments}
                 parts.append({"functionCall": {"name": tc.name, "args": args}})
             return {"role": role, "parts": parts}
@@ -299,7 +299,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     fc = part["functionCall"]
                     try:
                         arguments = json.dumps(fc.get("args") or {}, ensure_ascii=False)
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         arguments = "{}"
                     tool_calls.append(
                         UnifiedToolCall(
@@ -552,7 +552,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     fc = part["functionCall"]
                     try:
                         arguments = json.dumps(fc.get("args") or {}, ensure_ascii=False)
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         arguments = "{}"
                     return UnifiedStreamEvent(
                         type="tool_call_start",

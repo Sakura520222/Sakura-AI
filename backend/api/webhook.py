@@ -19,6 +19,9 @@ from backend.core.github_app import (
     extract_pr_info_from_webhook,
     verify_webhook_signature,
 )
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.workers.review_worker import submit_review_task
@@ -2313,7 +2316,9 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
         # 延迟导入：避免 webhook ↔ agent_team_worker 循环依赖
         from backend.workers.agent_team_worker import submit_agent_team_task
 
-        asyncio.create_task(submit_agent_team_task(task_id))
+        create_registered_background_task(
+            submit_agent_team_task(task_id), "agent_team_webhook"
+        )
 
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
@@ -2472,7 +2477,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         # 后台执行任务
         from backend.workers.agent_team_worker import submit_agent_team_task
 
-        asyncio.create_task(submit_agent_team_task(task_id))
+        create_registered_background_task(
+            submit_agent_team_task(task_id), "agent_team_webhook"
+        )
 
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""

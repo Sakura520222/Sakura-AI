@@ -121,7 +121,7 @@ jobs:
           SOURCE="ghcr.io/${IMAGE_NAME}@${{ needs.build-and-publish.outputs.digest }}"
           if [ "${{ inputs.channel }}" = "stable" ]; then
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:v${{ inputs.version }}"
-            crane tag "$SOURCE" latest
+            crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest
           else
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"
           fi

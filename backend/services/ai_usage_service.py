@@ -335,7 +335,11 @@ async def record_unified_ai_usage_best_effort(
 ) -> bool:
     provider = getattr(candidate, "provider", None)
     model = getattr(candidate, "model", None)
-    family = getattr(provider, "family", "unknown")
+    family = getattr(candidate, "effective_protocol", None)
+    if family in (None, ""):
+        family = getattr(candidate, "protocol_family", None)
+    if family in (None, ""):
+        family = getattr(provider, "family", "unknown")
     return await record_ai_usage_best_effort(
         record_key=build_usage_record_key(call_kind, logical_call_id),
         call_kind=call_kind,

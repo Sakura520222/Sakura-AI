@@ -40,6 +40,7 @@ def _candidate(
     model_id: str,
     *,
     context_window_tokens: int = 128000,
+    protocol: ProtocolFamily | str | None = None,
 ) -> ResolvedModel:
     decl = ProviderDeclaration(
         id=f"prov-{model_id}",
@@ -60,7 +61,11 @@ def _candidate(
         source=MetadataSource.FALLBACK,
     )
     return ResolvedModel(
-        provider=decl, model=metadata, credential="key", endpoint=endpoint
+        provider=decl,
+        model=metadata,
+        credential="key",
+        endpoint=endpoint,
+        protocol=protocol,
     )
 
 
@@ -114,6 +119,56 @@ class _StubAdapter:
 
     def build_headers(self, credential, endpoint):
         return {}
+
+
+@pytest.mark.asyncio
+async def test_effective_protocol_selects_chat_stream_and_discovery_adapters(monkeypatch):
+    """账号协议覆盖 provider 默认族时，所有发送/发现入口都应使用覆盖族。"""
+    adapter = _StubAdapter(content="protocol-aware")
+    seen_families: list[ProtocolFamily] = []
+
+    from backend.core.ai_protocol import registry as reg
+
+    def fake_get_adapter(family):
+        seen_families.append(family)
+        return adapter
+
+    monkeypatch.setattr(reg, "get_adapter", fake_get_adapter)
+    candidate = _candidate(
+        ProtocolFamily.OPENAI_COMPATIBLE,
+        "protocol-aware",
+        protocol=ProtocolFamily.ANTHROPIC_NATIVE,
+    )
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+    )
+
+    response = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="hello")],
+        model="protocol-aware",
+        role="main",
+    )
+    events = [
+        event
+        async for event in client.stream_with_retry(
+            [candidate],
+            [UnifiedMessage(role="user", content="hello")],
+            model="protocol-aware",
+            role="main",
+        )
+    ]
+    assert response.content == "protocol-aware"
+    assert events == [None]
+    await client.discover_models(candidate)
+    await client.fetch_model_metadata(candidate, "protocol-aware")
+    assert seen_families == [
+        ProtocolFamily.ANTHROPIC_NATIVE,
+        ProtocolFamily.ANTHROPIC_NATIVE,
+        ProtocolFamily.ANTHROPIC_NATIVE,
+        ProtocolFamily.ANTHROPIC_NATIVE,
+    ]
+    await client.aclose()
 
 
 class _LaneObserver:

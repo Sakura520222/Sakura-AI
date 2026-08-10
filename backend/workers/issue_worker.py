@@ -15,6 +15,11 @@ from backend.models.database import (
     IssueAnalysisStatus,
     async_session,
 )
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeAdmissionClosed,
+    ensure_background_admission,
+    register_background_task,
+)
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
 
@@ -640,6 +645,7 @@ class IssueWorker:
                             )
 
                             sakura_memory_service = get_sakura_memory_service()
+                            ensure_background_admission("issue_reflection")
                             task = asyncio.create_task(
                                 sakura_memory_service.reflect_issue(
                                     repo=repo,
@@ -650,6 +656,15 @@ class IssueWorker:
                                     analysis_record=analysis_record,
                                 )
                             )
+                            try:
+                                register_background_task(task, "issue_reflection")
+                            except DatabaseResetRuntimeAdmissionClosed:
+                                task.cancel()
+                                try:
+                                    await task
+                                except asyncio.CancelledError:
+                                    pass
+                                raise
                             self._background_tasks.add(task)
                             task.add_done_callback(self._background_tasks.discard)
                             logger.info(f"[{task_id}] 已触发 .sakura/ Issue 反思任务")
@@ -777,8 +792,20 @@ def get_issue_worker() -> IssueWorker:
 
 async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
+    ensure_background_admission("issue")
     task_id = str(uuid.uuid4())
     issue_info["task_id"] = task_id
     worker = get_issue_worker()
-    asyncio.create_task(worker.process_issue_analysis(issue_info))
+    task = asyncio.create_task(worker.process_issue_analysis(issue_info))
+    try:
+        register_background_task(task, "issue")
+    except DatabaseResetRuntimeAdmissionClosed:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise
+    worker._background_tasks.add(task)
+    task.add_done_callback(worker._background_tasks.discard)
     return task_id
