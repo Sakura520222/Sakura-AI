@@ -730,7 +730,9 @@ ensure_updater_running() {
 
     if ! updater_backend start \
         --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH"; then
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --compose-file "$COMPOSE_FILE" \
+        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE"; then
         fail "updater 启动失败"
         fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式"
         return 1
@@ -745,7 +747,14 @@ cmd_updater() {
         install)
             cmd_updater_install "$@"
             ;;
-        start|stop|status|is-running)
+        start)
+            updater_backend start \
+                --state-dir "$UPDATER_STATE_DIR" \
+                --socket-path "$UPDATER_SOCKET_PATH" \
+                --compose-file "$COMPOSE_FILE" \
+                --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE" "$@"
+            ;;
+        stop|status|is-running)
             updater_backend "$action" \
                 --state-dir "$UPDATER_STATE_DIR" \
                 --socket-path "$UPDATER_SOCKET_PATH" "$@"

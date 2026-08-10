@@ -179,6 +179,8 @@ class DaemonBackend:
         run_dir: str = DEFAULT_RUN_DIR,
         gid: int = DEFAULT_GID,
         group: str = DEFAULT_GROUP,
+        compose_file: str | None = None,
+        deployment_env: str | None = None,
     ):
         self.state_dir = state_dir
         self.socket_path = socket_path
@@ -189,6 +191,11 @@ class DaemonBackend:
         self.run_dir = run_dir
         self.gid = gid
         self.group = group
+        # These paths are passed explicitly to the child daemon.  ``None`` keeps
+        # backwards compatibility for callers that only exercise lifecycle
+        # management; production bootstrap supplies absolute configured paths.
+        self.compose_file = compose_file
+        self.deployment_env = deployment_env
         # Dev mode: socket 用当前用户 uid/gid（非 root 无法 chown 到 root:9472）
         if os.environ.get("SAKURA_UPDATER_DEV") == "1":
             self._socket_uid = getattr(os, "getuid", lambda: 0)()
@@ -282,8 +289,12 @@ class DaemonBackend:
         )
 
     def _serve_args(self) -> list[str]:
-        """返回 child 进程所需的 --serve 参数（socket_path/state_dir/lock_path/socket uid+gid）。"""
-        return [
+        """返回 child 进程所需的 ``--serve`` 参数。
+
+        Existing argument order/meaning is stable; compose/deployment paths are
+        appended only after the legacy socket/lock arguments.
+        """
+        args = [
             "--serve",
             "--socket-path", self.socket_path,
             "--state-dir", self.state_dir,
@@ -291,6 +302,11 @@ class DaemonBackend:
             "--socket-uid", str(self._socket_uid),
             "--socket-gid", str(self._socket_gid),
         ]
+        if self.compose_file is not None:
+            args.extend(["--compose-file", self.compose_file])
+        if self.deployment_env is not None:
+            args.extend(["--deployment-env", self.deployment_env])
+        return args
 
     # ------------------------------------------------------------ privileges
 
