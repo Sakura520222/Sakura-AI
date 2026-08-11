@@ -24,6 +24,8 @@ set -euo pipefail
 
 COMPOSE_FILE="docker/docker-compose.yml"
 PROD_COMPOSE_FILE="docker/docker-compose.prod.yml"
+COMPOSE_PROJECT=""
+DEFAULT_PROD_COMPOSE_PROJECT="sakura-ai"
 DEPLOY_DIR=".deploy"
 BUILD_LOG="$DEPLOY_DIR/build.log"
 PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / start / health / done
@@ -116,33 +118,38 @@ init_deployment_env() {
     if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
         local persisted_mode=""
         local persisted_password=""
+        local persisted_project=""
         local line
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
                 SAKURA_DEPLOY_MODE=*) persisted_mode="${line#SAKURA_DEPLOY_MODE=}" ;;
                 SAKURA_DB_PASSWORD=*) persisted_password="${line#SAKURA_DB_PASSWORD=}" ;;
+                COMPOSE_PROJECT_NAME=*) persisted_project="${line#COMPOSE_PROJECT_NAME=}" ;;
             esac
         done < "$DEPLOYMENT_ENV_FILE"
 
-        if [[ -n "$persisted_password" ]]; then
-            if [[ ! "$persisted_password" =~ ^[0-9a-f]{64}$ ]]; then
-                fail "deployment.env 中的 SAKURA_DB_PASSWORD 格式无效；拒绝启动以避免数据库凭据不一致" >&2
+        case "$persisted_mode" in
+            source)
+                ;;
+            image)
+                if [[ ! "$persisted_password" =~ ^[0-9a-f]{64}$ ]]; then
+                    fail "invalid production deployment state: SAKURA_DB_PASSWORD must be 64 lowercase hexadecimal characters" >&2
+                    return 1
+                fi
+                if [[ "$persisted_project" != "$DEFAULT_PROD_COMPOSE_PROJECT" ]]; then
+                    fail "invalid production deployment state: COMPOSE_PROJECT_NAME must be '$DEFAULT_PROD_COMPOSE_PROJECT'" >&2
+                    return 1
+                fi
+                ;;
+            *)
+                fail "invalid deployment state: SAKURA_DEPLOY_MODE must be 'source' or 'image'" >&2
                 return 1
-            fi
-            chmod 600 "$DEPLOYMENT_ENV_FILE" || {
-                fail "无法将 deployment.env 权限收紧为 0600；拒绝启动以保护数据库凭据" >&2
-                return 1
-            }
-            return 0
-        fi
-
-        # source compose 不创建内置 MySQL，旧 source 状态可以继续运行。
-        # image/--prod 状态必须由管理员完成一次显式密码迁移，不能在已有
-        # mysql_data 上静默生成新密码，否则应用和数据库会立即失联。
-        if [[ "$persisted_mode" == "image" || "${prod:-false}" == "true" ]]; then
-            fail "现有 deployment.env 缺少 SAKURA_DB_PASSWORD；请先按 README 的 legacy 密码迁移步骤 ALTER USER，再写入同一 64 位十六进制密码" >&2
+                ;;
+        esac
+        chmod 600 "$DEPLOYMENT_ENV_FILE" || {
+            fail "无法将 deployment.env 权限收紧为 0600；拒绝启动以保护数据库凭据" >&2
             return 1
-        fi
+        }
         return 0
     fi
 
@@ -160,6 +167,7 @@ init_deployment_env() {
             # 写实际值：解析当前 SAKURA_AI_IMAGE 环境变量，缺省用默认 latest
             local image="${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}"
             echo "SAKURA_AI_IMAGE=$image"
+            echo "COMPOSE_PROJECT_NAME=$DEFAULT_PROD_COMPOSE_PROJECT"
             # 仅写入由本函数生成的 URL-safe hex secret；绝不记录到日志。
             echo "SAKURA_DB_PASSWORD=$db_password"
         fi
@@ -195,32 +203,81 @@ UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
 #
 # deployment.env 是 updater 的权威运行时状态。这里仅逐行读取精确的
 # SAKURA_DEPLOY_MODE=... 字段，绝不 source/eval runtime 文件，避免把其中的
-# 值当作 shell 代码执行。历史 source/缺失状态继续使用开发 Compose；image
-# 状态必须选择生产 Compose，不能因 start.sh 新进程默认值而回落到开发定义。
-select_compose_from_deployment_mode() {
-    local mode="" line
-    if [[ -r "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+# 值当作 shell 代码执行。source 使用开发 Compose；image 使用生产 Compose。
+# 缺失或未知模式属于无效的 3.0.0 部署状态，不提供兼容回退。
+read_deployment_value() {
+    local key="$1" state_file="${2:-$DEPLOYMENT_ENV_FILE}" value="" line
+    if [[ -r "$state_file" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
-            case "$line" in
-                SAKURA_DEPLOY_MODE=*) mode="${line#SAKURA_DEPLOY_MODE=}" ;;
-            esac
-        done < "$UPDATER_DEPLOYMENT_ENV_FILE"
+            if [[ "${line%%=*}" == "$key" ]]; then
+                value="${line#*=}"
+            fi
+        done < "$state_file"
     fi
+    printf '%s\n' "$value"
+}
+
+read_deployment_mode() {
+    read_deployment_value "SAKURA_DEPLOY_MODE" "${1:-$DEPLOYMENT_ENV_FILE}"
+}
+
+compose_project_name_is_valid() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+}
+
+select_production_compose_project() {
+    local state_file="${1:-$DEPLOYMENT_ENV_FILE}" project=""
+    project="$(read_deployment_value "COMPOSE_PROJECT_NAME" "$state_file")"
+
+    if [[ -z "$project" ]]; then
+        fail "missing COMPOSE_PROJECT_NAME in production deployment state" >&2
+        return 1
+    fi
+
+    if ! compose_project_name_is_valid "$project"; then
+        fail "invalid COMPOSE_PROJECT_NAME in deployment state: '$project'" >&2
+        return 1
+    fi
+    if [[ "$project" != "$DEFAULT_PROD_COMPOSE_PROJECT" ]]; then
+        fail "unsupported production COMPOSE_PROJECT_NAME '$project'; expected '$DEFAULT_PROD_COMPOSE_PROJECT'" >&2
+        return 1
+    fi
+    COMPOSE_PROJECT="$project"
+}
+
+select_compose_for_operation() {
+    local requested_prod="${1:-false}"
+    if should_use_production_mode "$requested_prod"; then
+        COMPOSE_FILE="$PROD_COMPOSE_FILE"
+        select_production_compose_project "$DEPLOYMENT_ENV_FILE"
+    else
+        COMPOSE_FILE="docker/docker-compose.yml"
+        COMPOSE_PROJECT=""
+    fi
+}
+
+should_use_production_mode() {
+    local requested_prod="${1:-false}"
+    [[ "$requested_prod" == "true" ]] \
+        || [[ "$(read_deployment_mode "$DEPLOYMENT_ENV_FILE")" == "image" ]]
+}
+
+select_compose_from_deployment_mode() {
+    local mode
+    mode="$(read_deployment_mode "$UPDATER_DEPLOYMENT_ENV_FILE")"
 
     case "$mode" in
         image)
             COMPOSE_FILE="$PROD_COMPOSE_FILE"
+            select_production_compose_project "$UPDATER_DEPLOYMENT_ENV_FILE"
             ;;
         source)
             COMPOSE_FILE="docker/docker-compose.yml"
-            ;;
-        "")
-            COMPOSE_FILE="docker/docker-compose.yml"
-            warn "SAKURA_DEPLOY_MODE missing; using development compose"
+            COMPOSE_PROJECT=""
             ;;
         *)
-            COMPOSE_FILE="docker/docker-compose.yml"
-            warn "unknown SAKURA_DEPLOY_MODE='$mode'; using development compose"
+            fail "invalid deployment state: SAKURA_DEPLOY_MODE must be 'source' or 'image'" >&2
+            return 1
             ;;
     esac
 }
@@ -891,13 +948,18 @@ cmd_updater() {
 
 detect_compose() {
     local env_file_opt=""
+    local project_opt=""
     if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
         env_file_opt="--env-file $DEPLOYMENT_ENV_FILE"
     fi
+    if [[ -n "$COMPOSE_PROJECT" ]]; then
+        project_opt="--project-name $COMPOSE_PROJECT"
+    fi
     if docker compose version &>/dev/null; then
-        echo "docker compose $env_file_opt -f $COMPOSE_FILE"
+        echo "docker compose $env_file_opt $project_opt -f $COMPOSE_FILE"
     elif command -v docker-compose &>/dev/null; then
-        echo "docker-compose $env_file_opt -f $COMPOSE_FILE"
+        fail "Docker Compose V2 is required; install the 'docker compose' plugin (docker-compose V1 cannot run the Host Updater)" >&2
+        echo ""
     else
         echo ""
     fi
@@ -908,19 +970,40 @@ detect_compose() {
 # ============================================================
 
 cmd_status() {
-    # host updater daemon 恢复尝试（spec §11.4）
-    ensure_updater_running || warn "host updater daemon 不可用"
+    local build_active=0
+    if is_running; then
+        build_active=1
+    fi
 
-    # updater daemon 状态快照
+    # updater daemon 状态快照。构建仍在运行或应用尚未健康时只报告状态，不提前
+    # acquisition；image :latest 必须等 /health 提供具体版本后才能安全安装。
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
         ok "host updater daemon 运行中"
     else
-        warn "host updater daemon 未运行"
+        if [[ "$build_active" -eq 1 ]]; then
+            warn "host updater daemon 未运行；部署仍在进行，等待应用健康后再恢复"
+        elif updater_binary_is_safe "${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}" \
+            || [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]] \
+            || updater_path_exists "${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"; then
+            if ensure_updater_running; then
+                ok "host updater daemon 运行中"
+            else
+                warn "host updater daemon 不可用"
+            fi
+        elif updater_health_payload >/dev/null 2>&1; then
+            if ensure_updater_running; then
+                ok "host updater daemon 运行中"
+            else
+                warn "host updater daemon 不可用"
+            fi
+        else
+            warn "host updater daemon 未运行；应用尚未健康，暂不尝试安装 updater"
+        fi
     fi
 
-    if is_running; then
+    if [[ "$build_active" -eq 1 ]]; then
         local pid
         pid=$(cat "$PID_FILE")
         local phase
@@ -1000,13 +1083,8 @@ build_runner() {
     local current_hash=""
     local dockerfile_hash=""
 
-    # 选择 compose 文件：生产模式用生产 compose（runner 进程 source 后变量被重置，
-    # 需在此显式重新指定）；源码模式保持默认开发 compose
-    if $prod; then
-        COMPOSE_FILE="$PROD_COMPOSE_FILE"
-    else
-        COMPOSE_FILE="docker/docker-compose.yml"
-    fi
+    # runner 会重新 source start.sh，因此必须从持久化状态恢复 Compose 文件和项目。
+    select_compose_for_operation "$prod"
 
     COMPOSE=$(detect_compose)
     if [[ -z "$COMPOSE" ]]; then
@@ -1227,6 +1305,8 @@ do_updater_menu() {
 }
 
 do_ps() {
+    local prod=${1:-false}
+    select_compose_for_operation "$prod"
     # Show container status
     local compose_cmd
     compose_cmd=$(detect_compose)
@@ -1239,6 +1319,8 @@ do_ps() {
 }
 
 do_down() {
+    local prod=${1:-false}
+    select_compose_for_operation "$prod"
     local compose_cmd
     compose_cmd=$(detect_compose)
     if [[ -z "$compose_cmd" ]]; then
@@ -1266,15 +1348,20 @@ do_start() {
         exit 1
     fi
 
-    # 生产模式使用生产 compose（跳过本地构建，直接拉取 GHCR 镜像）
-    if $prod; then
-        COMPOSE_FILE="$PROD_COMPOSE_FILE"
+    # 显式 --prod 或持久化 image 部署都使用生产 compose。这样最小化镜像部署
+    # 后再次运行交互菜单的“启动服务”也不会误入缺少源码文件的开发构建路径。
+    if should_use_production_mode "$prod"; then
+        if [[ "$prod" != "true" ]]; then
+            info "检测到持久化 image 部署，继续使用生产模式"
+        fi
+        prod=true
         info "生产模式：使用生产 compose ($PROD_COMPOSE_FILE)"
     fi
 
     # 先初始化部署状态（detect_compose 依赖 deployment.env 是否存在来决定 --env-file）
     mkdir -p "$DEPLOY_DIR"
     init_deployment_env
+    select_compose_for_operation "$prod"
 
     # Detect compose
     COMPOSE=$(detect_compose)
@@ -1415,8 +1502,8 @@ main() {
         status) cmd_status; exit 0 ;;
         attach) cmd_attach; exit $? ;;
         stop)   cmd_stop; exit 0 ;;
-        ps)     do_ps; exit 0 ;;
-        down)   do_down; exit 0 ;;
+        ps)     do_ps "$prod"; exit 0 ;;
+        down)   do_down "$prod"; exit 0 ;;
     esac
 
     # No subcommand args -> interactive menu

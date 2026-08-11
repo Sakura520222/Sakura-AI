@@ -169,7 +169,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`/opt/sakura-ai` 及其中的 Compose 定义由 root 管理，避免持久运行的 root updater 执行普通用户可篡改的部署文件。该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
+`/opt/sakura-ai` 及其中的 Compose 定义由 root 管理，避免持久运行的 root updater 执行普通用户可篡改的部署文件。启动脚本会把固定的 `sakura-ai` Compose 项目名写入部署状态，并在每次 Compose 操作中显式传入，持久化卷不会因配置文件位于 `docker/` 目录而落入通用的 `docker_*` 命名空间。该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
 

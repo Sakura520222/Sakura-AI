@@ -6,6 +6,7 @@ import pytest
 from sakura_ai_updater.adapters.image import (
     HealthCheckVersionMismatch,
     ImageAdapter,
+    ImageAdapterError,
     ImageCommandError,
 )
 
@@ -48,7 +49,10 @@ async def test_pull_failure_does_not_touch_deployment_env(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_activate_writes_env_and_uses_explicit_compose_env_file(tmp_path, monkeypatch):
     env = tmp_path / "deployment.env"
-    env.write_text("SAKURA_AI_IMAGE=old:image\nOTHER=keep\n", encoding="utf-8")
+    env.write_text(
+        "SAKURA_AI_IMAGE=old:image\nCOMPOSE_PROJECT_NAME=sakura-ai\nOTHER=keep\n",
+        encoding="utf-8",
+    )
     calls: list[tuple[str, ...]] = []
 
     async def fake_exec(*argv, **kwargs):
@@ -65,12 +69,77 @@ async def test_activate_writes_env_and_uses_explicit_compose_env_file(tmp_path, 
             "compose",
             "--env-file",
             str(env),
+            "--project-name",
+            "sakura-ai",
             "-f",
             "/srv/docker-compose.prod.yml",
             "up",
             "-d",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_activate_rejects_invalid_persisted_compose_project(tmp_path, monkeypatch):
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        "SAKURA_AI_IMAGE=old:image\nCOMPOSE_PROJECT_NAME=../../unsafe\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(tuple(argv))
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter("/srv/docker-compose.prod.yml", str(env))
+
+    with pytest.raises(ImageAdapterError, match="invalid COMPOSE_PROJECT_NAME"):
+        await adapter.activate("ghcr.io/example/app:v3.1.0")
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_activate_requires_persisted_compose_project(tmp_path, monkeypatch):
+    env = tmp_path / "deployment.env"
+    env.write_text("SAKURA_AI_IMAGE=old:image\n", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(tuple(argv))
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter("/srv/docker-compose.prod.yml", str(env))
+
+    with pytest.raises(ImageAdapterError, match="missing COMPOSE_PROJECT_NAME"):
+        await adapter.activate("ghcr.io/example/app:v3.1.0")
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_activate_rejects_noncanonical_compose_project(tmp_path, monkeypatch):
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        "SAKURA_AI_IMAGE=old:image\nCOMPOSE_PROJECT_NAME=docker\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(tuple(argv))
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter("/srv/docker-compose.prod.yml", str(env))
+
+    with pytest.raises(ImageAdapterError, match="unsupported COMPOSE_PROJECT_NAME"):
+        await adapter.activate("ghcr.io/example/app:v3.1.0")
+
+    assert calls == []
 
 
 @pytest.mark.asyncio
