@@ -80,3 +80,21 @@ def test_conflict_and_preflight_errors_are_unwrapped():
     response = client.post("/v1/update", json={"target_version": "3.1.0"})
     assert response.status_code == 409
     assert response.json() == {"error": "update_in_progress", "job_id": "upd_existing"}
+
+
+def test_release_error_exposes_only_safe_classification():
+    class ReleaseUnavailableError(RuntimeError):
+        detail = "tls_certificate_verification_failed"
+
+    class _Unavailable(_Orchestrator):
+        async def check(self):
+            raise ReleaseUnavailableError("signed URL must not escape")
+
+    client = TestClient(create_app("unused", orchestrator=_Unavailable()))
+    response = client.post("/v1/check")
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "error": "release_unavailable",
+        "detail": "tls_certificate_verification_failed",
+    }

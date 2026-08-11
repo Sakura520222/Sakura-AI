@@ -859,3 +859,36 @@ jobs:
           TAG_NAME="v${VERSION}"
           gh release view "$TAG_NAME" >/dev/null
           gh release upload "$TAG_NAME" update-manifest.json --clobber
+
+      - name: 验证已发布 updater 的 HTTPS 就绪性
+        env:
+          VERSION: ${{ needs.generate-release.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_IMAGE: >-
+            debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_dir=$(mktemp -d)
+          cleanup() {
+            rm -rf -- "$smoke_dir"
+          }
+          trap cleanup EXIT
+
+          tag="v${VERSION}"
+          asset="$smoke_dir/sakura-ai-updater-linux-amd64"
+          gh release download "$tag" \
+            --pattern sakura-ai-updater-linux-amd64 \
+            --dir "$smoke_dir"
+          [[ -f "$asset" && ! -L "$asset" && -s "$asset" ]] || {
+            echo "published updater smoke asset is missing or unsafe" >&2
+            exit 1
+          }
+          chmod 0700 "$asset"
+
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "$asset:/mnt/sakura-ai-updater:ro" \
+            -v "$GITHUB_WORKSPACE/updater/build/run-fresh-runtime-smoke.sh:/usr/local/bin/run-fresh-runtime-smoke.sh:ro" \
+            "$RUNTIME_IMAGE" \
+            bash /usr/local/bin/run-fresh-runtime-smoke.sh /mnt/sakura-ai-updater 1

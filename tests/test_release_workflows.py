@@ -295,6 +295,18 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert '"asset_linux_amd64"' in run_text
     assert '"asset_linux_arm64"' in run_text
 
+    smoke = next(
+        step
+        for step in manifest["steps"]
+        if step.get("name") == "验证已发布 updater 的 HTTPS 就绪性"
+    )
+    smoke_text = smoke["run"]
+    assert smoke["env"]["RUNTIME_IMAGE"] == RUNTIME_IMAGE
+    assert "gh release download" in smoke_text
+    assert "sakura-ai-updater-linux-amd64" in smoke_text
+    assert "run-fresh-runtime-smoke.sh /mnt/sakura-ai-updater 1" in smoke_text
+    assert "--platform linux/amd64" in smoke_text
+
 
 def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     ci, _ = _load(CI_PATH)

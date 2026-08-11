@@ -11,7 +11,10 @@ import asyncio
 import inspect
 import json
 import platform
+import socket
+import ssl
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -27,6 +30,10 @@ class ReleaseClientError(RuntimeError):
 class ReleaseUnavailableError(ReleaseClientError):
     """GitHub could not be reached and no cached result is available."""
 
+    def __init__(self, message: str, *, detail: str = "request_failed") -> None:
+        self.detail = detail
+        super().__init__(message)
+
 
 class ReleaseNotFoundError(ReleaseClientError):
     """No matching stable release exists."""
@@ -34,6 +41,42 @@ class ReleaseNotFoundError(ReleaseClientError):
 
 class ManifestNotFoundError(ReleaseClientError):
     """A release exists but does not include update-manifest.json."""
+
+
+def _request_failure_detail(exc: BaseException) -> str:
+    """Return a credential-free reason suitable for IPC and operator logs."""
+
+    if isinstance(exc, HTTPError):
+        return f"http_status_{exc.code}"
+    if isinstance(exc, URLError):
+        reason = exc.reason
+        if isinstance(reason, FileNotFoundError):
+            filename = Path(reason.filename).name if reason.filename else "unknown"
+            safe_name = "".join(
+                character if character.isalnum() or character in ".-_" else "_"
+                for character in filename
+            )
+            return f"file_not_found_{safe_name}"
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return "tls_certificate_verification_failed"
+        if isinstance(reason, ssl.SSLError):
+            return "tls_failed"
+        if isinstance(reason, socket.gaierror):
+            return "dns_failed"
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return "timeout"
+        return f"url_error_{type(reason).__name__.lower()}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(exc, UnicodeError):
+        return "invalid_utf8"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, OSError):
+        return f"os_error_{type(exc).__name__.lower()}"
+    if isinstance(exc, ValueError):
+        return "invalid_response"
+    return "request_failed"
 
 
 class ReleaseClient:
@@ -79,7 +122,10 @@ class ReleaseClient:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-            raise ReleaseUnavailableError(f"GitHub request failed for {url!r}: {exc}") from exc
+            raise ReleaseUnavailableError(
+                f"GitHub request failed for {url!r}: {exc}",
+                detail=_request_failure_detail(exc),
+            ) from exc
 
     async def _fetch_json(self, url: str) -> Any:
         return await asyncio.to_thread(self._fetch_json_sync, url)
