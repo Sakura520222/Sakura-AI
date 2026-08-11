@@ -141,7 +141,10 @@ async def verify_token(request: Request):
 
     if validate_setup_token(token):
         response = RedirectResponse(url="/setup", status_code=302)
-        _set_setup_verified_cookie(response, token)
+        verified_token = get_setup_token()
+        if verified_token is None:
+            return RedirectResponse(url="/setup/verify", status_code=302)
+        _set_setup_verified_cookie(response, verified_token)
         return response
 
     lang = resolve_language(request)
