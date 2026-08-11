@@ -171,6 +171,17 @@ sudo ./start.sh --prod
 
 `/opt/sakura-ai` and its Compose definition are managed by root so the persistent root updater never executes deployment files that an unprivileged account can replace. The launcher persists the fixed `sakura-ai` Compose project and passes it explicitly to every Compose operation, so placing the file under `docker/` cannot put persistent volumes in the generic `docker_*` namespace. This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
+> **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
+>
+> ```bash
+> sudo ./start.sh updater stop
+> sudo ./start.sh updater install
+> sudo ./start.sh updater start
+> sudo ./start.sh updater status
+> ```
+>
+> `install` is strictly bound to the currently healthy Sakura AI version, so run it only after the application update has completed. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
+
 **Web image only** (bring your own MySQL/Redis):
 
 ```bash

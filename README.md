@@ -171,6 +171,17 @@ sudo ./start.sh --prod
 
 `/opt/sakura-ai` 及其中的 Compose 定义由 root 管理，避免持久运行的 root updater 执行普通用户可篡改的部署文件。启动脚本会把固定的 `sakura-ai` Compose 项目名写入部署状态，并在每次 Compose 操作中显式传入，持久化卷不会因配置文件位于 `docker/` 目录而落入通用的 `docker_*` 命名空间。该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
 
+> **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
+>
+> ```bash
+> sudo ./start.sh updater stop
+> sudo ./start.sh updater install
+> sudo ./start.sh updater start
+> sudo ./start.sh updater status
+> ```
+>
+> `install` 严格绑定当前已健康运行的 Sakura AI 版本，因此必须在应用更新成功后执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
+
 **仅 Web 镜像**（MySQL/Redis 自备）：
 
 ```bash
