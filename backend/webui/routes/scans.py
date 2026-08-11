@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
+from loguru import logger
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -253,10 +254,8 @@ async def trigger_scan(
                     worker.process_scan(scan_id), "scan_manual_webui"
                 )
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
-            except Exception as e:
-                from loguru import logger
-
-                logger.error(f"触发扫描失败 ({repo_name}): {e}")
+            except Exception:
+                logger.exception("触发仓库扫描失败: {}", repo_name)
 
         return JSONResponse(
             {
@@ -266,8 +265,9 @@ async def trigger_scan(
             }
         )
 
-    except Exception as e:
+    except Exception:
+        logger.exception("获取扫描候选仓库失败")
         return JSONResponse(
-            {"success": False, "message": str(e)},
+            {"success": False, "message": "触发扫描失败，请稍后重试"},
             status_code=500,
         )

@@ -61,12 +61,20 @@ class UpdaterClient:
 
     Args:
         socket_path: UDS 路径。None 时从 Settings 读（默认 /run/sakura-ai/updater.sock）。
-        timeout: 请求超时（秒）。updater 响应慢时生效；连不上 socket 通常瞬间失败。
+        timeout: 状态与 job 轮询超时（秒）。
+        action_timeout: check/preflight/update 动作超时（秒）；这些动作会同步执行
+            GitHub、镜像仓库和 Docker 预检，不能复用短轮询超时。
     """
 
-    def __init__(self, socket_path: str | None = None, timeout: float = 2.0):
+    def __init__(
+        self,
+        socket_path: str | None = None,
+        timeout: float = 2.0,
+        action_timeout: float = 120.0,
+    ):
         self._socket_path = socket_path or get_settings().sakura_updater_socket_path
         self._timeout = timeout
+        self._action_timeout = action_timeout
 
     async def get_status(self) -> dict | None:
         """GET /v1/status。成功且 envelope shape 合法返回 envelope，否则 None。
@@ -107,11 +115,16 @@ class UpdaterClient:
         """
 
         transport = httpx.AsyncHTTPTransport(uds=self._socket_path)
+        request_timeout = (
+            self._action_timeout
+            if path in {"/v1/check", "/v1/preflight", "/v1/update"}
+            else self._timeout
+        )
         try:
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="http://updater",
-                timeout=self._timeout,
+                timeout=request_timeout,
             ) as client:
                 response = await client.request(method, path, json=json_body)
         except (httpx.HTTPError, OSError, AttributeError) as exc:

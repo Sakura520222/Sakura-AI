@@ -220,8 +220,8 @@ class Settings(BaseSettings):
         description="JWT 和 CSRF Token 签名密钥，生产环境必须改为强随机字符串（如 openssl rand -hex 32）",
     )
     webui_cookie_secure: bool = Field(
-        False,
-        description="Cookie Secure 属性，HTTPS 环境必须设为 True",
+        True,
+        description="兼容配置项；敏感认证 Cookie 始终启用 Secure 属性",
     )
 
     # 多因素认证配置 / Multi-factor authentication configuration

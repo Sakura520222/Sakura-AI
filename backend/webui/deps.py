@@ -6,6 +6,7 @@ from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from functools import lru_cache
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from fastapi import Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -163,11 +164,41 @@ async def _close_db_session(session: AsyncSession) -> None:
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """获取异步数据库会话"""
-    session = db_module.async_session()
+    from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeAdmissionClosed,
+        DatabaseResetRuntimeBindingError,
+        get_runtime_supervisor,
+    )
+
+    supervisor = None
+    request_lease = None
     try:
+        supervisor = get_runtime_supervisor()
+    except DatabaseResetRuntimeBindingError:
+        # Direct dependency consumers (notably isolated unit tests and maintenance
+        # code) do not have an HTTP middleware context.  HTTP requests always bind
+        # the app supervisor before dependency resolution and remain tracked.
+        pass
+    if supervisor is not None:
+        try:
+            request_lease = supervisor.register_request("http.get_db")
+        except DatabaseResetRuntimeAdmissionClosed as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="数据库重置正在进行，请稍后重试",
+                headers={"Retry-After": "5"},
+            ) from exc
+    session = None
+    try:
+        session = db_module.async_session()
         yield session
     finally:
-        await _close_db_session(session)
+        try:
+            if session is not None:
+                await _close_db_session(session)
+        finally:
+            if supervisor is not None and request_lease is not None:
+                supervisor.release_request(request_lease)
 
 
 async def mark_webui_request(request: Request):
@@ -343,7 +374,23 @@ def error_page(
 
 def _safe_redirect_path(url: str) -> str:
     """Return a same-origin absolute path for redirects, or root if unsafe."""
-    if not url or not url.startswith("/") or url.startswith("//") or "://" in url:
+    if not url or not url.startswith("/"):
+        return "/"
+    decoded_url = unquote(url)
+    if "\\" in decoded_url or any(ord(char) < 32 for char in decoded_url):
+        return "/"
+    try:
+        parsed = urlsplit(url)
+        decoded = urlsplit(decoded_url)
+    except ValueError:
+        return "/"
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or decoded.scheme
+        or decoded.netloc
+        or decoded_url.startswith("//")
+    ):
         return "/"
     return url
 

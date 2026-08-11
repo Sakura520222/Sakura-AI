@@ -40,6 +40,7 @@ from backend.models.database import (
     close_async_db,
     create_tables_async,
     init_async_db,
+    init_database,
     insert_default_configs_async,
     migrate_schema_async,
 )
@@ -64,6 +65,7 @@ from backend.models.scan_models import (
     ScanFinding,
     ScanStatus,
 )
+from backend.models.security_models import SecurityEventLog
 from backend.models.star_aid_models import (
     StarAidActionLog,
     StarAidCredential,

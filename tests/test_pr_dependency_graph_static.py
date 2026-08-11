@@ -1,3 +1,4 @@
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -62,6 +63,57 @@ def make_github_file(path: str, status: str = "modified", changes: int = 1):
         deletions=0,
         changes=changes,
     )
+
+
+def test_extract_previous_graph_uses_deterministic_delimiter_parsing(service):
+    body = (
+        "prefix\n"
+        f"{service.START_MARKER}\n"
+        "```mermaid\r\n"
+        "graph TD\r\n"
+        "    A --> B\r\n"
+        "```\n"
+        f"{service.END_MARKER}\n"
+        "suffix"
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        side_effect=AssertionError("untrusted PR body must not use regex search"),
+    ):
+        graph = service._extract_previous_graph(body)
+
+    assert graph == "graph TD\r\n    A --> B"
+
+
+def test_extract_previous_graph_rejects_large_unterminated_fence(service):
+    body = (
+        service.START_MARKER
+        + "\n```mermaid\n"
+        + (" \n" * 50_000)
+        + service.END_MARKER
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        side_effect=AssertionError("untrusted PR body must not use regex search"),
+    ):
+        graph = service._extract_previous_graph(body)
+
+    assert graph is None
+
+
+def test_validate_mermaid_rejects_large_unterminated_fence_without_fence_regex():
+    content = "```mermaid\n" + (" \n" * 50_000)
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        wraps=re.search,
+    ) as regex_search:
+        graph = PRDependencyGraphService._validate_mermaid(content)
+
+    assert graph == ""
+    assert all("```mermaid" not in call.args[0] for call in regex_search.call_args_list)
 
 
 def test_incremental_graph_uses_all_pr_file_metadata(service):
