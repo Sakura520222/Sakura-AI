@@ -189,9 +189,21 @@ def _updater_error(exc: Exception) -> JSONResponse:
     if isinstance(exc, UpdaterProtocolError):
         return JSONResponse({"error": "updater_protocol_error"}, status_code=502)
     if isinstance(exc, UpdaterActionError):
-        if exc.status_code >= 500:
-            return JSONResponse({"error": "updater_internal_error"}, status_code=502)
         body = exc.body if isinstance(exc.body, dict) else {"error": "updater_error"}
+        if exc.status_code >= 500:
+            code = body.get("error")
+            if code in {"release_unavailable", "protocol_error", "updater_not_ready"}:
+                payload = {"error": code}
+                detail = body.get("detail")
+                if (
+                    isinstance(detail, str)
+                    and len(detail) <= 96
+                    and all(character.isalnum() or character in "._-" for character in detail)
+                ):
+                    payload["detail"] = detail
+                status_code = 503 if code == "updater_not_ready" else 502
+                return JSONResponse(payload, status_code=status_code)
+            return JSONResponse({"error": "updater_internal_error"}, status_code=502)
         return JSONResponse(body, status_code=exc.status_code)
     return JSONResponse({"error": "updater_internal_error"}, status_code=502)
 
