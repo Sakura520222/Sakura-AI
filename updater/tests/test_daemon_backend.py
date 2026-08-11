@@ -1243,7 +1243,14 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     _patch_euid(monkeypatch, uid=0)
     child = FakePopen(pid=4242)
     popen_calls = []
-    _patch_popen(monkeypatch, child, calls=popen_calls)
+    popen_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append(args)
+        popen_kwargs.update(kwargs)
+        return child
+
+    monkeypatch.setattr(daemon_mod.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
     monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
     monkeypatch.setattr(backend, "_health_ready", lambda *a: True)
@@ -1261,3 +1268,25 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     assert "--socket-gid" in argv
     gid_idx = argv.index("--socket-gid")
     assert argv[gid_idx + 1] == str(daemon_mod.DEFAULT_GID)
+    assert popen_kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+def test_start_dev_mode_does_not_force_pyinstaller_reset(tmp_path, monkeypatch):
+    backend = _make_backend(tmp_path)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    monkeypatch.delenv("PYINSTALLER_RESET_ENVIRONMENT", raising=False)
+    child = FakePopen(pid=4242)
+    popen_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        popen_kwargs.update(kwargs)
+        return child
+
+    monkeypatch.setattr(daemon_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
+    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
+    monkeypatch.setattr(backend, "_health_ready", lambda *a: True)
+
+    backend.start()
+
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in popen_kwargs["env"]
