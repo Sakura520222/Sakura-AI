@@ -92,8 +92,8 @@ async def update_user_config(
         await db.commit()
     except ValueError:
         await db.rollback()
-        logger.warning("用户配置更新校验失败 / user config validation failed", exc_info=True)
-        return error_response("配置数据无效，请检查后重试")
+        logger.opt(exception=True).warning("用户配置更新校验失败 / user config validation failed")
+        return error_response(f"配置项 {key} 的值不合法，请从可选项中选择")
     except Exception as e:
         await db.rollback()
         logger.error(f"更新用户配置失败: {e}", exc_info=True)

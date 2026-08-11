@@ -366,7 +366,7 @@ async def test_db_connection(
         }
     except Exception:
         # 不向外部暴露异常详情，避免泄漏内部实现（堆栈/SQL/路径等）
-        logger.error("测试数据库连接失败 / database connection test failed", exc_info=True)
+        logger.exception("测试数据库连接失败 / database connection test failed")
         return {"success": False, "message": "数据库连接测试失败，请检查连接配置"}
 
 
@@ -391,5 +391,5 @@ async def test_chromadb(
         }
     except Exception:
         # 不向外部暴露异常详情，避免泄漏内部实现（堆栈/SQL/路径等）
-        logger.error("测试 ChromaDB 连接失败 / chromadb connection test failed", exc_info=True)
+        logger.exception("测试 ChromaDB 连接失败 / chromadb connection test failed")
         return {"success": False, "message": "ChromaDB 连接测试失败，请检查服务状态"}
