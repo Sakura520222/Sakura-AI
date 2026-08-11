@@ -1,5 +1,7 @@
 """Version updater proxy route unit checks (dependency-light helpers)."""
 
+import json
+
 from backend.services.updater_client import (
     UpdaterActionError,
     UpdaterProtocolError,
@@ -20,3 +22,33 @@ def test_version_proxy_error_mapping():
     assert _updater_error(UpdaterProtocolError("bad")).status_code == 502
     response = _updater_error(UpdaterActionError(409, {"error": "update_in_progress", "job_id": "upd_1"}))
     assert response.status_code == 409
+
+
+def test_version_proxy_preserves_safe_release_failure_reason():
+    response = _updater_error(
+        UpdaterActionError(
+            502,
+            {
+                "error": "release_unavailable",
+                "detail": "file_not_found_base_library.zip",
+            },
+        )
+    )
+
+    assert response.status_code == 502
+    assert json.loads(response.body) == {
+        "error": "release_unavailable",
+        "detail": "file_not_found_base_library.zip",
+    }
+
+
+def test_version_proxy_drops_untrusted_internal_error_details():
+    response = _updater_error(
+        UpdaterActionError(
+            500,
+            {"error": "internal_error", "detail": "https://signed.example/?token=secret"},
+        )
+    )
+
+    assert response.status_code == 502
+    assert json.loads(response.body) == {"error": "updater_internal_error"}

@@ -125,7 +125,7 @@ const VM_I18N = {
   healthMismatch: {{ _("version_manager.health_mismatch") | tojson }},
   target: {{ _("version_manager.target") | tojson }},
   noTarget: {{ _("version_manager.no_target") | tojson }},
-  readinessFailed: {{ _("version_manager.readiness_failed") | tojson }},
+  readinessError: {{ _("version_manager.readiness_error") | tojson }},
   preflightPassed: {{ _("version_manager.preflight_passed") | tojson }},
   preflightFailed: {{ _("version_manager.preflight_failed") | tojson }},
   preflightError: {{ _("version_manager.preflight_error") | tojson }},
@@ -138,6 +138,14 @@ const VM_I18N = {
   missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
   httpError: {{ _("version_manager.http_error") | tojson }},
   reconnectingJob: {{ _("version_manager.reconnecting_job") | tojson }},
+  errorDetail: {{ _("version_manager.error_detail") | tojson }},
+  errorLabels: {
+    release_unavailable: {{ _("version_manager.error_release_unavailable") | tojson }},
+    updater_not_ready: {{ _("version_manager.error_updater_not_ready") | tojson }},
+    protocol_error: {{ _("version_manager.error_protocol") | tojson }},
+    updater_protocol_error: {{ _("version_manager.error_protocol") | tojson }},
+    updater_internal_error: {{ _("version_manager.error_internal") | tojson }}
+  },
   stateLabels: {
     idle: {{ _("version_manager.state_idle") | tojson }},
     checking: {{ _("version_manager.state_checking") | tojson }},
@@ -216,6 +224,12 @@ async function requestJson(url, options) {
   return body;
 }
 
+function vmUpdaterError(error) {
+  const body = error && error.body && typeof error.body === 'object' ? error.body : {};
+  const label = VM_I18N.errorLabels[body.error] || error.message || VM_I18N.error;
+  return body.detail ? vmFormat(VM_I18N.errorDetail, {error: label, detail: body.detail}) : label;
+}
+
 function showReadiness(data) {
   const payload = data && data.data ? data.data : data || {};
   readinessCard.classList.remove('hidden');
@@ -241,8 +255,11 @@ async function loadReadiness() {
     showReadiness(data);
     return data && data.data ? data.data : data;
   } catch (error) {
-    if (error.status === 503) setStatus(VM_I18N.notConnected, 'error');
-    else setStatus(VM_I18N.readinessFailed, 'error');
+    if (error.status === 503 && error.body && error.body.error === 'updater_unavailable') {
+      setStatus(VM_I18N.notConnected, 'error');
+    } else {
+      setStatus(vmFormat(VM_I18N.readinessError, {error: vmUpdaterError(error)}), 'error');
+    }
     updateButton.disabled = true;
     return null;
   }

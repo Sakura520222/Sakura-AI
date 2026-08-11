@@ -115,7 +115,12 @@ def _action_error(exc: Exception) -> JSONResponse:
     if "protocol" in name:
         return _error_response(502, "protocol_error", **details)
     if "unavailable" in name or "network" in name:
-        return _error_response(502, "release_unavailable")
+        detail = details.get("detail")
+        return _error_response(
+            502,
+            "release_unavailable",
+            **({"detail": detail} if isinstance(detail, str) else {}),
+        )
     # Unknown orchestrator failures are not silently reported as success.
     return _error_response(500, "internal_error", **details)
 

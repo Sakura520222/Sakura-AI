@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+import json
+from urllib.error import URLError
+
 import pytest
-from sakura_ai_updater.release_client import ReleaseClient, ReleaseUnavailableError
+from sakura_ai_updater.release_client import (
+    ReleaseClient,
+    ReleaseUnavailableError,
+    _request_failure_detail,
+)
+
+
+def test_request_failure_detail_is_safe_and_typed():
+    assert _request_failure_detail(URLError("certificate verify failed")) == "url_error_str"
+    missing = FileNotFoundError(2, "missing", "/secret/path/libexample.so")
+    assert _request_failure_detail(URLError(missing)) == "file_not_found_libexample.so"
+    assert _request_failure_detail(json.JSONDecodeError("bad", "x", 0)) == "invalid_json"
 
 
 @pytest.mark.asyncio
