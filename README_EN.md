@@ -153,18 +153,19 @@ Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for 
 
 ### Docker One-Click Deployment (Recommended for Self-hosting)
 
-**Full deployment** (spins up Web + MySQL + Redis):
+**Linux full deployment** (Web + MySQL + Redis + Host Updater):
 
 ```bash
 mkdir sakura-ai && cd sakura-ai
-mkdir -p docker .deploy
+mkdir -p docker
 curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
   -o docker/docker-compose.prod.yml
-umask 077
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
-  "$(openssl rand -hex 32)" > .deploy/deployment.env
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh -o start.sh
+chmod +x start.sh
+sudo ./start.sh --prod
 ```
+
+This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
 **Web image only** (bring your own MySQL/Redis):
 
@@ -175,6 +176,8 @@ docker run -d -p 8000:8000 \
   -v $(pwd)/config:/app/config \
   ghcr.io/sakura520222/sakura-ai:latest
 ```
+
+This mode does not include the Host Updater. It can report available releases, but it cannot apply an update from the WebUI.
 
 After first start, visit `http://localhost:8000/setup` and complete configuration via the Setup Wizard.
 

@@ -189,6 +189,7 @@ UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
 UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$DEPLOYMENT_ENV_FILE}"
 UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-backend/__init__.py}"
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
+UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
 
 # 依据持久化部署模式选择 updater 使用的 Compose 定义。
 #
@@ -261,6 +262,27 @@ updater_curl() {
     fi
     http_status=${http_status//$'\r'/}
     [[ "$http_status" =~ ^2[0-9][0-9]$ ]]
+}
+
+# Read the already-running image version without requiring a source checkout.
+# 读取已运行镜像的实际版本，使最小 Curl + Compose 部署无需源码版本文件。
+updater_health_payload() {
+    curl --fail --silent --show-error \
+        --connect-timeout 2 --max-time 5 \
+        --header 'Accept: application/json' \
+        "$UPDATER_HEALTH_URL"
+}
+
+resolve_running_image_version() {
+    local payload
+    if ! payload=$(updater_health_payload); then
+        return 1
+    fi
+    if [[ "$payload" =~ \"version\"[[:space:]]*:[[:space:]]*\"([0-9]+\.[0-9]+\.[0-9]+)\" ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
 }
 
 updater_sha256() {
@@ -457,7 +479,7 @@ updater_prepare_state_dir() {
 }
 
 resolve_updater_app_version() {
-    local deploy_mode="" image_version="" package_version="" line image version
+    local deploy_mode="" image_version="" running_version="" package_version="" line image version
 
     if [[ -f "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -478,6 +500,8 @@ resolve_updater_app_version() {
         image)
             if [[ -n "$image_version" ]]; then
                 version="$image_version"
+            elif running_version=$(resolve_running_image_version); then
+                version="$running_version"
             fi
             ;;
         source) ;;
