@@ -1189,7 +1189,7 @@ build_runner() {
         info "停止现有容器..."
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
         info "启动服务（拉取最新镜像）..."
-        if $COMPOSE up -d >> "$BUILD_LOG" 2>&1; then
+        if $COMPOSE up -d --pull always >> "$BUILD_LOG" 2>&1; then
             ok "服务已启动"
         else
             set_phase "start" "fail"
