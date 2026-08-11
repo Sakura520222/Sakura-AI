@@ -51,6 +51,7 @@ updater_binary_mode() {
 }
 updater_directory_owner_uid() { printf '%s\n' "$FAKE_STATE_OWNER"; }
 updater_directory_mode() { printf '%s\n' "$FAKE_STATE_MODE"; }
+updater_chown() { :; }
 updater_binary_is_safe() {
     local binary="$1" owner mode
     [[ -f "$binary" && ! -L "$binary" ]] || return 1
@@ -389,6 +390,7 @@ __version__ = "3.0.0"
 EOF
 updater_uname_s() { printf '%s\n' Linux; }
 updater_uname_m() { printf '%s\n' x86_64; }
+updater_health_payload() { return 1; }
 cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
 SAKURA_DEPLOY_MODE=image
 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:$(printf '%064d' 0)
@@ -402,6 +404,13 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest
 EOF
 [ "$(resolve_updater_app_version)" = "3.0.0" ] \
     && report 0 "V3: image latest falls back to package version" || report 1 "V3"
+updater_health_payload() { printf '%s\n' '{"status":"healthy","version":"3.2.0"}'; }
+[ "$(resolve_updater_app_version)" = "3.2.0" ] \
+    && report 0 "V3b: running image version is authoritative for latest" || report 1 "V3b"
+updater_health_payload() { printf '%s\n' '{"status":"healthy","version":"latest"}'; }
+[ "$(resolve_updater_app_version)" = "3.0.0" ] \
+    && report 0 "V3c: malformed health version falls back to package" || report 1 "V3c"
+updater_health_payload() { return 1; }
 rm -f "$UPDATER_BACKEND_VERSION_FILE"
 cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
 SAKURA_DEPLOY_MODE=image
@@ -682,6 +691,13 @@ updater_backend() { echo "BACKEND:$@" >> "$FAKE_LOG"; }
 : > "$FAKE_LOG"
 cmd_updater status --extra-opt 2>/dev/null
 grep -q "BACKEND:status" "$FAKE_LOG" && report 0 "S7: cmd_updater 透传 action" || report 1 "S7"
+
+# S8: start 必须复用 ensure 路径，在 /run 被重启清空后重新执行 install bootstrap。
+ensure_updater_running() { echo "ENSURE:$*" >> "$FAKE_LOG"; }
+: > "$FAKE_LOG"
+cmd_updater start --extra-opt 2>/dev/null
+grep -q "ENSURE:--extra-opt" "$FAKE_LOG" \
+    && report 0 "S8: cmd_updater start 复用 bootstrap ensure" || report 1 "S8"
 
 # --- missing failure matrix: real lock contention ---
 run_real_flock_busy_case() {
