@@ -490,6 +490,7 @@ async def bind_database_reset_runtime(request: Request, call_next):
     """
 
     from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeAdmissionClosed,
         DatabaseResetRuntimeSupervisor,
         bind_runtime_supervisor,
         reset_runtime_supervisor,
@@ -501,6 +502,14 @@ async def bind_database_reset_runtime(request: Request, call_next):
     if supervisor is None:
         supervisor = DatabaseResetRuntimeSupervisor()
         request.app.state.database_reset_runtime_supervisor = supervisor
+    try:
+        supervisor.ensure_admission("http.request")
+    except DatabaseResetRuntimeAdmissionClosed:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "数据库重置正在进行，请稍后重试"},
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        )
     token = bind_runtime_supervisor(supervisor)
     try:
         return await call_next(request)

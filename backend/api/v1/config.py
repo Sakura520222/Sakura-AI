@@ -50,6 +50,16 @@ class AIModelsRequest(BaseModel):
 def _mask_sensitive(value: str, key: str) -> str:
     """对敏感配置字段进行脱敏"""
     sensitive_keys = ("secret", "key", "token", "password", "credential")
+    if key.startswith("ai_account."):
+        try:
+            account = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return "****"
+        if not isinstance(account, dict):
+            return "****"
+        account["has_key"] = bool(account.get("api_key"))
+        account["api_key"] = "****" if account.get("api_key") else ""
+        return json.dumps(account, ensure_ascii=False)
     if any(s in key.lower() for s in sensitive_keys):
         if value and len(value) > 8:
             return value[:4] + "****" + value[-4:]
@@ -284,9 +294,18 @@ async def save_ai_bindings(
     """保存角色→账号绑定 / Persist role→account bindings."""
     if not isinstance(body.bindings, dict):
         return error_response("bindings 必须是对象")
-    await account_store.save_role_bindings_raw(body.bindings)
+    accounts = await account_store.list_accounts()
+    try:
+        bindings = account_store.validate_role_bindings_payload(
+            body.bindings,
+            {account.id for account in accounts},
+        )
+    except ValueError as exc:
+        return error_response(str(exc))
+    await account_store.save_role_bindings(bindings)
     logger.info(f"AI 角色绑定已更新 / role bindings saved, by={user['sub']}")
-    return success_response(data={"bindings": body.bindings})
+    normalized = {role: binding.to_dict() for role, binding in bindings.items()}
+    return success_response(data={"bindings": normalized})
 
 
 # =========================================================================
@@ -366,7 +385,7 @@ async def put_ai_strategy_settings(
             lo, hi = _AI_STRATEGY_RANGES[key]
             try:
                 numeric = float(value)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return error_response(f"{key} 取值无效")
             if not (lo <= numeric <= hi):
                 return error_response(f"{key} 取值需在 {lo}~{hi} 之间")
@@ -545,6 +564,16 @@ async def update_general_config(
     configs = body.configs
     if not configs:
         return error_response("配置内容不能为空")
+    reserved_keys = {
+        key
+        for key in configs
+        if key == "ai_role_bindings" or key.startswith("ai_account.")
+    }
+    if reserved_keys:
+        return error_response(
+            "AI 账号与角色绑定必须通过专用配置接口更新",
+            detail=", ".join(sorted(reserved_keys)),
+        )
 
     async with _config_lock:
         for key, value in configs.items():

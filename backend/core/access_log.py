@@ -50,7 +50,7 @@ class QuietSuccessfulAccessFilter(logging.Filter):
             method = str(args[1]).upper()
             path = str(args[2])
             status_code = int(args[4])
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
         return method, path, status_code
 

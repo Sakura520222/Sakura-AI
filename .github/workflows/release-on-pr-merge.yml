@@ -490,12 +490,12 @@ jobs:
       contents: write
 
     steps:
-      - name: 检出代码（使用合并后的 main 分支）
+      - name: 检出不可变发布 Tag
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: main  # 确保使用的是合并后的 main 分支代码
+          ref: refs/tags/v${{ needs.generate-release.outputs.version }}
 
       - name: 验证项目结构
         run: |
@@ -765,12 +765,13 @@ jobs:
     uses: ./.github/workflows/updater-build.yml
     with:
       version: ${{ needs.generate-release.outputs.version }}
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
     secrets: inherit
 
   publish-stable-image:
     name: 发布稳定镜像
     needs: generate-release
-    if: needs.generate-release.outputs.release_action == 'created'
+    if: needs.generate-release.result == 'success'
     permissions:
       contents: read
       packages: write
@@ -792,19 +793,16 @@ jobs:
       always() &&
       needs.generate-release.result == 'success' &&
       needs.publish-updater-assets.result == 'success' &&
-      (
-        needs.publish-stable-image.result == 'success' ||
-        needs.publish-stable-image.result == 'skipped'
-      )
+      needs.publish-stable-image.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: 检出代码
+      - name: 检出不可变发布 Tag
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: refs/tags/v${{ needs.generate-release.outputs.version }}
 
       - name: 生成并上传 update-manifest.json
         env:
