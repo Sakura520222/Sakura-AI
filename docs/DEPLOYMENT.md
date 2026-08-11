@@ -40,7 +40,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-推荐路径固定为 root 管理的 `/opt/sakura-ai`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+推荐路径固定为 root 管理的 `/opt/sakura-ai`。生产 Compose 显式使用 `sakura-ai` 项目名，避免配置文件所在的 `docker/` 目录把网络和持久化卷错误命名为通用的 `docker_*`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
 
 **macOS（仅容器，不包含 Host Updater）**：
 

@@ -84,10 +84,84 @@ def test_non_image_mode_keeps_development_compose_with_compatibility_warning(
 
 def test_mode_parser_does_not_source_or_evaluate_deployment_file():
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
-    helper_start = script.index("select_compose_from_deployment_mode()")
+    helper_start = script.index("read_deployment_mode()")
     helper_end = script.index("\n}\n", helper_start) + 3
     helper = script[helper_start:helper_end]
 
     assert "source " not in helper
     assert "eval " not in helper
     assert "SAKURA_DEPLOY_MODE=" in helper
+
+
+@pytest.mark.parametrize(
+    ("persisted_mode", "requested_prod", "expected"),
+    [
+        ("image", "false", True),
+        ("source", "false", False),
+        (None, "false", False),
+        ("source", "true", True),
+    ],
+)
+def test_start_mode_honors_persisted_image_deployment(
+    persisted_mode: str | None,
+    requested_prod: str,
+    expected: bool,
+):
+    deployment_line = (
+        f"printf 'SAKURA_DEPLOY_MODE=%s\\n' '{persisted_mode}' > \"$DEPLOYMENT_ENV_FILE\""
+        if persisted_mode is not None
+        else ": > \"$DEPLOYMENT_ENV_FILE\""
+    )
+    command = f"""
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+{deployment_line}
+should_use_production_mode {requested_prod}
+"""
+    result = subprocess.run(
+        ["bash"],
+        cwd=ROOT,
+        env={**os.environ, "TERM": "dumb"},
+        input=command.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+
+    assert (result.returncode == 0) is expected
+
+
+def test_status_defers_updater_bootstrap_while_deployment_is_running():
+    command = """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+PID_FILE="$case_dir/build.pid"
+BUILD_LOG="$case_dir/build.log"
+printf '4242\n' > "$PID_FILE"
+: > "$BUILD_LOG"
+is_running() { return 0; }
+get_phase() { printf 'start\\n'; }
+updater_backend() { return 1; }
+ensure_updater_running() { printf 'UNEXPECTED_BOOTSTRAP\\n'; return 1; }
+tail() { :; }
+cmd_status
+"""
+    result = subprocess.run(
+        ["bash"],
+        cwd=ROOT,
+        env={**os.environ, "TERM": "dumb"},
+        input=command.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    output = result.stdout.decode("utf-8", errors="replace")
+
+    assert result.returncode == 0, output + result.stderr.decode(errors="replace")
+    assert "UNEXPECTED_BOOTSTRAP" not in output
+    assert "等待应用健康后再恢复" in output
