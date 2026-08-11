@@ -153,18 +153,23 @@
 
 ### Docker 一键部署（推荐自建）
 
-**全量部署**（拉起 Web + MySQL + Redis）：
+**Linux 全量部署**（Web + MySQL + Redis + Host Updater）：
 
 ```bash
-mkdir sakura-ai && cd sakura-ai
-mkdir -p docker .deploy
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  -o docker/docker-compose.prod.yml
-umask 077
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
-  "$(openssl rand -hex 32)" > .deploy/deployment.env
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  --output /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
+  --output /opt/sakura-ai/start.sh
+sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo chmod 0755 /opt/sakura-ai/start.sh
+cd /opt/sakura-ai
+sudo ./start.sh --prod
 ```
+
+`/opt/sakura-ai` 及其中的 Compose 定义由 root 管理，避免持久运行的 root updater 执行普通用户可篡改的部署文件。该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
 
@@ -175,6 +180,8 @@ docker run -d -p 8000:8000 \
   -v $(pwd)/config:/app/config \
   ghcr.io/sakura520222/sakura-ai:latest
 ```
+
+此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
 
 首次启动后访问 `http://localhost:8000/setup`，按 Setup Wizard 完成配置。
 
@@ -187,7 +194,7 @@ pip install -r requirements.txt
 python -m backend.main
 ```
 
-> 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 自动更新守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
+> 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
 
 ---
 
