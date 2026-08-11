@@ -1,6 +1,7 @@
 """API v1 Setup Wizard 端点（免认证，仅在 bootstrap 模式下可用）"""
 
 from fastapi import APIRouter, Request
+from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from backend.api.v1.deps import limiter
@@ -173,8 +174,9 @@ async def save_step(body: SaveStepRequest):
             data={"saved_count": saved},
             message=f"已保存 {saved} 项配置",
         )
-    except Exception as e:
-        return error_response(f"保存失败: {e}", status_code=500)
+    except Exception:
+        logger.error("Setup 配置保存失败 / setup save failed", exc_info=True)
+        return error_response("配置保存失败，请稍后重试", status_code=500)
 
 
 @router.post("/complete")

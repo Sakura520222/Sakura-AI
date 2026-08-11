@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, Query
+from loguru import logger
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -176,5 +177,6 @@ async def reanalyze_issue(
 
         task_id = await submit_issue_analysis_task(issue_info)
         return success_response(data={"task_id": task_id})
-    except Exception as e:
-        return error_response(str(e), status_code=500)
+    except Exception:
+        logger.error("提交 Issue 分析任务失败 / submit issue analysis failed", exc_info=True)
+        return error_response("提交分析任务失败，请稍后重试", status_code=500)
