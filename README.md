@@ -180,7 +180,7 @@ sudo ./start.sh --prod
 > sudo ./start.sh updater status
 > ```
 >
-> `install` 严格绑定当前已健康运行的 Sakura AI 版本，因此必须在应用更新成功后执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
+> `install` 会按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行 `install`。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
 
