@@ -283,6 +283,32 @@ Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检�
 
 action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
 
+### WebUI 更新后同步 Host Updater
+
+WebUI 版本管理器当前负责更新 Sakura AI 应用镜像，不会替换或重启宿主机上的 Host Updater。预检中的“Updater 文件可用”只验证目标 Release 包含当前架构对应的 updater binary 与 `SHA256SUMS`，不代表更新任务会安装该 binary。因此，WebUI 更新应用成功后，正在运行的 updater 仍是更新前的版本。
+
+等待 WebUI 更新任务成功，并确认应用健康接口已经返回目标版本：
+
+```bash
+cd /opt/sakura-ai
+curl --fail --silent --show-error http://localhost:8000/health
+```
+
+然后停止旧 daemon，安装与当前已健康运行应用版本严格对应的 updater，再启动并验证：
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater install
+sudo ./start.sh updater start
+sudo ./start.sh updater status
+
+sudo curl --fail --silent --show-error \
+  --unix-socket /run/sakura-ai/updater.sock \
+  http://updater/v1/health
+```
+
+`install` 不会下载 `latest` updater，而是解析当前部署的具体 Sakura AI 版本并下载同一 Release 的架构资产。因此命令顺序必须是“先完成应用更新并确认健康，再安装 updater”。这套操作只同步管理员已经在 WebUI 确认过的 Release，不会启用定时任务或无人值守更新。
+
 ### 生产首次安装
 
 生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`。首次执行 `install` 时，即使宿主机没有 Python 且该 binary 尚不存在，也会由 `start.sh` 完成 binary acquisition；生产路径不依赖宿主机 Python。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
@@ -307,7 +333,15 @@ sudo ./start.sh updater start     # 启动守护进程
 - 下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。
 - atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
 
-如果 daemon 在安装前已经运行，替换 binary 不会自动重启正在运行的进程。安装成功后请显式执行：
+Linux 原子替换 binary 后，已经运行的 daemon 会继续使用旧 inode，不会自动切换到新版本。重复安装时推荐先停止 daemon，再安装和启动：
+
+```bash
+sudo ./start.sh updater stop
+sudo ./start.sh updater install
+sudo ./start.sh updater start
+```
+
+如果已经在 daemon 运行期间执行了 `install`，则至少需要显式重启：
 
 ```bash
 sudo ./start.sh updater stop
