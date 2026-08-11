@@ -90,9 +90,10 @@ async def update_user_config(
             updated_keys.append(key)
 
         await db.commit()
-    except ValueError as e:
+    except ValueError:
         await db.rollback()
-        return error_response(str(e))
+        logger.warning("用户配置更新校验失败 / user config validation failed", exc_info=True)
+        return error_response("配置数据无效，请检查后重试")
     except Exception as e:
         await db.rollback()
         logger.error(f"更新用户配置失败: {e}", exc_info=True)
