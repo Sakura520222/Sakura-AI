@@ -30,6 +30,7 @@ from sakura_ai_updater.backends.daemon import (
     DaemonBackend,
     GIDConflictError,
     PrivilegeError,
+    UnsafeDeploymentPathError,
     UpdaterNotInstalledError,
     UpdaterStartError,
     _is_same_process,
@@ -141,7 +142,10 @@ def _patch_root_owned_lstat(monkeypatch):
 
     def fake_lstat(path):
         result = real_lstat(path)
-        mode = result.st_mode if result.st_mode & 0o111 else stat.S_IFREG | 0o700
+        if stat.S_ISDIR(result.st_mode):
+            mode = stat.S_IFDIR | 0o755
+        else:
+            mode = stat.S_IFREG | 0o700
         return SimpleNamespace(st_mode=mode, st_uid=0)
 
     monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
@@ -157,6 +161,34 @@ def _patch_target_owned_lstat(monkeypatch, target: Path, uid: int):
             return result
         mode = result.st_mode if result.st_mode & 0o111 else stat.S_IFREG | 0o700
         return SimpleNamespace(st_mode=mode, st_uid=uid)
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+
+
+def _patch_trusted_path_tree(
+    monkeypatch,
+    *,
+    file_modes: dict[Path, int],
+    overrides: dict[Path, tuple[int, int]] | None = None,
+):
+    """把临时目录映射为 Linux root-owned 安全路径，可精确注入不安全 inode。"""
+
+    real_lstat = daemon_mod.os.lstat
+    normalized_modes = {os.path.abspath(path): mode for path, mode in file_modes.items()}
+    normalized_overrides = {
+        os.path.abspath(path): value for path, value in (overrides or {}).items()
+    }
+
+    def fake_lstat(path):
+        absolute = os.path.abspath(path)
+        if absolute in normalized_overrides:
+            mode, uid = normalized_overrides[absolute]
+            return SimpleNamespace(st_mode=mode, st_uid=uid)
+        result = real_lstat(path)
+        if stat.S_ISDIR(result.st_mode):
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        mode = normalized_modes.get(absolute, 0o700)
+        return SimpleNamespace(st_mode=stat.S_IFREG | mode, st_uid=0)
 
     monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
 
@@ -186,6 +218,7 @@ def test_module_exports_error_types():
     assert issubclass(UpdaterStartError, RuntimeError)
     assert issubclass(GIDConflictError, RuntimeError)
     assert issubclass(PrivilegeError, RuntimeError)
+    assert issubclass(UnsafeDeploymentPathError, RuntimeError)
 
 
 # =============================================================================
@@ -557,6 +590,87 @@ def test_start_allows_root_for_production_binary(tmp_path, monkeypatch):
     backend.start()
     data = json.loads(Path(backend._pid_meta_path).read_text(encoding="utf-8"))
     assert data == {"pid": 4242, "starttime": "555666", "identity": "sakura-ai-updater"}
+
+
+def _production_paths(tmp_path: Path) -> tuple[Path, Path, Path, DaemonBackend]:
+    binary = tmp_path / ".deploy" / "updater" / "sakura-ai-updater"
+    compose = tmp_path / "docker" / "docker-compose.prod.yml"
+    deployment_env = tmp_path / ".deploy" / "deployment.env"
+    for path in (binary, compose, deployment_env):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test\n", encoding="utf-8")
+    backend = _make_backend(
+        tmp_path,
+        binary_path=str(binary),
+        compose_file=str(compose),
+        deployment_env=str(deployment_env),
+    )
+    return binary, compose, deployment_env, backend
+
+
+def test_validate_production_paths_accepts_trusted_root_tree(tmp_path, monkeypatch):
+    binary, compose, deployment_env, backend = _production_paths(tmp_path)
+    _patch_trusted_path_tree(
+        monkeypatch,
+        file_modes={binary: 0o700, compose: 0o644, deployment_env: 0o600},
+    )
+
+    backend._validate_production_paths()
+
+    assert backend.binary_path == os.path.abspath(binary)
+    assert backend.compose_file == os.path.abspath(compose)
+    assert backend.deployment_env == os.path.abspath(deployment_env)
+
+
+@pytest.mark.parametrize(
+    ("target_name", "unsafe_mode", "unsafe_uid", "message"),
+    [
+        ("compose", stat.S_IFREG | 0o644, 1000, "owned by root"),
+        ("compose", stat.S_IFREG | 0o666, 0, "group/other writable"),
+        ("compose", stat.S_IFLNK | 0o777, 0, "regular file"),
+        ("compose_parent", stat.S_IFDIR | 0o777, 0, "parent"),
+        ("deployment_env", stat.S_IFREG | 0o644, 0, "mode 0600"),
+    ],
+)
+def test_validate_production_paths_rejects_untrusted_inputs(
+    tmp_path,
+    monkeypatch,
+    target_name,
+    unsafe_mode,
+    unsafe_uid,
+    message,
+):
+    binary, compose, deployment_env, backend = _production_paths(tmp_path)
+    targets = {
+        "compose": compose,
+        "compose_parent": compose.parent,
+        "deployment_env": deployment_env,
+    }
+    _patch_trusted_path_tree(
+        monkeypatch,
+        file_modes={binary: 0o700, compose: 0o644, deployment_env: 0o600},
+        overrides={targets[target_name]: (unsafe_mode, unsafe_uid)},
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError, match=message):
+        backend._validate_production_paths()
+
+
+def test_start_dev_mode_does_not_require_trusted_production_paths(tmp_path, monkeypatch):
+    backend = _make_backend(tmp_path)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    monkeypatch.setattr(
+        backend,
+        "_validate_production_paths",
+        lambda: pytest.fail("dev start must not validate production deployment paths"),
+    )
+    child = FakePopen(pid=4242)
+    _patch_popen(monkeypatch, child)
+    monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
+    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
+    monkeypatch.setattr(backend, "_health_ready", lambda *a: True)
+
+    backend.start()
 
 
 def test_start_fails_when_child_exits_immediately(tmp_path, monkeypatch):
