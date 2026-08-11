@@ -25,6 +25,7 @@ from sakura_ai_updater.backends.daemon import (
     DEFAULT_STARTUP_TIMEOUT,
     GIDConflictError,
     PrivilegeError,
+    UnsafeDeploymentPathError,
     UpdaterNotInstalledError,
     UpdaterStartError,
 )
@@ -45,6 +46,7 @@ _BACKEND_ERRORS = (
     UpdaterStartError,
     GIDConflictError,
     PrivilegeError,
+    UnsafeDeploymentPathError,
 )
 
 
