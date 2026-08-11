@@ -169,7 +169,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`/opt/sakura-ai` and its Compose definition are managed by root so the persistent root updater never executes deployment files that an unprivileged account can replace. Production Compose uses the fixed project name `sakura-ai`, so placing the file under `docker/` cannot put persistent volumes in the generic `docker_*` namespace. This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+`/opt/sakura-ai` and its Compose definition are managed by root so the persistent root updater never executes deployment files that an unprivileged account can replace. The launcher persists the fixed `sakura-ai` Compose project and passes it explicitly to every Compose operation, so placing the file under `docker/` cannot put persistent volumes in the generic `docker_*` namespace. This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
 **Web image only** (bring your own MySQL/Redis):
 
