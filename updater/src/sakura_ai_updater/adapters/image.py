@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import tempfile
 import time
 from collections.abc import Iterable
@@ -76,6 +77,37 @@ class HealthCheckVersionMismatch(HealthCheckError):
         )
         self.expected = expected
         self.actual = actual
+
+
+_COMPOSE_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_PRODUCTION_COMPOSE_PROJECT = "sakura-ai"
+
+
+def _read_compose_project_name(path: str) -> str:
+    """Read a persisted Compose project without evaluating the env file."""
+
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
+        raise ImageAdapterError(
+            f"cannot read deployment state for Compose project: {path!r}"
+        ) from exc
+    project: str | None = None
+    for line in lines:
+        if line.startswith("COMPOSE_PROJECT_NAME="):
+            project = line.split("=", 1)[1]
+    if project is None:
+        raise ImageAdapterError("missing COMPOSE_PROJECT_NAME in deployment state")
+    if not _COMPOSE_PROJECT_RE.fullmatch(project):
+        raise ImageAdapterError(
+            f"invalid COMPOSE_PROJECT_NAME in deployment state: {project!r}"
+        )
+    if project != _PRODUCTION_COMPOSE_PROJECT:
+        raise ImageAdapterError(
+            "unsupported COMPOSE_PROJECT_NAME in deployment state: "
+            f"{project!r}; expected {_PRODUCTION_COMPOSE_PROJECT!r}"
+        )
+    return project
 
 
 def _fsync_parent(path: str | os.PathLike[str]) -> None:
@@ -313,18 +345,14 @@ class ImageAdapter:
         # This write is deliberately after ``pull`` (the orchestrator calls
         # those methods as separate state-machine steps).
         await asyncio.to_thread(write_deployment_env, self.deployment_env, target_image)
-        await self._run_command(
-            [
-                "docker",
-                "compose",
-                "--env-file",
-                self.deployment_env,
-                "-f",
-                self.compose_file,
-                "up",
-                "-d",
-            ]
+        compose_argv = ["docker", "compose", "--env-file", self.deployment_env]
+        project = await asyncio.to_thread(
+            _read_compose_project_name,
+            self.deployment_env,
         )
+        compose_argv.extend(["--project-name", project])
+        compose_argv.extend(["-f", self.compose_file, "up", "-d"])
+        await self._run_command(compose_argv)
 
     async def inspect_running_digest(self) -> str:
         """Return the immutable digest captured by the running container."""
