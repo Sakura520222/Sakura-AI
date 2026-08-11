@@ -456,7 +456,7 @@ issue_analysis:
     {related_info}
 
     ---
-    *此评论由 Sakura AI 自动生成。*
+    *此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。*
 
   # 自动评论模板（英文）
   comment_template_en: |
@@ -480,7 +480,7 @@ issue_analysis:
     {related_info}
 
     ---
-    *This comment was generated automatically by Sakura AI.*
+    *This comment was generated automatically by [Sakura AI](https://github.com/Sakura520222/Sakura-AI).*
 
 # ========== PR 总结配置 ==========
 pr_summary:
