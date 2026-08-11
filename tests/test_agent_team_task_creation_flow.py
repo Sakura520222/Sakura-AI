@@ -9,6 +9,7 @@ import pytest
 from backend.services.agent_team.candidate_service import (
     AgentCandidate,
     AgentTeamCandidateService,
+    CandidateServiceError,
 )
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
@@ -320,6 +321,27 @@ async def test_build_manual_issue_task_draft_reuses_analysis_without_creating_ta
 
 
 @pytest.mark.asyncio
+async def test_build_manual_issue_task_draft_hides_github_exception(monkeypatch):
+    service = AgentTeamCandidateService()
+    secret = "https://token:super-secret@api.github.example/issues/123"
+
+    async def empty_allowlist():
+        return set()
+
+    monkeypatch.setattr(service, "_load_repo_allowlist", empty_allowlist)
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.GitHubAppClient",
+        lambda: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
+
+    with pytest.raises(CandidateServiceError) as exc_info:
+        await service.build_manual_issue_task_draft(object(), "owner/repo", 123)
+
+    assert str(exc_info.value) == "GitHub API 调用失败，无法获取 Issue"
+    assert secret not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_preview_task_from_issue_returns_draft(monkeypatch):
     async def fake_draft(self, db, repo_full_name, issue_number):
         assert repo_full_name == "owner/repo"
@@ -365,6 +387,34 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     assert (
         "## GitHub Issue 上下文" in payload["submission_context"]["agent_task_context"]
     )
+
+
+@pytest.mark.asyncio
+async def test_preview_task_from_issue_hides_candidate_service_error(monkeypatch):
+    secret = "https://token:super-secret@api.github.example/issues/123"
+
+    async def fail_draft(self, db, repo_full_name, issue_number):
+        raise CandidateServiceError(secret)
+
+    monkeypatch.setattr(
+        AgentTeamCandidateService,
+        "build_manual_issue_task_draft",
+        fail_draft,
+    )
+
+    response = await preview_task_from_issue(
+        db=DraftDb(),
+        user={"user_id": 1, "sub": "owner", "role": "admin"},
+        csrf_token="token",
+        issue_ref="owner/repo#123",
+    )
+    payload = json.loads(response.body)
+
+    assert payload == {
+        "success": False,
+        "message": "GitHub API 调用失败，请稍后重试",
+    }
+    assert secret.encode() not in response.body
 
 
 @pytest.mark.asyncio

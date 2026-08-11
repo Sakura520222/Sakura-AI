@@ -44,6 +44,7 @@ from backend.services.agent_team.ai_client import (
 )
 from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
+    CandidateServiceError,
     candidates_to_dicts,
 )
 from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
@@ -823,9 +824,10 @@ async def list_repo_branches(
                 "branches": branches,
             }
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("获取仓库分支列表失败")
         return JSONResponse(
-            {"success": False, "message": f"获取分支列表失败: {exc}"},
+            {"success": False, "message": "获取分支列表失败，请稍后重试"},
             status_code=200,
         )
 
@@ -845,9 +847,11 @@ async def preview_candidates(
         )
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=200)
-    except Exception as exc:
+    except Exception:
+        logger.exception("AI 筛选候选失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 筛选候选失败: {exc}"}, status_code=200
+            {"success": False, "message": "AI 筛选候选失败，请稍后重试"},
+            status_code=200,
         )
     await log_admin_action(
         db,
@@ -899,9 +903,10 @@ async def create_task_from_candidate(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("创建 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
             status_code=200,
         )
     service = AgentTeamCandidateService()
@@ -1036,6 +1041,11 @@ async def preview_task_from_issue(
             db, repo_full_name, issue_number
         )
         submission_context = await _build_manual_issue_submission_context(db, draft)
+    except CandidateServiceError:
+        return JSONResponse(
+            {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
+            status_code=200,
+        )
     except ValueError as e:
         return JSONResponse(
             {"success": False, "message": str(e)},
@@ -1099,9 +1109,10 @@ async def create_task_from_issue(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("从 Issue 创建 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
             status_code=200,
         )
 
@@ -1160,6 +1171,11 @@ async def create_task_from_issue(
             ai_config_snapshot=config.safe_snapshot(),
             base_branch=base_branch.strip() or None,
             overrides=overrides,
+        )
+    except CandidateServiceError:
+        return JSONResponse(
+            {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
+            status_code=200,
         )
     except ValueError as e:
         return JSONResponse(
@@ -1231,9 +1247,11 @@ async def retry_task(
         config.validate()
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception as e:
+    except Exception:
+        logger.exception("重试 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
+            status_code=200,
         )
 
     old_status = task.status
@@ -1307,9 +1325,11 @@ async def resume_task(
         config.validate()
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception as e:
+    except Exception:
+        logger.exception("续跑 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
+            status_code=200,
         )
 
     old_status = task.status
@@ -1474,8 +1494,11 @@ async def delete_workspace(
     service = AgentTeamWorkspaceService()
     try:
         workspace = service.delete_workspace(repo_owner, repo_name)
-    except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+    except ValueError:
+        logger.exception("删除 Agent 仓库工作区失败：路径校验未通过")
+        return JSONResponse(
+            {"success": False, "message": "工作区路径无效"}, status_code=400
+        )
 
     await log_admin_action(
         db,
@@ -1594,8 +1617,11 @@ async def delete_worktree(
         deleted = await asyncio.to_thread(
             service.delete_worktree, repo_owner, repo_name, dir_name
         )
-    except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+    except ValueError:
+        logger.exception("删除 Agent worktree 失败：路径校验未通过")
+        return JSONResponse(
+            {"success": False, "message": "工作区路径无效"}, status_code=400
+        )
 
     await log_admin_action(
         db,

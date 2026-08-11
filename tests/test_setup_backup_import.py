@@ -90,6 +90,28 @@ async def test_setup_backup_inspection_is_disabled_after_setup(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_step_hides_unexpected_exception_details(monkeypatch):
+    secret = "mysql+asyncmy://admin:super-secret@db/sakura"
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    monkeypatch.setattr(
+        setup_route.setup_service,
+        "test_database_connection",
+        AsyncMock(side_effect=RuntimeError(secret)),
+    )
+
+    response = await setup_route.save_step(
+        _Request({"values": {"DATABASE_URL": secret}})
+    )
+
+    payload = _response_json(response)
+    assert payload == {
+        "success": False,
+        "message": "保存失败，请检查输入或服务日志",
+    }
+    assert secret.encode() not in response.body
+
+
+@pytest.mark.asyncio
 async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
     monkeypatch,
 ):

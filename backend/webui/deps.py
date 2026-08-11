@@ -6,6 +6,7 @@ from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from functools import lru_cache
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from fastapi import Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -343,7 +344,23 @@ def error_page(
 
 def _safe_redirect_path(url: str) -> str:
     """Return a same-origin absolute path for redirects, or root if unsafe."""
-    if not url or not url.startswith("/") or url.startswith("//") or "://" in url:
+    if not url or not url.startswith("/"):
+        return "/"
+    decoded_url = unquote(url)
+    if "\\" in decoded_url or any(ord(char) < 32 for char in decoded_url):
+        return "/"
+    try:
+        parsed = urlsplit(url)
+        decoded = urlsplit(decoded_url)
+    except ValueError:
+        return "/"
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or decoded.scheme
+        or decoded.netloc
+        or decoded_url.startswith("//")
+    ):
         return "/"
     return url
 

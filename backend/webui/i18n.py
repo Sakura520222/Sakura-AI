@@ -243,9 +243,10 @@ def resolve_language(request) -> str:
 
 def set_language_cookie(response, lang: str) -> None:
     """在响应上写入语言切换 Cookie（跨免认证页面共享）。"""
+    safe_lang = lang if lang in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
     response.set_cookie(
         key=LANG_COOKIE,
-        value=lang,
+        value=safe_lang,
         httponly=True,
         samesite="lax",
         path="/",

@@ -512,10 +512,10 @@ async def batch_index_issues(
 
     try:
         installations = await _get_installations_with_stats(db)
-    except Exception as e:
-        logger.error(f"批量索引获取仓库列表失败: {e}", exc_info=True)
+    except Exception:
+        logger.exception("批量索引获取仓库列表失败")
         return JSONResponse(
-            {"success": False, "message": f"获取仓库列表失败: {e}"},
+            {"success": False, "message": "获取仓库列表失败，请稍后重试"},
             status_code=500,
         )
 

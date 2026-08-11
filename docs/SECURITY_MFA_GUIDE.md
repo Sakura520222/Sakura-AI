@@ -157,7 +157,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 
 ### Cookie Secure
 
-生产 HTTPS 环境建议启用 `webui_cookie_secure`，避免登录 Cookie 在非安全连接中传输。
+WebUI 登录、MFA 临时凭证和 Setup 验证 Cookie 始终启用 `Secure` 属性，避免凭证在非加密连接中传输。开发环境请通过 `localhost` 访问；非本机部署必须在反向代理或应用入口终止 HTTPS。`webui_cookie_secure` 仅作为旧配置兼容项保留，不再允许关闭敏感 Cookie 的 `Secure` 属性。
 
 ### Redis 可用性
 
@@ -200,4 +200,4 @@ API v1 现已支持 Passkey 二次验证（`POST /auth/2fa/passkey/options` + `P
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-11 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

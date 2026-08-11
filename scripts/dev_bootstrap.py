@@ -94,7 +94,6 @@ def main() -> int:
     env.setdefault("APP_DOMAIN", "localhost")
     env.setdefault("APP_PORT", str(args.port))
     env.setdefault("LOG_LEVEL", args.log_level.upper())
-    env.setdefault("WEBUI_COOKIE_SECURE", "false")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
 
