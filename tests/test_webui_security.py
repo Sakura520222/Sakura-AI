@@ -18,6 +18,28 @@ def test_toast_redirect_rejects_protocol_relative_url():
     assert "//evil.com" not in response.headers["location"]
 
 
+def test_toast_redirect_rejects_backslash_authority_url():
+    """浏览器可能把反斜杠规范化为斜杠，不得允许其形成站外跳转。"""
+    response = deps.toast_redirect("/\\evil.com/path", message="ok")
+
+    assert response.headers["location"].startswith("/?")
+    assert "evil.com" not in response.headers["location"]
+
+
+def test_toast_redirect_rejects_encoded_protocol_relative_url():
+    response = deps.toast_redirect("/%2f%2fevil.com/path", message="ok")
+
+    assert response.headers["location"].startswith("/?")
+    assert "evil.com" not in response.headers["location"]
+
+
+def test_toast_redirect_rejects_control_characters():
+    response = deps.toast_redirect("/safe\r\nX-Injected:true", message="ok")
+
+    assert response.headers["location"].startswith("/?")
+    assert "X-Injected" not in response.headers["location"]
+
+
 def test_toast_redirect_rejects_absolute_url():
     """绝对 URL（http://evil.com）必须回退到站内根路径。"""
     response = deps.toast_redirect("http://evil.com/path", message="ok")

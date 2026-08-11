@@ -38,6 +38,18 @@ router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
 templates = get_templates()
 
 
+def _set_setup_verified_cookie(response: RedirectResponse, token: str) -> None:
+    """写入仅可通过 HTTPS 传输的 Setup 验证 Cookie。"""
+    response.set_cookie(
+        key=_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/setup",
+    )
+
+
 def _lang_switch_response(lang: str) -> RedirectResponse:
     """构造语言切换响应：设置 Cookie 并去掉 ?lang= 参数，避免重复切换。"""
     response = RedirectResponse(url="/setup", status_code=302)
@@ -129,13 +141,7 @@ async def verify_token(request: Request):
 
     if validate_setup_token(token):
         response = RedirectResponse(url="/setup", status_code=302)
-        response.set_cookie(
-            key=_COOKIE_NAME,
-            value=token,
-            httponly=True,
-            samesite="lax",
-            path="/setup",
-        )
+        _set_setup_verified_cookie(response, token)
         return response
 
     lang = resolve_language(request)
@@ -337,9 +343,11 @@ async def save_step(request: Request):
 
         clear_bootstrap_cache()
         return JSONResponse({"success": True, "message": "配置已保存"})
-    except Exception as e:
-        logger.error(f"保存配置失败: {e}")
-        return JSONResponse({"success": False, "message": f"保存失败: {e}"})
+    except Exception:
+        logger.exception("保存配置失败")
+        return JSONResponse(
+            {"success": False, "message": "保存失败，请检查输入或服务日志"}
+        )
 
 
 @router.post("/api/complete")

@@ -145,12 +145,11 @@ def _build_login_token_payload(
 
 def _set_webui_token_cookie(response: RedirectResponse | JSONResponse, token: str):
     """写入正式 WebUI 登录 Cookie。"""
-    settings = get_settings()
     response.set_cookie(
         "webui_token",
         token,
         httponly=True,
-        secure=settings.webui_cookie_secure,
+        secure=True,
         max_age=86400,
         samesite="lax",
     )
@@ -163,7 +162,7 @@ def _set_mfa_pending_cookie(response: RedirectResponse, token: str):
         MFA_PENDING_COOKIE_NAME,
         token,
         httponly=True,
-        secure=settings.webui_cookie_secure,
+        secure=True,
         max_age=settings.two_factor_pending_token_expire_minutes * 60,
         samesite="lax",
     )
