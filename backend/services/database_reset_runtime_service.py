@@ -24,6 +24,7 @@ from loguru import logger
 _OUTBOX_STOP_TIMEOUT_SECONDS = 5.0
 _SSE_STOP_TIMEOUT_SECONDS = 5.0
 _BACKGROUND_STOP_TIMEOUT_SECONDS = 5.0
+_REQUEST_DRAIN_TIMEOUT_SECONDS = 30.0
 
 
 class DatabaseResetRuntimeError(RuntimeError):
@@ -96,13 +97,21 @@ class DatabaseResetRuntimeSupervisor:
     ``wait=False`` 穿过数据库 DDL。
     """
 
-    def __init__(self, *, background_timeout: float = _BACKGROUND_STOP_TIMEOUT_SECONDS):
+    def __init__(
+        self,
+        *,
+        background_timeout: float = _BACKGROUND_STOP_TIMEOUT_SECONDS,
+        request_timeout: float = _REQUEST_DRAIN_TIMEOUT_SECONDS,
+    ):
         self.accepting = True
         self.quiescing = False
         self.quiesced = False
         self.background_timeout = max(float(background_timeout), 0.01)
+        self.request_timeout = max(float(request_timeout), 0.01)
         self._tasks: dict[Any, str] = {}
         self._schedulers: list[Any] = []
+        self._requests: dict[object, tuple[asyncio.Task[Any], str]] = {}
+        self._request_changed = asyncio.Event()
         self._quiesce_lock = asyncio.Lock()
 
     @property
@@ -117,6 +126,12 @@ class DatabaseResetRuntimeSupervisor:
 
         return tuple(self._schedulers)
 
+    @property
+    def requests(self) -> tuple[tuple[asyncio.Task[Any], str], ...]:
+        """返回仍持有数据库 session 的请求快照。"""
+
+        return tuple(self._requests.values())
+
     def ensure_admission(self, source: str) -> None:
         """在创建新的 DB-backed 后台 task 前检查 gate。"""
 
@@ -124,6 +139,70 @@ class DatabaseResetRuntimeSupervisor:
             raise DatabaseResetRuntimeAdmissionClosed(
                 f"database reset runtime gate is closed (source={source})"
             )
+
+    def register_request(self, source: str) -> object:
+        """登记当前持有数据库 session 的 HTTP 请求并返回释放句柄。"""
+
+        self.ensure_admission(source)
+        task = asyncio.current_task()
+        if task is None:
+            raise DatabaseResetRuntimeBindingError(
+                "database-backed request is not running in an asyncio task"
+            )
+        lease = object()
+        self._requests[lease] = (task, source)
+        return lease
+
+    def release_request(self, lease: object) -> None:
+        """释放 ``register_request`` 返回的请求句柄。"""
+
+        if self._requests.pop(lease, None) is not None:
+            self._request_changed.set()
+
+    def _active_requests(
+        self, *, exclude: asyncio.Task[Any] | None
+    ) -> list[tuple[asyncio.Task[Any], str]]:
+        active: list[tuple[asyncio.Task[Any], str]] = []
+        for lease, (task, source) in tuple(self._requests.items()):
+            if _task_done(task):
+                self._requests.pop(lease, None)
+                continue
+            if task is not exclude:
+                active.append((task, source))
+        return active
+
+    async def wait_for_requests(self) -> None:
+        """等待 reset 请求之外的既有数据库请求释放 session。"""
+
+        current = asyncio.current_task()
+        deadline = asyncio.get_running_loop().time() + self.request_timeout
+        while True:
+            active = self._active_requests(exclude=current)
+            if not active:
+                return
+            self._request_changed.clear()
+            # ``release_request`` 与本方法运行在同一个 event loop；clear 后再次
+            # 检查可避免在进入 wait 前丢失完成通知。
+            active = self._active_requests(exclude=current)
+            if not active:
+                return
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                sources = ",".join(source for _task, source in active)
+                raise DatabaseResetRuntimeQuiesceError(
+                    "database-backed requests did not finish before timeout "
+                    f"({self.request_timeout:.2f}s); sources={sources}"
+                )
+            try:
+                await asyncio.wait_for(
+                    self._request_changed.wait(), timeout=remaining
+                )
+            except TimeoutError as exc:
+                sources = ",".join(source for _task, source in active)
+                raise DatabaseResetRuntimeQuiesceError(
+                    "database-backed requests did not finish before timeout "
+                    f"({self.request_timeout:.2f}s); sources={sources}"
+                ) from exc
 
     def register_task(
         self, task: Any, source: str, *, allow_closed: bool = False
@@ -279,6 +358,7 @@ class DatabaseResetRuntimeSupervisor:
                 return
             try:
                 await self.stop_schedulers_and_tasks()
+                await self.wait_for_requests()
             except asyncio.CancelledError as exc:
                 self.accepting = False
                 self.quiescing = True

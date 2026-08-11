@@ -61,6 +61,8 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     call = triggers["workflow_call"]
     assert call["inputs"]["version"]["required"] is True
     assert call["inputs"]["version"]["type"] == "string"
+    assert call["inputs"]["source_ref"]["required"] is True
+    assert call["inputs"]["source_ref"]["type"] == "string"
 
     jobs = workflow["jobs"]
     build = jobs["build-updater"]
@@ -76,6 +78,10 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     assert build["permissions"]["contents"] == "read"
 
     steps = build["steps"]
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["ref"] == "${{ inputs.source_ref }}"
     build_index = _step_index(build, "Build onefile")
     runtime_index = _step_index(build, "fresh runtime")
     upload_index = _step_index(build, "Upload updater artifact")
@@ -196,14 +202,18 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert "needs.build-and-upload-assets.result == 'success'" in updater["if"]
     assert updater["uses"] == "./.github/workflows/updater-build.yml"
     assert updater["with"] == {
-        "version": "${{ needs.generate-release.outputs.version }}"
+        "version": "${{ needs.generate-release.outputs.version }}",
+        "source_ref": "refs/tags/v${{ needs.generate-release.outputs.version }}",
     }
     assert updater["secrets"] == "inherit"
     assert "runs-on" not in updater
     assert "steps" not in updater
 
     assert stable["needs"] == "generate-release"
-    assert stable["if"] == "needs.generate-release.outputs.release_action == 'created'"
+    assert stable["if"] == "needs.generate-release.result == 'success'"
+    assert stable["with"]["source_ref"] == (
+        "refs/tags/v${{ needs.generate-release.outputs.version }}"
+    )
     assert stable["with"]["channel"] == "stable"
     assert stable["with"]["version"] == "${{ needs.generate-release.outputs.version }}"
     assert release["concurrency"]["cancel-in-progress"] is False
@@ -240,7 +250,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert "needs.generate-release.result == 'success'" in condition
     assert "needs.publish-updater-assets.result == 'success'" in condition
     assert "needs.publish-stable-image.result == 'success'" in condition
-    assert "needs.publish-stable-image.result == 'skipped'" in condition
+    assert "needs.publish-stable-image.result == 'skipped'" not in condition
 
     checkout = next(
         step
@@ -248,7 +258,19 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
         if step.get("uses", "").startswith("actions/checkout@")
     )
     assert checkout["uses"] == "actions/checkout@v7"
-    assert checkout["with"]["ref"] == "main"
+    assert checkout["with"]["ref"] == (
+        "refs/tags/v${{ needs.generate-release.outputs.version }}"
+    )
+
+    source_assets = release["jobs"]["build-and-upload-assets"]
+    source_checkout = next(
+        step
+        for step in source_assets["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert source_checkout["with"]["ref"] == (
+        "refs/tags/v${{ needs.generate-release.outputs.version }}"
+    )
 
     run_text = _job_run_text(manifest)
     assert 'VERSION: ${{ needs.generate-release.outputs.version }}' in text

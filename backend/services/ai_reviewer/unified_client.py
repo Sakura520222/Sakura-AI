@@ -662,7 +662,7 @@ class UnifiedAIClient:
                     success=True,
                 )
                 return response
-            except asyncio.CancelledError, ReviewCancelledError:
+            except (asyncio.CancelledError, ReviewCancelledError):
                 self._log_logical_call_summary(
                     logical_call_id=logical_call_id,
                     role=role,
@@ -721,7 +721,7 @@ class UnifiedAIClient:
                             call_state=call_state,
                             reasoning_snapshot=reasoning_snapshot,
                         )
-                    except asyncio.CancelledError, ReviewCancelledError:
+                    except (asyncio.CancelledError, ReviewCancelledError):
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -1010,7 +1010,7 @@ class UnifiedAIClient:
                         success=True,
                     )
                     return
-                except asyncio.CancelledError, ReviewCancelledError:
+                except (asyncio.CancelledError, ReviewCancelledError):
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
                         role=role,
@@ -1061,7 +1061,7 @@ class UnifiedAIClient:
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except asyncio.CancelledError, ReviewCancelledError:
+                        except (asyncio.CancelledError, ReviewCancelledError):
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -1105,7 +1105,7 @@ class UnifiedAIClient:
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except asyncio.CancelledError, ReviewCancelledError:
+                        except (asyncio.CancelledError, ReviewCancelledError):
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,

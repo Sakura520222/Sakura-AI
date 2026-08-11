@@ -7,6 +7,10 @@ on:
         description: Release version without the v prefix
         required: true
         type: string
+      source_ref:
+        description: Immutable source ref (normally refs/tags/vX.Y.Z)
+        required: true
+        type: string
 
 jobs:
   build-updater:
@@ -28,10 +32,10 @@ jobs:
             asset: sakura-ai-updater-linux-arm64
 
     steps:
-      - name: Checkout caller commit
+      - name: Checkout immutable release source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.source_ref }}
 
       - name: Verify requested version
         env:
