@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: 检出目标分支
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
@@ -81,7 +81,7 @@ jobs:
 
       - name: 同步失败时创建 Issue
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const source = '${{ steps.branches.outputs.source }}';

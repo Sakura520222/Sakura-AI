@@ -27,6 +27,8 @@ SYSTEM_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "webui_secret_key",
+        "activity_cursor_signing_secret",
+        "star_aid_github_app_client_secret",
     }
 )
 
@@ -37,6 +39,7 @@ RESTART_REQUIRED_KEYS = frozenset(
         "redis_url",
         "github_private_key",
         "webui_secret_key",
+        "activity_cursor_signing_secret",
     }
 )
 
@@ -64,6 +67,14 @@ SYSTEM_CONFIG_GROUPS = [
         ],
     },
     {
+        "id": "star_aid_app",
+        "keys": [
+            "star_aid_github_app_client_id",
+            "star_aid_github_app_client_secret",
+            "star_aid_github_app_callback_url",
+        ],
+    },
+    {
         "id": "telegram",
         "keys": ["telegram_bot_token"],
     },
@@ -74,10 +85,16 @@ SYSTEM_CONFIG_GROUPS = [
             "app_port",
             "log_level",
             "webui_secret_key",
+            "activity_cursor_signing_secret",
             "bot_username",
         ],
     },
 ]
+
+# 「系统配置」页面实际管理的完整键集合。
+SYSTEM_CONFIG_KEYS = frozenset(
+    key for group in SYSTEM_CONFIG_GROUPS for key in group["keys"]
+)
 
 
 class SystemConfigService:
@@ -94,7 +111,7 @@ class SystemConfigService:
         settings = get_settings()
 
         result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name.in_(CORE_CONFIG_KEYS))
+            select(AppConfig).where(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
         )
         db_configs = result.scalars().all()
         config_map = {c.key_name: c.key_value for c in db_configs}

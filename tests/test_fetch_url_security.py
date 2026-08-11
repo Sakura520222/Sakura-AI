@@ -93,6 +93,10 @@ class TestMixedRadixIPv4:
 class TestValidateURL:
     def setup_method(self):
         self.handler = FetchUrlToolHandler()
+        # 显式关闭强制 HTTPS：下列用例覆盖默认（非强制）模式下的协议/主机名校验，
+        # 强制 HTTPS 行为由 test_force_https_rejects_http 单独覆盖；避免依赖
+        # settings.fetch_url_force_https 的生产默认值漂移。
+        self.handler._force_https = False
 
     def test_reject_ftp(self):
         with pytest.raises(ValueError, match="不允许的协议"):
@@ -168,9 +172,12 @@ class TestSSRFCheck:
 
     @pytest.mark.asyncio
     async def test_unresolvable_host(self):
-        with patch.object(
-            socket, "getaddrinfo", side_effect=socket.gaierror("DNS lookup failed")
-        ), pytest.raises(ValueError, match="DNS 解析失败"):
+        with (
+            patch.object(
+                socket, "getaddrinfo", side_effect=socket.gaierror("DNS lookup failed")
+            ),
+            pytest.raises(ValueError, match="DNS 解析失败"),
+        ):
             await self.handler._resolve_and_check_ssrf("nonexistent.invalid")
 
 

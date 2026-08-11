@@ -1,6 +1,5 @@
 """支付网关工厂"""
 
-
 from loguru import logger
 
 from backend.services.payment.alipay_gateway import AlipayGateway

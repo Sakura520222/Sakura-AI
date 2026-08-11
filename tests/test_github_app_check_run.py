@@ -31,8 +31,9 @@ def test_build_check_run_output_full():
 
 
 def test_build_check_run_output_partial():
+    """title 或 summary 缺失时拒绝 output（GitHub API 要求两者并存）。"""
     out = GitHubAppClient._build_check_run_output("t", None, None)
-    assert out == {"title": "t"}
+    assert out is None
 
 
 # ---------------- create_check_run ----------------
@@ -141,7 +142,7 @@ def test_update_check_run_exception_returns_false(app_with_repo):
 
 
 def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
-    """多个 active run：保留 id 最大者，其余 update 成 completed+neutral。"""
+    """多个 active run：保留 id 最大者，其余 update 成 completed+cancelled(superseded)。"""
     app, _client, repo = app_with_repo
     cr_stale1 = MagicMock()
     cr_stale1.name = "Sakura AI Review"
@@ -162,9 +163,73 @@ def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
     latest_id = app.cleanup_stale_check_runs("o", "r", "sha", "Sakura AI Review")
 
     assert latest_id == 300
-    cr_stale1.edit.assert_called_once_with(status="completed", conclusion="neutral")
-    cr_stale2.edit.assert_called_once_with(status="completed", conclusion="neutral")
+    cr_stale1.edit.assert_called_once_with(status="completed", conclusion="cancelled")
+    cr_stale2.edit.assert_called_once_with(status="completed", conclusion="cancelled")
     cr_latest.edit.assert_not_called()  # 最新的保留不动
+
+
+def test_cleanup_stale_with_external_id_cancels_webhook_placeholder(app_with_repo):
+    """external_id 提供时：收敛 webhook 预创建占位（review_job_id=webhook-incremental），
+    让 worker 接管时 placeholder 不悬挂；复用匹配的 latest。"""
+    app, _client, repo = app_with_repo
+    cr_match = MagicMock()
+    cr_match.name = "Sakura AI Review"
+    cr_match.status = "in_progress"
+    cr_match.id = 300
+    cr_match.external_id = "sakura-ai:v1:99:review"
+    cr_placeholder = MagicMock()
+    cr_placeholder.name = "Sakura AI Review"
+    cr_placeholder.status = "queued"
+    cr_placeholder.id = 100
+    cr_placeholder.external_id = "sakura-ai:v1:webhook-incremental:review"
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_placeholder, cr_match]
+    repo.get_commit.return_value = commit
+
+    latest_id = app.cleanup_stale_check_runs(
+        "o",
+        "r",
+        "sha",
+        "Sakura AI Review",
+        external_id="sakura-ai:v1:99:review",
+    )
+
+    assert latest_id == 300
+    cr_placeholder.edit.assert_called_once_with(
+        status="completed", conclusion="cancelled"
+    )
+    cr_match.edit.assert_not_called()  # 匹配的 latest 保留不动
+
+
+def test_cleanup_stale_with_external_id_keeps_other_jobs(app_with_repo):
+    """external_id 提供时：不触碰其他合法并行执行的 Check（不同 review_job_id，
+    非 webhook 占位），避免误取消正常审查。"""
+    app, _client, repo = app_with_repo
+    cr_match = MagicMock()
+    cr_match.name = "Sakura AI Review"
+    cr_match.status = "in_progress"
+    cr_match.id = 300
+    cr_match.external_id = "sakura-ai:v1:99:review"
+    cr_other_job = MagicMock()
+    cr_other_job.name = "Sakura AI Review"
+    cr_other_job.status = "in_progress"
+    cr_other_job.id = 200
+    cr_other_job.external_id = "sakura-ai:v1:55:review"  # 另一合法执行
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_other_job, cr_match]
+    repo.get_commit.return_value = commit
+
+    latest_id = app.cleanup_stale_check_runs(
+        "o",
+        "r",
+        "sha",
+        "Sakura AI Review",
+        external_id="sakura-ai:v1:99:review",
+    )
+
+    assert latest_id == 300
+    cr_other_job.edit.assert_not_called()  # 其他合法执行不动
+    cr_match.edit.assert_not_called()
 
 
 def test_cleanup_stale_skips_completed_runs(app_with_repo):

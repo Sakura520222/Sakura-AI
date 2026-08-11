@@ -58,8 +58,14 @@ from backend.webui.deps import (
     require_csrf_header,
     toast_redirect,
 )
-from backend.webui.i18n import detect_language
-from backend.webui.i18n import i18n as _i18n
+from backend.webui.i18n import (
+    detect_language,
+    resolve_language,
+    set_language_cookie,
+)
+from backend.webui.i18n import (
+    i18n as _i18n,
+)
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
@@ -100,6 +106,9 @@ def _oauth_error(
     telegram_deep_link: str | None = None,
 ):
     """统一的 OAuth 错误页面响应"""
+    lang = resolve_language(request)
+    from backend.webui.i18n import make_translation_func
+
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -110,6 +119,9 @@ def _oauth_error(
             "app_version": APP_VERSION,
             "has_oauth": has_oauth,
             "telegram_deep_link": telegram_deep_link,
+            "lang": lang,
+            "_": make_translation_func(lang),
+            "user_prefs": {"language": lang},
         },
         status_code=status_code,
     )
@@ -133,12 +145,11 @@ def _build_login_token_payload(
 
 def _set_webui_token_cookie(response: RedirectResponse | JSONResponse, token: str):
     """写入正式 WebUI 登录 Cookie。"""
-    settings = get_settings()
     response.set_cookie(
         "webui_token",
         token,
         httponly=True,
-        secure=settings.webui_cookie_secure,
+        secure=True,
         max_age=86400,
         samesite="lax",
     )
@@ -151,7 +162,7 @@ def _set_mfa_pending_cookie(response: RedirectResponse, token: str):
         MFA_PENDING_COOKIE_NAME,
         token,
         httponly=True,
-        secure=settings.webui_cookie_secure,
+        secure=True,
         max_age=settings.two_factor_pending_token_expire_minutes * 60,
         samesite="lax",
     )
@@ -163,8 +174,8 @@ async def _save_oauth_state(state: str, redirect: str):
         r = await get_async_redis()
         key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
         await r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
-    except Exception as e:
-        logger.warning(f"Redis 存储失败，使用内存回退: {e}")
+    except Exception:
+        logger.warning("OAuth state Redis 存储失败，使用内存回退")
         if len(_oauth_states_fallback) > _MAX_FALLBACK_STATES:
             _cleanup_expired_states()
         if len(_oauth_states_fallback) >= _MAX_FALLBACK_STATES:
@@ -184,8 +195,8 @@ async def _get_oauth_state(state: str):
         value = await r.get(key)
         if value:
             return json.loads(value)
-    except Exception as e:
-        logger.warning(f"Redis 读取失败，尝试内存回退: {e}")
+    except Exception:
+        logger.warning("OAuth state Redis 读取失败，尝试内存回退")
     # Redis 失败或未命中，尝试内存回退
     fallback = _oauth_states_fallback.get(state)
     if fallback and fallback["expires"] > time.time():
@@ -199,8 +210,8 @@ async def _delete_oauth_state(state: str):
         r = await get_async_redis()
         key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
         await r.delete(key)
-    except Exception as e:
-        logger.warning(f"Redis 删除失败: {e}")
+    except Exception:
+        logger.warning("OAuth state Redis 删除失败")
     _oauth_states_fallback.pop(state, None)
 
 
@@ -216,9 +227,17 @@ async def login_page(request: Request):
     has_oauth = bool(settings.github_oauth_client_id)
     telegram_deep_link = _get_telegram_deep_link()
 
+    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
+    lang = resolve_language(request)
+    if request.query_params.get("lang"):
+        response = RedirectResponse(url="/auth/login", status_code=302)
+        set_language_cookie(response, lang)
+        return response
+
     return render_template(
         "login.html",
         request,
+        user_prefs={"language": lang},
         csrf_token=get_csrf_serializer().dumps({}),
         error=None,
         app_version=APP_VERSION,
@@ -262,7 +281,7 @@ async def github_login(request: Request):
     }
 
     auth_url = f"{settings.github_oauth_auth_url}?{urlencode(params)}"
-    logger.info(f"GitHub OAuth: 重定向用户到授权页面, state={state[:8]}...")
+    logger.info("GitHub OAuth authorization redirect generated")
     return RedirectResponse(url=auth_url, status_code=302)
 
 
@@ -278,13 +297,13 @@ async def github_callback(
 
     # 用户拒绝了授权
     if error:
-        logger.warning(f"GitHub OAuth 授权被拒绝: {error} - {error_description}")
+        logger.warning("GitHub OAuth authorization was rejected")
         return _oauth_error(request, f"授权被拒绝: {error_description or error}")
 
     # 验证 state（惰性读取，不立即删除 — 登录成功后再删除）
     state_data = await _get_oauth_state(state) if state else None
     if not state_data:
-        logger.warning(f"GitHub OAuth state 验证失败: state={state}")
+        logger.warning("GitHub OAuth state validation failed")
         return _oauth_error(request, "无效的授权请求，请重新登录")
 
     redirect_target = state_data["redirect"]
@@ -310,14 +329,14 @@ async def github_callback(
 
         if token_response.status_code != 200:
             logger.error(
-                f"GitHub OAuth token 交换失败: status={token_response.status_code}, body={token_response.text}"
+                f"GitHub OAuth token 交换失败: status={token_response.status_code}"
             )
             return _oauth_error(request, "获取访问令牌失败，请重试")
 
         token_data = token_response.json()
         access_token = token_data.get("access_token")
         if not access_token:
-            logger.error(f"GitHub OAuth token 响应缺少 access_token: {token_data}")
+            logger.error("GitHub OAuth token response missing access token")
             return _oauth_error(request, "获取访问令牌失败，请重试")
 
         # 用 access_token 获取 GitHub 用户信息
@@ -340,13 +359,13 @@ async def github_callback(
         gh_user = user_response.json()
 
     except httpx.TimeoutException:
-        logger.error("GitHub OAuth 请求超时")
+        logger.error("GitHub OAuth request timed out")
         return _oauth_error(request, "连接 GitHub 超时，请重试", status_code=502)
-    except httpx.RequestError as e:
-        logger.error(f"GitHub OAuth 网络请求失败: {type(e).__name__}: {e}")
+    except httpx.RequestError:
+        logger.error("GitHub OAuth network request failed")
         return _oauth_error(request, "网络连接失败，请重试", status_code=502)
     except Exception:
-        logger.exception("GitHub OAuth 未预期的错误")
+        logger.error("GitHub OAuth unexpected error")
         return _oauth_error(request, "登录过程中发生错误，请重试", status_code=502)
 
     github_username = gh_user.get("login")
@@ -354,7 +373,7 @@ async def github_callback(
     avatar_url = gh_user.get("avatar_url", "")
 
     if not github_username:
-        logger.error(f"GitHub OAuth 返回的用户信息缺少 login 字段: {gh_user}")
+        logger.error("GitHub OAuth user response missing login")
         return _oauth_error(request, "无法获取 GitHub 用户信息")
 
     # 通过 github_username 匹配 telegram_users

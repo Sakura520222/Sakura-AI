@@ -4,16 +4,18 @@
 使用 config/connection.json 存储数据库连接信息和完成标记。
 """
 
+import hmac
 import json
 import os
+import secrets
+import tempfile
 import time
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Literal
 
 from loguru import logger
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 SetupState = Literal["not_configured", "in_progress", "completed"]
@@ -52,6 +54,33 @@ def read_connection_config() -> dict:
         return {}
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort directory fsync after replacing a config file.
+
+    ``os.replace`` is atomic for readers, while syncing the containing
+    directory makes the replacement durable across a sudden POSIX reboot.
+    Windows and filesystems without ``O_DIRECTORY`` simply skip this optional
+    durability step.
+    """
+
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    if not directory_flag:
+        return
+
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY | directory_flag)
+        os.fsync(directory_fd)
+    except (OSError, ValueError):
+        logger.debug("无法同步 connection.json 所在目录（当前平台可忽略）")
+    finally:
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except (OSError, ValueError):
+                logger.debug("无法关闭 connection.json 所在目录句柄")
+
+
 def write_connection_config(
     database_url: str,
     setup_completed: bool = False,
@@ -69,13 +98,39 @@ def write_connection_config(
     if setup_completed:
         config["completed_at"] = datetime.now(UTC).isoformat()
 
-    # 确保 config 目录存在
+    # 在同一目录中先写临时文件，再用 os.replace 原子替换目标。这样即使
+    # 进程在写入过程中崩溃，启动时也只会看到完整的旧文件或完整的新文件，
+    # 不会读到截断 JSON。临时文件与目标同目录也保证 replace 不跨文件系统。
     config_path = get_connection_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    temp_path: Path | None = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{config_path.name}.",
+            suffix=".tmp",
+            dir=config_path.parent,
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as temp_file:
+            temp_file.write(json.dumps(config, indent=2, ensure_ascii=False))
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        # 限制临时文件权限后再替换，避免凭证在短暂窗口内继承宽松权限。
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            logger.debug("无法设置临时 connection.json 文件权限（Windows 可忽略）")
+        os.replace(temp_path, config_path)
+        temp_path = None
+        _fsync_directory(config_path.parent)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
     # 限制文件权限为仅所有者可读写（包含数据库凭证等敏感信息）
     try:
         os.chmod(config_path, 0o600)
@@ -92,6 +147,7 @@ def mark_setup_completed(database_url: str) -> None:
         database_url: 数据库连接字符串（写入 connection.json 供下次启动使用）
     """
     write_connection_config(database_url, setup_completed=True)
+    clear_setup_token()
     logger.info("Setup 已完成，标记已写入")
 
 
@@ -133,13 +189,73 @@ def clear_bootstrap_cache():
     _cache_ts = 0
 
 
+# =============================================================================
+# Setup Wizard Token 安全防护
+# =============================================================================
+
+# 进程级 Token（每次启动重新生成，不持久化）
+_setup_token: str | None = None
+
+# Cookie 名称
+_COOKIE_NAME = "setup_verified"
+
+
+def generate_setup_token() -> None:
+    """生成 Setup Token 并醒目打印到日志。
+
+    仅在 bootstrap 模式启动时调用。每次启动生成新 Token，
+    旧 Token 在进程退出后自然失效。
+    """
+    global _setup_token
+    _setup_token = secrets.token_urlsafe(32)
+    logger.info("=" * 60)
+    logger.info("Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：")
+    logger.info(f"  Token: {_setup_token}")
+    logger.info("请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。")
+    logger.info("=" * 60)
+
+
+def get_setup_token() -> str | None:
+    """获取当前 Setup Token（未生成时返回 None）。"""
+    return _setup_token
+
+
+def validate_setup_token(submitted: str) -> bool:
+    """常量时间比较 Token，防止时序攻击。"""
+    if _setup_token is None or not submitted:
+        return False
+    return hmac.compare_digest(submitted, _setup_token)
+
+
+def clear_setup_token() -> None:
+    """清除内存中的 Token。Setup 完成后调用。"""
+    global _setup_token
+    _setup_token = None
+
+
+def _has_valid_setup_cookie(scope: dict) -> bool:
+    """从 ASGI scope 解析 Cookie，验证 setup_verified 是否有效。
+
+    纯 ASGI 实现，不构造 Request 对象，避免在中间件层引入额外开销。
+    """
+    token = get_setup_token()
+    if token is None:
+        return False
+    for header_name, header_value in scope.get("headers", []):
+        if header_name == b"cookie":
+            cookies = SimpleCookie(header_value.decode("latin-1"))
+            morsel = cookies.get(_COOKIE_NAME)
+            if morsel is not None and hmac.compare_digest(morsel.value, token):
+                return True
+    return False
+
+
 async def get_missing_fields() -> list[str]:
     """返回核心配置中缺失的字段列表（从数据库查询）"""
     core_required = [
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
-        "openai_api_key",
         "telegram_bot_token",
     ]
 
@@ -209,7 +325,7 @@ async def get_current_step() -> int:
                             "github_app_id",
                             "github_private_key",
                             "github_webhook_secret",
-                            "openai_api_key",
+                            "telegram_bot_token",
                         ]
                     )
                 )
@@ -228,48 +344,86 @@ async def get_current_step() -> int:
     if not all(f.strip() for f in github_fields):
         return 1
 
-    # Step 2: AI & 通知
-    if not db_values.get("openai_api_key", "").strip():
-        return 2
-
+    # Step 2: AI & 通知。Setup 不强制 AI readiness；账号和角色绑定由配置页管理。
     # Step 3: 管理员
     return 3
 
 
-class BootstrapMiddleware(BaseHTTPMiddleware):
-    """Bootstrap 模式中间件：未完成 Setup 时拦截所有请求"""
+class BootstrapMiddleware:
+    """Bootstrap 模式中间件：未完成 Setup 时拦截所有请求。
 
-    # 始终放行的路径
-    ALLOWED_PATHS = ("/setup", "/health", "/docs", "/openapi.json", "/redoc")
+    纯 ASGI 实现（不再继承 ``BaseHTTPMiddleware``）。
 
-    async def dispatch(self, request: Request, call_next):
+    Why: ``starlette.middleware.base.BaseHTTPMiddleware`` 用 anyio TaskGroup
+    包裹下游 ``call_next``，响应返回后 teardown 会取消该 coro。若此时
+    FastAPI 依赖（如 ``get_db``）正在执行数据库会话清理，cleanup 会被
+    ``CancelledError`` 中断，导致连接未归还连接池、最终由 GC 兜底回收，
+    触发 ``SAWarning: non-checked-in connection``。纯 ASGI 中间件不经过
+    该 TaskGroup 路径，从根上消除连接泄漏。
+    """
+
+    # 始终放行的路径（不含 /setup，/setup 由专门逻辑处理）
+    ALLOWED_PATHS = ("/health", "/docs", "/openapi.json", "/redoc")
+
+    SETUP_PREFIX = "/setup"
+    VERIFY_PREFIX = "/setup/verify"
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        # 仅拦截 HTTP；lifespan / websocket 等透传给下游应用
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         if not is_bootstrap_mode():
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        path = request.url.path
+        path = scope["path"]
 
-        # 放行根路径（重定向到 /setup）
+        # 根路径重定向到 /setup
         if path == "/":
-            return RedirectResponse(url="/setup", status_code=302)
+            await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)
+            return
 
-        # 放行 Setup Wizard 相关路径
+        # Setup Wizard 路径分层处理
+        if path.startswith(self.SETUP_PREFIX):
+            # verify 页面本身不需要 Token（Token 输入入口）
+            if path.startswith(self.VERIFY_PREFIX):
+                await self.app(scope, receive, send)
+                return
+            # 其他 /setup 路径需要验证 setup_verified Cookie
+            if not _has_valid_setup_cookie(scope):
+                await RedirectResponse(
+                    url="/setup/verify", status_code=302
+                )(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
+        # 其他始终放行的路径
         for allowed in self.ALLOWED_PATHS:
             if path.startswith(allowed):
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
 
         # 静态资源放行
         if path.startswith("/static") or path.endswith((".css", ".js", ".ico")):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         # API 请求返回 503
         if "/api/" in path or path.startswith("/api/"):
-            return JSONResponse(
+            await JSONResponse(
                 status_code=503,
                 content={
                     "detail": "应用尚未完成初始配置，请访问 /setup 完成设置",
                     "setup_url": "/setup",
                 },
-            )
+            )(scope, receive, send)
+            return
 
         # 页面请求重定向到 Setup
-        return RedirectResponse(url="/setup", status_code=302)
+        await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)

@@ -71,7 +71,7 @@ def decrypt_totp_secret(encrypted_secret: str) -> str:
 
 def _normalize_account_name(user: TelegramUser) -> str:
     github_username = user.github_username or f"telegram-{user.telegram_id}"
-    return f"{github_username}@Sakura-AI-Reviewer"
+    return f"{github_username}@Sakura-AI"
 
 
 def _build_qr_data_uri(provisioning_uri: str) -> str:

@@ -1,8 +1,7 @@
 """API v1 Setup Wizard 端点（免认证，仅在 bootstrap 模式下可用）"""
 
-
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from backend.api.v1.deps import limiter
 from backend.api.v1.responses import error_response, success_response
@@ -15,7 +14,9 @@ router = APIRouter(prefix="/setup", tags=["Setup"])
 class TestConnectionRequest(BaseModel):
     """连接测试请求"""
 
-    type: str  # database, redis, github, openai, telegram
+    model_config = ConfigDict(extra="ignore")
+
+    type: str  # database, redis, github, telegram
     # database
     database_url: str | None = None
     # redis
@@ -23,11 +24,6 @@ class TestConnectionRequest(BaseModel):
     # github
     app_id: str | None = None
     private_key: str | None = None
-    # openai
-    provider: str | None = None
-    api_key: str | None = None
-    api_base: str | None = None
-    model: str | None = None
     # telegram
     bot_token: str | None = None
 
@@ -39,18 +35,15 @@ class SaveStepRequest(BaseModel):
 
 
 class CompleteSetupRequest(BaseModel):
-    """完成 Setup 请求"""
+    """完成 Setup 请求；未知旧字段必须被忽略而不是写入 AppConfig。"""
+
+    model_config = ConfigDict(extra="ignore")
 
     DATABASE_URL: str | None = None
     REDIS_URL: str | None = None
     GITHUB_APP_ID: str | None = None
     GITHUB_PRIVATE_KEY: str | None = None
     GITHUB_WEBHOOK_SECRET: str | None = None
-    AI_PROVIDER: str | None = None
-    OPENAI_API_KEY: str | None = None
-    OPENAI_API_BASE: str | None = None
-    OPENAI_MODEL: str | None = None
-    SUMMARY_PROVIDER: str | None = None
     TELEGRAM_BOT_TOKEN: str | None = None
     APP_DOMAIN: str | None = None
     APP_PORT: str | None = None
@@ -140,13 +133,6 @@ async def test_connection(request: Request, body: TestConnectionRequest):
         result = await setup_service.test_github_app(
             body.app_id or "", body.private_key or ""
         )
-    elif body.type == "openai":
-        result = await setup_service.test_ai_api(
-            body.api_key or "",
-            body.api_base or "",
-            body.provider or "custom",
-            body.model or "",
-        )
     elif body.type == "telegram":
         result = await setup_service.test_telegram_bot(body.bot_token or "")
     else:
@@ -162,21 +148,6 @@ async def get_ai_providers():
     if bootstrap_error:
         return bootstrap_error
     return success_response(data={"providers": setup_service.list_ai_providers()})
-
-
-@router.post("/ai-providers/{provider}/models")
-@limiter.limit("10/minute")
-async def get_ai_provider_models(
-    request: Request, provider: str, body: TestConnectionRequest
-):
-    """按厂商获取模型列表。"""
-    bootstrap_error = _check_bootstrap()
-    if bootstrap_error:
-        return bootstrap_error
-    result = await setup_service.fetch_provider_models(
-        provider, body.api_key or "", body.api_base or ""
-    )
-    return success_response(data=result)
 
 
 @router.post("/save-step")

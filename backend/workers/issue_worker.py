@@ -15,6 +15,11 @@ from backend.models.database import (
     IssueAnalysisStatus,
     async_session,
 )
+from backend.services.database_reset_runtime_service import (
+    DatabaseResetRuntimeAdmissionClosed,
+    ensure_background_admission,
+    register_background_task,
+)
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
 
@@ -56,6 +61,11 @@ class IssueWorker:
         self.analyzer = IssueAnalyzer()
         self.github_app = GitHubAppClient()
         self._background_tasks: set[asyncio.Task] = set()
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+
+        self.activity_integration = ActivityIntegrationService()
 
     @staticmethod
     async def _log_activity(
@@ -63,16 +73,14 @@ class IssueWorker:
         event_type: str,
         content: dict[str, Any] | None = None,
     ) -> None:
-        """记录 Issue 分析活动事件（持久化 + SSE 推送）。"""
-        try:
-            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
-            from backend.services.activity_event_service import ActivityEventService
+        """Legacy activity event hook — now a no-op.
 
-            await ActivityEventService.log_event(
-                "issue", analysis_id, event_type, content
-            )
-        except Exception as exc:
-            logger.debug("Issue 活动事件记录失败: {}", exc)
+        The new observability system (ActivityOutbox + user-scoped SSE, driven by
+        ``execution.finish`` and the Attempt observer) replaces the legacy
+        ``activity_events`` table and global ``activity:*`` SSE channel. This shim
+        is retained so existing call sites remain harmless; it writes nothing.
+        """
+        return
 
     async def process_issue_analysis(self, issue_info: dict[str, Any]) -> str:
         """处理 Issue 分析任务
@@ -92,6 +100,50 @@ class IssueWorker:
         repo_full_name = issue_info.get("repo_full_name", f"{repo_owner}/{repo_name}")
 
         logger.info(f"[{task_id}] 开始处理 Issue 分析: {repo_full_name}#{issue_number}")
+
+        execution = None
+        try:
+            admission = await self.activity_integration.admit_issue(
+                issue_info,
+                delivery_id=issue_info.get("delivery_id") or str(task_id),
+                actor_id=str(
+                    issue_info.get("actor_id") or issue_info.get("sender") or "worker"
+                ),
+                base_sha=issue_info.get("base_sha"),
+                head_sha=issue_info.get("head_sha"),
+            )
+            role_snapshot = None
+            analyzer_api_client = getattr(self.analyzer, "api_client", None)
+            resolver = getattr(
+                analyzer_api_client, "resolve_role_config_snapshot", None
+            )
+            if resolver is not None:
+                role_snapshot = await resolver("main")
+            execution = await self.activity_integration.start_execution(
+                session_id=admission.session_id,
+                trigger_ids=[admission.trigger_id],
+                role_snapshot=role_snapshot,
+                role="main",
+                task_type="issue",
+                task_id=None,
+            )
+            if getattr(execution, "merged", False):
+                logger.info(
+                    "[{}] Issue Trigger 已合并到正在运行的 Invocation {}，当前 Worker 不重复执行",
+                    task_id,
+                    execution.invocation_id,
+                )
+                return task_id
+        except Exception as observability_exc:
+            # Observability admission is best-effort for legacy callers that lack
+            # immutable repository identity; the core analysis still runs, but
+            # no invocation/attempt is recorded.  Once admission has succeeded,
+            # downstream failures are handled via ``execution.finish`` below.
+            logger.warning(
+                "[{}] issue observability admission skipped: {}",
+                task_id,
+                observability_exc,
+            )
 
         # 获取并发信号量，限制同时运行的 Issue 分析任务数
         semaphore = await _get_issue_semaphore()
@@ -115,7 +167,7 @@ class IssueWorker:
                             await get_dynamic_config("issue_max_analysis_versions")
                             or 10
                         )
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         max_versions = 10
                     if next_version > max_versions:
                         await self._archive_old_versions(
@@ -180,36 +232,53 @@ class IssueWorker:
                     if client:
                         repo = client.get_repo(repo_full_name)
 
-                    # 4. 调用 AI 分析（使用 ActivityCheckpointService 记录对话流）
-                    from backend.services.activity_checkpoint_service import (
-                        ActivityCheckpointService,
-                    )
-
-                    checkpoint = ActivityCheckpointService("issue", record.id)
-                    act_session = await checkpoint.create_session(
-                        iteration_number=1,
-                        role_name="issue_analyzer",
-                    )
-
+                    # 4. 调用 AI 分析：对话流持久化到新可观测性 Canonical Transcript
+                    # （同一 Issue 的长期 issue_analyzer Thread），替代旧 checkpoint 表。
                     async def _issue_event_callback(event_type, data):
-                        """Mirrors ConversationCheckpointService usage pattern."""
+                        if execution is None or execution.thread is None:
+                            return
                         try:
                             if event_type == "message":
-                                msg = await checkpoint.append_message(
-                                    act_session.id, data
+                                origin_attempt_id = (
+                                    getattr(
+                                        execution.observer,
+                                        "last_attempt_id",
+                                        None,
+                                    )
+                                    if data.get("role") in {"assistant", "tool"}
+                                    else None
+                                )
+                                await (
+                                    execution.tool_service.append_conversation_message(
+                                        thread_id=execution.thread.id,
+                                        work_unit_id=execution.work_unit.id,
+                                        message=data,
+                                        origin_attempt_id=origin_attempt_id,
+                                        lease=execution.lease,
+                                    )
                                 )
                                 if data.get("role") == "tool" and data.get(
                                     "tool_call_id"
                                 ):
-                                    await checkpoint.mark_tool_call_completed(
-                                        act_session.id, data["tool_call_id"], msg.id
-                                    )
+                                    if execution.tool_service.is_failed_tool_result(
+                                        data
+                                    ):
+                                        await execution.tool_service.mark_tool_execution_failed(
+                                            execution.work_unit.id,
+                                            data["tool_call_id"],
+                                        )
+                                    else:
+                                        await execution.tool_service.mark_tool_execution_completed(
+                                            execution.work_unit.id, data["tool_call_id"]
+                                        )
                             elif event_type == "tool_running":
-                                await checkpoint.mark_tool_call_running(
-                                    act_session.id, data
+                                await (
+                                    execution.tool_service.mark_tool_execution_running(
+                                        execution.work_unit.id, data
+                                    )
                                 )
                         except Exception as exc:
-                            logger.debug("issue checkpoint callback failed: {}", exc)
+                            logger.debug("issue observability callback failed: {}", exc)
 
                     analysis_result = await self.analyzer.analyze_issue(
                         issue_info=issue_info,
@@ -217,18 +286,21 @@ class IssueWorker:
                         repo_name=repo_name,
                         repo=repo,
                         event_callback=_issue_event_callback,
+                        publication_coordinator=(
+                            execution.publication_coordinator
+                            if execution is not None
+                            else None
+                        ),
+                        invocation_context=(
+                            execution.invocation_context
+                            if execution is not None
+                            else None
+                        ),
+                        observer=execution.observer if execution is not None else None,
                     )
 
-                    # 完成 checkpoint session
-                    await checkpoint.complete_session(act_session.id)
-                    await checkpoint.save_session_result(
-                        act_session.id,
-                        {
-                            "category": analysis_result.get("category", ""),
-                            "priority": analysis_result.get("priority", ""),
-                            "summary": str(analysis_result.get("summary", "")),
-                        },
-                    )
+                    # WorkUnit 终态由 execution.finish("completed") 统一收敛（见下方
+                    # 成功路径），分析结果摘要持久化在 IssueAnalysis 记录中。
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
                     analysis_record = await issue_service.save_analysis_result(
@@ -237,6 +309,11 @@ class IssueWorker:
 
                     if not analysis_record:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
+                        if execution is not None:
+                            await execution.finish(
+                                "failed",
+                                error_message="未找到待更新的 Issue 分析记录",
+                            )
                         return task_id
 
                     # 5.1 关联扫描记录（如果此 Issue 来自仓库扫描）
@@ -345,13 +422,70 @@ class IssueWorker:
                     # 8. 自动评论
                     if await get_dynamic_config("issue_auto_comment"):
                         try:
-                            success = await issue_service.post_analysis_comment(
-                                repo_owner,
-                                repo_name,
-                                issue_number,
-                                analysis_record,
-                                db,
+                            activity_result_id = analysis_result.get(
+                                "_activity_result_id"
                             )
+                            if execution is not None and isinstance(
+                                activity_result_id, int
+                            ):
+                                body = issue_service.build_analysis_comment(
+                                    analysis_record
+                                )
+                                if not body:
+                                    success = False
+                                else:
+                                    publication = await execution.publication_service.create_pending(
+                                        activity_result_id,
+                                        "issue_comment",
+                                        (
+                                            f"issue-comment-{execution.session.id}-"
+                                            f"{execution.invocation.id}-"
+                                            f"{execution.work_unit.id}"
+                                        ),
+                                    )
+                                    resource_identity = {
+                                        "source_system_instance": issue_info.get(
+                                            "source_system_instance", "github.com"
+                                        ),
+                                        "repository_external_id": issue_info.get(
+                                            "repository_external_id", repo_full_name
+                                        ),
+                                        "resource_type": "issue",
+                                        "resource_number": str(issue_number),
+                                    }
+
+                                    async def _sender(
+                                        _kind: str,
+                                        body_with_marker: str,
+                                        _resource_identity: dict[str, Any],
+                                    ) -> Any:
+                                        return await asyncio.to_thread(
+                                            issue_service.github_app.create_issue_comment,
+                                            repo_owner,
+                                            repo_name,
+                                            issue_number,
+                                            body_with_marker,
+                                            raise_on_error=True,
+                                        )
+
+                                    terminal = await execution.publication_service.send(
+                                        publication.id,
+                                        body=body,
+                                        sender=_sender,
+                                        resource_identity=resource_identity,
+                                    )
+                                    success = terminal.status == "succeeded"
+                                    if success:
+                                        analysis_record.comment_posted = 1
+                                        await db.commit()
+                            else:
+                                success = await issue_service.post_analysis_comment(
+                                    repo_owner,
+                                    repo_name,
+                                    issue_number,
+                                    analysis_record,
+                                    db,
+                                )
                             if success:
                                 logger.info(f"[{task_id}] 已发布分析评论")
                         except Exception as e:
@@ -511,6 +645,7 @@ class IssueWorker:
                             )
 
                             sakura_memory_service = get_sakura_memory_service()
+                            ensure_background_admission("issue_reflection")
                             task = asyncio.create_task(
                                 sakura_memory_service.reflect_issue(
                                     repo=repo,
@@ -521,6 +656,15 @@ class IssueWorker:
                                     analysis_record=analysis_record,
                                 )
                             )
+                            try:
+                                register_background_task(task, "issue_reflection")
+                            except DatabaseResetRuntimeAdmissionClosed:
+                                task.cancel()
+                                try:
+                                    await task
+                                except asyncio.CancelledError:
+                                    pass
+                                raise
                             self._background_tasks.add(task)
                             task.add_done_callback(self._background_tasks.discard)
                             logger.info(f"[{task_id}] 已触发 .sakura/ Issue 反思任务")
@@ -539,9 +683,20 @@ class IssueWorker:
                         analysis_result.get("completion_tokens", 0),
                         analysis_result.get("estimated_cost", 0),
                     )
+                    if execution is not None:
+                        await execution.finish("completed")
 
                 except Exception as e:
                     logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
+                    if execution is not None:
+                        try:
+                            await execution.finish("failed", error_message=str(e))
+                        except Exception as finish_exc:
+                            logger.warning(
+                                "[{}] issue observability finish failed: {}",
+                                task_id,
+                                finish_exc,
+                            )
 
                     # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
                     try:
@@ -637,8 +792,20 @@ def get_issue_worker() -> IssueWorker:
 
 async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
+    ensure_background_admission("issue")
     task_id = str(uuid.uuid4())
     issue_info["task_id"] = task_id
     worker = get_issue_worker()
-    asyncio.create_task(worker.process_issue_analysis(issue_info))
+    task = asyncio.create_task(worker.process_issue_analysis(issue_info))
+    try:
+        register_background_task(task, "issue")
+    except DatabaseResetRuntimeAdmissionClosed:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise
+    worker._background_tasks.add(task)
+    task.add_done_callback(worker._background_tasks.discard)
     return task_id

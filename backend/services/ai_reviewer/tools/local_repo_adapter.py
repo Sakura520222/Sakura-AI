@@ -185,7 +185,9 @@ class LocalRepoAdapter:
 
         raise FileNotFoundError(f"路径类型未知: {path}")
 
-    def get_git_tree(self, sha: str | None = None, recursive: bool = False) -> _LocalGitTree:
+    def get_git_tree(
+        self, sha: str | None = None, recursive: bool = False
+    ) -> _LocalGitTree:
         """基于本地文件系统构建文件树
 
         模拟 PyGithub Repository.get_git_tree() 的行为，

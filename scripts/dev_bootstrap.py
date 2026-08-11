@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start Sakura AI Reviewer in local Setup Wizard development mode."""
+"""Start Sakura AI in local Setup Wizard development mode."""
 
 from __future__ import annotations
 
@@ -94,7 +94,6 @@ def main() -> int:
     env.setdefault("APP_DOMAIN", "localhost")
     env.setdefault("APP_PORT", str(args.port))
     env.setdefault("LOG_LEVEL", args.log_level.upper())
-    env.setdefault("WEBUI_COOKIE_SECURE", "false")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
 
@@ -113,7 +112,7 @@ def main() -> int:
     if not args.no_reload:
         command.append("--reload")
 
-    print("Sakura AI Reviewer 本地 Setup Wizard 调试模式")
+    print("Sakura AI 本地 Setup Wizard 调试模式")
     print(f"访问地址: http://{args.host}:{args.port}/setup")
     print(f"连接配置: {config_path}")
     print(

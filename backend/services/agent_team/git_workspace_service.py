@@ -401,7 +401,7 @@ def _parse_numstat_count(value: str) -> int:
     """解析 git numstat 行数；二进制文件用 '-'，按 0 处理。"""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 

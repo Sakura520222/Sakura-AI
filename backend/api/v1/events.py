@@ -1,6 +1,5 @@
 """API v1 SSE 事件流端点"""
 
-import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -27,7 +26,9 @@ async def sse_events(
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    event = await sse_manager.receive(queue, timeout=30)
+                    if event is None:
+                        return
                     yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
                 except TimeoutError:
                     yield ": keepalive\n\n"

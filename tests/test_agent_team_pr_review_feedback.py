@@ -428,9 +428,7 @@ async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(
     memory_bridge,
 ):
     task = _task(iteration_count=3, max_iterations=3)
-    task.updated_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(
-        seconds=1
-    )
+    task.updated_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=1)
     review = _completed_review(score=9)
     memory_bridge.tasks.append(task)
     memory_bridge.reviews[review.id] = review

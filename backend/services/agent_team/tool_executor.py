@@ -45,7 +45,7 @@ class AgentToolExecutor:
         function_name = tool_call.function.name
         try:
             arguments = json.loads(tool_call.function.arguments)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return {"error": f"无法解析工具参数: {tool_call.function.arguments}"}
 
         handler = {

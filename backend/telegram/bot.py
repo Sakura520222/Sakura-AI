@@ -103,7 +103,16 @@ async def _telegram_error_handler(update: object, context) -> None:
     if "Message is not modified" in error_str:
         return
 
-    if isinstance(error, (httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout, NetworkError, TimedOut)):
+    if isinstance(
+        error,
+        (
+            httpx.ReadError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            NetworkError,
+            TimedOut,
+        ),
+    ):
         logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
     else:
         logger.error(f"❌ Telegram Bot 未预期的错误: {error}", exc_info=error)

@@ -11,33 +11,28 @@ from typing import Any
 import httpx
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.core.ai_providers import (
-    build_model_detail_url,
-    build_models_url,
-    extract_context_window_k,
     get_ai_provider,
     list_ai_providers,
-    normalize_model_list_response,
 )
 from backend.core.bootstrap import (
     mark_setup_completed,
 )
 
 # 环境变量字段（大写） → Settings 字段名（小写）
-# 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步
+# 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步。
+# AI 账号、角色绑定和模型覆盖仅通过 ai_account.* 等新结构管理，Setup
+# 不再把旧的 provider/key/model 字段写入 AppConfig。
 _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
-    "AI_PROVIDER": "ai_provider",
-    "OPENAI_API_KEY": "openai_api_key",
-    "OPENAI_API_BASE": "openai_api_base",
-    "OPENAI_MODEL": "openai_model",
-    "SUMMARY_PROVIDER": "summary_provider",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
     "WEBUI_SECRET_KEY": "webui_secret_key",
+    "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
     "APP_PORT": "app_port",
     "LOG_LEVEL": "log_level",
@@ -63,27 +58,53 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "RERANK_PROVIDER": "rerank_provider",
 }
 
+_LEGACY_CONFIG_KEYS = frozenset(
+    {
+        "ai_provider",
+        "openai_api_key",
+        "openai_api_base",
+        "openai_model",
+        "summary_provider",
+        "summary_api_key",
+        "summary_api_base",
+        "summary_model",
+    }
+)
+
 # 环境变量字段与 Settings 字段的分组（前端步骤用）
 ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
-    "ai": [
-        "AI_PROVIDER",
-        "OPENAI_API_KEY",
-        "OPENAI_API_BASE",
-        "OPENAI_MODEL",
-        "TELEGRAM_BOT_TOKEN",
-    ],
-    "rag": [
-        "EMBEDDING_API_KEY",
-        "EMBEDDING_BASE_URL",
-        "EMBEDDING_MODEL",
-        "RERANK_API_KEY",
-        "RERANK_BASE_URL",
-        "RERANK_MODEL",
-    ],
+    "ai": ["TELEGRAM_BOT_TOKEN"],
+    # RAG 配置是可选项，不参与 Setup readiness 判定。
+    "rag": [],
     "admin": ["APP_DOMAIN"],
 }
+
+# Setup 页面可以从备份中预填的字段。未列出的配置仍会在完成 Setup 时恢复，
+# 但不会把不需要展示的密钥（例如 WebUI 会话密钥）回传给浏览器。
+SETUP_BACKUP_PREFILL_KEYS = frozenset(
+    {
+        "database_url",
+        "redis_url",
+        "github_app_id",
+        "github_private_key",
+        "github_webhook_secret",
+        "telegram_bot_token",
+        "app_domain",
+        "bot_username",
+        "github_oauth_client_id",
+        "github_oauth_client_secret",
+        "github_oauth_redirect_uri",
+        "mobile_oauth_allowed_redirect_uris",
+        "embedding_api_key",
+        "embedding_base_url",
+        "embedding_model",
+        "rerank_api_key",
+        "rerank_base_url",
+        "rerank_model",
+    }
+)
 
 
 class SetupService:
@@ -209,10 +230,6 @@ class SetupService:
         """获取内置 AI 厂商列表。"""
         return list_ai_providers()
 
-    async def test_openai_api(self, api_key: str, api_base: str) -> dict[str, Any]:
-        """测试 OpenAI API Key（兼容旧调用）。"""
-        return await self.test_ai_api(api_key, api_base, provider="custom")
-
     async def test_ai_api(
         self,
         api_key: str,
@@ -220,52 +237,81 @@ class SetupService:
         provider: str = "custom",
         model: str = "",
     ) -> dict[str, Any]:
-        """测试 OpenAI 兼容 AI API Key，并返回可用模型。"""
+        """测试 AI API Key 并返回可用模型（按协议族适配）.
+
+        支持 OpenAI 兼容、Anthropic 原生、Gemini 原生三类协议族。返回结构
+        与旧版一致以兼容现有前端：{success, message, models, provider,
+        default_model, context_window_k}。
+        """
         if not api_key:
             return {"success": False, "message": "API Key 不能为空"}
 
+        from backend.core.ai_protocol.registry import get_adapter, resolve_endpoint
+        from backend.core.ai_providers import get_builtin_provider
+
+        decl = get_builtin_provider(provider)
+        endpoint = resolve_endpoint(decl, api_base)
+        adapter = get_adapter(decl.family)
         provider_meta = get_ai_provider(provider)
-        models_url = build_models_url(provider, api_base)
 
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    models_url,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=15,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    model_ids = normalize_model_list_response(data)
-                    model_count = len(model_ids)
-                    context_window_k = None
-                    selected_model = model or provider_meta.default_model
-                    if selected_model and provider_meta.supports_context_window:
-                        context_window_k = await self.fetch_model_context_window(
-                            selected_model, api_key, api_base, provider
+                discovered = await adapter.list_models(client, endpoint, api_key)
+            model_ids = [d.model_id for d in discovered]
+            model_count = len(model_ids)
+            selected_model = model or provider_meta.default_model
+            context_window_k: int | None = None
+            if selected_model:
+                detail = None
+                # 先从发现结果中查找 / look up in discovery results first
+                for d in discovered:
+                    if d.model_id == selected_model:
+                        detail = d
+                        break
+                if detail is None:
+                    try:
+                        detail = await adapter.fetch_model_metadata(
+                            client, endpoint, api_key, selected_model
                         )
-                    return {
-                        "success": True,
-                        "message": f"API Key 有效，可用模型: {model_count} 个",
-                        "models": model_ids,
-                        "provider": provider_meta.to_public_dict(),
-                        "default_model": provider_meta.default_model,
-                        "context_window_k": context_window_k,
-                    }
-                elif resp.status_code == 401:
-                    return {"success": False, "message": "API Key 无效"}
-                else:
-                    return {
-                        "success": False,
-                        "message": f"验证失败 (HTTP {resp.status_code})",
-                    }
-        except httpx.ConnectError:
+                    except Exception as exc:
+                        logger.debug(
+                            "模型详情获取失败 / model detail fetch failed: {}", exc
+                        )
+                if detail and detail.context_window_tokens:
+                    ctx_tokens = detail.context_window_tokens
+                    # tokens → K tokens（>2000 视为绝对值，否则视为 K）/ to K
+                    context_window_k = (
+                        max(1, round(ctx_tokens / 1000))
+                        if ctx_tokens > 2000
+                        else ctx_tokens
+                    )
             return {
-                "success": False,
-                "message": "无法连接到 API 服务，请检查 API Base URL",
+                "success": True,
+                "message": f"API Key 有效，可用模型: {model_count} 个",
+                "models": sorted(set(model_ids)),
+                "provider": provider_meta.to_public_dict(),
+                "default_model": provider_meta.default_model,
+                "context_window_k": context_window_k,
             }
         except Exception as e:
+            from backend.core.ai_protocol.errors import (
+                AIError,
+                classify_context_overflow,
+            )
+
+            if isinstance(e, AIError):
+                if e.category.value == "auth_invalid":
+                    return {"success": False, "message": "API Key 无效"}
+                if e.category.value == "network":
+                    return {
+                        "success": False,
+                        "message": "无法连接到 API 服务，请检查 API Base URL",
+                    }
+                return {"success": False, "message": f"验证失败: {e}"}
             logger.debug(f"AI API 测试异常: {e}")
+            msg_lower = str(e).lower()
+            if classify_context_overflow(msg_lower):
+                return {"success": False, "message": "验证失败：上下文超限"}
             return {"success": False, "message": "验证异常，请稍后重试"}
 
     async def fetch_provider_models(
@@ -281,27 +327,32 @@ class SetupService:
     async def fetch_model_context_window(
         self, model: str, api_key: str, api_base: str = "", provider: str = "custom"
     ) -> int | None:
-        """尝试从模型详情端点获取上下文窗口大小（K tokens）。"""
+        """尝试从模型详情端点获取上下文窗口大小（K tokens，按协议族适配）."""
         if not model or not api_key:
             return None
         provider_meta = get_ai_provider(provider)
         if not provider_meta.supports_context_window:
             return None
+        from backend.core.ai_protocol.registry import get_adapter, resolve_endpoint
+        from backend.core.ai_providers import get_builtin_provider
+
+        decl = get_builtin_provider(provider)
+        endpoint = resolve_endpoint(decl, api_base)
+        adapter = get_adapter(decl.family)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    build_model_detail_url(provider, model, api_base),
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=10,
+                detail = await adapter.fetch_model_metadata(
+                    client, endpoint, api_key, model
                 )
-            if resp.status_code != 200:
-                return None
-            return extract_context_window_k(resp.json())
         except Exception as e:
             logger.debug(
                 f"获取模型上下文窗口失败: provider={provider}, model={model}, err={e}"
             )
             return None
+        if not detail or not detail.context_window_tokens:
+            return None
+        ctx_tokens = detail.context_window_tokens
+        return max(1, round(ctx_tokens / 1000)) if ctx_tokens > 2000 else ctx_tokens
 
     async def test_telegram_bot(self, bot_token: str) -> dict[str, Any]:
         """测试 Telegram Bot Token"""
@@ -346,8 +397,10 @@ class SetupService:
             # 尝试大写环境变量名映射
             settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
             if settings_key is None:
-                # 也接受已经是小写的 Settings 字段名（动态配置场景）
+                # 也接受已经是小写的非遗留 Settings 字段名（动态配置场景）
                 settings_key = env_key if env_key.islower() else None
+            if settings_key in _LEGACY_CONFIG_KEYS:
+                continue
             if settings_key is None or env_value is None:
                 continue
             env_value = str(env_value).strip()
@@ -400,12 +453,14 @@ class SetupService:
             create_tables_async,
             init_async_db,
             insert_default_configs_async,
+            migrate_schema_async,
         )
 
         if db_module.async_engine is None:
             init_async_db(database_url)
             await create_tables_async()
-            await insert_default_configs_async()
+        await migrate_schema_async()
+        await insert_default_configs_async()
 
     async def create_admin_user(
         self, github_username: str, telegram_id: int, database_url: str
@@ -423,13 +478,15 @@ class SetupService:
             create_tables_async,
             init_async_db,
             insert_default_configs_async,
+            migrate_schema_async,
         )
         from backend.models.telegram_models import TelegramUser
 
         if db_module.async_engine is None:
             init_async_db(database_url)
             await create_tables_async()
-            await insert_default_configs_async()
+        await migrate_schema_async()
+        await insert_default_configs_async()
 
         # 创建管理员记录
         from backend.models.database import async_session
@@ -477,69 +534,242 @@ class SetupService:
                 logger.info(f"已创建超级管理员: {github_username}")
             await session.commit()
 
-    async def complete_setup(self, all_config: dict[str, str]) -> dict[str, Any]:
+    @staticmethod
+    def _flatten_backup_values(
+        backup_sections: dict[str, list[Any]] | None,
+    ) -> dict[str, str | None]:
+        """把已校验的备份分类展开为配置键值映射。"""
+        if not backup_sections:
+            return {}
+        return {
+            record.key: record.value
+            for records in backup_sections.values()
+            for record in records
+        }
+
+    def get_backup_setup_values(
+        self,
+        backup_sections: dict[str, list[Any]],
+    ) -> dict[str, str]:
+        """提取可安全回填到 Setup 表单的备份字段。"""
+        values = self._flatten_backup_values(backup_sections)
+        return {
+            key: value
+            for key, value in values.items()
+            if key in SETUP_BACKUP_PREFILL_KEYS and value is not None
+        }
+
+    async def restore_backup_for_setup(
+        self,
+        backup_sections: dict[str, list[Any]],
+    ) -> Any:
+        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。"""
+        from backend.models.database import async_session
+        from backend.services.config_backup_service import (
+            refresh_imported_runtime_config,
+            restore_config_backup,
+        )
+
+        async with async_session() as session:
+            result = await restore_config_backup(session, backup_sections)
+
+        try:
+            refresh_imported_runtime_config(result)
+        except Exception as exc:
+            # Setup 成功后必定重启，运行时刷新失败不影响已提交的备份数据。
+            logger.warning("Setup 备份已恢复，但运行时配置刷新失败: {}", exc)
+        return result
+
+    async def complete_setup(
+        self,
+        all_config: dict[str, str],
+        backup_sections: dict[str, list[Any]] | None = None,
+    ) -> dict[str, Any]:
         """完成 Setup 全流程
 
         Args:
             all_config: 所有配置项的环境变量键值对
+            backup_sections: 已严格校验的配置备份分类；为空时执行普通 Setup
 
         Returns:
             结果字典
         """
+        all_config = dict(all_config)
+        backup_values = self._flatten_backup_values(backup_sections)
+        database_url = ""
         try:
-            # 1. 自动生成 WEBUI_SECRET_KEY
-            all_config.setdefault("WEBUI_SECRET_KEY", secrets.token_hex(32))
-
-            # 2. 未配置嵌入 API Key 时自动禁用 RAG，避免空 Key 调用报错
-            if not all_config.get("EMBEDDING_API_KEY", "").strip():
-                all_config["ENABLE_RAG"] = "false"
-                logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
-
-            database_url = all_config.get("DATABASE_URL", "")
-            admin_github = all_config.get("ADMIN_GITHUB_USERNAME", "")
-            admin_telegram_id = all_config.get("ADMIN_TELEGRAM_ID", "")
-
-            if not database_url:
-                return {"success": False, "message": "数据库连接字符串为必填项"}
-
-            # 3. 初始化数据库并创建表
-            await self.init_database(database_url)
-
-            # 4. 将所有配置写入数据库
-            await self.save_configs_to_db(all_config)
-
-            # 5. 创建管理员
-            if admin_github and admin_telegram_id:
-                try:
-                    telegram_id_int = int(admin_telegram_id)
-                    await self.create_admin_user(
-                        admin_github, telegram_id_int, database_url
-                    )
-                except (ValueError, TypeError):
-                    return {
-                        "success": False,
-                        "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
-                    }
-            else:
+            # 1. 先校验管理员和数据库信息，避免无效请求产生部分写入。
+            admin_github = str(
+                all_config.get("ADMIN_GITHUB_USERNAME", "") or ""
+            ).strip()
+            admin_telegram_id = str(
+                all_config.get("ADMIN_TELEGRAM_ID", "") or ""
+            ).strip()
+            if not admin_github or not admin_telegram_id:
                 return {
                     "success": False,
                     "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
                 }
+            try:
+                telegram_id_int = int(admin_telegram_id)
+            except ValueError, TypeError:
+                return {
+                    "success": False,
+                    "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
+                }
 
-            # 6. 写入 connection.json 标记完成
+            database_url = str(all_config.get("DATABASE_URL", "") or "").strip()
+            if not database_url:
+                database_url = str(backup_values.get("database_url") or "").strip()
+            if not database_url:
+                return {"success": False, "message": "数据库连接字符串为必填项"}
+            # 显式填写的数据库地址优先；从备份取得时也写回完成配置。
+            all_config["DATABASE_URL"] = database_url
+
+            # 2. 优先沿用备份中的安全密钥，仅在新部署和备份都未提供时生成。
+            if not str(all_config.get("WEBUI_SECRET_KEY", "") or "").strip():
+                all_config["WEBUI_SECRET_KEY"] = str(
+                    backup_values.get("webui_secret_key") or secrets.token_hex(32)
+                )
+            # 活动可观测性 cursor HMAC 密钥：留空则新版 dispatcher 跳过，故自动生成
+            if not str(
+                all_config.get("ACTIVITY_CURSOR_SIGNING_SECRET", "") or ""
+            ).strip():
+                all_config["ACTIVITY_CURSOR_SIGNING_SECRET"] = str(
+                    backup_values.get("activity_cursor_signing_secret")
+                    or secrets.token_hex(32)
+                )
+
+            # 3. 表单或备份均未配置嵌入 API Key 时自动禁用 RAG。
+            embedding_api_key = str(
+                all_config.get("EMBEDDING_API_KEY", "")
+                or backup_values.get("embedding_api_key")
+                or ""
+            ).strip()
+            if not embedding_api_key:
+                all_config["ENABLE_RAG"] = "false"
+                logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
+
+            # 4. 初始化目标数据库；旧版备份不含系统分类时使用表单中的地址。
+            await self.init_database(database_url)
+
+            # 5. 先精确恢复备份，再写入本次 Setup 表单值，使部署时的显式修改优先。
+            import_result = None
+            if backup_sections is not None:
+                import_result = await self.restore_backup_for_setup(backup_sections)
+                logger.info(
+                    "Setup 配置备份已恢复, sections={}, created={}, updated={}, deleted={}",
+                    import_result.sections,
+                    import_result.created,
+                    import_result.updated,
+                    import_result.deleted,
+                )
+
+            # 6. 将 Setup 表单配置写入数据库。
+            await self.save_configs_to_db(all_config)
+
+            # 7. 备份不包含用户，始终由当前部署者创建/确认超级管理员。
+            await self.create_admin_user(admin_github, telegram_id_int, database_url)
+
+            # 8. 所有步骤成功后才写入 connection.json 标记完成。
             mark_setup_completed(database_url)
 
-            # 7. 返回成功（前端开始轮询 /health）
-            return {"success": True, "message": "配置完成，正在重启应用..."}
+            # 9. 返回成功（前端开始轮询 /health）。
+            response: dict[str, Any] = {
+                "success": True,
+                "message": "配置完成，正在重启应用...",
+            }
+            if import_result is not None:
+                response["backup_import"] = {
+                    "sections": list(import_result.sections),
+                    "created": import_result.created,
+                    "updated": import_result.updated,
+                    "deleted": import_result.deleted,
+                    "unchanged": import_result.unchanged,
+                }
+            return response
         except Exception as e:
             logger.error(f"Setup 完成失败: {e}")
-            return {"success": False, "message": f"配置失败: {e}"}
+            error_message = str(e)
+            if database_url and database_url in error_message:
+                error_message = error_message.replace(database_url, "***")
+            return {"success": False, "message": f"配置失败: {error_message}"}
 
     def trigger_restart(self) -> None:
         """触发应用重启（通过 SIGTERM 信号）"""
         logger.info("Setup 完成，正在触发应用重启...")
+        try:
+            # Uvicorn 会先等待 HTTP 长连接结束，再进入 lifespan shutdown。
+            # 先唤醒所有 SSE 生成器，避免 EventSource 让重启无限等待。
+            from backend.webui.sse import sse_manager
+
+            sse_manager.close_all()
+        except Exception as exc:
+            # SSE 清理失败不能阻止重启；Uvicorn 的强制停机超时会继续兜底。
+            logger.warning(
+                "重启前关闭 SSE 长连接失败: error_type={}",
+                type(exc).__name__,
+            )
         os.kill(os.getpid(), signal.SIGTERM)
 
 
 # 全局单例
 setup_service = SetupService()
+
+
+async def ensure_activity_cursor_signing_secret() -> str:
+    """启动时自愈：``activity_cursor_signing_secret`` 为空则生成并幂等落库。
+
+    覆盖 Setup 之前未生成该密钥的已部署实例。幂等写兼容 web/worker 容器同时
+    启动的竞态：SELECT → 不存在则 INSERT → 捕获唯一约束冲突再 SELECT，
+    最终以 DB 中权威值为准回填 Settings 单例。
+    """
+    from backend.core.config import get_settings
+    from backend.models.database import AppConfig, async_session
+
+    settings = get_settings()
+    current = settings.activity_cursor_signing_secret
+    if current:
+        return current
+
+    new_secret = secrets.token_hex(32)
+    value: str
+    generated = False
+    async with async_session() as session:
+        existing = (
+            await session.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "activity_cursor_signing_secret"
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            value = existing.key_value
+        else:
+            try:
+                session.add(
+                    AppConfig(
+                        key_name="activity_cursor_signing_secret",
+                        key_value=new_secret,
+                    )
+                )
+                await session.commit()
+                value = new_secret
+                generated = True
+            except IntegrityError:
+                # 并发对手刚刚写入：回退后重新读取权威值
+                await session.rollback()
+                existing = (
+                    await session.execute(
+                        select(AppConfig).where(
+                            AppConfig.key_name == "activity_cursor_signing_secret"
+                        )
+                    )
+                ).scalar_one()
+                value = existing.key_value
+    settings.activity_cursor_signing_secret = value
+    logger.info(
+        "活动 cursor signing secret 已就绪（{}）",
+        "自动生成并写入 DB" if generated else "从 DB 加载",
+    )
+    return value

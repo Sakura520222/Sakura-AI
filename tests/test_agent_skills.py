@@ -513,7 +513,6 @@ def _build_zip_raw(files: dict[str, bytes]) -> bytes:
     class _EncodedFile(io.BytesIO):
         """带文件名编码控制的 ZIP 文件。"""
 
-
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name_bytes, content in files.items():

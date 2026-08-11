@@ -375,7 +375,7 @@ def parse_scan_result(response_text: str) -> dict:
         try:
             confidence = int(f.get("confidence", 50))
             confidence = max(0, min(100, confidence))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             confidence = 50
 
         valid_findings.append(
@@ -405,5 +405,5 @@ def _safe_int(value) -> int | None:
         return None
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None

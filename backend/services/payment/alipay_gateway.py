@@ -372,7 +372,7 @@ class AlipayGateway(PaymentGateway):
             # 解析金额
             try:
                 amount_cents = int(float(total_amount) * 100)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 amount_cents = 0
 
             # 交易状态映射
@@ -507,7 +507,7 @@ class AlipayGateway(PaymentGateway):
                 total_amount = result.get("total_amount", "0")
                 try:
                     amount_cents = int(float(total_amount) * 100)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     amount_cents = 0
 
                 return PaymentStatusResult(

@@ -21,6 +21,7 @@ from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
 from backend.models import database as db_module
 from backend.models.database import CIFailure, HeadShaPRMap
+from backend.services.check_run_service import CheckRunService
 
 
 def _utcnow_naive() -> datetime:
@@ -31,7 +32,9 @@ def _utcnow_naive() -> datetime:
 class CIFailureService:
     """外部 CI 失败采集与查询服务。"""
 
-    SELF_CHECK_NAME = "Sakura AI Review"
+    # 自身拥有的全部 Check 名（主 Review + 副 Analysis/Findings），避免副 Check
+    # failure 被误记为外部 CI 失败。从 CheckRunService 取单一真相，保持同步。
+    SELF_CHECK_NAMES = frozenset(CheckRunService.OWNED_CHECK_NAMES)
     # 值得记录的失败结论 / Failure conclusions worth recording
     FAILURE_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required"}
 
@@ -67,8 +70,8 @@ class CIFailureService:
             return
         try:
             name = check_run_payload.get("name", "")
-            # 过滤自身 Check Run / Filter self check run
-            if name == self.SELF_CHECK_NAME:
+            # 过滤自身 Check Run（含副 Analysis/Findings）/ Filter self check runs
+            if name in self.SELF_CHECK_NAMES:
                 return
             conclusion = check_run_payload.get("conclusion", "")
             if conclusion not in self.FAILURE_CONCLUSIONS:
@@ -319,7 +322,7 @@ class CIFailureService:
             return None
         try:
             return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return None
 
     # ------------------------------------------------------------------ head_sha map
@@ -360,9 +363,7 @@ class CIFailureService:
         except Exception as exc:
             logger.debug("CIFailureService.upsert_head_sha_pr_map 失败: {}", exc)
 
-    async def lookup_pr_number(
-        self, repo_full_name: str, head_sha: str
-    ) -> int | None:
+    async def lookup_pr_number(self, repo_full_name: str, head_sha: str) -> int | None:
         """查映射表解 pr_number（三层降级第二层）。"""
         try:
             async with db_module.async_session() as session:

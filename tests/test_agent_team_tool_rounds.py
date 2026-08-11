@@ -29,15 +29,19 @@ def test_agent_team_max_tool_rounds_is_registered_for_webui():
     assert get_settings().agent_team_max_tool_rounds == 30
 
 
-def test_agent_team_context_compression_config_is_registered_for_webui():
-    expected_keys = {
+def test_agent_team_context_compression_config_retired_from_webui():
+    """压缩配置随「专用 AI 模型」选项卡从 /agent-team WebUI 移除，后端元数据与默认值保留。"""
+    retired_keys = {
         "agent_team_enable_context_compression",
         "agent_team_context_compression_threshold",
-        "agent_team_context_compression_keep_rounds",
         "agent_team_context_summary_max_tokens",
     }
+    # keep_rounds 已废弃移除，确认它不再出现在 WebUI 注册集中
+    assert "agent_team_context_compression_keep_rounds" not in AGENT_TEAM_CONFIG_KEYS
+    # 压缩配置已从 WebUI 配置页移除（迁至执行默认值，由 get_dynamic_config 读取）
+    assert retired_keys.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
 
-    assert expected_keys.issubset(AGENT_TEAM_CONFIG_KEYS)
+    # 后端元数据（标签/范围）与 Settings 默认值仍保留，运行时可读取
     assert (
         DYNAMIC_CONFIG_LABELS["agent_team_enable_context_compression"]
         == "启用上下文压缩"
@@ -46,10 +50,8 @@ def test_agent_team_context_compression_config_is_registered_for_webui():
         0.1,
         1.0,
     )
-    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_keep_rounds"] == (
-        1,
-        20,
-    )
+    # keep_rounds 已废弃，RANGES 不再注册
+    assert "agent_team_context_compression_keep_rounds" not in DYNAMIC_CONFIG_RANGES
     assert DYNAMIC_CONFIG_RANGES["agent_team_context_summary_max_tokens"] == (500, 8192)
     settings = get_settings()
     assert settings.agent_team_enable_context_compression is True

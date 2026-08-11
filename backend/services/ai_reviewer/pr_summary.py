@@ -23,9 +23,8 @@ class PRSummaryService:
     START_MARKER = "<!-- sakura-ai-summary-start -->"
     END_MARKER = "<!-- sakura-ai-summary-end -->"
 
-    def __init__(self, api_client: AIApiClient, model: str):
+    def __init__(self, api_client: AIApiClient, model: str = ""):
         self.api_client = api_client
-        self.model = model
 
     async def generate_summary(
         self, analysis: PRAnalysis, pr_info: dict[str, Any], pr: Any = None
@@ -48,13 +47,14 @@ class PRSummaryService:
         )
 
         response = await self.api_client.call_with_retry(
-            model=self.model,
+            model="",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             temperature=0.3,
             max_tokens=16000,
+            role="summary",
         )
 
         if (
@@ -190,7 +190,7 @@ class PRSummaryService:
         """构建带标记的摘要块"""
         return (
             f"{self.START_MARKER}\n\n"
-            f"## 🌸 Sakura AI Reviewer的总结\n\n{summary}\n\n"
+            f"## 🌸 Sakura AI的总结\n\n{summary}\n\n"
             f"{self.END_MARKER}"
         )
 
@@ -232,6 +232,6 @@ class PRSummaryService:
 
         # 去掉旧标题行（AI 可能生成带后缀的变体，如 "更新版"）
         content = re.sub(
-            r"^## 🌸 Sakura AI Reviewer的总结[^\n]*\n*", "", content
+            r"^## 🌸 Sakura AI(?: Reviewer)?的总结[^\n]*\n*", "", content
         ).strip()
         return content if content else None

@@ -64,7 +64,7 @@ class SakuraMemoryTool(BaseTool):
                 c = int(count)
                 if c < 1 or c > 50:
                     return f"count 须在 1-50 之间，当前: {c}"
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return f"count 须为整数，当前: {count}"
         return None
 

@@ -162,7 +162,7 @@ def _event_to_dict(event: ActivityEvent) -> dict[str, Any]:
     if event.content:
         try:
             content = json.loads(event.content)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             content = {"raw": event.content}
     return {
         "id": event.id,

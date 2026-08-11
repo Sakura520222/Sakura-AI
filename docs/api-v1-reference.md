@@ -1,6 +1,8 @@
-# Sakura AI Reviewer API v1 参考文档
+# Sakura AI API v1 参考文档
 
-> 面向 Android 开发者的完整 API 参考。所有端点前缀为 `/api/v1`。
+> Complete API reference for Android developers. All endpoints prefixed with `/api/v1`.
+
+← [Documentation Index](README.md) · [README](../README.md)
 
 ---
 
@@ -637,7 +639,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 ```json
 {
   "type": "database",
-  "database_url": "mysql+aiomysql://user:pass@localhost:3306/sakura"
+  "database_url": "mysql+aiomysql://user:pass@localhost:3306/sakura_ai"
 }
 ```
 
@@ -750,7 +752,7 @@ Setup 阶段按 AI 厂商获取模型列表，并尽可能提取上下文窗口�
 ```json
 {
   "values": {
-    "DATABASE_URL": "mysql+aiomysql://user:pass@localhost:3306/sakura",
+    "DATABASE_URL": "mysql+aiomysql://user:pass@localhost:3306/sakura_ai",
     "REDIS_URL": "redis://localhost:6379/0"
   }
 }
@@ -1819,7 +1821,7 @@ Issue 分析详情。
 
 #### POST /config/ai-providers/{provider}/models
 
-按厂商获取模型列表。若请求体未提供 `api_key` 或 `api_base`，服务端会尝试回退使用数据库中保存的 `openai_api_key` / `openai_api_base`。
+按厂商获取模型列表。凭据通过已保存账号解析：请求体必须提供 `account_id`，服务端使用该账号的 `api_base` / `api_key` 获取模型列表。旧式扁平凭据回退（`openai_api_key` / `openai_api_base`）已停用。
 
 **认证级别**：super_admin
 
@@ -1835,8 +1837,7 @@ Issue 分析详情。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `api_key` | string | 否 | API Key；为空时尝试读取已保存配置 |
-| `api_base` | string | 否 | API Base URL；为空时使用 provider 默认地址或已保存配置 |
+| `account_id` | string | 是 | 已保存 AI 账号 ID（在 WebUI「AI 配置」中创建）；凭据从该账号解析 |
 
 **响应示例**：
 
@@ -1871,7 +1872,7 @@ Issue 分析详情。
 
 | 配置键 | 说明 |
 |--------|------|
-| `openai_api_key` / `openai_api_base` / `openai_model` | OpenAI 兼容主模型配置 |
+| ~~`openai_api_key` / `openai_api_base` / `openai_model`~~ | **已废弃** - 请通过 WebUI 「AI 配置」角色绑定配置（main/summary/agent_team） |
 | `output_language` | AI 输出语言配置 |
 | `init_user_daily_quota` / `init_user_weekly_quota` / `init_user_monthly_quota` | 自注册用户基础 PR 配额 |
 | `init_user_issue_daily_quota` / `init_user_issue_weekly_quota` / `init_user_issue_monthly_quota` | 自注册用户基础 Issue 配额 |
@@ -3255,4 +3256,8 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-> 文档版本：v1.3 | 最后更新：2026-05-21 | 端点总数：86
+> Documentation version: v1.3 | Last updated: 2026-05-21 | Total endpoints: 86
+
+---
+
+*Last updated: 2026-8-10 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

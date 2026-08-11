@@ -21,10 +21,12 @@ def _worker_with_mock_check_run():
     worker.check_run_service = SimpleNamespace(
         report_queued=AsyncMock(),
         report_progress=AsyncMock(),
+        report_stage_progress=AsyncMock(),
         report_completed=AsyncMock(),
         report_failed=AsyncMock(),
         report_cancelled=AsyncMock(),
         report_skipped=AsyncMock(),
+        cancel_active_runs_by_sha=AsyncMock(),
     )
     worker.comment_service = SimpleNamespace(
         delete_placeholder_comment=AsyncMock(),
@@ -71,9 +73,10 @@ async def test_cancel_and_cleanup_reports_cancelled_with_head_sha():
 
     # review_id=None → 不更新 DB 状态
     worker._update_review_status.assert_not_called()
-    worker.check_run_service.report_cancelled.assert_awaited_once()
-    call = worker.check_run_service.report_cancelled.call_args
+    worker.check_run_service.cancel_active_runs_by_sha.assert_awaited_once()
+    call = worker.check_run_service.cancel_active_runs_by_sha.call_args
     assert call.args == ("o", "r", "abc")
+    assert call.kwargs["cancel_reason"] == "worker_cancelled"
     assert call.kwargs["output_language"] == "zh"
 
 
@@ -93,7 +96,7 @@ async def test_cancel_and_cleanup_updates_status_and_reports_when_review_id():
     )
 
     worker._update_review_status.assert_awaited_once()
-    worker.check_run_service.report_cancelled.assert_awaited_once()
+    worker.check_run_service.cancel_active_runs_by_sha.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -110,7 +113,7 @@ async def test_cancel_and_cleanup_skips_check_run_when_no_head_sha():
         pr_info=pr_info,
     )
 
-    worker.check_run_service.report_cancelled.assert_not_awaited()
+    worker.check_run_service.cancel_active_runs_by_sha.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -119,4 +122,4 @@ async def test_cancel_and_cleanup_skips_check_run_when_no_pr_info():
 
     await worker._cancel_and_cleanup("tid", "o/r#1", None, None, "reason")
 
-    worker.check_run_service.report_cancelled.assert_not_awaited()
+    worker.check_run_service.cancel_active_runs_by_sha.assert_not_awaited()

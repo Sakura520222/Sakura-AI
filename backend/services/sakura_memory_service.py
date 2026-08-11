@@ -257,34 +257,12 @@ class SakuraMemoryService:
     def __init__(self):
         """初始化服务 / Initialize service"""
         self.write_service = get_github_write_service()
-        self._ai_client_config = None
         self._refresh_ai_client()
 
     def _refresh_ai_client(self) -> None:
-        """刷新主/辅助模型选择与凭据。"""
-        settings = get_settings()
-        if settings.sakura_use_summary_model:
-            base_url = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-            model = settings.summary_model or settings.openai_model
-        else:
-            base_url = settings.openai_api_base
-            api_key = settings.openai_api_key
-            model = settings.openai_model
-
-        config = (
-            settings.sakura_use_summary_model,
-            base_url,
-            api_key,
-            model,
-        )
-        if self._ai_client_config != config:
-            self.api_client = AIApiClient(
-                base_url=base_url,
-                api_key=api_key,
-            )
-            self._ai_client_config = config
-        self._default_model = model
+        """刷新角色驱动的统一客户端，不读取旧扁平供应商配置。"""
+        self.api_client = AIApiClient()
+        self._default_model = ""
 
     def _get_config(self) -> dict:
         """获取 sakura_memory 配置，优先使用 DB/WebUI 配置 / Get config, DB/WebUI overrides yaml"""
@@ -292,22 +270,11 @@ class SakuraMemoryService:
         yaml_config = ce_config.get("sakura_memory", {})
         settings = get_settings()
 
-        reflection_model = settings.sakura_reflection_model or yaml_config.get(
-            "reflection", {}
-        ).get("model")
-        consolidation_model = settings.sakura_consolidation_model or yaml_config.get(
-            "consolidation", {}
-        ).get("model")
-        issue_reflection_model = (
-            settings.sakura_issue_reflection_model
-            or yaml_config.get("issue_reflection", {}).get("model")
-        )
-
         return {
             "enabled": settings.sakura_memory_enabled,
             "reflection": {
                 "enabled": settings.sakura_reflection_enabled,
-                "model": reflection_model,
+                "model": "",
                 "prompt_template": yaml_config.get("reflection", {}).get(
                     "prompt_template"
                 ),
@@ -323,14 +290,14 @@ class SakuraMemoryService:
             },
             "issue_reflection": {
                 "enabled": settings.sakura_issue_reflection_enabled,
-                "model": issue_reflection_model,
+                "model": "",
                 "prompt_template": yaml_config.get("issue_reflection", {}).get(
                     "prompt_template"
                 ),
             },
             "consolidation": {
                 "interval": settings.sakura_consolidation_interval,
-                "model": consolidation_model,
+                "model": "",
                 "max_memory_chars": settings.sakura_max_memory_chars,
                 "max_sakura_chars": settings.sakura_max_sakura_chars,
                 "cleanup_old_reflections": yaml_config.get("consolidation", {}).get(
@@ -349,21 +316,15 @@ class SakuraMemoryService:
                 "auto_init": settings.sakura_auto_init,
                 "init_commit_message": yaml_config.get("initialization", {}).get(
                     "init_commit_message",
-                    "chore: initialize .sakura/ directory for Sakura AI Reviewer",
+                    "chore: initialize .sakura/ directory for Sakura AI",
                 ),
             },
             "directory_convention": yaml_config.get("directory_convention", {}),
         }
 
     def _get_model(self, config_section: dict) -> str:
-        """获取模型配置，null 表示使用默认审查模型
-
-        Get model config, null means use default review model.
-        """
-        model = config_section.get("model")
-        if model:
-            return model
-        return self._default_model
+        """模型由绑定的业务角色解析；忽略历史模型覆盖配置。"""
+        return ""
 
     async def _get_or_create_state(self, repo_full_name: str) -> SakuraMemoryState:
         """获取或创建仓库的记忆状态 / Get or create memory state for a repo"""
@@ -529,7 +490,7 @@ class SakuraMemoryService:
 
             commit_msg = init_config.get(
                 "init_commit_message",
-                "chore: initialize .sakura/ directory for Sakura AI Reviewer",
+                "chore: initialize .sakura/ directory for Sakura AI",
             )
             logger.info(
                 f"[sakura] 步骤5: 提交文件到仓库 {repo_full_name}, {len(files)} 个文件"
@@ -864,7 +825,7 @@ class SakuraMemoryService:
                         else:
                             formatted_labels.append(f"- {label}")
                     suggested_labels = "\n".join(formatted_labels)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             suggested_assignees = analysis_record.suggested_assignees or "无"
@@ -879,7 +840,7 @@ class SakuraMemoryService:
                         a.get("username", a) if isinstance(a, dict) else str(a)
                         for a in assignees_data[:10]
                     )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             duplicate_of = analysis_record.duplicate_of
@@ -901,7 +862,7 @@ class SakuraMemoryService:
                         else f"- {p}"
                         for p in prs_data[:10]
                     )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             # 构建 Prompt / Build prompt
@@ -1307,14 +1268,14 @@ class SakuraMemoryService:
 
         Read configured max comments for reflection prompt.
         """
-        return self._get_config().get("reflection", {}).get(
-            "max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS
+        return (
+            self._get_config()
+            .get("reflection", {})
+            .get("max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS)
         )
 
     @staticmethod
-    def _format_review_result_comments(
-        comments: list, max_count: int
-    ) -> str:
+    def _format_review_result_comments(comments: list, max_count: int) -> str:
         """格式化 review_result 中的评论列表供反思 prompt 使用。
 
         评论正文完整保留，不截断；按 max_count 限制条数。
@@ -1516,9 +1477,10 @@ class SakuraMemoryService:
         messages = [{"role": "user", "content": prompt}]
         response = await self.api_client.call_with_retry(
             messages=messages,
-            model=model or self._default_model,
+            model="",
             temperature=0.7,
             max_tokens=4000,
+            role="summary",
         )
         if not response.choices:
             logger.warning("LLM 返回空响应 / LLM returned empty choices")

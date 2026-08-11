@@ -4,6 +4,7 @@ import json
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from loguru import logger
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,7 +169,7 @@ async def issue_detail_page(
         suggested_labels = (
             json.loads(analysis.suggested_labels) if analysis.suggested_labels else []
         )
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     suggested_assignees = []
@@ -178,13 +179,13 @@ async def issue_detail_page(
             if analysis.suggested_assignees
             else []
         )
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     related_prs = []
     try:
         related_prs = json.loads(analysis.related_prs) if analysis.related_prs else []
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     return render_template(
@@ -274,7 +275,9 @@ async def reanalyze_issue(
 
         task_id = await submit_issue_analysis_task(issue_info)
         return JSONResponse(content={"success": True, "task_id": task_id})
-    except Exception as e:
+    except Exception:
+        logger.exception("提交 Issue 重新分析任务失败")
         return JSONResponse(
-            content={"success": False, "message": str(e)}, status_code=500
+            content={"success": False, "message": "提交重新分析任务失败，请稍后重试"},
+            status_code=500,
         )

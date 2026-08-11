@@ -79,9 +79,7 @@ class ScanReportService:
 
         return report_info
 
-    def generate_issue_body(
-        self, scan: RepoScan, findings: list[ScanFinding]
-    ) -> str:
+    def generate_issue_body(self, scan: RepoScan, findings: list[ScanFinding]) -> str:
         """生成 GitHub Issue 报告 Markdown 内容"""
         lines = []
 
@@ -150,12 +148,14 @@ class ScanReportService:
 
         lines.append("---")
         lines.append(
-            "*此报告由 [Sakura AI Reviewer](https://github.com/Sakura520222/Sakura-AI) 自动生成*"
+            "*此报告由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成*"
         )
 
         return "\n".join(lines)
 
-    def generate_telegram_message(self, scan: RepoScan, issue_url: str | None = None) -> str:
+    def generate_telegram_message(
+        self, scan: RepoScan, issue_url: str | None = None
+    ) -> str:
         """生成 Telegram 通知消息"""
         health = scan.overall_health_score or 0
         health_emoji = "🟢" if health >= 80 else "🟡" if health >= 60 else "🔴"

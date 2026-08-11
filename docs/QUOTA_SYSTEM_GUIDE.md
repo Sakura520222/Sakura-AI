@@ -1,6 +1,12 @@
 # 配额系统指南
 
-Sakura AI Reviewer 提供基于用户配额的访问控制，用于限制和管理 PR 审查、Issue 分析、Agent 专家团队任务等高成本操作的使用量。本文档说明配额统计、自动重置和管理方式。
+> Sakura AI 用户配额（PR 审查 / Issue 分析 / Agent 任务）的统计维度、UTC 自动重置机制与管理方式。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
+Sakura AI 提供基于用户配额的访问控制，用于限制和管理 PR 审查、Issue 分析、Agent 专家团队任务等高成本操作的使用量。本文档说明配额统计、自动重置和管理方式。
 
 ## 配额类型
 
@@ -89,3 +95,7 @@ Agent 配额初始化配置项：
 - `backend/webui/routes/users.py`、`backend/webui/routes/billing.py`：WebUI 中的用户和计费管理入口。
 - `backend/webui/routes/agent_team.py`：Agent 任务创建、重试、仓库权限和 Agent 配额入口。
 - `backend/telegram/handlers.py`：Telegram Bot 配额相关交互入口。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

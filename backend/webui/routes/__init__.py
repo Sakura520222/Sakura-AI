@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from backend.webui.deps import mark_webui_request
 from backend.webui.routes import (
     action_logs,
-    activity,
+    activity_observability,
     agent_skills,
     agent_team,
     assetlinks,
@@ -24,9 +24,11 @@ from backend.webui.routes import (
     security,
     settings,
     sse,
+    star_aid,
     system_config,
     users,
     vector_db,
+    version,
 )
 
 # WebUI routes are mounted at root (no prefix) so the dashboard is served at /.
@@ -55,7 +57,9 @@ webui_router.include_router(agent_team.router)
 webui_router.include_router(assetlinks.router)
 webui_router.include_router(agent_skills.router)
 webui_router.include_router(sakura_memory.router)
+webui_router.include_router(star_aid.router)
 webui_router.include_router(system_config.router)
 webui_router.include_router(vector_db.router)
 webui_router.include_router(legal.router)
-webui_router.include_router(activity.router)
+webui_router.include_router(activity_observability.router)
+webui_router.include_router(version.router)

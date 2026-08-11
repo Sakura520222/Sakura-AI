@@ -108,9 +108,7 @@ class ReadSakuraDocsTool(BaseTool):
             output={"file_path": safe_path, "content": content, "size": len(content)},
         )
 
-    async def _get_docs_overview(
-        self, repo: Any, sakura_ref: str | None
-    ) -> ToolResult:
+    async def _get_docs_overview(self, repo: Any, sakura_ref: str | None) -> ToolResult:
         """返回 .sakura/ 所有文档概览"""
         try:
             contents = await self._list_dir(repo, sakura_ref, ".sakura")
@@ -155,9 +153,7 @@ class ReadSakuraDocsTool(BaseTool):
             )
 
     @staticmethod
-    async def _read_file(
-        repo: Any, sakura_ref: str | None, path: str
-    ) -> str | None:
+    async def _read_file(repo: Any, sakura_ref: str | None, path: str) -> str | None:
         try:
             ref = sakura_ref or "main"
 
@@ -172,9 +168,7 @@ class ReadSakuraDocsTool(BaseTool):
             return None
 
     @staticmethod
-    async def _list_dir(
-        repo: Any, sakura_ref: str | None, path: str
-    ) -> list | None:
+    async def _list_dir(repo: Any, sakura_ref: str | None, path: str) -> list | None:
         try:
             ref = sakura_ref or "main"
 
@@ -277,9 +271,7 @@ class ListSakuraDirectoryTool(BaseTool):
         )
 
     @staticmethod
-    async def _list_dir(
-        repo: Any, sakura_ref: str | None, path: str
-    ) -> list | None:
+    async def _list_dir(repo: Any, sakura_ref: str | None, path: str) -> list | None:
         try:
             ref = sakura_ref or "main"
 

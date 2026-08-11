@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Sakura AI Reviewer{% endblock %}</title>
+    <title>{% block title %}Sakura AI{% endblock %}</title>
+    <link rel="icon" href="data:,">
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
@@ -642,7 +643,7 @@
     </script>
 
     <!-- SSE 实时推送客户端 -->
-    {% include "components/sse_client.html" %}
+    {% block global_sse_client %}{% include "components/sse_client.html" %}{% endblock %}
 
     <script>
     // === Markdown 渲染 ===
@@ -667,7 +668,7 @@
         <div class="ml-0 lg:ml-64 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-400 dark:text-gray-500">
             <div class="flex items-center gap-2">
                 <span>🌸</span>
-                <span>&copy; 2025-2026 Sakura AI Reviewer</span>
+                <span>&copy; 2025-2026 Sakura AI</span>
             </div>
             <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
                 <a href="/pricing" class="hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors">Pricing</a>

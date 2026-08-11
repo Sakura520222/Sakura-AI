@@ -3,8 +3,33 @@
 import logging
 
 from backend.core.config import get_settings
+from backend.models.activity_observability_models import (
+    ActivityArtifactAccessLog,
+    ActivityCanonicalContextRevision,
+    ActivityContextOperation,
+    ActivityContextSnapshot,
+    ActivityEvent,
+    ActivityInvocation,
+    ActivityInvocationTrigger,
+    ActivityInvocationWorkUnit,
+    ActivityMessage,
+    ActivityModelAttempt,
+    ActivityNativeArtifact,
+    ActivityObservabilityRoleBindingSnapshot,
+    ActivityObservabilitySession,
+    ActivityOutbox,
+    ActivityPublication,
+    ActivityResourceIdentity,
+    ActivitySession,
+    ActivityThread,
+    ActivityThreadLease,
+    ActivityToolExecution,
+    ActivityTrigger,
+    ActivityWorkUnitResult,
+)
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.agent_skill_models import AgentSkill
+from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.database import (
     AppConfig,
     Base,
@@ -17,6 +42,7 @@ from backend.models.database import (
     init_async_db,
     init_database,
     insert_default_configs_async,
+    migrate_schema_async,
 )
 from backend.models.payment_models import (
     Order,
@@ -40,11 +66,41 @@ from backend.models.scan_models import (
     ScanStatus,
 )
 from backend.models.security_models import SecurityEventLog
+from backend.models.star_aid_models import (
+    StarAidActionLog,
+    StarAidCredential,
+    StarAidMember,
+    StarAidRepository,
+    StarAidRepositoryMetric,
+)
 from backend.models.telegram_models import UserRecoveryCode, UserWebAuthnCredential
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AIUsageRecord",
+    "ActivityArtifactAccessLog",
+    "ActivityCanonicalContextRevision",
+    "ActivityContextOperation",
+    "ActivityContextSnapshot",
+    "ActivityEvent",
+    "ActivityInvocation",
+    "ActivityInvocationTrigger",
+    "ActivityInvocationWorkUnit",
+    "ActivityMessage",
+    "ActivityModelAttempt",
+    "ActivityNativeArtifact",
+    "ActivityObservabilityRoleBindingSnapshot",
+    "ActivityObservabilitySession",
+    "ActivityOutbox",
+    "ActivityPublication",
+    "ActivityResourceIdentity",
+    "ActivitySession",
+    "ActivityThread",
+    "ActivityThreadLease",
+    "ActivityToolExecution",
+    "ActivityTrigger",
+    "ActivityWorkUnitResult",
     "AdminActionLog",
     "AgentSkill",
     "AppConfig",
@@ -68,6 +124,11 @@ __all__ = [
     "ScanFinding",
     "ScanStatus",
     "SecurityEventLog",
+    "StarAidActionLog",
+    "StarAidCredential",
+    "StarAidMember",
+    "StarAidRepository",
+    "StarAidRepositoryMetric",
     "SubscriptionStatus",
     "UserConfig",
     "UserRecoveryCode",
@@ -89,7 +150,7 @@ async def init_db():
     """
     try:
         logger.info("正在初始化数据库...")
-        logger.info(f"数据库地址: {settings.database_url}")
+        logger.info("数据库连接地址已配置")
 
         # 1. 先初始化异步数据库引擎
         init_async_db(settings.database_url)
@@ -98,9 +159,7 @@ async def init_db():
         await create_tables_async()
 
         # 3. 自动迁移（检测缺失列并添加）
-        from backend.models.database import _auto_migrate
-
-        await _auto_migrate()
+        await migrate_schema_async()
 
         # 4. 异步插入默认配置
         await insert_default_configs_async()

@@ -141,7 +141,7 @@ class NowPaymentsGateway(PaymentGateway):
         decimals = cls._currency_decimals(currency)
         try:
             value = Decimal(str(amount))
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             logger.warning(
                 "Invalid amount '{}' for currency '{}', defaulting to 0",
                 amount,

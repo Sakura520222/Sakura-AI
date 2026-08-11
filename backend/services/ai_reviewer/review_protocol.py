@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,9 @@ Reformat the same review conclusions only. Do not add, remove, or reconsider fin
 Return exactly one <SAKURA_REVIEW> envelope and no text outside it.
 Use VERSION 1, a SCORE from 1 to 10, a valid DECISION, and complete FINDING fields.
 Put DECISION_REASON, SUMMARY, TITLE, DESCRIPTION, and SUGGESTION opening and closing tags on separate lines.
+Each FINDING must contain exactly these fields, each appearing exactly once and in this exact order: SEVERITY, FILE, START_LINE, END_LINE, TITLE, DESCRIPTION, SUGGESTION.
+Do not repeat any field. After DESCRIPTION the next tag must be <SUGGESTION>; never re-emit <START_LINE> or <END_LINE> with NONE, and never write a second <DESCRIPTION>.
+If a finding needs no one-click code fix, put the value NONE inside <SUGGESTION>NONE</SUGGESTION>; keep the tag name SUGGESTION and keep the original START_LINE/END_LINE values unchanged.
 Keep protocol tags and enum values in English. Preserve the requested language only inside natural-language fields."""
 
 
@@ -67,6 +71,17 @@ class TaggedReviewParser:
         "DESCRIPTION",
         "SUGGESTION",
     }
+    # Some models wrap the SUGGESTION payload in a nested
+    # START_LINE/END_LINE/CONTENT block instead of raw replacement code. The
+    # reserved-tag guard in _consume_field only blocks bare tag lines, so the
+    # wrapped form leaks through verbatim and is rendered inside the GitHub
+    # suggestion block. Match the exact three-tag form and keep only CONTENT.
+    _nested_content_re = re.compile(
+        r"^\s*<START_LINE>[^\n]*</START_LINE>\s*\n"
+        r"\s*<END_LINE>[^\n]*</END_LINE>\s*\n"
+        r"\s*<CONTENT>(.*)</CONTENT>\s*$",
+        re.DOTALL,
+    )
 
     def parse(self, text: str) -> dict[str, Any]:
         if not isinstance(text, str) or not text.strip():
@@ -178,7 +193,9 @@ class TaggedReviewParser:
                 index += 1
                 continue
 
-            value, index = self._consume_field(lines, index, field)
+            value, index = self._consume_field(
+                lines, index, field, field_order=self._root_fields
+            )
             fields[field] = value
 
         if index != len(lines):
@@ -192,7 +209,9 @@ class TaggedReviewParser:
             # Tolerate blank lines between finding fields (readability spacing).
             while index < len(lines) and not lines[index].strip():
                 index += 1
-            value, index = self._consume_field(lines, index, field)
+            value, index = self._consume_field(
+                lines, index, field, field_order=self._finding_fields
+            )
             fields[field] = value
         if index != len(lines):
             raise ReviewProtocolError("unexpected content in FINDING")
@@ -227,6 +246,14 @@ class TaggedReviewParser:
         if not title or not description:
             raise ReviewProtocolError("finding title and description must not be empty")
 
+        if suggestion_value.strip() == "NONE":
+            suggestion: str | None = None
+        else:
+            # Tolerate the model wrapping the code in a nested
+            # START_LINE/END_LINE/CONTENT block; unwrap to the CONTENT payload
+            # so the nested tags do not leak into the GitHub suggestion block.
+            suggestion = self._unwrap_nested_suggestion(suggestion_value)
+
         return TaggedFinding(
             severity=severity,
             file_path=file_path,
@@ -234,11 +261,16 @@ class TaggedReviewParser:
             end_line=end_line,
             title=title,
             description=description,
-            suggestion=None if suggestion_value.strip() == "NONE" else suggestion_value,
+            suggestion=suggestion,
         )
 
     def _consume_field(
-        self, lines: list[str], index: int, field: str
+        self,
+        lines: list[str],
+        index: int,
+        field: str,
+        *,
+        field_order: tuple[str, ...] | None = None,
     ) -> tuple[str, int]:
         if index >= len(lines):
             raise ReviewProtocolError(f"missing {field}")
@@ -269,7 +301,7 @@ class TaggedReviewParser:
         # Opening tag may sit on its own line or share the line with the first
         # content line (compact form "<TAG>first line"). Both are accepted.
         if not stripped.startswith(single_prefix):
-            raise ReviewProtocolError(f"expected {single_prefix}")
+            raise self._unexpected_field_error(field, stripped, field_order)
         after_open = stripped[len(single_prefix) :]
         index += 1
         content: list[str] = []
@@ -311,6 +343,47 @@ class TaggedReviewParser:
             )
         return self._strip_blank_lines(content), index
 
+    @classmethod
+    def _unexpected_field_error(
+        cls,
+        expected: str,
+        stripped: str,
+        field_order: tuple[str, ...] | None,
+    ) -> ReviewProtocolError:
+        """Translate "expected X but found Y" into a model-actionable message.
+
+        The parser consumes fields in a fixed order, each exactly once. When the
+        model repeats or reorders a tag, the raw ``expected <X>`` is opaque to the
+        repair model, so the repair loop cannot converge. Point at the actual tag,
+        flag repeats explicitly, and append the full field order so the model can
+        correct itself instead of re-emitting the same shape.
+        """
+        actual = cls._extract_tag_name(stripped)
+        order = ""
+        if field_order is not None:
+            order = (
+                "; each field must appear exactly once, in this order: "
+                + ", ".join(field_order)
+            )
+        if (
+            field_order is not None
+            and actual in field_order
+            and field_order.index(actual) < field_order.index(expected)
+        ):
+            return ReviewProtocolError(
+                f"<{actual}> is repeated (already used earlier in this block); "
+                f"expected <{expected}> next{order}"
+            )
+        return ReviewProtocolError(
+            f"expected <{expected}> next but found <{actual}>{order}"
+        )
+
+    @staticmethod
+    def _extract_tag_name(stripped: str) -> str:
+        """Extract TAG from '<TAG>...' or '</TAG>'; fall back to truncated text."""
+        match = re.match(r"</?([A-Z_]+)>", stripped)
+        return match.group(1) if match else stripped[:40]
+
     @staticmethod
     def _strip_blank_lines(lines: list[str]) -> str:
         """Join lines, dropping only leading/trailing blank lines.
@@ -326,6 +399,26 @@ class TaggedReviewParser:
         while body and not body[-1].strip():
             body.pop()
         return "\n".join(body)
+
+    @classmethod
+    def _unwrap_nested_suggestion(cls, value: str) -> str:
+        """Extract CONTENT payload when the model wraps SUGGESTION in nested tags.
+
+        Some models emit the replacement as ``<START_LINE>..<END_LINE>..<CONTENT>
+        code</CONTENT>`` instead of raw code. The guard in ``_consume_field`` only
+        blocks bare reserved-tag lines, so the wrapped form would survive verbatim
+        and be rendered inside the GitHub suggestion block (the START_LINE /
+        END_LINE / CONTENT tags showing up as literal text). When the exact
+        three-tag shape is present, keep only the CONTENT payload, preserving its
+        indentation so the one-click suggestion still aligns with the source.
+        """
+        match = cls._nested_content_re.match(value)
+        if not match:
+            return value
+        logger.warning(
+            "unwrapped nested START_LINE/END_LINE/CONTENT tags from SUGGESTION"
+        )
+        return cls._strip_blank_lines(match.group(1).splitlines())
 
     @staticmethod
     def _consume_block(

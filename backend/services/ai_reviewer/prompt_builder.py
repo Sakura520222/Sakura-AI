@@ -168,14 +168,6 @@ class PromptBuilder:
                 f"\n注意: 还有 {context['remaining_files']} 个文件未显示"
             )
 
-        # 添加文件摘要（针对large策略）
-        if context.get("file_summary"):
-            message_parts.append("\n## 文件变更摘要")
-            for file in context["file_summary"]:
-                message_parts.append(
-                    f"- {file['path']}: {file['status']} ({file['changes']} 行)"
-                )
-
         changed_lines_map = context.get("changed_lines_map", {})
         if changed_lines_map:
             message_parts.append("\n## 可用于行内评论的变更行")
@@ -414,6 +406,11 @@ class PromptBuilder:
             "DESCRIPTION instead.",
             "- Do not include line numbers, code fences, context outside the range, "
             "or explanation inside SUGGESTION.",
+            "- Put the raw replacement code directly inside "
+            "<SUGGESTION>...</SUGGESTION>. Never wrap it in nested tags such as "
+            "<CONTENT>, <START_LINE>, or <END_LINE>; those are reserved protocol "
+            "field names, not suggestion containers, and their text would be "
+            "inserted verbatim into the code when the suggestion is applied.",
             "- Close every SUGGESTION block with </SUGGESTION> on its own line. When "
             "SUGGESTION holds multi-line replacement code, verify the closing tag is "
             "present before starting the next FINDING.",
@@ -442,6 +439,13 @@ class PromptBuilder:
             "- Every actionable defect or optional improvement mentioned in SUMMARY must "
             "also be represented as a complete FINDING.",
             "- FINDINGS may be empty. FILE=NONE requires both line fields to be NONE.",
+            "- Each FINDING field appears exactly once, in the template order "
+            "(SEVERITY, FILE, START_LINE, END_LINE, TITLE, DESCRIPTION, SUGGESTION). "
+            "Do not repeat a field. After DESCRIPTION the next tag must be "
+            "<SUGGESTION>; never re-emit <START_LINE>/<END_LINE> as NONE and never "
+            "write a second <DESCRIPTION>.",
+            "- NONE is a field value written inside the tags (e.g. "
+            "<SUGGESTION>NONE</SUGGESTION>); never change a tag name to <NONE>.",
             "- A file finding requires a repository-relative path and positive start/end "
             "lines from the PR diff.",
             REVIEW_PROTOCOL_TEMPLATE,

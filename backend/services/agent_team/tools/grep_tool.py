@@ -135,7 +135,7 @@ class GrepTool(BaseTool):
                     },
                 )
 
-        except (TimeoutError, FileNotFoundError, OSError):
+        except TimeoutError, FileNotFoundError, OSError:
             # grep 不可用或超时，回退到 Python 搜索
             pass
 
@@ -189,7 +189,7 @@ class GrepTool(BaseTool):
                         matched = keyword in line
                     if matched:
                         matches.append(f"{rel}:{i}:{line.strip()}")
-            except (OSError, UnicodeDecodeError):
+            except OSError, UnicodeDecodeError:
                 continue
 
         truncated = len(matches) > max_results

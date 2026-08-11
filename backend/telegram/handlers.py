@@ -134,7 +134,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         await update.message.reply_text(
-            "🌸 欢迎注册 Sakura AI Reviewer！\n\n"
+            "🌸 欢迎注册 Sakura AI！\n\n"
             "请输入你的 GitHub 用户名完成注册：\n"
             "/sign <github_username>\n\n"
             "示例: /sign mygithub\n\n"
@@ -165,7 +165,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         role_text = "❌ 未注册"
 
     text = (
-        f"🌸 *Sakura AI Reviewer Bot*\n\n"
+        f"🌸 *Sakura AI Bot*\n\n"
         f"👤 你的ID: `{telegram_id}`\n"
         f"🏷️ 角色: {role_text}\n\n"
         f"请选择功能："
@@ -197,7 +197,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *系统状态*\n\n"
             f"👥 注册用户: {len(users)} 人\n"
             f"📦 授权仓库: {len(repos)} 个\n"
-            f"🤖 AI模型: {settings.openai_model}\n"
             f"🌐 应用域名: {settings.app_domain}/\n"
         )
 
@@ -575,7 +574,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     select(PRReview).where(
                         and_(
                             PRReview.repo_name == pr_info["repo_name"],
-                            PRReview.pr_id == pr_info["pr_number"],
+                            PRReview.pr_number == pr_info["pr_number"],
                         )
                     )
                 )
@@ -1089,7 +1088,7 @@ async def cmd_repo_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not context.args or len(context.args) < 1:
         await update.message.reply_text(
             "用法: /repo_subscribe <owner/repo>\n\n"
-            "示例: /repo_subscribe Sakura520222/Sakura-AI-Reviewer"
+            "示例: /repo_subscribe Sakura520222/Sakura-AI"
         )
         return
 
@@ -1114,7 +1113,7 @@ async def cmd_repo_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYP
     if not context.args or len(context.args) < 1:
         await update.message.reply_text(
             "用法: /repo_unsubscribe <owner/repo>\n\n"
-            "示例: /repo_unsubscribe Sakura520222/Sakura-AI-Reviewer"
+            "示例: /repo_unsubscribe Sakura520222/Sakura-AI"
         )
         return
 

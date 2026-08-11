@@ -70,7 +70,7 @@ def _try_parse_mixed_radix_ipv4(hostname: str) -> str | None:
         if any(o < 0 or o > 255 for o in octets):
             return None
         return str(ipaddress.IPv4Address(bytes(octets)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -237,21 +237,21 @@ class FetchUrlToolHandler:
         if hostname.isdigit():
             try:
                 return str(ipaddress.IPv4Address(int(hostname)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         # Hex integer IPv4 (e.g. 0x7f000001)
         if hostname.lower().startswith("0x"):
             try:
                 return str(ipaddress.IPv4Address(int(hostname, 16)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         # Octal integer IPv4 (e.g. 017700000001)
         if len(hostname) > 1 and hostname[0] == "0" and hostname[1:].isdigit():
             try:
                 return str(ipaddress.IPv4Address(int(hostname, 8)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         return hostname
@@ -575,7 +575,7 @@ class FetchUrlToolHandler:
                 response = await client.get(
                     current_url,
                     headers={
-                        "User-Agent": "Sakura-AI-Reviewer/1.0",
+                        "User-Agent": "Sakura-AI/1.0",
                         "Accept": ",".join(sorted(self._allowed_content_types)),
                     },
                 )
@@ -653,7 +653,7 @@ class FetchUrlToolHandler:
                     content = body.decode(
                         response.encoding or "utf-8", errors="replace"
                     )
-                except (UnicodeDecodeError, LookupError):
+                except UnicodeDecodeError, LookupError:
                     content = body.decode("utf-8", errors="replace")
 
                 return content, status_code, total_bytes

@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 设置 Python 3.14
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
@@ -36,6 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -e './updater[dev]'
           pip install ruff pytest pytest-asyncio
 
       - name: Ruff 检查
@@ -45,3 +46,31 @@ jobs:
         run: pytest -q
         env:
           PYTHONPATH: ${{ github.workspace }}
+
+  updater-quality:
+    name: Updater 质量检查
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: updater/pyproject.toml
+
+      - name: 安装 updater 依赖
+        run: pip install -e './updater[dev]' ruff
+
+      - name: Ruff updater 检查
+        run: ruff check updater
+
+      - name: 运行 updater 测试
+        run: |
+          pytest updater/tests -q
+          pytest updater/tests/test_build_config.py -q

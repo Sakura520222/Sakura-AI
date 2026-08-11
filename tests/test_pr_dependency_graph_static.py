@@ -1,3 +1,4 @@
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,12 +10,18 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SELECT_OPTIONS,
 )
 from backend.services.ai_reviewer.pr_dependency_graph import PRDependencyGraphService
+from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
 
 @pytest.fixture
 def service():
     return PRDependencyGraphService(api_client=AsyncMock(), model="test-model")
+
+
+@pytest.fixture
+def summary_service():
+    return PRSummaryService(api_client=AsyncMock(), model="test-model")
 
 
 def make_file(path: str, status: str = "modified", changes: int = 1) -> PRFileInfo:
@@ -56,6 +63,57 @@ def make_github_file(path: str, status: str = "modified", changes: int = 1):
         deletions=0,
         changes=changes,
     )
+
+
+def test_extract_previous_graph_uses_deterministic_delimiter_parsing(service):
+    body = (
+        "prefix\n"
+        f"{service.START_MARKER}\n"
+        "```mermaid\r\n"
+        "graph TD\r\n"
+        "    A --> B\r\n"
+        "```\n"
+        f"{service.END_MARKER}\n"
+        "suffix"
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        side_effect=AssertionError("untrusted PR body must not use regex search"),
+    ):
+        graph = service._extract_previous_graph(body)
+
+    assert graph == "graph TD\r\n    A --> B"
+
+
+def test_extract_previous_graph_rejects_large_unterminated_fence(service):
+    body = (
+        service.START_MARKER
+        + "\n```mermaid\n"
+        + (" \n" * 50_000)
+        + service.END_MARKER
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        side_effect=AssertionError("untrusted PR body must not use regex search"),
+    ):
+        graph = service._extract_previous_graph(body)
+
+    assert graph is None
+
+
+def test_validate_mermaid_rejects_large_unterminated_fence_without_fence_regex():
+    content = "```mermaid\n" + (" \n" * 50_000)
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.re.search",
+        wraps=re.search,
+    ) as regex_search:
+        graph = PRDependencyGraphService._validate_mermaid(content)
+
+    assert graph == ""
+    assert all("```mermaid" not in call.args[0] for call in regex_search.call_args_list)
 
 
 def test_incremental_graph_uses_all_pr_file_metadata(service):
@@ -162,6 +220,58 @@ def test_build_prompts_uses_cumulative_file_counts(service):
         )
 
     assert user_message == "8/6/4\nimports"
+
+
+@pytest.mark.asyncio
+async def test_summary_calls_summary_role_without_model_override(summary_service):
+    summary_service._build_prompts = MagicMock(return_value=("system", "user"))
+    summary_service.api_client.call_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="summary"))]
+        )
+    )
+
+    await summary_service.generate_summary(make_analysis([]), {"body": ""})
+
+    call = summary_service.api_client.call_with_retry.await_args.kwargs
+    assert call["role"] == "summary"
+    assert call["model"] == ""
+
+
+@pytest.mark.asyncio
+async def test_dependency_graph_calls_summary_role_without_model_override(service):
+    file_info = make_file("src/new.py")
+    analysis = make_analysis([file_info])
+    settings = SimpleNamespace(
+        pr_dependency_graph_max_files=50,
+        pr_dependency_graph_max_nodes=25,
+    )
+    service._get_graph_files_sync = MagicMock(return_value=([file_info], 1))
+    service._fetch_file_contents_sync = MagicMock(
+        return_value={"src/new.py": "from src.old import helper\n"}
+    )
+    service._get_graph_mode = AsyncMock(return_value="ai")
+    service._build_import_context = MagicMock(return_value="full import context")
+    service._build_prompts = MagicMock(return_value=("system", "user"))
+    service._validate_mermaid = MagicMock(return_value="graph TD\nN1 --> N2")
+    service.update_pr_body_with_graph = AsyncMock()
+    service.api_client.call_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="graph TD\nN1 --> N2"))
+            ]
+        )
+    )
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.get_settings",
+        return_value=settings,
+    ):
+        await service.generate_dependency_graph(analysis, {"body": ""}, MagicMock())
+
+    call = service.api_client.call_with_retry.await_args.kwargs
+    assert call["role"] == "summary"
+    assert call["model"] == ""
 
 
 @pytest.mark.asyncio

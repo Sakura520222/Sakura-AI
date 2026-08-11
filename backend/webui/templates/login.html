@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="light">
+<html lang="{{ lang | default('zh-CN') }}" class="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ _('auth.login') }} - Sakura AI Reviewer</title>
+    <title>{{ _('auth.login') }} - Sakura AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -36,11 +36,26 @@
     </style>
 </head>
 <body class="sakura-gradient-bg flex items-center justify-center min-h-screen font-sans">
+    <!-- 右上角语言切换 -->
+    <div class="fixed top-4 right-4 flex items-center gap-1 text-sm z-50">
+        {% if lang != "zh-CN" %}
+        <a href="/auth/login?lang=zh-CN"
+           class="px-2.5 py-1 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-gray-700/60 transition-colors backdrop-blur-sm">
+            {{ _("setup.language_zh") }}
+        </a>
+        {% endif %}
+        {% if lang != "en" %}
+        <a href="/auth/login?lang=en"
+           class="px-2.5 py-1 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-gray-700/60 transition-colors backdrop-blur-sm">
+            {{ _("setup.language_en") }}
+        </a>
+        {% endif %}
+    </div>
     <div class="w-full max-w-md px-4">
         <!-- Logo -->
         <div class="text-center mb-8">
             <span class="text-6xl inline-block sakura-logo-float">🌸</span>
-            <h1 class="mt-4 text-3xl font-extrabold bg-gradient-to-r from-sakura-600 to-purple-600 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">Sakura AI Reviewer</h1>
+            <h1 class="mt-4 text-3xl font-extrabold bg-gradient-to-r from-sakura-600 to-purple-600 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">Sakura AI</h1>
             <p class="mt-2 text-gray-500 dark:text-gray-400 text-sm">{{ _('auth.login_title') }}</p>
         </div>
 
@@ -113,13 +128,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
                 </svg>
                 <p class="mt-4 text-gray-500 dark:text-gray-400 text-sm">{{ _('auth.oauth_not_configured') }}</p>
-                <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">请联系管理员设置 GITHUB_OAUTH_CLIENT_ID 和 GITHUB_OAUTH_CLIENT_SECRET</p>
+                <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ _('auth.oauth_contact_admin') }}</p>
             </div>
             {% endif %}
         </div>
 
         <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
-            Sakura AI Reviewer v{{ app_version }}
+            Sakura AI v{{ app_version }}
         </p>
     </div>
 

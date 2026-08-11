@@ -106,9 +106,8 @@ class PRDependencyGraphService:
     # import 语句通常出现在文件顶部，只扫描前 N 行以提升性能
     _IMPORT_SCAN_LINES: int = 150
 
-    def __init__(self, api_client: AIApiClient, model: str):
+    def __init__(self, api_client: AIApiClient, model: str = ""):
         self.api_client = api_client
-        self.model = model
 
     # ==================== 公开接口 ====================
 
@@ -192,13 +191,14 @@ class PRDependencyGraphService:
         )
 
         response = await self.api_client.call_with_retry(
-            model=self.model,
+            model="",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
             max_tokens=16000,
+            role="summary",
         )
 
         if (
@@ -787,7 +787,7 @@ class PRDependencyGraphService:
         if end == -1:
             return None
         node_id = line[:start].strip()
-        label = line[start + 2:end]
+        label = line[start + 2 : end]
         if not node_id or any(c.isspace() or c in '[]"' for c in node_id):
             return None
         return node_id, label
@@ -803,7 +803,7 @@ class PRDependencyGraphService:
         if arrow <= 0:
             return None
         source = line[:arrow].strip()
-        target = line[arrow + 3:].strip()
+        target = line[arrow + 3 :].strip()
         if not source or not target:
             return None
         if any(c.isspace() or c in '[]"' for c in source + target):
@@ -864,14 +864,33 @@ class PRDependencyGraphService:
         return system_prompt, user_message
 
     @staticmethod
+    def _extract_mermaid_fence(text: str) -> str | None:
+        """使用线性分隔符查找提取 Mermaid fence，避免正则回溯。"""
+        fence = "```mermaid"
+        search_start = 0
+        while True:
+            fence_start = text.find(fence, search_start)
+            if fence_start == -1:
+                return None
+            language_end = fence_start + len(fence)
+            code_start = text.find("\n", language_end)
+            if code_start == -1:
+                return None
+            if not text[language_end:code_start].strip():
+                break
+            search_start = language_end
+
+        code_end = text.find("```", code_start + 1)
+        if code_end == -1:
+            return None
+        return text[code_start + 1 : code_end].strip()
+
+    @staticmethod
     def _validate_mermaid(mermaid_text: str) -> str:
         """验证并提取 Mermaid 语法"""
-        # 从 markdown 代码块中提取
-        code_block_match = re.search(
-            r"```mermaid\s*\n(.*?)```", mermaid_text, re.DOTALL
-        )
-        if code_block_match:
-            mermaid_text = code_block_match.group(1).strip()
+        fenced_mermaid = PRDependencyGraphService._extract_mermaid_fence(mermaid_text)
+        if fenced_mermaid is not None:
+            mermaid_text = fenced_mermaid
 
         # 检查是否包含有效图类型声明
         if not re.search(r"^(graph|flowchart)\s+", mermaid_text, re.MULTILINE):
@@ -933,15 +952,18 @@ class PRDependencyGraphService:
         if not body:
             return None
 
-        pattern = re.escape(self.START_MARKER) + r"(.*?)" + re.escape(self.END_MARKER)
-        match = re.search(pattern, body, flags=re.DOTALL)
-        if not match:
+        marker_start = body.find(self.START_MARKER)
+        if marker_start == -1:
             return None
 
-        content = match.group(1).strip()
+        content_start = marker_start + len(self.START_MARKER)
+        marker_end = body.find(self.END_MARKER, content_start)
+        if marker_end == -1:
+            return None
+
+        content = body[content_start:marker_end].strip()
         if not content:
             return None
 
-        # 提取 Mermaid 代码块
-        code_match = re.search(r"```mermaid\s*\n(.*?)```", content, re.DOTALL)
-        return code_match.group(1).strip() if code_match else None
+        # 使用确定性的分隔符查找，避免在不受信任的 PR body 上进行回溯式正则匹配。
+        return self._extract_mermaid_fence(content)

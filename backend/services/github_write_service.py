@@ -245,7 +245,7 @@ class GitHubWriteService:
             # 3. 创建 PR / Create pull request
             pr_title = message[:72]
             pr_body = (
-                "Automated commit by **Sakura AI Reviewer**.\n\n"
+                "Automated commit by **Sakura AI**.\n\n"
                 f"Files: {', '.join(f'`{p}`' for p in files)}"
             )
             pr = repo.create_pull(
@@ -304,9 +304,7 @@ class GitHubWriteService:
             )
             raise
 
-    async def read_file(
-        self, repo, path: str, ref: str | None = None
-    ) -> str | None:
+    async def read_file(self, repo, path: str, ref: str | None = None) -> str | None:
         """从仓库读取文件内容 / Read file content from repository"""
 
         def _sync() -> str | None:

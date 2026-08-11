@@ -1,6 +1,12 @@
 # PR 功能指南
 
-本文档说明 Sakura AI Reviewer 中与 Pull Request 内容增强和审查稳定性相关的功能，覆盖 PR 变更总结、PR 依赖图、自动审查开关、大型 PR compact diff 以及 AI API 超时治理。
+> Sakura AI 与 Pull Request 内容增强和审查稳定性相关的功能说明，覆盖变更总结、依赖图、自动审查开关、compact diff 和 AI API 超时治理。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
+本文档说明 Sakura AI 中与 Pull Request 内容增强和审查稳定性相关的功能，覆盖 PR 变更总结、PR 依赖图、自动审查开关、大型 PR compact diff 以及 AI API 超时治理。
 
 ## 功能概览
 
@@ -143,3 +149,7 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 - `backend/services/ai_reviewer/api_client.py`：AI API 请求、重试与超时控制。
 - `backend/api/webhook.py`：PR webhook 自动审查触发与 `enable_auto_review` 检查。
 - `backend/core/config.py`：定义 PR 功能、上下文和超时相关动态配置项。
+
+---
+
+*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

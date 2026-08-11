@@ -17,9 +17,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return _create_token(data, TOKEN_TYPE_ACCESS, expires_delta)
 
 
-def create_mfa_pending_token(
-    data: dict, expires_delta: timedelta | None = None
-) -> str:
+def create_mfa_pending_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """创建等待二次验证的短期 JWT 令牌"""
     from backend.core.config import get_settings
 

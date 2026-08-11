@@ -1,0 +1,24 @@
+name: Docker edge 镜像
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-edge
+  cancel-in-progress: true   # edge 为最新提交预览，旧运行直接取消
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-edge:
+    name: 发布 edge 镜像
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      source_ref: ${{ github.sha }}   # 必须用不可变 SHA，不能传 main
+      channel: edge
+      sync_dockerhub: true
+    secrets: inherit

@@ -14,6 +14,9 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import IssueAnalysis, PRReview
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -443,7 +446,9 @@ async def index_docs(
         )
 
     # 启动后台任务
-    task = asyncio.create_task(_run_docs_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_docs_index(repo_name, user["user_id"]), "repo_docs_index"
+    )
     _active_index_tasks[f"{repo_name}:docs"] = task
 
     logger.info(f"WebUI 触发文档索引: {repo_name}, by={user['sub']}")
@@ -478,7 +483,9 @@ async def index_code(
         )
 
     # 启动后台任务
-    task = asyncio.create_task(_run_code_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_code_index(repo_name, user["user_id"]), "repo_code_index"
+    )
     _active_index_tasks[f"{repo_name}:code"] = task
 
     logger.info(f"WebUI 触发代码索引: {repo_name}, by={user['sub']}")
@@ -505,10 +512,10 @@ async def batch_index_issues(
 
     try:
         installations = await _get_installations_with_stats(db)
-    except Exception as e:
-        logger.error(f"批量索引获取仓库列表失败: {e}", exc_info=True)
+    except Exception:
+        logger.exception("批量索引获取仓库列表失败")
         return JSONResponse(
-            {"success": False, "message": f"获取仓库列表失败: {e}"},
+            {"success": False, "message": "获取仓库列表失败，请稍后重试"},
             status_code=500,
         )
 
@@ -525,7 +532,9 @@ async def batch_index_issues(
                 skipped += 1
                 skipped_names.append(repo_name)
                 continue
-            task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
+            task = create_registered_background_task(
+                _run_issues_index(repo_name, user["user_id"]), "repo_issues_index"
+            )
             _active_index_tasks[f"{repo_name}:issues"] = task
             queued += 1
             queued_names.append(repo_name)
@@ -594,7 +603,9 @@ async def index_issues(
         )
 
     # 启动后台任务
-    task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_issues_index(repo_name, user["user_id"]), "repo_issues_index"
+    )
     _active_index_tasks[f"{repo_name}:issues"] = task
 
     logger.info(f"WebUI 触发 Issues 索引: {repo_name}, by={user['sub']}")
@@ -660,7 +671,9 @@ async def trigger_repo_scan(
         )
 
     # 启动后台任务
-    task = asyncio.create_task(_run_repo_scan(repo_name, user["user_id"]))
+    task = create_registered_background_task(
+        _run_repo_scan(repo_name, user["user_id"]), "repo_manual_scan"
+    )
     _active_index_tasks[f"{repo_name}:scan"] = task
 
     logger.info(f"WebUI 触发仓库扫描: {repo_name}, by={user['sub']}")

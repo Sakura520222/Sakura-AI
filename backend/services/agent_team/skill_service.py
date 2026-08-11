@@ -90,7 +90,7 @@ def _decode_zip_filename(raw_name: str) -> str:
             decoded = raw_bytes.decode(enc)
             if decoded != raw_name:
                 return decoded
-        except (UnicodeDecodeError, UnicodeEncodeError):
+        except UnicodeDecodeError, UnicodeEncodeError:
             continue
     return raw_name
 
@@ -561,14 +561,14 @@ class AgentSkillService:
                         lines.append(
                             f"  - arguments: {', '.join(str(a) for a in arg_names)}"
                         )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             if skill.allowed_tools:
                 try:
                     tools = json.loads(skill.allowed_tools)
                     if tools:
                         lines.append(f"  - tools: {', '.join(str(t) for t in tools)}")
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             if skill.requires:
                 lines.append(f"  - requires: {skill.requires.strip()[:200]}")

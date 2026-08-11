@@ -16,7 +16,9 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import AllCandidatesFailedError
 from backend.core.github_app import GitHubAppClient
+from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.embedding_service import (
     get_embedding_service,
     get_reranker_service,
@@ -63,7 +65,7 @@ class IssueEmbeddingService:
         """安全地将 metadata 中的 number 转为 int，失败返回 None"""
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     async def index_repo_issues(
@@ -266,7 +268,7 @@ class IssueEmbeddingService:
                 number_str = old_metadata.get("number", "")
                 try:
                     number = int(number_str)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     number = None
 
                 if number and number in ai_results:
@@ -547,17 +549,8 @@ class IssueEmbeddingService:
             return candidates
 
         try:
-            from backend.core.config import get_settings
-            from backend.services.ai_reviewer.api_client import AIApiClient
-
-            settings = get_settings()
-
-            # 使用辅助模型（更便宜）
-            api_base = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-            model = settings.summary_model or settings.openai_model
-
-            client = AIApiClient(base_url=api_base, api_key=api_key)
+            # 使用 summary 角色；模型、端点和凭据由角色绑定解析。
+            client = AIApiClient()
 
             # 构建候选 issues 文本
             issues_text = ""
@@ -613,8 +606,9 @@ class IssueEmbeddingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                model=model,
+                model="",
                 temperature=0.1,
+                role="summary",
             )
 
             # 解析 AI 响应
@@ -639,6 +633,8 @@ class IssueEmbeddingService:
 
             return verified
 
+        except AllCandidatesFailedError:
+            raise
         except Exception as e:
             logger.warning(f"AI 验证失败，回退使用原始候选: {e}")
             return candidates
@@ -651,7 +647,7 @@ class IssueEmbeddingService:
             data = json.loads(content.strip())
             if "verified" in data:
                 return {int(n) for n in data["verified"]}
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             pass
 
         # 2. 尝试从 markdown 代码块中提取完整内容再解析
@@ -661,7 +657,7 @@ class IssueEmbeddingService:
                 data = json.loads(code_match.group(1).strip())
                 if "verified" in data:
                     return {int(n) for n in data["verified"]}
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 pass
 
         # 3. 逐字符花括号计数提取最外层完整 JSON
@@ -679,7 +675,7 @@ class IssueEmbeddingService:
                         data = json.loads(content[start : i + 1])
                         if "verified" in data:
                             return {int(n) for n in data["verified"]}
-                    except (json.JSONDecodeError, ValueError):
+                    except json.JSONDecodeError, ValueError:
                         pass
                     start = None
 

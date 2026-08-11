@@ -19,6 +19,9 @@ from backend.core.github_app import (
     extract_pr_info_from_webhook,
     verify_webhook_signature,
 )
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+)
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.workers.review_worker import submit_review_task
@@ -192,7 +195,9 @@ async def handle_check_run_event(payload: dict[str, Any]) -> JSONResponse:
     try:
         action = payload.get("action")
         if action != "completed":
-            logger.info(f"忽略 check_run 动作: {action}")
+            # 本期不处理 check_run.rerequested（re-run）：声明不支持，统一忽略。
+            # 未来支持时在此分支按 Sakura check name 重新提交 review。
+            logger.info("忽略 check_run 动作（不支持 rerequested 等）: {}", action)
             return JSONResponse(content={"status": "ignored", "action": action})
 
         check_run = payload.get("check_run") or {}
@@ -207,9 +212,11 @@ async def handle_check_run_event(payload: dict[str, Any]) -> JSONResponse:
             f"[check_run] completed 收到: name={name!r}, conclusion={conclusion!r}, head_sha={head_sha[:8]!r}"
         )
 
-        # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
-        if name == "Sakura AI Review":
-            logger.info("[check_run] 跳过自身 Check Run")
+        # 过滤自身 Check Run（主+副，避免把 Sakura 审查状态当外部失败）
+        from backend.services.check_run_service import CheckRunService
+
+        if name in CheckRunService.OWNED_CHECK_NAMES:
+            logger.info("[check_run] 跳过自身 Check Run: {}", name)
             return JSONResponse(
                 content={"status": "ignored", "reason": "self check run"}
             )
@@ -258,9 +265,7 @@ async def handle_check_run_event(payload: dict[str, Any]) -> JSONResponse:
             head_sha,
             check_run,
         )
-        logger.info(
-            f"[check_run] 已采集失败: name={name!r}, pr_number={pr_number}"
-        )
+        logger.info(f"[check_run] 已采集失败: name={name!r}, pr_number={pr_number}")
         return JSONResponse(
             content={
                 "status": "accepted",
@@ -356,6 +361,41 @@ async def handle_workflow_job_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
 
+async def _admit_observability_pr_trigger(
+    pr_info: dict[str, Any], delivery_id: str | None, action: str
+) -> None:
+    """Best-effort admission into the new observability domain.
+
+    Business webhook handling remains compatible with older installations, but
+    real GitHub payloads must carry the immutable repository ID before this
+    path can create an authoritative Session/Trigger.
+    """
+    if not delivery_id or not pr_info.get("repository_external_id"):
+        return
+    trigger_kind = {
+        "synchronize": "synchronize",
+        "reopened": "reopen",
+    }.get(action)
+    if trigger_kind is None:
+        return
+    try:
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+
+        await ActivityIntegrationService().admit(
+            pr_info,
+            trigger_kind=trigger_kind,
+            delivery_id=delivery_id,
+            base_sha=pr_info.get("before"),
+            head_sha=pr_info.get("after") or pr_info.get("head_sha"),
+        )
+    except Exception as exc:
+        # Admission is fail-safe for deployments that have not migrated their
+        # schema yet; it must never duplicate or block GitHub side effects.
+        logger.warning("Activity observability admission skipped: {}", exc)
+
+
 async def handle_pull_request_event(
     payload: dict[str, Any],
     delivery_id: str | None = None,
@@ -372,6 +412,9 @@ async def handle_pull_request_event(
             )
 
         action = pr_info["action"]
+        if delivery_id:
+            pr_info["delivery_id"] = delivery_id
+        await _admit_observability_pr_trigger(pr_info, delivery_id, action)
 
         # Handle PR closed/merged event: cancel any active review task
         if action == "closed":
@@ -390,6 +433,22 @@ async def handle_pull_request_event(
                     )
             except Exception as e:
                 logger.warning(f"[webhook] 取消审查任务失败: {e}")
+
+            # 直接收敛该 commit 的 Sakura Check Run（不依赖 worker 存活）。
+            # 覆盖 worker 未启动/已退出/未到检查点的场景，避免悬挂 Check。
+            try:
+                from backend.services.check_run_service import CheckRunService
+
+                _closed_sha = pr_info.get("head_sha") or pr_info.get("after")
+                if _closed_sha:
+                    await CheckRunService().cancel_active_runs_by_sha(
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        _closed_sha,
+                        cancel_reason="pr_closed_merged",
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 取消 Check Run 失败: {e}")
 
             # 清理该 PR 的 pending 增量队列，避免永久残留 / PR 重开后污染新审查上下文
             try:
@@ -685,7 +744,10 @@ async def handle_pull_request_event(
                 # 当前审查消费增量前就能看到新 commit 的 check（否则消费前新
                 # commit 无 check 显示）。当前审查消费增量时会迁移到该 head。
                 try:
-                    from backend.services.check_run_service import CheckRunService
+                    from backend.services.check_run_service import (
+                        CheckRunService,
+                        ReviewRunKey,
+                    )
 
                     inc_head = pr_info.get("head_sha") or pr_info.get("after")
                     if inc_head:
@@ -693,9 +755,13 @@ async def handle_pull_request_event(
                             "output_language", pr_info.get("user_id")
                         )
                         await CheckRunService().report_queued(
-                            pr_info["repo_owner"],
-                            pr_info["repo_name"],
-                            inc_head,
+                            ReviewRunKey(
+                                repo_full_name=pr_info.get("repo_full_name")
+                                or f"{pr_info['repo_owner']}/{pr_info['repo_name']}",
+                                pr_number=pr_info.get("pr_number", 0),
+                                head_sha=inc_head,
+                                review_job_id="webhook-incremental",
+                            ),
                             pr_number=pr_info["pr_number"],
                             output_language=inc_lang,
                         )
@@ -895,6 +961,13 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "repo_full_name": repo_full_name,
+                "repository_external_id": getattr(repo, "id", None),
+                "source_system_instance": getattr(
+                    repo, "html_url", "https://github.com"
+                )
+                .split("://")[-1]
+                .split("/", 1)[0]
+                .lower(),
                 "installation_id": installation_id,
                 "author": pr.user.login,
                 "title": pr.title,
@@ -964,7 +1037,7 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                     select(PRReview).where(
                         and_(
                             PRReview.repo_name == repo_name,
-                            PRReview.pr_id == pr_number,
+                            PRReview.pr_number == pr_number,
                         )
                     )
                 )
@@ -2112,22 +2185,13 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     scan_findings = list(result.scalars().all())
 
         if not existing_analysis and not scan_report:
+            # 不再阻塞：底层 create_task_from_manual_issue 已支持无分析记录的情况，
+            # 会从 GitHub Issue 原始标题/正文构建任务（source_type=MANUAL_ISSUE），
+            # 评论上下文由 load_issue_comments_for_context 自动拉取。
             logger.info(
-                "/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number
-            )
-            await _post_issue_comment(
-                github_app,
-                repo_owner,
-                repo_name,
+                "/agent 无分析记录或扫描报告，直接使用 Issue 原始上下文: {}#{}",
                 repo_full_name,
                 issue_number,
-                "❌ 此 Issue 尚未完成 AI 分析，也未匹配到 Sakura 仓库扫描报告。请先使用 `/analyze` 命令分析此 Issue。",
-            )
-            return JSONResponse(
-                content={
-                    "status": "skipped",
-                    "reason": "no completed analysis or scan report",
-                }
             )
 
         # 构建提交上下文（与通过 WebUI 创建任务一致）
@@ -2184,6 +2248,17 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                         else 60,
                     }
                 )
+            elif not existing_analysis:
+                # 无分析记录且非扫描报告 Issue：使用 Issue 原始标题与正文作为任务摘要，
+                # 确保 Agent 拿到完整的 Issue 上下文（评论由 load_issue_comments_for_context 补充）
+                issue_title = (issue.get("title") or "").strip()
+                issue_body = (issue.get("body") or "").strip()
+                raw_parts: list[str] = []
+                if issue_title:
+                    raw_parts.append(f"# {issue_title}")
+                if issue_body:
+                    raw_parts.append(issue_body)
+                task_summary = "\n\n".join(raw_parts)
             agent_task_context = build_agent_task_summary(
                 task_summary or "", issue_context_md
             )
@@ -2241,7 +2316,9 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
         # 延迟导入：避免 webhook ↔ agent_team_worker 循环依赖
         from backend.workers.agent_team_worker import submit_agent_team_task
 
-        asyncio.create_task(submit_agent_team_task(task_id))
+        create_registered_background_task(
+            submit_agent_team_task(task_id), "agent_team_webhook"
+        )
 
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
@@ -2400,7 +2477,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         # 后台执行任务
         from backend.workers.agent_team_worker import submit_agent_team_task
 
-        asyncio.create_task(submit_agent_team_task(task_id))
+        create_registered_background_task(
+            submit_agent_team_task(task_id), "agent_team_webhook"
+        )
 
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""

@@ -362,7 +362,7 @@ async def disable_two_factor_route(
         if used_step is not None:
             db_user.totp_last_used_step = used_step
             verified = True
-    except (TwoFactorError, TwoFactorReplayError):
+    except TwoFactorError, TwoFactorReplayError:
         verified = False
 
     if not verified:

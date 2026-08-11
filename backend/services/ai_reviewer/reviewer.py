@@ -4,6 +4,7 @@
 保持与原 ai_reviewer.py 中 AIReviewer 类相同的公共接口。
 """
 
+import asyncio
 import json
 import re
 from collections.abc import Callable, Coroutine
@@ -11,12 +12,18 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
+    get_dynamic_config,
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
 )
 from backend.core.model_context import get_model_context_manager
+from backend.services.activity_observability.publication_service import (
+    coordinate_publication,
+)
+from backend.services.protocol_repair import run_protocol_repair_loop
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
@@ -147,9 +154,7 @@ class AIReviewer:
         """初始化AI审查器"""
         settings = get_settings()
 
-        # 初始化各组件
-        self._ai_client_config = None
-        self._summary_client_config = None
+        # 初始化各组件。端点、凭据和模型均由角色门面按请求解析。
         self._refresh_ai_clients()
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
@@ -176,17 +181,13 @@ class AIReviewer:
         self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
 
-        # 初始化上下文压缩
-        # 压缩使用主审查 model（settings.openai_model）而非 summary model：
-        # _compress_early_history 需要忠实压缩含 tool_call 的多轮对话历史
-        # （见 context_compressor._extract_tool_call_fields），summary model 通常
-        # 更弱、难以可靠处理 tool_call 结构，故与主审查共用同一 model/客户端。
+        # 初始化上下文压缩。实际模型由 main 角色绑定解析。
         self.enable_compression = settings.enable_context_compression
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
             api_client=self.api_client,
-            model=settings.openai_model,
+            model="",
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
@@ -196,7 +197,7 @@ class AIReviewer:
             api_client=self.summary_api_client,
             prompt_builder=self.prompt_builder,
             result_parser=self.result_parser,
-            model=self.summary_model,
+            model="",
         )
 
         # 存储工具定义（用于向后兼容）
@@ -213,51 +214,17 @@ class AIReviewer:
         self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_clients(self) -> None:
-        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
-        settings = get_settings()
-        main_config = (settings.openai_api_base, settings.openai_api_key)
-        if self._ai_client_config != main_config:
-            self.api_client = AIApiClient(
-                base_url=settings.openai_api_base,
-                api_key=settings.openai_api_key,
-            )
-            self._ai_client_config = main_config
-
-        # summary_model 不纳入 summary_config 元组：model 是每次调用的入参
-        # （call_with_retry(model=...)），与客户端凭据无关，仅在此刷新属性即可，
-        # 避免 model 变化时重建客户端；凭据变化仍由下方元组比较触发重建。
-        self.summary_model = settings.summary_model or settings.openai_model
-        summary_uses_main = (
-            not settings.summary_api_base and not settings.summary_api_key
-        )
-        summary_config = (
-            (
-                "main",
-                main_config,
-            )
-            if summary_uses_main
-            else (
-                "custom",
-                settings.summary_api_base or settings.openai_api_base,
-                settings.summary_api_key or settings.openai_api_key,
-            )
-        )
-        if self._summary_client_config != summary_config:
-            if summary_uses_main:
-                self.summary_api_client = self.api_client
-            else:
-                self.summary_api_client = AIApiClient(
-                    base_url=settings.summary_api_base or settings.openai_api_base,
-                    api_key=settings.summary_api_key or settings.openai_api_key,
-                )
-            self._summary_client_config = summary_config
+        """刷新角色驱动的 AI 门面，不读取旧的扁平供应商配置。"""
+        if not hasattr(self, "api_client"):
+            self.api_client = AIApiClient()
+        self.summary_api_client = self.api_client
 
         if hasattr(self, "context_compressor"):
             self.context_compressor.api_client = self.api_client
-            self.context_compressor.model = settings.openai_model
+            self.context_compressor.model = ""
         if hasattr(self, "label_recommender"):
             self.label_recommender.api_client = self.summary_api_client
-            self.label_recommender.model = self.summary_model
+            self.label_recommender.model = ""
 
     async def _parse_or_repair_review(
         self,
@@ -266,66 +233,73 @@ class AIReviewer:
         strategy: str,
         tracker: TokenTracker,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
-        """Parse a final review and make one format-only repair attempt if needed."""
+        """Parse a final review; delegate to the shared repair loop on failure."""
+        # 注意：不在此推送 final assistant turn——_run_tool_loop 两个退出分支
+        # （无工具分支 / finalize 分支）已推送，此处补推会造成同一条 assistant
+        # 消息被推 2 次（Canonical Transcript 重复）。
         try:
-            return self.result_parser.parse_review_result(review_text, strategy)
-        except ReviewProtocolError as first_error:
-            stripped = review_text.strip()
+            max_attempts = int(
+                await get_dynamic_config("protocol_repair_max_attempts") or 3
+            )
+        except ValueError, TypeError:
+            max_attempts = 3
+
+        # helper 只把 first_error 传给 on_parse_failure 回调，review_text/strategy
+        # 不可见，故用闭包捕获两者，复用模块级落盘函数（完整载荷诊断）。
+        async def _dump_failure(_error: BaseException) -> None:
             _dump_protocol_failure(strategy, review_text)
-            logger.warning(
-                "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
-                first_error,
-                len(review_text),
-                stripped[:80],
-                stripped[-80:],
-            )
 
-        system_message = next(
-            (message for message in messages if message.get("role") == "system"),
-            None,
+        return await run_protocol_repair_loop(
+            parse_fn=lambda text: self.result_parser.parse_review_result(
+                text, strategy
+            ),
+            error_type=ReviewProtocolError,
+            base_messages=messages,
+            final_text=review_text,
+            repair_instruction=REPAIR_INSTRUCTION,
+            api_client=self.api_client,
+            tracker=tracker,
+            max_attempts=max_attempts,
+            fallback_result_fn=safe_protocol_failure,
+            log_label="审查",
+            sse_channel="review:protocol_repair",
+            invocation_context=invocation_context,
+            observer=observer,
+            event_callback=event_callback,
+            on_repaired=self._check_finding_consistency,
+            on_parse_failure=_dump_failure,
         )
-        repair_messages = [
-            *([system_message] if system_message else []),
-            {"role": "assistant", "content": review_text},
-            {"role": "user", "content": REPAIR_INSTRUCTION},
-        ]
-        try:
-            settings = get_settings()
-            response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
-                messages=repair_messages,
-                temperature=0,
-            )
-            tracker.accumulate(response)
-            repaired_text = response.choices[0].message.content or ""
-            if event_callback:
-                try:
-                    await event_callback(
-                        "message",
-                        {"role": "assistant", "content": repaired_text},
-                    )
-                except Exception as exc:
-                    logger.warning("event_callback failed: {}", exc)
-            result = self.result_parser.parse_review_result(repaired_text, strategy)
-            original_finding_count = sum(
-                line.strip() == "<FINDING>" for line in review_text.splitlines()
-            )
-            repaired_finding_count = len(result["comments"]) + len(
-                result["inline_comments"]
-            )
-            if repaired_finding_count != original_finding_count:
-                logger.warning(
-                    "审查协议修复后的 finding 数量发生变化: original_tags={} repaired_valid={}",
-                    original_finding_count,
-                    repaired_finding_count,
-                )
-            return result
-        except Exception as repair_error:
-            logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
-            return safe_protocol_failure(repair_error)
 
-    async def review_pr(self, context: dict[str, Any], strategy: str) -> dict[str, Any]:
+    @staticmethod
+    async def _check_finding_consistency(
+        original_text: str, repaired_text: str, result: dict[str, Any]
+    ) -> None:
+        """修复后的 finding 数量与原始输出的标签数对比——仅警告，不阻断。"""
+        # 语义与旧实现一致：原始 review_text 的 <FINDING> 标签数 vs 修复后解析的
+        # comment 数。修复丢弃 finding（或凭空增加）时告警。
+        original_tag_count = sum(
+            line.strip() == "<FINDING>" for line in original_text.splitlines()
+        )
+        comment_count = len(result["comments"]) + len(result["inline_comments"])
+        if comment_count != original_tag_count:
+            logger.warning(
+                "审查协议修复后的 finding 数量与原始标签数不一致: original_tags={} repaired={}",
+                original_tag_count,
+                comment_count,
+            )
+
+    async def review_pr(
+        self,
+        context: dict[str, Any],
+        strategy: str,
+        cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
+    ) -> dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
         Args:
@@ -365,9 +339,13 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
+                role="main",
+                cancel_event=cancel_event,
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
 
@@ -378,9 +356,17 @@ class AIReviewer:
                 messages,
                 strategy,
                 tracker,
+                invocation_context=invocation_context,
+                observer=observer,
             )
             result["token_usage"] = tracker.to_dict()
-
+            if publication_coordinator is not None and invocation_context is not None:
+                result = await coordinate_publication(
+                    publication_coordinator,
+                    kind="review",
+                    result=result,
+                    context=invocation_context,
+                )
             logger.info("AI审查完成，策略: {}", strategy)
             return result
 
@@ -401,6 +387,10 @@ class AIReviewer:
         tool_handler: ToolHandler | None = None,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         pending_user_message_callback: PendingUserMessageCallback | None = None,
+        cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -426,9 +416,21 @@ class AIReviewer:
             .get_context_enhancement_config()
             .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
         )
-        safe_context = self.model_context_mgr.calculate_safe_context(
-            settings.openai_model, settings.context_safety_threshold
-        )
+        # 优先用新版 unified config 解析的上下文窗口（来自角色绑定模型的内置元数据，
+        # 如 deepseek-v4-flash 内置 1M tokens），避免 model_context 在未提供模型名时
+        # 回退 128K 兜底（曾导致日志误报 102K 上限、过早触发压缩）。
+        (
+            _ctx_model_id,
+            context_window_tokens,
+        ) = await self.api_client.resolve_role_model_context("main")
+        if context_window_tokens and context_window_tokens > 0:
+            safe_context = int(
+                context_window_tokens * settings.context_safety_threshold
+            )
+        else:
+            safe_context = self.model_context_mgr.calculate_safe_context(
+                None, settings.context_safety_threshold
+            )
         # 增量审查恢复的历史 tool_calls 可能是字符串（checkpoint 持久化损坏），
         # 发送给 AI 前统一规范化为标准 dict，避免上游反序列化失败（400）
         _normalize_tool_calls_inplace(messages)
@@ -436,6 +438,10 @@ class AIReviewer:
 
         while iteration < max_iterations:
             iteration += 1
+
+            # 取消信号：PR 关闭等外部信号已触发时，立即中止工具循环
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
 
             await self._append_pending_user_message_if_any(
                 messages,
@@ -445,13 +451,31 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
                 tools=enabled_tools,
                 tool_choice="auto",
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
+                role="main",
+                cancel_event=cancel_event,
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
+            reported_context_tokens = tracker.log_context_usage(
+                response,
+                context_window_tokens,
+                iteration,
+            )
+            response_meta = getattr(response, "meta", None)
+            reported_context_window = (
+                getattr(
+                    response_meta,
+                    "context_window_tokens",
+                    None,
+                )
+                or context_window_tokens
+            )
 
             # 防御性检查：确保响应有效
             if not response.choices:
@@ -482,6 +506,8 @@ class AIReviewer:
                     strategy,
                     tracker,
                     event_callback,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -505,7 +531,7 @@ class AIReviewer:
                 hasattr(assistant_message, "reasoning_content")
                 and assistant_message.reasoning_content
                 and strategy_config.is_model_supports_reasoning_content(
-                    settings.openai_model
+                    "",
                 )
             ):
                 assistant_msg_dict["reasoning_content"] = (
@@ -567,19 +593,42 @@ class AIReviewer:
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
 
-            # 记录上下文使用率
-            current_tokens = self.context_compressor.estimate_messages_tokens(messages)
-            tracker.log_context_usage(current_tokens, safe_context, iteration)
+            # 本地估算仅用于预测下一次发送前是否应压缩；不得展示为
+            # Provider 精确上下文使用量。
+            estimated_message_tokens = self.context_compressor.estimate_messages_tokens(
+                messages
+            )
+
+            # 通知 Check Run：本轮进度快照（轮次/工具调用/Token/上下文/模型）。
+            # worker 侧 _review_event_callback 识别 "progress" 事件桥接到 Analysis Check。
+            # 异常仅记日志，不中断审查（与现有 "message"/"tool_running" 回调一致）。
+            if event_callback:
+                try:
+                    await event_callback(
+                        "progress",
+                        {
+                            "iteration": iteration,
+                            "max_iterations": max_iterations,
+                            "token_usage": tracker.to_dict(),
+                            "current_tokens": reported_context_tokens,
+                            "safe_context": reported_context_window,
+                            "estimated_message_tokens": estimated_message_tokens,
+                            "context_source": "provider",
+                            "model": "",
+                        },
+                    )
+                except Exception as exc:
+                    logger.warning("event_callback progress failed: {}", exc)
 
             # 检查上下文是否超限，触发压缩
             if self.enable_compression:
                 threshold_tokens = int(safe_context * self.compression_threshold)
 
-                if current_tokens > threshold_tokens:
-                    current_k = current_tokens / 1000
+                if estimated_message_tokens > threshold_tokens:
+                    current_k = estimated_message_tokens / 1000
                     threshold_k = threshold_tokens / 1000
                     logger.warning(
-                        "🚨 上下文超限: {:.1f}K tokens > {:.1f}K tokens "
+                        "🚨 本地上下文估算超限: {:.1f}K tokens > {:.1f}K tokens "
                         "(阈值 {}%)，启动压缩...",
                         current_k,
                         threshold_k,
@@ -595,12 +644,35 @@ class AIReviewer:
                         )
                     )
 
-                    # 压缩后再次记录上下文使用率
+                    # 压缩成功后写入可观测性：创建 context_operation + 替换消息行，
+                    # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
+                    # Persist the replacement so the observability timeline and
+                    # conversation stream reflect this explicit compression.
+                    if observer is not None:
+                        record_replacement = getattr(
+                            observer, "record_context_replacement", None
+                        )
+                        if record_replacement is not None:
+                            try:
+                                await record_replacement(
+                                    messages,
+                                    trigger_reason="threshold",
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "PR 审查压缩可观测性记录失败（不影响审查）: {}",
+                                    exc,
+                                )
+
+                    # 压缩发生在下一次 Provider 请求前，此时只能本地估算；
+                    # 精确值会在下一次响应 usage 中记录。
                     post_compress_tokens = (
                         self.context_compressor.estimate_messages_tokens(messages)
                     )
-                    tracker.log_context_usage(
-                        post_compress_tokens, safe_context, iteration
+                    logger.info(
+                        "上下文压缩后本地估算: {:,} tokens；精确值等待下一次 "
+                        "Provider usage",
+                        post_compress_tokens,
                     )
 
         # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
@@ -623,20 +695,49 @@ class AIReviewer:
             event_callback,
         )
         last_response = await self.api_client.call_with_retry(
-            model=settings.openai_model,
+            model="",
             messages=messages,
-            temperature=settings.openai_temperature,
+            temperature=settings.ai_temperature,
+            role="main",
+            cancel_event=cancel_event,
+            context=invocation_context,
+            observer=observer,
         )
         tracker.accumulate(last_response)
+        tracker.log_context_usage(
+            last_response,
+            context_window_tokens,
+            max_iterations + 1,
+        )
         review_text = last_response.choices[0].message.content or ""
+        if event_callback:
+            try:
+                await event_callback(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": review_text,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
         result = await self._parse_or_repair_review(
             review_text,
             messages,
             strategy,
             tracker,
-            event_callback,
+            event_callback=event_callback,
+            invocation_context=invocation_context,
+            observer=observer,
         )
         result["token_usage"] = tracker.to_dict()
+        if publication_coordinator is not None and invocation_context is not None:
+            result = await coordinate_publication(
+                publication_coordinator,
+                kind="review",
+                result=result,
+                context=invocation_context,
+            )
         return result
 
     async def _append_pending_user_message_if_any(
@@ -693,6 +794,10 @@ class AIReviewer:
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         pending_user_message_callback: PendingUserMessageCallback | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -802,6 +907,10 @@ class AIReviewer:
                     tool_handler=active_tool_handler,
                     event_callback=event_callback,
                     pending_user_message_callback=pending_user_message_callback,
+                    cancel_event=cancel_event,
+                    publication_coordinator=publication_coordinator,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
 
             except PromptTooLongError as e:
@@ -813,9 +922,18 @@ class AIReviewer:
                 # 尝试压缩后重试
                 if self.enable_compression:
                     settings = get_settings()
-                    safe_context = self.model_context_mgr.calculate_safe_context(
-                        settings.openai_model, settings.context_safety_threshold
-                    )
+                    (
+                        _ctx_model_id,
+                        ctx_tokens,
+                    ) = await self.api_client.resolve_role_model_context("main")
+                    if ctx_tokens and ctx_tokens > 0:
+                        safe_context = int(
+                            ctx_tokens * settings.context_safety_threshold
+                        )
+                    else:
+                        safe_context = self.model_context_mgr.calculate_safe_context(
+                            None, settings.context_safety_threshold
+                        )
                     threshold_tokens = int(safe_context * self.compression_threshold)
                     compressed_messages = (
                         await self.context_compressor.compress_conversation_history(
@@ -839,6 +957,8 @@ class AIReviewer:
                         tool_handler=active_tool_handler,
                         event_callback=event_callback,
                         pending_user_message_callback=pending_user_message_callback,
+                        cancel_event=cancel_event,
+                        publication_coordinator=publication_coordinator,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",
@@ -886,12 +1006,13 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
+                role="main",
             )
 
             review_text = response.choices[0].message.content
@@ -908,6 +1029,11 @@ class AIReviewer:
         available_labels: dict[str, dict[str, Any]],
         pr_info: dict[str, Any],
         existing_labels: list[str] | None = None,
+        *,
+        invocation_context: Any = None,
+        observer: Any = None,
+        propagate_errors: bool = False,
+        event_callback: Any = None,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -916,6 +1042,10 @@ class AIReviewer:
             available_labels: 可用的标签字典
             pr_info: PR信息（包含标题、描述等）
             existing_labels: PR 已有的标签名称列表（用于增量审查时避免冲突）
+            invocation_context: 可观测调用上下文
+            observer: 可观测模型发送器
+            propagate_errors: 是否向上抛出 provider 失败
+            event_callback: 标签推荐请求/响应可观测事件回调
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
@@ -923,5 +1053,12 @@ class AIReviewer:
         self._refresh_ai_clients()
         self._refresh_runtime_config()
         return await self.label_recommender.recommend_labels(
-            context, available_labels, pr_info, existing_labels=existing_labels
+            context,
+            available_labels,
+            pr_info,
+            existing_labels=existing_labels,
+            invocation_context=invocation_context,
+            observer=observer,
+            propagate_errors=propagate_errors,
+            event_callback=event_callback,
         )

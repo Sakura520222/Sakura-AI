@@ -231,18 +231,50 @@ class TaggedIssueAnalysisParser:
                 raise IssueProtocolError(f"reserved tag syntax in {field}")
             return value.strip(), index + 1
 
-        if stripped != single_prefix:
+        if stripped.startswith(single_prefix) and stripped.endswith(single_suffix):
+            value = stripped[len(single_prefix) : -len(single_suffix)]
+            if self._is_reserved_tag_line(value.strip()):
+                raise IssueProtocolError(f"reserved protocol tag inside {field}")
+            return value, index + 1
+
+        if not stripped.startswith(single_prefix):
             raise IssueProtocolError(f"expected {single_prefix}")
+        after_open = stripped[len(single_prefix) :]
         index += 1
         content: list[str] = []
-        while index < len(lines) and lines[index].strip() != single_suffix:
-            if self._is_reserved_tag_line(lines[index].strip()):
+        if after_open.strip():
+            content.append(after_open)
+
+        closed = False
+        while index < len(lines):
+            current = lines[index]
+            stripped_current = current.strip()
+            if stripped_current == single_suffix:
+                index += 1
+                closed = True
+                break
+            if stripped_current.endswith(single_suffix):
+                content.append(current[: current.rfind(single_suffix)])
+                index += 1
+                closed = True
+                break
+            if self._is_reserved_tag_line(stripped_current):
                 raise IssueProtocolError(f"reserved protocol tag inside {field}")
-            content.append(lines[index])
+            content.append(current)
             index += 1
-        if index >= len(lines):
+
+        if not closed:
             raise IssueProtocolError(f"missing {single_suffix}")
-        return "\n".join(content).strip(), index + 1
+        return self._strip_blank_lines(content), index
+
+    @staticmethod
+    def _strip_blank_lines(lines: list[str]) -> str:
+        body = list(lines)
+        while body and not body[0].strip():
+            body.pop(0)
+        while body and not body[-1].strip():
+            body.pop()
+        return "\n".join(body)
 
     @staticmethod
     def _consume_block(

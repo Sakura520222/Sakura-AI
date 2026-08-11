@@ -22,10 +22,31 @@ from backend.utils.message_utils import has_missing_tool_results
 class AgentTeamContextCompressor:
     """Compress Agent Team messages without mutating persisted checkpoints."""
 
-    def __init__(self, target_model: str, compressor_model: str | None = None):
+    def __init__(
+        self,
+        target_model: str,
+        compressor_model: str | None = None,
+        *,
+        context_window_tokens: int | None = None,
+    ):
         self.target_model = target_model
         self.compressor_model = compressor_model or target_model
         self.model_context_mgr = get_model_context_manager()
+        # 优先用新版 unified config 解析的上下文窗口（来自 resolve_role_model_context），
+        # 避免 model_context 在未注册模型时回退 128K 兜底导致过早压缩。
+        self._context_window_tokens = context_window_tokens
+
+    def _resolve_safe_context(self, safety_ratio: float) -> int:
+        """计算压缩预算 tokens，优先用新版 context_window_tokens。
+
+        Per-model 覆盖由 unified config 通过角色绑定的模型元数据提供，
+        不再依赖 model_context 的预定义表/兜底逻辑。
+        """
+        if self._context_window_tokens and self._context_window_tokens > 0:
+            return int(self._context_window_tokens * safety_ratio)
+        return self.model_context_mgr.calculate_safe_context(
+            self.target_model, safety_ratio=safety_ratio
+        )
 
     async def build_model_messages(
         self,
@@ -49,10 +70,7 @@ class AgentTeamContextCompressor:
             "agent_team_context_summary_max_tokens",
             get_settings().agent_team_context_summary_max_tokens,
         )
-        safe_context = self.model_context_mgr.calculate_safe_context(
-            self.target_model,
-            safety_ratio=threshold,
-        )
+        safe_context = self._resolve_safe_context(threshold)
         current_tokens = estimate_messages_tokens(messages, self.model_context_mgr)
         if current_tokens <= safe_context:
             return messages
@@ -112,8 +130,7 @@ class AgentTeamContextCompressor:
         max_tokens: int,
         token_tracker: TokenTracker | None = None,
     ) -> str:
-        client, summary_model, config = await create_agent_team_summary_client()
-        compressor_model = self.compressor_model or summary_model or self.target_model
+        client, summary_role, config = await create_agent_team_summary_client()
         prompt = _build_compression_prompt(messages, max_tokens)
         response = await client.call_with_retry(
             messages=[
@@ -123,10 +140,11 @@ class AgentTeamContextCompressor:
                 },
                 {"role": "user", "content": prompt},
             ],
-            model=compressor_model,
+            model="",
             temperature=0.2,
             timeout=config.timeout_seconds,
             max_tokens=max_tokens,
+            role=summary_role,
         )
         if token_tracker is not None:
             token_tracker.accumulate(response)

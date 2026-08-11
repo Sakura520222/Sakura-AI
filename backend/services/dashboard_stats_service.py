@@ -1,8 +1,4 @@
-"""仪表盘统计公共服务
-
-提取 WebUI 和 API v1 仪表盘共享的 Token 聚合与趋势合并逻辑，
-避免跨文件重复。
-"""
+"""仪表盘统计公共服务。"""
 
 from __future__ import annotations
 
@@ -13,29 +9,27 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.agent_team_models import AgentTeamTask
+from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.database import IssueAnalysis, PRReview
 from backend.models.scan_models import RepoScan
+from backend.services.ai_usage_service import (
+    ACCOUNTED_CALL_KINDS,
+    fetch_global_token_totals,
+)
 
 
-async def fetch_module_token_stats(
+async def fetch_estimated_cost(
     db: AsyncSession,
     scope_user: str | None = None,
-) -> dict[str, int]:
-    """聚合所有模块（PR / Issue / Agent / Scan）的累计 token 和 cost。
+) -> int:
+    """Return the existing business-result cost estimate.
 
-    Args:
-        db: 数据库 session
-        scope_user: 非 admin 用户的 GitHub 用户名，用于权限过滤；
-            None 表示管理员或无需过滤。
-
-    Returns:
-        {"total_prompt": int, "total_completion": int, "total_cost": int}
+    Cost is not a provider-usage counter: providers do not expose one stable,
+    cross-provider monetary amount.  It therefore remains a distinct estimate
+    and must never be used as a Token source.
     """
 
-    # ── 构建各模块的 scope 过滤条件 ──
-    # PRReview / IssueAnalysis 有 repo_owner + author，双向匹配
-    # AgentTeamTask / RepoScan 仅有 repo_owner
-    def _scope_for(model, *, has_author: bool = True):
+    def scope_for(model: Any, *, has_author: bool = True) -> Any | None:
         if scope_user is None:
             return None
         conditions = [model.repo_owner == scope_user]
@@ -43,59 +37,49 @@ async def fetch_module_token_stats(
             conditions.append(model.author == scope_user)
         return or_(*conditions) if len(conditions) > 1 else conditions[0]
 
-    def _aggregate(model, scope):
-        q = select(
-            func.coalesce(func.sum(model.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(model.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(model.estimated_cost), 0).label("e"),
-        ).where(model.status == "completed")
+    total_cost = 0
+    for model, has_author in (
+        (PRReview, True),
+        (IssueAnalysis, True),
+        (AgentTeamTask, False),
+        (RepoScan, False),
+    ):
+        query = select(func.coalesce(func.sum(model.estimated_cost), 0)).where(
+            model.status == "completed"
+        )
+        scope = scope_for(model, has_author=has_author)
         if scope is not None:
-            q = q.where(scope)
-        return q
+            query = query.where(scope)
+        total_cost += int((await db.execute(query)).scalar() or 0)
+    return total_cost
 
-    # PR 审查聚合
-    pr_row = (
-        await db.execute(_aggregate(PRReview, _scope_for(PRReview, has_author=True)))
-    ).one()
 
-    # Issue 分析聚合
-    issue_row = (
-        await db.execute(
-            _aggregate(IssueAnalysis, _scope_for(IssueAnalysis, has_author=True))
-        )
-    ).one()
+async def fetch_module_token_stats(
+    db: AsyncSession,
+    scope_user: str | None = None,
+) -> dict[str, Any]:
+    """Return dashboard Token totals from the new global ledger only.
 
-    # Agent 任务聚合
-    agent_row = (
-        await db.execute(
-            _aggregate(AgentTeamTask, _scope_for(AgentTeamTask, has_author=False))
-        )
-    ).one()
+    The ledger is deliberately global and does not contain an end-user owner
+    column.  A user-scoped dashboard must consequently not receive a global
+    aggregate, and it also must not silently fall back to legacy Token fields.
+    """
 
-    # 仓库扫描聚合
-    scan_row = (
-        await db.execute(_aggregate(RepoScan, _scope_for(RepoScan, has_author=False)))
-    ).one()
+    total_cost = await fetch_estimated_cost(db, scope_user)
+    if scope_user is not None:
+        return {
+            "total_prompt": None,
+            "total_completion": None,
+            "total_cost": total_cost,
+            "token_usage_available": False,
+        }
 
+    totals = await fetch_global_token_totals(db)
     return {
-        "total_prompt": (
-            int(pr_row.p or 0)
-            + int(issue_row.p or 0)
-            + int(agent_row.p or 0)
-            + int(scan_row.p or 0)
-        ),
-        "total_completion": (
-            int(pr_row.c or 0)
-            + int(issue_row.c or 0)
-            + int(agent_row.c or 0)
-            + int(scan_row.c or 0)
-        ),
-        "total_cost": (
-            int(pr_row.e or 0)
-            + int(issue_row.e or 0)
-            + int(agent_row.e or 0)
-            + int(scan_row.e or 0)
-        ),
+        "total_prompt": totals.input_tokens,
+        "total_completion": totals.output_tokens,
+        "total_cost": total_cost,
+        "token_usage_available": True,
     }
 
 
@@ -105,94 +89,34 @@ async def fetch_token_trend(
     labels: list[str],
     scope_user: str | None = None,
 ) -> list[int]:
-    """获取最近 30 天全模块 Token 消耗趋势。
+    """Return the latest 30-day Token trend from ``ai_usage_records`` only."""
 
-    Args:
-        db: 数据库 session
-        thirty_days_ago: 30 天前的时间戳
-        labels: 日期标签列表（用于确定数组长度）
-        scope_user: 非 admin 用户的 GitHub 用户名，用于权限过滤；
-            None 表示管理员或无需过滤。
-
-    Returns:
-        长度与 labels 一致的 token 总量列表。
-    """
     token_data = [0] * len(labels)
-
-    # ── PR 审查 token 趋势（repo_owner / author 均可匹配）──
-    pr_scope = None
+    # See ``fetch_module_token_stats``: the global ledger cannot be safely
+    # projected into a non-admin user's dashboard until it has an owner scope.
     if scope_user is not None:
-        pr_scope = or_(
-            PRReview.repo_owner == scope_user,
-            PRReview.author == scope_user,
-        )
-    pr_query = (
+        return token_data
+
+    ledger_query = (
         select(
-            func.date(PRReview.created_at).label("day"),
-            (
-                func.coalesce(func.sum(PRReview.prompt_tokens), 0)
-                + func.coalesce(func.sum(PRReview.completion_tokens), 0)
+            func.date(AIUsageRecord.occurred_at).label("day"),
+            func.coalesce(
+                func.sum(
+                    func.coalesce(AIUsageRecord.input_tokens, 0)
+                    + func.coalesce(AIUsageRecord.output_tokens, 0)
+                ),
+                0,
             ).label("tokens"),
         )
-        .where(PRReview.created_at >= thirty_days_ago)
-        .where(PRReview.status == "completed")
-        .group_by(func.date(PRReview.created_at))
+        .where(
+            AIUsageRecord.occurred_at >= thirty_days_ago,
+            AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS),
+        )
+        .group_by(func.date(AIUsageRecord.occurred_at))
     )
-    if pr_scope is not None:
-        pr_query = pr_query.where(pr_scope)
-    for row in (await db.execute(pr_query)).all():
+    for row in (await db.execute(ledger_query)).all():
         if row.day:
             idx = (row.day - thirty_days_ago.date()).days
             if 0 <= idx < len(labels):
-                token_data[idx] += int(row.tokens)
-
-    # ── 其他模块 token 趋势（按 repo_owner 过滤）──
-    # IssueAnalysis 同时有 repo_owner 和 author，可以同 PRReview 一样双向匹配；
-    # AgentTeamTask / RepoScan 仅有 repo_owner，按 repo_owner 过滤。
-    module_scopes: list[tuple[type, Any, Any | None]] = [
-        (
-            IssueAnalysis,
-            IssueAnalysis.completed_at,
-            or_(
-                IssueAnalysis.repo_owner == scope_user,
-                IssueAnalysis.author == scope_user,
-            )
-            if scope_user is not None
-            else None,
-        ),
-        (
-            AgentTeamTask,
-            AgentTeamTask.completed_at,
-            (AgentTeamTask.repo_owner == scope_user)
-            if scope_user is not None
-            else None,
-        ),
-        (
-            RepoScan,
-            RepoScan.completed_at,
-            (RepoScan.repo_owner == scope_user) if scope_user is not None else None,
-        ),
-    ]
-    for model_cls, date_col, scope in module_scopes:
-        q = (
-            select(
-                func.date(date_col).label("day"),
-                (
-                    func.coalesce(func.sum(model_cls.prompt_tokens), 0)
-                    + func.coalesce(func.sum(model_cls.completion_tokens), 0)
-                ).label("tokens"),
-            )
-            .where(date_col >= thirty_days_ago)
-            .where(model_cls.status == "completed")
-            .group_by(func.date(date_col))
-        )
-        if scope is not None:
-            q = q.where(scope)
-        rows = (await db.execute(q)).all()
-        for row in rows:
-            if row.day:
-                idx = (row.day - thirty_days_ago.date()).days
-                if 0 <= idx < len(labels):
-                    token_data[idx] += int(row.tokens)
-
+                token_data[idx] += int(row.tokens or 0)
     return token_data

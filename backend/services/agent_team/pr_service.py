@@ -496,7 +496,7 @@ class AgentTeamPRService:
                 create_agent_team_summary_client,
             )
 
-            client, model, _config = await create_agent_team_summary_client()
+            client, _summary_role, _config = await create_agent_team_summary_client()
 
             files_text = ", ".join(modified_files)
             findings_text = "\n".join(
@@ -540,8 +540,9 @@ class AgentTeamPRService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                model=model,
+                model="",
                 temperature=0.1,
+                role=_summary_role,
             )
 
             if not response.choices:
@@ -589,7 +590,7 @@ class AgentTeamPRService:
                 create_agent_team_summary_client,
             )
 
-            client, model, _config = await create_agent_team_summary_client()
+            client, _summary_role, _config = await create_agent_team_summary_client()
 
             files_text = ", ".join(modified_files[:20])
             if len(modified_files) > 20:
@@ -621,8 +622,9 @@ class AgentTeamPRService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                model=model,
+                model="",
                 temperature=0.1,
+                role=_summary_role,
             )
 
             if not response.choices:
@@ -664,7 +666,7 @@ class AgentTeamPRService:
                 create_agent_team_summary_client,
             )
 
-            client, model, _config = await create_agent_team_summary_client()
+            client, _summary_role, _config = await create_agent_team_summary_client()
 
             files_text = ", ".join(modified_files[:20])
             if len(modified_files) > 20:
@@ -698,8 +700,9 @@ class AgentTeamPRService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                model=model,
+                model="",
                 temperature=0.1,
+                role=_summary_role,
             )
 
             if not response.choices:

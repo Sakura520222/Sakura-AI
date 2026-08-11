@@ -234,7 +234,7 @@ async def get_order(
         try:
             meta = json.loads(order.metadata_json)
             checkout_url = meta.get("checkout_url", "")
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             pass
 
     return {

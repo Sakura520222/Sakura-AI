@@ -43,6 +43,22 @@ def test_basic_config_keys_are_loaded_from_database_config_keys():
     assert BASIC_CONFIG_KEYS.issubset(set(get_all_db_config_keys()))
 
 
+def test_activity_outbox_shutdown_timeout_is_database_configurable():
+    required_key = "activity_outbox_shutdown_timeout_seconds"
+
+    assert required_key in Settings.model_fields
+    assert required_key in BASIC_CONFIG_KEYS
+    assert required_key in get_all_db_config_keys()
+
+
+def test_activity_artifact_purge_interval_is_database_configurable():
+    required_key = "activity_artifact_purge_interval_seconds"
+
+    assert required_key in Settings.model_fields
+    assert required_key in BASIC_CONFIG_KEYS
+    assert required_key in get_all_db_config_keys()
+
+
 def test_mobile_oauth_allowed_redirect_uris_is_available_in_core_config_paths():
     required_key = "mobile_oauth_allowed_redirect_uris"
 
@@ -72,6 +88,8 @@ def test_mobile_oauth_allowed_redirect_uris_is_exposed_in_system_config_group():
 
 
 def test_ai_api_config_fields_support_live_update():
+    from backend.core.config import AI_STRATEGY_CONFIG_KEYS
+
     required_fields = {
         "ai_api_timeout_seconds",
         "ai_api_max_retries",
@@ -79,8 +97,9 @@ def test_ai_api_config_fields_support_live_update():
         "ai_api_total_timeout_seconds",
     }
     assert required_fields.issubset(Settings.model_fields)
-    assert "ai_api" in DYNAMIC_CONFIG_GROUPS
-    assert required_fields.issubset(set(DYNAMIC_CONFIG_GROUPS["ai_api"]["keys"]))
+    # AI API 调用策略已迁移到「AI 配置」页，不再出现在全局动态配置页
+    assert "ai_api" not in DYNAMIC_CONFIG_GROUPS
+    assert required_fields.issubset(set(AI_STRATEGY_CONFIG_KEYS))
     assert required_fields.issubset(set(get_all_db_config_keys()))
 
     settings = get_settings()
@@ -98,6 +117,17 @@ def test_ai_api_config_fields_support_live_update():
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)
+
+
+def test_embedding_provider_options_exclude_local_huggingface():
+    from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS
+
+    provider_values = {
+        option["value"]
+        for option in DYNAMIC_CONFIG_SELECT_OPTIONS["embedding_provider"]
+    }
+
+    assert provider_values == {"siliconflow", "openai", "ollama"}
 
 
 def test_fetch_url_dynamic_config_fields_support_live_update():

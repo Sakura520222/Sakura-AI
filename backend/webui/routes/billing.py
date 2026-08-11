@@ -62,7 +62,7 @@ def _get_order_expires_at(order: Order) -> str:
 def _parse_page(value: str | None) -> int:
     try:
         return max(1, int(value or 1))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
 
 
@@ -291,7 +291,7 @@ async def reopen_crypto_payment(
     # 从 order metadata 中提取支付信息
     try:
         md = json.loads(order.metadata_json) if order.metadata_json else {}
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         md = {}
 
     pay_address = md.get("pay_address", "")
@@ -1130,7 +1130,7 @@ async def admin_edit_code(
     if expires_at is not None and expires_at.strip():
         try:
             update_data["expires_at"] = datetime.fromisoformat(expires_at.strip())
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return toast_redirect(
                 "/billing/admin/codes",
                 "toast.invalid_param",

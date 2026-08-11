@@ -12,14 +12,13 @@ from backend.core.ai_providers import (
 from backend.core.config import (
     CORE_CONFIG_KEYS,
     DYNAMIC_CONFIG_GROUPS,
-    DYNAMIC_CONFIG_LABELS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
 )
 
 
 def test_ai_provider_registry_contains_common_providers():
     assert get_ai_provider("openai").base_url == "https://api.openai.com/v1"
-    assert get_ai_provider("deepseek").default_model == "deepseek-chat"
+    assert get_ai_provider("deepseek").default_model == "deepseek-v4-pro"
     assert get_ai_provider("unknown").id == "custom"
 
 
@@ -47,15 +46,17 @@ def test_extract_context_window_k_from_common_fields():
     assert extract_context_window_k({"context_window": 200}) == 200
 
 
-def test_ai_provider_dynamic_config_registered():
-    assert "ai_provider" in DYNAMIC_CONFIG_GROUPS["ai_model"]["keys"]
-    assert "summary_provider" in DYNAMIC_CONFIG_GROUPS["summary_model"]["keys"]
-    assert DYNAMIC_CONFIG_LABELS["ai_provider"] == "AI 厂商"
-    assert DYNAMIC_CONFIG_LABELS["summary_provider"] == "辅助模型厂商"
-    assert "ai_provider" in DYNAMIC_CONFIG_SELECT_OPTIONS
-    assert "summary_provider" in DYNAMIC_CONFIG_SELECT_OPTIONS
-    assert "ai_provider" in CORE_CONFIG_KEYS
-    assert "summary_provider" in CORE_CONFIG_KEYS
+def test_ai_provider_dynamic_config_migrated_to_ai_config_page():
+    # AI 模型/辅助模型/AI API/上下文管理已迁移到 /config/ai，
+    # 不再出现在全局动态配置页，避免多账号配置与旧扁平字段双写。
+    assert "ai_model" not in DYNAMIC_CONFIG_GROUPS
+    assert "summary_model" not in DYNAMIC_CONFIG_GROUPS
+    assert "ai_api" not in DYNAMIC_CONFIG_GROUPS
+    assert "context" not in DYNAMIC_CONFIG_GROUPS
+    assert "ai_provider" not in DYNAMIC_CONFIG_SELECT_OPTIONS
+    assert "summary_provider" not in DYNAMIC_CONFIG_SELECT_OPTIONS
+    assert "ai_provider" not in CORE_CONFIG_KEYS
+    assert "summary_provider" not in CORE_CONFIG_KEYS
 
 
 def test_list_ai_providers_default():

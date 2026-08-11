@@ -103,6 +103,7 @@ class DocumentService:
         Returns:
             MD5 Hash 字符串（16进制）
         """
+
         def _compute() -> str:
             try:
                 md5_hash = hashlib.md5()

@@ -1,12 +1,18 @@
 # 安全与 MFA 指南
 
-本文介绍 Sakura AI Reviewer 的多因素认证（MFA）、Passkeys/WebAuthn、安全中心和安全审计能力。适用于部署管理员、超级管理员和需要启用二次验证的普通用户。
+> Sakura AI 多因素认证（MFA）、Passkeys/WebAuthn、安全中心与安全审计能力的使用与管理指南。
+
+← [文档索引](README.md) · [README](../README.md)
+
+---
+
+本文介绍 Sakura AI 的多因素认证（MFA）、Passkeys/WebAuthn、安全中心和安全审计能力。适用于部署管理员、超级管理员和需要启用二次验证的普通用户。
 
 ---
 
 ## 功能概览
 
-Sakura AI Reviewer 支持以下安全能力：
+Sakura AI 支持以下安全能力：
 
 - **TOTP 两步验证**：用户可在个人设置中扫描二维码绑定认证器 App。
 - **恢复码**：启用 TOTP 时生成一次性恢复码，用于认证器不可用时登录。
@@ -92,7 +98,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `two_factor_enabled` | `true` | 是否允许用户启用两步验证 |
-| `two_factor_issuer` | `Sakura AI Reviewer` | 认证器 App 中显示的发行方名称 |
+| `two_factor_issuer` | `Sakura AI` | 认证器 App 中显示的发行方名称 |
 | `two_factor_pending_token_expire_minutes` | `10` | OAuth 后等待二次验证的临时 Token 有效期 |
 | `two_factor_verify_rate_limit` | `5/minute` | 二次验证接口限流规则 |
 | `two_factor_setup_rate_limit` | `10/minute` | TOTP 设置接口限流规则 |
@@ -106,7 +112,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 |--------|--------|------|
 | `passkeys_enabled` | `true` | 是否允许用户注册和使用 Passkeys/WebAuthn |
 | `passkeys_rp_id` | 空 | WebAuthn Relying Party ID；为空时使用应用域名 |
-| `passkeys_rp_name` | `Sakura AI Reviewer` | WebAuthn Relying Party 显示名称 |
+| `passkeys_rp_name` | `Sakura AI` | WebAuthn Relying Party 显示名称 |
 | `passkeys_origin` | 空 | WebAuthn 允许的 Origin；为空时根据应用域名和端口推导 |
 | `passkeys_allowed_origins` | 空 | WebAuthn 额外允许 Origin，多个值使用逗号或换行分隔；用于 Android 原生 Passkey 等场景 |
 | `passkeys_challenge_ttl_seconds` | `300` | WebAuthn challenge 有效期（范围 60-900） |
@@ -151,7 +157,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 
 ### Cookie Secure
 
-生产 HTTPS 环境建议启用 `webui_cookie_secure`，避免登录 Cookie 在非安全连接中传输。
+WebUI 登录、MFA 临时凭证和 Setup 验证 Cookie 始终启用 `Secure` 属性，避免凭证在非加密连接中传输。开发环境请通过 `localhost` 访问；非本机部署必须在反向代理或应用入口终止 HTTPS。`webui_cookie_secure` 仅作为旧配置兼容项保留，不再允许关闭敏感 Cookie 的 `Secure` 属性。
 
 ### Redis 可用性
 
@@ -191,3 +197,7 @@ API v1 现已支持 Passkey 二次验证（`POST /auth/2fa/passkey/options` + `P
 ### 强制 MFA 后用户无法访问普通页面怎么办？
 
 当全局或单用户 MFA 要求开启后，未注册任何 MFA 方法的用户会被引导到个人设置完成注册。API 请求可能返回 `428 MFA enrollment required`。超级管理员可在安全中心取消该用户的强制要求或协助重置 MFA。
+
+---
+
+*最后更新：2026-8-11 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

@@ -19,7 +19,7 @@ def _parse_redis_version(version: str) -> tuple[int, int, int] | None:
     try:
         parts = version.split("-", 1)[0].split(".")
         numbers = [int(part) for part in parts[:3]]
-    except (AttributeError, TypeError, ValueError):
+    except AttributeError, TypeError, ValueError:
         return None
     while len(numbers) < 3:
         numbers.append(0)

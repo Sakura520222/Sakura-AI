@@ -290,7 +290,7 @@ class AgentTeamPRReviewFeedbackService:
             fallback = int(
                 getattr(get_settings(), "agent_team_pr_review_pass_score", 8)
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             fallback = 8
 
         try:
@@ -301,7 +301,7 @@ class AgentTeamPRReviewFeedbackService:
             return fallback
         try:
             return int(configured)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return fallback
 
     async def _load_blocking_severities(self) -> set[str]:

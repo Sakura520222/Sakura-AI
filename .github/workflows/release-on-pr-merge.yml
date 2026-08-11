@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false   # 排队执行，避免后续 main push 取消进行中的稳定镜像发布
 
 jobs:
   generate-release:
@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
@@ -102,7 +102,7 @@ jobs:
 
       - name: 设置 Python 3.14
         if: steps.check_llm.outputs.has_llm == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.14'
 
@@ -490,12 +490,12 @@ jobs:
       contents: write
 
     steps:
-      - name: 检出代码（使用合并后的 main 分支）
-        uses: actions/checkout@v4
+      - name: 检出不可变发布 Tag
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: main  # 确保使用的是合并后的 main 分支代码
+          ref: refs/tags/v${{ needs.generate-release.outputs.version }}
 
       - name: 验证项目结构
         run: |
@@ -549,7 +549,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
+          echo "✅ Sakura-AI 项目结构验证通过"
 
       - name: 获取版本信息
         id: get_version
@@ -602,30 +602,28 @@ jobs:
       - name: 检查并清理 Release 附件状态
         id: check_assets
         run: |
+          set -euo pipefail
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
 
-          # 检查是否有附件
-          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
-          echo "现有附件数量: $ASSETS"
-
-          if [ "$ASSETS" -gt 0 ]; then
-            echo "🗑️ 检测到已有附件，正在清理旧附件..."
-
-            # 获取所有附件名称并删除
-            ASSET_NAMES=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name')
-            for asset in $ASSET_NAMES; do
-              echo "  删除附件: $asset"
+          delete_source_asset_if_present() {
+            local asset="$1"
+            if gh release view "$TAG_NAME" --json assets \
+              -q ".assets[] | select(.name == \"$asset\") | .name" \
+              | grep -Fxq "$asset"; then
+              echo "删除现有 source asset: $asset"
               gh release delete-asset "$TAG_NAME" "$asset" -y
-            done
+            else
+              echo "source asset 不存在，跳过: $asset"
+            fi
+          }
 
-            echo "✅ 已删除 $ASSETS 个旧附件"
-          else
-            echo "ℹ️ Release 没有附件"
-          fi
+          # 只清理当前版本的 source archives，保留 updater assets 与其他 Release 文件。
+          delete_source_asset_if_present "Sakura-AI-v${VERSION}.tar.gz"
+          delete_source_asset_if_present "Sakura-AI-v${VERSION}.zip"
 
-          # 无论是否有旧附件，都标记为需要上传（确保附件与代码同步）
-          echo "should_upload=true" >> $GITHUB_OUTPUT
-          echo "ℹ️ 将上传新的发布附件"
+          echo "should_upload=true" >> "$GITHUB_OUTPUT"
+          echo "将上传新的 source archives"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -637,11 +635,11 @@ jobs:
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
           RELEASE_NAME="${TAG_NAME}"
-          RELEASE_DIR="Sakura-AI-Reviewer-${RELEASE_NAME}"
+          RELEASE_DIR="Sakura-AI-${RELEASE_NAME}"
 
           mkdir -p "$RELEASE_DIR"
 
-          echo "📦 正在打包 Sakura-AI-Reviewer 发布资源..."
+          echo "📦 正在打包 Sakura-AI 发布资源..."
 
           echo "📋 打包配置:" > packaging_manifest.txt
           echo "- 版本: ${VERSION}" >> packaging_manifest.txt
@@ -690,7 +688,7 @@ jobs:
           mkdir -p "$RELEASE_DIR/data"
 
           # === 版本信息文件 ===
-          echo "Sakura AI Reviewer" > "$RELEASE_DIR/VERSION"
+          echo "Sakura AI" > "$RELEASE_DIR/VERSION"
           echo "Version: ${VERSION}" >> "$RELEASE_DIR/VERSION"
           echo "Release Date: $(date +'%Y-%m-%d')" >> "$RELEASE_DIR/VERSION"
           echo "GitHub: https://github.com/${{ github.repository }}" >> "$RELEASE_DIR/VERSION"
@@ -710,14 +708,14 @@ jobs:
           echo "- ${RELEASE_DIR}.tar.gz: ${TAR_SIZE}" >> packaging_manifest.txt
           echo "- ${RELEASE_DIR}.zip: ${ZIP_SIZE}" >> packaging_manifest.txt
 
-          echo "✅ Sakura-AI-Reviewer 资源包创建完成"
+          echo "✅ Sakura-AI 资源包创建完成"
           cat packaging_manifest.txt
 
       - name: 上传发布资源
         if: steps.check_assets.outputs.should_upload == 'true'
         run: |
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          ASSET_NAME="Sakura-AI-Reviewer-${TAG_NAME}"
+          ASSET_NAME="Sakura-AI-${TAG_NAME}"
 
           echo "正在上传资源到 Release ${TAG_NAME}..."
 
@@ -749,7 +747,114 @@ jobs:
         run: |
           rm -f packaging_manifest.txt
           VERSION="${{ steps.get_version.outputs.VERSION }}"
-          rm -rf "Sakura-AI-Reviewer-v${VERSION}"
-          rm -f "Sakura-AI-Reviewer-v${VERSION}.tar.gz"
-          rm -f "Sakura-AI-Reviewer-v${VERSION}.zip"
+          rm -rf "Sakura-AI-v${VERSION}"
+          rm -f "Sakura-AI-v${VERSION}.tar.gz"
+          rm -f "Sakura-AI-v${VERSION}.zip"
           echo "✅ 临时文件已清理"
+
+  publish-updater-assets:
+    name: 构建并上传 Host Updater
+    needs:
+      - generate-release
+      - build-and-upload-assets
+    if: >-
+      needs.generate-release.result == 'success' &&
+      needs.build-and-upload-assets.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/updater-build.yml
+    with:
+      version: ${{ needs.generate-release.outputs.version }}
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+    secrets: inherit
+
+  publish-stable-image:
+    name: 发布稳定镜像
+    needs: generate-release
+    if: needs.generate-release.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      channel: stable
+      version: ${{ needs.generate-release.outputs.version }}
+      sync_dockerhub: true
+    secrets: inherit
+
+  publish-update-manifest:
+    name: 发布更新清单
+    needs:
+      - generate-release
+      - publish-updater-assets
+      - publish-stable-image
+    if: >-
+      always() &&
+      needs.generate-release.result == 'success' &&
+      needs.publish-updater-assets.result == 'success' &&
+      needs.publish-stable-image.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出不可变发布 Tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+
+      - name: 生成并上传 update-manifest.json
+        env:
+          VERSION: ${{ needs.generate-release.outputs.version }}
+          RELEASE_ACTION: ${{ needs.generate-release.outputs.release_action }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Release workflow versions are generated from backend/__init__.py.
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          }
+
+          actual=$(sed -nE 's/^__version__[^=]*=[^"]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/__init__.py | head -n1)
+          [[ "$actual" == "$VERSION" ]] || {
+            echo "version mismatch: workflow=$VERSION backend=$actual" >&2
+            exit 1
+          }
+
+          proto=$(sed -nE 's/^PROTOCOL_VERSION[^=]*=[^0-9]*([0-9]+).*/\1/p' updater/src/sakura_ai_updater/__init__.py | head -n1)
+          [[ "$proto" == "1" ]] || {
+            echo "unsupported or missing PROTOCOL_VERSION: ${proto:-<empty>}" >&2
+            exit 1
+          }
+
+          # Created and refresh releases both require the concrete stable image
+          # tag to exist before the manifest can become authoritative.
+          image="ghcr.io/sakura520222/sakura-ai:v${VERSION}"
+          docker manifest inspect "$image" >/dev/null || {
+            echo "stable image not found: $image (release_action=$RELEASE_ACTION)" >&2
+            exit 1
+          }
+
+          cat > update-manifest.json <<JSON
+          {"schema_version":1,"version":"${VERSION}","channel":"stable","min_upgrade_from":"0.0.0","image":"${image}","updater":{"protocol_version":${proto},"asset_linux_amd64":"sakura-ai-updater-linux-amd64","asset_linux_arm64":"sakura-ai-updater-linux-arm64"}}
+          JSON
+
+          jq -e '
+            .schema_version == 1
+            and (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and .channel == "stable"
+            and .min_upgrade_from == "0.0.0"
+            and (.image | test("^ghcr\\.io/sakura520222/sakura-ai:v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and (.updater | type == "object")
+            and (.updater.protocol_version | type == "number")
+            and .updater.asset_linux_amd64 == "sakura-ai-updater-linux-amd64"
+            and .updater.asset_linux_arm64 == "sakura-ai-updater-linux-arm64"
+          ' update-manifest.json >/dev/null
+
+          TAG_NAME="v${VERSION}"
+          gh release view "$TAG_NAME" >/dev/null
+          gh release upload "$TAG_NAME" update-manifest.json --clobber

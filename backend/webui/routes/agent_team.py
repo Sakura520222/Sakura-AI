@@ -44,6 +44,7 @@ from backend.services.agent_team.ai_client import (
 )
 from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
+    CandidateServiceError,
     candidates_to_dicts,
 )
 from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
@@ -59,6 +60,10 @@ from backend.services.agent_team.submission_context import (
     load_skills_context,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.database_reset_runtime_service import (
+    create_registered_background_task,
+    register_current_background_task,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -79,19 +84,6 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_enabled",
     "agent_team_workspace_root",
     "agent_team_repo_allowlist",
-    "agent_team_model_provider",
-    "agent_team_api_base",
-    "agent_team_api_key",
-    "agent_team_model",
-    "agent_team_review_model",
-    "agent_team_summary_model",
-    "agent_team_temperature",
-    "agent_team_max_tokens",
-    "agent_team_enable_context_compression",
-    "agent_team_context_compression_threshold",
-    "agent_team_context_compression_keep_rounds",
-    "agent_team_context_summary_max_tokens",
-    "agent_team_timeout_seconds",
     "agent_team_max_concurrent",
     "agent_team_min_priority",
     "agent_team_feasibility_keywords",
@@ -311,7 +303,7 @@ def _should_schedule_agent_task(status: str) -> bool:
 def _compact_json(value) -> str:
     try:
         return json.dumps(value, ensure_ascii=False)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(value)
 
 
@@ -461,26 +453,6 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_enabled",
             "agent_team_workspace_root",
             "agent_team_repo_allowlist",
-        ],
-    },
-    {
-        "key": "ai",
-        "title_key": "agent_team.config_group_ai",
-        "description_key": "agent_team.config_group_ai_desc",
-        "keys": [
-            "agent_team_model_provider",
-            "agent_team_api_base",
-            "agent_team_api_key",
-            "agent_team_model",
-            "agent_team_review_model",
-            "agent_team_summary_model",
-            "agent_team_temperature",
-            "agent_team_max_tokens",
-            "agent_team_enable_context_compression",
-            "agent_team_context_compression_threshold",
-            "agent_team_context_compression_keep_rounds",
-            "agent_team_context_summary_max_tokens",
-            "agent_team_timeout_seconds",
         ],
     },
     {
@@ -852,9 +824,10 @@ async def list_repo_branches(
                 "branches": branches,
             }
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("获取仓库分支列表失败")
         return JSONResponse(
-            {"success": False, "message": f"获取分支列表失败: {exc}"},
+            {"success": False, "message": "获取分支列表失败，请稍后重试"},
             status_code=200,
         )
 
@@ -874,9 +847,11 @@ async def preview_candidates(
         )
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=200)
-    except Exception as exc:
+    except Exception:
+        logger.exception("AI 筛选候选失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 筛选候选失败: {exc}"}, status_code=200
+            {"success": False, "message": "AI 筛选候选失败，请稍后重试"},
+            status_code=200,
         )
     await log_admin_action(
         db,
@@ -928,9 +903,10 @@ async def create_task_from_candidate(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("创建 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
             status_code=200,
         )
     service = AgentTeamCandidateService()
@@ -1065,6 +1041,11 @@ async def preview_task_from_issue(
             db, repo_full_name, issue_number
         )
         submission_context = await _build_manual_issue_submission_context(db, draft)
+    except CandidateServiceError:
+        return JSONResponse(
+            {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
+            status_code=200,
+        )
     except ValueError as e:
         return JSONResponse(
             {"success": False, "message": str(e)},
@@ -1128,9 +1109,10 @@ async def create_task_from_issue(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("从 Issue 创建 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
             status_code=200,
         )
 
@@ -1189,6 +1171,11 @@ async def create_task_from_issue(
             ai_config_snapshot=config.safe_snapshot(),
             base_branch=base_branch.strip() or None,
             overrides=overrides,
+        )
+    except CandidateServiceError:
+        return JSONResponse(
+            {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
+            status_code=200,
         )
     except ValueError as e:
         return JSONResponse(
@@ -1260,9 +1247,11 @@ async def retry_task(
         config.validate()
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception as e:
+    except Exception:
+        logger.exception("重试 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
+            status_code=200,
         )
 
     old_status = task.status
@@ -1336,9 +1325,11 @@ async def resume_task(
         config.validate()
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception as e:
+    except Exception:
+        logger.exception("续跑 Agent 任务时加载 AI 配置失败")
         return JSONResponse(
-            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
+            status_code=200,
         )
 
     old_status = task.status
@@ -1503,8 +1494,11 @@ async def delete_workspace(
     service = AgentTeamWorkspaceService()
     try:
         workspace = service.delete_workspace(repo_owner, repo_name)
-    except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+    except ValueError:
+        logger.exception("删除 Agent 仓库工作区失败：路径校验未通过")
+        return JSONResponse(
+            {"success": False, "message": "工作区路径无效"}, status_code=400
+        )
 
     await log_admin_action(
         db,
@@ -1623,8 +1617,11 @@ async def delete_worktree(
         deleted = await asyncio.to_thread(
             service.delete_worktree, repo_owner, repo_name, dir_name
         )
-    except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+    except ValueError:
+        logger.exception("删除 Agent worktree 失败：路径校验未通过")
+        return JSONResponse(
+            {"success": False, "message": "工作区路径无效"}, status_code=400
+        )
 
     await log_admin_action(
         db,
@@ -1697,6 +1694,8 @@ async def clean_orphan_worktrees(
 
 async def _run_agent_task_background(task_id: int) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
+    if register_current_background_task("agent_team_webui") is None:
+        return
     try:
         from backend.workers.agent_team_worker import submit_agent_team_task
 
@@ -1709,6 +1708,8 @@ async def _run_agent_task_background(task_id: int) -> None:
 
 async def _resume_agent_task_background(task_id: int) -> None:
     """后台续跑 Agent 任务，避免阻塞 WebUI 请求。"""
+    if register_current_background_task("agent_team_webui_resume") is None:
+        return
     try:
         from backend.workers.agent_team_worker import resume_agent_team_task
 
@@ -2230,7 +2231,9 @@ async def submit_user_prompt(
                 submit_agent_team_human_followup,
             )
 
-            asyncio.create_task(submit_agent_team_human_followup(task_id))
+            create_registered_background_task(
+                submit_agent_team_human_followup(task_id), "agent_team_human_followup"
+            )
         except Exception as exc:
             logger.warning("调度 Agent follow-up iteration 失败: {}", exc)
 

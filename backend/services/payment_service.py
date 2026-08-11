@@ -523,7 +523,7 @@ class PaymentService:
                             "payment_id": md.get("payment_id", ""),
                             "order_no": order.order_no,
                         }
-                except (json.JSONDecodeError, TypeError):
+                except json.JSONDecodeError, TypeError:
                     pass
 
         return order
@@ -640,7 +640,7 @@ class PaymentService:
                 existing = json.loads(order.metadata_json)
                 existing.update(metadata)
                 metadata = existing
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 pass
         order.metadata_json = json.dumps(metadata)
         await self.session.flush()
@@ -694,7 +694,7 @@ class PaymentService:
                     converted,
                     rate,
                 )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 logger.warning(
                     "Invalid dynamic exchange rate '{}', using fallback",
                     rate_str,
@@ -1497,8 +1497,7 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC)
-            + timedelta(days=plan.duration_days or 30),
+            expires_at=datetime.now(UTC) + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
             applied_pr_weekly_add=values["pr_weekly_add"],

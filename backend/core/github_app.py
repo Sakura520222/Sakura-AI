@@ -2,8 +2,10 @@
 
 import hashlib
 import hmac
+import time
 from typing import Any
 
+import httpx
 from github import Github, GithubIntegration
 from loguru import logger
 
@@ -80,9 +82,6 @@ class GitHubAppClient:
                 logger.debug(f"私钥结尾检查: '{private_key[-50:]}'")
                 raise ValueError("私钥格式无效：缺少END标记")
 
-            # 输出调试信息（脱敏）
-            logger.debug(f"私钥预览: {private_key[:50]}...{private_key[-50:]}")
-
             # 创建 GithubIntegration 实例（app_id保持为字符串）
             logger.info("正在创建GithubIntegration实例...")
             integration = GithubIntegration(
@@ -109,6 +108,43 @@ class GitHubAppClient:
             token = self.integration.create_jwt()
             self._app_client = Github(login_or_token=token)
         return self._app_client
+
+    async def exchange_user_code(self, code: str) -> dict[str, Any]:
+        """GitHub App user-to-server：用授权码交换 user access token。"""
+        return await exchange_user_access_token(
+            settings.star_aid_github_app_client_id,
+            settings.star_aid_github_app_client_secret,
+            code,
+            settings.star_aid_github_app_callback_url or None,
+        )
+
+    async def refresh_user_token(self, refresh_token: str) -> dict[str, Any]:
+        """GitHub App user-to-server：刷新 user access token。"""
+        return await refresh_user_access_token(
+            settings.star_aid_github_app_client_id,
+            settings.star_aid_github_app_client_secret,
+            refresh_token,
+        )
+
+    async def get_user_access_token(self, user_id: int) -> str | None:
+        """从 star_aid 凭据服务获取可用 user access token。"""
+        from backend.models.database import async_session
+        from backend.services import star_aid_github_service
+
+        if async_session is None:
+            return None
+        async with async_session() as session:
+            token, _ = await star_aid_github_service.get_effective_access_token(
+                session, int(user_id)
+            )
+            return token
+
+    async def get_user_client(self, user_id: int) -> Github | None:
+        """基于 GitHub App user access token 创建 PyGithub 客户端。"""
+        token = await self.get_user_access_token(user_id)
+        if not token:
+            return None
+        return Github(login_or_token=token)
 
     def get_all_installations_with_repos(self) -> list[dict]:
         """获取所有 GitHub App 安装及其仓库列表
@@ -241,9 +277,7 @@ class GitHubAppClient:
             logger.warning(f"轻量检查 GitHub App 安装状态失败: {e}", exc_info=True)
             return None
 
-    def get_installation_client(
-        self, repo_owner: str, repo_name: str
-    ) -> Github | None:
+    def get_installation_client(self, repo_owner: str, repo_name: str) -> Github | None:
         """获取安装级别的GitHub客户端（用于访问特定仓库）"""
         try:
             if self.integration is None:
@@ -859,7 +893,8 @@ class GitHubAppClient:
         inline_comments: list | None = None,
         bot_username: str | None = None,
         enable_idempotency_check: bool = True,
-    ) -> bool:
+        raise_on_error: bool = False,
+    ) -> bool | dict[str, object]:
         """提交审查决定到GitHub（包含行内评论）
 
         Args:
@@ -871,6 +906,7 @@ class GitHubAppClient:
             inline_comments: 行内评论列表，格式：[{"path": str, "line": int, "body": str}]
             bot_username: 机器人用户名（用于幂等性检查）
             enable_idempotency_check: 是否启用幂等性检查
+            raise_on_error: 将异常交给调用方分类（用于 Publication 状态机）
 
         Returns:
             是否成功提交
@@ -893,7 +929,12 @@ class GitHubAppClient:
                         f"跳过重复提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                         f"event={event}"
                     )
-                    return True
+                    return {
+                        "success": True,
+                        "inline_published": 0,
+                        "fallback_body_only": False,
+                        "skipped_existing": True,
+                    }
 
             # 构建行内评论格式
             comments = []
@@ -923,13 +964,28 @@ class GitHubAppClient:
                     comments.append(comment_dict)
 
             # 提交Review（包含行内评论）
-            pr.create_review(event=event, body=body, comments=comments)
+            created_review = pr.create_review(
+                event=event,
+                body=body,
+                comments=comments,
+            )
 
             logger.info(
                 f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                 f"event={event}, body_length={len(body)}, inline_comments={len(comments)}"
             )
-            return True
+            result = {
+                "success": True,
+                "inline_published": len(comments),
+                "fallback_body_only": False,
+            }
+            review_id = getattr(created_review, "id", None)
+            review_url = getattr(created_review, "html_url", None)
+            if isinstance(review_id, (str, int)) and not isinstance(review_id, bool):
+                result["id"] = str(review_id)
+            if isinstance(review_url, str) and review_url:
+                result["html_url"] = review_url
+            return result
 
         except Exception as e:
             # 安全提取错误信息，避免PyGithub内部的KeyError导致信息丢失
@@ -979,21 +1035,48 @@ class GitHubAppClient:
                         "422 行号/路径无法解析，尝试降级为无行内评论的 Review..."
                     )
                     try:
-                        pr.create_review(event=event, body=body, comments=[])
+                        created_review = pr.create_review(
+                            event=event,
+                            body=body,
+                            comments=[],
+                        )
                         logger.info(
                             f"✅ 降级成功: 已提交无行内评论的 Review "
                             f"({repo_owner}/{repo_name}#{pr_number})"
                         )
-                        return True
+                        result = {
+                            "success": True,
+                            "inline_published": 0,
+                            "fallback_body_only": True,
+                        }
+                        review_id = getattr(created_review, "id", None)
+                        review_url = getattr(created_review, "html_url", None)
+                        if isinstance(review_id, (str, int)) and not isinstance(
+                            review_id, bool
+                        ):
+                            result["id"] = str(review_id)
+                        if isinstance(review_url, str) and review_url:
+                            result["html_url"] = review_url
+                        return result
                     except Exception as fallback_error:
                         logger.error(f"降级提交也失败: {fallback_error}")
+                        if raise_on_error:
+                            raise fallback_error from e
             else:
                 logger.error(f"提交Review失败: {error_type}: {e!s}")
 
             logger.debug("完整异常信息:", exc_info=True)
-            return False
+            if raise_on_error:
+                raise
+            return {
+                "success": False,
+                "inline_published": 0,
+                "fallback_body_only": False,
+            }
 
-    def get_bot_username(self, repo_owner: str | None = None, repo_name: str | None = None) -> str:
+    def get_bot_username(
+        self, repo_owner: str | None = None, repo_name: str | None = None
+    ) -> str:
         """获取机器人用户名（用于幂等性检查）
 
         Args:
@@ -1024,24 +1107,67 @@ class GitHubAppClient:
             return getattr(settings, "bot_username", None)
 
     @staticmethod
+    def _is_rate_limited(exc: Exception) -> bool:
+        """判断异常是否为 GitHub rate-limit。
+
+        429 一定是 rate-limit；403 需 message 含 'rate limit' / 'secondary rate'
+        （'Resource not accessible by integration' 等权限 403 不应重试，否则每次
+        best-effort 检查更新都会 sleep 5s+10s，拖慢整个流程）。
+        """
+        status = getattr(exc, "status", None)
+        msg = str(getattr(exc, "data", "") or getattr(exc, "message", "") or "").lower()
+        if status == 429:
+            return True
+        if status == 403:
+            return "rate limit" in msg or "secondary rate" in msg
+        return "rate limit" in msg or "secondary rate" in msg
+
+    def _call_with_rate_limit(self, fn, *args, **kwargs):
+        """有界退避重试：遇 rate-limit 退避后重试，最多 3 次（5s/10s）。
+
+        Check Run create/update 经 asyncio.to_thread 调用，time.sleep 仅阻塞
+        工作线程，不影响事件循环。最终仍失败则抛出，由调用方 except 吞为 best-effort。
+        """
+        for attempt in range(3):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                if self._is_rate_limited(exc) and attempt < 2:
+                    wait = (attempt + 1) * 5
+                    logger.warning(
+                        "GitHub API rate-limit，{}s 后重试（attempt {}/3）",
+                        wait,
+                        attempt + 1,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
+        return None  # 不可达，保险
+
+    @staticmethod
     def _build_check_run_output(
         title: str | None,
         summary: str | None,
         text: str | None,
     ) -> dict | None:
-        """构建 Check Run output dict，仅包含非空字段。
+        """构建 Check Run output dict。
 
-        GitHub API 要求 output 至少包含 title + summary；title/summary 的完整性
-        由调用方（CheckRunService）保证，底层方法保持灵活。
+        GitHub API 要求 output 必须同时包含 title 与 summary，缺失任一会触发
+        422 校验失败。本方法在 title 或 summary 缺失时返回 None（跳过 output）
+        并记录 warning，确保 wrapper 不产出非法载荷；text 单独可选。
         """
-        output: dict = {}
-        if title:
-            output["title"] = title
-        if summary:
-            output["summary"] = summary
+        if not title or not summary:
+            logger.warning(
+                "Check Run output 缺少 title 或 summary，跳过 output 字段"
+                "（has_title={}, has_summary={}）",
+                bool(title),
+                bool(summary),
+            )
+            return None
+        output: dict = {"title": title, "summary": summary}
         if text:
             output["text"] = text
-        return output or None
+        return output
 
     def create_check_run(
         self,
@@ -1054,6 +1180,7 @@ class GitHubAppClient:
         output_title: str | None = None,
         output_summary: str | None = None,
         output_text: str | None = None,
+        external_id: str | None = None,
     ) -> dict | None:
         """创建 GitHub Check Run。
 
@@ -1065,6 +1192,7 @@ class GitHubAppClient:
             status: queued / in_progress / completed
             conclusion: success / failure / neutral / cancelled（completed 时有意义）
             output_title/summary/text: Check Run 输出内容（可选）
+            external_id: 跨进程恢复标识（可选，见 CheckRunService external_id 编码）
 
         Returns:
             {"id": int, "status": str, "conclusion": str|None}，失败返回 None。
@@ -1081,13 +1209,15 @@ class GitHubAppClient:
             kwargs: dict = {"name": name, "head_sha": head_sha, "status": status}
             if conclusion:
                 kwargs["conclusion"] = conclusion
+            if external_id:
+                kwargs["external_id"] = external_id
             output = self._build_check_run_output(
                 output_title, output_summary, output_text
             )
             if output:
                 kwargs["output"] = output
 
-            check_run = repo.create_check_run(**kwargs)
+            check_run = self._call_with_rate_limit(repo.create_check_run, **kwargs)
             logger.info(
                 f"已创建 Check Run {name} for {repo_owner}/{repo_name}@{head_sha} "
                 f"(id={check_run.id}, status={status})"
@@ -1110,11 +1240,18 @@ class GitHubAppClient:
         output_title: str | None = None,
         output_summary: str | None = None,
         output_text: str | None = None,
+        external_id: str | None = None,
+        skip_if_completed: bool = False,
     ) -> bool:
         """更新指定 Check Run。
 
+        Args:
+            external_id: 可选，恢复场景补设。
+            skip_if_completed: 为 True 时，先读 Check Run 状态，若已 completed 则
+                跳过更新（落实「不追溯改写已 completed 的副 Check」规则）。
+
         Returns:
-            是否成功。
+            是否成功（跳过时返回 True）。
         """
         try:
             client = self.get_repo_client(repo_owner, repo_name)
@@ -1126,11 +1263,22 @@ class GitHubAppClient:
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             check_run = repo.get_check_run(check_run_id)
+
+            # 状态守卫：已 completed 的 Check Run 不追溯改写
+            if skip_if_completed and check_run.status == "completed":
+                logger.info(
+                    "Check Run id={} 已 completed，跳过更新（不追溯改写）",
+                    check_run_id,
+                )
+                return True
+
             kwargs: dict = {}
             if status:
                 kwargs["status"] = status
             if conclusion:
                 kwargs["conclusion"] = conclusion
+            if external_id:
+                kwargs["external_id"] = external_id
             output = self._build_check_run_output(
                 output_title, output_summary, output_text
             )
@@ -1138,7 +1286,7 @@ class GitHubAppClient:
                 kwargs["output"] = output
 
             if kwargs:
-                check_run.edit(**kwargs)
+                self._call_with_rate_limit(check_run.edit, **kwargs)
             logger.info(
                 f"已更新 Check Run id={check_run_id} "
                 f"(status={status}, conclusion={conclusion})"
@@ -1157,8 +1305,12 @@ class GitHubAppClient:
         repo_name: str,
         head_sha: str,
         name: str,
+        external_id: str | None = None,
     ) -> int | None:
         """收敛同 commit 同名 Check Run，返回最新 active run id。
+
+        external_id 提供时，只复用/收敛 external_id 匹配的 active run（防止并发/
+        重复 webhook 场景下误终结其他执行的 Check Run）；为 None 时按原逻辑（最新 active）。
 
         同一 commit 上可能存在多个同名 active（queued/in_progress）Check Run
         （如历史重复创建 bug 的产物，会一直显示悬挂转圈）。保留 id 最大（最新）
@@ -1179,21 +1331,54 @@ class GitHubAppClient:
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             commit = repo.get_commit(head_sha)
-            active = [
+            all_active = [
                 cr
                 for cr in commit.get_check_runs()
                 if cr.name == name and cr.status != "completed"
             ]
+            if not all_active:
+                return None
+            # external_id 提供时（worker 接管）：仅收敛 webhook 预创建占位 Check
+            # （review_job_id="webhook-incremental"），让 placeholder 不悬挂；不触碰
+            # 其他合法并行执行的 Check（不同 review_job_id），避免误取消正常审查。
+            if external_id:
+                for stale in all_active:
+                    stale_eid = getattr(stale, "external_id", "") or ""
+                    if "webhook-incremental" in stale_eid:
+                        try:
+                            self._call_with_rate_limit(
+                                stale.edit,
+                                status="completed",
+                                conclusion="cancelled",
+                            )
+                            logger.info(
+                                f"已收敛 webhook 占位 Check Run {name} id={stale.id} "
+                                f"({repo_owner}/{repo_name}@{head_sha}) "
+                                f"-> cancelled(superseded)"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"收敛 webhook 占位 Check Run id={stale.id} 失败: {e}"
+                            )
+                active = [
+                    cr
+                    for cr in all_active
+                    if getattr(cr, "external_id", None) == external_id
+                ]
+            else:
+                active = all_active
             if not active:
                 return None
             active.sort(key=lambda cr: cr.id, reverse=True)
             latest_id = active[0].id
             for stale in active[1:]:
                 try:
-                    stale.edit(status="completed", conclusion="neutral")
+                    self._call_with_rate_limit(
+                        stale.edit, status="completed", conclusion="cancelled"
+                    )
                     logger.info(
                         f"已收敛悬挂 Check Run {name} id={stale.id} "
-                        f"({repo_owner}/{repo_name}@{head_sha}) -> completed+neutral"
+                        f"({repo_owner}/{repo_name}@{head_sha}) -> completed+cancelled(superseded)"
                     )
                 except Exception as e:
                     logger.warning(f"收敛悬挂 Check Run id={stale.id} 失败: {e}")
@@ -1365,18 +1550,33 @@ class GitHubAppClient:
             return []
 
     def create_issue_comment(
-        self, repo_owner: str, repo_name: str, issue_number: int, body: str
-    ) -> bool:
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        body: str,
+        *,
+        raise_on_error: bool = False,
+    ) -> bool | dict[str, object]:
         """在 Issue 上创建评论"""
         client = self.get_repo_client(repo_owner, repo_name)
         repo = client.get_repo(f"{repo_owner}/{repo_name}")
         try:
-            repo.get_issue(issue_number).create_comment(body)
-            return True
+            comment = repo.get_issue(issue_number).create_comment(body)
+            result: dict[str, object] = {"success": True}
+            comment_id = getattr(comment, "id", None)
+            comment_url = getattr(comment, "html_url", None)
+            if isinstance(comment_id, (str, int)) and not isinstance(comment_id, bool):
+                result["id"] = str(comment_id)
+            if isinstance(comment_url, str) and comment_url:
+                result["html_url"] = comment_url
+            return result
         except Exception as e:
             logger.error(
                 f"创建 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
             )
+            if raise_on_error:
+                raise
             return False
 
     def add_labels_to_issue(
@@ -1516,6 +1716,14 @@ def extract_pr_info_from_webhook(payload: dict[str, Any]) -> dict[str, Any] | No
             "repo_owner": repository["owner"]["login"],
             "repo_name": repository["name"],
             "repo_full_name": repository["full_name"],
+            # Provider-owned immutable repository identity.  The observability
+            # admission layer rejects payloads where this is absent; owner/name
+            # remains display metadata only.
+            "repository_external_id": repository.get("id"),
+            "source_system_instance": repository.get("html_url", "https://github.com")
+            .split("://")[-1]
+            .split("/", 1)[0]
+            .lower(),
             "installation_id": installation["id"],
             "author": pull_request["user"]["login"],
             "title": pull_request["title"],
@@ -1564,6 +1772,11 @@ def extract_issue_info_from_webhook(
         "repo_owner": repository.get("owner", {}).get("login", ""),
         "repo_name": repository.get("name", ""),
         "repo_full_name": repository.get("full_name", ""),
+        "repository_external_id": repository.get("id"),
+        "source_system_instance": repository.get("html_url", "https://github.com")
+        .split("://")[-1]
+        .split("/", 1)[0]
+        .lower(),
         "installation_id": payload.get("installation", {}).get("id"),
         "author": issue.get("user", {}).get("login", ""),
         "title": issue.get("title", ""),
@@ -1644,6 +1857,11 @@ async def get_pr_info_from_url(pr_url: str) -> dict[str, Any] | None:
             "repo_owner": repo_owner,
             "repo_name": repo_name,
             "repo_full_name": repo_full_name,
+            "repository_external_id": getattr(repo, "id", None),
+            "source_system_instance": getattr(repo, "html_url", "https://github.com")
+            .split("://")[-1]
+            .split("/", 1)[0]
+            .lower(),
             "installation_id": installation_id,
             "author": pr.user.login,
             "title": pr.title,
@@ -1669,3 +1887,82 @@ async def get_pr_info_from_url(pr_url: str) -> dict[str, Any] | None:
     except Exception as e:
         logger.error(f"从URL获取PR信息失败: {e}", exc_info=True)
         raise
+
+
+# ========== GitHub App user-to-server token 协议层 ==========
+# 这些函数只负责 OAuth/token 端点的 HTTP 协议，不读取任何业务配置；
+# client_id / client_secret 由调用方（star_aid_github_service）注入，
+# 从而保持 core 层对 star_aid 配置的反向解耦。
+
+GITHUB_LOGIN_OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+
+
+async def exchange_user_access_token(
+    client_id: str,
+    client_secret: str,
+    code: str,
+    redirect_uri: str | None = None,
+) -> dict[str, Any]:
+    """GitHub App web application flow：用授权码交换 user access token。
+
+    成功时返回包含 ``access_token`` / ``expires_in`` / ``refresh_token``
+    / ``refresh_token_expires_in`` / ``token_type`` 的字典；授权码无效时
+    GitHub 仍返回 200，但 body 含 ``error`` 字段，由调用方检查。
+
+    Raises:
+        RuntimeError: GitHub 返回非 200 状态码。
+    """
+    data: dict[str, Any] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+    }
+    if redirect_uri:
+        data["redirect_uri"] = redirect_uri
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            GITHUB_LOGIN_OAUTH_TOKEN_URL,
+            data=data,
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"github user token exchange failed: status={resp.status_code}"
+        )
+    return resp.json()
+
+
+async def refresh_user_access_token(
+    client_id: str,
+    client_secret: str,
+    refresh_token: str,
+) -> dict[str, Any]:
+    """用 refresh_token 刷新 GitHub App user access token。
+
+    GitHub 在每次刷新时会签发新的 refresh_token，旧 refresh_token 随即失效，
+    调用方必须用返回的新 refresh_token 覆盖存储。
+
+    Raises:
+        RuntimeError: GitHub 返回非 200 状态码。
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            GITHUB_LOGIN_OAUTH_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"github user token refresh failed: status={resp.status_code}"
+        )
+    return resp.json()

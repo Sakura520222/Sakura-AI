@@ -117,7 +117,7 @@ class TronGateway(PaymentGateway):
         """USDT TRC-20 金额解析（6 位小数，字符串→float）"""
         try:
             return int(raw) / 1_000_000
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return 0.0
 
     # ------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ _('dashboard.title') }} - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('dashboard.title') }} - Sakura AI{% endblock %}
 
 {% block content %}
 <div class="space-y-6" x-data="dashboardInit()">
@@ -107,13 +107,17 @@ function dashboardInit() {
             document.getElementById('stat-score').textContent = data.avg_score;
 
             // Token 统计
+            var tokensAvailable = data.token_usage_available !== false;
             var totalTokens = (data.total_prompt_tokens || 0) + (data.total_completion_tokens || 0);
-            document.getElementById('stat-total-tokens').textContent = totalTokens.toLocaleString();
-            document.getElementById('stat-prompt-completion').textContent =
-                (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
-                (data.total_completion_tokens || 0).toLocaleString();
+            document.getElementById('stat-total-tokens').textContent =
+                tokensAvailable ? totalTokens.toLocaleString() : '—';
+            document.getElementById('stat-prompt-completion').textContent = tokensAvailable
+                ? (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
+                    (data.total_completion_tokens || 0).toLocaleString()
+                : '—';
             document.getElementById('stat-cost').textContent =
                 ((data.total_estimated_cost || 0) / 100).toFixed(2);
+
         })
         .catch(err => console.error('加载统计数据失败:', err));
 
