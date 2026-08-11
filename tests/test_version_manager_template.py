@@ -24,7 +24,7 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
     assert "checks: result.checks, update_ready: result.can_update" in template
     assert "updateButton.disabled = payload.update_ready === false" in template
     for key in (
-        "readinessFailed",
+        "readinessError",
         "preflightPassed",
         "preflightFailed",
         "preflightError",
@@ -36,3 +36,5 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
         "noTarget",
     ):
         assert f"VM_I18N.{key}" in template
+    assert "function vmUpdaterError(error)" in template
+    assert "release_unavailable:" in template

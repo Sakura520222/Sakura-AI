@@ -90,9 +90,13 @@ def test_fresh_runtime_smoke_contract():
     assert 'backend stop "${common_args[@]}"' in helper
     assert 'if "$installed_binary" backend is-running "${common_args[@]}"; then' in helper
     assert 'curl --unix-socket "$socket_path" http://localhost/v1/health' in helper
+    assert 'curl --unix-socket "$socket_path" http://localhost/v1/check' in helper
+    assert 'if [[ "$check_release" == "1" ]]' in helper
     assert "apt-get update" in helper
     assert "apt-get install" in helper
-    assert "curl" in helper and "passwd" in helper
+    assert "ca-certificates" in helper and "curl" in helper and "passwd" in helper
+    assert '--compose-file "$compose_file"' in helper
+    assert '--deployment-env "$deployment_env"' in helper
     assert "infrastructure failure" in helper
 
 

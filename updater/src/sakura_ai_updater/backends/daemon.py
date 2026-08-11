@@ -581,6 +581,16 @@ class DaemonBackend:
             self._validate_production_paths()
             argv_exe = [self.binary_path]
         argv = argv_exe + self._serve_args()
+        child_env = os.environ.copy()
+        if identity == IDENTITY_BINARY:
+            # ``backend start`` is itself running inside the PyInstaller onefile
+            # executable and launches a second, long-lived instance of that same
+            # executable.  Without a reset, the child reuses the parent's _MEI
+            # extraction directory; the parent then exits and removes
+            # base_library.zip while the daemon still needs it for lazy imports.
+            # Treat the daemon as a new top-level onefile application so it owns
+            # an independent extraction directory for its full lifetime.
+            child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         os.makedirs(self.state_dir, exist_ok=True)
         log_path = self._log_path
         with open(log_path, "ab") as logf:
@@ -592,6 +602,7 @@ class DaemonBackend:
                     stdin=subprocess.DEVNULL,
                     stdout=logf,
                     stderr=logf,
+                    env=child_env,
                 )
             except OSError as e:
                 raise UpdaterStartError(
