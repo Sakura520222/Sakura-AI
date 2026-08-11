@@ -15,7 +15,9 @@ def _compose() -> dict:
 
 
 def test_web_and_mysql_use_the_same_required_secret_variable():
-    services = _compose()["services"]
+    compose = _compose()
+    assert compose["name"] == "sakura-ai"
+    services = compose["services"]
     web_environment = services["web"]["environment"]
     mysql_environment = services["mysql"]["environment"]
 

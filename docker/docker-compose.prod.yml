@@ -4,6 +4,8 @@
 # deployment.env 提交到 Git。
 # 固定镜像版本由 .deploy/deployment.env 中的 SAKURA_AI_IMAGE 指定：
 #   docker compose --env-file <deployment_env> -f docker-compose.prod.yml up -d
+name: sakura-ai
+
 services:
   web:
     image: ${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}

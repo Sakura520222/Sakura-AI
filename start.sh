@@ -197,15 +197,27 @@ UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
 # SAKURA_DEPLOY_MODE=... 字段，绝不 source/eval runtime 文件，避免把其中的
 # 值当作 shell 代码执行。历史 source/缺失状态继续使用开发 Compose；image
 # 状态必须选择生产 Compose，不能因 start.sh 新进程默认值而回落到开发定义。
-select_compose_from_deployment_mode() {
-    local mode="" line
-    if [[ -r "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+read_deployment_mode() {
+    local state_file="${1:-$DEPLOYMENT_ENV_FILE}" mode="" line
+    if [[ -r "$state_file" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
                 SAKURA_DEPLOY_MODE=*) mode="${line#SAKURA_DEPLOY_MODE=}" ;;
             esac
-        done < "$UPDATER_DEPLOYMENT_ENV_FILE"
+        done < "$state_file"
     fi
+    printf '%s\n' "$mode"
+}
+
+should_use_production_mode() {
+    local requested_prod="${1:-false}"
+    [[ "$requested_prod" == "true" ]] \
+        || [[ "$(read_deployment_mode "$DEPLOYMENT_ENV_FILE")" == "image" ]]
+}
+
+select_compose_from_deployment_mode() {
+    local mode
+    mode="$(read_deployment_mode "$UPDATER_DEPLOYMENT_ENV_FILE")"
 
     case "$mode" in
         image)
@@ -908,19 +920,32 @@ detect_compose() {
 # ============================================================
 
 cmd_status() {
-    # host updater daemon 恢复尝试（spec §11.4）
-    ensure_updater_running || warn "host updater daemon 不可用"
+    local build_active=0
+    if is_running; then
+        build_active=1
+    fi
 
-    # updater daemon 状态快照
+    # updater daemon 状态快照。构建仍在运行或应用尚未健康时只报告状态，不提前
+    # acquisition；image :latest 必须等 /health 提供具体版本后才能安全安装。
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
         ok "host updater daemon 运行中"
     else
-        warn "host updater daemon 未运行"
+        if [[ "$build_active" -eq 1 ]]; then
+            warn "host updater daemon 未运行；部署仍在进行，等待应用健康后再恢复"
+        elif updater_health_payload >/dev/null 2>&1; then
+            if ensure_updater_running; then
+                ok "host updater daemon 运行中"
+            else
+                warn "host updater daemon 不可用"
+            fi
+        else
+            warn "host updater daemon 未运行；应用尚未健康，暂不尝试安装 updater"
+        fi
     fi
 
-    if is_running; then
+    if [[ "$build_active" -eq 1 ]]; then
         local pid
         pid=$(cat "$PID_FILE")
         local phase
@@ -1266,8 +1291,13 @@ do_start() {
         exit 1
     fi
 
-    # 生产模式使用生产 compose（跳过本地构建，直接拉取 GHCR 镜像）
-    if $prod; then
+    # 显式 --prod 或持久化 image 部署都使用生产 compose。这样最小化镜像部署
+    # 后再次运行交互菜单的“启动服务”也不会误入缺少源码文件的开发构建路径。
+    if should_use_production_mode "$prod"; then
+        if [[ "$prod" != "true" ]]; then
+            info "检测到持久化 image 部署，继续使用生产模式"
+        fi
+        prod=true
         COMPOSE_FILE="$PROD_COMPOSE_FILE"
         info "生产模式：使用生产 compose ($PROD_COMPOSE_FILE)"
     fi
