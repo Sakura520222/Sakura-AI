@@ -295,13 +295,12 @@ async def save_ai_bindings(
     if not isinstance(body.bindings, dict):
         return error_response("bindings 必须是对象")
     accounts = await account_store.list_accounts()
-    try:
-        bindings = account_store.validate_role_bindings_payload(
-            body.bindings,
-            {account.id for account in accounts},
-        )
-    except ValueError as exc:
-        return error_response(str(exc))
+    bindings, error_message = account_store.validate_role_bindings_payload(
+        body.bindings,
+        {account.id for account in accounts},
+    )
+    if error_message:
+        return error_response(error_message)
     await account_store.save_role_bindings(bindings)
     logger.info(f"AI 角色绑定已更新 / role bindings saved, by={user['sub']}")
     normalized = {role: binding.to_dict() for role, binding in bindings.items()}

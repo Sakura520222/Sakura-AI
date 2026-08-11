@@ -90,12 +90,13 @@ async def update_user_config(
             updated_keys.append(key)
 
         await db.commit()
-    except ValueError as e:
+    except ValueError:
         await db.rollback()
-        return error_response(str(e))
-    except Exception as e:
+        logger.opt(exception=True).warning("用户配置更新校验失败 / user config validation failed")
+        return error_response(f"配置项 {key} 的值不合法，请从可选项中选择")
+    except Exception:
         await db.rollback()
-        logger.error(f"更新用户配置失败: {e}", exc_info=True)
+        logger.exception("更新用户配置失败 / user config update failed")
         return error_response("更新用户配置失败")
 
     invalidate_user_dynamic_config_cache(user_id, updated_keys)
