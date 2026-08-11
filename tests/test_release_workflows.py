@@ -127,6 +127,9 @@ def test_publish_is_single_writer_and_uploads_only_two_binaries_and_checksum():
     assert publish["runs-on"] == "ubuntu-24.04"
     assert publish["permissions"]["contents"] == "write"
 
+    publish_step = publish["steps"][_step_index(publish, "Verify assets")]
+    assert publish_step["env"]["GH_REPO"] == "${{ github.repository }}"
+
     download_steps = [
         step
         for step in publish["steps"]
