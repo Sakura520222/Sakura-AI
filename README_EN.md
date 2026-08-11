@@ -180,7 +180,7 @@ sudo ./start.sh --prod
 > sudo ./start.sh updater status
 > ```
 >
-> `install` is strictly bound to the currently healthy Sakura AI version, so run it only after the application update has completed. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
+> `install` selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not run `install` if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
 
 **Web image only** (bring your own MySQL/Redis):
 

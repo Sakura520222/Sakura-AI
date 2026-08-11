@@ -26,3 +26,14 @@ def test_deployment_guide_documents_manual_update_and_trusted_root_path() -> Non
     assert "逐级 `lstat` 并 fail-closed" in guide
     assert "sudo ./start.sh updater start" in guide
     assert "Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机" in guide
+
+
+def test_updater_sync_documents_health_as_a_manual_prerequisite() -> None:
+    readme_zh = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+
+    assert "它本身不会强制检查应用健康状态" in readme_zh
+    assert "mandatory manual prerequisite" in readme_en
+    assert "它本身**不提供应用健康门禁**" in guide
+    assert "无需查询 `/health`" in guide

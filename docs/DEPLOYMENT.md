@@ -294,7 +294,7 @@ cd /opt/sakura-ai
 curl --fail --silent --show-error http://localhost:8000/health
 ```
 
-然后停止旧 daemon，安装与当前已健康运行应用版本严格对应的 updater，再启动并验证：
+只有人工确认上述响应中的 `version` 等于 WebUI 更新的目标版本后，才能停止旧 daemon、安装 updater，再启动并验证：
 
 ```bash
 sudo ./start.sh updater stop
@@ -307,7 +307,7 @@ sudo curl --fail --silent --show-error \
   http://updater/v1/health
 ```
 
-`install` 不会下载 `latest` updater，而是解析当前部署的具体 Sakura AI 版本并下载同一 Release 的架构资产。因此命令顺序必须是“先完成应用更新并确认健康，再安装 updater”。这套操作只同步管理员已经在 WebUI 确认过的 Release，不会启用定时任务或无人值守更新。
+`install` 不会下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本并下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z` 时，安装器可以直接采用该版本，无需查询 `/health`；即使应用停止、启动失败或报告其他版本，也不会因此自动拒绝安装。因此，“`/health` 成功返回预期目标版本”是管理员必须手动完成的前置检查，而不是安装器保证。命令顺序必须是“先完成应用更新并人工确认健康，再安装 updater”；健康检查失败、不可用或版本不符时请勿继续。这套操作只同步管理员已经在 WebUI 确认过的 Release，不会启用定时任务或无人值守更新。
 
 ### 生产首次安装
 
