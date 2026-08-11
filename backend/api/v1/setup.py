@@ -175,7 +175,7 @@ async def save_step(body: SaveStepRequest):
             message=f"已保存 {saved} 项配置",
         )
     except Exception:
-        logger.error("Setup 配置保存失败 / setup save failed", exc_info=True)
+        logger.exception("Setup 配置保存失败 / setup save failed")
         return error_response("配置保存失败，请稍后重试", status_code=500)
 
 

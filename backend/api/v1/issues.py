@@ -178,5 +178,5 @@ async def reanalyze_issue(
         task_id = await submit_issue_analysis_task(issue_info)
         return success_response(data={"task_id": task_id})
     except Exception:
-        logger.error("提交 Issue 分析任务失败 / submit issue analysis failed", exc_info=True)
+        logger.exception("提交 Issue 分析任务失败 / submit issue analysis failed")
         return error_response("提交分析任务失败，请稍后重试", status_code=500)
