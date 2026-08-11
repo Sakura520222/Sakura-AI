@@ -870,12 +870,7 @@ cmd_updater() {
             cmd_updater_install "$@"
             ;;
         start)
-            select_compose_from_deployment_mode
-            updater_backend start \
-                --state-dir "$UPDATER_STATE_DIR" \
-                --socket-path "$UPDATER_SOCKET_PATH" \
-                --compose-file "$COMPOSE_FILE" \
-                --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE" "$@"
+            ensure_updater_running "$@"
             ;;
         stop|status|is-running)
             updater_backend "$action" \

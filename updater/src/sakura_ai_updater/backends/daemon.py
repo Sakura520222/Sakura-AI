@@ -80,6 +80,10 @@ class PrivilegeError(RuntimeError):
     """权限不足（生产 install/start 必须 root）。"""
 
 
+class UnsafeDeploymentPathError(RuntimeError):
+    """生产 updater 的可执行文件或部署输入不在受信任的 root 路径中。"""
+
+
 def _read_proc_cmdline(pid: int) -> tuple[str, ...]:
     """读取 ``/proc/<pid>/cmdline``（NUL-separated argv）。
 
@@ -319,6 +323,84 @@ class DaemonBackend:
         if geteuid() != 0:
             raise PrivilegeError(f"{action} requires root privileges; run as root or sudo")
 
+    @staticmethod
+    def _trusted_file(path: str, label: str, *, exact_mode: int | None = None) -> str:
+        """验证 root daemon 将读取或执行的文件及其完整目录链。
+
+        ``lstat`` 检查每一级以拒绝 symlink。文件必须 root-owned，且 group/other
+        不可写；敏感部署状态还可要求精确 mode。所有父目录直到文件系统根都必须
+        root-owned 且 group/other 不可写，避免普通用户通过 rename/replace 在校验后
+        替换 Compose、deployment.env 或 updater binary。
+        """
+
+        absolute = os.path.abspath(path)
+        try:
+            file_stat = os.lstat(absolute)
+        except OSError as exc:
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: cannot lstat {absolute!r}: {exc}"
+            ) from exc
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: {absolute!r} must be a regular file, not a symlink"
+            )
+        if file_stat.st_uid != 0:
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: {absolute!r} must be owned by root"
+            )
+        mode = stat.S_IMODE(file_stat.st_mode)
+        if mode & 0o022:
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: {absolute!r} must not be group/other writable"
+            )
+        if exact_mode is not None and mode != exact_mode:
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: {absolute!r} must have mode {exact_mode:04o}"
+            )
+
+        directory = os.path.dirname(absolute)
+        while True:
+            try:
+                directory_stat = os.lstat(directory)
+            except OSError as exc:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label} parent: cannot lstat {directory!r}: {exc}"
+                ) from exc
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label} parent: {directory!r} must be a directory, not a symlink"
+                )
+            if directory_stat.st_uid != 0:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label} parent: {directory!r} must be owned by root"
+                )
+            if stat.S_IMODE(directory_stat.st_mode) & 0o022:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label} parent: {directory!r} must not be group/other writable"
+                )
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                break
+            directory = parent
+        return absolute
+
+    def _validate_production_paths(self) -> None:
+        """生产启动前冻结为已验证的绝对路径；开发模式不会调用。"""
+
+        self.binary_path = self._trusted_file(self.binary_path, "updater binary")
+        if self.compose_file is None and self.deployment_env is None:
+            return
+        if self.compose_file is None or self.deployment_env is None:
+            raise UnsafeDeploymentPathError(
+                "compose_file and deployment_env must be configured together"
+            )
+        self.compose_file = self._trusted_file(self.compose_file, "Compose file")
+        self.deployment_env = self._trusted_file(
+            self.deployment_env,
+            "deployment.env",
+            exact_mode=0o600,
+        )
+
     # ------------------------------------------------------------- bootstrap
 
     def ensure_group(self) -> None:
@@ -494,9 +576,11 @@ class DaemonBackend:
         if self.is_running():
             return
         argv_exe, identity = self._resolve_executable()
-        argv = argv_exe + self._serve_args()
         if identity == IDENTITY_BINARY:
             self._require_root("start")
+            self._validate_production_paths()
+            argv_exe = [self.binary_path]
+        argv = argv_exe + self._serve_args()
         os.makedirs(self.state_dir, exist_ok=True)
         log_path = self._log_path
         with open(log_path, "ab") as logf:

@@ -692,6 +692,13 @@ updater_backend() { echo "BACKEND:$@" >> "$FAKE_LOG"; }
 cmd_updater status --extra-opt 2>/dev/null
 grep -q "BACKEND:status" "$FAKE_LOG" && report 0 "S7: cmd_updater 透传 action" || report 1 "S7"
 
+# S8: start 必须复用 ensure 路径，在 /run 被重启清空后重新执行 install bootstrap。
+ensure_updater_running() { echo "ENSURE:$*" >> "$FAKE_LOG"; }
+: > "$FAKE_LOG"
+cmd_updater start --extra-opt 2>/dev/null
+grep -q "ENSURE:--extra-opt" "$FAKE_LOG" \
+    && report 0 "S8: cmd_updater start 复用 bootstrap ensure" || report 1 "S8"
+
 # --- missing failure matrix: real lock contention ---
 run_real_flock_busy_case() {
     local case_dir="$TMPDIR/real-flock-busy"

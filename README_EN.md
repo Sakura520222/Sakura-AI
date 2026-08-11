@@ -156,16 +156,20 @@ Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for 
 **Linux full deployment** (Web + MySQL + Redis + Host Updater):
 
 ```bash
-mkdir sakura-ai && cd sakura-ai
-mkdir -p docker
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  -o docker/docker-compose.prod.yml
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh -o start.sh
-chmod +x start.sh
+sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  --output /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
+  --output /opt/sakura-ai/start.sh
+sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo chmod 0755 /opt/sakura-ai/start.sh
+cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+`/opt/sakura-ai` and its Compose definition are managed by root so the persistent root updater never executes deployment files that an unprivileged account can replace. This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
 **Web image only** (bring your own MySQL/Redis):
 
@@ -190,7 +194,7 @@ pip install -r requirements.txt
 python -m backend.main
 ```
 
-> Deployment details (image tags, pinned versions, GitHub App creation, database setup, full Setup Wizard flow, Host Updater auto-update daemon, upgrade and password rotation) are in the [Deployment Guide](docs/DEPLOYMENT.md) (Chinese).
+> Deployment details (image tags, pinned versions, GitHub App creation, database setup, full Setup Wizard flow, Host Updater daemon, upgrade and password rotation) are in the [Deployment Guide](docs/DEPLOYMENT.md) (Chinese).
 
 ---
 

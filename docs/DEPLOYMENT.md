@@ -1,6 +1,6 @@
 # 部署指南
 
-> Sakura AI 完整部署流程：Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard 与 Host Updater 自动更新守护进程。
+> Sakura AI 完整部署流程：Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard 与 Host Updater 守护进程。
 
 ← [文档索引](README.md) · [README](../README.md)
 
@@ -27,16 +27,20 @@
 **Linux（包含 Host Updater，推荐）**：
 
 ```bash
-mkdir sakura-ai && cd sakura-ai
-mkdir -p docker
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  -o docker/docker-compose.prod.yml
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh -o start.sh
-chmod +x start.sh
+sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
+  --output /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo curl --fail --location \
+  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
+  --output /opt/sakura-ai/start.sh
+sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
+sudo chmod 0755 /opt/sakura-ai/start.sh
+cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`start.sh --prod` 会生成权限为 `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+推荐路径固定为 root 管理的 `/opt/sakura-ai`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
 
 **macOS（仅容器，不包含 Host Updater）**：
 
@@ -275,7 +279,7 @@ WebUI：`https://your-domain.com/`
 
 ---
 
-## 八、Host Updater 守护进程（自动更新）
+## 八、Host Updater 守护进程
 
 Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认更新后，Host Updater 执行预检、拉取镜像、原子更新部署状态、重建容器并校验新版本健康状态。它不会无人值守安装更新。
 
@@ -308,20 +312,7 @@ sudo ./start.sh updater start     # 启动守护进程
 
 `:latest` 不是具体版本。以上来源都无法确定具体版本时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
 
-### 现有 Curl + Compose 部署启用 WebUI 更新
-
-如果之前按旧 README 只下载了 `docker-compose.prod.yml`，可在原部署目录补充 `start.sh`，保留原 `.deploy/deployment.env` 和所有 Compose volumes：
-
-```bash
-curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh -o start.sh
-chmod +x start.sh
-sudo ./start.sh updater install
-sudo ./start.sh updater start
-```
-
-当 `SAKURA_AI_IMAGE=:latest` 时，执行 `install` 前 Web 容器必须已健康运行，以便从 `/health` 取得实际版本并下载严格匹配的 updater。完成后刷新 WebUI 版本管理器，应显示 updater 已连接并允许超级管理员执行预检和更新。
-
-**state directory 与 binary 校验**：state directory 首次创建为 root-owned `0700`。如果目录已存在（如从旧版升级），只要 owner 为 root 且 group/other 无写权限就会自动 harden 到 `0700`；owner 非 root、group/other 可写或目录是 symlink 时 fail-closed。binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。binary 为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
+**state directory 与 binary 校验**：state directory 首次创建为 root-owned `0700`。重复执行安装时，只要现有目录 owner 为 root 且 group/other 无写权限就会自动 harden 到 `0700`；owner 非 root、group/other 可写或目录是 symlink 时 fail-closed。binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。binary 为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
 
 **安装失败保护**（两个阶段）：
 
@@ -346,7 +337,8 @@ SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater st
 ### 安全边界
 
 - Web 容器通过只读挂载 `/run/sakura-ai` 目录（Unix Domain Socket）与 updater 通信，**不挂载 `docker.sock`**
-- updater 不依赖 systemd 或 cron 自启；宿主机重启后请运行 `sudo ./start.sh updater start`，或再次执行 `sudo ./start.sh --prod` 兜底恢复。这只恢复更新服务，不会自动安装应用更新
+- 生产部署必须位于 root-owned、group/other 不可写的目录链中；推荐固定使用 `/opt/sakura-ai`。updater 启动时会对 binary、Compose 和 `deployment.env` 逐级 `lstat` 并 fail-closed，拒绝 symlink、非 root owner、共享写权限或非 `0600` 的部署状态
+- updater 不依赖 systemd 或 cron 自启；宿主机重启后，在 `/opt/sakura-ai` 运行 `sudo ./start.sh updater start`，或再次执行 `sudo ./start.sh --prod`。`start` 会重新创建 tmpfs 中消失的 `/run/sakura-ai` 后再拉起 daemon；这只恢复更新服务，不会自动安装应用更新
 
 ---
 
