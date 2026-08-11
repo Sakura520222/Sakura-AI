@@ -364,9 +364,10 @@ async def test_db_connection(
             "success": result.get("success", False),
             "message": result.get("message", ""),
         }
-    except Exception as e:
-        logger.error("测试数据库连接失败: {}", e)
-        return {"success": False, "message": str(e)}
+    except Exception:
+        # 不向外部暴露异常详情，避免泄漏内部实现（堆栈/SQL/路径等）
+        logger.exception("测试数据库连接失败 / database connection test failed")
+        return {"success": False, "message": "数据库连接测试失败，请检查连接配置"}
 
 
 # ========== POST: 测试 ChromaDB 连接 ==========
@@ -388,6 +389,7 @@ async def test_chromadb(
             "message": f"ChromaDB 连接正常，共有 {len(collections)} 个 Collection",
             "data": {"collection_count": len(collections)},
         }
-    except Exception as e:
-        logger.error("测试 ChromaDB 连接失败: {}", e)
-        return {"success": False, "message": str(e)}
+    except Exception:
+        # 不向外部暴露异常详情，避免泄漏内部实现（堆栈/SQL/路径等）
+        logger.exception("测试 ChromaDB 连接失败 / chromadb connection test failed")
+        return {"success": False, "message": "ChromaDB 连接测试失败，请检查服务状态"}
