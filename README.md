@@ -153,18 +153,19 @@
 
 ### Docker 一键部署（推荐自建）
 
-**全量部署**（拉起 Web + MySQL + Redis）：
+**Linux 全量部署**（Web + MySQL + Redis + Host Updater）：
 
 ```bash
 mkdir sakura-ai && cd sakura-ai
-mkdir -p docker .deploy
+mkdir -p docker
 curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
   -o docker/docker-compose.prod.yml
-umask 077
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
-  "$(openssl rand -hex 32)" > .deploy/deployment.env
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh -o start.sh
+chmod +x start.sh
+sudo ./start.sh --prod
 ```
+
+该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
 
@@ -175,6 +176,8 @@ docker run -d -p 8000:8000 \
   -v $(pwd)/config:/app/config \
   ghcr.io/sakura520222/sakura-ai:latest
 ```
+
+此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
 
 首次启动后访问 `http://localhost:8000/setup`，按 Setup Wizard 完成配置。
 
