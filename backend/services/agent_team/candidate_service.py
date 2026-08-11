@@ -59,6 +59,10 @@ class AgentCandidate:
     filter_reason: str = ""
 
 
+class CandidateServiceError(RuntimeError):
+    """候选任务依赖服务失败，不向调用方暴露底层异常详情。"""
+
+
 class AgentTeamCandidateService:
     """从 Issue 分析和仓库扫描发现中筛选候选任务。"""
 
@@ -190,7 +194,8 @@ class AgentTeamCandidateService:
                 github_app.get_issue, repo_owner, repo_name, issue_number
             )
         except Exception as exc:
-            raise ValueError(f"GitHub API 调用失败，无法获取 Issue: {exc}") from exc
+            logger.exception("GitHub API 调用失败，无法获取 Issue")
+            raise CandidateServiceError("GitHub API 调用失败，无法获取 Issue") from exc
 
         if issue is None:
             raise ValueError(

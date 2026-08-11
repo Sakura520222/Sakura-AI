@@ -27,7 +27,10 @@ from backend.webui.sse import SSEManager
 
 @pytest.fixture
 def fresh_supervisor():
-    supervisor = DatabaseResetRuntimeSupervisor(background_timeout=0.05)
+    supervisor = DatabaseResetRuntimeSupervisor(
+        background_timeout=0.05,
+        request_timeout=0.05,
+    )
     token = bind_runtime_supervisor(supervisor)
     try:
         yield supervisor
@@ -212,6 +215,91 @@ async def test_main_request_middleware_binds_the_app_supervisor():
 
     assert result == "ok"
     assert observed == [supervisor, supervisor]
+
+
+@pytest.mark.asyncio
+async def test_quiesce_waits_for_existing_database_request(fresh_supervisor):
+    request_started = asyncio.Event()
+    release_request = asyncio.Event()
+    request_finished = asyncio.Event()
+
+    async def database_request():
+        lease = fresh_supervisor.register_request("test.request")
+        request_started.set()
+        try:
+            await release_request.wait()
+        finally:
+            fresh_supervisor.release_request(lease)
+            request_finished.set()
+
+    task = asyncio.create_task(database_request())
+    await request_started.wait()
+    quiesce = asyncio.create_task(
+        quiesce_database_reset_runtime(_app(fresh_supervisor))
+    )
+    await asyncio.sleep(0)
+
+    assert not quiesce.done()
+    assert not request_finished.is_set()
+
+    release_request.set()
+    await quiesce
+    await task
+
+    assert request_finished.is_set()
+    assert fresh_supervisor.quiesced
+
+
+@pytest.mark.asyncio
+async def test_quiesce_excludes_reset_request_own_database_lease(fresh_supervisor):
+    lease = fresh_supervisor.register_request("reset.request")
+    try:
+        await quiesce_database_reset_runtime(_app(fresh_supervisor))
+    finally:
+        fresh_supervisor.release_request(lease)
+
+    assert fresh_supervisor.quiesced
+
+
+@pytest.mark.asyncio
+async def test_quiesce_fails_closed_when_database_request_does_not_finish(
+    fresh_supervisor,
+):
+    stop = asyncio.Event()
+
+    async def database_request():
+        lease = fresh_supervisor.register_request("stuck.request")
+        try:
+            await stop.wait()
+        finally:
+            fresh_supervisor.release_request(lease)
+
+    task = asyncio.create_task(database_request())
+    await asyncio.sleep(0)
+
+    with pytest.raises(DatabaseResetRuntimeQuiesceError, match="stuck.request"):
+        await quiesce_database_reset_runtime(_app(fresh_supervisor))
+
+    assert not fresh_supervisor.quiesced
+    assert not fresh_supervisor.accepting
+    stop.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_main_request_middleware_rejects_new_request_after_gate_closes():
+    from backend import main
+
+    supervisor = DatabaseResetRuntimeSupervisor()
+    supervisor.begin_quiesce()
+    request = SimpleNamespace(app=_app(supervisor))
+    call_next = MagicMock()
+
+    response = await main.bind_database_reset_runtime(request, call_next)
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    call_next.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Typed updater client action error boundaries."""
 
 import pytest
+from httpx import Response
 
 from backend.services.updater_client import (
     UpdaterActionError,
@@ -60,3 +61,45 @@ async def test_action_paths_and_json_payload(monkeypatch):
         ("GET", "/v1/jobs/upd_1", None),
         ("GET", "/v1/jobs/upd_1/logs", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_action_requests_use_long_timeout_but_job_polling_stays_short(monkeypatch):
+    client = UpdaterClient(
+        socket_path="/tmp/unused.sock",
+        timeout=2.0,
+        action_timeout=90.0,
+    )
+    seen_timeouts: list[float] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout, **kwargs):
+            seen_timeouts.append(timeout)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def request(self, method, path, json=None):
+            return Response(
+                200,
+                json={
+                    "protocol_version": 1,
+                    "updater_version": "0.1.0",
+                    "data": {},
+                },
+            )
+
+    monkeypatch.setattr(
+        "backend.services.updater_client.httpx.AsyncClient", FakeAsyncClient
+    )
+
+    await client.check()
+    await client.preflight("3.1.0")
+    await client.update("3.1.0")
+    await client.get_job("upd_1")
+    await client.get_job_logs("upd_1")
+
+    assert seen_timeouts == [90.0, 90.0, 90.0, 2.0, 2.0]

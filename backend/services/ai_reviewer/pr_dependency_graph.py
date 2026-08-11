@@ -864,14 +864,33 @@ class PRDependencyGraphService:
         return system_prompt, user_message
 
     @staticmethod
+    def _extract_mermaid_fence(text: str) -> str | None:
+        """使用线性分隔符查找提取 Mermaid fence，避免正则回溯。"""
+        fence = "```mermaid"
+        search_start = 0
+        while True:
+            fence_start = text.find(fence, search_start)
+            if fence_start == -1:
+                return None
+            language_end = fence_start + len(fence)
+            code_start = text.find("\n", language_end)
+            if code_start == -1:
+                return None
+            if not text[language_end:code_start].strip():
+                break
+            search_start = language_end
+
+        code_end = text.find("```", code_start + 1)
+        if code_end == -1:
+            return None
+        return text[code_start + 1 : code_end].strip()
+
+    @staticmethod
     def _validate_mermaid(mermaid_text: str) -> str:
         """验证并提取 Mermaid 语法"""
-        # 从 markdown 代码块中提取
-        code_block_match = re.search(
-            r"```mermaid\s*\n(.*?)```", mermaid_text, re.DOTALL
-        )
-        if code_block_match:
-            mermaid_text = code_block_match.group(1).strip()
+        fenced_mermaid = PRDependencyGraphService._extract_mermaid_fence(mermaid_text)
+        if fenced_mermaid is not None:
+            mermaid_text = fenced_mermaid
 
         # 检查是否包含有效图类型声明
         if not re.search(r"^(graph|flowchart)\s+", mermaid_text, re.MULTILINE):
@@ -933,15 +952,18 @@ class PRDependencyGraphService:
         if not body:
             return None
 
-        pattern = re.escape(self.START_MARKER) + r"(.*?)" + re.escape(self.END_MARKER)
-        match = re.search(pattern, body, flags=re.DOTALL)
-        if not match:
+        marker_start = body.find(self.START_MARKER)
+        if marker_start == -1:
             return None
 
-        content = match.group(1).strip()
+        content_start = marker_start + len(self.START_MARKER)
+        marker_end = body.find(self.END_MARKER, content_start)
+        if marker_end == -1:
+            return None
+
+        content = body[content_start:marker_end].strip()
         if not content:
             return None
 
-        # 提取 Mermaid 代码块
-        code_match = re.search(r"```mermaid\s*\n(.*?)```", content, re.DOTALL)
-        return code_match.group(1).strip() if code_match else None
+        # 使用确定性的分隔符查找，避免在不受信任的 PR body 上进行回溯式正则匹配。
+        return self._extract_mermaid_fence(content)

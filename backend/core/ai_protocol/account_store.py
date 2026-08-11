@@ -184,6 +184,65 @@ def _role_binding_from_dict(data: dict[str, Any]) -> RoleBindingConfig | None:
     return RoleBindingConfig(primary=primary, fallback=fallback)
 
 
+def validate_role_bindings_payload(
+    payload: dict[str, Any],
+    account_ids: set[str],
+) -> dict[str, RoleBindingConfig]:
+    """Validate and normalize API-supplied role bindings.
+
+    Bindings are security-sensitive configuration: accepting a dangling account
+    reference makes the saved role silently unusable and can unexpectedly alter
+    its fallback behaviour.  Keep the accepted shape aligned with the runtime
+    resolver and reject malformed or unknown references before persistence.
+    """
+    supported_roles = {"main", "summary", "agent_team"}
+    result: dict[str, RoleBindingConfig] = {}
+
+    for raw_role, raw_binding in payload.items():
+        role = str(raw_role)
+        if role not in supported_roles:
+            raise ValueError(f"不支持的 AI 角色: {role}")
+        if not isinstance(raw_binding, dict):
+            raise ValueError(f"角色 {role} 的绑定必须是对象")
+
+        primary = raw_binding.get("primary")
+        fallback = raw_binding.get("fallback", [])
+        if not isinstance(primary, dict):
+            raise ValueError(f"角色 {role} 缺少有效的 primary 绑定")
+        if not isinstance(fallback, list) or any(
+            not isinstance(item, dict) for item in fallback
+        ):
+            raise ValueError(f"角色 {role} 的 fallback 必须是对象列表")
+
+        binding = _role_binding_from_dict(raw_binding)
+        if binding is None:
+            raise ValueError(f"角色 {role} 的绑定格式无效")
+
+        assignments = [binding.primary, *binding.fallback]
+        for assignment in assignments:
+            if not assignment.account or not assignment.model:
+                raise ValueError(f"角色 {role} 的账号和模型不能为空")
+
+            follows_main = (
+                assignment.account == "main" or assignment.model == "follow"
+            )
+            if follows_main:
+                if role == "main" or not (
+                    assignment.account == "main" and assignment.model == "follow"
+                ):
+                    raise ValueError(f"角色 {role} 的跟随绑定无效")
+                continue
+
+            if assignment.account not in account_ids:
+                raise ValueError(
+                    f"角色 {role} 引用了不存在的 AI 账号: {assignment.account}"
+                )
+
+        result[role] = binding
+
+    return result
+
+
 # =============================================================================
 # 数据库访问 / DB access (lazy import to avoid circular deps)
 # =============================================================================
@@ -431,4 +490,5 @@ __all__ = [
     "save_account",
     "save_role_bindings",
     "save_role_bindings_raw",
+    "validate_role_bindings_payload",
 ]
