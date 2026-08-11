@@ -40,7 +40,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-推荐路径固定为 root 管理的 `/opt/sakura-ai`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名，避免配置文件所在的 `docker/` 目录把网络和持久化卷错误命名为通用的 `docker_*`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
 
 **macOS（仅容器，不包含 Host Updater）**：
 
@@ -50,9 +50,9 @@ mkdir -p docker .deploy
 curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
   -o docker/docker-compose.prod.yml
 umask 077
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nSAKURA_DB_PASSWORD=%s\n' \
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%s\n' \
   "$(openssl rand -hex 32)" > .deploy/deployment.env
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
 **PowerShell（Windows）**：
@@ -66,9 +66,9 @@ Invoke-WebRequest `
   -OutFile "docker/docker-compose.prod.yml"
 $bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
 $dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
-@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "SAKURA_DB_PASSWORD=$dbPassword") |
+@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "COMPOSE_PROJECT_NAME=sakura-ai", "SAKURA_DB_PASSWORD=$dbPassword") |
   Set-Content -Encoding ascii .deploy/deployment.env
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
 macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新；请手动拉取目标镜像并重新运行 Compose。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机。
@@ -108,14 +108,14 @@ docker run -d `
 
 ```bash
 SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
-  docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+  docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
 **PowerShell（Windows）**：
 
 ```powershell
 $env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
-docker compose --env-file .deploy/deployment.env -f docker/docker-compose.prod.yml up -d
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 Remove-Item Env:SAKURA_AI_IMAGE
 ```
 
@@ -135,24 +135,12 @@ Remove-Item Env:SAKURA_AI_IMAGE
 - `connection.json` 与其它运行时文件不被触碰
 - 合并采用同目录原子替换并在批次失败时回滚；YAML 解析失败或无法安全处理的类型冲突 fail-closed，既有文件不会被覆盖
 
-首次升级旧卷时没有 baseline，会保守保留现有值并补入新键，然后写入 baseline。这样升级镜像既能获得默认策略/标签变化，又不会丢失管理员修改；请将 YAML 文件纳入你自己的备份流程（配置备份接口主要覆盖数据库 `app_config`）。
-
-### 1.6 升级与密码轮换
-
-已有旧部署若 `.deploy/deployment.env` 没有 `SAKURA_DB_PASSWORD`，`start.sh` 不会猜测或静默轮换（否则会与已有 `mysql_data` 凭据不一致）。请按以下步骤处理：
-
-1. 停止 Web 服务
-2. 生成新的 64 位十六进制密码
-3. 在 MySQL 中执行 `ALTER USER 'sakura'@'%' IDENTIFIED BY '<同一密码>'`
-4. 确认连接成功后，把同一值写入 `.deploy/deployment.env`（权限 0600）
-5. 用上面的 `--env-file` 命令启动
-
 ---
 
 ## 二、环境要求
 
 - Linux 服务器（推荐 Ubuntu 20.04+）
-- Docker 和 Docker Compose（镜像部署）/ Python 3.14+（源码部署）
+- Docker 和 Docker Compose V2（镜像部署；旧版 `docker-compose` V1 不受支持）/ Python 3.14+（源码部署）
 - 公网 IP 和域名
 - GitHub 账号
 - DeepSeek API Key（或其他 OpenAI 兼容 API）
