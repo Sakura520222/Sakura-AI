@@ -8,7 +8,7 @@
 
 | 文档 | 说明 |
 |---|---|
-| [部署指南](DEPLOYMENT.md) | Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard、Host Updater 自动更新 |
+| [部署指南](DEPLOYMENT.md) | Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard、WebUI 应用更新与 Host Updater 管理 |
 | [配置参考](CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
 | [技术架构](ARCHITECTURE.md) | 整体架构图、技术栈、代码结构、客户端、交互式知识图谱 |
 
