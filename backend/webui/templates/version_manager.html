@@ -197,6 +197,7 @@ const VM_I18N = {
   progressTarget: {{ _("version_manager.update_progress_target") | tojson }},
   progressFailedTitle: {{ _("version_manager.update_progress_failed_title") | tojson }},
   progressHealthMismatch: {{ _("version_manager.update_progress_health_mismatch") | tojson }},
+  progressPollFailed: {{ _("version_manager.update_progress_poll_failed") | tojson }},
   unknownState: {{ _("version_manager.unknown_state") | tojson }},
   emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
   missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
@@ -206,6 +207,7 @@ const VM_I18N = {
   errorLabels: {
     release_unavailable: {{ _("version_manager.error_release_unavailable") | tojson }},
     updater_not_ready: {{ _("version_manager.error_updater_not_ready") | tojson }},
+    job_not_found: {{ _("version_manager.error_job_not_found") | tojson }},
     protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_internal_error: {{ _("version_manager.error_internal") | tojson }}
@@ -346,14 +348,28 @@ function closeProgressModal() {
   progressPreviousFocus = null;
 }
 
-function markProgressError(message) {
+function markProgressError(message, {allowRetry = false} = {}) {
   if (progressJobId && sessionStorage.getItem(JOB_STORAGE_KEY) === progressJobId) {
     sessionStorage.removeItem(JOB_STORAGE_KEY);
   }
   progressTerminal = true;
   renderProgress({kind: 'error', message});
-  updateButton.disabled = false;
+  updateButton.disabled = !allowRetry;
   updateProgressClose.focus();
+}
+
+function isTransientPollError(error) {
+  // Fetch rejects with TypeError for connection loss. A 503 from the Backend
+  // proxy without a permanent updater code is also expected while the Web
+  // container or Host Updater restarts. All other HTTP/protocol failures are
+  // deterministic until user action.
+  const errorCode = error && error.body && error.body.error;
+  return Boolean(
+    error && (
+      (error.status === 503 && (!errorCode || errorCode === 'updater_unavailable')) ||
+      (error instanceof TypeError && typeof error.status !== 'number')
+    )
+  );
 }
 
 function scheduleRefresh() {
@@ -526,17 +542,27 @@ async function pollJob(jobId) {
         }
         if (job.state === 'failed') {
           const detail = job.error || job.error_code || VM_I18N.unknownState;
-          markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}));
+          markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});
           setStatus(vmFormat(VM_I18N.updateFailed, {error: detail}), 'error');
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 1500));
       } catch (error) {
-        // Web container restarts are expected during activation. Keep the job
-        // id and last progress value, and retry without marking the update failed.
-        setStatus(VM_I18N.reconnecting, null);
-        renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (isTransientPollError(error)) {
+          // Web container restarts are expected during activation. Keep the job
+          // id and last progress value, and retry without marking the update failed.
+          setStatus(VM_I18N.reconnecting, null);
+          renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+        const message = vmFormat(VM_I18N.progressPollFailed, {error: vmUpdaterError(error)});
+        markProgressError(message);
+        // A stale job is no longer active, so refresh readiness before deciding
+        // whether a new update may be started. Other permanent failures stay disabled.
+        if (error && error.status === 404) await loadReadiness();
+        setStatus(message, 'error');
+        return;
       }
     }
   })();
@@ -598,7 +624,7 @@ updateButton.addEventListener('click', async function() {
       await pollJob(error.body.job_id);
     } else {
       const message = vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message});
-      markProgressError(message);
+      markProgressError(message, {allowRetry: true});
       setStatus(message, 'error');
     }
   }

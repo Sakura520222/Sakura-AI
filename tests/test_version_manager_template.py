@@ -96,3 +96,38 @@ def test_version_manager_failure_path_is_closeable_without_refresh():
     assert "updateProgressModal.addEventListener('keydown'" in template
     assert "scheduleRefresh();" in template
     assert template.index("markProgressError(") < template.index("scheduleRefresh();")
+
+
+def test_polling_retries_only_transient_errors_and_recovers_stale_jobs():
+    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    assert "function isTransientPollError(error)" in template
+    assert "error.status === 503" in template
+    assert "errorCode === 'updater_unavailable'" in template
+    assert "error instanceof TypeError" in template
+    assert "if (isTransientPollError(error))" in template
+    assert "continue;" in template
+
+    permanent_error = template.index("const message = vmFormat(VM_I18N.progressPollFailed")
+    terminal = template.index("markProgressError(message);", permanent_error)
+    stale = template.index("error.status === 404", terminal)
+    readiness = template.index("await loadReadiness();", stale)
+    stop = template.index("return;", readiness)
+    assert permanent_error < terminal < stale < readiness < stop
+
+
+def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():
+    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    start = template.index("function markProgressError(")
+    end = template.index("function isTransientPollError(", start)
+    function = template[start:end]
+    assert "{allowRetry = false} = {}" in function
+    assert "updateButton.disabled = !allowRetry" in function
+    assert "updateButton.disabled = false" not in function
+
+    # Readiness and permanent polling failures use the safe disabled default.
+    assert "markProgressError(VM_I18N.preflightFailed);" in template
+    assert "markProgressError(message);" in template
+    # A failed accepted job or a failed submission may be retried; the click
+    # handler runs readiness again before any subsequent update submission.
+    assert "markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});" in template
+    assert "markProgressError(message, {allowRetry: true});" in template
