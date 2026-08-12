@@ -6,6 +6,50 @@
 <div class="max-w-4xl mx-auto px-4 py-6 space-y-6">
   <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">{{ _("version_manager.title") }}</h1>
 
+  {# Host updater progress dialog. It stays modal while the destructive operation is active. #}
+  <div id="update-progress-modal"
+       class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="update-progress-title"
+       aria-describedby="update-progress-description"
+       aria-hidden="true"
+       tabindex="-1">
+    <div id="update-progress-card"
+         class="w-full max-w-lg rounded-2xl border border-sakura-200/60 bg-white p-6 shadow-xl dark:border-sakura-800/40 dark:bg-gray-800">
+      <div class="flex items-start justify-between gap-4">
+        <h2 id="update-progress-title" class="text-lg font-semibold text-gray-800 dark:text-gray-100"></h2>
+        <span id="update-progress-percent" class="shrink-0 font-mono text-lg font-semibold text-sakura-600 dark:text-sakura-300">0%</span>
+      </div>
+      <p id="update-progress-target" class="mt-2 font-mono text-sm text-gray-500 dark:text-gray-400"></p>
+      <div id="update-progress-bar"
+           class="mt-5 h-3 overflow-hidden rounded-full bg-sakura-100 dark:bg-sakura-900/40"
+           role="progressbar"
+           aria-valuemin="0"
+           aria-valuemax="100"
+           aria-valuenow="0"
+           aria-labelledby="update-progress-title">
+        <div id="update-progress-fill" class="h-full w-0 rounded-full bg-sakura-500 transition-[width] duration-300 ease-out" style="width: 0%"></div>
+      </div>
+      <p id="update-progress-phase" class="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200"></p>
+      <p id="update-progress-description" class="mt-2 text-xs text-gray-500 dark:text-gray-400"></p>
+      <p id="update-progress-reconnect" class="mt-2 hidden text-sm text-sakura-600 dark:text-sakura-300" role="status" aria-live="polite"></p>
+      <p id="update-progress-error" class="mt-2 hidden text-sm text-red-600 dark:text-red-400" role="alert"></p>
+      <div class="mt-5 flex justify-end">
+        <button id="update-progress-close"
+                type="button"
+                class="hidden rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+          {{ _("version_manager.update_progress_close") }}
+        </button>
+      </div>
+    </div>
+  </div>
+  <style>
+    @media (prefers-reduced-motion: reduce) {
+      #update-progress-fill { transition: none !important; }
+    }
+  </style>
+
   {# 当前部署信息卡 / Current deployment card #}
   <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
     <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ _("version_manager.deployment") }}</h2>
@@ -116,6 +160,17 @@ const statusNode = document.getElementById('update-status');
 const readinessCard = document.getElementById('readiness-card');
 const readinessTarget = document.getElementById('readiness-target');
 const readinessChecks = document.getElementById('readiness-checks');
+const updateProgressModal = document.getElementById('update-progress-modal');
+const updateProgressTitle = document.getElementById('update-progress-title');
+const updateProgressTarget = document.getElementById('update-progress-target');
+const updateProgressPercent = document.getElementById('update-progress-percent');
+const updateProgressBar = document.getElementById('update-progress-bar');
+const updateProgressFill = document.getElementById('update-progress-fill');
+const updateProgressPhase = document.getElementById('update-progress-phase');
+const updateProgressDescription = document.getElementById('update-progress-description');
+const updateProgressReconnect = document.getElementById('update-progress-reconnect');
+const updateProgressError = document.getElementById('update-progress-error');
+const updateProgressClose = document.getElementById('update-progress-close');
 const VM_I18N = {
   checking: {{ _("version_manager.checking") | tojson }},
   preflight: {{ _("version_manager.preflight_running") | tojson }},
@@ -133,6 +188,16 @@ const VM_I18N = {
   updateSuccess: {{ _("version_manager.update_success") | tojson }},
   updateFailed: {{ _("version_manager.update_failed") | tojson }},
   updateSubmitFailed: {{ _("version_manager.update_submit_failed") | tojson }},
+  progressTitle: {{ _("version_manager.update_progress_title") | tojson }},
+  progressPreparing: {{ _("version_manager.update_progress_preparing") | tojson }},
+  progressDescription: {{ _("version_manager.update_progress_description") | tojson }},
+  progressReconnecting: {{ _("version_manager.update_progress_reconnecting") | tojson }},
+  progressRefreshing: {{ _("version_manager.update_progress_refreshing") | tojson }},
+  progressClose: {{ _("version_manager.update_progress_close") | tojson }},
+  progressTarget: {{ _("version_manager.update_progress_target") | tojson }},
+  progressFailedTitle: {{ _("version_manager.update_progress_failed_title") | tojson }},
+  progressHealthMismatch: {{ _("version_manager.update_progress_health_mismatch") | tojson }},
+  progressPollFailed: {{ _("version_manager.update_progress_poll_failed") | tojson }},
   unknownState: {{ _("version_manager.unknown_state") | tojson }},
   emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
   missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
@@ -142,6 +207,7 @@ const VM_I18N = {
   errorLabels: {
     release_unavailable: {{ _("version_manager.error_release_unavailable") | tojson }},
     updater_not_ready: {{ _("version_manager.error_updater_not_ready") | tojson }},
+    job_not_found: {{ _("version_manager.error_job_not_found") | tojson }},
     protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_internal_error: {{ _("version_manager.error_internal") | tojson }}
@@ -186,6 +252,133 @@ const VM_I18N = {
   success: {{ _("common.success") | tojson }},
   error: {{ _("common.error") | tojson }}
 };
+
+// Host Updater exposes discrete milestones rather than byte-level transfer
+// progress. Keep this mapping in one place and only ever move forward.
+const UPDATE_PROGRESS = Object.freeze({
+  submitted: 4,
+  checking: 12,
+  update_available: 20,
+  preflight: 32,
+  materialize_current_anchor: 42,
+  downloading: 58,
+  activating: 74,
+  restarting: 86,
+  health_checking: 94,
+  success: 100,
+  complete: 100
+});
+let lastProgress = 0;
+let progressTargetVersion = '';
+let progressJobId = '';
+let progressTerminal = false;
+let progressPreviousFocus = null;
+let refreshTimer = null;
+let activePoll = null;
+
+function setUpdateProgress(next) {
+  const numeric = Number.isFinite(Number(next)) ? Number(next) : lastProgress;
+  lastProgress = Math.max(lastProgress, Math.min(100, numeric));
+  updateProgressPercent.textContent = lastProgress + '%';
+  updateProgressBar.setAttribute('aria-valuenow', String(lastProgress));
+  updateProgressFill.style.width = lastProgress + '%';
+  return lastProgress;
+}
+
+function progressForJob(job) {
+  if (!job || typeof job !== 'object') return lastProgress;
+  const stepProgress = UPDATE_PROGRESS[job.step];
+  if (typeof stepProgress === 'number') return stepProgress;
+  const stateProgress = UPDATE_PROGRESS[job.state];
+  return typeof stateProgress === 'number' ? stateProgress : lastProgress;
+}
+
+function renderProgress({state = '', step = '', kind = 'active', message = ''} = {}) {
+  const phase = step ? vmStepLabel(step) : (state ? vmStateLabel(state) : VM_I18N.progressPreparing);
+  updateProgressTitle.textContent = kind === 'error'
+    ? VM_I18N.progressFailedTitle
+    : kind === 'success'
+      ? vmFormat(VM_I18N.updateSuccess, {version: progressTargetVersion})
+      : VM_I18N.progressTitle;
+  updateProgressPhase.textContent = message || phase;
+  updateProgressDescription.textContent = kind === 'success' ? VM_I18N.progressRefreshing : VM_I18N.progressDescription;
+  updateProgressError.textContent = kind === 'error' ? message : '';
+  updateProgressError.classList.toggle('hidden', kind !== 'error');
+  updateProgressReconnect.classList.toggle('hidden', kind !== 'reconnecting');
+  if (kind === 'reconnecting') updateProgressReconnect.textContent = VM_I18N.progressReconnecting;
+  updateProgressFill.classList.toggle('bg-red-500', kind === 'error');
+  updateProgressFill.classList.toggle('bg-emerald-500', kind === 'success');
+  updateProgressFill.classList.toggle('bg-sakura-500', kind !== 'error' && kind !== 'success');
+  updateProgressModal.dataset.state = kind;
+  const canClose = kind === 'error' && progressTerminal;
+  updateProgressClose.classList.toggle('hidden', !canClose);
+  updateProgressClose.disabled = !canClose;
+}
+
+function openProgressModal({jobId = '', targetVersion = '', initial = false} = {}) {
+  if (!updateProgressModal.classList.contains('hidden')) return;
+  progressPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (initial) {
+    lastProgress = 0;
+    progressJobId = '';
+    progressTargetVersion = '';
+    setUpdateProgress(0);
+  }
+  progressJobId = jobId || progressJobId;
+  progressTargetVersion = targetVersion || progressTargetVersion;
+  progressTerminal = false;
+  document.body.classList.add('overflow-hidden');
+  updateProgressModal.classList.remove('hidden');
+  updateProgressModal.setAttribute('aria-hidden', 'false');
+  updateProgressTarget.textContent = progressTargetVersion
+    ? vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion})
+    : '';
+  updateProgressClose.classList.add('hidden');
+  updateProgressError.classList.add('hidden');
+  renderProgress({message: initial ? VM_I18N.progressPreparing : ''});
+  updateProgressModal.focus();
+}
+
+function closeProgressModal() {
+  if (!progressTerminal) return;
+  updateProgressModal.classList.add('hidden');
+  updateProgressModal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('overflow-hidden');
+  if (progressPreviousFocus && typeof progressPreviousFocus.focus === 'function') progressPreviousFocus.focus();
+  progressPreviousFocus = null;
+}
+
+function markProgressError(message, {allowRetry = false} = {}) {
+  if (progressJobId && sessionStorage.getItem(JOB_STORAGE_KEY) === progressJobId) {
+    sessionStorage.removeItem(JOB_STORAGE_KEY);
+  }
+  progressTerminal = true;
+  renderProgress({kind: 'error', message});
+  updateButton.disabled = !allowRetry;
+  updateProgressClose.focus();
+}
+
+function isTransientPollError(error) {
+  // Fetch rejects with TypeError for connection loss. A 503 from the Backend
+  // proxy without a permanent updater code is also expected while the Web
+  // container or Host Updater restarts. All other HTTP/protocol failures are
+  // deterministic until user action.
+  const errorCode = error && error.body && error.body.error;
+  return Boolean(
+    error && (
+      (error.status === 503 && (!errorCode || errorCode === 'updater_unavailable')) ||
+      (error instanceof TypeError && typeof error.status !== 'number')
+    )
+  );
+}
+
+function scheduleRefresh() {
+  if (refreshTimer !== null) return;
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    window.location.reload();
+  }, 1200);
+}
 
 function vmFormat(template, values) {
   return Object.entries(values || {}).reduce(
@@ -245,7 +438,10 @@ function showReadiness(data) {
     item.className = check.passed ? 'text-emerald-600' : 'text-amber-600';
     readinessChecks.appendChild(item);
   });
-  updateButton.disabled = payload.update_ready === false || payload.update_available === false;
+  const updateInProgress = !updateProgressModal.classList.contains('hidden') && !progressTerminal;
+  if (!updateInProgress) {
+    updateButton.disabled = payload.update_ready === false || payload.update_available === false;
+  }
   return payload;
 }
 
@@ -308,47 +504,109 @@ async function verifyHealth(targetVersion) {
 }
 
 async function pollJob(jobId) {
-  setStatus(vmFormat(VM_I18N.reconnectingJob, {job_id: jobId}), null);
-  while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
-    try {
-      const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
-      const job = body && body.data ? body.data : body;
-      if (!job) throw new Error(VM_I18N.emptyJobResponse);
-      const state = vmStateLabel(job.state);
-      setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
-      if (job.state === 'success') {
-        const target = job.target_version;
-        if (target && await verifyHealth(target)) {
-          setStatus(vmFormat(VM_I18N.updateSuccess, {version: target}), 'ok');
-        } else {
-          setStatus(VM_I18N.healthMismatch, 'error');
+  if (activePoll) return activePoll;
+  activePoll = (async () => {
+    progressJobId = jobId;
+    openProgressModal({jobId});
+    updateButton.disabled = true;
+    setStatus(vmFormat(VM_I18N.reconnectingJob, {job_id: jobId}), null);
+    renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
+    while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
+      try {
+        const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
+        const job = body && body.data ? body.data : body;
+        if (!job) throw new Error(VM_I18N.emptyJobResponse);
+        if (job.target_version) {
+          progressTargetVersion = job.target_version;
+          updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion});
         }
-        sessionStorage.removeItem(JOB_STORAGE_KEY);
-        updateButton.disabled = false;
+        setUpdateProgress(progressForJob(job));
+        const state = vmStateLabel(job.state);
+        setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
+        renderProgress({state: job.state, step: job.step});
+        if (job.state === 'success' || job.state === 'complete') {
+          setUpdateProgress(UPDATE_PROGRESS.success);
+          const target = job.target_version || progressTargetVersion;
+          if (target && await verifyHealth(target)) {
+            sessionStorage.removeItem(JOB_STORAGE_KEY);
+            progressTerminal = true;
+            setStatus(vmFormat(VM_I18N.updateSuccess, {version: target}), 'ok');
+            renderProgress({kind: 'success', message: VM_I18N.progressRefreshing});
+            updateButton.disabled = false;
+            scheduleRefresh();
+          } else {
+            markProgressError(VM_I18N.progressHealthMismatch);
+            setStatus(VM_I18N.healthMismatch, 'error');
+          }
+          return;
+        }
+        if (job.state === 'failed') {
+          const detail = job.error || job.error_code || VM_I18N.unknownState;
+          markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});
+          setStatus(vmFormat(VM_I18N.updateFailed, {error: detail}), 'error');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      } catch (error) {
+        if (isTransientPollError(error)) {
+          // Web container restarts are expected during activation. Keep the job
+          // id and last progress value, and retry without marking the update failed.
+          setStatus(VM_I18N.reconnecting, null);
+          renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+        const message = vmFormat(VM_I18N.progressPollFailed, {error: vmUpdaterError(error)});
+        markProgressError(message);
+        // A stale job is no longer active, so refresh readiness before deciding
+        // whether a new update may be started. Other permanent failures stay disabled.
+        if (error && error.status === 404) await loadReadiness();
+        setStatus(message, 'error');
         return;
       }
-      if (job.state === 'failed') {
-        setStatus(vmFormat(VM_I18N.updateFailed, {error: job.error || job.error_code || VM_I18N.unknownState}), 'error');
-        sessionStorage.removeItem(JOB_STORAGE_KEY);
-        updateButton.disabled = false;
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    } catch (error) {
-      // Web container restarts are expected during activation.  Keep the job id
-      // and retry; only the host's terminal failed state is rendered as failed.
-      setStatus(VM_I18N.reconnecting, null);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
+  })();
+  try {
+    return await activePoll;
+  } finally {
+    activePoll = null;
   }
 }
 
+updateProgressClose.addEventListener('click', closeProgressModal);
+updateProgressModal.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && progressTerminal) {
+    event.preventDefault();
+    closeProgressModal();
+  } else if (event.key === 'Tab') {
+    // The active dialog intentionally has no dismiss action. Keep keyboard
+    // focus inside it until a terminal error exposes the sole close button.
+    event.preventDefault();
+    (progressTerminal ? updateProgressClose : updateProgressModal).focus();
+  }
+});
+
 updateButton.addEventListener('click', async function() {
-  const readiness = await loadReadiness();
-  const target = readiness && readiness.target && readiness.target.version;
-  if (!target || updateButton.disabled) return;
+  if (updateButton.disabled) return;
+  openProgressModal({initial: true});
+  setUpdateProgress(UPDATE_PROGRESS.submitted);
   updateButton.disabled = true;
   setStatus(VM_I18N.submitting, null);
+  renderProgress({message: VM_I18N.progressPreparing});
+  const readiness = await loadReadiness();
+  const target = readiness && readiness.target && readiness.target.version;
+  if (!target) {
+    markProgressError(vmFormat(VM_I18N.readinessError, {error: VM_I18N.noTarget}));
+    return;
+  }
+  if (readiness.update_ready === false || readiness.update_available === false) {
+    markProgressError(VM_I18N.preflightFailed);
+    setStatus(VM_I18N.preflightFailed, 'error');
+    return;
+  }
+  updateButton.disabled = true;
+  progressTargetVersion = target;
+  updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: target});
   try {
     const body = await requestJson('/version/update', {
       method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
@@ -356,22 +614,28 @@ updateButton.addEventListener('click', async function() {
     });
     const data = body && body.data ? body.data : body;
     if (!data.job_id) throw new Error(VM_I18N.missingJobId);
+    progressJobId = data.job_id;
     sessionStorage.setItem(JOB_STORAGE_KEY, data.job_id);
     await pollJob(data.job_id);
   } catch (error) {
     if (error.status === 409 && error.body && error.body.job_id) {
+      progressJobId = error.body.job_id;
       sessionStorage.setItem(JOB_STORAGE_KEY, error.body.job_id);
       await pollJob(error.body.job_id);
     } else {
-      setStatus(vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message}), 'error');
-      updateButton.disabled = false;
+      const message = vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message});
+      markProgressError(message, {allowRetry: true});
+      setStatus(message, 'error');
     }
   }
 });
 
 // A page reload after Web container restart resumes the same host job.
 const persistedJobId = sessionStorage.getItem(JOB_STORAGE_KEY);
-if (persistedJobId) pollJob(persistedJobId);
+if (persistedJobId) {
+  openProgressModal({jobId: persistedJobId});
+  pollJob(persistedJobId);
+}
 loadReadiness();
 </script>
 {% endblock %}
