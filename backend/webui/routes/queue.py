@@ -1,12 +1,12 @@
 """WebUI 审查队列监控路由"""
 
 import logging
-from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import get_time_service, parse_local_date_boundary
 from backend.models.database import PRReview
 from backend.webui.deps import (
     build_review_search_filter,
@@ -147,14 +147,18 @@ async def queue_list_fragment(
     # 日期范围
     if start_date:
         try:
-            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            sd = parse_local_date_boundary(start_date, get_time_service().zone)
             query = query.where(PRReview.created_at >= sd)
             count_query = count_query.where(PRReview.created_at >= sd)
         except ValueError:
             logger.warning("Invalid start_date format: %s", start_date)
     if end_date:
         try:
-            ed = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            ed = parse_local_date_boundary(
+                end_date,
+                get_time_service().zone,
+                exclusive_end=True,
+            )
             query = query.where(PRReview.created_at < ed)
             count_query = count_query.where(PRReview.created_at < ed)
         except ValueError:

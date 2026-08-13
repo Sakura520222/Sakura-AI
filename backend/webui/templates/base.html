@@ -15,7 +15,9 @@
             if (value == null || value === '') return '—';
             try {
                 return new Intl.DateTimeFormat(undefined, Object.assign({
-                    dateStyle: 'medium', timeStyle: 'medium',
+                    year: 'numeric', month: 'short', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    timeZoneName: 'longOffset',
                     timeZone: window.SAKURA_APP_TIMEZONE,
                 }, options || {})).format(new Date(value));
             } catch (_) { return String(value); }

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from backend.core.time_service import get_time_service, now_utc
+from backend.core.time_service import SystemClock, get_time_service
 
 APP_LOG_DIRECTORY = Path("logs")
 APP_LOG_RETENTION_DAYS = 10
@@ -24,7 +24,9 @@ _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 
 def _cleanup_expired_app_logs(_log_paths: list[str] | None = None) -> None:
     """删除超过保留期限的应用日志，包含历史启动与轮转文件。"""
-    retention_threshold = now_utc().timestamp() - APP_LOG_RETENTION_DAYS * 24 * 60 * 60
+    retention_threshold = (
+        SystemClock.now_utc().timestamp() - APP_LOG_RETENTION_DAYS * 24 * 60 * 60
+    )
     for log_path in APP_LOG_DIRECTORY.glob("app_*.log"):
         try:
             if log_path.stat().st_mtime < retention_threshold:
@@ -42,7 +44,7 @@ def _create_startup_log_file(
 ) -> Path:
     """为本次进程启动原子地分配一个新的日志文件。"""
     log_directory.mkdir(parents=True, exist_ok=True)
-    startup_time = started_at or now_utc()
+    startup_time = started_at or SystemClock.now_utc()
     if startup_time.tzinfo is None or startup_time.utcoffset() is None:
         raise ValueError("日志文件启动时间必须是 aware datetime")
     startup_time = startup_time.astimezone(UTC)
