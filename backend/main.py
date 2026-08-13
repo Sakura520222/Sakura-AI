@@ -28,6 +28,7 @@ from backend.core.bootstrap import (
 )
 from backend.core.config import Settings, get_settings
 from backend.core.time_service import (
+    SystemClock,
     format_rfc3339,
     get_time_service,
     initialize_time_service,
@@ -175,11 +176,13 @@ async def lifespan(app: FastAPI):
     runtime_context_token = None
     try:
         # 启动时
-        # Time points come from OS wall clock through TimeService; all elapsed
-        # values use the same injected monotonic clock.
-        startup_service = initialize_time_service(settings.app_timezone)
-        _startup_started_instant_utc = startup_service.now_utc()
-        _startup_started_monotonic = startup_service.monotonic()
+        # Startup measurements must not resolve the application timezone before
+        # its persisted configuration is available. Use one zone-independent
+        # clock for both instants and elapsed time, then initialize TimeService
+        # only after the database-backed app_timezone has loaded successfully.
+        startup_clock = SystemClock()
+        _startup_started_instant_utc = startup_clock.now_utc()
+        _startup_started_monotonic = startup_clock.monotonic()
         _startup_started_at = _startup_started_instant_utc.timestamp()
         logger.info("🚀 Sakura AI 启动中...")
 
@@ -248,7 +251,7 @@ async def lifespan(app: FastAPI):
                     await load_dynamic_configs_to_settings(required_keys={"app_timezone"})
                     # app_timezone is restart-required: this new process reads
                     # it once during bootstrap and freezes the resulting zone.
-                    startup_service = initialize_time_service(settings.app_timezone)
+                    initialize_time_service(settings.app_timezone)
                     logger.info("✅ 配置已从数据库加载到 Settings")
                 except Exception:
                     # A configured timezone is part of the process-wide time
@@ -441,8 +444,8 @@ async def lifespan(app: FastAPI):
             generate_setup_token()
 
         # 记录启动完成时间
-        _startup_finished_instant_utc = startup_service.now_utc()
-        _startup_finished_monotonic = startup_service.monotonic()
+        _startup_finished_instant_utc = startup_clock.now_utc()
+        _startup_finished_monotonic = startup_clock.monotonic()
         _startup_finished_at = _startup_finished_instant_utc.timestamp()
         _startup_duration = max(
             0.0,

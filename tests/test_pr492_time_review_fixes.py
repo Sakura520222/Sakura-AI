@@ -17,9 +17,13 @@ from backend.core.time_service import (
     start_of_local_day,
 )
 from backend.models.ai_usage_models import AIUsageRecord
+from backend.models.database import PRReview
 from backend.models.telegram_models import TelegramUser
 from backend.services import dashboard_stats_service, star_aid_service
-from backend.services.dashboard_stats_service import fetch_token_trend
+from backend.services.dashboard_stats_service import (
+    fetch_review_trend,
+    fetch_token_trend,
+)
 from backend.services.quota_service import QuotaService
 
 
@@ -150,6 +154,53 @@ async def test_token_trend_is_aggregated_in_sql_by_application_day(monkeypatch):
         )
 
     assert trend == [3, 18, 15]
+    sql = str(adapter.statements[-1]).lower()
+    assert "sum(" in sql
+    assert "case when" in sql
+
+
+@pytest.mark.asyncio
+async def test_review_trend_is_aggregated_in_sql_by_application_day(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    PRReview.__table__.create(engine)
+    service = TimeService("America/New_York")
+    monkeypatch.setattr(
+        dashboard_stats_service,
+        "get_time_service",
+        lambda: service,
+    )
+
+    records = (
+        (1, datetime(2026, 3, 8, 4, 30, tzinfo=UTC), "completed"),
+        (2, datetime(2026, 3, 8, 6, 30, tzinfo=UTC), "completed"),
+        (3, datetime(2026, 3, 8, 7, 30, tzinfo=UTC), "failed"),
+        (4, datetime(2026, 3, 9, 4, 30, tzinfo=UTC), "failed"),
+    )
+    with Session(engine) as session:
+        session.add_all(
+            [
+                PRReview(
+                    pr_id=pr_id,
+                    repo_name="owner/repo",
+                    repo_owner="owner",
+                    strategy="balanced",
+                    status=status,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+                for pr_id, created_at, status in records
+            ]
+        )
+        session.commit()
+        adapter = _AsyncSessionAdapter(session)
+        completed, failed = await fetch_review_trend(
+            adapter,
+            start_of_local_day(date(2026, 3, 7), service.zone),
+            ["03-07", "03-08", "03-09"],
+        )
+
+    assert completed == [1, 1, 0]
+    assert failed == [0, 1, 1]
     sql = str(adapter.statements[-1]).lower()
     assert "sum(" in sql
     assert "case when" in sql

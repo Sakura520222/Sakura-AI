@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend import main
-from backend.core import logging_bridge
+from backend.core import logging_bridge, time_service
 from backend.core.config import Settings
 from backend.main import (
     _format_duration,
@@ -205,6 +205,20 @@ async def test_lifespan_does_not_yield_when_required_timezone_load_fails(monkeyp
         get_runtime_supervisor()
 
 
+@pytest.mark.anyio
+async def test_bootstrap_lifespan_does_not_resolve_application_timezone(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "initialize_time_service",
+        Mock(side_effect=AssertionError("timezone resolved before configuration load")),
+    )
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+
+
 def _patch_minimal_lifespan_shutdown(monkeypatch):
     from backend.webui.sse import sse_manager
 
@@ -229,6 +243,42 @@ def _patch_minimal_lifespan_shutdown(monkeypatch):
     monkeypatch.setattr(
         "backend.services.embedding_service.close_reranker_service", no_op_close
     )
+
+
+@pytest.mark.anyio
+async def test_lifespan_resolves_persisted_timezone_after_database_load(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    database_url = "mysql+asyncmy://db/app"
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main.settings, "app_timezone", "system")
+
+    async def no_op_init_db():
+        return None
+
+    async def load_persisted_timezone(*, required_keys):
+        assert required_keys == {"app_timezone"}
+        main.settings.app_timezone = "UTC"
+
+    monkeypatch.setattr("backend.models.init_db", no_op_init_db)
+    monkeypatch.setattr(
+        "backend.core.config.load_dynamic_configs_to_settings",
+        load_persisted_timezone,
+    )
+    monkeypatch.setattr(
+        time_service,
+        "get_localzone_name",
+        Mock(side_effect=RuntimeError("system timezone unavailable")),
+    )
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert main.get_time_service().resolved_timezone == "UTC"
 
 
 @pytest.mark.anyio
