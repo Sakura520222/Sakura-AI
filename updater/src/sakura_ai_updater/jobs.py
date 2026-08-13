@@ -393,6 +393,7 @@ class JobOrchestrator:
             if manifest_version != stable.version or manifest_image != expected_tag_image:
                 raise ManifestInvalidError("stable target does not match release manifest")
             current_version = await self.deployment.resolve_current_version()
+            min_version = _value(manifest, "min_upgrade_from", "0.0.0")
             mode = self.deployment.read_deploy_mode()
             current_state = {}
             state_method = getattr(self.deployment, "current_state", None)
@@ -415,6 +416,13 @@ class JobOrchestrator:
                 self._check(
                     "protocol_compatible",
                     _updater_value(manifest, "protocol_version") == PROTOCOL_VERSION,
+                ),
+                self._check(
+                    "min_upgrade_from",
+                    _version_tuple(current_version) is not None
+                    and _version_tuple(min_version) is not None
+                    and _version_tuple(current_version) >= _version_tuple(min_version),
+                    f"{current_version} >= {min_version}",
                 ),
                 self._check("target_newer", target_newer, f"{stable.version} > {current_version}"),
                 self._check("already_current", digest_changed, "target digest differs"),

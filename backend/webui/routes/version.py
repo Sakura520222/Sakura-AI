@@ -372,7 +372,9 @@ async def updater_update(
                 "deployment",
                 job_id,
                 {
-                    "target_version": target,
+                    "target_version": (
+                        target_object.get("version") if target_object else target
+                    ),
                     "target_channel": target_object.get("channel") if target_object else None,
                     "target_revision": target_object.get("revision") if target_object else None,
                     "target_digest": target_object.get("digest") if target_object else None,

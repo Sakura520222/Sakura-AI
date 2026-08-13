@@ -149,6 +149,8 @@ jobs:
 
       - name: 按 digest 安全物化 channel 标签
         id: materialize
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           DIGEST="${{ steps.build.outputs.digest }}"
@@ -184,8 +186,28 @@ jobs:
           fi
           rm -f "$existing_error"
           if [ "${{ inputs.channel }}" = "development" ]; then
+            # Only the current develop head may advance edge.  A rerun of an
+            # older commit can reproduce its immutable digest, but must never
+            # roll the moving channel alias backward.
+            REMOTE_DEVELOP_REVISION=$(git ls-remote origin refs/heads/develop | awk '{print $1}')
+            [[ "$REMOTE_DEVELOP_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "unable to resolve the current develop head; refusing edge update" >&2
+              exit 1
+            }
+            if [ "$REMOTE_DEVELOP_REVISION" != "${{ steps.tags.outputs.revision }}" ]; then
+              echo "development source is not the current develop head; refusing edge rollback" >&2
+              exit 1
+            fi
             crane tag "$IMMUTABLE" edge
           elif [ "${{ inputs.channel }}" = "stable" ]; then
+            # Likewise, only the current latest stable Release may advance
+            # latest.  Serialization prevents concurrent writers, while this
+            # identity gate prevents an older serialized rerun from winning.
+            LATEST_RELEASE_TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName')
+            if [ "$LATEST_RELEASE_TAG" != "v${{ steps.tags.outputs.version }}" ]; then
+              echo "stable source is not the current latest Release; refusing latest rollback" >&2
+              exit 1
+            fi
             crane tag "$IMMUTABLE" latest
           else
             echo "unsupported channel; refusing alias materialization" >&2
