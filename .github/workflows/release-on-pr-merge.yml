@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-stable-writer
   cancel-in-progress: false   # 排队执行，避免后续 main push 取消进行中的稳定镜像发布
 
 jobs:

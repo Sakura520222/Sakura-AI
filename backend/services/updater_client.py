@@ -150,13 +150,29 @@ class UpdaterClient:
     async def check(self) -> dict:
         return await self._request("POST", "/v1/check")
 
-    async def preflight(self, target_version: str) -> dict:
+    async def preflight(
+        self,
+        target_version: str | None = None,
+        *,
+        target: dict | None = None,
+        confirm_channel_switch: bool = False,
+    ) -> dict:
+        body = {"target": target, "confirm_channel_switch": confirm_channel_switch} if target is not None else {"target_version": target_version}
         return await self._request(
-            "POST", "/v1/preflight", {"target_version": target_version}
+            "POST", "/v1/preflight", body
         )
 
-    async def update(self, target_version: str | None = None) -> dict:
-        body = {"target_version": target_version} if target_version is not None else {}
+    async def update(
+        self,
+        target_version: str | None = None,
+        *,
+        target: dict | None = None,
+        confirm_channel_switch: bool = False,
+    ) -> dict:
+        if target is not None:
+            body = {"target": target, "confirm_channel_switch": confirm_channel_switch}
+        else:
+            body = {"target_version": target_version} if target_version is not None else {}
         return await self._request("POST", "/v1/update", body)
 
     async def get_job(self, job_id: str) -> dict:

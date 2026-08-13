@@ -26,6 +26,7 @@ from backend.core.bootstrap import (
     is_bootstrap_mode,
     read_connection_config,
 )
+from backend.core.build_info import get_build_info
 from backend.core.config import Settings, get_settings
 from backend.core.time_service import (
     SystemClock,
@@ -580,6 +581,7 @@ async def health():
         "status": "healthy",
         "service": "Sakura AI",
         "version": __version__,
+        "build": get_build_info(),
         **startup_info,
     }
 

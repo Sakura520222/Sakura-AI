@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import pytest
 from fastapi.testclient import TestClient
 from sakura_ai_updater.ipc import create_app
 
@@ -67,6 +68,18 @@ def test_actions_without_orchestrator_are_not_success(tmp_path):
     assert response.status_code == 503
     assert response.json() == {"error": "updater_not_ready"}
     assert "protocol_version" not in response.json()
+
+
+@pytest.mark.parametrize("endpoint", ["/v1/preflight", "/v1/update"])
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}])
+def test_channel_switch_confirmation_requires_json_boolean(tmp_path, endpoint, value):
+    client = TestClient(create_app(str(tmp_path / "state.json"), orchestrator=_Orchestrator()))
+    response = client.post(
+        endpoint,
+        json={"target_version": "3.1.0", "confirm_channel_switch": value},
+    )
+    assert response.status_code == 422
+    assert response.json() == {"error": "invalid_confirm_channel_switch"}
 
 
 def test_conflict_and_preflight_errors_are_unwrapped():

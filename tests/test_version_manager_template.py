@@ -21,7 +21,7 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
     template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
     # The preflight result must put update_ready inside the envelope data that
     # showReadiness() actually reads; an outer sibling is silently ignored.
-    assert "checks: result.checks, update_ready: result.can_update" in template
+    assert "checks: result.checks, update_ready: result.can_update === true" in template
     assert "updateButton.disabled = payload.update_ready === false" in template
     for key in (
         "readinessError",
@@ -38,6 +38,10 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
         assert f"VM_I18N.{key}" in template
     assert "function vmUpdaterError(error)" in template
     assert "release_unavailable:" in template
+    assert "async function preflightRegistryTarget(target)" in template
+    assert "readiness = await preflightRegistryTarget(selectedRegistryTarget);" in template
+    assert template.count("preflightRegistryTarget(selectedRegistryTarget)") == 2
+    assert "if (selectedRegistryTarget && readiness.can_update !== true)" in template
 
 
 def test_version_manager_has_accessible_monotonic_progress_modal_and_refresh_gate():

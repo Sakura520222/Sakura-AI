@@ -384,8 +384,21 @@ class ImageAdapter:
             return status, {}
         return status, payload
 
-    async def health_check(self, target_version: str) -> None:
-        """Poll ``/health`` until HTTP 200 reports the target application version."""
+    async def health_check(self, target_version: str | dict[str, Any]) -> None:
+        """Poll ``/health`` until the expected version/build identity is live.
+
+        The string form remains the stable v1 compatibility API.  Development
+        updates pass ``{version, channel, revision}`` and require all three
+        fields to match.
+        """
+
+        if isinstance(target_version, dict):
+            expected_version = target_version.get("version")
+            expected_channel = target_version.get("channel")
+            expected_revision = target_version.get("revision")
+        else:
+            expected_version = target_version
+            expected_channel = expected_revision = None
 
         deadline = time.monotonic() + max(0.0, self.health_timeout)
         mismatch: Any = None
@@ -393,7 +406,7 @@ class ImageAdapter:
             remaining = deadline - time.monotonic()
             if remaining < 0:
                 if mismatch is not None:
-                    raise HealthCheckVersionMismatch(target_version, mismatch)
+                    raise HealthCheckVersionMismatch(str(expected_version), mismatch)
                 raise HealthCheckTimeout()
             request_timeout = max(0.05, min(remaining, 5.0))
             try:
@@ -405,12 +418,22 @@ class ImageAdapter:
                 status, payload = 0, {}
             if status == 200:
                 actual = payload.get("version")
-                if actual == target_version:
+                build = payload.get("build") if isinstance(payload.get("build"), dict) else {}
+                identity_ok = actual == expected_version
+                if expected_channel is not None:
+                    identity_ok = identity_ok and build.get("channel") == expected_channel
+                if expected_revision is not None:
+                    identity_ok = identity_ok and build.get("revision") == expected_revision
+                if identity_ok:
                     return
-                mismatch = actual
+                mismatch = {
+                    "version": actual,
+                    "channel": build.get("channel"),
+                    "revision": build.get("revision"),
+                }
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if mismatch is not None:
-                    raise HealthCheckVersionMismatch(target_version, mismatch)
+                    raise HealthCheckVersionMismatch(str(expected_version), mismatch)
                 raise HealthCheckTimeout()
             await asyncio.sleep(min(max(0.0, self.health_poll_interval), remaining))

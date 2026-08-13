@@ -9,6 +9,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: release-stable-writer
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: sakura520222/sakura-ai   # Docker 仓库名必须小写
 
@@ -18,7 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
-      missing: ${{ steps.check.outputs.missing }}
+      version_missing: ${{ steps.check.outputs.version_missing }}
+      latest_needs_repair: ${{ steps.check.outputs.latest_needs_repair }}
+      version_digest: ${{ steps.check.outputs.version_digest }}
+      latest_digest: ${{ steps.check.outputs.latest_digest }}
     steps:
       - name: 检出代码（含 tag）
         uses: actions/checkout@v6
@@ -49,15 +56,52 @@ jobs:
         run: |
           VERSION="${{ steps.release.outputs.version }}"
           TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:${IMAGE_NAME}:pull" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          VERSION_HEADERS=$(mktemp)
+          STATUS=$(curl -s -D "$VERSION_HEADERS" -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $TOKEN" \
             "https://ghcr.io/v2/${IMAGE_NAME}/manifests/v${VERSION}")
           echo "v${VERSION} manifest 状态: ${STATUS}"
           # 200 = 镜像已存在；仅 404 视为缺失可补建；
           # 401/403（鉴权）、429（限流）、5xx（GHCR 故障）均不重建，避免误建或掩盖问题
           case "${STATUS}" in
-            200) echo "missing=false" >> "$GITHUB_OUTPUT" ;;
-            404) echo "missing=true" >> "$GITHUB_OUTPUT" ;;
+            200)
+              VERSION_DIGEST=$(awk 'BEGIN{IGNORECASE=1} /^docker-content-digest:/ {gsub("\r", "", $2); print $2}' "$VERSION_HEADERS" | tail -n1)
+              if [ -z "$VERSION_DIGEST" ]; then
+                echo "stable version digest header missing; refusing backfill" >&2
+                exit 1
+              fi
+              LATEST_HEADERS=$(mktemp)
+              LATEST_STATUS=$(curl -s -D "$LATEST_HEADERS" -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://ghcr.io/v2/${IMAGE_NAME}/manifests/latest")
+              LATEST_DIGEST=$(awk 'BEGIN{IGNORECASE=1} /^docker-content-digest:/ {gsub("\r", "", $2); print $2}' "$LATEST_HEADERS" | tail -n1)
+              rm -f "$LATEST_HEADERS"
+              case "${LATEST_STATUS}" in
+                200)
+                  if [ -z "$LATEST_DIGEST" ]; then
+                    echo "stable latest digest header missing; refusing repair" >&2
+                    exit 1
+                  fi
+                  ;;
+                404) echo "latest manifest is missing; digest-only repair is allowed" >&2 ;;
+                401|403) echo "GHCR latest鉴权失败（${LATEST_STATUS}），跳过本次补偿" >&2; exit 1 ;;
+                429) echo "GHCR latest限流（429），跳过本次补偿" >&2; exit 1 ;;
+                5*) echo "GHCR latest暂时故障（${LATEST_STATUS}），跳过本次补偿" >&2; exit 1 ;;
+                *) echo "GHCR latest未知状态 ${LATEST_STATUS}，跳过本次补偿" >&2; exit 1 ;;
+              esac
+              echo "version_digest=$VERSION_DIGEST" >> "$GITHUB_OUTPUT"
+              echo "latest_digest=$LATEST_DIGEST" >> "$GITHUB_OUTPUT"
+              echo "version_missing=false" >> "$GITHUB_OUTPUT"
+              if [ "$LATEST_STATUS" = "200" ] && [ "$VERSION_DIGEST" = "$LATEST_DIGEST" ]; then
+                echo "latest_needs_repair=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "latest_needs_repair=true" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            404)
+              echo "version_missing=true" >> "$GITHUB_OUTPUT"
+              echo "latest_needs_repair=false" >> "$GITHUB_OUTPUT"
+              echo "version_digest=" >> "$GITHUB_OUTPUT"
+              echo "latest_digest=" >> "$GITHUB_OUTPUT"
+              ;;
             401|403) echo "GHCR 鉴权失败（401/403），跳过本次补偿" >&2; exit 1 ;;
             429) echo "GHCR 限流（429），跳过本次补偿" >&2; exit 1 ;;
             5*) echo "GHCR 暂时故障（${STATUS}），跳过本次补偿" >&2; exit 1 ;;
@@ -67,10 +111,44 @@ jobs:
   backfill:
     name: 补建缺失的稳定镜像
     needs: detect
-    if: needs.detect.outputs.missing == 'true'
+    if: needs.detect.outputs.version_missing == 'true'
     uses: ./.github/workflows/docker-publish.yml
     with:
       source_ref: refs/tags/v${{ needs.detect.outputs.version }}
       channel: stable
       version: ${{ needs.detect.outputs.version }}
     secrets: inherit
+
+  repair-latest:
+    name: 按现有 digest 修复稳定 latest
+    needs: detect
+    if: needs.detect.outputs.latest_needs_repair == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 复制稳定版本 digest 到 latest
+        env:
+          VERSION_DIGEST: ${{ needs.detect.outputs.version_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid stable version digest; refusing latest repair" >&2
+            exit 1
+          }
+          SOURCE="ghcr.io/${IMAGE_NAME}@${VERSION_DIGEST}"
+          TARGET="ghcr.io/${IMAGE_NAME}:latest"
+          crane copy "$SOURCE" "$TARGET"
+          ACTUAL=$(crane digest "$TARGET")
+          [[ "$ACTUAL" == "$VERSION_DIGEST" ]] || {
+            echo "latest digest verification failed: expected $VERSION_DIGEST, got $ACTUAL" >&2
+            exit 1
+          }
