@@ -247,7 +247,7 @@ class ImageAdapter:
         health_url: str = "http://localhost:8000/health",
         health_timeout: float = 90.0,
         health_poll_interval: float = 2.0,
-        command_timeout: float = 300.0,
+        command_timeout: float = 600.0,
     ) -> None:
         self.compose_file = compose_file
         self.deployment_env = deployment_env
