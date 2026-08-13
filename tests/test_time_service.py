@@ -8,6 +8,7 @@ from backend.core.time_service import (
     DateTimeLocalError,
     InvalidTimezoneError,
     TimeService,
+    datetime_local_fold,
     filename_timestamp,
     format_rfc3339,
     parse_datetime_local,
@@ -89,6 +90,23 @@ def test_datetime_local_gap_and_fold_require_explicit_fold():
     early = parse_datetime_local("2026-11-01T01:30", "America/New_York", fold=0)
     late = parse_datetime_local("2026-11-01T01:30", "America/New_York", fold=1)
     assert early < late
+
+
+def test_datetime_local_fold_preserves_repeated_hour_instant():
+    assert (
+        datetime_local_fold(
+            datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
+            "America/New_York",
+        )
+        == 0
+    )
+    assert (
+        datetime_local_fold(
+            datetime(2026, 11, 1, 6, 30, tzinfo=UTC),
+            "America/New_York",
+        )
+        == 1
+    )
 
 
 def test_filename_timestamp_uses_local_calendar_offset_and_zone():

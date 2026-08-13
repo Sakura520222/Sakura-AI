@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from backend.core.time_service import (
+    datetime_local_fold as get_datetime_local_fold,
+)
+from backend.core.time_service import (
     datetime_local_value,
     get_time_service,
     parse_rfc3339,
@@ -58,6 +61,12 @@ def datetime_local(value: datetime | None) -> str:
     return datetime_local_value(value, get_time_service().zone)
 
 
+def datetime_local_fold(value: datetime | None) -> int | str:
+    if value is None:
+        return ""
+    return get_datetime_local_fold(value, get_time_service().zone)
+
+
 def register_time_filters(environment) -> None:
     environment.filters.update(
         {
@@ -65,5 +74,6 @@ def register_time_filters(environment) -> None:
             "format_datetime_short": format_datetime_short,
             "format_date": format_date,
             "datetime_local": datetime_local,
+            "datetime_local_fold": datetime_local_fold,
         }
     )

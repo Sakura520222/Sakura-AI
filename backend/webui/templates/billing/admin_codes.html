@@ -66,7 +66,7 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for code in codes %}
-                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at|datetime_local if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
+                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at|datetime_local if code.expires_at else "", "expires_at_fold": code.expires_at|datetime_local_fold if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
                     <td class="px-4 py-4">
                         <input type="checkbox" class="code-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                                value="{{ code.id }}" data-used="{{ code.used_count }}" onchange="updateBatchBar()">
@@ -283,6 +283,10 @@ function openEditCodeModal(codeJson) {
         document.getElementById('edit-code-form').action = '/billing/admin/codes/' + code.id + '/edit';
         document.getElementById('edit-code-status').value = code.status;
         document.getElementById('edit-code-expires').value = code.expires_at || '';
+        document.getElementById('edit-code-expires-fold').value =
+            code.expires_at_fold === 0 || code.expires_at_fold === 1
+                ? String(code.expires_at_fold)
+                : '';
         document.getElementById('edit-code-max-uses').value = code.max_uses;
         document.getElementById('edit-code-plan').value = code.plan_id;
         document.getElementById('edit-code-modal').classList.remove('hidden');
