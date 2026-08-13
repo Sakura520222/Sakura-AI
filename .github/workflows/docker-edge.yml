@@ -1,12 +1,17 @@
-name: Docker edge 镜像
+name: Docker development 镜像
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
   workflow_dispatch:
+    inputs:
+      confirm_branch:
+        description: "必须为 develop 分支手动运行"
+        required: true
+        type: string
 
 concurrency:
-  group: docker-edge
+  group: docker-development
   cancel-in-progress: true   # edge 为最新提交预览，旧运行直接取消
 
 permissions:
@@ -15,10 +20,11 @@ permissions:
 
 jobs:
   publish-edge:
-    name: 发布 edge 镜像
+    name: 发布 development 镜像
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || inputs.confirm_branch == 'develop')
     uses: ./.github/workflows/docker-publish.yml
     with:
       source_ref: ${{ github.sha }}   # 必须用不可变 SHA，不能传 main
-      channel: edge
+      channel: development
       sync_dockerhub: true
     secrets: inherit

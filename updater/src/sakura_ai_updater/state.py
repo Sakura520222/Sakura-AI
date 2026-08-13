@@ -56,6 +56,10 @@ class JobState:
     from_digest: str | None = None
     target_version: str | None = None
     target_image: str | None = None
+    target_channel: str | None = None
+    target_revision: str | None = None
+    target_digest: str | None = None
+    target_tag: str | None = None
     state: str = "idle"
     step: str | None = None
     started_at: str | None = None

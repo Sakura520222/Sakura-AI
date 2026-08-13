@@ -119,6 +119,21 @@
     <ul id="readiness-checks" class="mt-3 space-y-1 text-xs text-gray-500"></ul>
   </section>
 
+  <section id="registry-catalog" class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6" aria-labelledby="registry-catalog-title">
+    <div class="flex items-center justify-between gap-3">
+      <h2 id="registry-catalog-title" class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.registry_catalog") }}</h2>
+      <span id="registry-catalog-status" class="text-xs text-gray-500" role="status" aria-live="polite"></span>
+    </div>
+    <div id="registry-tabs" class="mt-4 flex gap-2" role="tablist" aria-label="{{ _("version_manager.channels") }}">
+      <button id="registry-tab-stable" type="button" role="tab" aria-selected="true" aria-controls="registry-panel-stable" class="rounded-xl border px-3 py-2 text-sm">{{ _("version_manager.channel_stable") }}</button>
+      <button id="registry-tab-development" type="button" role="tab" aria-selected="false" aria-controls="registry-panel-development" class="rounded-xl border px-3 py-2 text-sm">{{ _("version_manager.channel_development") }}</button>
+      <button id="registry-tab-other" type="button" role="tab" aria-selected="false" aria-controls="registry-panel-other" class="rounded-xl border px-3 py-2 text-sm">{{ _("version_manager.channel_other") }}</button>
+    </div>
+    <div id="registry-panel-stable" role="tabpanel" aria-labelledby="registry-tab-stable" class="mt-4"></div>
+    <div id="registry-panel-development" role="tabpanel" aria-labelledby="registry-tab-development" class="mt-4 hidden"></div>
+    <div id="registry-panel-other" role="tabpanel" aria-labelledby="registry-tab-other" class="mt-4 hidden"></div>
+  </section>
+
   {# Release 列表 / Release list（已按 SemVer 降序） #}
   <section class="space-y-4">
     <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.release_history") }}</h2>
@@ -152,6 +167,7 @@
 // CSRF token 从 template context 注入（navbar restart 同款模式）。所有更新请求
 // 只走 Backend proxy；浏览器永远不接触 UDS 或宿主 Docker。
 const CSRF_TOKEN = "{{ csrf_token }}";
+const CURRENT_BUILD_CHANNEL = {{ (version_info.build or {}).channel | tojson }};
 const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
 const recheckButton = document.getElementById('recheck-btn');
 const preflightButton = document.getElementById('preflight-btn');
@@ -168,6 +184,105 @@ const updateProgressBar = document.getElementById('update-progress-bar');
 const updateProgressFill = document.getElementById('update-progress-fill');
 const updateProgressPhase = document.getElementById('update-progress-phase');
 const updateProgressDescription = document.getElementById('update-progress-description');
+const registryStatus = document.getElementById('registry-catalog-status');
+const registryPanels = {
+  stable: document.getElementById('registry-panel-stable'),
+  development: document.getElementById('registry-panel-development'),
+  other: document.getElementById('registry-panel-other')
+};
+let registryCatalog = null;
+let selectedRegistryTarget = null;
+let selectedRegistryVersion = null;
+let selectedRegistryConfirmed = false;
+
+function registryText(value) {
+  return value === null || value === undefined || value === '' ? '—' : String(value);
+}
+
+function renderRegistryPanel(channel) {
+  const panel = registryPanels[channel];
+  while (panel.firstChild) panel.removeChild(panel.firstChild);
+  const images = registryCatalog && Array.isArray(registryCatalog.images)
+    ? registryCatalog.images.filter((item) => channel === 'other'
+      ? item.channel !== 'stable' && item.channel !== 'development'
+      : item.channel === channel) : [];
+  if (!images.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = VM_I18N.registryEmpty;
+    panel.appendChild(empty);
+    return;
+  }
+  images.forEach((image) => {
+    const row = document.createElement('article');
+    row.className = 'mb-3 rounded-xl border border-gray-200 p-3 dark:border-gray-700';
+    const title = document.createElement('div');
+    title.className = 'flex items-center justify-between gap-2';
+    const tag = document.createElement('span');
+    tag.className = 'font-mono text-sm';
+    tag.textContent = registryText(image.canonical_tag);
+    title.appendChild(tag);
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'rounded-lg border px-2 py-1 text-xs disabled:opacity-50';
+    action.disabled = image.selectable !== true || registryCatalog.stale === true;
+    action.textContent = image.selectable ? VM_I18N.registrySelect : (image.legacy_reason || VM_I18N.registryNotSelectable);
+    if (image.selectable) action.addEventListener('click', () => {
+      const candidate = {
+        channel: image.channel, version: image.version, revision: image.revision,
+        tag: image.canonical_tag, digest: image.digest
+      };
+      const channelSwitch = CURRENT_BUILD_CHANNEL !== image.channel;
+      const confirmation = image.channel === 'development'
+        ? VM_I18N.developmentRisk
+        : VM_I18N.channelSwitchRisk;
+      if ((image.channel === 'development' || channelSwitch) && !window.confirm(confirmation)) {
+        return;
+      }
+      selectedRegistryTarget = candidate;
+      selectedRegistryVersion = image.version;
+      selectedRegistryConfirmed = image.channel === 'development' || channelSwitch;
+      setStatus(VM_I18N.registrySelected, 'ok');
+      preflightButton.disabled = false;
+    });
+    title.appendChild(action);
+    row.appendChild(title);
+    const details = document.createElement('p');
+    details.className = 'mt-2 text-xs text-gray-500 break-all';
+    details.textContent = vmFormat(VM_I18N.registryDetails, {
+      version: registryText(image.version), revision: registryText(image.revision),
+      digest: registryText(image.digest), aliases: Array.isArray(image.tags) ? image.tags.join(', ') : '—'
+    });
+    row.appendChild(details);
+    panel.appendChild(row);
+  });
+}
+
+function selectRegistryTab(channel) {
+  Object.keys(registryPanels).forEach((name) => {
+    const panel = registryPanels[name];
+    const tab = document.getElementById('registry-tab-' + name);
+    const active = name === channel;
+    panel.classList.toggle('hidden', !active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+async function loadRegistryCatalog() {
+  try {
+    registryCatalog = await requestJson('/version/images', {headers: {'Accept': 'application/json'}});
+    registryStatus.textContent = registryCatalog.stale ? VM_I18N.registryStale : '';
+    renderRegistryPanel('stable');
+    renderRegistryPanel('development');
+    renderRegistryPanel('other');
+  } catch (error) {
+    registryStatus.textContent = VM_I18N.registryUnavailable;
+  }
+}
+
+document.getElementById('registry-tab-stable').addEventListener('click', () => selectRegistryTab('stable'));
+document.getElementById('registry-tab-development').addEventListener('click', () => selectRegistryTab('development'));
+document.getElementById('registry-tab-other').addEventListener('click', () => selectRegistryTab('other'));
 const updateProgressReconnect = document.getElementById('update-progress-reconnect');
 const updateProgressError = document.getElementById('update-progress-error');
 const updateProgressClose = document.getElementById('update-progress-close');
@@ -204,6 +319,15 @@ const VM_I18N = {
   httpError: {{ _("version_manager.http_error") | tojson }},
   reconnectingJob: {{ _("version_manager.reconnecting_job") | tojson }},
   errorDetail: {{ _("version_manager.error_detail") | tojson }},
+  registryEmpty: {{ _("version_manager.registry_empty") | tojson }},
+  registrySelect: {{ _("version_manager.registry_select") | tojson }},
+  registryNotSelectable: {{ _("version_manager.registry_not_selectable") | tojson }},
+  registryStale: {{ _("version_manager.registry_stale") | tojson }},
+  registryUnavailable: {{ _("version_manager.registry_unavailable") | tojson }},
+  registrySelected: {{ _("version_manager.registry_selected") | tojson }},
+  registryDetails: {{ _("version_manager.registry_details") | tojson }},
+  developmentRisk: {{ _("version_manager.development_risk") | tojson }},
+  channelSwitchRisk: {{ _("version_manager.channel_switch_risk") | tojson }},
   errorLabels: {
     release_unavailable: {{ _("version_manager.error_release_unavailable") | tojson }},
     updater_not_ready: {{ _("version_manager.error_updater_not_ready") | tojson }},
@@ -430,7 +554,7 @@ function showReadiness(data) {
   readinessTarget.textContent = target.version
     ? vmFormat(VM_I18N.target, {version: target.version}) + (target.image ? ' · ' + target.image : '')
     : VM_I18N.noTarget;
-  readinessChecks.innerHTML = '';
+  while (readinessChecks.firstChild) readinessChecks.removeChild(readinessChecks.firstChild);
   const checks = payload.readiness || payload.checks || {};
   (Array.isArray(checks) ? checks : Object.entries(checks).map(([name, passed]) => ({name, passed}))).forEach((check) => {
     const item = document.createElement('li');
@@ -475,15 +599,30 @@ recheckButton.addEventListener('click', async function() {
 });
 
 preflightButton.addEventListener('click', async function() {
-  const readiness = await loadReadiness();
-  const target = readiness && readiness.target && readiness.target.version;
+  let readiness;
+  if (selectedRegistryTarget) {
+    try {
+      const envelope = await requestJson('/version/preflight', {
+        method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: JSON.stringify({target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed})
+      });
+      readiness = envelope && envelope.data ? envelope.data : envelope;
+      showReadiness({data: {target: selectedRegistryTarget, checks: readiness.checks, update_ready: readiness.can_update}});
+    } catch (error) {
+      setStatus(vmFormat(VM_I18N.preflightError, {error: vmUpdaterError(error)}), 'error');
+      return;
+    }
+  } else {
+    readiness = await loadReadiness();
+  }
+  const target = selectedRegistryTarget ? selectedRegistryTarget.version : readiness && readiness.target && readiness.target.version;
   if (!target) return;
   this.disabled = true;
   setStatus(VM_I18N.preflight, null);
   try {
     const data = await requestJson('/version/preflight', {
       method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
-      body: JSON.stringify({target_version: target})
+      body: JSON.stringify(selectedRegistryTarget ? {target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed} : {target_version: selectedRegistryVersion || target})
     });
     const result = data && data.data ? data.data : data;
     showReadiness({data: {target: {version: target}, checks: result.checks, update_ready: result.can_update}});
@@ -494,12 +633,19 @@ preflightButton.addEventListener('click', async function() {
   finally { this.disabled = false; }
 });
 
-async function verifyHealth(targetVersion) {
+async function verifyHealth(expected) {
   try {
     const response = await fetch('/health', {headers: {'Accept': 'application/json'}, cache: 'no-store'});
     if (!response.ok) return false;
     const body = await response.json();
-    return body && (body.version === targetVersion || (body.data && body.data.version === targetVersion));
+    const target = typeof expected === 'string' ? {version: expected} : expected;
+    const payload = body && body.data ? body.data : body;
+    if (!payload || payload.version !== target.version) return false;
+    if (target.channel === 'stable' || target.channel === 'development') {
+      if (!payload.build || payload.build.channel !== target.channel) return false;
+      return target.channel !== 'development' || payload.build.revision === target.revision;
+    }
+    return true;
   } catch (_) { return false; }
 }
 
@@ -526,11 +672,15 @@ async function pollJob(jobId) {
         renderProgress({state: job.state, step: job.step});
         if (job.state === 'success' || job.state === 'complete') {
           setUpdateProgress(UPDATE_PROGRESS.success);
-          const target = job.target_version || progressTargetVersion;
+          const target = job.target_channel ? {
+            version: job.target_version || progressTargetVersion,
+            channel: job.target_channel,
+            revision: job.target_revision
+          } : (job.target_version || progressTargetVersion);
           if (target && await verifyHealth(target)) {
             sessionStorage.removeItem(JOB_STORAGE_KEY);
             progressTerminal = true;
-            setStatus(vmFormat(VM_I18N.updateSuccess, {version: target}), 'ok');
+            setStatus(vmFormat(VM_I18N.updateSuccess, {version: target.version || target}), 'ok');
             renderProgress({kind: 'success', message: VM_I18N.progressRefreshing});
             updateButton.disabled = false;
             scheduleRefresh();
@@ -593,8 +743,25 @@ updateButton.addEventListener('click', async function() {
   updateButton.disabled = true;
   setStatus(VM_I18N.submitting, null);
   renderProgress({message: VM_I18N.progressPreparing});
-  const readiness = await loadReadiness();
-  const target = readiness && readiness.target && readiness.target.version;
+  let readiness;
+  if (selectedRegistryTarget) {
+    try {
+      const envelope = await requestJson('/version/preflight', {
+        method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: JSON.stringify({target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed})
+      });
+      readiness = envelope && envelope.data ? envelope.data : envelope;
+      showReadiness({data: {target: selectedRegistryTarget, checks: readiness.checks, update_ready: readiness.can_update}});
+    } catch (error) {
+      const message = vmFormat(VM_I18N.updateSubmitFailed, {error: vmUpdaterError(error)});
+      markProgressError(message, {allowRetry: true});
+      setStatus(message, 'error');
+      return;
+    }
+  } else {
+    readiness = await loadReadiness();
+  }
+  const target = selectedRegistryTarget ? selectedRegistryTarget.version : readiness && readiness.target && readiness.target.version;
   if (!target) {
     markProgressError(vmFormat(VM_I18N.readinessError, {error: VM_I18N.noTarget}));
     return;
@@ -610,7 +777,7 @@ updateButton.addEventListener('click', async function() {
   try {
     const body = await requestJson('/version/update', {
       method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
-      body: JSON.stringify({target_version: target})
+      body: JSON.stringify(selectedRegistryTarget ? {target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed} : {target_version: selectedRegistryVersion || target})
     });
     const data = body && body.data ? body.data : body;
     if (!data.job_id) throw new Error(VM_I18N.missingJobId);
@@ -637,5 +804,6 @@ if (persistedJobId) {
   pollJob(persistedJobId);
 }
 loadReadiness();
+loadRegistryCatalog();
 </script>
 {% endblock %}

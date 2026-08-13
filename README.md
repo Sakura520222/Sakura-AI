@@ -194,6 +194,8 @@ docker run -d -p 8000:8000 \
 
 此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
 
+`latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
+
 首次启动后访问 `http://localhost:8000/setup`，按 Setup Wizard 完成配置。
 
 ### 源码开发

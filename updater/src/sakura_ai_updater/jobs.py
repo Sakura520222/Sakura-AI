@@ -12,6 +12,14 @@ from typing import Any
 from sakura_ai_updater import PROTOCOL_VERSION
 from sakura_ai_updater.deployment import DeploymentStateProvider
 from sakura_ai_updater.job_logs import JobLogStore
+from sakura_ai_updater.registry import (
+    DevelopmentTarget,
+    RegistryClient,
+    RegistryTargetError,
+    StableTarget,
+    parse_development_target,
+    parse_stable_target,
+)
 from sakura_ai_updater.release_client import (
     ManifestNotFoundError,
     ReleaseClient,
@@ -110,6 +118,22 @@ def _is_newer(target: str | None, current: str | None) -> bool:
     return target_tuple is not None and current_tuple is not None and target_tuple > current_tuple
 
 
+def _development(value: Any) -> DevelopmentTarget | None:
+    if isinstance(value, DevelopmentTarget):
+        return value
+    if isinstance(value, dict) and value.get("channel") == "development":
+        return parse_development_target(value)
+    return None
+
+
+def _stable(value: Any) -> StableTarget | None:
+    if isinstance(value, StableTarget):
+        return value
+    if isinstance(value, dict) and value.get("channel") == "stable":
+        return parse_stable_target(value)
+    return None
+
+
 class JobOrchestrator:
     """Coordinate check, preflight, and one asynchronous destructive update."""
 
@@ -180,6 +204,7 @@ class JobOrchestrator:
         target_version: str,
         target_image: str,
         channel: Any = None,
+        target_extra: dict[str, Any] | None = None,
     ) -> None:
         """Store a copy-only projection used by the synchronous status route."""
 
@@ -189,6 +214,8 @@ class JobOrchestrator:
         }
         if channel is not None:
             target["channel"] = channel
+        if target_extra:
+            target.update(target_extra)
         self.readiness_snapshot = {
             "update_ready": bool(can_update),
             "readiness": self._readiness_from_checks(checks),
@@ -274,8 +301,165 @@ class JobOrchestrator:
         usage = await asyncio.to_thread(shutil.disk_usage, directory)
         return usage.free >= self.disk_space_threshold, usage.free
 
-    async def preflight(self, target_version: str) -> dict[str, Any]:
+    async def preflight(
+        self,
+        target_version: str | dict[str, Any],
+        *,
+        confirm_channel_switch: bool = False,
+    ) -> dict[str, Any]:
         """Evaluate all readiness gates.  This method is read-only."""
+
+        development = _development(target_version)
+        stable = _stable(target_version)
+        if development is None and stable is None and isinstance(target_version, dict):
+            if target_version.get("channel") != "stable":
+                raise RegistryTargetError("unsupported target channel")
+            target_version = target_version.get("version")
+        if development is None and stable is None and not isinstance(target_version, str):
+            raise TargetNotFoundError("target")
+        if development is not None:
+            current_version = await self.deployment.resolve_current_version()
+            mode = self.deployment.read_deploy_mode()
+            checks: list[dict[str, Any]] = [
+                self._check("deployment_mode_image", mode == "image", f"mode={mode!r}"),
+                self._check("target_identity_valid", True),
+                self._check("target_channel_head", True),
+            ]
+            current_state = {}
+            state_method = getattr(self.deployment, "current_state", None)
+            if state_method is not None:
+                value = state_method()
+                current_state = await value if inspect.isawaitable(value) else value
+            current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
+            current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
+            same_channel = current_channel == "development"
+            digest_changed = current_digest != development.digest
+            # A missing/legacy health identity is not evidence that the host is
+            # already on the requested channel.  Require the explicit channel
+            # switch confirmation for every current channel except a positively
+            # identified development deployment.
+            requires_confirmation = current_channel != "development"
+            if same_channel or current_digest is not None:
+                checks.append(self._check("target_newer", digest_changed, "development digest differs"))
+            else:
+                checks.append(self._check("target_newer", True, "channel switch"))
+            checks.append(self._check("channel_switch_confirmed", not requires_confirmation or confirm_channel_switch))
+            registry_ok = True
+            try:
+                await RegistryClient().verify_target(development)
+            except Exception:
+                registry_ok = False
+            checks.append(self._check("registry_digest_matches", registry_ok))
+            try:
+                result = self.adapter.preflight_image(development.image)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                checks.append(self._check("image_manifest_exists", False))
+            else:
+                checks.append(self._check("image_manifest_exists", True))
+            disk_ok, free = await self._disk_check()
+            checks.append(self._check("disk_space_sufficient", disk_ok, f"free={free}" if free else None))
+            result = {
+                "can_update": all(item["passed"] for item in checks),
+                "from_version": current_version,
+                "target_version": development.version,
+                "target_image": development.image,
+                "target_channel": "development",
+                "target_revision": development.revision,
+                "target_digest": development.digest,
+                "target_tag": development.tag,
+                "requires_channel_switch_confirmation": requires_confirmation,
+                "risk_code": "channel_switch" if requires_confirmation else None,
+                "checks": checks,
+            }
+            self._remember_readiness(
+                can_update=result["can_update"], checks=checks,
+                target_version=development.version, target_image=development.image,
+                channel="development",
+                target_extra={
+                    "revision": development.revision,
+                    "tag": development.tag,
+                    "digest": development.digest,
+                },
+            )
+            return result
+
+        if stable is not None:
+            manifest = await self._manifest(stable.version)
+            manifest_version = _value(manifest, "version")
+            manifest_image = _value(manifest, "image")
+            expected_tag_image = f"{stable.repository}:{stable.tag}"
+            if manifest_version != stable.version or manifest_image != expected_tag_image:
+                raise ManifestInvalidError("stable target does not match release manifest")
+            current_version = await self.deployment.resolve_current_version()
+            mode = self.deployment.read_deploy_mode()
+            current_state = {}
+            state_method = getattr(self.deployment, "current_state", None)
+            if state_method is not None:
+                state_value = state_method()
+                current_state = await state_value if inspect.isawaitable(state_value) else state_value
+            current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
+            current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
+            requires_confirmation = current_channel != "stable"
+            digest_changed = current_digest != stable.digest
+            target_newer = (
+                _is_newer(stable.version, current_version)
+                if current_channel == "stable"
+                else digest_changed
+            )
+            checks: list[dict[str, Any]] = [
+                self._check("manifest_found", True),
+                self._check("manifest_valid", True),
+                self._check("deployment_mode_image", mode == "image", f"mode={mode!r}"),
+                self._check(
+                    "protocol_compatible",
+                    _updater_value(manifest, "protocol_version") == PROTOCOL_VERSION,
+                ),
+                self._check("target_newer", target_newer, f"{stable.version} > {current_version}"),
+                self._check("already_current", digest_changed, "target digest differs"),
+                self._check(
+                    "channel_switch_confirmed",
+                    not requires_confirmation or confirm_channel_switch,
+                ),
+            ]
+            registry_ok = True
+            try:
+                await RegistryClient().verify_target(stable)
+            except Exception:
+                registry_ok = False
+            checks.append(self._check("registry_digest_matches", registry_ok))
+            try:
+                image_result = self.adapter.preflight_image(stable.image)
+                if inspect.isawaitable(image_result):
+                    await image_result
+            except Exception:
+                checks.append(self._check("image_manifest_exists", False))
+            else:
+                checks.append(self._check("image_manifest_exists", True))
+            disk_ok, free = await self._disk_check()
+            checks.append(self._check("disk_space_sufficient", disk_ok, f"free={free}" if free else None))
+            assets_ok = await self._asset_check(manifest, stable.version)
+            checks.append(self._check("updater_asset_present", assets_ok))
+            result = {
+                "can_update": all(item["passed"] for item in checks),
+                "from_version": current_version,
+                "target_version": stable.version,
+                "target_image": stable.image,
+                "target_channel": "stable",
+                "target_digest": stable.digest,
+                "target_tag": stable.tag,
+                "requires_channel_switch_confirmation": requires_confirmation,
+                "risk_code": "channel_switch" if requires_confirmation else None,
+                "checks": checks,
+            }
+            self._remember_readiness(
+                can_update=result["can_update"], checks=checks,
+                target_version=stable.version, target_image=stable.image,
+                channel="stable",
+                target_extra={"tag": stable.tag, "digest": stable.digest},
+            )
+            return result
 
         manifest = await self._manifest(target_version)
         manifest_version = _value(manifest, "version")
@@ -352,7 +536,12 @@ class JobOrchestrator:
             return job
         return None
 
-    async def submit_update(self, target_version: str | None = None) -> str:
+    async def submit_update(
+        self,
+        target_version: str | dict[str, Any] | None = None,
+        *,
+        confirm_channel_switch: bool = False,
+    ) -> str:
         """Validate and enqueue one destructive update task."""
 
         if self._lock.locked():
@@ -366,7 +555,18 @@ class JobOrchestrator:
             target_version = checked.get("latest_version")
             if not isinstance(target_version, str):
                 raise TargetNotFoundError("latest")
-        preflight = await self.preflight(target_version)
+        development = _development(target_version)
+        stable = _stable(target_version)
+        if development is None and stable is None and isinstance(target_version, dict):
+            if target_version.get("channel") != "stable":
+                raise RegistryTargetError("unsupported target channel")
+            target_version = target_version.get("version")
+        if development is None and stable is None and target_version is not None and not isinstance(target_version, str):
+            raise TargetNotFoundError("target")
+        preflight = await self.preflight(
+            target_version,
+            confirm_channel_switch=confirm_channel_switch,
+        )
         if not preflight["can_update"]:
             raise PreflightFailedError(preflight["checks"], preflight)
         async with self._lock:
@@ -380,8 +580,16 @@ class JobOrchestrator:
                 operation="update",
                 deployment="image",
                 from_version=preflight.get("from_version"),
-                target_version=target_version,
+                target_version=(
+                    development.version if development is not None
+                    else stable.version if stable is not None
+                    else target_version
+                ),
                 target_image=preflight.get("target_image"),
+                target_channel=preflight.get("target_channel"),
+                target_revision=preflight.get("target_revision"),
+                target_digest=preflight.get("target_digest"),
+                target_tag=preflight.get("target_tag"),
                 state="checking",
                 step="checking",
                 started_at=now,
@@ -448,11 +656,55 @@ class JobOrchestrator:
     async def _run_update_job(self, job: JobState) -> None:
         try:
             self._transition(job, "checking", "checking")
-            manifest = await self._manifest(job.target_version)
-            job.target_image = _value(manifest, "image", job.target_image)
+            if job.target_channel == "development":
+                if not all((job.target_version, job.target_revision, job.target_digest, job.target_tag)):
+                    raise RegistryTargetError("persisted development target is incomplete")
+                target = DevelopmentTarget(
+                    channel="development",
+                    version=job.target_version or "",
+                    revision=job.target_revision or "",
+                    tag=job.target_tag or "",
+                    digest=job.target_digest or "",
+                )
+                await RegistryClient().verify_target(target)
+                job.target_image = target.image
+            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+                target = StableTarget(
+                    channel="stable",
+                    version=job.target_version or "",
+                    tag=job.target_tag,
+                    digest=job.target_digest,
+                )
+                await RegistryClient().verify_target(target)
+                job.target_image = target.image
+            else:
+                manifest = await self._manifest(job.target_version)
+                job.target_image = _value(manifest, "image", job.target_image)
             self._transition(job, "update_available", "update_available")
             self._transition(job, "preflight", "preflight")
-            result = await self.preflight(job.target_version or "")
+            if job.target_channel == "development":
+                result = await self.preflight(
+                    {
+                        "channel": "development",
+                        "version": job.target_version,
+                        "revision": job.target_revision,
+                        "tag": job.target_tag,
+                        "digest": job.target_digest,
+                    },
+                    confirm_channel_switch=True,
+                )
+            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+                result = await self.preflight(
+                    {
+                        "channel": "stable",
+                        "version": job.target_version,
+                        "tag": job.target_tag,
+                        "digest": job.target_digest,
+                    },
+                    confirm_channel_switch=True,
+                )
+            else:
+                result = await self.preflight(job.target_version or "")
             if not result["can_update"]:
                 raise PreflightFailedError(result["checks"], result)
             # :latest materialization is destructive by definition and is not
@@ -472,7 +724,20 @@ class JobOrchestrator:
             await self.adapter.activate(job.target_image)
             self._transition(job, "restarting", "restarting")
             self._transition(job, "health_checking", "health_checking")
-            await self.adapter.health_check(job.target_version)
+            if job.target_channel == "development":
+                await self.adapter.health_check(
+                    {
+                        "version": job.target_version,
+                        "channel": "development",
+                        "revision": job.target_revision,
+                    }
+                )
+            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+                await self.adapter.health_check(
+                    {"version": job.target_version, "channel": "stable"}
+                )
+            else:
+                await self.adapter.health_check(job.target_version)
             self._transition(job, "success", "complete")
             self._log(job, "update completed", step="complete")
             self._clear_active_gate(job)

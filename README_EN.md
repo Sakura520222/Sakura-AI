@@ -194,6 +194,8 @@ docker run -d -p 8000:8000 \
 
 This mode does not include the Host Updater. It can report available releases, but it cannot apply an update from the WebUI.
 
+`latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
+
 After first start, visit `http://localhost:8000/setup` and complete configuration via the Setup Wizard.
 
 ### Source Development

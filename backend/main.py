@@ -26,6 +26,7 @@ from backend.core.bootstrap import (
     is_bootstrap_mode,
     read_connection_config,
 )
+from backend.core.build_info import get_build_info
 from backend.core.config import Settings, get_settings
 from backend.telegram import start_telegram_bot, stop_telegram_bot
 from backend.webui.auth import decode_access_token
@@ -538,6 +539,7 @@ async def health():
         "status": "healthy",
         "service": "Sakura AI",
         "version": __version__,
+        "build": get_build_info(),
         **startup_info,
     }
 
