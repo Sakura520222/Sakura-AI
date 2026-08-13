@@ -1,5 +1,7 @@
 """Billing WebUI route helpers tests"""
 
+from pathlib import Path
+
 from backend.core.config import DYNAMIC_CONFIG_LABELS
 from backend.webui.routes.billing import _parse_page
 
@@ -75,3 +77,14 @@ def test_sidebar_hides_refund_reviews_for_non_super_admin():
 
     assert "套餐中心" in rendered
     assert "退款审核" not in rendered
+
+
+def test_admin_code_edit_payload_preserves_expiration_fold():
+    source = (
+        Path(__file__).parents[1]
+        / "backend/webui/templates/billing/admin_codes.html"
+    ).read_text(encoding="utf-8")
+
+    assert '"expires_at_fold": code.expires_at|datetime_local_fold' in source
+    assert "code.expires_at_fold === 0 || code.expires_at_fold === 1" in source
+    assert "String(code.expires_at_fold)" in source

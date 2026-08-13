@@ -234,7 +234,7 @@
                             </span>
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                            {{ order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '-' }}
+                            {{ order.created_at|format_datetime_short if order.created_at else '-' }}
                         </td>
                         <td class="px-6 py-4 text-sm space-x-3">
                             {% if order.status == 'fulfilled' and order.amount_cents > 0 %}

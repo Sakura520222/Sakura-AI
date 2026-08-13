@@ -1,5 +1,4 @@
 """API v1 扫描管理端点"""
-
 import asyncio
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -13,6 +12,7 @@ from backend.api.v1.responses import (
     paginated_response,
     success_response,
 )
+from backend.core.time_service import format_rfc3339
 from backend.models.scan_models import RepoScan, ScanFinding
 from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
@@ -75,8 +75,8 @@ async def list_scans(
             "progress": s.progress,
             "total_findings": s.total_findings,
             "overall_health_score": s.overall_health_score,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+            "created_at": format_rfc3339(s.created_at) if s.created_at else None,
+            "completed_at": format_rfc3339(s.completed_at) if s.completed_at else None,
         }
         for s in scans
     ]
@@ -155,9 +155,9 @@ async def get_scan(
         "overall_health_score": scan.overall_health_score,
         "report_issue_number": scan.report_issue_number,
         "report_issue_url": scan.report_issue_url,
-        "created_at": scan.created_at.isoformat() if scan.created_at else None,
-        "started_at": scan.started_at.isoformat() if scan.started_at else None,
-        "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+        "created_at": format_rfc3339(scan.created_at) if scan.created_at else None,
+        "started_at": format_rfc3339(scan.started_at) if scan.started_at else None,
+        "completed_at": format_rfc3339(scan.completed_at) if scan.completed_at else None,
         "findings": [
             {
                 "id": f.id,

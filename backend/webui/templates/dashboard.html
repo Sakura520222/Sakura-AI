@@ -110,10 +110,10 @@ function dashboardInit() {
             var tokensAvailable = data.token_usage_available !== false;
             var totalTokens = (data.total_prompt_tokens || 0) + (data.total_completion_tokens || 0);
             document.getElementById('stat-total-tokens').textContent =
-                tokensAvailable ? totalTokens.toLocaleString() : '—';
+                tokensAvailable ? window.sakuraFormatNumber(totalTokens) : '—';
             document.getElementById('stat-prompt-completion').textContent = tokensAvailable
-                ? (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
-                    (data.total_completion_tokens || 0).toLocaleString()
+                ? window.sakuraFormatNumber(data.total_prompt_tokens || 0) + ' / ' +
+                    window.sakuraFormatNumber(data.total_completion_tokens || 0)
                 : '—';
             document.getElementById('stat-cost').textContent =
                 ((data.total_estimated_cost || 0) / 100).toFixed(2);

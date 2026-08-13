@@ -2,13 +2,13 @@
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import desc, select
 
 from backend.core.config import get_settings
+from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
 from backend.services.activity_observability.integration_service import (
@@ -51,7 +51,7 @@ class PRReviewIncrementalQueueService:
         if not review.created_at:
             return False
         timeout_seconds = get_settings().review_timeout_seconds
-        age = (datetime.utcnow() - review.created_at).total_seconds()
+        age = (now_utc() - review.created_at).total_seconds()
         return age > timeout_seconds
 
     async def find_active_review(self, pr_info: dict[str, Any]) -> PRReview | None:
@@ -320,7 +320,7 @@ class PRReviewIncrementalQueueService:
             if not pending:
                 return
 
-            consumed_at = datetime.utcnow()
+            consumed_at = now_utc()
             for item in pending:
                 item.status = "consumed"
                 item.consumed_review_id = review_id
@@ -359,7 +359,7 @@ class PRReviewIncrementalQueueService:
             pending = list(result.scalars().all())
             if not pending:
                 return 0
-            consumed_at = datetime.utcnow()
+            consumed_at = now_utc()
             for item in pending:
                 item.status = "skipped"
                 item.consumed_at = consumed_at

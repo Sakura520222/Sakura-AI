@@ -6,17 +6,21 @@
 - 定期合并更新 SAKURA.md 和 memory.md / Periodically consolidate and update files
 - 读取上下文注入审查 prompt / Read context for review prompt injection
 """
-
 import asyncio
 import functools
 import hashlib
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.time_service import (
+    format_rfc3339,
+    get_time_service,
+    local_date,
+    now_utc,
+)
 from backend.models.database import SakuraMemoryState, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.github_write_service import get_github_write_service
@@ -665,7 +669,7 @@ class SakuraMemoryService:
             reflection_content = await self._call_llm(prompt, model=model)
 
             # 格式化反思文件名 / Format reflection filename
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = local_date(now_utc(), get_time_service().zone).isoformat()
             if is_incremental:
                 round_num = await self._count_pr_reflections(repo, pr_number) + 1
                 reflection_path = f".sakura/memory/{today}_PR{pr_number}_incr{round_num}_{commit_sha}.md"
@@ -892,10 +896,10 @@ class SakuraMemoryService:
             reflection_content = await self._call_llm(prompt, model=model)
 
             # 格式化文件名 / Format filename
-            now = datetime.now()
-            today = now.strftime("%Y-%m-%d")
+            now = now_utc()
+            today = local_date(now, get_time_service().zone).isoformat()
             short_hash = hashlib.md5(
-                f"{repo_full_name}#{issue_number}#{now.isoformat()}".encode()
+                f"{repo_full_name}#{issue_number}#{format_rfc3339(now)}".encode()
             ).hexdigest()[:7]
             reflection_path = (
                 f".sakura/memory/{today}_ISSUE{issue_number}_{short_hash}.md"
@@ -1052,7 +1056,7 @@ class SakuraMemoryService:
 
                 await self._update_state(
                     repo_full_name,
-                    last_consolidation_at=datetime.now(UTC),
+                    last_consolidation_at=now_utc(),
                     last_consolidation_count=total_count,
                 )
 

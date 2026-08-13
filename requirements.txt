@@ -27,6 +27,8 @@ typing-extensions>=4.5.0
 pyyaml>=6.0.1
 pydantic>=2.5.3
 pydantic-settings>=2.14.2
+tzlocal==5.4.4
+tzdata==2026.3
 
 # 日志
 loguru>=0.7.3

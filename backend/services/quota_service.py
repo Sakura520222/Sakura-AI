@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import now_utc
 from backend.models.telegram_models import TelegramUser
 
 
@@ -56,11 +57,8 @@ class QuotaService:
 
     @staticmethod
     def _utcnow() -> datetime:
-        """返回无时区 UTC 时间，保持与现有 TIMESTAMP 字段兼容。
-
-        TODO: 迁移到 timezone-aware TIMESTAMP 列后移除 replace(tzinfo=None)。
-        """
-        return datetime.now(UTC).replace(tzinfo=None)
+        """返回配额结算使用的 aware UTC 时间点。"""
+        return now_utc()
 
     @staticmethod
     def _week_start(now: datetime) -> datetime:
@@ -164,8 +162,8 @@ class QuotaService:
         affected_fields = 0
         affected_user_ids: set[int] = set()
 
-        daily_cutoff = datetime.combine(today, datetime.min.time())
-        monthly_cutoff = datetime(now.year, now.month, 1)
+        daily_cutoff = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
+        monthly_cutoff = datetime(now.year, now.month, 1, tzinfo=UTC)
         reset_specs = (
             (
                 (TelegramUser.last_reset_daily.is_(None))

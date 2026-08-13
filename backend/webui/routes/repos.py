@@ -4,8 +4,6 @@ import asyncio
 import shutil
 import subprocess
 import tempfile
-import time
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -13,6 +11,7 @@ from loguru import logger
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import monotonic
 from backend.models.database import IssueAnalysis, PRReview
 from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
@@ -51,7 +50,7 @@ def _is_index_locked(repo_name: str, index_type: str) -> bool:
 async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
     """获取所有安装的仓库列表（带缓存），并附加 PR/Issue 统计"""
     global _installations_cache
-    now = time.time()
+    now = monotonic()
 
     if (
         _installations_cache
@@ -147,9 +146,12 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
             repo["issue_count"] = issue_count_map.get(key, 0)
             lp = last_pr_map.get(key)
             li = last_issue_map.get(key)
-            last_activity = max(lp or datetime.min, li or datetime.min)
-            repo["last_activity"] = (
-                last_activity if last_activity != datetime.min else None
+            # Both values are aware UTC instants when present. Avoid a naive
+            # sentinel so repositories with only one activity kind remain
+            # comparable under the strict UTCDateTime contract.
+            repo["last_activity"] = max(
+                (value for value in (lp, li) if value is not None),
+                default=None,
             )
 
     return data

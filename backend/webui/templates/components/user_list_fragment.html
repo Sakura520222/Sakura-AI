@@ -95,7 +95,7 @@
                         {% endif %}
                     </td>
                     <td class="py-3 px-5 text-gray-400 text-xs hidden sm:table-cell">
-                        {{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '-' }}
+                        {{ u.created_at|format_datetime_short if u.created_at else '-' }}
                     </td>
                 </tr>
                 {% endfor %}

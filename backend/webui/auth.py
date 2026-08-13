@@ -1,10 +1,12 @@
 """WebUI 认证工具（JWT 令牌管理）"""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Literal
 
 from jose import JWTError, jwt
 from loguru import logger
+
+from backend.core.time_service import now_utc
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
@@ -41,7 +43,7 @@ def _create_token(
     _settings = get_settings()
 
     to_encode = data.copy()
-    expire = datetime.now(UTC) + (
+    expire = now_utc() + (
         expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     )
     to_encode.update({"exp": expire, "token_type": token_type})

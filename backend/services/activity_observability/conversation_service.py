@@ -1,5 +1,6 @@
 """Conversation-first, role-aware projection over observability storage."""
 
+
 from __future__ import annotations
 
 import base64
@@ -12,6 +13,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import format_rfc3339
 from backend.models.activity_observability_models import (
     ActivityCanonicalContextRevision,
     ActivityContextOperation,
@@ -52,12 +54,12 @@ def _as_utc(value: datetime | None) -> datetime:
     if value is None:
         return datetime.fromtimestamp(0, tz=UTC)
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+        raise ValueError("conversation timestamps must be aware")
     return value.astimezone(UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
-    return _as_utc(value).isoformat() if value is not None else None
+    return format_rfc3339(_as_utc(value)) if value is not None else None
 
 
 def _message_tool_call_ids(message_json: str | None) -> set[str]:

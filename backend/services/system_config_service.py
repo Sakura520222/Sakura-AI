@@ -17,6 +17,7 @@ from backend.core.config import (
     sanitize_domain,
     update_settings_field,
 )
+from backend.core.time_service import InvalidTimezoneError, resolve_timezone
 from backend.models.database import AppConfig
 
 # 敏感键（在页面显示时脱敏）
@@ -40,6 +41,7 @@ RESTART_REQUIRED_KEYS = frozenset(
         "github_private_key",
         "webui_secret_key",
         "activity_cursor_signing_secret",
+        "app_timezone",
     }
 )
 
@@ -83,6 +85,7 @@ SYSTEM_CONFIG_GROUPS = [
         "keys": [
             "app_domain",
             "app_port",
+            "app_timezone",
             "log_level",
             "webui_secret_key",
             "activity_cursor_signing_secret",
@@ -164,6 +167,14 @@ class SystemConfigService:
         for key, val in updates.items():
             is_sensitive = key in SYSTEM_SENSITIVE_KEYS
 
+            if key == "app_timezone":
+                try:
+                    # Validate with the exact startup resolver, but persist the
+                    # user's original ``system``/IANA spelling for audit/UI.
+                    resolve_timezone(val)
+                except InvalidTimezoneError as exc:
+                    raise ValueError("无效应用时区") from exc
+
             # Auto-sanitize app_domain: strip protocol prefix and trailing slashes
             if key == "app_domain" and val:
                 val = sanitize_domain(val)
@@ -189,7 +200,7 @@ class SystemConfigService:
                 }
                 cfg.key_value = val
 
-            if key in RESTART_REQUIRED_KEYS:
+            if key in RESTART_REQUIRED_KEYS and key in changed:
                 needs_restart = True
 
         if changed:
@@ -202,6 +213,10 @@ class SystemConfigService:
         all_dynamic_keys = get_all_dynamic_config_keys()
         invalidate_dynamic_config_cache(all_dynamic_keys)
         for key, change in changed.items():
+            # Restart-required settings are persisted and audited but must not
+            # mutate this process's frozen runtime context.
+            if key in RESTART_REQUIRED_KEYS:
+                continue
             if key in all_dynamic_keys or key in CORE_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
 

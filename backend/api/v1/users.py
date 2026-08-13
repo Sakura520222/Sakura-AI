@@ -1,7 +1,5 @@
 """API v1 用户管理端点"""
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
 from sqlalchemy import String, desc, func, or_, select, type_coerce
@@ -23,6 +21,7 @@ from backend.api.v1.schemas import (
     UserRoleUpdateRequest,
 )
 from backend.core.config import get_settings
+from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
@@ -50,7 +49,7 @@ def _serialize_quota_usage_log(log: QuotaUsageLog) -> dict:
         "repo_name": log.repo_name,
         "pr_number": log.pr_number,
         "used_count": 1,
-        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "created_at": format_rfc3339(log.created_at) if log.created_at else None,
     }
 
 
@@ -499,7 +498,7 @@ async def reset_user_quota(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    now = datetime.now(UTC)
+    now = now_utc()
     old_used = {
         "daily": target.daily_used,
         "weekly": target.weekly_used,

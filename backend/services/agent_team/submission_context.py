@@ -1,5 +1,6 @@
 """Agent Team task submission context helpers."""
 
+
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +12,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.time_service import format_rfc3339
 from backend.models.agent_team_models import AgentTeamSourceType
 from backend.models.database import IssueAnalysis, IssueAnalysisStatus
 from backend.services.agent_team.fullstack_expert import (
@@ -372,7 +374,7 @@ def build_issue_context_markdown(
             author = comment.get("author") or "unknown"
             created_at = comment.get("created_at")
             if created_at and hasattr(created_at, "isoformat"):
-                created_at = created_at.isoformat()
+                created_at = format_rfc3339(created_at)
             timestamp = f" · {created_at}" if created_at else ""
             parts.append(f"\n#### 评论 {index}: @{author} ({role}{timestamp})\n")
             parts.append(f"{comment.get('body') or ''}\n")
