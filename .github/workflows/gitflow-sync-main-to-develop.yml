@@ -1,8 +1,7 @@
 name: Gitflow 自动同步
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -20,11 +19,7 @@ jobs:
   sync-main-to-develop:
     name: 将 main 回合到 develop
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       (startsWith(github.event.pull_request.head.ref, 'release/') ||
-        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
+    # push 到 main 或手动触发时运行；on 已限定事件来源，此处无需额外过滤
     permissions:
       contents: write
       pull-requests: write
@@ -45,6 +40,8 @@ jobs:
       - name: 检出目标分支
         uses: actions/checkout@v7
         with:
+          # PAT push 会继续触发 develop CI/开发镜像；仅回退 GITHUB_TOKEN 时，
+          # GitHub 的防递归规则会抑制该 push 产生的后续 workflow runs。
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
           ref: ${{ steps.branches.outputs.target }}

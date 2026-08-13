@@ -28,23 +28,31 @@
 - 不修改现有 Release 源码包发布逻辑。
 - 不引入独立数据库 migration 框架。
 
-## 2. 镜像 Tag 策略
+## 2. 镜像 Tag 策略（stable v1 与 development registry target）
+
+> 本节原有 stable `update-manifest.json` v1 设计继续有效。development 不伪造或放宽
+> stable manifest，而使用受约束的 GHCR registry target（不可变 tag + digest）；历史
+> stable manifest 的安全边界不得因开发通道改变。
 
 版本单一来源保持不变：`backend/__init__.py` 中的 `__version__ = "X.Y.Z"`（不带 `v` 前缀）；Git tag 与 Docker 稳定标签统一添加 `v` 前缀，形成 `vX.Y.Z`。
 
 | Tag | 语义 | 触发方式 | 可变性 |
 | --- | --- | --- | --- |
-| `edge` | 最新 main 提交的开发预览 | 每次 `main` push | 可变，指向该次 commit SHA |
+| `edge` | 最新 `develop` 提交的开发移动别名 | 每次 `develop` push | 可变；仅作目录别名，不写入 deployment.env |
+| `dev-<UTC>-vX.Y.Z-<SHA>` | 可追溯开发构建 | 与 `edge` 同一次 Buildx 构建 | 不可变，更新时必须再钉住 manifest digest |
 | `vX.Y.Z` | 稳定版本 | Release 工作流成功创建新 Release 后 | 不可变（从 tag 构建，不重新指向） |
 | `latest` | 最新稳定版 | 与 `vX.Y.Z` 同一次构建 | 指向与 `vX.Y.Z` 完全相同的 manifest digest |
 
-没有 bump 版本号的 `main` push：只更新 `edge`，不动 `vX.Y.Z` / `latest`。
+`main` 只负责正式 Release；`develop` 只负责 development。没有 bump 版本号的开发提交
+仍然以同版本、不同 revision/digest 的 immutable tag 发布。
 
 ### 2.1 触发链路（事件驱动为主，轮询仅作补偿）
 
 不依赖 `release.published` 事件 —— 由工作流内置 `GITHUB_TOKEN` 产生的大多数事件不会再次触发其他工作流（GitHub 官方说明），且现有工作流在 PAT 缺失时回退 `GITHUB_TOKEN`，仅监听 Release 事件不可靠。
 
-1. **`docker-edge.yml`**（新增）：`push: branches: [main]`，只推 `edge`，`concurrency.cancel-in-progress: true`。调用时 `source_ref` **必须传 `${{ github.sha }}`**（该次 push 的不可变 commit SHA），不能传 `main`（否则排队/构建期间若有新提交，checkout 可能拿到后续提交，导致镜像与触发事件不一致）：
+1. **`docker-edge.yml`**（现有文件名保留兼容）：`push: branches: [develop]`，同一次构建推 `edge` 与
+   `dev-<UTC>-vX.Y.Z-<SHA>`，`concurrency.cancel-in-progress: true`。调用时 `source_ref`
+   **必须传 `${{ github.sha }}`**（该次 push 的不可变 commit SHA），不能传 `develop`：
 
    ```yaml
    jobs:
@@ -55,7 +63,7 @@
          packages: write
        with:
          source_ref: ${{ github.sha }}
-         channel: edge
+         channel: development
          sync_dockerhub: true
        secrets: inherit
    ```
@@ -70,10 +78,10 @@
          source_ref:          # 不可变构建来源：commit SHA 或 refs/tags/vX.Y.Z
            required: true
            type: string
-         channel:             # edge / stable
+         channel:             # development / stable
            required: true
            type: string
-         version:             # 稳定版版本号（edge 可不传）
+         version:             # 严格版本号（development 可从 source_ref 读取）
            required: false
            type: string
          sync_dockerhub:      # 是否同步 Docker Hub（非阻塞）

@@ -156,6 +156,13 @@ class DeploymentStateProvider:
         version = payload.get("version") if payload else None
         return version if isinstance(version, str) and _parse_version(version) else None
 
+    async def resolve_current_build(self) -> dict[str, Any]:
+        """Return health build identity when the running app exposes it."""
+
+        payload = await self._health_payload()
+        build = payload.get("build") if isinstance(payload, dict) else None
+        return dict(build) if isinstance(build, dict) else {}
+
     async def capture_from_image(self) -> str | None:
         """Capture the current authoritative image ref before activation."""
 
@@ -350,8 +357,11 @@ class DeploymentStateProvider:
 
         image = self.read_image_ref()
         running_digest = await self.capture_from_digest()
+        build = await self.resolve_current_build()
         return {
             "current_version": await self.resolve_current_version(),
+            "current_channel": build.get("channel"),
+            "current_revision": build.get("revision"),
             "current_image": image,
             "from_image": image,
             "from_digest": running_digest,

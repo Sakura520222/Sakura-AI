@@ -121,8 +121,10 @@ Remove-Item Env:SAKURA_AI_IMAGE
 
 ### 1.4 镜像与 Tag 说明
 
-- **镜像地址**：主镜像 `ghcr.io/sakura520222/sakura-ai`；Docker Hub 替代镜像 `sakura520222/sakura-ai`（内容与 GHCR 完全一致）。
-- **Tag**：`latest` 最新稳定版；`vX.Y.Z` 固定版本；`edge` 开发预览（不保证稳定）。
+- **权威目录**：WebUI 与 Host Updater 只读取 GHCR `ghcr.io/sakura520222/sakura-ai`；Docker Hub `sakura520222/sakura-ai` 仅是 best-effort 副本，同步失败不会阻塞 GHCR 发布。
+- **正式通道**：`latest` 是默认正式版，且必须与唯一对应的 `vX.Y.Z` manifest digest 对齐；正式镜像始终从 Release tag 构建。
+- **开发通道**：`edge` 是开发移动别名，同时每次 `develop` push 产生不可变 `dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>` tag。WebUI 的开发版目标只使用不可变 tag + digest，不会把 `edge` 写入部署状态。
+- 跨通道切换可能回到较旧的正式版本，WebUI 会显示风险并要求明确确认；同通道历史镜像仅供查看，不提供任意降级或回滚。
 - 生产 compose 不再内置数据库密码：首次部署必须将强随机的 64 位十六进制 `SAKURA_DB_PASSWORD` 保存到权限为 0600 的 `.deploy/deployment.env`，并始终通过 `--env-file .deploy/deployment.env` 启动；文件缺失或变量缺失时 Compose 会 fail-closed。使用仓库中的 `./start.sh --prod` 会自动完成生成、持久化和复用，**切勿提交该运行时文件**。
 
 ### 1.5 config 卷三路合并
