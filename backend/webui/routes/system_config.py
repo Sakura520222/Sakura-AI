@@ -4,7 +4,6 @@
 Telegram Bot、WebUI 安全等。这些配置通常在 Setup Wizard 首次部署时设置，
 此页面允许超级管理员在运行时修改。
 """
-
 import asyncio
 
 from fastapi import APIRouter, Depends, Request
@@ -12,6 +11,15 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import get_settings
+from backend.core.time_service import (
+    InvalidTimezoneError,
+    format_rfc3339,
+    get_localzone_name,
+    get_time_service,
+    now_utc,
+    resolve_timezone,
+)
 from backend.services.database_reset_runtime_service import (
     quiesce_database_reset_runtime,
 )
@@ -50,6 +58,18 @@ async def system_config_page(
 ):
     """渲染系统核心配置页面"""
     groups, _ = await system_config_service.load_grouped_configs(db)
+    time_service = get_time_service()
+    try:
+        detected_system_timezone = get_localzone_name()
+    except Exception:
+        detected_system_timezone = "unavailable"
+    time_status = {
+        "configured_timezone": get_settings().app_timezone,
+        "resolved_timezone": time_service.resolved_timezone,
+        "system_timezone": detected_system_timezone,
+        "current_utc": format_rfc3339(now_utc()),
+        "current_local": time_service.format_display(now_utc()),
+    }
 
     return render_template(
         "system_config.html",
@@ -60,6 +80,7 @@ async def system_config_page(
         active_page="system_config",
         groups=groups,
         database_reset_confirmation=DATABASE_RESET_CONFIRMATION,
+        time_status=time_status,
     )
 
 
@@ -142,6 +163,17 @@ async def save_system_config(
                         lang=detect_language(),
                     )
                 val = val.upper()
+
+            if key == "app_timezone":
+                try:
+                    resolve_timezone(val)
+                except InvalidTimezoneError:
+                    return toast_redirect(
+                        "/system-config/",
+                        "system_config.invalid_timezone",
+                        "error",
+                        lang=detect_language(),
+                    )
 
             updates[key] = val
 

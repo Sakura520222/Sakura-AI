@@ -3,12 +3,12 @@
 聚合 PR 审查、Issues 分析、仓库扫描三种任务的实时状态，
 复用 Agent Team 的 Session/Message/ToolCheckPoint 模式实现对话流。
 """
-
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import format_rfc3339
 from backend.models.activity_conversation_models import (
     ActivityMessage,
     ActivitySession,
@@ -96,8 +96,8 @@ async def get_active_tasks(
                 "author": pr.author or "",
                 "status": pr.status,
                 "strategy": pr.strategy,
-                "created_at": pr.created_at.isoformat() if pr.created_at else None,
-                "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
+                "created_at": format_rfc3339(pr.created_at) if pr.created_at else None,
+                "updated_at": format_rfc3339(pr.updated_at) if pr.updated_at else None,
             }
         )
 
@@ -124,10 +124,10 @@ async def get_active_tasks(
                 "author": issue.author or "",
                 "status": issue.status,
                 "created_at": (
-                    issue.created_at.isoformat() if issue.created_at else None
+                    format_rfc3339(issue.created_at) if issue.created_at else None
                 ),
                 "updated_at": (
-                    issue.updated_at.isoformat() if issue.updated_at else None
+                    format_rfc3339(issue.updated_at) if issue.updated_at else None
                 ),
             }
         )
@@ -157,10 +157,10 @@ async def get_active_tasks(
                 "progress": scan.progress or 0,
                 "current_phase": scan.current_phase or "",
                 "created_at": (
-                    scan.created_at.isoformat() if scan.created_at else None
+                    format_rfc3339(scan.created_at) if scan.created_at else None
                 ),
                 "updated_at": (
-                    scan.updated_at.isoformat() if scan.updated_at else None
+                    format_rfc3339(scan.updated_at) if scan.updated_at else None
                 ),
             }
         )
@@ -222,8 +222,8 @@ async def get_recent_tasks(
                 "status": pr.status,
                 "strategy": pr.strategy,
                 "overall_score": pr.overall_score,
-                "created_at": pr.created_at.isoformat() if pr.created_at else None,
-                "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
+                "created_at": format_rfc3339(pr.created_at) if pr.created_at else None,
+                "updated_at": format_rfc3339(pr.updated_at) if pr.updated_at else None,
             }
         )
 
@@ -247,10 +247,10 @@ async def get_recent_tasks(
                 "author": issue.author or "",
                 "status": issue.status,
                 "created_at": (
-                    issue.created_at.isoformat() if issue.created_at else None
+                    format_rfc3339(issue.created_at) if issue.created_at else None
                 ),
                 "updated_at": (
-                    issue.updated_at.isoformat() if issue.updated_at else None
+                    format_rfc3339(issue.updated_at) if issue.updated_at else None
                 ),
             }
         )
@@ -274,10 +274,10 @@ async def get_recent_tasks(
                 "progress": scan.progress or 0,
                 "current_phase": scan.current_phase or "",
                 "created_at": (
-                    scan.created_at.isoformat() if scan.created_at else None
+                    format_rfc3339(scan.created_at) if scan.created_at else None
                 ),
                 "updated_at": (
-                    scan.updated_at.isoformat() if scan.updated_at else None
+                    format_rfc3339(scan.updated_at) if scan.updated_at else None
                 ),
             }
         )
@@ -380,7 +380,7 @@ async def activity_stream_data(
                     "content": m.content,
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
-                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "created_at": format_rfc3339(m.created_at) if m.created_at else None,
                 }
                 for m in msg_rows
             ],
@@ -393,8 +393,8 @@ async def activity_stream_data(
                     "name": tc.name,
                     "status": tc.status,
                     "arguments_json": tc.arguments_json,
-                    "started_at": tc.started_at.isoformat() if tc.started_at else None,
-                    "completed_at": tc.completed_at.isoformat()
+                    "started_at": format_rfc3339(tc.started_at) if tc.started_at else None,
+                    "completed_at": format_rfc3339(tc.completed_at)
                     if tc.completed_at
                     else None,
                     "error_message": tc.error_message,
@@ -407,8 +407,8 @@ async def activity_stream_data(
                     "iteration_number": s.iteration_number,
                     "role_name": s.role_name,
                     "status": s.status,
-                    "started_at": s.started_at.isoformat() if s.started_at else None,
-                    "completed_at": s.completed_at.isoformat()
+                    "started_at": format_rfc3339(s.started_at) if s.started_at else None,
+                    "completed_at": format_rfc3339(s.completed_at)
                     if s.completed_at
                     else None,
                 }

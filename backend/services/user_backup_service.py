@@ -4,6 +4,7 @@
 两步验证和 Passkey，不包含仓库订阅、配额使用日志、支付或审计数据。
 """
 
+
 from __future__ import annotations
 
 import hashlib
@@ -25,6 +26,7 @@ from backend.core.config import (
     invalidate_user_dynamic_config_cache,
     validate_user_dynamic_config_value,
 )
+from backend.core.time_service import format_rfc3339, now_utc, parse_rfc3339
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import (
     TelegramUser,
@@ -190,8 +192,8 @@ def _datetime_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
+        raise UserBackupError("备份时间必须包含 UTC offset")
+    return format_rfc3339(value.astimezone(UTC))
 
 
 def _parse_datetime(value: Any, label: str) -> datetime | None:
@@ -200,11 +202,9 @@ def _parse_datetime(value: Any, label: str) -> datetime | None:
     if not isinstance(value, str) or len(value) > 80:
         raise UserBackupError(f"{label} 时间格式无效")
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = parse_rfc3339(value)
     except ValueError as exc:
         raise UserBackupError(f"{label} 时间格式无效") from exc
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed
 
 
@@ -362,7 +362,7 @@ def build_user_backup_document(
     recovery_code_hash_key_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Build a stable JSON-compatible user backup document from records."""
-    timestamp = exported_at or datetime.now(UTC)
+    timestamp = exported_at or now_utc()
     sorted_users = sorted(
         users,
         key=lambda item: (
@@ -380,7 +380,7 @@ def build_user_backup_document(
     return {
         "format": USER_BACKUP_FORMAT,
         "version": USER_BACKUP_VERSION,
-        "exported_at": timestamp.isoformat(),
+        "exported_at": format_rfc3339(timestamp),
         "scope": USER_BACKUP_SCOPE,
         "user_count": len(sorted_users),
         "contains_sensitive_values": contains_sensitive_values,
@@ -1156,7 +1156,7 @@ async def restore_user_backup(
                             created_at=_parse_datetime(
                                 code.get("created_at"), "recovery created_at"
                             )
-                            or datetime.now(UTC).replace(tzinfo=None),
+                            or now_utc(),
                         )
                     )
                     recovery_codes_imported += 1
@@ -1178,7 +1178,7 @@ async def restore_user_backup(
                             created_at=_parse_datetime(
                                 passkey.get("created_at"), "passkey created_at"
                             )
-                            or datetime.now(UTC).replace(tzinfo=None),
+                            or now_utc(),
                             last_used_at=_parse_datetime(
                                 passkey.get("last_used_at"), "passkey last_used_at"
                             ),

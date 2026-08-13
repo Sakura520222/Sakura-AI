@@ -9,7 +9,6 @@
 
 import asyncio
 import hashlib
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,7 @@ from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import now_utc
 from backend.models.database import (
     CodeFile,
     CodeIndex,
@@ -890,7 +890,7 @@ class CodeIndexService:
         """
         existing = await self._get_code_file(session, repo_full_name, file_path)
 
-        now = datetime.utcnow()
+        now = now_utc()
 
         if existing:
             # 更新
@@ -945,7 +945,7 @@ class CodeIndexService:
         )
         code_index = result.scalar_one_or_none()
 
-        now = datetime.utcnow()
+        now = now_utc()
 
         if code_index:
             code_index.file_count = file_count

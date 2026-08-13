@@ -23,6 +23,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from backend.core.config import get_dynamic_config
+from backend.core.time_service import now_utc, parse_rfc3339
 from backend.models.star_aid_models import (
     ACTION_MANUAL_STAR,
     ACTION_STAR,
@@ -55,7 +56,7 @@ async def is_auto_star_enabled() -> bool:
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return now_utc()
 
 
 def random_schedule_delay_minutes(min_interval: int, max_interval: int) -> int:
@@ -86,7 +87,7 @@ def repo_daily_limit_allows(limit: int, *, current_count: int) -> bool:
 
 def _naive_now() -> datetime:
     """与 MySQL TIMESTAMP（naive）比较用的本地 UTC naive 时间。"""
-    return datetime.utcnow()
+    return now_utc()
 
 
 def compute_activity_score(
@@ -410,13 +411,12 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
 
 
 def _parse_github_timestamp(raw) -> datetime | None:
-    """解析 GitHub ISO8601 时间戳（带 Z）为 naive UTC datetime。"""
+    """解析 GitHub ISO8601 时间戳并归一化为 aware UTC datetime。"""
     if not raw:
         return None
     try:
-        # GitHub 格式："2024-01-01T12:00:00Z"
-        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ")
-    except ValueError, TypeError:
+        return parse_rfc3339(raw)
+    except (ValueError, TypeError):
         return None
 
 

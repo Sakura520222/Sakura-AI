@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import os
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from sakura_ai_updater import PROTOCOL_VERSION
@@ -31,6 +30,7 @@ from sakura_ai_updater.state import (
     load_state,
     save_state,
 )
+from sakura_ai_updater.time import now_rfc3339
 
 DISK_SPACE_THRESHOLD = 2 * 1024 * 1024 * 1024
 P0_STATES = frozenset(
@@ -50,7 +50,7 @@ P0_STATES = frozenset(
 
 
 def _utcnow() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_rfc3339()
 
 
 class UpdateOrchestrationError(RuntimeError):

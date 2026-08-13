@@ -33,6 +33,22 @@
         </div>
     </div>
 
+    <!-- 应用时间上下文：只展示/修改应用层时区，不触碰宿主机时钟或系统时区。 -->
+    <section class="rounded-xl border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-900/60 dark:bg-blue-950/20"
+             aria-labelledby="application-time-title">
+        <h2 id="application-time-title" class="text-sm font-semibold text-blue-900 dark:text-blue-200">
+            {{ _('system_config.time_title') }}
+        </h2>
+        <div class="mt-2 grid gap-2 text-xs text-blue-800 dark:text-blue-300 sm:grid-cols-2">
+            <div><span class="font-medium">{{ _('system_config.time_configured') }}：</span>{{ time_status.configured_timezone }}</div>
+            <div><span class="font-medium">{{ _('system_config.time_resolved') }}：</span>{{ time_status.resolved_timezone }}</div>
+            <div><span class="font-medium">{{ _('system_config.time_system') }}：</span>{{ time_status.system_timezone }}</div>
+            <div><span class="font-medium">{{ _('system_config.time_utc') }}：</span>{{ time_status.current_utc }}</div>
+            <div class="sm:col-span-2"><span class="font-medium">{{ _('system_config.time_local') }}：</span>{{ time_status.current_local }}</div>
+        </div>
+        <p class="mt-2 text-xs text-blue-700 dark:text-blue-300">{{ _('system_config.time_restart_hint') }}</p>
+    </section>
+
     <!-- Tab 导航 -->
     <div class="border-b border-gray-200 dark:border-gray-700">
         <nav class="flex flex-wrap -mb-px gap-1" role="tablist">
@@ -95,6 +111,13 @@
                                    value="{{ item.value }}"
                                    min="1" max="65535"
                                    class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'app_timezone' %}
+                            <input type="text"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   placeholder="system / Area/City"
+                                   autocomplete="off"
+                                   class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
                             {% elif item.key == 'log_level' %}
                             <select name="{{ item.key }}"
                                     class="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">

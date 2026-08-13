@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.routing import APIRoute
@@ -55,10 +55,10 @@ def _user(*, user_id: int = 1, telegram_id: int = 1001) -> TelegramUser:
         mfa_required=True,
         totp_enabled=True,
         totp_secret_encrypted="encrypted",
-        totp_enabled_at=datetime(2026, 8, 1, 0, 0, 0),
+        totp_enabled_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC),
         totp_last_used_step=123,
-        created_at=datetime(2026, 7, 1, 0, 0, 0),
-        updated_at=datetime(2026, 8, 1, 0, 0, 0),
+        created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC),
     )
 
 
@@ -93,8 +93,8 @@ def _passkey(*, user_id: int = 1) -> UserWebAuthnCredential:
         transports="internal",
         device_name="Laptop",
         backed_up=True,
-        created_at=datetime(2026, 7, 1, 0, 0, 0),
-        last_used_at=datetime(2026, 8, 1, 0, 0, 0),
+        created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
+        last_used_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC),
     )
 
 
@@ -108,7 +108,7 @@ async def test_export_includes_personal_config_totp_recovery_codes_and_passkeys(
         user_id=user.id,
         code_hash="a" * 64,
         used_at=None,
-        created_at=datetime(2026, 7, 1, 0, 0, 0),
+        created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
     )
     monkeypatch.setattr(service, "decrypt_totp_secret", lambda value: "TOTP-SECRET")
     monkeypatch.setattr(
@@ -301,7 +301,7 @@ async def test_restore_skips_nonportable_recovery_codes_and_preserves_existing(
         user_id=target.id,
         code_hash="e" * 64,
         used_at=None,
-        created_at=datetime(2026, 7, 1, 0, 0, 0),
+        created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
     )
     session.recoveries.append(existing)
     monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "d" * 64)
@@ -340,7 +340,7 @@ async def test_restore_same_secret_replaces_recovery_codes_and_merges_passkey_si
         user_id=target.id,
         code_hash="e" * 64,
         used_at=None,
-        created_at=datetime(2026, 7, 1, 0, 0, 0),
+        created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
     )
     existing_passkey = _passkey(user_id=target.id)
     session.recoveries.append(existing_recovery)

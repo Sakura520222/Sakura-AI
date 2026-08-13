@@ -1,8 +1,8 @@
 """Sakura AI 主应用"""
 
 import asyncio
-import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from backend.core.logging_bridge import configure_logging
 
@@ -28,6 +28,12 @@ from backend.core.bootstrap import (
 )
 from backend.core.build_info import get_build_info
 from backend.core.config import Settings, get_settings
+from backend.core.time_service import (
+    SystemClock,
+    format_rfc3339,
+    get_time_service,
+    initialize_time_service,
+)
 from backend.telegram import start_telegram_bot, stop_telegram_bot
 from backend.webui.auth import decode_access_token
 from backend.webui.deps import (
@@ -46,20 +52,35 @@ settings = get_settings()
 _startup_started_at: float = 0.0
 _startup_finished_at: float = 0.0
 _startup_duration: float = 0.0
+_startup_started_instant_utc: datetime | None = None
+_startup_finished_instant_utc: datetime | None = None
+_startup_started_monotonic: float | None = None
+_startup_finished_monotonic: float | None = None
 
 
 def get_startup_info() -> dict:
     """返回启动时间与运行时长信息，供 /health 端点使用。"""
-    now = time.time()
-    uptime_seconds = now - _startup_finished_at if _startup_finished_at else 0.0
+    service = get_time_service()
+    now_mono = service.monotonic()
+    started = _startup_finished_at > 0
+    finished_instant = _startup_finished_instant_utc
+    if finished_instant is None and started:
+        finished_instant = datetime.fromtimestamp(_startup_finished_at, tz=UTC)
+    uptime_seconds = (
+        max(0.0, now_mono - _startup_finished_monotonic)
+        if started and _startup_finished_monotonic is not None
+        else 0.0
+    )
     return {
         "startup_time": (
-            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_startup_finished_at))
-            if _startup_finished_at
+            format_rfc3339(finished_instant)
+            if started and finished_instant
             else None
         ),
         "startup_duration_seconds": round(_startup_duration, 2),
         "uptime_seconds": round(uptime_seconds),
+        "app_timezone": service.configured_timezone,
+        "resolved_timezone": service.resolved_timezone,
     }
 
 
@@ -142,6 +163,8 @@ async def _shutdown_activity_outbox(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global _startup_started_at, _startup_finished_at, _startup_duration
+    global _startup_started_instant_utc, _startup_finished_instant_utc
+    global _startup_started_monotonic, _startup_finished_monotonic
 
     from backend.services.database_reset_runtime_service import (
         DatabaseResetRuntimeSupervisor,
@@ -154,7 +177,14 @@ async def lifespan(app: FastAPI):
     runtime_context_token = None
     try:
         # 启动时
-        _startup_started_at = time.time()
+        # Startup measurements must not resolve the application timezone before
+        # its persisted configuration is available. Use one zone-independent
+        # clock for both instants and elapsed time, then initialize TimeService
+        # only after the database-backed app_timezone has loaded successfully.
+        startup_clock = SystemClock()
+        _startup_started_instant_utc = startup_clock.now_utc()
+        _startup_started_monotonic = startup_clock.monotonic()
+        _startup_started_at = _startup_started_instant_utc.timestamp()
         logger.info("🚀 Sakura AI 启动中...")
 
         # Install the admission gate before any background task can be created. A
@@ -219,10 +249,17 @@ async def lifespan(app: FastAPI):
                 try:
                     from backend.core.config import load_dynamic_configs_to_settings
 
-                    await load_dynamic_configs_to_settings()
+                    await load_dynamic_configs_to_settings(required_keys={"app_timezone"})
+                    # app_timezone is restart-required: this new process reads
+                    # it once during bootstrap and freezes the resulting zone.
+                    initialize_time_service(settings.app_timezone)
                     logger.info("✅ 配置已从数据库加载到 Settings")
-                except Exception as e:
-                    logger.warning(f"⚠️ 加载配置失败: {e}")
+                except Exception:
+                    # A configured timezone is part of the process-wide time
+                    # contract.  Continuing with the bootstrap zone would make
+                    # only some components use the requested setting.
+                    logger.exception("❌ 加载应用时区配置失败，停止启动")
+                    raise
 
                 # 打印关键配置（在动态配置加载后，确保显示实际值）
                 logger.info(f"📊 日志级别: {settings.log_level}")
@@ -408,8 +445,13 @@ async def lifespan(app: FastAPI):
             generate_setup_token()
 
         # 记录启动完成时间
-        _startup_finished_at = time.time()
-        _startup_duration = _startup_finished_at - _startup_started_at
+        _startup_finished_instant_utc = startup_clock.now_utc()
+        _startup_finished_monotonic = startup_clock.monotonic()
+        _startup_finished_at = _startup_finished_instant_utc.timestamp()
+        _startup_duration = max(
+            0.0,
+            _startup_finished_monotonic - (_startup_started_monotonic or _startup_finished_monotonic),
+        )
         logger.info(
             "✅ Sakura AI 启动完成，耗时 {}",
             _format_duration(_startup_duration),

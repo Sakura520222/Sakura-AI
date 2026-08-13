@@ -1,5 +1,4 @@
 """API v1 队列监控端点"""
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +9,7 @@ from backend.api.v1.responses import (
     paginated_response,
     success_response,
 )
+from backend.core.time_service import format_rfc3339
 from backend.models.database import ReviewQueue
 from backend.webui.deps import get_db, paginate
 
@@ -82,8 +82,8 @@ async def list_queue_items(
             "retry_count": item.retry_count,
             "max_retries": item.max_retries,
             "error_message": item.error_message,
-            "created_at": item.created_at.isoformat() if item.created_at else None,
-            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            "created_at": format_rfc3339(item.created_at) if item.created_at else None,
+            "updated_at": format_rfc3339(item.updated_at) if item.updated_at else None,
         }
         for item in items
     ]
@@ -114,8 +114,8 @@ async def get_queue_item(
             "retry_count": item.retry_count,
             "max_retries": item.max_retries,
             "error_message": item.error_message,
-            "created_at": item.created_at.isoformat() if item.created_at else None,
-            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            "created_at": format_rfc3339(item.created_at) if item.created_at else None,
+            "updated_at": format_rfc3339(item.updated_at) if item.updated_at else None,
         }
     )
 

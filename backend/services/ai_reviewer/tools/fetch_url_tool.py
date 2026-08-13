@@ -8,7 +8,6 @@ import asyncio
 import ipaddress
 import re
 import socket
-import time
 import unicodedata
 from fnmatch import fnmatch
 from typing import Any
@@ -19,6 +18,7 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from backend.core.config import DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES, get_settings
+from backend.core.time_service import monotonic
 
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -117,7 +117,7 @@ class FetchUrlToolHandler:
             self._session_call_count = 0
 
     async def _load_config(self) -> None:
-        if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
+        if monotonic() - self._last_config_load < self._CONFIG_CACHE_TTL:
             return
 
         try:
@@ -165,7 +165,7 @@ class FetchUrlToolHandler:
             if config_values.get("fetch_url_max_redirects") is not None:
                 self._max_redirects = int(config_values["fetch_url_max_redirects"])
 
-            self._last_config_load = time.time()
+            self._last_config_load = monotonic()
 
         except (ValueError, TypeError) as e:
             logger.warning(f"URL 抓取配置值格式无效，使用环境变量默认值: {e}")
@@ -443,7 +443,7 @@ class FetchUrlToolHandler:
 
     async def fetch_url(self, url: str) -> dict[str, Any]:
         """抓取网页并转换为纯文本"""
-        start_time = time.time()
+        start_time = monotonic()
 
         # Check session call limit (protected by lock)
         async with self._session_lock:
@@ -500,7 +500,7 @@ class FetchUrlToolHandler:
             truncated = len(text) > self._max_content_length
             text = self._truncate(text)
 
-            elapsed_ms = int((time.time() - start_time) * 1000)
+            elapsed_ms = int((monotonic() - start_time) * 1000)
             self._audit_log(
                 url=validated_url,
                 resolved_ip=resolved_ip,
@@ -528,7 +528,7 @@ class FetchUrlToolHandler:
             return result
 
         except ValueError as e:
-            elapsed_ms = int((time.time() - start_time) * 1000)
+            elapsed_ms = int((monotonic() - start_time) * 1000)
             security_events.append(str(e))
             self._audit_log(
                 url=self._sanitize_url_for_log(url),
@@ -544,7 +544,7 @@ class FetchUrlToolHandler:
             return {"url": url, "content": "", "error": str(e)}
 
         except Exception as e:
-            elapsed_ms = int((time.time() - start_time) * 1000)
+            elapsed_ms = int((monotonic() - start_time) * 1000)
             logger.error(f"URL 抓取失败: {e}", exc_info=True)
             self._audit_log(
                 url=self._sanitize_url_for_log(url),

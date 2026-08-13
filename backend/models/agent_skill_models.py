@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from sqlalchemy import TIMESTAMP, Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Text
 
 from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class AgentSkill(Base):
@@ -33,8 +34,8 @@ class AgentSkill(Base):
     requires = Column(Text, nullable=True, comment="Skill 运行前置条件描述")
     created_by = Column(String(100), nullable=True)
     error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False, index=True)
-    updated_at = Column(TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self) -> str:
         return f"<AgentSkill(id={self.id}, slug={self.slug}, enabled={self.enabled})>"

@@ -5,6 +5,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service
 from backend.models.telegram_models import (
     QuotaUsageLog,
     RepoSubscription,
@@ -494,7 +495,7 @@ class TelegramService:
                 "title": r.title,
                 "score": r.overall_score,
                 "status": r.status,  # 现在是 String 类型，不需要 .value
-                "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "created_at": get_time_service().format_display(r.created_at),
             }
             for r in reviews
         ]

@@ -977,7 +977,7 @@ class ActivityObservabilityService:
             protocol_family=field_values["protocol_family"],
             endpoint_fingerprint=snapshot.endpoint_fingerprint,
             config_snapshot_version=snapshot.config_snapshot_version,
-            captured_at=snapshot.captured_at.replace(tzinfo=None),
+            captured_at=snapshot.captured_at,
         )
 
     @staticmethod

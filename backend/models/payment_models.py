@@ -2,10 +2,8 @@
 
 import enum
 import secrets
-from datetime import datetime
 
 from sqlalchemy import (
-    TIMESTAMP,
     Boolean,
     Column,
     ForeignKey,
@@ -17,7 +15,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
+from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class PlanType(str, enum.Enum):
@@ -107,9 +106,9 @@ class Plan(Base):
     sort_order = Column(Integer, default=0, nullable=False)
     description = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     orders = relationship("Order", back_populates="plan", lazy="selectin")
@@ -139,14 +138,14 @@ class Order(Base):
     status = Column(String(20), default=OrderStatus.PENDING.value, nullable=False)
     payment_provider = Column(String(50), nullable=True)
     provider_tx_id = Column(String(255), nullable=True)
-    paid_at = Column(TIMESTAMP, nullable=True)
-    fulfilled_at = Column(TIMESTAMP, nullable=True)
-    expires_at = Column(TIMESTAMP, nullable=True)
+    paid_at = Column(UTCDateTime, nullable=True)
+    fulfilled_at = Column(UTCDateTime, nullable=True)
+    expires_at = Column(UTCDateTime, nullable=True)
     metadata_json = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     plan = relationship("Plan", back_populates="orders", lazy="selectin")
@@ -169,14 +168,14 @@ class RedeemCode(Base):
     max_uses = Column(Integer, default=1, nullable=False)
     used_count = Column(Integer, default=0, nullable=False)
     status = Column(String(20), default=RedeemCodeStatus.ACTIVE.value, nullable=False)
-    expires_at = Column(TIMESTAMP, nullable=True)
+    expires_at = Column(UTCDateTime, nullable=True)
     created_by = Column(
         Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
     )
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     plan = relationship("Plan", back_populates="redeem_codes", lazy="selectin")
@@ -202,8 +201,8 @@ class UserSubscription(Base):
         Integer, ForeignKey("plan_plans.id", ondelete="CASCADE"), nullable=False
     )
     status = Column(String(20), default=SubscriptionStatus.ACTIVE.value, nullable=False)
-    started_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
-    expires_at = Column(TIMESTAMP, nullable=False)
+    started_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    expires_at = Column(UTCDateTime, nullable=False)
     auto_renew = Column(Boolean, default=False, nullable=False)
     applied_pr_quota_bonus = Column(Integer, default=0, nullable=False)
     applied_pr_daily_add = Column(Integer, default=0, nullable=False)
@@ -221,9 +220,9 @@ class UserSubscription(Base):
         Integer, ForeignKey("payment_orders.id", ondelete="SET NULL"), nullable=True
     )
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     __table_args__ = (UniqueConstraint("user_id", "plan_id", name="uq_user_plan_sub"),)
@@ -248,7 +247,7 @@ class PaymentLog(Base):
     detail = Column(Text, nullable=True)
     operator_id = Column(Integer, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<PaymentLog(order={self.order_id}, action={self.action})>"
@@ -273,17 +272,17 @@ class RefundRequest(Base):
     )
     reason = Column(Text, nullable=True)
     review_note = Column(Text, nullable=True)
-    requested_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    requested_at = Column(UTCDateTime, default=utc_now, nullable=False)
     reviewed_by = Column(
         Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
     )
-    reviewed_at = Column(TIMESTAMP, nullable=True)
-    processed_at = Column(TIMESTAMP, nullable=True)
+    reviewed_at = Column(UTCDateTime, nullable=True)
+    processed_at = Column(UTCDateTime, nullable=True)
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     order = relationship("Order", lazy="selectin")

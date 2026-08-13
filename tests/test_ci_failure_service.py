@@ -12,7 +12,8 @@ from backend.services.ci_failure_service import CIFailureService
 
 
 def _utcnow_naive() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+    """Domain fixtures use aware UTC instants like production models."""
+    return datetime.now(UTC)
 
 
 class _Result:
@@ -99,7 +100,9 @@ class _MemoryDb:
             rows = list(self.store["ci_failures"].values())
             rows = self._apply_where(rows, statement)
             rows = sorted(
-                rows, key=lambda row: row.created_at or datetime.min, reverse=True
+                rows,
+                key=lambda row: row.created_at or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
             )
             return _Result(rows)
         if entity is HeadShaPRMap:

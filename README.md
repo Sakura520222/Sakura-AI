@@ -121,8 +121,8 @@
 ### 管理与运维
 
 - **Setup Wizard** — 首次启动分步引导，支持断点续配
-- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录
-- **动态配置管理** — WebUI 修改即时生效，无需重启
+- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录；超级管理员可设置应用 IANA 时区（保存后重启）
+- **动态配置管理** — 普通 WebUI 配置修改即时生效；应用时区等重启键保存后按提示重启
 - **AI API 超时治理** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
 - **用户级配置覆盖** — UserConfig → AppConfig → Settings 逐级回退
 - **AI Provider 注册表** — 内置 20+ 厂商，协议族感知模型发现与上下文窗口

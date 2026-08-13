@@ -60,7 +60,7 @@
            {% set deployment_code = version_info.deployment_type or "unknown" %}
            <dd>{{ _("version_manager.deployment_" ~ deployment_code) if deployment_code in ["image", "source"] else _("version_manager.unknown_deployment") }}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.last_checked") }}</dt>
-           <dd>{{ version_info.last_checked or _("version_manager.not_checked") }}</dd></div>
+           <dd>{{ version_info.last_checked|format_datetime_short if version_info.last_checked else _("version_manager.not_checked") }}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.update_supported") }}</dt>
            <dd>{{ _("version_manager.supported_yes") if version_info.update_supported else _("version_manager.supported_no") }}
                {% if version_info.update_unsupported_reason %}<span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span>{% endif %}</dd></div>
@@ -150,7 +150,7 @@
         <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _("version_manager.current") }}</span>
         {% endif %}
       </header>
-      <div class="text-xs text-gray-400 mb-3">{{ rel.published_at or "—" }}</div>
+      <div class="text-xs text-gray-400 mb-3">{{ rel.published_at|format_datetime_short if rel.published_at else "—" }}</div>
       {# data-markdown：前端 marked + DOMPurify 自动渲染（base.html 管线）。
          Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
       <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>

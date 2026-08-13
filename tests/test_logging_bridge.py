@@ -1,10 +1,17 @@
 import ast
 import logging
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import backend.models.database
-from backend.core.logging_bridge import InterceptHandler, _redact_standard_log_message
+from backend.core.logging_bridge import (
+    InterceptHandler,
+    _create_startup_log_file,
+    _patch_loguru_time,
+    _redact_standard_log_message,
+)
 
 
 def test_auto_migrate_standard_logging_messages_are_percent_formatted():
@@ -141,3 +148,77 @@ def test_redact_standard_log_message_masks_url_passwords_and_bot_tokens():
         "mysql+asyncmy://sakura:***@db.local/sakura "
         "https://api.telegram.org/bot***/getMe"
     )
+
+
+def test_intercept_handler_preserves_record_created_and_converts_to_app_zone(monkeypatch):
+    calls = {}
+
+    class FakeTimeService:
+        zone = ZoneInfo("America/New_York")
+
+    class LoguruLogger:
+        def level(self, name):
+            return type("Level", (), {"name": name})()
+
+        def patch(self, patcher):
+            calls["patcher"] = patcher
+            return self
+
+        def opt(self, **_kwargs):
+            return self
+
+        def log(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr("backend.core.logging_bridge.logger", LoguruLogger())
+    monkeypatch.setattr("backend.core.logging_bridge.get_time_service", lambda: FakeTimeService())
+
+    record = logging.LogRecord(
+        name="example",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="hello",
+        args=(),
+        exc_info=None,
+    )
+    record.created = datetime(2026, 8, 12, 16, 34, 56, tzinfo=UTC).timestamp()
+
+    InterceptHandler().emit(record)
+    patched = {}
+    calls["patcher"](patched)
+
+    assert patched["time"] == datetime(
+        2026, 8, 12, 12, 34, 56, tzinfo=ZoneInfo("America/New_York")
+    )
+
+
+def test_loguru_patcher_keeps_bootstrap_diagnostics_utc_when_zone_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "backend.core.logging_bridge.get_time_service",
+        lambda: (_ for _ in ()).throw(ValueError("timezone unavailable")),
+    )
+    record = {"time": datetime(2026, 8, 12, 12, 34, 56, tzinfo=UTC)}
+
+    _patch_loguru_time(record)
+
+    assert record["time"].tzinfo is UTC
+
+
+def test_startup_log_filename_is_utc_z_even_for_local_input(tmp_path):
+    path = _create_startup_log_file(
+        tmp_path,
+        started_at=datetime(
+            2026,
+            8,
+            12,
+            20,
+            34,
+            56,
+            123456,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+        process_id=7,
+    )
+
+    assert path.name == "app_20260812_123456_123456Z_pid7.log"

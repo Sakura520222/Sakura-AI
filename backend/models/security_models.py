@@ -1,11 +1,11 @@
 """Security event audit models."""
 
-from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
+from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class SecurityEventLog(Base):
@@ -25,7 +25,7 @@ class SecurityEventLog(Base):
     ip_address = Column(String(100), nullable=True)
     user_agent = Column(String(500), nullable=True)
     detail = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
 
     actor = relationship("TelegramUser", foreign_keys=[actor_user_id])
     target = relationship("TelegramUser", foreign_keys=[target_user_id])

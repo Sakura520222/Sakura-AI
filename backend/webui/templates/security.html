@@ -78,7 +78,7 @@
                             <span class="text-gray-500">{{ _('security.not_required') }}</span>
                             {% endif %}
                         </td>
-                        <td class="px-6 py-4 text-sm text-gray-500">{{ item.last_security_event_at or '-' }}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">{{ item.last_security_event_at|format_datetime_short if item.last_security_event_at else '-' }}</td>
                         <td class="px-6 py-4 text-right text-sm">
                             <a href="/security/users/{{ item.user.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.more') }}</a>
                         </td>
@@ -103,7 +103,7 @@
                         <span class="font-medium">{{ event.event_type }}</span>
                         <span class="ml-2 text-gray-500">{{ event.event_result }}</span>
                     </div>
-                    <span class="text-xs text-gray-500">{{ event.created_at }}</span>
+                    <span class="text-xs text-gray-500">{{ event.created_at|format_datetime_short }}</span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500">target={{ event.target_user_id or '-' }} actor={{ event.actor_user_id or '-' }} ip={{ event.ip_address or '-' }}</p>
             </div>

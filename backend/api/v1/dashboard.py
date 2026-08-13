@@ -1,8 +1,6 @@
 """API v1 仪表盘端点"""
-
-import time
 from collections import OrderedDict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, case, desc, func, select
@@ -10,9 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.v1.deps import require_api_auth
 from backend.api.v1.responses import success_response
+from backend.core.time_service import (
+    format_rfc3339,
+    get_time_service,
+    monotonic,
+    start_of_local_day,
+)
 from backend.models.database import PRReview, ReviewComment
 from backend.services.dashboard_stats_service import (
     fetch_module_token_stats,
+    fetch_review_trend,
     fetch_token_trend,
 )
 from backend.webui.deps import (
@@ -43,7 +48,7 @@ async def get_stats(
     # 缓存检查
     if uid in _stats_cache:
         cached_data, ts = _stats_cache[uid]
-        if time.time() - ts < _STATS_CACHE_TTL:
+        if monotonic() - ts < _STATS_CACHE_TTL:
             _stats_cache.move_to_end(uid)
             return success_response(data=cached_data)
 
@@ -124,7 +129,7 @@ async def get_stats(
     # LRU 缓存
     if len(_stats_cache) >= _MAX_STATS_CACHE_SIZE:
         _stats_cache.popitem(last=False)
-    _stats_cache[uid] = (result, time.time())
+    _stats_cache[uid] = (result, monotonic())
 
     return success_response(data=result)
 
@@ -157,8 +162,8 @@ async def get_recent_reviews(
                 "overall_score": r.overall_score,
                 "decision": r.decision,
                 "strategy": r.strategy,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "created_at": format_rfc3339(r.created_at) if r.created_at else None,
+                "completed_at": format_rfc3339(r.completed_at) if r.completed_at else None,
             }
         )
 
@@ -176,47 +181,33 @@ async def get_chart_data(
     # 缓存检查
     if uid in _chart_cache:
         cached_data, ts = _chart_cache[uid]
-        if time.time() - ts < _CHART_CACHE_TTL:
+        if monotonic() - ts < _CHART_CACHE_TTL:
             _chart_cache.move_to_end(uid)
             return success_response(data=cached_data)
 
-    now = datetime.now(UTC)
-    thirty_days_ago = now - timedelta(days=30)
+    time_service = get_time_service()
+    now = time_service.now_utc()
+    local_now = time_service.to_app_timezone(now)
+    start_date = local_now.date() - timedelta(days=30)
+    bucket_start_utc = start_of_local_day(
+        start_date, time_service.zone
+    ).astimezone(UTC)
     scope_filter = build_user_scope_filter(user, PRReview)
 
-    # 1. 审查趋势（最近 30 天）
-    trend_query = (
-        select(
-            func.date(PRReview.created_at).label("day"),
-            PRReview.status,
-            func.count(PRReview.id).label("cnt"),
-        )
-        .where(PRReview.created_at >= thirty_days_ago)
-        .group_by(func.date(PRReview.created_at), PRReview.status)
-        .order_by(func.date(PRReview.created_at))
-    )
-    if scope_filter is not None:
-        trend_query = trend_query.where(scope_filter)
-    trend_rows = (await db.execute(trend_query)).all()
-
     labels = []
-    completed_data = []
-    failed_data = []
-    current = thirty_days_ago
-    while current <= now:
-        labels.append(current.strftime("%m-%d"))
-        completed_data.append(0)
-        failed_data.append(0)
-        current += timedelta(days=1)
+    current_date = start_date
+    end_date = local_now.date()
+    while current_date <= end_date:
+        labels.append(f"{current_date.month:02d}-{current_date.day:02d}")
+        current_date += timedelta(days=1)
 
-    for row in trend_rows:
-        if row.day:
-            idx = (row.day - thirty_days_ago.date()).days
-            if 0 <= idx < len(labels):
-                if row.status == "completed":
-                    completed_data[idx] = row.cnt
-                elif row.status == "failed":
-                    failed_data[idx] = row.cnt
+    # 1. 审查趋势（最近 30 天）
+    completed_data, failed_data = await fetch_review_trend(
+        db,
+        bucket_start_utc,
+        labels,
+        scope_filter,
+    )
 
     # 2. 决策分布
     decision_query = (
@@ -252,7 +243,7 @@ async def get_chart_data(
 
     # 4. Token 消耗趋势（合并所有模块，按用户权限过滤）
     scope_user = None if scope_filter is None else user["sub"]
-    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_user)
+    token_data = await fetch_token_trend(db, bucket_start_utc, labels, scope_user)
 
     result = {
         "trend": {
@@ -276,7 +267,7 @@ async def get_chart_data(
 
     if len(_chart_cache) >= _MAX_CHART_CACHE_SIZE:
         _chart_cache.popitem(last=False)
-    _chart_cache[uid] = (result, time.time())
+    _chart_cache[uid] = (result, monotonic())
 
     return success_response(data=result)
 

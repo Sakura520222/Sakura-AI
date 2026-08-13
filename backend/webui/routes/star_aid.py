@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import secrets
-import time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -29,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
+from backend.core.time_service import monotonic
 from backend.models import database as db_module
 from backend.services import star_aid_github_service as gh_service
 from backend.services import star_aid_service, star_aid_summary_service
@@ -59,7 +59,7 @@ _MAX_FALLBACK_STATES = 1000
 
 
 def _cleanup_expired_states() -> None:
-    now = time.time()
+    now = monotonic()
     for key in [k for k, v in _fallback_states.items() if v.get("expires", 0) <= now]:
         _fallback_states.pop(key, None)
 
@@ -76,7 +76,7 @@ async def _save_auth_state(state: str, payload: dict) -> None:
         _cleanup_expired_states()
         if len(_fallback_states) >= _MAX_FALLBACK_STATES:
             raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试")
-    payload = {**payload, "expires": time.time() + _AUTH_STATE_TTL}
+    payload = {**payload, "expires": monotonic() + _AUTH_STATE_TTL}
     _fallback_states[state] = payload
 
 
@@ -90,7 +90,7 @@ async def _get_auth_state(state: str) -> dict | None:
     except Exception as exc:
         logger.warning("star_aid auth state redis read failed, fallback: {}", exc)
     fallback = _fallback_states.get(state)
-    if fallback and fallback.get("expires", 0) > time.time():
+    if fallback and fallback.get("expires", 0) > monotonic():
         return {k: v for k, v in fallback.items() if k != "expires"}
     return None
 

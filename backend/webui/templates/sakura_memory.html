@@ -35,7 +35,7 @@
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
             <div class="text-sm text-gray-500 dark:text-gray-400">上次合并</div>
-            <div class="text-sm font-medium">{{ repo_state.last_consolidation_at.strftime('%Y-%m-%d %H:%M') if repo_state.last_consolidation_at else '未合并' }}</div>
+            <div class="text-sm font-medium">{{ repo_state.last_consolidation_at|format_datetime_short if repo_state.last_consolidation_at else '未合并' }}</div>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
             <div class="text-sm text-gray-500 dark:text-gray-400">知识提取</div>
