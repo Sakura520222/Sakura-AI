@@ -9,13 +9,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
+
+from backend.core.time_service import format_rfc3339, monotonic, now_utc
 
 REPOSITORY = "ghcr.io/sakura520222/sakura-ai"
 _SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -46,7 +47,7 @@ def parse_development_tag(tag: str) -> dict[str, Any] | None:
         "channel": "development",
         "version": match.group("version"),
         "revision": match.group("revision"),
-        "created_at": created.isoformat().replace("+00:00", "Z"),
+        "created_at": format_rfc3339(created),
         "tag": tag,
     }
 
@@ -240,7 +241,7 @@ class ContainerRegistryClient:
         return digest.lower()
 
     async def list_images(self) -> dict[str, Any]:
-        now = time.monotonic()
+        now = monotonic()
         if self._cache is not None and now - self._cache_at < self.ttl:
             return self._cache
         try:
@@ -250,7 +251,7 @@ class ContainerRegistryClient:
             tag_digests = {tag: digest for tag, digest in zip(tags, pairs) if digest}
             payload = {
                 "repository": self.repository,
-                "fetched_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "fetched_at": format_rfc3339(now_utc()),
                 "stale": False,
                 "images": _group_images(tag_digests),
             }
