@@ -256,9 +256,12 @@ python -m backend.main               # 启动应用
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查
 python -m pytest -q                  # 运行测试
+tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
 ```
 
 首次启动进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 完成 Setup Wizard 配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
+
+> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 > Updater 是独立的 Python 3.12+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。
 

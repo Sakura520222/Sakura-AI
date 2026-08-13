@@ -267,7 +267,72 @@ WebUI：`https://your-domain.com/`
 
 ---
 
-## 八、Host Updater 守护进程
+## 八、查看运行日志
+
+应用使用 Loguru 输出日志：控制台（stdout）记录 `INFO` 及以上级别，落盘文件记录 `DEBUG` 及以上级别。控制台适合实时排障，文件适合详细回溯。
+
+### 日志文件
+
+- **源码部署**：项目根目录 `logs/app_<启动时间戳>_pid<PID>.log`
+- **Docker 部署**：容器内 `/app/logs/`，对应生产 Compose 的 `logs_data` 命名卷
+- 每次进程启动新建一个以「时间戳 + PID」命名的文件；单文件达到 **500 MB** 自动轮转；超过 **10 天** 的 `app_*.log` 自动清理
+- URL 中的密码与 Telegram Bot Token 在写入前自动脱敏，可安全分享日志
+
+### 实时跟踪控制台（INFO 及以上）
+
+```bash
+# 源码部署：直接运行会在当前终端实时输出
+python -m backend.main
+
+# Docker：跟踪 web 容器输出（在 /opt/sakura-ai 下）
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+```
+
+PowerShell：
+
+```powershell
+Set-Location C:\path\to\sakura-ai
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai `
+  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+```
+
+### 查看落盘 DEBUG 日志
+
+控制台只显示 INFO；需要 DEBUG 细节或历史记录时读取文件。跟踪最新一次启动的文件：
+
+```bash
+# 源码部署
+tail -f "$(ls -t logs/app_*.log | head -n1)"
+
+# Docker：进入 web 容器查看
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml exec web \
+  sh -c 'tail -f "$(ls -t /app/logs/app_*.log | head -n1)"'
+
+# 容器已停止时，直接从命名卷读取
+docker run --rm -v sakura-ai_logs_data:/logs alpine \
+  sh -c 'tail -f "$(ls -t /logs/app_*.log | head -n1)"'
+```
+
+### 过滤错误与提取首次部署 Token
+
+```bash
+# 统一设置 compose 调用（在 /opt/sakura-ai 下执行）
+COMPOSE="docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml"
+
+# 只看错误与异常
+$COMPOSE logs --tail=1000 web | grep -iE "error|exception|critical|traceback"
+
+# 提取 Setup Wizard 首次部署验证 Token（每次启动重新生成）
+$COMPOSE logs web | grep -A6 "Setup Wizard"
+```
+
+> WebUI 的「审查日志」(`/logs`) 与「操作日志」(`/logs/actions`) 存于数据库，分别记录 PR 审查历史和管理员审计操作，与本节的应用运行日志文件不同。
+
+---
+
+## 九、Host Updater 守护进程
 
 Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认更新后，Host Updater 执行预检、拉取镜像、原子更新部署状态、重建容器并校验新版本健康状态。它不会无人值守安装更新。
 
@@ -364,4 +429,4 @@ SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater st
 
 ---
 
-*最后更新：2026-8-11 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-13 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
