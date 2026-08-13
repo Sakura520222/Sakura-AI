@@ -12,13 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.time_service import (
     format_rfc3339,
     get_time_service,
-    local_date,
     monotonic,
     start_of_local_day,
 )
 from backend.models.database import PRReview, ReviewComment
 from backend.services.dashboard_stats_service import (
     fetch_module_token_stats,
+    fetch_review_trend,
     fetch_token_trend,
 )
 from backend.webui.deps import (
@@ -346,37 +346,22 @@ async def get_chart_data(
     # 构建用户过滤条件
     scope_filter = build_user_scope_filter(user, PRReview)
 
-    # 1. 审查趋势（最近 30 天）
-    # Convert UTC instants in Python so application-calendar buckets have the
-    # same DST behavior on SQLite, MySQL, and PostgreSQL.
-    trend_query = select(PRReview.created_at, PRReview.status).where(
-        PRReview.created_at >= bucket_start_utc
-    )
-    if scope_filter is not None:
-        trend_query = trend_query.where(scope_filter)
-    trend_rows = (await db.execute(trend_query)).all()
-
     # 构建连续日期标签
     labels = []
-    completed_data = []
-    failed_data = []
     current_date = start_date
     end_date = local_now.date()
     while current_date <= end_date:
         day_str = f"{current_date.month:02d}-{current_date.day:02d}"
         labels.append(day_str)
-        completed_data.append(0)
-        failed_data.append(0)
         current_date += timedelta(days=1)
 
-    for row in trend_rows:
-        if row.created_at:
-            idx = (local_date(row.created_at, time_service.zone) - start_date).days
-            if 0 <= idx < len(labels):
-                if row.status == "completed":
-                    completed_data[idx] += 1
-                elif row.status == "failed":
-                    failed_data[idx] += 1
+    # 1. 审查趋势（最近 30 天）
+    completed_data, failed_data = await fetch_review_trend(
+        db,
+        bucket_start_utc,
+        labels,
+        scope_filter,
+    )
 
     # 2. 决策分布
     decision_query = (

@@ -134,3 +134,64 @@ async def fetch_token_trend(
     )
     row = (await db.execute(ledger_query)).one()
     return [int(getattr(row, f"bucket_{index}") or 0) for index in range(len(labels))]
+
+
+async def fetch_review_trend(
+    db: AsyncSession,
+    thirty_days_ago: datetime,
+    labels: list[str],
+    scope_filter: Any | None = None,
+) -> tuple[list[int], list[int]]:
+    """Aggregate review outcomes into application-calendar buckets in SQL."""
+
+    completed_data = [0] * len(labels)
+    failed_data = [0] * len(labels)
+    if not labels:
+        return completed_data, failed_data
+
+    zone = get_time_service().zone
+    start_date = local_date(thirty_days_ago, zone)
+    boundaries = [
+        start_of_local_day(start_date + timedelta(days=index), zone)
+        for index in range(len(labels) + 1)
+    ]
+
+    def bucket_column(index: int, status: str) -> Any:
+        return func.coalesce(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            PRReview.created_at >= boundaries[index],
+                            PRReview.created_at < boundaries[index + 1],
+                            PRReview.status == status,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label(f"{status}_{index}")
+
+    bucket_columns = [
+        bucket_column(index, status)
+        for status in ("completed", "failed")
+        for index in range(len(labels))
+    ]
+    query = select(*bucket_columns).where(
+        PRReview.created_at >= boundaries[0],
+        PRReview.created_at < boundaries[-1],
+        PRReview.status.in_(("completed", "failed")),
+    )
+    if scope_filter is not None:
+        query = query.where(scope_filter)
+
+    row = (await db.execute(query)).one()
+    completed_data = [
+        int(getattr(row, f"completed_{index}") or 0) for index in range(len(labels))
+    ]
+    failed_data = [
+        int(getattr(row, f"failed_{index}") or 0) for index in range(len(labels))
+    ]
+    return completed_data, failed_data
