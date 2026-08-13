@@ -4,7 +4,6 @@ import asyncio
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -147,9 +146,12 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
             repo["issue_count"] = issue_count_map.get(key, 0)
             lp = last_pr_map.get(key)
             li = last_issue_map.get(key)
-            last_activity = max(lp or datetime.min, li or datetime.min)
-            repo["last_activity"] = (
-                last_activity if last_activity != datetime.min else None
+            # Both values are aware UTC instants when present. Avoid a naive
+            # sentinel so repositories with only one activity kind remain
+            # comparable under the strict UTCDateTime contract.
+            repo["last_activity"] = max(
+                (value for value in (lp, li) if value is not None),
+                default=None,
             )
 
     return data

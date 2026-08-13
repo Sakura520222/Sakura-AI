@@ -231,6 +231,12 @@ def datetime_local_value(value: datetime, zone: ZoneInfo | str) -> str:
     return to_app_timezone(value, zone).strftime("%Y-%m-%dT%H:%M")
 
 
+def datetime_local_fold(value: datetime, zone: ZoneInfo | str) -> int:
+    """Return the PEP 495 fold that preserves an instant in a local edit form."""
+
+    return to_app_timezone(value, zone).fold
+
+
 def filename_timestamp(value: datetime | None = None, zone: ZoneInfo | str | None = None) -> str:
     """Safe local-calendar timestamp for human-facing download filenames."""
 
