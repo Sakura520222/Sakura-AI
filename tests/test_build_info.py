@@ -27,7 +27,7 @@ def test_build_info_normalizes_image_identity(monkeypatch):
     assert get_build_info() == {
         "channel": "development",
         "revision": "a" * 40,
-        "created_at": "2026-08-12T20:00:00Z",
+        "created_at": "2026-08-12T20:00:00.000000Z",
     }
 
 
@@ -52,5 +52,13 @@ async def test_health_preserves_top_level_version_and_exposes_build(monkeypatch)
     assert payload["build"] == {
         "channel": "stable",
         "revision": "c" * 40,
-        "created_at": "2026-08-13T04:00:00Z",
+        "created_at": "2026-08-13T04:00:00.000000Z",
     }
+
+
+def test_build_info_rejects_non_rfc3339_created_at(monkeypatch):
+    monkeypatch.setenv("SAKURA_BUILD_CHANNEL", "development")
+    monkeypatch.setenv("SAKURA_BUILD_REVISION", "d" * 40)
+    monkeypatch.setenv("SAKURA_BUILD_CREATED", "2026-08-13 04:00:00+00:00")
+
+    assert get_build_info()["created_at"] is None

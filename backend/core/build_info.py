@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import UTC, datetime
+
+from backend.core.time_service import format_rfc3339, parse_rfc3339
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 _CHANNELS = {"stable", "development"}
@@ -20,12 +21,9 @@ def _created(value: str | None) -> str | None:
     if not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value)
+        return format_rfc3339(parse_rfc3339(value))
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def get_build_info() -> dict[str, str | None]:

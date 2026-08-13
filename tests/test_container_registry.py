@@ -22,7 +22,7 @@ def test_tag_parsers_are_strict_and_capture_identity():
         "channel": "development",
         "version": "3.0.2",
         "revision": revision,
-        "created_at": "2026-08-13T04:00:00Z",
+        "created_at": "2026-08-13T04:00:00.000000Z",
         "tag": f"dev-20260813040000-v3.0.2-{revision}",
     }
     assert parse_development_tag("edge") is None
