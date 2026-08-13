@@ -2,7 +2,6 @@
 
 import json
 import secrets
-import time
 from urllib.parse import urlencode
 
 import httpx
@@ -23,6 +22,7 @@ from backend import __version__
 from backend.core.config import get_settings
 from backend.core.rate_limit import limiter
 from backend.core.redis import get_async_redis
+from backend.core.time_service import monotonic
 from backend.models import database as db_module
 from backend.models.telegram_models import TelegramUser
 from backend.services.mfa_lockout_service import (
@@ -90,7 +90,7 @@ MFA_PENDING_COOKIE_NAME = "webui_mfa_token"
 
 def _cleanup_expired_states():
     """清理过期的 OAuth state"""
-    now = time.time()
+    now = monotonic()
     expired = [
         s for s, d in _oauth_states_fallback.items() if d.get("expires", 0) <= now
     ]
@@ -183,7 +183,7 @@ async def _save_oauth_state(state: str, redirect: str):
             raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试")
         _oauth_states_fallback[state] = {
             "redirect": redirect,
-            "expires": time.time() + _OAUTH_STATE_TTL,
+            "expires": monotonic() + _OAUTH_STATE_TTL,
         }
 
 
@@ -199,7 +199,7 @@ async def _get_oauth_state(state: str):
         logger.warning("OAuth state Redis 读取失败，尝试内存回退")
     # Redis 失败或未命中，尝试内存回退
     fallback = _oauth_states_fallback.get(state)
-    if fallback and fallback["expires"] > time.time():
+    if fallback and fallback["expires"] > monotonic():
         return {"redirect": fallback["redirect"]}
     return None
 

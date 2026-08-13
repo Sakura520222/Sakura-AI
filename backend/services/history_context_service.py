@@ -9,6 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service
 from backend.models.database import PRReview, PRStatus
 from backend.services.ai_reviewer.api_client import AIApiClient
 
@@ -122,7 +123,7 @@ class HistoryContextService:
         for idx, review in enumerate(reviews, 1):
             section = [
                 f"### 第{idx}轮审查",
-                f"- 时间: {review.created_at.strftime('%Y-%m-%d %H:%M') if review.created_at else 'N/A'}",
+                f"- 时间: {get_time_service().format_display(review.created_at, seconds=False) if review.created_at else 'N/A'}",
                 f"- 策略: {review.strategy}",
                 f"- 评分: {review.overall_score}/10",
                 f"- 决策: {review.decision or 'N/A'}",

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from loguru import logger
@@ -28,6 +28,7 @@ from backend.core.github_app import (
     exchange_user_access_token,
     refresh_user_access_token,
 )
+from backend.core.time_service import now_utc
 from backend.models.star_aid_models import (
     MEMBER_STATUS_REAUTH_REQUIRED,
     StarAidCredential,
@@ -82,7 +83,8 @@ def _parse_rate_limit(headers: httpx.Headers) -> tuple[int | None, datetime | No
     )
     reset_at: datetime | None = None
     if reset_raw and reset_raw.isdigit():
-        reset_at = datetime.utcfromtimestamp(int(reset_raw))
+        # GitHub's rate-limit reset is a Unix instant; keep it aware UTC.
+        reset_at = datetime.fromtimestamp(int(reset_raw), tz=UTC)
     return remaining, reset_at
 
 
@@ -172,7 +174,7 @@ async def save_credential_from_token(
     token_payload: dict,
 ) -> StarAidCredential:
     """把 token 交换/刷新返回的凭据加密写库（upsert）。"""
-    now = datetime.utcnow()
+    now = now_utc()
     access_token = token_payload.get("access_token") or ""
     refresh_token = token_payload.get("refresh_token") or ""
     expires_in = token_payload.get("expires_in")
@@ -220,7 +222,7 @@ async def get_credential(
 
 async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
     """标记用户需要重新授权：吊销凭据并把成员状态置为 reauth_required。"""
-    now = datetime.utcnow()
+    now = now_utc()
     cred = await get_credential(session, user_id)
     if cred and cred.revoked_at is None:
         cred.revoked_at = now
@@ -292,7 +294,7 @@ async def get_effective_access_token(
         await mark_reauth_required(session, user_id)
         return None, GitHubCallResult(reauth_required=True, error_code="decrypt_failed")
 
-    now = datetime.utcnow()
+    now = now_utc()
     # 未过期（或长期 token 无 expires_at）直接返回
     expired = (
         cred.access_token_expires_at is not None
@@ -318,7 +320,7 @@ async def _refresh_and_persist(
             reauth_required=True, error_code="no_refresh_token"
         )
 
-    now = datetime.utcnow()
+    now = now_utc()
     if (
         cred.refresh_token_expires_at is not None
         and cred.refresh_token_expires_at <= now

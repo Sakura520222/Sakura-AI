@@ -3,7 +3,6 @@
 import enum
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Column,
     ForeignKey,
@@ -12,10 +11,13 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGTEXT as MYSQL_LONGTEXT
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
+
+LONGTEXT = MYSQL_LONGTEXT().with_variant(Text(), "sqlite")
 
 DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
 
@@ -94,8 +96,8 @@ class AgentTeamTask(Base):
     resume_count = Column(Integer, default=0, nullable=False)
     failed_phase = Column(String(50), nullable=True)
     failed_role = Column(String(50), nullable=True)
-    rate_limit_reset_at = Column(TIMESTAMP, nullable=True)
-    last_checkpoint_at = Column(TIMESTAMP, nullable=True)
+    rate_limit_reset_at = Column(UTCDateTime, nullable=True)
+    last_checkpoint_at = Column(UTCDateTime, nullable=True)
     pr_number = Column(BigInteger, nullable=True, index=True)
     pr_head_sha = Column(String(64), nullable=True, index=True)
     pr_url = Column(String(500), nullable=True)
@@ -113,10 +115,10 @@ class AgentTeamTask(Base):
     estimated_cost = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False, index=True)
-    updated_at = Column(TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False)
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     iterations = relationship(
         "AgentTeamIteration", back_populates="task", cascade="all, delete-orphan"
@@ -162,8 +164,8 @@ class AgentTeamIteration(Base):
     test_passed = Column(Integer, default=0, nullable=False)
     diff_summary = Column(Text, nullable=True)
     decision = Column(String(50), nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     task = relationship("AgentTeamTask", back_populates="iterations")
     patch_files = relationship(
@@ -190,7 +192,7 @@ class AgentTeamPatchFile(Base):
     deletions = Column(Integer, default=0)
     diff_summary = Column(Text, nullable=True)
     risk_level = Column(String(50), nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     iteration = relationship("AgentTeamIteration", back_populates="patch_files")
 
@@ -216,8 +218,8 @@ class AgentTeamSession(Base):
     last_seq = Column(Integer, default=0, nullable=False)
     error_message = Column(Text, nullable=True)
     result_payload = Column(LONGTEXT, nullable=True, comment="Structured result JSON")
-    started_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    started_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     task = relationship("AgentTeamTask", back_populates="sessions")
     messages = relationship(
@@ -249,7 +251,7 @@ class AgentTeamMessage(Base):
     message_json = Column(LONGTEXT, nullable=False)
     tool_call_id = Column(String(255), nullable=True, index=True)
     finish_reason = Column(String(100), nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     session = relationship("AgentTeamSession", back_populates="messages")
 
@@ -283,8 +285,8 @@ class AgentTeamToolCall(Base):
         nullable=True,
         index=True,
     )
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
     error_message = Column(Text, nullable=True)
 
     session = relationship("AgentTeamSession", back_populates="tool_calls")
@@ -313,7 +315,7 @@ class AgentTeamConversationContext(Base):
     unresolved_items_json = Column(LONGTEXT, nullable=True)
     modified_files_json = Column(LONGTEXT, nullable=True)
     token_estimate = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     task = relationship("AgentTeamTask", back_populates="conversation_contexts")
 
@@ -339,7 +341,7 @@ class AgentTeamFeedback(Base):
     author = Column(String(100), nullable=True)
     content = Column(Text, nullable=False)
     resolved = Column(Integer, default=0, nullable=False)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     task = relationship("AgentTeamTask", back_populates="feedback")
 
@@ -361,7 +363,7 @@ class AgentTeamUserPrompt(Base):
         String(50), default="pending", nullable=False, index=True
     )  # pending → consumed | expired
     submitted_by = Column(String(100), nullable=True)
-    consumed_at = Column(TIMESTAMP, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    consumed_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     task = relationship("AgentTeamTask", back_populates="user_prompts")

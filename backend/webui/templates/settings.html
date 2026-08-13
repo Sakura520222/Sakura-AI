@@ -180,8 +180,8 @@
                         <div>
                             <p class="text-sm font-medium">{{ passkey.device_name or _('settings.passkey_default_name') }}</p>
                             <p class="text-xs text-gray-500 dark:text-gray-400">
-                                {{ _('common.created_at') }}: {{ passkey.created_at }}
-                                {% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at }}{% endif %}
+                                {{ _('common.created_at') }}: {{ passkey.created_at|format_datetime_short }}
+                                {% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at|format_datetime_short }}{% endif %}
                             </p>
                         </div>
                         <form method="POST" action="/settings/passkeys/{{ passkey.id }}/delete">

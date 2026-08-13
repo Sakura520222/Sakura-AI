@@ -4,7 +4,6 @@ import asyncio
 import json
 import math
 import threading
-from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
 from backend.core.github_app import GitHubAppClient
+from backend.core.time_service import now_utc
 from backend.models.database import (
     IssueAnalysis,
     IssueAnalysisQueue,
@@ -115,7 +115,7 @@ class IssueService:
         record.prompt_tokens = analysis_data.get("prompt_tokens", 0)
         record.completion_tokens = analysis_data.get("completion_tokens", 0)
         record.estimated_cost = analysis_data.get("estimated_cost", 0)
-        record.completed_at = datetime.utcnow()
+        record.completed_at = now_utc()
 
         await db.commit()
         await db.refresh(record)

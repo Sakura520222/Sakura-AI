@@ -60,7 +60,7 @@
 
                 <!-- 时间 -->
                 <div class="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
-                    {{ r.created_at[:16] if r.created_at else '-' }}
+                    {{ r.created_at|format_datetime_short if r.created_at else '-' }}
                 </div>
             </a>
             {% endfor %}

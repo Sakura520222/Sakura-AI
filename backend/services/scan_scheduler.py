@@ -3,6 +3,7 @@
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service
 
 
 class ScanScheduler:
@@ -32,7 +33,7 @@ class ScanScheduler:
 
             self._worker = ScanWorker()
             self._scheduler = AsyncIOScheduler(
-                timezone="Asia/Shanghai",
+                timezone=get_time_service().zone,
                 job_defaults={"coalesce": True, "max_instances": 1},
             )
 

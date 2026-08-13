@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Callable, Coroutine
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
@@ -14,6 +14,7 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.model_context import get_model_context_manager
+from backend.core.time_service import now_utc
 from backend.models.database import AppConfig, async_session
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
@@ -463,7 +464,7 @@ class IssueAnalyzer:
 
         github_app = GitHubAppClient()
         cache_key = repo_full_name
-        now = datetime.now()
+        now = now_utc()
         if (
             cache_key in _collaborator_cache
             and now - _collaborator_cache[cache_key]["updated_at"]

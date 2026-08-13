@@ -66,7 +66,7 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for code in codes %}
-                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at.strftime('%Y-%m-%dT%H:%M') if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
+                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at|datetime_local if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
                     <td class="px-4 py-4">
                         <input type="checkbox" class="code-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                                value="{{ code.id }}" data-used="{{ code.used_count }}" onchange="updateBatchBar()">
@@ -90,7 +90,7 @@
                         </span>
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                        {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else _('billing.never_expire') }}
+                        {{ code.expires_at|format_datetime_short if code.expires_at else _('billing.never_expire') }}
                     </td>
                     <td class="px-6 py-4 space-x-2">
                         <button onclick="openEditCodeModal(this.closest('tr').dataset.code)"
@@ -200,6 +200,13 @@
                 <input type="datetime-local" name="expires_at" id="edit-code-expires"
                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <label for="edit-code-expires-fold" class="mt-2 block text-xs text-gray-500 dark:text-gray-400">{{ _('billing.datetime_local_fold') }}</label>
+                <select name="expires_at_fold" id="edit-code-expires-fold"
+                        class="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="">{{ _('billing.datetime_local_fold_auto') }}</option>
+                    <option value="0">{{ _('billing.datetime_local_fold_early') }}</option>
+                    <option value="1">{{ _('billing.datetime_local_fold_late') }}</option>
+                </select>
             </div>
 
             <div>

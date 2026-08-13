@@ -35,7 +35,7 @@
                     <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _('agent_skills.disabled') }}</span>
                     {% endif %}
                 </td>
-                <td class="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{{ skill.updated_at }}</td>
+                <td class="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{{ skill.updated_at|format_datetime_short }}</td>
                 <td class="px-4 py-4">
                     <div class="flex justify-end gap-2">
                         <form method="post" action="/agent-skills/{{ skill.id }}/toggle">

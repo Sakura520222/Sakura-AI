@@ -10,6 +10,7 @@ from __future__ import annotations
 from loguru import logger
 
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.time_service import get_time_service
 
 # 扫描周期（分钟）：多久检查一次到期成员。成员实际节奏由 next_scheduled_at 决定。
 _TICK_INTERVAL_MINUTES = 3
@@ -40,7 +41,7 @@ class StarAidScheduler:
 
             self._worker = StarAidWorker()
             self._scheduler = AsyncIOScheduler(
-                timezone="Asia/Shanghai",
+                timezone=get_time_service().zone,
                 job_defaults={"coalesce": True, "max_instances": 1},
             )
             self._scheduler.add_job(

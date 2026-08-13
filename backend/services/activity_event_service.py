@@ -1,11 +1,11 @@
 """实时活动事件服务 — 持久化事件 + SSE 推送，驱动前端对话流 UI。"""
-
 import json
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
 
+from backend.core.time_service import format_rfc3339
 from backend.models import database as db_module
 from backend.models.activity_event_models import ActivityEvent
 
@@ -148,7 +148,7 @@ async def _publish_activity_event(
                 "event_type": event.event_type,
                 "content": content,
                 "created_at": (
-                    event.created_at.isoformat() if event.created_at else None
+                    format_rfc3339(event.created_at) if event.created_at else None
                 ),
             },
         )
@@ -170,5 +170,5 @@ def _event_to_dict(event: ActivityEvent) -> dict[str, Any]:
         "task_id": event.task_id,
         "event_type": event.event_type,
         "content": content,
-        "created_at": event.created_at.isoformat() if event.created_at else None,
+        "created_at": format_rfc3339(event.created_at) if event.created_at else None,
     }

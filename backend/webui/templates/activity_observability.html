@@ -1194,7 +1194,7 @@ function activityObservability() {
         },
         formatTime(value) {
             if (!value) return '';
-            try { return new Date(value).toLocaleString(); } catch (_) { return value; }
+            try { return window.sakuraFormatTime(value); } catch (_) { return value; }
         },
         formatRelativeTime(value) {
             if (!value) return '';
@@ -1205,7 +1205,7 @@ function activityObservability() {
             return `${Math.floor(seconds / 86400)}{{ _('activity.time_days_ago') }}`;
         },
         formatNumber(value) {
-            return value == null ? '—' : Number(value).toLocaleString();
+            return value == null ? '—' : window.sakuraFormatNumber(value);
         },
     };
 }

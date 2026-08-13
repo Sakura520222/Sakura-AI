@@ -1,7 +1,6 @@
 """WebUI FastAPI 依赖注入"""
 
 import asyncio
-import time
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from functools import lru_cache
@@ -17,11 +16,13 @@ from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service, monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
 from backend.services.payment_service import is_payment_enabled
 from backend.webui.auth import decode_access_token, is_access_token_payload
 from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
+from backend.webui.time_filters import register_time_filters
 
 
 # ========== 模板引擎 ==========
@@ -33,6 +34,7 @@ def get_templates() -> Jinja2Templates:
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
     templates.env.filters["format_duration"] = _format_duration_filter
+    register_time_filters(templates.env)
     # i18n: 注入默认翻译函数（实际语言由模板上下文中的 _ 覆盖）
     templates.env.globals["_"] = make_translation_func("zh-CN")
     return templates
@@ -83,6 +85,12 @@ def render_template(
     context["lang"] = lang
     context["supported_languages"] = SUPPORTED_LANGUAGES
     context["request"] = request
+    time_service = get_time_service()
+    context["app_timezone"] = time_service.resolved_timezone
+    context["app_timezone_json"] = time_service.resolved_timezone
+    context["app_timezone_offset"] = time_service.to_app_timezone(
+        time_service.now_utc()
+    ).strftime("%z")
     if user_prefs:
         context["user_prefs"] = user_prefs
 
@@ -543,7 +551,7 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     cached = _USER_PREFS_CACHE.get(user_id)
     if cached:
         prefs, ts = cached
-        if time.time() - ts < _USER_PREFS_TTL:
+        if monotonic() - ts < _USER_PREFS_TTL:
             _USER_PREFS_CACHE.move_to_end(user_id)
             return prefs
 
@@ -562,7 +570,7 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     if len(_USER_PREFS_CACHE) >= _MAX_USER_PREFS_CACHE:
         _USER_PREFS_CACHE.popitem(last=False)
 
-    _USER_PREFS_CACHE[user_id] = (prefs, time.time())
+    _USER_PREFS_CACHE[user_id] = (prefs, monotonic())
     return prefs
 
 
@@ -581,7 +589,7 @@ async def get_active_repos(db: AsyncSession) -> list[str]:
     global _ACTIVE_REPOS_CACHE
     if _ACTIVE_REPOS_CACHE:
         repos, ts = _ACTIVE_REPOS_CACHE
-        if time.time() - ts < _ACTIVE_REPOS_TTL:
+        if monotonic() - ts < _ACTIVE_REPOS_TTL:
             return repos
 
     from backend.models.telegram_models import RepoSubscription
@@ -592,5 +600,5 @@ async def get_active_repos(db: AsyncSession) -> list[str]:
         .order_by(RepoSubscription.repo_name)
     )
     repos = [r[0] for r in result.all()]
-    _ACTIVE_REPOS_CACHE = (repos, time.time())
+    _ACTIVE_REPOS_CACHE = (repos, monotonic())
     return repos

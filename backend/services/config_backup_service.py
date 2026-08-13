@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -23,6 +23,13 @@ from backend.core.config import (
     get_settings,
     invalidate_dynamic_config_cache,
     update_settings_field,
+)
+from backend.core.time_service import (
+    InvalidTimezoneError,
+    format_rfc3339,
+    now_utc,
+    parse_rfc3339,
+    resolve_timezone,
 )
 from backend.models.database import AppConfig
 from backend.services.system_config_service import (
@@ -178,11 +185,11 @@ def build_backup_document(
             ],
         }
 
-    timestamp = exported_at or datetime.now(UTC)
+    timestamp = exported_at or now_utc()
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
-        "exported_at": timestamp.isoformat(),
+        "exported_at": format_rfc3339(timestamp),
         "scope": scope,
         "contains_sensitive_values": contains_sensitive_values,
         "sections": sections,
@@ -293,6 +300,14 @@ def _validate_global_record(record: BackupRecord) -> None:
 
 def _validate_system_record(record: BackupRecord) -> None:
     _validate_typed_config_value(record.key, record.value)
+    if record.key == "app_timezone":
+        if record.value is None or not record.value or record.value != record.value.strip():
+            raise ConfigBackupError("系统配置 app_timezone 不得为空或包含首尾空格")
+        try:
+            resolve_timezone(record.value)
+        except InvalidTimezoneError as exc:
+            raise ConfigBackupError("系统配置 app_timezone 必须是 system 或有效 IANA 时区") from exc
+        return
     if record.value is None or not record.value.strip():
         return
 
@@ -483,6 +498,14 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
     version = payload.get("version")
     if version not in SUPPORTED_BACKUP_VERSIONS:
         raise ConfigBackupError("不支持此备份版本")
+    if version == BACKUP_VERSION:
+        exported_at = payload.get("exported_at")
+        if not isinstance(exported_at, str):
+            raise ConfigBackupError("v2 备份缺少有效 exported_at")
+        try:
+            parse_rfc3339(exported_at)
+        except ValueError as exc:
+            raise ConfigBackupError("v2 备份 exported_at 必须是 RFC3339 时间") from exc
 
     scope = payload.get("scope")
     selected_sections = _sections_for_scope(scope, version=version)
@@ -668,7 +691,8 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     reset_keys = {
         key
         for key in runtime_keys
-        if key in result.deleted_keys or result.imported_values.get(key) is None
+        if key not in RESTART_REQUIRED_KEYS
+        and (key in result.deleted_keys or result.imported_values.get(key) is None)
     }
     defaults = Settings() if reset_keys else None
     settings = get_settings()
@@ -677,7 +701,9 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
             setattr(settings, key, getattr(defaults, key))
 
     for key, value in result.imported_values.items():
-        if key in runtime_keys and value is not None:
+        # Restart-required settings (notably app_timezone) are persisted and
+        # audited but never hot-applied to this frozen process.
+        if key in runtime_keys and key not in RESTART_REQUIRED_KEYS and value is not None:
             update_settings_field(key, value)
 
     if "max_concurrent_issues" in affected_keys:

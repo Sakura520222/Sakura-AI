@@ -8,13 +8,14 @@ which transport (WebUI / API) the attempt comes from.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
+from backend.core.time_service import now_utc
 
 # Redis key patterns
 _FAIL_COUNT_PREFIX = "mfa:fail:count:"
@@ -94,7 +95,7 @@ async def record_mfa_failure(user_id: int) -> int:
 
 def _cleanup_expired_fallbacks() -> None:
     """Remove expired entries from both fallback dicts."""
-    now = datetime.now(UTC)
+    now = now_utc()
     lock_ttl = _lock_ttl_seconds()
     for store in (_fail_fallback, _lock_fallback):
         expired = [
@@ -109,7 +110,7 @@ def _cleanup_expired_fallbacks() -> None:
 def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) -> int:
     if len(_fail_fallback) > _MAX_FALLBACK_ENTRIES:
         _cleanup_expired_fallbacks()
-    now = datetime.now(UTC)
+    now = now_utc()
     count_val, created_at = _fail_fallback.get(user_id, (0, now))
     # If previous entry is older than lock TTL, reset
     if (now - created_at).total_seconds() > lock_ttl:
@@ -163,7 +164,7 @@ def _check_mfa_lockout_fallback(user_id: int) -> None:
     if user_id not in _lock_fallback:
         return
     _, locked_at = _lock_fallback[user_id]
-    elapsed = (datetime.now(UTC) - locked_at).total_seconds()
+    elapsed = (now_utc() - locked_at).total_seconds()
     remaining = _lock_ttl_seconds() - elapsed
     if remaining > 0:
         raise AccountLockedError(int(remaining))
@@ -221,7 +222,7 @@ async def get_mfa_lockout_status(user_id: int) -> dict[str, Any]:
     except Exception:
         if user_id in _lock_fallback:
             _, locked_at = _lock_fallback[user_id]
-            elapsed = (datetime.now(UTC) - locked_at).total_seconds()
+            elapsed = (now_utc() - locked_at).total_seconds()
             rem = _lock_ttl_seconds() - elapsed
             if rem > 0:
                 locked = True

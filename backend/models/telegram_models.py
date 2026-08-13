@@ -1,10 +1,8 @@
 """Telegram Bot 数据模型"""
 
 import enum
-from datetime import datetime
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Boolean,
     Column,
@@ -16,7 +14,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
+from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class UserRole(str, enum.Enum):
@@ -58,9 +57,9 @@ class TelegramUser(Base):
     monthly_used = Column(Integer, default=0, nullable=False)
 
     # 配额重置时间
-    last_reset_daily = Column(TIMESTAMP, nullable=True)
-    last_reset_weekly = Column(TIMESTAMP, nullable=True)
-    last_reset_monthly = Column(TIMESTAMP, nullable=True)
+    last_reset_daily = Column(UTCDateTime, nullable=True)
+    last_reset_weekly = Column(UTCDateTime, nullable=True)
+    last_reset_monthly = Column(UTCDateTime, nullable=True)
 
     # Issue 分析配额设置
     issue_daily_quota = Column(Integer, default=20, nullable=False)
@@ -73,9 +72,9 @@ class TelegramUser(Base):
     issue_monthly_used = Column(Integer, default=0, nullable=False)
 
     # Issue 配额重置时间
-    last_reset_issue_daily = Column(TIMESTAMP, nullable=True)
-    last_reset_issue_weekly = Column(TIMESTAMP, nullable=True)
-    last_reset_issue_monthly = Column(TIMESTAMP, nullable=True)
+    last_reset_issue_daily = Column(UTCDateTime, nullable=True)
+    last_reset_issue_weekly = Column(UTCDateTime, nullable=True)
+    last_reset_issue_monthly = Column(UTCDateTime, nullable=True)
 
     # Agent 配额设置
     agent_daily_quota = Column(Integer, default=1, nullable=False)
@@ -88,9 +87,9 @@ class TelegramUser(Base):
     agent_monthly_used = Column(Integer, default=0, nullable=False)
 
     # Agent 配额重置时间
-    last_reset_agent_daily = Column(TIMESTAMP, nullable=True)
-    last_reset_agent_weekly = Column(TIMESTAMP, nullable=True)
-    last_reset_agent_monthly = Column(TIMESTAMP, nullable=True)
+    last_reset_agent_daily = Column(UTCDateTime, nullable=True)
+    last_reset_agent_weekly = Column(UTCDateTime, nullable=True)
+    last_reset_agent_monthly = Column(UTCDateTime, nullable=True)
 
     # 状态
     is_active = Column(Boolean, default=True, nullable=False)
@@ -99,14 +98,14 @@ class TelegramUser(Base):
     mfa_required = Column(Boolean, default=False, nullable=False)
     totp_enabled = Column(Boolean, default=False, nullable=False)
     totp_secret_encrypted = Column(Text, nullable=True)
-    totp_enabled_at = Column(TIMESTAMP, nullable=True)
+    totp_enabled_at = Column(UTCDateTime, nullable=True)
     # TOTP time step is floor(unix_time / 30); signed MySQL BIGINT covers far beyond real-world timestamps.
     totp_last_used_step = Column(BigInteger, nullable=True)
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -123,8 +122,8 @@ class UserRecoveryCode(Base):
         Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
     )
     code_hash = Column(String(128), nullable=False, index=True)
-    used_at = Column(TIMESTAMP, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    used_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     user = relationship("TelegramUser", foreign_keys=[user_id])
 
@@ -152,8 +151,8 @@ class UserWebAuthnCredential(Base):
     transports = Column(String(255), nullable=True)
     device_name = Column(String(100), nullable=True)
     backed_up = Column(Boolean, default=False, nullable=False)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
-    last_used_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    last_used_at = Column(UTCDateTime, nullable=True)
 
     user = relationship("TelegramUser", foreign_keys=[user_id])
 
@@ -176,9 +175,9 @@ class RepoSubscription(Base):
     added_by = Column(BigInteger, nullable=True)  # Telegram ID
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -199,7 +198,7 @@ class UserRepoSubscription(Base):
     )
     repo_name = Column(String(255), nullable=False, index=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("telegram_id", "repo_name", name="uq_user_repo"),
@@ -226,7 +225,7 @@ class QuotaUsageLog(Base):
     )  # "pr_review" 或 "issue_analysis"
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
 
     def __repr__(self):
         return f"<QuotaUsageLog(user_id={self.telegram_user_id}, repo={self.repo_name}, pr={self.pr_number})>"

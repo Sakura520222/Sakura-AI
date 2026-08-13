@@ -16,12 +16,18 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from loguru import logger
 from sqlalchemy import func, select
 
 from backend.core.config import get_dynamic_config
+from backend.core.time_service import (
+    get_time_service,
+    local_date,
+    now_utc,
+    start_of_local_day,
+)
 from backend.models.database import async_session
 from backend.models.star_aid_models import (
     ACTION_MANUAL_STAR,
@@ -52,7 +58,7 @@ class StarAidWorker:
             return
 
         batch_size = int(await get_dynamic_config("star_aid_batch_size") or 5)
-        now = datetime.utcnow()
+        now = now_utc()
         async with async_session() as session:
             result = await session.execute(
                 select(StarAidMember.id)
@@ -83,7 +89,7 @@ class StarAidWorker:
             member = await session.get(StarAidMember, member_id)
             if member is None or member.status != MEMBER_STATUS_ACTIVE:
                 return
-            now = datetime.utcnow()
+            now = now_utc()
 
             if self._needs_daily_reset(member):
                 member.daily_star_used = 0
@@ -132,7 +138,8 @@ class StarAidWorker:
             await session.commit()
 
     def _needs_daily_reset(self, member: StarAidMember) -> bool:
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        service = get_time_service()
+        today = start_of_local_day(local_date(now_utc(), service.zone), service.zone)
         last = member.last_daily_reset_at
         return last is None or last < today
 
@@ -174,9 +181,8 @@ class StarAidWorker:
         repo_limit = int(repo_limit_raw if repo_limit_raw is not None else 50)
         if repo_limit <= 0:
             return []
-        today_start = datetime.utcnow().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        service = get_time_service()
+        today_start = start_of_local_day(local_date(now_utc(), service.zone), service.zone)
         counts_result = await session.execute(
             select(
                 StarAidActionLog.target_repository_id,

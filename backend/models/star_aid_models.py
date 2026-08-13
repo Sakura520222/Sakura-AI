@@ -17,10 +17,8 @@
   重复 star/unstar；重试明细如有需要另存，不破坏最终状态幂等表。
 """
 
-from datetime import datetime
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Boolean,
     Column,
@@ -31,7 +29,8 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
-from backend.models.database import Base
+from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 # ---------- 合法状态枚举值（以字符串存储，避免 Enum 迁移陷阱）----------
 # Member status
@@ -84,9 +83,9 @@ class StarAidMember(Base):
     # active / paused / left / banned / reauth_required
     status = Column(String(30), nullable=False, default=MEMBER_STATUS_ACTIVE)
 
-    joined_at = Column(TIMESTAMP, nullable=True)
-    left_at = Column(TIMESTAMP, nullable=True)
-    banned_at = Column(TIMESTAMP, nullable=True)
+    joined_at = Column(UTCDateTime, nullable=True)
+    left_at = Column(UTCDateTime, nullable=True)
+    banned_at = Column(UTCDateTime, nullable=True)
     banned_by_user_id = Column(Integer, nullable=True)
     ban_reason = Column(Text, nullable=True)
 
@@ -95,17 +94,17 @@ class StarAidMember(Base):
     # 每日自动 star 配额；join 时由 service 从 settings 写入实际默认值
     daily_star_limit = Column(Integer, nullable=False, default=20)
     daily_star_used = Column(Integer, nullable=False, default=0)
-    last_daily_reset_at = Column(TIMESTAMP, nullable=True)
+    last_daily_reset_at = Column(UTCDateTime, nullable=True)
 
     # 调度器使用的下一次执行时间（随机间隔）
-    last_scheduled_at = Column(TIMESTAMP, nullable=True)
-    next_scheduled_at = Column(TIMESTAMP, nullable=True)
+    last_scheduled_at = Column(UTCDateTime, nullable=True)
+    next_scheduled_at = Column(UTCDateTime, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        UTCDateTime,
+            default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -134,24 +133,24 @@ class StarAidCredential(Base):
     github_username = Column(String(100), nullable=True, index=True)
 
     encrypted_access_token = Column(Text, nullable=True)
-    access_token_expires_at = Column(TIMESTAMP, nullable=True)
+    access_token_expires_at = Column(UTCDateTime, nullable=True)
 
     encrypted_refresh_token = Column(Text, nullable=True)
-    refresh_token_expires_at = Column(TIMESTAMP, nullable=True)
+    refresh_token_expires_at = Column(UTCDateTime, nullable=True)
 
     token_type = Column(String(30), nullable=False, default="bearer")
     # 授权时使用的 GitHub App client id，便于多 App 场景区分
     github_app_client_id = Column(String(100), nullable=True)
 
-    last_authorized_at = Column(TIMESTAMP, nullable=True)
-    last_refresh_at = Column(TIMESTAMP, nullable=True)
-    revoked_at = Column(TIMESTAMP, nullable=True)
+    last_authorized_at = Column(UTCDateTime, nullable=True)
+    last_refresh_at = Column(UTCDateTime, nullable=True)
+    revoked_at = Column(UTCDateTime, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        UTCDateTime,
+            default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -184,7 +183,7 @@ class StarAidRepository(Base):
     primary_language = Column(String(100), nullable=True)
 
     stargazers_count = Column(Integer, nullable=False, default=0)
-    pushed_at = Column(TIMESTAMP, nullable=True)
+    pushed_at = Column(UTCDateTime, nullable=True)
 
     readme_sha = Column(String(80), nullable=True)
     readme_excerpt = Column(Text, nullable=True)
@@ -194,7 +193,7 @@ class StarAidRepository(Base):
     # pending / ready / failed / stale
     ai_summary_status = Column(String(30), nullable=False, default=SUMMARY_PENDING)
     ai_summary_error = Column(Text, nullable=True)
-    ai_summary_updated_at = Column(TIMESTAMP, nullable=True)
+    ai_summary_updated_at = Column(UTCDateTime, nullable=True)
 
     is_displayed = Column(Boolean, nullable=False, default=True)
     is_public = Column(Boolean, nullable=False, default=True)
@@ -202,11 +201,11 @@ class StarAidRepository(Base):
     disabled_by_admin = Column(Boolean, nullable=False, default=False)
     disabled_reason = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        UTCDateTime,
+            default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -254,7 +253,7 @@ class StarAidActionLog(Base):
     # 是否由本功能创建了 star（用于退出时可选批量取消）
     created_star = Column(Boolean, nullable=False, default=False)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -291,9 +290,9 @@ class StarAidRepositoryMetric(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     repository_id = Column(Integer, nullable=False, index=True)
-    sampled_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    sampled_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
     stargazers_count = Column(Integer, nullable=True)
-    pushed_at = Column(TIMESTAMP, nullable=True)
+    pushed_at = Column(UTCDateTime, nullable=True)
     open_issues_count = Column(Integer, nullable=True)
     forks_count = Column(Integer, nullable=True)
 

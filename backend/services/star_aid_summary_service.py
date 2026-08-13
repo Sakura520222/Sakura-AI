@@ -22,6 +22,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.star_aid_models import (
     SUMMARY_FAILED,
@@ -232,7 +233,7 @@ async def refresh_repository_summary(
     ):
         return {"status": "skipped"}
 
-    now = datetime.utcnow()
+    now = now_utc()
     lang = await _resolve_summary_language(session, repo.owner_user_id)
     topics = json.loads(repo.topics_json) if repo.topics_json else []
 

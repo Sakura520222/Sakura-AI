@@ -20,6 +20,7 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.model_context import get_model_context_manager
+from backend.core.time_service import filename_timestamp
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
@@ -61,12 +62,11 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
     the fact instead of guessing from truncated snippets.
     """
     try:
-        from datetime import datetime
         from pathlib import Path
 
         dump_dir = Path("logs") / "protocol_failures"
         dump_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = filename_timestamp()
         path = dump_dir / f"{timestamp}_{strategy}.txt"
         path.write_text(review_text, encoding="utf-8")
         logger.warning("已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path)

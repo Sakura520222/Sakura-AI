@@ -27,7 +27,7 @@
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
             <p class="text-sm text-gray-500">{{ _('security.last_event') }}</p>
-            <p class="mt-2 text-sm font-semibold">{{ summary.last_security_event_at or '-' }}</p>
+            <p class="mt-2 text-sm font-semibold">{{ summary.last_security_event_at|format_datetime_short if summary.last_security_event_at else '-' }}</p>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
             <p class="text-sm text-gray-500">{{ _('security.mfa_requirement') }}</p>
@@ -79,7 +79,7 @@
             <div class="px-6 py-4 flex items-center justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium">{{ passkey.device_name or _('settings.passkey_default_name') }}</p>
-                    <p class="text-xs text-gray-500">{{ _('common.created_at') }}: {{ passkey.created_at }}{% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at }}{% endif %}</p>
+                    <p class="text-xs text-gray-500">{{ _('common.created_at') }}: {{ passkey.created_at|format_datetime_short }}{% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at|format_datetime_short }}{% endif %}</p>
                 </div>
                 <form method="POST" action="/security/users/{{ target_user.id }}/passkeys/{{ passkey.id }}/delete" onsubmit="return confirm('{{ _('security.confirm_delete_passkey') }}')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -99,7 +99,7 @@
             <div class="px-6 py-4 text-sm">
                 <div class="flex items-center justify-between gap-4">
                     <div><span class="font-medium">{{ event.event_type }}</span><span class="ml-2 text-gray-500">{{ event.event_result }}</span></div>
-                    <span class="text-xs text-gray-500">{{ event.created_at }}</span>
+                    <span class="text-xs text-gray-500">{{ event.created_at|format_datetime_short }}</span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500">actor={{ event.actor_user_id or '-' }} ip={{ event.ip_address or '-' }}</p>
             </div>

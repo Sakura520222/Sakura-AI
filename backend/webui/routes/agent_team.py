@@ -1,5 +1,4 @@
 """WebUI Agent 专家团队路由"""
-
 import asyncio
 import json
 import re
@@ -25,6 +24,7 @@ from backend.core.config import (
     mask_sensitive_value,
     update_settings_field,
 )
+from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.agent_team_models import (
     AgentTeamConversationContext,
     AgentTeamIteration,
@@ -336,7 +336,7 @@ def _format_agent_conversation_contexts(
         contexts,
         key=lambda item: (
             item.iteration_number or 0,
-            item.created_at.isoformat() if item.created_at else "",
+            format_rfc3339(item.created_at) if item.created_at else "",
             item.id or 0,
         ),
     )
@@ -1393,7 +1393,7 @@ async def cancel_task(
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.CANCELLED.value
-    task.completed_at = datetime.now(UTC)
+    task.completed_at = now_utc()
     await db.commit()
 
     # 向正在运行的 worker 发送取消信号
@@ -1955,8 +1955,8 @@ async def list_active_tasks(
                     "pr_url": t.pr_url,
                     "iteration_count": t.iteration_count,
                     "max_iterations": t.max_iterations,
-                    "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-                    "completed_at": t.completed_at.isoformat()
+                    "updated_at": format_rfc3339(t.updated_at) if t.updated_at else None,
+                    "completed_at": format_rfc3339(t.completed_at)
                     if t.completed_at
                     else None,
                 }
@@ -2066,7 +2066,7 @@ async def task_stream_data(
                     "content": m.content,
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
-                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "created_at": format_rfc3339(m.created_at) if m.created_at else None,
                 }
                 for m in msg_rows
             ],
@@ -2079,8 +2079,8 @@ async def task_stream_data(
                     "name": tc.name,
                     "status": tc.status,
                     "arguments_json": tc.arguments_json,
-                    "started_at": tc.started_at.isoformat() if tc.started_at else None,
-                    "completed_at": tc.completed_at.isoformat()
+                    "started_at": format_rfc3339(tc.started_at) if tc.started_at else None,
+                    "completed_at": format_rfc3339(tc.completed_at)
                     if tc.completed_at
                     else None,
                     "error_message": tc.error_message,
@@ -2093,8 +2093,8 @@ async def task_stream_data(
                     "iteration_number": s.iteration_number,
                     "role_name": s.role_name,
                     "status": s.status,
-                    "started_at": s.started_at.isoformat() if s.started_at else None,
-                    "completed_at": s.completed_at.isoformat()
+                    "started_at": format_rfc3339(s.started_at) if s.started_at else None,
+                    "completed_at": format_rfc3339(s.completed_at)
                     if s.completed_at
                     else None,
                 }
@@ -2106,8 +2106,8 @@ async def task_stream_data(
                     "content": p.content,
                     "status": p.status,
                     "submitted_by": p.submitted_by,
-                    "created_at": p.created_at.isoformat() if p.created_at else None,
-                    "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+                    "created_at": format_rfc3339(p.created_at) if p.created_at else None,
+                    "consumed_at": format_rfc3339(p.consumed_at) if p.consumed_at else None,
                 }
                 for p in prompt_rows
             ],
@@ -2282,8 +2282,8 @@ async def list_user_prompts(
                     "content": p.content,
                     "status": p.status,
                     "submitted_by": p.submitted_by,
-                    "created_at": p.created_at.isoformat() if p.created_at else None,
-                    "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+                    "created_at": format_rfc3339(p.created_at) if p.created_at else None,
+                    "consumed_at": format_rfc3339(p.consumed_at) if p.consumed_at else None,
                 }
                 for p in rows
             ],

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import UTC, datetime
 from typing import Any
+
+from sakura_ai_updater.time import now_rfc3339
 
 
 def _timestamp() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_rfc3339()
 
 
 class JobLogBuffer:

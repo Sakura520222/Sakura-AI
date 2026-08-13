@@ -93,7 +93,10 @@ async def test_lifespan_outbox_shutdown_cancels_and_awaits_unresponsive_dispatch
     monkeypatch.setattr(
         main,
         "settings",
-        SimpleNamespace(activity_outbox_shutdown_timeout_seconds=shutdown_timeout),
+        SimpleNamespace(
+            activity_outbox_shutdown_timeout_seconds=shutdown_timeout,
+            app_timezone="system",
+        ),
     )
 
     started_at = asyncio.get_running_loop().time()

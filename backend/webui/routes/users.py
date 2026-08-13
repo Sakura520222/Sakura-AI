@@ -1,6 +1,5 @@
 """WebUI 用户管理路由"""
 
-from datetime import UTC
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
+from backend.core.time_service import now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
@@ -753,9 +753,7 @@ async def reset_user_quota(
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
 
-    from datetime import datetime
-
-    now = datetime.now(UTC)
+    now = now_utc()
 
     old_used = {
         "daily": target_user.daily_used,

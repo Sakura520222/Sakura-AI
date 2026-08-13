@@ -9,7 +9,6 @@ credentials never belong here.
 from __future__ import annotations
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -20,6 +19,7 @@ from sqlalchemy import (
 )
 
 from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class AIUsageRecord(Base):
@@ -68,8 +68,8 @@ class AIUsageRecord(Base):
     reasoning_tokens = Column(BigInteger, nullable=True)
     usage_reported = Column(Boolean, nullable=False, default=False)
 
-    occurred_at = Column(TIMESTAMP, nullable=False, default=utc_now)
-    created_at = Column(TIMESTAMP, nullable=False, default=utc_now)
+    occurred_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
 
 
 __all__ = ["AIUsageRecord"]

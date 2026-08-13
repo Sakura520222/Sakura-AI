@@ -4,14 +4,34 @@ import asyncio
 import hashlib
 import json
 import re
+from datetime import date, datetime
 from typing import Any
 
 import redis.exceptions  # 仅异常类型引用，不触发连接初始化
 from loguru import logger
 
+from backend.core.time_service import format_rfc3339
 from backend.services.activity_observability.contracts import PublicActivityNotification
 
 _SSE_SHUTDOWN = object()
+
+
+def _serialize_sse_value(value: Any) -> Any:
+    """Normalize event payloads before local and Redis publication.
+
+    Datetime values are protocol instants and therefore always emitted as
+    strict RFC3339 UTC ``Z`` strings.  Naive values are rejected instead of
+    guessing a host timezone.
+    """
+    if isinstance(value, datetime):
+        return format_rfc3339(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _serialize_sse_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_serialize_sse_value(item) for item in value]
+    return value
 
 
 class SSEManager:
@@ -165,7 +185,11 @@ async def publish_event(
     event_type: str, data: dict[str, Any], channel: str = "webui:events"
 ):
     """发布事件到所有 SSE 订阅者 + Redis Pub/Sub（支持多进程）"""
-    event = {"type": event_type, "data": data, "channel": channel}
+    event = {
+        "type": event_type,
+        "data": _serialize_sse_value(data),
+        "channel": channel,
+    }
 
     # 本进程内广播
     await sse_manager.publish(channel, event)

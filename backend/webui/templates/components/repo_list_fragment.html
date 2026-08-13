@@ -44,7 +44,7 @@
                     Issue: {{ repo.issue_count }}
                 </a>
                 <span class="text-gray-400 dark:text-gray-500 hidden md:inline">
-                    {{ repo.last_activity.strftime('%Y-%m-%d %H:%M') if repo.last_activity else '-' }}
+                    {{ repo.last_activity|format_datetime_short if repo.last_activity else '-' }}
                 </span>
             </div>
 

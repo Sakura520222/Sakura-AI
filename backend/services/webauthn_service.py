@@ -5,9 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -30,6 +28,7 @@ from webauthn.helpers.structs import (
 from backend.core.config import get_settings
 from backend.core.constants import ANDROID_APK_KEY_HASH_ORIGINS
 from backend.core.redis import get_async_redis
+from backend.core.time_service import monotonic, now_utc
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 
 _WEBAUTHN_CHALLENGE_PREFIX = "webauthn:challenge:"
@@ -98,7 +97,7 @@ def _dedupe_origins(origins: list[str]) -> list[str]:
 
 
 def _cleanup_fallback_challenges() -> None:
-    now = time.time()
+    now = monotonic()
     expired = [
         key
         for key, value in _webauthn_challenge_fallback.items()
@@ -189,7 +188,7 @@ async def save_challenge(challenge_id: str, challenge: bytes, context: dict) -> 
         raise WebAuthnError("WebAuthn challenge fallback cache is full")
     _webauthn_challenge_fallback[key] = {
         **payload,
-        "expires": time.time() + settings.passkeys_challenge_ttl_seconds,
+        "expires": monotonic() + settings.passkeys_challenge_ttl_seconds,
     }
 
 
@@ -207,7 +206,7 @@ async def pop_challenge(challenge_id: str) -> tuple[bytes, dict] | None:
         logger.warning("Redis 读取 WebAuthn challenge 失败，尝试内存回退: {}", exc)
 
     fallback = _webauthn_challenge_fallback.pop(key, None)
-    if fallback and fallback.get("expires", 0) > time.time():
+    if fallback and fallback.get("expires", 0) > monotonic():
         return b64url_decode(fallback["challenge"]), fallback.get("context", {})
     return None
 
@@ -404,6 +403,6 @@ async def finish_authentication(
         require_user_verification=True,
     )
     db_credential.sign_count = verification.new_sign_count
-    db_credential.last_used_at = datetime.now(UTC)
+    db_credential.last_used_at = now_utc()
     await session.flush()
     return db_credential

@@ -1,7 +1,7 @@
 """配置管理模块"""
 
-import time
 from collections import OrderedDict
+from collections.abc import Collection
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, get_origin
@@ -10,6 +10,8 @@ import yaml
 from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from backend.core.time_service import monotonic, resolve_timezone
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
@@ -63,6 +65,8 @@ class Settings(BaseSettings):
     # 应用配置
     app_domain: str = "localhost"
     app_port: int = 8000
+    # 用户可见时间的应用时区；system 在每次进程启动时解析为系统 IANA 区域。
+    app_timezone: str = "system"
     log_level: str = "INFO"
     sakura_env: str = Field(
         "production",
@@ -1878,14 +1882,14 @@ async def get_dynamic_config(key: str) -> Any:
     cached = _dynamic_config_cache.get(key)
     if cached is not None:
         value, expire_time = cached
-        if time.time() < expire_time:
+        if monotonic() < expire_time:
             return _cast_config_type(value, expected_type)
         _dynamic_config_cache.pop(key, None)
 
     # 2. 从数据库读取
     db_value = await _read_config_from_db(key)
     if db_value is not None:
-        _dynamic_config_cache[key] = (db_value, time.time() + _CACHE_TTL)
+        _dynamic_config_cache[key] = (db_value, monotonic() + _CACHE_TTL)
         _evict_config_cache()
         return _cast_config_type(db_value, expected_type)
 
@@ -1931,14 +1935,14 @@ async def get_user_dynamic_config(key: str, user_id: int | None = None) -> Any:
     cached = _user_dynamic_config_cache.get(cache_key)
     if cached is not None:
         value, expire_time = cached
-        if time.time() < expire_time:
+        if monotonic() < expire_time:
             _user_dynamic_config_cache.move_to_end(cache_key)
             return _cast_config_type(value, expected_type)
         _user_dynamic_config_cache.pop(cache_key, None)
 
     db_value = await _read_user_config_from_db(int(user_id), key)
     if db_value is not None:
-        _user_dynamic_config_cache[cache_key] = (db_value, time.time() + _CACHE_TTL)
+        _user_dynamic_config_cache[cache_key] = (db_value, monotonic() + _CACHE_TTL)
         _evict_user_config_cache()
         return _cast_config_type(db_value, expected_type)
 
@@ -2052,7 +2056,7 @@ def get_cached_config(key: str) -> str | None:
     cached = _dynamic_config_cache.get(key)
     if cached is not None:
         value, expire_time = cached
-        if time.time() < expire_time:
+        if monotonic() < expire_time:
             return value
     return None
 
@@ -2069,6 +2073,7 @@ CORE_CONFIG_KEYS = frozenset(
         "activity_cursor_signing_secret",
         "app_domain",
         "app_port",
+        "app_timezone",
         "log_level",
         "bot_username",
         "github_oauth_client_id",
@@ -2186,15 +2191,28 @@ def _evict_user_config_cache():
         _user_dynamic_config_cache.popitem(last=False)
 
 
-async def load_dynamic_configs_to_settings():
+async def load_dynamic_configs_to_settings(
+    *, required_keys: Collection[str] | None = None
+):
     """从数据库加载全部配置到 Settings 单例
 
     启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置 + 基础配置）。
     让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
+
+    ``required_keys`` 仅供启动时的进程级契约使用。普通动态配置读取继续
+    保留原有的容错行为；但当必需键（当前为 ``app_timezone``）所在的查询
+    失败、转换失败或校验失败时，必须 fail-closed，避免进程继续使用未确认
+    的旧时区。
     """
     settings = get_settings()
+    required = frozenset(required_keys or ())
     all_keys = get_all_db_config_keys()
     if not all_keys:
+        if "app_timezone" in required:
+            try:
+                resolve_timezone(settings.app_timezone)
+            except Exception as exc:
+                raise RuntimeError("加载必需配置 [app_timezone] 失败") from exc
         return
 
     try:
@@ -2208,6 +2226,9 @@ async def load_dynamic_configs_to_settings():
             )
             config_map = {c.key_name: c.key_value for c in result.scalars().all()}
     except Exception as e:
+        if required:
+            required_names = ", ".join(sorted(required))
+            raise RuntimeError(f"加载必需配置失败 [{required_names}]") from e
         logger.warning(f"批量加载动态配置失败: {e}")
         return
 
@@ -2216,12 +2237,25 @@ async def load_dynamic_configs_to_settings():
         db_value = config_map.get(key)
         if db_value is not None:
             field_type = _get_field_type(key)
-            typed_value = _cast_config_type(db_value, field_type)
             try:
+                typed_value = _cast_config_type(db_value, field_type)
+                if key in required and key == "app_timezone":
+                    resolve_timezone(typed_value)
                 setattr(settings, key, typed_value)
                 loaded += 1
             except Exception as e:
+                if key in required:
+                    raise RuntimeError(f"加载必需配置 [{key}] 失败") from e
                 logger.warning(f"加载动态配置 [{key}] 到 Settings 失败: {e}")
+
+    # A fresh database may not have an app_timezone row yet.  In that case the
+    # Settings/env default is the authoritative value, but it still must pass
+    # the same strict resolver before startup freezes the TimeService.
+    if "app_timezone" in required and config_map.get("app_timezone") is None:
+        try:
+            resolve_timezone(settings.app_timezone)
+        except Exception as exc:
+            raise RuntimeError("加载必需配置 [app_timezone] 失败") from exc
     logger.info(f"已从数据库加载 {loaded} 项动态配置到 Settings")
 
 

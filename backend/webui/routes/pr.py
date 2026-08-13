@@ -2,13 +2,13 @@
 
 import csv
 import io
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import filename_timestamp, get_time_service
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
     build_review_search_filter,
@@ -107,13 +107,13 @@ async def export_pr_csv(
                 r.status,
                 r.decision or "",
                 r.overall_score or "",
-                r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
-                r.completed_at.strftime("%Y-%m-%d %H:%M") if r.completed_at else "",
+                get_time_service().format_display(r.created_at, seconds=False) if r.created_at else "",
+                get_time_service().format_display(r.completed_at, seconds=False) if r.completed_at else "",
             ]
         )
 
     output.seek(0)
-    filename = f"pr_reviews_{datetime.now().strftime('%Y%m%d')}.csv"
+    filename = f"pr_reviews_{filename_timestamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -226,16 +226,6 @@ async def pr_detail_page(
     )
     comments = comments_result.scalars().all()
 
-    # 预处理时间格式
-    created_at_str = (
-        review.created_at.strftime("%Y-%m-%d %H:%M:%S") if review.created_at else "-"
-    )
-    completed_at_str = (
-        review.completed_at.strftime("%Y-%m-%d %H:%M:%S")
-        if review.completed_at
-        else None
-    )
-
     return render_template(
         "pr_detail.html",
         request,
@@ -245,8 +235,6 @@ async def pr_detail_page(
         active_page="pr",
         review=review,
         comments=comments,
-        created_at_str=created_at_str,
-        completed_at_str=completed_at_str,
     )
 
 

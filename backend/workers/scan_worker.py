@@ -5,7 +5,7 @@ import json as _json
 import os
 import shutil
 import tempfile
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from backend.core.config import get_settings
+from backend.core.time_service import now_utc
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
@@ -146,7 +147,7 @@ class ScanWorker:
 
         async with async_session() as session:
             # 排除冷却期内已成功扫描的仓库
-            cutoff = datetime.now(UTC) - timedelta(hours=settings.scan_cooldown_hours)
+            cutoff = now_utc() - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -242,7 +243,7 @@ class ScanWorker:
                 scan_id,
                 status=ScanStatus.INDEXING.value,
                 current_phase="indexing",
-                started_at=datetime.now(UTC),
+                started_at=now_utc(),
             )
             await self._log_activity(
                 scan_id,
@@ -410,7 +411,7 @@ class ScanWorker:
                 report_issue_number=issue_number,
                 report_issue_url=issue_url,
                 estimated_cost=estimated_cost,
-                completed_at=datetime.now(UTC),
+                completed_at=now_utc(),
             )
             await self._log_activity(
                 scan_id,
@@ -1041,7 +1042,7 @@ class ScanWorker:
                         if hasattr(scan, key):
                             setattr(scan, key, value)
                     if "status" not in kwargs:
-                        scan.updated_at = datetime.now(UTC)
+                        scan.updated_at = now_utc()
                     await session.commit()
 
         try:

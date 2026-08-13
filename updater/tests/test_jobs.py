@@ -131,6 +131,8 @@ async def test_update_success_clears_active_gate(tmp_path):
     store = load_state(path)
     assert store.active_job_id is None
     assert store.current_job and store.current_job.state == "success"
+    assert store.current_job.started_at and store.current_job.started_at.endswith("Z")
+    assert store.current_job.updated_at and store.current_job.updated_at.endswith("Z")
     assert [call[0] for call in adapter.calls] == ["preflight", "preflight", "pull", "activate", "health"]
 
 

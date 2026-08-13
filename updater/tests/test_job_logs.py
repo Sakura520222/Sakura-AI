@@ -22,3 +22,10 @@ def test_job_log_store_isolated_per_job():
     assert store.snapshot("b")["logs"][0]["msg"] == "two"
     assert store.snapshot("missing")["logs"] == []
 
+
+def test_automatic_job_log_timestamp_is_utc_rfc3339_z():
+    entry = JobLogBuffer().append("started")
+
+    assert entry["ts"].endswith("Z")
+    assert "T" in entry["ts"]
+

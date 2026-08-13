@@ -1,10 +1,8 @@
 """仓库扫描数据模型"""
 
 import enum
-from datetime import datetime
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Column,
     ForeignKey,
@@ -14,7 +12,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
+from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 
 class ScanStatus(str, enum.Enum):
@@ -97,12 +96,12 @@ class RepoScan(Base):
     issue_analysis_id = Column(Integer, nullable=True)
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     # 关联
     findings = relationship(
@@ -145,7 +144,7 @@ class ScanFinding(Base):
     confidence = Column(Integer, nullable=True)  # 0-100
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     # 关联
     scan = relationship("RepoScan", back_populates="findings")

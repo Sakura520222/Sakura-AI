@@ -29,7 +29,7 @@ class QuotaResetScheduler:
             )
             self._scheduler.add_job(
                 self._run_quota_reset,
-                trigger=CronTrigger(hour=0, minute=0),
+                trigger=CronTrigger(hour=0, minute=0, timezone="UTC"),
                 id="quota_reset_daily",
                 name="用户配额每日重置",
                 replace_existing=True,

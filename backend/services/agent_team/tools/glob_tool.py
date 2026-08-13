@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from backend.core.time_service import monotonic
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 from backend.services.agent_team.workspace_service import WorkspaceSecurityError
 from backend.utils.search_excludes import SEARCH_EXCLUDES
@@ -62,7 +62,7 @@ class GlobTool(BaseTool):
         pattern = args["pattern"]
         base_dir = args.get("path", ".")
 
-        start_time = time.time()
+        start_time = monotonic()
 
         resolved_base = self._resolve(base_dir, ctx)
         if resolved_base is None:
@@ -75,7 +75,7 @@ class GlobTool(BaseTool):
                     "pattern": pattern,
                     "filenames": [],
                     "num_files": 0,
-                    "duration_ms": int((time.time() - start_time) * 1000),
+                    "duration_ms": int((monotonic() - start_time) * 1000),
                 },
             )
 
@@ -97,7 +97,7 @@ class GlobTool(BaseTool):
             )
             filenames.append(str(rel))
 
-        duration_ms = int((time.time() - start_time) * 1000)
+        duration_ms = int((monotonic() - start_time) * 1000)
         truncated = len(matches) > max_results
 
         logger.debug(

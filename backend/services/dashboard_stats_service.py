@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import get_time_service, local_date
 from backend.models.agent_team_models import AgentTeamTask
 from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.database import IssueAnalysis, PRReview
@@ -97,26 +98,23 @@ async def fetch_token_trend(
     if scope_user is not None:
         return token_data
 
-    ledger_query = (
-        select(
-            func.date(AIUsageRecord.occurred_at).label("day"),
-            func.coalesce(
-                func.sum(
-                    func.coalesce(AIUsageRecord.input_tokens, 0)
-                    + func.coalesce(AIUsageRecord.output_tokens, 0)
-                ),
-                0,
-            ).label("tokens"),
-        )
-        .where(
-            AIUsageRecord.occurred_at >= thirty_days_ago,
-            AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS),
-        )
-        .group_by(func.date(AIUsageRecord.occurred_at))
+    # Convert UTC instants in Python so the same application-calendar bucket
+    # and DST behavior is used on every supported SQL dialect.
+    ledger_query = select(
+        AIUsageRecord.occurred_at,
+        AIUsageRecord.input_tokens,
+        AIUsageRecord.output_tokens,
+    ).where(
+        AIUsageRecord.occurred_at >= thirty_days_ago,
+        AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS),
     )
+    zone = get_time_service().zone
+    start_date = local_date(thirty_days_ago, zone)
     for row in (await db.execute(ledger_query)).all():
-        if row.day:
-            idx = (row.day - thirty_days_ago.date()).days
+        if row.occurred_at:
+            idx = (local_date(row.occurred_at, zone) - start_date).days
             if 0 <= idx < len(labels):
-                token_data[idx] += int(row.tokens or 0)
+                token_data[idx] += int(row.input_tokens or 0) + int(
+                    row.output_tokens or 0
+                )
     return token_data

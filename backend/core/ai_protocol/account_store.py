@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import json
 import secrets
-import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from loguru import logger
 
 from backend.core.ai_protocol.models import ProtocolFamily
+from backend.core.time_service import now_utc
 
 # AppConfig 键前缀 / AppConfig key prefix
 _ACCOUNT_PREFIX = "ai_account."
@@ -125,7 +125,7 @@ def generate_account_id() -> str:
 
 
 def _now() -> float:
-    return time.time()
+    return now_utc().timestamp()
 
 
 def _safe_json_loads(raw: str | None) -> Any:

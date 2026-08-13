@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
+import sakura_ai_updater.adapters.image as image_module
 from sakura_ai_updater.adapters.image import (
     HealthCheckVersionMismatch,
     ImageAdapter,
@@ -156,6 +158,31 @@ async def test_health_check_requires_target_version(monkeypatch):
         health_timeout=1,
         health_poll_interval=0,
     )
+    await adapter.health_check("3.1.0")
+
+
+@pytest.mark.asyncio
+async def test_health_check_deadline_uses_monotonic_clock(monkeypatch):
+    ticks = iter((100.0, 100.1))
+    # Replace the adapter's module reference rather than the process-wide
+    # ``time`` module; asyncio itself also depends on ``time.monotonic``.
+    monkeypatch.setattr(
+        image_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(ticks)),
+    )
+    monkeypatch.setattr(
+        ImageAdapter,
+        "_read_health_sync",
+        staticmethod(lambda _url, _timeout: (200, {"version": "3.1.0"})),
+    )
+    adapter = ImageAdapter(
+        "compose.yml",
+        "deployment.env",
+        health_timeout=1,
+        health_poll_interval=0,
+    )
+
     await adapter.health_check("3.1.0")
 
 

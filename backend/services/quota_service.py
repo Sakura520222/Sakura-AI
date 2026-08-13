@@ -1,12 +1,13 @@
 """用户配额重置服务"""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import now_utc
 from backend.models.telegram_models import TelegramUser
 
 
@@ -56,11 +57,8 @@ class QuotaService:
 
     @staticmethod
     def _utcnow() -> datetime:
-        """返回无时区 UTC 时间，保持与现有 TIMESTAMP 字段兼容。
-
-        TODO: 迁移到 timezone-aware TIMESTAMP 列后移除 replace(tzinfo=None)。
-        """
-        return datetime.now(UTC).replace(tzinfo=None)
+        """返回配额结算使用的 aware UTC 时间点。"""
+        return now_utc()
 
     @staticmethod
     def _week_start(now: datetime) -> datetime:

@@ -11,10 +11,11 @@ a branch + PR + auto-merge when branch protection blocks direct commits.
 
 import asyncio
 import base64
-from datetime import datetime
 
 from github.GithubException import GithubException, UnknownObjectException
 from loguru import logger
+
+from backend.core.time_service import filename_timestamp
 
 
 class GitHubWriteService:
@@ -202,7 +203,7 @@ class GitHubWriteService:
             )
 
         # 无已有分支 → 创建新分支 + PR / No existing branch → create new
-        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        timestamp = filename_timestamp()
         new_branch = f"{self.SAKURA_BRANCH_PREFIX}/{timestamp}"
 
         def _sync() -> str:

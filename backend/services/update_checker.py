@@ -4,18 +4,19 @@ Slice 2：只检测、不更新。Release 数据仅用于 discovery/UI（见 spe
 destructive operation 的 authoritative gate 在 Slice 4 updater PREFLIGHT。
 """
 
+
 from __future__ import annotations
 
 import asyncio
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 
 import httpx
 
 from backend import __version__
 from backend.core.redis import get_async_redis
+from backend.core.time_service import format_rfc3339, now_utc
 
 # 严格 SemVer X.Y.Z（P0 过滤 prerelease，P2 beta channel 再实现 prerelease precedence）。
 # 不接受 v 前缀（tag 去 v 后再比较）；不接受前导零（01.2.3 非法）。
@@ -179,7 +180,7 @@ def _build_cache_data(
     注意：缓存里的 update_available 只是诊断快照，Web 层必须用 __version__ + latest 重 derive。
     """
     current = __version__
-    now = datetime.now(UTC).isoformat()
+    now = format_rfc3339(now_utc())
     if success:
         if releases:
             # max 防御（parse 已排序，但显式 max 保证即使无序也对）

@@ -169,7 +169,7 @@ async function initDashboardCharts() {
                             tooltip: {
                                 callbacks: {
                                     label: function(ctx) {
-                                        return ctx.parsed.y.toLocaleString() + ' tokens';
+                                        return window.sakuraFormatNumber(ctx.parsed.y) + ' tokens';
                                     }
                                 }
                             },

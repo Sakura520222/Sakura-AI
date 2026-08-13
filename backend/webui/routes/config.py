@@ -4,7 +4,6 @@ import asyncio
 import re
 import shutil
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -24,6 +23,7 @@ from backend.core.config import (
     reload_label_config,
     reload_strategy_config,
 )
+from backend.core.time_service import filename_timestamp
 from backend.models.database import AppConfig
 from backend.services.config_backup_service import (
     BACKUP_MAX_BYTES,
@@ -723,7 +723,7 @@ async def download_user_backup(
             {"scope": "users", "counts": counts},
         )
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = filename_timestamp()
         filename = f"sakura-ai-users-{timestamp}.json"
         logger.info(
             "用户信息备份已导出, by={}, counts={}",
@@ -782,7 +782,7 @@ async def download_config_backup(
             {"scope": scope, "counts": counts},
         )
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = filename_timestamp()
         filename = f"sakura-ai-config-{scope}-{timestamp}.json"
         logger.info(
             "配置备份已导出, by={}, scope={}, counts={}",

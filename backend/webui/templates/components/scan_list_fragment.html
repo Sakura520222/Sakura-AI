@@ -75,7 +75,7 @@
 
             <!-- 时间 -->
             <div class="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hidden lg:block">
-                {{ s.created_at.strftime('%m-%d %H:%M') if s.created_at else '-' }}
+                {{ s.created_at|format_datetime_short if s.created_at else '-' }}
             </div>
         </a>
         {% endfor %}

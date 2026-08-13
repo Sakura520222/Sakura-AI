@@ -21,6 +21,7 @@ from backend.core.ai_providers import (
 from backend.core.bootstrap import (
     mark_setup_completed,
 )
+from backend.core.time_service import now_utc
 
 # 环境变量字段（大写） → Settings 字段名（小写）
 # 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步。
@@ -35,6 +36,7 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
     "APP_PORT": "app_port",
+    "APP_TIMEZONE": "app_timezone",
     "LOG_LEVEL": "log_level",
     "BOT_USERNAME": "bot_username",
     "DATABASE_URL": "database_url",
@@ -176,11 +178,9 @@ class SetupService:
             return {"success": False, "message": "App ID 和 Private Key 不能为空"}
 
         try:
-            import time
-
             import jwt
 
-            now = int(time.time())
+            now = int(now_utc().timestamp())
             payload = {
                 "iat": now - 60,
                 "exp": now + (10 * 60),

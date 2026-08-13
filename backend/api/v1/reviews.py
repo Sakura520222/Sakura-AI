@@ -1,8 +1,6 @@
 """API v1 PR 审查端点"""
-
 import csv
 import io
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -16,6 +14,11 @@ from backend.api.v1.responses import (
     success_response,
 )
 from backend.api.v1.schemas import ReviewFileStatsResponse, ReviewResponse
+from backend.core.time_service import (
+    filename_timestamp,
+    format_rfc3339,
+    get_time_service,
+)
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
     build_review_search_filter,
@@ -134,13 +137,13 @@ async def export_reviews_csv(
                 r.status,
                 r.decision or "",
                 r.overall_score or "",
-                r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
-                r.completed_at.strftime("%Y-%m-%d %H:%M") if r.completed_at else "",
+                get_time_service().format_display(r.created_at, seconds=False) if r.created_at else "",
+                get_time_service().format_display(r.completed_at, seconds=False) if r.completed_at else "",
             ]
         )
 
     output.seek(0)
-    filename = f"pr_reviews_{datetime.now().strftime('%Y%m%d')}.csv"
+    filename = f"pr_reviews_{filename_timestamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -190,7 +193,7 @@ async def get_review(
             "comment_type": c.comment_type,
             "severity": c.severity,
             "content": c.content,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "created_at": format_rfc3339(c.created_at) if c.created_at else None,
         }
         for c in comments
     ]
@@ -294,7 +297,7 @@ async def get_review_comments(
             "comment_type": c.comment_type,
             "severity": c.severity,
             "content": c.content,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "created_at": format_rfc3339(c.created_at) if c.created_at else None,
         }
         for c in comments
     ]
@@ -345,7 +348,7 @@ async def get_file_comments(
                     "comment_type": c.comment_type,
                     "severity": c.severity,
                     "content": c.content,
-                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "created_at": format_rfc3339(c.created_at) if c.created_at else None,
                 }
                 for c in comments
             ],

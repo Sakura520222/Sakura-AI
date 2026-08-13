@@ -380,10 +380,10 @@ class ToolService:
         if expires_at is None:
             return False
         now = self._clock()
-        if expires_at.tzinfo is None and now.tzinfo is not None:
-            expires_at = expires_at.replace(tzinfo=now.tzinfo)
-        elif expires_at.tzinfo is not None and now.tzinfo is None:
-            now = now.replace(tzinfo=expires_at.tzinfo)
+        if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+            raise ValueError("artifact retention expiry must be timezone-aware")
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("artifact clock must be timezone-aware")
         return expires_at <= now
 
     async def purge_expired_artifacts(self, *, limit: int | None = None) -> int:
