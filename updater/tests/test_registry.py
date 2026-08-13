@@ -66,6 +66,25 @@ def test_stable_target_requires_exact_semver_tag_and_digest_pin():
             parse_stable_target(invalid)
 
 
+def test_manifest_request_accepts_oci_and_docker_multiarch_indexes(monkeypatch):
+    from sakura_ai_updater.registry import RegistryClient
+
+    digest = "sha256:" + "f" * 64
+    seen = {}
+
+    def request(url, headers):
+        seen["url"] = url
+        seen["headers"] = headers
+        return {}, {"docker-content-digest": digest}
+
+    client = RegistryClient()
+    monkeypatch.setattr(client, "_json_sync", request)
+    assert client._manifest_sync("edge", "token") == digest
+    accept = seen["headers"]["Accept"]
+    assert "application/vnd.oci.image.index.v1+json" in accept
+    assert "application/vnd.docker.distribution.manifest.list.v2+json" in accept
+
+
 @pytest.mark.asyncio
 async def test_stable_registry_target_must_match_latest_head(monkeypatch):
     from sakura_ai_updater.registry import RegistryClient

@@ -110,6 +110,7 @@ class _StableRelease:
             "schema_version": 1,
             "version": version,
             "channel": "stable",
+            "min_upgrade_from": "0.0.0",
             "image": f"ghcr.io/sakura520222/sakura-ai:v{version}",
             "updater": {"protocol_version": 1},
         }
@@ -254,3 +255,37 @@ async def test_stable_to_stable_same_semver_is_still_strictly_newer(monkeypatch,
     result = await orchestrator.preflight(_stable_target(), confirm_channel_switch=True)
     assert result["can_update"] is False
     assert any(item["name"] == "target_newer" and not item["passed"] for item in result["checks"])
+
+
+@pytest.mark.asyncio
+async def test_structured_stable_target_enforces_manifest_minimum_upgrade(monkeypatch, tmp_path):
+    async def verify(self, target):
+        return target
+
+    class _MinimumUpgradeRelease(_StableRelease):
+        async def fetch_manifest(self, version=None):
+            manifest = await super().fetch_manifest(version)
+            manifest["min_upgrade_from"] = "3.1.0"
+            return manifest
+
+    monkeypatch.setattr("sakura_ai_updater.jobs.RegistryClient.verify_target", verify)
+    target = {
+        "channel": "stable",
+        "version": "3.1.1",
+        "tag": "v3.1.1",
+        "digest": "sha256:" + "e" * 64,
+    }
+    result = await JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _MinimumUpgradeRelease(),
+        _Deployment(),
+        disk_space_threshold=1,
+    ).preflight(target, confirm_channel_switch=True)
+    minimum = next(item for item in result["checks"] if item["name"] == "min_upgrade_from")
+    assert minimum == {
+        "name": "min_upgrade_from",
+        "passed": False,
+        "detail": "3.0.2 >= 3.1.0",
+    }
+    assert result["can_update"] is False

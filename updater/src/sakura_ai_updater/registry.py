@@ -148,7 +148,13 @@ class RegistryClient:
         registry, path = self.repository.split("/", 1)
         _, headers = self._json_sync(
             f"https://{registry}/v2/{path}/manifests/{tag}",
-            {"Authorization": f"Bearer {token}", "Accept": "application/vnd.oci.image.index.v1+json"},
+            {
+                "Authorization": f"Bearer {token}",
+                "Accept": (
+                    "application/vnd.oci.image.index.v1+json, "
+                    "application/vnd.docker.distribution.manifest.list.v2+json"
+                ),
+            },
         )
         digest = headers.get("docker-content-digest", "").lower()
         if not _DIGEST_RE.fullmatch(digest):

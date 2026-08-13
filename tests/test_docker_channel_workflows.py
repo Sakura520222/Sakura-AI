@@ -48,6 +48,16 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert "ACTUAL_REVISION=$(git rev-parse HEAD)" in text
     assert 'REVISION" != "$ACTUAL_REVISION"' in text
     assert 'COMMIT_CREATED=$(git show -s --format=%cI "$ACTUAL_REVISION")' in text
+    assert "REMOTE_DEVELOP_REVISION=$(git ls-remote origin refs/heads/develop" in text
+    assert "development source is not the current develop head" in text
+    assert "LATEST_RELEASE_TAG=$(gh release view" in text
+    assert "stable source is not the current latest Release" in text
+    development_guard = text.index("REMOTE_DEVELOP_REVISION=$(git ls-remote")
+    development_tag = text.index('crane tag "$IMMUTABLE" edge')
+    stable_guard = text.index("LATEST_RELEASE_TAG=$(gh release view")
+    stable_tag = text.index('crane tag "$IMMUTABLE" latest')
+    assert development_guard < development_tag
+    assert stable_guard < stable_tag
     # Stable release callers check out the immutable tag; identity is derived
     # inside the reusable workflow and must not be copied from main HEAD.
     release = (ROOT / ".github" / "workflows" / "release-on-pr-merge.yml").read_text(encoding="utf-8")
@@ -91,3 +101,15 @@ def test_main_sync_workflow_runs_for_every_main_push():
     assert "target=develop" in text
     assert workflow["concurrency"]["group"] == "gitflow-sync-main-to-develop"
     assert workflow["concurrency"]["cancel-in-progress"] is False
+    sync = workflow["jobs"]["sync-main-to-develop"]
+    assert sync["outputs"]["revision"] == "${{ steps.sync.outputs.revision }}"
+    assert sync["outputs"]["using_pat"] == "${{ steps.push-token.outputs.using_pat }}"
+    publish = workflow["jobs"]["publish-synchronized-development"]
+    assert publish["needs"] == "sync-main-to-develop"
+    assert publish["uses"] == "./.github/workflows/docker-publish.yml"
+    assert publish["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert publish["with"]["channel"] == "development"
+    assert "outputs.changed == 'true'" in publish["if"]
+    assert "outputs.target == 'develop'" in publish["if"]
+    assert "outputs.using_pat != 'true'" in publish["if"]
+    assert publish["secrets"] == "inherit"
