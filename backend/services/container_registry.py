@@ -163,12 +163,12 @@ class ContainerRegistryError(RuntimeError):
 
 
 class ContainerRegistryClient:
-    def __init__(self, repository: str = REPOSITORY, *, ttl: float = 30.0, timeout: float = 10.0):
-        # Config may intentionally point a self-hosted GHCR-compatible registry,
-        # but callers cannot select it through an HTTP query/body.
-        if not re.fullmatch(r"[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+", repository) or ":" not in repository.split("/", 1)[0] and repository.split("/", 1)[0] != "ghcr.io":
-            raise ValueError("invalid registry repository")
-        self.repository = repository
+    def __init__(self, repository: str | None = None, *, ttl: float = 30.0, timeout: float = 10.0):
+        # The registry is a trust-boundary constant.  Do not allow deployment
+        # configuration or request data to redirect catalog reads elsewhere.
+        if repository is not None and repository != REPOSITORY:
+            raise ValueError("registry repository is fixed")
+        self.repository = REPOSITORY
         self.ttl = ttl
         self.timeout = timeout
         self._cache: dict[str, Any] | None = None

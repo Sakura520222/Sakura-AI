@@ -569,6 +569,16 @@ function showReadiness(data) {
   return payload;
 }
 
+async function preflightRegistryTarget(target) {
+  const envelope = await requestJson('/version/preflight', {
+    method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+    body: JSON.stringify({target: target, confirm_channel_switch: selectedRegistryConfirmed})
+  });
+  const readiness = envelope && envelope.data ? envelope.data : envelope;
+  showReadiness({data: {target: target, checks: readiness.checks, update_ready: readiness.can_update === true}});
+  return readiness;
+}
+
 async function loadReadiness() {
   try {
     const data = await requestJson('/version/readiness', { method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'} });
@@ -601,20 +611,19 @@ recheckButton.addEventListener('click', async function() {
 preflightButton.addEventListener('click', async function() {
   let readiness;
   if (selectedRegistryTarget) {
+    this.disabled = true;
+    setStatus(VM_I18N.preflight, null);
     try {
-      const envelope = await requestJson('/version/preflight', {
-        method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: JSON.stringify({target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed})
-      });
-      readiness = envelope && envelope.data ? envelope.data : envelope;
-      showReadiness({data: {target: selectedRegistryTarget, checks: readiness.checks, update_ready: readiness.can_update}});
+      readiness = await preflightRegistryTarget(selectedRegistryTarget);
+      setStatus(readiness.can_update === true ? VM_I18N.preflightPassed : VM_I18N.preflightFailed, readiness.can_update === true ? 'ok' : 'error');
     } catch (error) {
       setStatus(vmFormat(VM_I18N.preflightError, {error: vmUpdaterError(error)}), 'error');
-      return;
+    } finally {
+      this.disabled = false;
     }
-  } else {
-    readiness = await loadReadiness();
+    return;
   }
+  readiness = await loadReadiness();
   const target = selectedRegistryTarget ? selectedRegistryTarget.version : readiness && readiness.target && readiness.target.version;
   if (!target) return;
   this.disabled = true;
@@ -625,8 +634,8 @@ preflightButton.addEventListener('click', async function() {
       body: JSON.stringify(selectedRegistryTarget ? {target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed} : {target_version: selectedRegistryVersion || target})
     });
     const result = data && data.data ? data.data : data;
-    showReadiness({data: {target: {version: target}, checks: result.checks, update_ready: result.can_update}});
-    setStatus(result.can_update ? VM_I18N.preflightPassed : VM_I18N.preflightFailed, result.can_update ? 'ok' : 'error');
+    showReadiness({data: {target: {version: target}, checks: result.checks, update_ready: result.can_update === true}});
+    setStatus(result.can_update === true ? VM_I18N.preflightPassed : VM_I18N.preflightFailed, result.can_update === true ? 'ok' : 'error');
   } catch (error) {
     setStatus(vmFormat(VM_I18N.preflightError, {error: (error.body && error.body.error) || error.message}), 'error');
   }
@@ -746,12 +755,7 @@ updateButton.addEventListener('click', async function() {
   let readiness;
   if (selectedRegistryTarget) {
     try {
-      const envelope = await requestJson('/version/preflight', {
-        method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: JSON.stringify({target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed})
-      });
-      readiness = envelope && envelope.data ? envelope.data : envelope;
-      showReadiness({data: {target: selectedRegistryTarget, checks: readiness.checks, update_ready: readiness.can_update}});
+      readiness = await preflightRegistryTarget(selectedRegistryTarget);
     } catch (error) {
       const message = vmFormat(VM_I18N.updateSubmitFailed, {error: vmUpdaterError(error)});
       markProgressError(message, {allowRetry: true});
@@ -766,7 +770,12 @@ updateButton.addEventListener('click', async function() {
     markProgressError(vmFormat(VM_I18N.readinessError, {error: VM_I18N.noTarget}));
     return;
   }
-  if (readiness.update_ready === false || readiness.update_available === false) {
+  if (selectedRegistryTarget && readiness.can_update !== true) {
+    markProgressError(VM_I18N.preflightFailed);
+    setStatus(VM_I18N.preflightFailed, 'error');
+    return;
+  }
+  if (!selectedRegistryTarget && (readiness.update_ready === false || readiness.update_available === false)) {
     markProgressError(VM_I18N.preflightFailed);
     setStatus(VM_I18N.preflightFailed, 'error');
     return;

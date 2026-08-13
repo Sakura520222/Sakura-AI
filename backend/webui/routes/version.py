@@ -16,6 +16,9 @@ from backend import __version__
 from backend.core.build_info import get_build_info
 from backend.core.config import get_settings
 from backend.services.container_registry import (
+    REPOSITORY as OFFICIAL_REGISTRY_REPOSITORY,
+)
+from backend.services.container_registry import (
     ContainerRegistryClient,
     ContainerRegistryError,
 )
@@ -41,21 +44,14 @@ router = APIRouter(tags=["Version"])
 
 _VALID_MODES = {"image", "source"}
 _registry_client: ContainerRegistryClient | None = None
-_registry_repository: str | None = None
 
 
 def _get_registry_client() -> ContainerRegistryClient:
     """Reuse the short-TTL client so last-known-good survives requests."""
 
-    global _registry_client, _registry_repository
-    repository = get_settings().sakura_registry_repository
-    if (
-        _registry_client is None
-        or _registry_repository != repository
-        or not isinstance(_registry_client, ContainerRegistryClient)
-    ):
-        _registry_client = ContainerRegistryClient(repository)
-        _registry_repository = repository
+    global _registry_client
+    if _registry_client is None or not isinstance(_registry_client, ContainerRegistryClient):
+        _registry_client = ContainerRegistryClient(OFFICIAL_REGISTRY_REPOSITORY)
     return _registry_client
 
 
@@ -254,6 +250,17 @@ async def _read_action_body(request: Request) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _confirm_channel_switch(body: dict) -> tuple[bool | None, JSONResponse | None]:
+    """Accept only a JSON boolean; an omitted field is the safe default false."""
+
+    if "confirm_channel_switch" not in body:
+        return False, None
+    value = body["confirm_channel_switch"]
+    if type(value) is not bool:
+        return None, JSONResponse({"error": "invalid_confirm_channel_switch"}, status_code=422)
+    return value, None
+
+
 async def _resolve_catalog_target(body: dict) -> tuple[dict | None, JSONResponse | None]:
     """Re-resolve a browser snapshot against the current authoritative head."""
 
@@ -305,6 +312,9 @@ async def updater_preflight(
     _csrf: str = Depends(require_csrf_header),
 ):
     body = await _read_action_body(request)
+    confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+    if confirm_error is not None:
+        return confirm_error
     target_object, target_error = await _resolve_catalog_target(body)
     if target_error is not None:
         return target_error
@@ -316,7 +326,7 @@ async def updater_preflight(
             await UpdaterClient().preflight(
                 target if isinstance(target, str) else None,
                 target=target_object,
-                confirm_channel_switch=bool(body.get("confirm_channel_switch", False)),
+                confirm_channel_switch=confirm_channel_switch is True,
             ),
             headers={"Cache-Control": "no-store"},
         )
@@ -332,6 +342,9 @@ async def updater_update(
     _csrf: str = Depends(require_csrf_header),
 ):
     body = await _read_action_body(request)
+    confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+    if confirm_error is not None:
+        return confirm_error
     target_object, target_error = await _resolve_catalog_target(body)
     if target_error is not None:
         return target_error
@@ -342,7 +355,7 @@ async def updater_update(
         payload = await UpdaterClient().update(
             target,
             target=target_object,
-            confirm_channel_switch=bool(body.get("confirm_channel_switch", False)),
+            confirm_channel_switch=confirm_channel_switch is True,
         )
         response = JSONResponse(
             payload,
@@ -363,7 +376,7 @@ async def updater_update(
                     "target_channel": target_object.get("channel") if target_object else None,
                     "target_revision": target_object.get("revision") if target_object else None,
                     "target_digest": target_object.get("digest") if target_object else None,
-                    "confirm_channel_switch": bool(body.get("confirm_channel_switch", False)),
+                    "confirm_channel_switch": confirm_channel_switch is True,
                     "job_id": job_id,
                     "deployment_mode": get_settings().sakura_deploy_mode or "unknown",
                 },

@@ -76,6 +76,11 @@ def test_digest_grouping_merges_aliases_and_only_marks_aligned_heads():
 
 
 def test_registry_client_rejects_user_selected_repository():
+    assert ContainerRegistryClient().repository == "ghcr.io/sakura520222/sakura-ai"
+    assert (
+        ContainerRegistryClient("ghcr.io/sakura520222/sakura-ai").repository
+        == "ghcr.io/sakura520222/sakura-ai"
+    )
     with pytest.raises(ValueError):
         ContainerRegistryClient("evil.example/sakura-ai")
 
