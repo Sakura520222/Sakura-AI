@@ -15,6 +15,10 @@ on:
         required: false
         default: develop
 
+concurrency:
+  group: gitflow-sync-main-to-develop
+  cancel-in-progress: false
+
 jobs:
   sync-main-to-develop:
     name: 将 main 回合到 develop

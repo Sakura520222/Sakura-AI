@@ -63,6 +63,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 安装 crane
+        uses: imjasonh/setup-crane@v0.4
+
       # 计算标签和可信构建身份。所有 channel/输入均 fail closed；开发构建
       # 同一 digest 同时写 edge 与可追溯 immutable tag，不能重复构建。
       - name: 计算镜像标签
@@ -109,20 +112,23 @@ jobs:
           }
           if [ "$CHANNEL" = "stable" ]; then
             [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "stable channel requires strict version" >&2; exit 1; }
-            TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            IMMUTABLE_TAG="v${VERSION}"
           else
             [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "development channel requires version" >&2; exit 1; }
             # The committer timestamp is normalized to UTC and made sortable.
             UTC_CREATED=$(date -u -d "$CREATED" +%Y%m%d%H%M%S 2>/dev/null || true)
             [[ "$UTC_CREATED" =~ ^[0-9]{14}$ ]] || { echo "cannot normalize created timestamp" >&2; exit 1; }
             DEV_TAG="dev-${UTC_CREATED}-v${VERSION}-${REVISION}"
-            TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:edge,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DEV_TAG}"
-            echo "immutable_tag=$DEV_TAG" >> "$GITHUB_OUTPUT"
+            IMMUTABLE_TAG="$DEV_TAG"
           fi
+          # The build is pushed without a tag and addressed only by digest.
+          # Moving aliases and the immutable channel tag are materialized
+          # after the digest is known, so reruns cannot overwrite an existing
+          # immutable tag or leave internal staging tags in the public catalog.
+          echo "immutable_tag=$IMMUTABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
           echo "created=$CREATED" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 
       - name: 构建并推送 GHCR（amd64 + arm64）
         uses: docker/build-push-action@v7
@@ -131,8 +137,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             SAKURA_BUILD_CHANNEL=${{ inputs.channel }}
             SAKURA_BUILD_VERSION=${{ steps.tags.outputs.version }}
@@ -141,6 +146,51 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=sakura-ai-${{ inputs.channel }}
           cache-to: type=gha,mode=max,scope=sakura-ai-${{ inputs.channel }}
+
+      - name: 按 digest 安全物化 channel 标签
+        id: materialize
+        run: |
+          set -euo pipefail
+          DIGEST="${{ steps.build.outputs.digest }}"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid build digest; refusing publication" >&2
+            exit 1
+          }
+          SOURCE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          IMMUTABLE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.immutable_tag }}"
+          existing_error=$(mktemp)
+          if existing=$(crane digest "$IMMUTABLE" 2>"$existing_error"); then
+            if [ "$existing" != "$DIGEST" ]; then
+              echo "immutable tag already points to a different digest; refusing overwrite" >&2
+              rm -f "$existing_error"
+              exit 1
+            fi
+          else
+            # Only an explicit missing-manifest response permits first
+            # materialization.  Authentication, rate-limit, and registry
+            # failures must not be mistaken for an absent immutable tag.
+            if ! grep -Eiq "manifest unknown|manifest_unknown" "$existing_error"; then
+              cat "$existing_error" >&2
+              rm -f "$existing_error"
+              echo "unable to verify immutable tag; refusing publication" >&2
+              exit 1
+            fi
+            crane copy "$SOURCE" "$IMMUTABLE"
+            if [ "$(crane digest "$IMMUTABLE")" != "$DIGEST" ]; then
+              rm -f "$existing_error"
+              echo "immutable tag digest changed during materialization; failing closed" >&2
+              exit 1
+            fi
+          fi
+          rm -f "$existing_error"
+          if [ "${{ inputs.channel }}" = "development" ]; then
+            crane tag "$IMMUTABLE" edge
+          elif [ "${{ inputs.channel }}" = "stable" ]; then
+            crane tag "$IMMUTABLE" latest
+          else
+            echo "unsupported channel; refusing alias materialization" >&2
+            exit 1
+          fi
 
   sync-dockerhub:
     name: 同步 Docker Hub（非阻塞）

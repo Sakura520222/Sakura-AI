@@ -11,6 +11,26 @@ import backend.webui.routes.version as version_routes
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}])
+def test_backend_channel_switch_confirmation_requires_json_boolean(value):
+    parsed, error = version_routes._confirm_channel_switch(
+        {"confirm_channel_switch": value}
+    )
+    assert parsed is None
+    assert error is not None
+    assert error.status_code == 422
+    assert json.loads(error.body) == {"error": "invalid_confirm_channel_switch"}
+
+
+def test_backend_channel_switch_confirmation_defaults_to_false_and_accepts_bool():
+    parsed, error = version_routes._confirm_channel_switch({})
+    assert parsed is False
+    assert error is None
+    parsed, error = version_routes._confirm_channel_switch({"confirm_channel_switch": True})
+    assert parsed is True
+    assert error is None
+
+
 def test_template_uses_tabs_safe_dom_and_target_snapshot():
     template = (ROOT / "backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
     assert 'role="tablist"' in template

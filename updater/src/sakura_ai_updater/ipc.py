@@ -140,6 +140,17 @@ async def _request_json(request: Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def _confirm_channel_switch(body: dict) -> tuple[bool | None, JSONResponse | None]:
+    """Accept only a JSON boolean; omitted means the safe false default."""
+
+    if "confirm_channel_switch" not in body:
+        return False, None
+    value = body["confirm_channel_switch"]
+    if type(value) is not bool:
+        return None, _error_response(422, "invalid_confirm_channel_switch")
+    return value, None
+
+
 def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
     """构建 updater IPC app。
 
@@ -210,6 +221,9 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
         if isinstance(orchestrator_value, JSONResponse):
             return orchestrator_value
         body = await _request_json(request)
+        confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+        if confirm_error is not None:
+            return confirm_error
         target = body.get("target")
         target_version = body.get("target_version")
         if target is not None and not isinstance(target, dict):
@@ -221,7 +235,7 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
                 if target.get("channel") in {"development", "stable"}:
                     result = await orchestrator_value.preflight(
                         target,
-                        confirm_channel_switch=bool(body.get("confirm_channel_switch", False)),
+                        confirm_channel_switch=confirm_channel_switch is True,
                     )
                 else:
                     return _error_response(422, "invalid_target")
@@ -237,6 +251,9 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
         if isinstance(orchestrator_value, JSONResponse):
             return orchestrator_value
         body = await _request_json(request)
+        confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+        if confirm_error is not None:
+            return confirm_error
         target = body.get("target")
         target_version = body.get("target_version")
         if target is not None and not isinstance(target, dict):
@@ -248,7 +265,7 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
                 if target.get("channel") in {"development", "stable"}:
                     result = await orchestrator_value.submit_update(
                         target,
-                        confirm_channel_switch=bool(body.get("confirm_channel_switch", False)),
+                        confirm_channel_switch=confirm_channel_switch is True,
                     )
                 else:
                     return _error_response(422, "invalid_target")

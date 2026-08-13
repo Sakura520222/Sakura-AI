@@ -90,11 +90,6 @@ class Settings(BaseSettings):
         description="GitHub owner/repo，UpdateChecker 检查此仓库的 Releases",
     )
 
-    sakura_registry_repository: str = Field(
-        "ghcr.io/sakura520222/sakura-ai",
-        description="权威 OCI/GHCR 镜像目录；仅允许部署级覆盖官方仓库",
-    )
-
     # Host Updater UDS 路径（spec §7.1）。容器内由 compose 挂载 /run/sakura-ai（Slice 3b）；
     # dev/源码模式可能指向宿主机路径或测试临时路径。
     sakura_updater_socket_path: str = Field(
