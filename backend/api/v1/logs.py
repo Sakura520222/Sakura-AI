@@ -1,5 +1,4 @@
 """API v1 日志查询端点"""
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +9,7 @@ from backend.api.v1.responses import (
     paginated_response,
     success_response,
 )
+from backend.core.time_service import format_rfc3339
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import TelegramUser
@@ -100,8 +100,8 @@ async def list_review_logs(
             "decision": r.decision,
             "overall_score": r.overall_score,
             "strategy": r.strategy,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "created_at": format_rfc3339(r.created_at) if r.created_at else None,
+            "completed_at": format_rfc3339(r.completed_at) if r.completed_at else None,
         }
         for r in reviews
     ]
@@ -154,8 +154,8 @@ async def get_review_log(
         "strategy": review.strategy,
         "prompt_tokens": review.prompt_tokens,
         "completion_tokens": review.completion_tokens,
-        "created_at": review.created_at.isoformat() if review.created_at else None,
-        "completed_at": review.completed_at.isoformat()
+        "created_at": format_rfc3339(review.created_at) if review.created_at else None,
+        "completed_at": format_rfc3339(review.completed_at)
         if review.completed_at
         else None,
         "comments": [
@@ -229,7 +229,7 @@ async def list_action_logs(
             "target_type": log.target_type,
             "target_id": log.target_id,
             "detail": log.detail,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": format_rfc3339(log.created_at) if log.created_at else None,
         }
         for log in logs
     ]
@@ -263,6 +263,6 @@ async def get_action_log(
             "target_type": log.target_type,
             "target_id": log.target_id,
             "detail": log.detail,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": format_rfc3339(log.created_at) if log.created_at else None,
         }
     )

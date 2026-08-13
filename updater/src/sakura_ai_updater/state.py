@@ -11,7 +11,8 @@ import json
 import os
 import tempfile
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+
+from sakura_ai_updater.time import now_rfc3339
 
 SCHEMA_VERSION = 1
 
@@ -25,7 +26,7 @@ ERROR_CODE_INTERRUPTED = "interrupted"
 
 
 def _utcnow() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_rfc3339()
 
 
 class StateLoadError(RuntimeError):

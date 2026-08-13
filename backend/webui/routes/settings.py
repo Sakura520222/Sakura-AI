@@ -1,6 +1,6 @@
 """WebUI 个人设置路由"""
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +16,7 @@ from backend.core.config import (
 )
 from backend.core.rate_limit import limiter
 from backend.core.redis import get_async_redis
+from backend.core.time_service import get_time_service, now_utc
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services.mfa_notification_service import notify_mfa_event
@@ -63,7 +64,7 @@ _totp_setup_fallback: dict[int, tuple[str, datetime]] = {}
 def _cleanup_totp_setup_fallback(now: datetime | None = None) -> None:
     """Prune expired and excessive in-memory TOTP setup secrets."""
     settings = get_settings()
-    now = now or datetime.now(UTC)
+    now = now or now_utc()
     ttl_seconds = settings.two_factor_pending_token_expire_minutes * 60
     expired_user_ids = [
         user_id
@@ -96,7 +97,7 @@ async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
     except Exception as exc:
         logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
     _cleanup_totp_setup_fallback()
-    _totp_setup_fallback[user_id] = (secret, datetime.now(UTC))
+    _totp_setup_fallback[user_id] = (secret, now_utc())
 
 
 async def _pop_totp_setup_secret(user_id: int) -> str | None:
@@ -319,7 +320,7 @@ async def enable_two_factor(
 
     db_user.totp_enabled = True
     db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
-    db_user.totp_enabled_at = datetime.now(UTC)
+    db_user.totp_enabled_at = now_utc()
     db_user.totp_last_used_step = used_step
     if db_user.mfa_required:
         db_user.mfa_required = False
@@ -521,5 +522,7 @@ async def about_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="about",
         app_version=APP_VERSION,
-        build_date=datetime.now(UTC).strftime("%Y-%m-%d"),
+        build_date=get_time_service()
+        .to_app_timezone(get_time_service().now_utc())
+        .strftime("%Y-%m-%d"),
     )

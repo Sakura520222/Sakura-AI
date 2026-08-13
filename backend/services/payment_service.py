@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import and_, func, select
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.time_service import now_utc
 from backend.models.payment_models import (
     Order,
     OrderStatus,
@@ -422,7 +423,7 @@ class PaymentService:
         if not redeem:
             raise PaymentError("Invalid or inactive redeem code")
 
-        if redeem.expires_at and redeem.expires_at < datetime.now(UTC):
+        if redeem.expires_at and redeem.expires_at < now_utc():
             raise PaymentError("Redeem code has expired")
 
         if redeem.used_count >= redeem.max_uses:
@@ -445,7 +446,7 @@ class PaymentService:
             status=OrderStatus.PAID.value,
             payment_provider="redeem_code",
             provider_tx_id=code,
-            paid_at=datetime.now(UTC),
+            paid_at=now_utc(),
         )
         self.session.add(order)
         await self.session.flush()
@@ -490,7 +491,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PENDING.value,
             payment_provider=provider,
-            expires_at=datetime.now(UTC) + timedelta(minutes=expire_minutes),
+            expires_at=now_utc() + timedelta(minutes=expire_minutes),
         )
         self.session.add(order)
         await self.session.flush()
@@ -839,7 +840,7 @@ class PaymentService:
 
         order.provider_tx_id = provider_tx_id
         order.status = OrderStatus.PAID.value
-        order.paid_at = datetime.now(UTC)
+        order.paid_at = now_utc()
 
         await self._log_payment(
             order_id=order.id,
@@ -1199,7 +1200,7 @@ class PaymentService:
                 f"Cannot approve refund request in status: {refund_request.status}"
             )
 
-        now = datetime.now(UTC)
+        now = now_utc()
         refund_request.reviewed_by = reviewer_id
         refund_request.reviewed_at = now
         refund_request.review_note = (review_note or "").strip() or None
@@ -1212,7 +1213,7 @@ class PaymentService:
             )
             refund_request.order = order
             refund_request.status = RefundRequestStatus.APPROVED.value
-            refund_request.processed_at = datetime.now(UTC)
+            refund_request.processed_at = now_utc()
             refund_request.error_message = None
             await self.session.flush()
             await notify_refund_request_approved(self.session, refund_request)
@@ -1264,7 +1265,7 @@ class PaymentService:
 
         refund_request.status = RefundRequestStatus.REJECTED.value
         refund_request.reviewed_by = reviewer_id
-        refund_request.reviewed_at = datetime.now(UTC)
+        refund_request.reviewed_at = now_utc()
         refund_request.review_note = (review_note or "").strip() or None
         refund_request.error_message = None
         await self.session.flush()
@@ -1299,7 +1300,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PAID.value,
             payment_provider="manual",
-            paid_at=datetime.now(UTC),
+            paid_at=now_utc(),
         )
         self.session.add(order)
         await self.session.flush()
@@ -1333,7 +1334,7 @@ class PaymentService:
             and_(
                 UserSubscription.user_id == user_id,
                 UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-                UserSubscription.expires_at > datetime.now(UTC),
+                UserSubscription.expires_at > now_utc(),
             )
         )
         result = await self.session.execute(stmt)
@@ -1342,7 +1343,7 @@ class PaymentService:
     async def expire_due_subscriptions(self, user_id: int | None = None) -> int:
         conditions = [
             UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-            UserSubscription.expires_at <= datetime.now(UTC),
+            UserSubscription.expires_at <= now_utc(),
         ]
         if user_id is not None:
             conditions.append(UserSubscription.user_id == user_id)
@@ -1395,7 +1396,7 @@ class PaymentService:
         user = await self._apply_plan_to_user(user, plan)
 
         order.status = OrderStatus.FULFILLED.value
-        order.fulfilled_at = datetime.now(UTC)
+        order.fulfilled_at = now_utc()
 
         if plan.plan_type == PlanType.SUBSCRIPTION.value:
             await self._upsert_subscription(user.id, plan, order.id)
@@ -1474,7 +1475,7 @@ class PaymentService:
         values = self._plan_quota_values(plan)
         if existing:
             existing.status = SubscriptionStatus.ACTIVE.value
-            existing.expires_at = datetime.now(UTC) + timedelta(
+            existing.expires_at = now_utc() + timedelta(
                 days=plan.duration_days or 30
             )
             existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
@@ -1497,7 +1498,7 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.now(UTC) + timedelta(days=plan.duration_days or 30),
+            expires_at=now_utc() + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
             applied_pr_weekly_add=values["pr_weekly_add"],
@@ -1690,6 +1691,6 @@ class PaymentService:
 
     @staticmethod
     def _generate_order_no() -> str:
-        now = datetime.now(UTC)
+        now = now_utc()
         short_uuid = uuid.uuid4().hex[:8].upper()
         return f"ORD{now.strftime('%Y%m%d%H%M%S')}{short_uuid}"

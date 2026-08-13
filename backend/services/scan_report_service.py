@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service
 from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 from backend.webui.deps import get_webui_url
 
@@ -88,7 +89,9 @@ class ScanReportService:
 
         # 扫描概览表
         scan_time = (
-            scan.created_at.strftime("%Y-%m-%d %H:%M:%S") if scan.created_at else "未知"
+            get_time_service().format_display(scan.created_at)
+            if scan.created_at
+            else "未知"
         )
         commit_short = scan.commit_sha[:7] if scan.commit_sha else "未知"
         health = scan.overall_health_score or 0

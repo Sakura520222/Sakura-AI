@@ -10,7 +10,6 @@ import secrets
 import string
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 import pyotp
 import qrcode
@@ -20,6 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
+from backend.core.time_service import now_utc
 from backend.models.telegram_models import TelegramUser, UserRecoveryCode
 
 
@@ -206,7 +206,7 @@ async def consume_recovery_code(
     recovery_code = result.scalar_one_or_none()
     if not recovery_code:
         return False
-    recovery_code.used_at = datetime.now(UTC)
+    recovery_code.used_at = now_utc()
     return True
 
 

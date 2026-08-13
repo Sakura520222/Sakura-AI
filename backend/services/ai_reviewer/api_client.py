@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from loguru import logger
 
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
+from backend.core.time_service import now_utc
 from backend.services.activity_observability.contracts import (
     InvocationContext,
     RoleConfigSnapshot,
@@ -205,7 +205,7 @@ class AIApiClient:
                     primary_endpoint.encode("utf-8")
                 ).hexdigest(),
                 config_snapshot_version=1,
-                captured_at=datetime.now(UTC),
+                captured_at=now_utc(),
             )
             call_context = replace(call_context, role_snapshot=snapshot)
 
@@ -302,7 +302,7 @@ class AIApiClient:
             ),
             endpoint_fingerprint=hashlib.sha256(endpoint.encode("utf-8")).hexdigest(),
             config_snapshot_version=1,
-            captured_at=datetime.now(UTC),
+            captured_at=now_utc(),
         )
 
     async def resolve_role_model_context(

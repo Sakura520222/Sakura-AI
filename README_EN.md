@@ -121,8 +121,8 @@
 ### Management & Operations
 
 - **Setup Wizard** — First-launch step-by-step guidance with resume support
-- **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged
-- **Dynamic Configuration** — WebUI changes take effect immediately without restart
+- **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged; super administrators can set an IANA application timezone (restart required)
+- **Dynamic Configuration** — Ordinary WebUI changes take effect immediately; restart-required keys such as the application timezone are applied after restart
 - **AI API Timeout Control** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
 - **Per-user Config Overrides** — UserConfig → AppConfig → Settings fallback
 - **AI Provider Registry** — 20+ built-in vendors, protocol-family-aware model discovery and context windows

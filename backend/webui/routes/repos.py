@@ -4,7 +4,6 @@ import asyncio
 import shutil
 import subprocess
 import tempfile
-import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -13,6 +12,7 @@ from loguru import logger
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import monotonic
 from backend.models.database import IssueAnalysis, PRReview
 from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
@@ -51,7 +51,7 @@ def _is_index_locked(repo_name: str, index_type: str) -> bool:
 async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
     """获取所有安装的仓库列表（带缓存），并附加 PR/Issue 统计"""
     global _installations_cache
-    now = time.time()
+    now = monotonic()
 
     if (
         _installations_cache

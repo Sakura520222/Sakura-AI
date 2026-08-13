@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
 from backend.core.config import get_settings
+from backend.core.time_service import get_time_service
 from backend.models.database import init_async_db
 from backend.models.telegram_models import UserRole
 from backend.services.payment_service import is_payment_enabled
@@ -1043,7 +1044,7 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ 状态: 已索引\n"
                 f"📁 文件数量: {code_index.file_count} 个\n"
                 f"🧩 代码块: {chunk_count} 个\n"
-                f"🕐 最后更新: {code_index.last_indexed_at.strftime('%Y-%m-%d %H:%M')}\n"
+                f"🕐 最后更新: {get_time_service().format_display(code_index.last_indexed_at, seconds=False)}\n"
             )
 
         await update.message.reply_text(text)
@@ -1266,7 +1267,9 @@ async def cmd_myorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             status_icon = status_map.get(order.status, "?")
             date_str = (
-                order.created_at.strftime("%m-%d %H:%M") if order.created_at else "?"
+                get_time_service().format_display(order.created_at, seconds=False)
+                if order.created_at
+                else "?"
             )
             lines.append(
                 f"{status_icon} `{order.order_no}`\n   {plan_name} — {date_str}"

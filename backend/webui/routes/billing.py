@@ -1,12 +1,16 @@
 """WebUI 付费配额路由"""
-
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import (
+    DateTimeLocalError,
+    format_rfc3339,
+    get_time_service,
+)
 from backend.models.payment_models import Order, RefundRequestStatus
 from backend.services.payment_service import (
     PaymentError,
@@ -51,12 +55,8 @@ def _format_crypto_currency_display(raw_currency: str) -> str:
 def _get_order_expires_at(order: Order) -> str:
     """获取订单过期时间的 ISO 格式字符串（带 UTC 后缀），无则默认 1 小时后"""
     if order.expires_at:
-        dt = order.expires_at
-        # MySQL TIMESTAMP 返回 naive datetime（实为 UTC），确保带 +00:00
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt.isoformat()
-    return (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        return format_rfc3339(order.expires_at)
+    return format_rfc3339(get_time_service().now_utc() + timedelta(hours=1))
 
 
 def _parse_page(value: str | None) -> int:
@@ -1120,6 +1120,7 @@ async def admin_edit_code(
     csrf_token: str = Depends(require_csrf),
     status: str = Form(None),
     expires_at: str = Form(None),
+    expires_at_fold: str = Form(None),
     max_uses: int = Form(None),
     plan_id: int = Form(None),
 ):
@@ -1129,8 +1130,11 @@ async def admin_edit_code(
         update_data["status"] = status
     if expires_at is not None and expires_at.strip():
         try:
-            update_data["expires_at"] = datetime.fromisoformat(expires_at.strip())
-        except ValueError, TypeError:
+            fold = None if expires_at_fold in (None, "") else int(expires_at_fold)
+            update_data["expires_at"] = get_time_service().parse_datetime_local(
+                expires_at.strip(), fold=fold
+            )
+        except (DateTimeLocalError, TypeError, ValueError):
             return toast_redirect(
                 "/billing/admin/codes",
                 "toast.invalid_param",

@@ -19,7 +19,7 @@
                 <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ analysis.repo_owner }}/{{ analysis.repo_name }} · #{{ analysis.issue_number }} ·
                     {% if analysis.author %}{{ analysis.author }} · {% endif %}
-                    {{ analysis.created_at.strftime('%Y-%m-%d %H:%M') if analysis.created_at else '-' }}
+                    {{ analysis.created_at|format_datetime_short if analysis.created_at else '-' }}
                 </p>
             </div>
             <div class="flex gap-2">

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+from backend.core.time_service import monotonic
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
 )
@@ -150,7 +150,7 @@ class ToolExecutor:
     async def execute_tool_call(self, tool_call: Any, ctx: ToolContext) -> ToolResult:
         """执行单个工具调用，完整的生命周期管理。"""
         function_name = tool_call.function.name
-        start_time = time.time()
+        start_time = monotonic()
 
         # 1. 查找工具
         tool = self._tools.get(function_name)
@@ -182,7 +182,7 @@ class ToolExecutor:
             )
 
         # 5. 日志与耗时
-        duration_ms = int((time.time() - start_time) * 1000)
+        duration_ms = int((monotonic() - start_time) * 1000)
         status = "成功" if result.success else f"失败({result.error[:50]})"
         logger.debug("工具 {} {} ({}ms)", function_name, status, duration_ms)
 

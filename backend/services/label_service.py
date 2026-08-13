@@ -7,13 +7,14 @@ import asyncio
 import json
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings
 from backend.core.github_app import GitHubAppClient
+from backend.core.time_service import now_utc
 
 settings = get_settings()
 
@@ -164,7 +165,7 @@ class LabelService:
             标签字典，格式：{标签名: {"name": str, "color": str, "description": str}}
         """
         repo_full_name = f"{repo_owner}/{repo_name}"
-        current_time = datetime.now()
+        current_time = now_utc()
 
         # 检查缓存
         if use_cache and repo_full_name in self._label_cache:

@@ -7,12 +7,13 @@
 - Push vs Pull 混合策略
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.time_service import monotonic
 from backend.services.document_service import get_document_service
 from backend.services.embedding_service import (
     get_embedding_service,
@@ -286,7 +287,7 @@ class RAGService:
         # 检查缓存
         if repo_full_name in self._index_status_cache:
             cached_data, expire_time = self._index_status_cache[repo_full_name]
-            if datetime.now() < expire_time:
+            if monotonic() < expire_time:
                 logger.debug(f"使用缓存的索引状态: {repo_full_name}")
                 return cached_data
 
@@ -301,7 +302,7 @@ class RAGService:
             }
 
             # 更新缓存
-            expire_time = datetime.now() + self._cache_duration
+            expire_time = monotonic() + self._cache_duration.total_seconds()
             self._index_status_cache[repo_full_name] = (result, expire_time)
 
             return result

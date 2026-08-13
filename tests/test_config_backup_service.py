@@ -87,7 +87,7 @@ def test_combined_backup_round_trip_preserves_allowed_values_and_secrets():
     assert document["format"] == BACKUP_FORMAT
     assert document["version"] == BACKUP_VERSION
     assert document["contains_sensitive_values"] is True
-    assert document["exported_at"] == "2026-07-29T10:30:00+00:00"
+    assert document["exported_at"] == "2026-07-29T10:30:00.000000Z"
     assert {record.key for record in parsed[GLOBAL_SECTION]} == {
         "max_concurrent_reviews"
     }
@@ -104,6 +104,7 @@ def test_backup_rejects_key_outside_declared_section():
     document = {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
+        "exported_at": "2026-08-12T12:00:00.000000Z",
         "scope": "global",
         "sections": {
             "global": {
@@ -182,6 +183,38 @@ def test_system_backup_rejects_invalid_values(key: str, value: str, message: str
     )
 
     with pytest.raises(ConfigBackupError, match=message):
+        parse_config_backup(serialize_config_backup(document))
+
+
+@pytest.mark.parametrize("value", ["", " ", " CST", "UTC+08:00", "not/a-zone"])
+def test_system_backup_rejects_invalid_app_timezone(value: str):
+    document = build_backup_document(
+        [BackupRecord("app_timezone", value, "app_timezone")],
+        "system",
+    )
+    with pytest.raises(ConfigBackupError, match="app_timezone"):
+        parse_config_backup(serialize_config_backup(document))
+
+
+def test_system_backup_accepts_system_or_iana_app_timezone():
+    for value in ("system", "UTC", "America/New_York"):
+        document = build_backup_document(
+            [BackupRecord("app_timezone", value, "app_timezone")],
+            "system",
+        )
+        parsed = parse_config_backup(serialize_config_backup(document))
+        assert parsed[SYSTEM_SECTION][0].value == value
+
+
+@pytest.mark.parametrize("exported_at", [None, "", "2026-08-12 12:00:00", "2026-08-12T12:00:00"])
+def test_v2_backup_rejects_missing_or_naive_exported_at(exported_at):
+    document = build_backup_document([], "global")
+    if exported_at is None:
+        document.pop("exported_at")
+    else:
+        document["exported_at"] = exported_at
+
+    with pytest.raises(ConfigBackupError, match="exported_at"):
         parse_config_backup(serialize_config_backup(document))
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -20,6 +20,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import now_utc
 from backend.models.ai_usage_models import AIUsageRecord
 
 # Only these call kinds are part of the provider-usage ledger.  The explicit
@@ -301,7 +302,7 @@ async def record_ai_usage(
         cache_creation_tokens=counters.cache_creation_tokens,
         reasoning_tokens=counters.reasoning_tokens,
         usage_reported=counters.usage_reported,
-        occurred_at=occurred_at or datetime.now(UTC),
+        occurred_at=occurred_at or now_utc(),
     )
 
     async with session_factory() as db:

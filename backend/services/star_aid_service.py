@@ -23,6 +23,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from backend.core.config import get_dynamic_config
+from backend.core.time_service import now_utc
 from backend.models.star_aid_models import (
     ACTION_MANUAL_STAR,
     ACTION_STAR,
@@ -55,7 +56,7 @@ async def is_auto_star_enabled() -> bool:
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return now_utc()
 
 
 def random_schedule_delay_minutes(min_interval: int, max_interval: int) -> int:
@@ -86,7 +87,7 @@ def repo_daily_limit_allows(limit: int, *, current_count: int) -> bool:
 
 def _naive_now() -> datetime:
     """与 MySQL TIMESTAMP（naive）比较用的本地 UTC naive 时间。"""
-    return datetime.utcnow()
+    return now_utc()
 
 
 def compute_activity_score(

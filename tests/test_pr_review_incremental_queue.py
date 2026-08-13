@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -44,14 +44,14 @@ class _MemoryDb:
                 obj.id = self.store["next_review_id"]
                 self.store["next_review_id"] += 1
             if obj.created_at is None:
-                obj.created_at = datetime.utcnow()
+                obj.created_at = datetime.now(UTC)
             self.store["reviews"][obj.id] = obj
         elif isinstance(obj, PRReviewIncrementalQueue):
             if obj.id is None:
                 obj.id = self.store["next_queue_id"]
                 self.store["next_queue_id"] += 1
             if obj.created_at is None:
-                obj.created_at = datetime.utcnow()
+                obj.created_at = datetime.now(UTC)
             self.store["queue"][obj.id] = obj
 
     async def commit(self):
@@ -83,7 +83,10 @@ class _MemoryDb:
                 rows = [row for row in rows if row.status in status_filter]
             rows = sorted(
                 rows,
-                key=lambda row: (row.created_at or datetime.min, row.id or 0),
+                key=lambda row: (
+                    row.created_at or datetime.min.replace(tzinfo=UTC),
+                    row.id or 0,
+                ),
                 reverse=True,
             )
             return _Result(rows)
@@ -107,7 +110,10 @@ class _MemoryDb:
             ]
             rows = sorted(
                 rows,
-                key=lambda row: (row.created_at or datetime.min, row.id or 0),
+                key=lambda row: (
+                    row.created_at or datetime.min.replace(tzinfo=UTC),
+                    row.id or 0,
+                ),
             )
             return _Result(rows)
 
@@ -172,7 +178,7 @@ def _add_review(store, status, created_offset=0):
         branch="feature",
         strategy="standard",
         status=status,
-        created_at=datetime.utcnow() + timedelta(seconds=created_offset),
+        created_at=datetime.now(UTC) + timedelta(seconds=created_offset),
     )
     store["next_review_id"] += 1
     store["reviews"][review.id] = review
@@ -189,7 +195,7 @@ def _add_queue(store, *, base_sha, head_sha, created_offset=0):
         base_sha=base_sha,
         head_sha=head_sha,
         status="pending",
-        created_at=datetime.utcnow() + timedelta(seconds=created_offset),
+        created_at=datetime.now(UTC) + timedelta(seconds=created_offset),
     )
     store["next_queue_id"] += 1
     store["queue"][item.id] = item

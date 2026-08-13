@@ -1,10 +1,9 @@
 """数据库模型定义"""
 
 import enum
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Boolean,
     Column,
@@ -14,22 +13,50 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
+
+from backend.core.time_service import now_utc
+from backend.models.time_types import UTCDateTime
 
 Base = declarative_base()
 
 
 def utc_now() -> datetime:
     """返回带 UTC 时区的当前时间（公共工具函数，供所有模型共享）。"""
-    return datetime.now(UTC)
+    return now_utc()
 
 
 # 异步数据库引擎和会话（将在 init_async_db 中初始化）
 async_engine = None
 async_session = None
+
+
+def _set_connection_timezone(dbapi_connection, _connection_record, dialect_name: str | None = None):
+    """Pin every server session to UTC before it is handed to SQLAlchemy.
+
+    This callback intentionally performs no action for SQLite.  Errors are not
+    swallowed: a connection with an unknown timezone must never enter the pool.
+    """
+
+    name = dialect_name or getattr(getattr(dbapi_connection, "dialect", None), "name", "")
+    if not name:
+        # SQLAlchemy's ``connect`` event does not expose a dialect on the raw
+        # DB-API connection; the closure installed by init_async_db supplies it.
+        return
+    if name in {"sqlite"}:
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        if name in {"mysql", "mariadb"}:
+            cursor.execute("SET time_zone = '+00:00'")
+        elif name == "postgresql":
+            cursor.execute("SET TIME ZONE 'UTC'")
+    finally:
+        cursor.close()
 
 
 def normalize_database_url(database_url: str) -> str:
@@ -188,11 +215,11 @@ class PRReview(Base):
     estimated_cost = Column(Integer, default=0, nullable=True)
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
-    completed_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     # Check Run ids（主从式三 Check）：创建成功后持久化，进程重启/换 worker 时
     # 优先从 DB 恢复，避免重复创建（external_id 作跨进程兜底恢复标识）。
@@ -246,8 +273,8 @@ class PRReviewIncrementalQueue(Base):
     )
     consumed_session_id = Column(Integer, nullable=True)
     consumed_message_id = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
-    consumed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
+    consumed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
         return (
@@ -298,7 +325,7 @@ class CIFailure(Base):
     # GitHub 侧对象 id（去重）/ GitHub-side object id (deduplication)
     external_id = Column(String(64), nullable=True, index=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -335,9 +362,9 @@ class HeadShaPRMap(Base):
     repo_owner = Column(String(100), nullable=False)
     repo_name = Column(String(255), nullable=False)
     updated_at = Column(
-        TIMESTAMP,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        UTCDateTime,
+            default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -375,7 +402,7 @@ class ReviewComment(Base):
     content = Column(Text, nullable=False)
 
     # 创建时间
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     # 关联审查记录
     review = relationship("PRReview", back_populates="comments")
@@ -393,9 +420,9 @@ class AppConfig(Base):
     key_name = Column(String(100), unique=True, nullable=False, index=True)
     key_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -412,9 +439,9 @@ class UserConfig(Base):
     config_key = Column(String(100), nullable=False, index=True)
     config_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     __table_args__ = (
@@ -447,11 +474,11 @@ class ReviewQueue(Base):
     error_message = Column(Text, nullable=True)
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
-    processed_at = Column(TIMESTAMP, nullable=True)
+    processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
         return f"<ReviewQueue(id={self.id}, pr_id={self.pr_id}, status={self.status})>"
@@ -465,16 +492,16 @@ class DocumentIndex(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     repo_full_name = Column(String(255), unique=True, nullable=False, index=True)
     last_commit_hash = Column(String(64), nullable=True)
-    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_at = Column(UTCDateTime, default=utc_now, nullable=False)
     document_count = Column(Integer, default=0, nullable=False)
     total_chunks = Column(Integer, default=0, nullable=False)
     indexing_status = Column(
         String(50), default=IndexingStatus.PENDING.value, nullable=False, index=True
     )
     error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -492,14 +519,14 @@ class DocumentFile(Base):
     file_hash = Column(String(64), nullable=False, index=True)
     file_size = Column(Integer, default=0, nullable=False)
     chunk_count = Column(Integer, default=0, nullable=False)
-    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_at = Column(UTCDateTime, default=utc_now, nullable=False)
     last_indexed_commit_hash = Column(String(64), nullable=True, index=True)
     indexed = Column(
         Integer, default=0, nullable=False
     )  # 0=False, 1=True for MySQL compatibility
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -514,7 +541,7 @@ class CodeIndex(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     repo_full_name = Column(String(255), unique=True, nullable=False, index=True)
     last_commit_hash = Column(String(64), nullable=True)
-    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_at = Column(UTCDateTime, default=utc_now, nullable=False)
     file_count = Column(Integer, default=0, nullable=False)
     total_chunks = Column(Integer, default=0, nullable=False)
     indexing_status = Column(
@@ -527,9 +554,9 @@ class CodeIndex(Base):
         String(50), default="full", nullable=False
     )  # full, pr, incremental
     error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -547,7 +574,7 @@ class CodeFile(Base):
     file_hash = Column(String(64), nullable=False, index=True)  # SHA-256 Content Hash
     language = Column(String(50), nullable=True)  # python, javascript, etc.
     chunk_count = Column(Integer, default=0, nullable=False)
-    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_at = Column(UTCDateTime, default=utc_now, nullable=False)
     last_indexed_commit_hash = Column(String(64), nullable=True, index=True)
     commit_sha = Column(String(64), nullable=True)  # 精准指向Git版本
     indexed = Column(Integer, default=0, nullable=False)
@@ -555,9 +582,9 @@ class CodeFile(Base):
     pr_number = Column(Integer, nullable=True)
     # 状态管理
     is_deleted = Column(Integer, default=0, nullable=False)  # 0=False, 1=True
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -616,11 +643,11 @@ class IssueAnalysis(Base):
     issue_state = Column(String(50), default="open", nullable=True, index=True)
 
     # 时间戳
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
-    completed_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
         return f"<IssueAnalysis(id={self.id}, issue={self.issue_number}, repo={self.repo_name})>"
@@ -638,7 +665,7 @@ class PRIssueLink(Base):
     link_type = Column(String(50), nullable=False)
     reference_text = Column(String(255), nullable=True)
     inference_reason = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<PRIssueLink(pr={self.pr_id}, issue={self.issue_number}, type={self.link_type})>"
@@ -658,11 +685,11 @@ class IssueAnalysisQueue(Base):
     retry_count = Column(Integer, default=0, nullable=False)
     max_retries = Column(Integer, default=3, nullable=False)
     error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
-    processed_at = Column(TIMESTAMP, nullable=True)
+    processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
         return f"<IssueAnalysisQueue(id={self.id}, issue={self.issue_number}, status={self.status})>"
@@ -1059,6 +1086,12 @@ def init_async_db(database_url: str):
             pool_timeout=30,
         )
 
+        dialect_name = async_engine.sync_engine.dialect.name
+
+        @event.listens_for(async_engine.sync_engine, "connect")
+        def _initialize_utc_session(dbapi_connection, connection_record):
+            _set_connection_timezone(dbapi_connection, connection_record, dialect_name)
+
         # 创建异步会话工厂
         async_session = async_sessionmaker(
             async_engine, class_=AsyncSession, expire_on_commit=False
@@ -1093,9 +1126,9 @@ class WebUIConfig(Base):
     language = Column(String(10), default="zh-CN")
     items_per_page = Column(Integer, default=20)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self):
@@ -1112,7 +1145,7 @@ class SakuraMemoryState(Base):
 
     # 状态跟踪 / State tracking
     reflection_count = Column(Integer, default=0, nullable=False)
-    last_consolidation_at = Column(TIMESTAMP, nullable=True)
+    last_consolidation_at = Column(UTCDateTime, nullable=True)
     last_consolidation_count = Column(
         Integer, nullable=True
     )  # 上次合并时的 reflection_count
@@ -1133,11 +1166,11 @@ class SakuraMemoryState(Base):
     # 配置覆盖 / Config override
     consolidation_interval = Column(Integer, default=5, nullable=False)
 
-    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: utc_now(), nullable=False)
     updated_at = Column(
-        TIMESTAMP,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        UTCDateTime,
+            default=lambda: utc_now(),
+        onupdate=lambda: utc_now(),
         nullable=False,
     )
 
@@ -1153,8 +1186,8 @@ class SchemaMigration(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     version = Column(String(50), unique=True, nullable=False)
     applied_at = Column(
-        TIMESTAMP,
-        default=datetime.utcnow,
+        UTCDateTime,
+            default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
     )
@@ -1449,7 +1482,7 @@ async def _auto_migrate():
             return
 
         # 记录迁移版本
-        version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        version = utc_now().strftime("%Y%m%d%H%M%S")
         await conn.execute(
             text(
                 "INSERT INTO schema_migrations (version, applied_at) "

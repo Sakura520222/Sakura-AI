@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +15,7 @@ from backend.core.ai_protocol.errors import AIError
 from backend.core.ai_protocol.models import AIErrorCategory
 from backend.core.config import get_dynamic_config
 from backend.core.github_app import GitHubAppClient
+from backend.core.time_service import monotonic
 from backend.models.agent_team_models import (
     AgentTeamSourceType,
     AgentTeamTask,
@@ -97,7 +97,7 @@ class AgentTeamCandidateService:
         if ttl > 0:
             key = self._cache_key(limit, ai_filter_requirement)
             cached = self._cache.get(key)
-            if cached and (time.time() - cached[1]) < ttl:
+            if cached and (monotonic() - cached[1]) < ttl:
                 logger.debug(f"候选池命中缓存: {len(cached[0])} 条")
                 return cached[0]
 
@@ -127,7 +127,7 @@ class AgentTeamCandidateService:
         # 写入缓存
         if ttl > 0:
             key = self._cache_key(limit, ai_filter_requirement)
-            self._cache[key] = (result, time.time())
+            self._cache[key] = (result, monotonic())
 
         return result
 
