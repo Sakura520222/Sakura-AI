@@ -53,7 +53,7 @@ TIME_PRIMITIVE_ALLOWLIST = (
 TIME_BOUNDARY_ALLOWLIST = TIME_PRIMITIVE_ALLOWLIST + (
     {
         "file": "backend/core/logging_bridge.py",
-        "position": "backend/core/logging_bridge.py:28",
+        "position": "backend/core/logging_bridge.py:32",
         "primitive": "Path.stat().st_mtime",
         "category": "filesystem-metadata-wall-clock",
         "reason": "Log retention uses filesystem mtime only, never a domain instant.",
@@ -63,7 +63,7 @@ TIME_BOUNDARY_ALLOWLIST = TIME_PRIMITIVE_ALLOWLIST + (
 FROMTIMESTAMP_ALLOWLIST = (
     {
         "file": "backend/core/logging_bridge.py",
-        "position": "backend/core/logging_bridge.py:80",
+        "position": "backend/core/logging_bridge.py:82",
         "category": "stdlib-logrecord-boundary",
         "reason": "LogRecord.created is a Unix instant and is immediately made aware UTC.",
     },

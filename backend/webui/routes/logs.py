@@ -1,12 +1,11 @@
 """WebUI 审查日志路由"""
 
-from datetime import datetime, timedelta
-
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import get_time_service, parse_local_date_boundary
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import RepoSubscription
 from backend.webui.deps import (
@@ -91,7 +90,7 @@ async def logs_list_fragment(
     # 时间范围过滤
     if date_from:
         try:
-            dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            dt_from = parse_local_date_boundary(date_from, get_time_service().zone)
             query = query.where(PRReview.created_at >= dt_from)
             count_query = count_query.where(PRReview.created_at >= dt_from)
         except ValueError:
@@ -99,7 +98,11 @@ async def logs_list_fragment(
 
     if date_to:
         try:
-            dt_to = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            dt_to = parse_local_date_boundary(
+                date_to,
+                get_time_service().zone,
+                exclusive_end=True,
+            )
             query = query.where(PRReview.created_at < dt_to)
             count_query = count_query.where(PRReview.created_at < dt_to)
         except ValueError:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from time import monotonic as _monotonic
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
@@ -135,14 +135,55 @@ def local_date(value: datetime, zone: ZoneInfo | str) -> date:
 
 
 def start_of_local_day(day: date, zone: ZoneInfo | str) -> datetime:
-    """返回指定应用日历日的 UTC 起点；DST gap 会 fail-closed。"""
+    """返回应用日历日的第一个有效 UTC instant。
+
+    少数 IANA 时区会在午夜向前跳时。表单中的不存在时间仍应被拒绝，
+    但日历分桶边界必须落到跳时后的第一个有效 instant；若整个日期被
+    跳过（例如国际日期变更线调整），则该日期是一个空区间，其起点与
+    下一有效日期的起点相同。
+    """
 
     zone_info = zone if isinstance(zone, ZoneInfo) else resolve_timezone(zone)
-    return parse_datetime_local(
-        datetime.combine(day, time.min).isoformat(timespec="minutes"),
-        zone_info,
-        fold=0,
-    )
+    midnight = datetime.combine(day, time.min)
+    try:
+        return parse_datetime_local(
+            midnight.isoformat(timespec="minutes"),
+            zone_info,
+            fold=0,
+        )
+    except DateTimeLocalError:
+        # Attaching both folds to an imaginary midnight and round-tripping via
+        # UTC yields the adjacent real instants.  The earliest result whose
+        # local date is not before ``day`` is the correct lower calendar bound.
+        candidates = []
+        for fold in (0, 1):
+            candidate = (
+                midnight.replace(tzinfo=zone_info, fold=fold)
+                .astimezone(UTC)
+                .astimezone(zone_info)
+            )
+            if candidate.date() >= day:
+                candidates.append(candidate.astimezone(UTC))
+        if candidates:
+            return min(candidates)
+
+        # Defensive fallback for unusual historical transitions whose two
+        # imaginary-midnight projections both precede the requested date.
+        return start_of_local_day(day + timedelta(days=1), zone_info)
+
+
+def parse_local_date_boundary(
+    value: str,
+    zone: ZoneInfo | str,
+    *,
+    exclusive_end: bool = False,
+) -> datetime:
+    """Parse a YYYY-MM-DD filter in the application calendar as aware UTC."""
+
+    day = datetime.strptime(value, "%Y-%m-%d").date()
+    if exclusive_end:
+        day += timedelta(days=1)
+    return start_of_local_day(day, zone)
 
 
 def parse_datetime_local(

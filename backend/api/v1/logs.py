@@ -9,7 +9,11 @@ from backend.api.v1.responses import (
     paginated_response,
     success_response,
 )
-from backend.core.time_service import format_rfc3339
+from backend.core.time_service import (
+    format_rfc3339,
+    get_time_service,
+    parse_local_date_boundary,
+)
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import TelegramUser
@@ -60,10 +64,8 @@ async def list_review_logs(
         query = query.where(PRReview.status == status)
         count_query = count_query.where(PRReview.status == status)
     if date_from:
-        from datetime import datetime
-
         try:
-            df = datetime.strptime(date_from, "%Y-%m-%d")
+            df = parse_local_date_boundary(date_from, get_time_service().zone)
             query = query.where(PRReview.created_at >= df)
             count_query = count_query.where(PRReview.created_at >= df)
         except ValueError:
@@ -71,10 +73,12 @@ async def list_review_logs(
                 "date_from 格式错误，请使用 YYYY-MM-DD", status_code=400
             )
     if date_to:
-        from datetime import datetime, timedelta
-
         try:
-            dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            dt = parse_local_date_boundary(
+                date_to,
+                get_time_service().zone,
+                exclusive_end=True,
+            )
             query = query.where(PRReview.created_at < dt)
             count_query = count_query.where(PRReview.created_at < dt)
         except ValueError:
@@ -192,10 +196,8 @@ async def list_action_logs(
         count_query = count_query.where(AdminActionLog.action == action)
 
     if start_date:
-        from datetime import datetime
-
         try:
-            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            sd = parse_local_date_boundary(start_date, get_time_service().zone)
             query = query.where(AdminActionLog.created_at >= sd)
             count_query = count_query.where(AdminActionLog.created_at >= sd)
         except ValueError:
@@ -204,10 +206,12 @@ async def list_action_logs(
             )
 
     if end_date:
-        from datetime import datetime, timedelta
-
         try:
-            ed = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            ed = parse_local_date_boundary(
+                end_date,
+                get_time_service().zone,
+                exclusive_end=True,
+            )
             query = query.where(AdminActionLog.created_at < ed)
             count_query = count_query.where(AdminActionLog.created_at < ed)
         except ValueError:

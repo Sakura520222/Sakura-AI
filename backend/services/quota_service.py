@@ -1,7 +1,7 @@
 """用户配额重置服务"""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select, update
@@ -162,8 +162,8 @@ class QuotaService:
         affected_fields = 0
         affected_user_ids: set[int] = set()
 
-        daily_cutoff = datetime.combine(today, datetime.min.time())
-        monthly_cutoff = datetime(now.year, now.month, 1)
+        daily_cutoff = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
+        monthly_cutoff = datetime(now.year, now.month, 1, tzinfo=UTC)
         reset_specs = (
             (
                 (TelegramUser.last_reset_daily.is_(None))
