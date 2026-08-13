@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import get_time_service, parse_local_date_boundary
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.telegram_models import TelegramUser
 from backend.webui.deps import (
@@ -67,8 +68,6 @@ async def action_log_list_fragment(
     per_page: int = Query(None, ge=1, le=100),
 ):
     """操作日志 HTMX 片段"""
-    from datetime import datetime
-
     if per_page is None:
         per_page = user_prefs["items_per_page"]
 
@@ -82,18 +81,20 @@ async def action_log_list_fragment(
         count_query = count_query.where(AdminActionLog.action == action)
     if start_date:
         try:
-            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            sd = parse_local_date_boundary(start_date, get_time_service().zone)
             query = query.where(AdminActionLog.created_at >= sd)
             count_query = count_query.where(AdminActionLog.created_at >= sd)
         except ValueError:
             pass
     if end_date:
         try:
-            ed = datetime.strptime(end_date, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59
+            ed = parse_local_date_boundary(
+                end_date,
+                get_time_service().zone,
+                exclusive_end=True,
             )
-            query = query.where(AdminActionLog.created_at <= ed)
-            count_query = count_query.where(AdminActionLog.created_at <= ed)
+            query = query.where(AdminActionLog.created_at < ed)
+            count_query = count_query.where(AdminActionLog.created_at < ed)
         except ValueError:
             pass
 

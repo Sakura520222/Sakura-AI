@@ -53,11 +53,11 @@
             <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2 text-sm">
                 <div class="flex justify-between">
                     <span class="text-gray-500 dark:text-gray-400">{{ _('common.created_at') }}</span>
-                    <span>{{ target_user.created_at.strftime('%Y-%m-%d %H:%M') if target_user.created_at else '-' }}</span>
+                    <span>{{ target_user.created_at|format_datetime_short if target_user.created_at else '-' }}</span>
                 </div>
                 <div class="flex justify-between">
                     <span class="text-gray-500 dark:text-gray-400">{{ _('common.updated_at') }}</span>
-                    <span>{{ target_user.updated_at.strftime('%Y-%m-%d %H:%M') if target_user.updated_at else '-' }}</span>
+                    <span>{{ target_user.updated_at|format_datetime_short if target_user.updated_at else '-' }}</span>
                 </div>
             </div>
         </div>
@@ -400,7 +400,7 @@
                             <span class="px-2 py-0.5 rounded-full text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">{{ _('billing.monthly') }}</span>
                             {% endif %}
                         </td>
-                        <td class="py-2 px-3 text-gray-400 text-xs">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td>
+                        <td class="py-2 px-3 text-gray-400 text-xs">{{ log.created_at|format_datetime_short if log.created_at else '-' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

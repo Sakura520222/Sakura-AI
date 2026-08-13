@@ -9,6 +9,25 @@
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
     <script>
+        // Server-resolved IANA zone is authoritative; browser defaults are not.
+        window.SAKURA_APP_TIMEZONE = {{ app_timezone | default('UTC') | tojson }};
+        window.sakuraFormatTime = function(value, options) {
+            if (value == null || value === '') return '—';
+            try {
+                return new Intl.DateTimeFormat(undefined, Object.assign({
+                    year: 'numeric', month: 'short', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    timeZoneName: 'longOffset',
+                    timeZone: window.SAKURA_APP_TIMEZONE,
+                }, options || {})).format(new Date(value));
+            } catch (_) { return String(value); }
+        };
+        window.sakuraFormatNumber = function(value) {
+            try { return new Intl.NumberFormat(undefined).format(Number(value)); }
+            catch (_) { return String(value); }
+        };
+    </script>
+    <script>
         tailwind.config = {
             darkMode: 'class',
             theme: {

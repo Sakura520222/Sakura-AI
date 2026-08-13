@@ -11,7 +11,7 @@
 
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -19,14 +19,15 @@ from sqlalchemy import select
 
 from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
+from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.database import CIFailure, HeadShaPRMap
 from backend.services.check_run_service import CheckRunService
 
 
-def _utcnow_naive() -> datetime:
-    """返回 UTC naive datetime，兼容现有 TIMESTAMP 字段且避免 utcnow 弃用警告。"""
-    return datetime.now(UTC).replace(tzinfo=None)
+def _utcnow() -> datetime:
+    """返回领域层统一的 aware UTC 时间点。"""
+    return now_utc()
 
 
 class CIFailureService:
@@ -258,7 +259,7 @@ class CIFailureService:
             cfg = self._config()
             max_records = int(cfg.get("max_records", 10))
             retention_days = int(cfg.get("retention_days", 7))
-            cutoff = _utcnow_naive() - timedelta(days=retention_days)
+            cutoff = _utcnow() - timedelta(days=retention_days)
             async with db_module.async_session() as session:
                 result = await session.execute(
                     select(CIFailure)
@@ -443,7 +444,7 @@ class CIFailureService:
     async def cleanup_expired(self) -> int:
         """按 TTL 清理过期记录。返回清理条数。"""
         retention_days = int(self._config().get("retention_days", 7))
-        cutoff = _utcnow_naive() - timedelta(days=retention_days)
+        cutoff = _utcnow() - timedelta(days=retention_days)
         try:
             async with db_module.async_session() as session:
                 result = await session.execute(

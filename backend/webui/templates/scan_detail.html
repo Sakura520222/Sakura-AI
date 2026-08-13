@@ -57,7 +57,7 @@
             </div>
             <div>
                 <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.scan_time') }}</span>
-                <p class="mt-0.5">{{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else '-' }}</p>
+                <p class="mt-0.5">{{ scan.created_at|format_datetime_short if scan.created_at else '-' }}</p>
             </div>
         </div>
 
@@ -67,12 +67,12 @@
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <div>
                     <span class="text-gray-500 dark:text-gray-400">{{ _('scan.started_at') }}</span>
-                    <p class="mt-0.5">{{ scan.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                    <p class="mt-0.5">{{ scan.started_at|format_datetime_short }}</p>
                 </div>
                 {% if scan.completed_at %}
                 <div>
                     <span class="text-gray-500 dark:text-gray-400">{{ _('scan.completed_at') }}</span>
-                    <p class="mt-0.5">{{ scan.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                    <p class="mt-0.5">{{ scan.completed_at|format_datetime_short }}</p>
                 </div>
                 <div>
                     <span class="text-gray-500 dark:text-gray-400">{{ _('scan.duration') }}</span>

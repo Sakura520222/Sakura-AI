@@ -22,8 +22,8 @@
     <div class="grid grid-cols-2 gap-2 text-xs">
         <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.branch') }}</div><div class="mt-1 font-semibold break-all">{{ task.branch_name or '-' }}{% if task.base_branch %} <span class="text-gray-400">→ {{ task.base_branch }}</span>{% endif %}</div></div>
         <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.current_phase') }}</div><div class="mt-1 font-semibold">{{ task.current_phase or '-' }}</div></div>
-        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.started_at') }}</div><div class="mt-1 font-semibold">{{ task.started_at.strftime('%Y-%m-%d %H:%M') if task.started_at else '-' }}</div></div>
-        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.completed_at') }}</div><div class="mt-1 font-semibold">{{ task.completed_at.strftime('%Y-%m-%d %H:%M') if task.completed_at else '-' }}</div></div>
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.started_at') }}</div><div class="mt-1 font-semibold">{{ task.started_at|format_datetime_short if task.started_at else '-' }}</div></div>
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.completed_at') }}</div><div class="mt-1 font-semibold">{{ task.completed_at|format_datetime_short if task.completed_at else '-' }}</div></div>
     </div>
 
     {% if task.summary %}
@@ -132,7 +132,7 @@
                                 {% if comment.is_bot %}<span class="ml-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">{{ _('agent_team.ai_comment') }}</span>{% endif %}
                                 {% if comment.author_association %}<span class="ml-1">{{ comment.author_association }}</span>{% endif %}
                             </div>
-                            <span class="shrink-0">{{ comment.created_at.strftime('%Y-%m-%d %H:%M') if comment.created_at else '-' }}</span>
+                            <span class="shrink-0">{{ comment.created_at|format_datetime_short if comment.created_at else '-' }}</span>
                         </div>
                         <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ comment.body }}</div>
                     </article>
@@ -187,7 +187,7 @@
                     </div>
                     <div class="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
                         <span>{{ _('agent_team.token_estimate') }}: {{ context.token_estimate or 0 }}</span>
-                        <span>{{ context.created_at.strftime('%Y-%m-%d %H:%M') if context.created_at else '-' }}</span>
+                        <span>{{ context.created_at|format_datetime_short if context.created_at else '-' }}</span>
                     </div>
                 </div>
             </details>
@@ -201,7 +201,7 @@
     {% if task.rate_limit_reset_at %}
     <section>
         <div class="text-xs rounded-xl bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 p-3">
-            {{ _('agent_team.rate_limit_reset_at') }}: {{ task.rate_limit_reset_at.strftime('%Y-%m-%d %H:%M') }}
+            {{ _('agent_team.rate_limit_reset_at') }}: {{ task.rate_limit_reset_at|format_datetime_short }}
         </div>
     </section>
     {% endif %}
@@ -264,7 +264,7 @@
             <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3 text-sm">
                 <div class="flex items-center justify-between gap-2 text-xs text-gray-500">
                     <span>{{ item.source }}{% if item.author %} · {{ item.author }}{% endif %}</span>
-                    <span>{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else '-' }}</span>
+                    <span>{{ item.created_at|format_datetime_short if item.created_at else '-' }}</span>
                 </div>
                 <p class="mt-2 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ item.content }}</p>
             </div>

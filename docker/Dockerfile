@@ -1,4 +1,9 @@
 # Sakura AI Dockerfile — multi-stage production build
+ARG SAKURA_BUILD_CHANNEL=source
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
 # Stage 1: builder — Python 依赖构建（含编译头文件）
 FROM python:3.14-bookworm AS builder
 
@@ -29,11 +34,26 @@ RUN python -m venv /opt/venv \
 # Stage 2: runtime — 只保留运行所需
 FROM python:3.14-slim-bookworm AS runtime
 
+ARG SAKURA_BUILD_CHANNEL=source
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/opt/venv/bin:/usr/local/go/bin:/root/.cargo/bin:${PATH}"
+    PATH="/opt/venv/bin:/usr/local/go/bin:/root/.cargo/bin:${PATH}" \
+    SAKURA_BUILD_CHANNEL=${SAKURA_BUILD_CHANNEL} \
+    SAKURA_BUILD_VERSION=${SAKURA_BUILD_VERSION} \
+    SAKURA_BUILD_REVISION=${SAKURA_BUILD_REVISION} \
+    SAKURA_BUILD_CREATED=${SAKURA_BUILD_CREATED}
+
+LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI" \
+      org.opencontainers.image.revision="${SAKURA_BUILD_REVISION}" \
+      org.opencontainers.image.version="${SAKURA_BUILD_VERSION}" \
+      org.opencontainers.image.created="${SAKURA_BUILD_CREATED}" \
+      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}"
 
 # 运行期通用编译工具链（Agent Team 编译 C/C++/Rust/CGO Go 项目必需）
 RUN apt-get update && apt-get install -y \

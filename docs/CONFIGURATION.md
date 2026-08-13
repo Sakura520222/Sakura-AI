@@ -1,6 +1,6 @@
 # 配置参考
 
-> Sakura AI 全部配置项的位置、键名与说明。配置修改通过 WebUI 即时生效，无需重启。
+> Sakura AI 全部配置项的位置、键名与说明。普通动态配置可即时生效；应用时区等重启键保存后必须重启。
 
 ← [文档索引](README.md) · [README](../README.md)
 
@@ -12,7 +12,18 @@
 - **用户偏好**：UserConfig > `app_config` > Settings 默认值
 - **YAML 文件**：`config/strategies.yaml`（审查策略、上下文增强）、`config/labels.yaml`（标签定义）
 
-> **动态配置**：通过 WebUI 配置管理页面修改的配置项即时生效，无需重启服务。AI 运行时的账号、端点、凭据与模型仅由「AI 配置」中的账号和角色绑定提供；调用策略、RAG、Web 搜索、代码索引和仓库互助仍由各自配置分组管理。
+> **动态配置**：通过 WebUI 配置管理页面修改的普通动态配置项即时生效。AI 运行时的账号、端点、凭据与模型仅由「AI 配置」中的账号和角色绑定提供；调用策略、RAG、Web 搜索、代码索引和仓库互助仍由各自配置分组管理。
+
+## 时间与应用时区
+
+超级管理员可在「系统核心配置 → 应用配置」修改 `app_timezone`：
+
+- 默认值 `system`：每次进程启动时读取运行环境的系统 IANA 时区并冻结，例如 `Asia/Shanghai` 或 `America/New_York`。
+- 也可填写明确的 IANA 名称或 `UTC`。不接受 `CST`、`EST`、任意 `UTC+08:00` 等歧义缩写/固定 offset。
+- 保存后必须重启应用；当前进程不会半热切换，所有进程在重启后使用同一解析结果。
+- 该设置只影响 Sakura AI 的日志正文、WebUI、Telegram/CSV 等用户可见日历显示，不修改宿主机物理时钟、NTP 或系统时区，也不会执行系统命令。
+- 数据库、API、SSE、配置/用户备份和 updater 协议中的时间点统一为 aware UTC，机器可读格式为 RFC3339 `Z`；超时、deadline、uptime 使用 monotonic 时钟。
+- `datetime-local` 表单值属于应用时区；夏令时不存在的时间会被拒绝，重复小时必须选择较早或较晚 offset。
 
 ---
 
@@ -244,4 +255,4 @@
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-12 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

@@ -46,17 +46,20 @@ def test_empty_string_normalized_to_unknown():
 
 
 def test_with_update_info_when_update_available():
-    # 测试环境 __version__=3.0.0 < latest 3.1.0 → derived True
+    # latest 高于当前 __version__ → derived True
+    # patch+1 动态构造，避免版本 bump 后硬编码 latest 与 __version__ 持平而失效
+    major, minor, patch = (int(part) for part in __version__.split("."))
+    newer_version = f"{major}.{minor}.{patch + 1}"
     info = build_version_info(
         "image",
         update_info={
-            "latest_version": "3.1.0",
+            "latest_version": newer_version,
             "update_available": True,
             "last_checked": "2026-08-07T10:00:00Z",
             "check_error": None,
         },
     )
-    assert info["latest_version"] == "3.1.0"
+    assert info["latest_version"] == newer_version
     assert info["update_available"] is True
     assert info["last_checked"] == "2026-08-07T10:00:00Z"
 

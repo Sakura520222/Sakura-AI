@@ -6,10 +6,16 @@ on:
       source_ref:          # 不可变构建来源：commit SHA 或 refs/tags/vX.Y.Z
         required: true
         type: string
-      channel:             # edge / stable
+      channel:             # development / stable
         required: true
         type: string
       version:             # 稳定版版本号（edge 可不传）
+        required: false
+        type: string
+      revision:            # 构建 commit 的 40 位小写 SHA（稳定版也可显式传入）
+        required: false
+        type: string
+      created:             # 被构建 commit 的 RFC3339 UTC committer timestamp
         required: false
         type: string
       sync_dockerhub:      # 是否同步 Docker Hub（非阻塞）
@@ -36,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}   # 供 Docker Hub 按 digest 同步
+      immutable_tag: ${{ steps.tags.outputs.immutable_tag }}
     steps:
       - name: 检出代码（固定到 source_ref）
         uses: actions/checkout@v6
@@ -56,19 +63,72 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 计算标签：stable → vX.Y.Z + latest；edge → edge
+      - name: 安装 crane
+        uses: imjasonh/setup-crane@v0.4
+
+      # 计算标签和可信构建身份。所有 channel/输入均 fail closed；开发构建
+      # 同一 digest 同时写 edge 与可追溯 immutable tag，不能重复构建。
       - name: 计算镜像标签
         id: tags
         run: |
-          if [ "${{ inputs.channel }}" = "stable" ] && [ -z "${{ inputs.version }}" ]; then
-            echo "stable 通道必须传 version" >&2
+          set -euo pipefail
+          CHANNEL="${{ inputs.channel }}"
+          VERSION="${{ inputs.version }}"
+          REVISION="${{ inputs.revision }}"
+          CREATED="${{ inputs.created }}"
+          case "$CHANNEL" in
+            stable|development) ;;
+            *) echo "unsupported channel: $CHANNEL" >&2; exit 1 ;;
+          esac
+          ACTUAL_REVISION=$(git rev-parse HEAD)
+          [[ "$ACTUAL_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid checked out revision" >&2; exit 1; }
+          if [ -n "$REVISION" ] && [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "revision must be a 40-character lowercase SHA" >&2
             exit 1
           fi
-          if [ "${{ inputs.channel }}" = "stable" ]; then
-            echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ inputs.version }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:edge" >> "$GITHUB_OUTPUT"
+          if [ -n "$REVISION" ] && [ "$REVISION" != "$ACTUAL_REVISION" ]; then
+            echo "revision does not match checked-out commit" >&2
+            exit 1
           fi
+          REVISION="$ACTUAL_REVISION"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(sed -nE 's/^__version__[^=]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/__init__.py | head -n1)
+          fi
+          COMMIT_CREATED=$(git show -s --format=%cI "$ACTUAL_REVISION")
+          [[ "$COMMIT_CREATED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$ ]] || {
+            echo "commit timestamp is not RFC3339: $COMMIT_CREATED" >&2; exit 1;
+          }
+          if [ -n "$CREATED" ]; then
+            COMMIT_EPOCH=$(date -u -d "$COMMIT_CREATED" +%s 2>/dev/null || true)
+            INPUT_EPOCH=$(date -u -d "$CREATED" +%s 2>/dev/null || true)
+            if [ -z "$COMMIT_EPOCH" ] || [ -z "$INPUT_EPOCH" ] || [ "$COMMIT_EPOCH" != "$INPUT_EPOCH" ]; then
+              echo "created does not match checked-out commit timestamp" >&2
+              exit 1
+            fi
+          fi
+          CREATED="$COMMIT_CREATED"
+          [[ "$CREATED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$ ]] || {
+            echo "created must be RFC3339: $CREATED" >&2; exit 1;
+          }
+          if [ "$CHANNEL" = "stable" ]; then
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "stable channel requires strict version" >&2; exit 1; }
+            IMMUTABLE_TAG="v${VERSION}"
+          else
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "development channel requires version" >&2; exit 1; }
+            # The committer timestamp is normalized to UTC and made sortable.
+            UTC_CREATED=$(date -u -d "$CREATED" +%Y%m%d%H%M%S 2>/dev/null || true)
+            [[ "$UTC_CREATED" =~ ^[0-9]{14}$ ]] || { echo "cannot normalize created timestamp" >&2; exit 1; }
+            DEV_TAG="dev-${UTC_CREATED}-v${VERSION}-${REVISION}"
+            IMMUTABLE_TAG="$DEV_TAG"
+          fi
+          # The build is pushed without a tag and addressed only by digest.
+          # Moving aliases and the immutable channel tag are materialized
+          # after the digest is known, so reruns cannot overwrite an existing
+          # immutable tag or leave internal staging tags in the public catalog.
+          echo "immutable_tag=$IMMUTABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "created=$CREATED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: 构建并推送 GHCR（amd64 + arm64）
         uses: docker/build-push-action@v7
@@ -77,11 +137,82 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            SAKURA_BUILD_CHANNEL=${{ inputs.channel }}
+            SAKURA_BUILD_VERSION=${{ steps.tags.outputs.version }}
+            SAKURA_BUILD_REVISION=${{ steps.tags.outputs.revision }}
+            SAKURA_BUILD_CREATED=${{ steps.tags.outputs.created }}
           provenance: false
           cache-from: type=gha,scope=sakura-ai-${{ inputs.channel }}
           cache-to: type=gha,mode=max,scope=sakura-ai-${{ inputs.channel }}
+
+      - name: 按 digest 安全物化 channel 标签
+        id: materialize
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DIGEST="${{ steps.build.outputs.digest }}"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid build digest; refusing publication" >&2
+            exit 1
+          }
+          SOURCE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          IMMUTABLE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.immutable_tag }}"
+          existing_error=$(mktemp)
+          if existing=$(crane digest "$IMMUTABLE" 2>"$existing_error"); then
+            if [ "$existing" != "$DIGEST" ]; then
+              echo "immutable tag already points to a different digest; refusing overwrite" >&2
+              rm -f "$existing_error"
+              exit 1
+            fi
+          else
+            # Only an explicit missing-manifest response permits first
+            # materialization.  Authentication, rate-limit, and registry
+            # failures must not be mistaken for an absent immutable tag.
+            if ! grep -Eiq "manifest unknown|manifest_unknown" "$existing_error"; then
+              cat "$existing_error" >&2
+              rm -f "$existing_error"
+              echo "unable to verify immutable tag; refusing publication" >&2
+              exit 1
+            fi
+            crane copy "$SOURCE" "$IMMUTABLE"
+            if [ "$(crane digest "$IMMUTABLE")" != "$DIGEST" ]; then
+              rm -f "$existing_error"
+              echo "immutable tag digest changed during materialization; failing closed" >&2
+              exit 1
+            fi
+          fi
+          rm -f "$existing_error"
+          if [ "${{ inputs.channel }}" = "development" ]; then
+            # Only the current develop head may advance edge.  A rerun of an
+            # older commit can reproduce its immutable digest, but must never
+            # roll the moving channel alias backward.
+            REMOTE_DEVELOP_REVISION=$(git ls-remote origin refs/heads/develop | awk '{print $1}')
+            [[ "$REMOTE_DEVELOP_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "unable to resolve the current develop head; refusing edge update" >&2
+              exit 1
+            }
+            if [ "$REMOTE_DEVELOP_REVISION" != "${{ steps.tags.outputs.revision }}" ]; then
+              echo "development source is not the current develop head; refusing edge rollback" >&2
+              exit 1
+            fi
+            crane tag "$IMMUTABLE" edge
+          elif [ "${{ inputs.channel }}" = "stable" ]; then
+            # Likewise, only the current latest stable Release may advance
+            # latest.  Serialization prevents concurrent writers, while this
+            # identity gate prevents an older serialized rerun from winning.
+            LATEST_RELEASE_TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName')
+            if [ "$LATEST_RELEASE_TAG" != "v${{ steps.tags.outputs.version }}" ]; then
+              echo "stable source is not the current latest Release; refusing latest rollback" >&2
+              exit 1
+            fi
+            crane tag "$IMMUTABLE" latest
+          else
+            echo "unsupported channel; refusing alias materialization" >&2
+            exit 1
+          fi
 
   sync-dockerhub:
     name: 同步 Docker Hub（非阻塞）
@@ -122,6 +253,10 @@ jobs:
           if [ "${{ inputs.channel }}" = "stable" ]; then
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:v${{ inputs.version }}"
             crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest
-          else
+          elif [ "${{ inputs.channel }}" = "development" ]; then
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"
+            crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:${{ needs.build-and-publish.outputs.immutable_tag }}"
+          else
+            echo "unsupported channel; refusing Docker Hub sync" >&2
+            exit 1
           fi

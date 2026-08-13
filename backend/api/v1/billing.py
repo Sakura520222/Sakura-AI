@@ -1,12 +1,12 @@
 """API v1 付费配额端点"""
-
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
+from backend.core.time_service import format_rfc3339
 from backend.services.payment import SUPPORTED_PROVIDERS
 from backend.services.payment_service import PaymentError, PaymentService
 from backend.webui.deps import get_db, require_payment_enabled
@@ -79,6 +79,16 @@ class RedeemCodeUpdateRequest(BaseModel):
     expires_at: datetime | None = None
     max_uses: int | None = Field(None, ge=1)
     plan_id: int | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expires_at(cls, value: datetime | None) -> datetime | None:
+        """Require an explicit offset and normalize the instant to UTC."""
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expires_at must include an explicit timezone offset")
+        return value.astimezone(UTC)
 
 
 class CreateOrderRequest(BaseModel):
@@ -170,8 +180,8 @@ async def list_orders(
                 "currency": o.currency,
                 "status": o.status,
                 "payment_provider": o.payment_provider,
-                "created_at": o.created_at.isoformat() if o.created_at else None,
-                "fulfilled_at": o.fulfilled_at.isoformat() if o.fulfilled_at else None,
+                "created_at": format_rfc3339(o.created_at) if o.created_at else None,
+                "fulfilled_at": format_rfc3339(o.fulfilled_at) if o.fulfilled_at else None,
             }
             for o in orders
         ],
@@ -203,7 +213,7 @@ async def create_order(
             "currency": order.currency,
             "provider": order.payment_provider,
             "checkout_url": checkout_url,
-            "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+            "expires_at": format_rfc3339(order.expires_at) if order.expires_at else None,
         }
     except PaymentError as e:
         await db.rollback()
@@ -246,10 +256,10 @@ async def get_order(
         "payment_provider": order.payment_provider,
         "provider_tx_id": order.provider_tx_id,
         "checkout_url": checkout_url,
-        "paid_at": order.paid_at.isoformat() if order.paid_at else None,
-        "fulfilled_at": order.fulfilled_at.isoformat() if order.fulfilled_at else None,
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+        "paid_at": format_rfc3339(order.paid_at) if order.paid_at else None,
+        "fulfilled_at": format_rfc3339(order.fulfilled_at) if order.fulfilled_at else None,
+        "created_at": format_rfc3339(order.created_at) if order.created_at else None,
+        "expires_at": format_rfc3339(order.expires_at) if order.expires_at else None,
     }
 
 

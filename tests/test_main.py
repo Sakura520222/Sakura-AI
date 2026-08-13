@@ -2,8 +2,7 @@
 
 import asyncio
 import contextvars
-import time
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -12,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend import main
-from backend.core import logging_bridge
+from backend.core import logging_bridge, time_service
 from backend.core.config import Settings
 from backend.main import (
     _format_duration,
@@ -29,7 +28,7 @@ from backend.services.database_reset_runtime_service import (
 
 
 def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
-    startup_time = datetime(2026, 8, 1, 12, 34, 56, 123456)
+    startup_time = datetime(2026, 8, 1, 12, 34, 56, 123456, tzinfo=UTC)
 
     first_log = logging_bridge._create_startup_log_file(
         tmp_path,
@@ -42,8 +41,8 @@ def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
         process_id=4321,
     )
 
-    assert first_log.name == "app_20260801_123456_123456_pid4321.log"
-    assert second_log.name == "app_20260801_123456_123456_pid4321_1.log"
+    assert first_log.name == "app_20260801_123456_123456Z_pid4321.log"
+    assert second_log.name == "app_20260801_123456_123456Z_pid4321_1.log"
     assert first_log.is_file()
     assert second_log.is_file()
 
@@ -52,7 +51,7 @@ def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path)
     remove = Mock()
     add = Mock()
     install_standard_bridge = Mock()
-    app_log_path = tmp_path / "app_20260801_123456_123456_pid4321.log"
+    app_log_path = tmp_path / "app_20260801_123456_123456Z_pid4321.log"
     cleanup = Mock()
     monkeypatch.setattr(logging_bridge.logger, "remove", remove)
     monkeypatch.setattr(logging_bridge.logger, "add", add)
@@ -72,6 +71,7 @@ def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path)
 
     assert add.call_args_list[1] == call(
         str(app_log_path),
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | {level: <8} | {name}:{function} - {message}",
         rotation="500 MB",
         retention=cleanup,
         level="DEBUG",
@@ -171,6 +171,54 @@ async def test_lifespan_does_not_yield_when_database_initialization_fails(monkey
         get_runtime_supervisor()
 
 
+@pytest.mark.anyio
+async def test_lifespan_does_not_yield_when_required_timezone_load_fails(monkeypatch):
+    database_url = "mysql+asyncmy://db/app"
+
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main, "_should_start_background_tasks", lambda _: False)
+
+    async def no_op_init_db():
+        return None
+
+    async def fail_required_timezone_load(*, required_keys):
+        assert required_keys == {"app_timezone"}
+        raise RuntimeError("required app_timezone load failed")
+
+    monkeypatch.setattr("backend.models.init_db", no_op_init_db)
+    monkeypatch.setattr(
+        "backend.core.config.load_dynamic_configs_to_settings",
+        fail_required_timezone_load,
+    )
+
+    with pytest.raises(RuntimeError, match="app_timezone"):
+        async with main.lifespan(main.app):
+            pytest.fail("lifespan yielded after required timezone load failed")
+
+    with pytest.raises(DatabaseResetRuntimeBindingError):
+        get_runtime_supervisor()
+
+
+@pytest.mark.anyio
+async def test_bootstrap_lifespan_does_not_resolve_application_timezone(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "initialize_time_service",
+        Mock(side_effect=AssertionError("timezone resolved before configuration load")),
+    )
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+
+
 def _patch_minimal_lifespan_shutdown(monkeypatch):
     from backend.webui.sse import sse_manager
 
@@ -195,6 +243,42 @@ def _patch_minimal_lifespan_shutdown(monkeypatch):
     monkeypatch.setattr(
         "backend.services.embedding_service.close_reranker_service", no_op_close
     )
+
+
+@pytest.mark.anyio
+async def test_lifespan_resolves_persisted_timezone_after_database_load(monkeypatch):
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    database_url = "mysql+asyncmy://db/app"
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main.settings, "app_timezone", "system")
+
+    async def no_op_init_db():
+        return None
+
+    async def load_persisted_timezone(*, required_keys):
+        assert required_keys == {"app_timezone"}
+        main.settings.app_timezone = "UTC"
+
+    monkeypatch.setattr("backend.models.init_db", no_op_init_db)
+    monkeypatch.setattr(
+        "backend.core.config.load_dynamic_configs_to_settings",
+        load_persisted_timezone,
+    )
+    monkeypatch.setattr(
+        time_service,
+        "get_localzone_name",
+        Mock(side_effect=RuntimeError("system timezone unavailable")),
+    )
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert main.get_time_service().resolved_timezone == "UTC"
 
 
 @pytest.mark.anyio
@@ -290,6 +374,7 @@ def test_get_startup_info_returns_none_when_not_started():
     with (
         patch.object(main, "_startup_finished_at", 0.0),
         patch.object(main, "_startup_duration", 0.0),
+        patch.object(main, "_startup_finished_monotonic", None),
     ):
         info = get_startup_info()
     assert info["startup_time"] is None
@@ -299,13 +384,15 @@ def test_get_startup_info_returns_none_when_not_started():
 
 def test_get_startup_info_returns_valid_data_after_startup():
     """模拟 lifespan 已执行后，startup_info 应包含有效数据"""
-    now = time.time()
-    fake_finished = now - 120  # 2 分钟前启动完成
+    now_mono = main.get_time_service().monotonic()
+    fake_finished = datetime.now(UTC).timestamp() - 120
     fake_duration = 3.45  # 启动耗时 3.45 秒
 
     with (
         patch.object(main, "_startup_finished_at", fake_finished),
         patch.object(main, "_startup_duration", fake_duration),
+        patch.object(main, "_startup_finished_monotonic", now_mono - 120),
+        patch.object(main, "_startup_finished_instant_utc", datetime.fromtimestamp(fake_finished, tz=UTC)),
     ):
         info = get_startup_info()
 
@@ -318,13 +405,15 @@ def test_get_startup_info_returns_valid_data_after_startup():
 
 def test_get_system_info_dict_contains_formatted_fields():
     """get_system_info_dict 应包含所有格式化字段和版本号"""
-    now = time.time()
-    fake_finished = now - 3600  # 1 小时前启动完成
+    now_mono = main.get_time_service().monotonic()
+    fake_finished = datetime.now(UTC).timestamp() - 3600
     fake_duration = 2.5  # 启动耗时 2.5 秒
 
     with (
         patch.object(main, "_startup_finished_at", fake_finished),
         patch.object(main, "_startup_duration", fake_duration),
+        patch.object(main, "_startup_finished_monotonic", now_mono - 3600),
+        patch.object(main, "_startup_finished_instant_utc", datetime.fromtimestamp(fake_finished, tz=UTC)),
     ):
         info = get_system_info_dict()
 
@@ -341,6 +430,7 @@ def test_get_system_info_dict_before_startup():
     with (
         patch.object(main, "_startup_finished_at", 0.0),
         patch.object(main, "_startup_duration", 0.0),
+        patch.object(main, "_startup_finished_monotonic", None),
     ):
         info = get_system_info_dict()
 

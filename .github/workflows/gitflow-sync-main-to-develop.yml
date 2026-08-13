@@ -1,8 +1,7 @@
 name: Gitflow 自动同步
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -16,15 +15,20 @@ on:
         required: false
         default: develop
 
+concurrency:
+  group: gitflow-sync-main-to-develop
+  cancel-in-progress: false
+
 jobs:
   sync-main-to-develop:
     name: 将 main 回合到 develop
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       (startsWith(github.event.pull_request.head.ref, 'release/') ||
-        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      revision: ${{ steps.sync.outputs.revision }}
+      target: ${{ steps.branches.outputs.target }}
+      using_pat: ${{ steps.push-token.outputs.using_pat }}
+    # push 到 main 或手动触发时运行；on 已限定事件来源，此处无需额外过滤
     permissions:
       contents: write
       pull-requests: write
@@ -42,9 +46,22 @@ jobs:
             echo "target=develop" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 检查推送令牌类型
+        id: push-token
+        env:
+          RELEASE_PAT: ${{ secrets.MY_RELEASE_PAT }}
+        run: |
+          if [ -n "$RELEASE_PAT" ]; then
+            echo "using_pat=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "using_pat=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 检出目标分支
         uses: actions/checkout@v7
         with:
+          # PAT push 会继续触发 develop CI/开发镜像；仅回退 GITHUB_TOKEN 时，
+          # GitHub 的防递归规则会抑制该 push 产生的后续 workflow runs。
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
           ref: ${{ steps.branches.outputs.target }}
@@ -78,6 +95,12 @@ jobs:
             git merge --abort || true
             exit 1
           fi
+          REVISION=$(git rev-parse HEAD)
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "无法解析同步后的 develop revision" >&2
+            exit 1
+          }
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
       - name: 同步失败时创建 Issue
         if: failure()
@@ -100,3 +123,24 @@ jobs:
               ].join('\n'),
               labels: ['gitflow', 'maintenance'],
             });
+
+  # A push made with GITHUB_TOKEN intentionally does not trigger another
+  # workflow run.  Publish the synchronized develop revision explicitly in
+  # that fallback mode; when a PAT is available, docker-edge.yml is triggered
+  # by the push and this job stays skipped to avoid duplicate builds.
+  publish-synchronized-development:
+    name: 发布同步后的 development 镜像
+    needs: sync-main-to-develop
+    if: >-
+      needs.sync-main-to-develop.outputs.changed == 'true' &&
+      needs.sync-main-to-develop.outputs.target == 'develop' &&
+      needs.sync-main-to-develop.outputs.using_pat != 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      source_ref: ${{ needs.sync-main-to-develop.outputs.revision }}
+      channel: development
+      sync_dockerhub: true
+    secrets: inherit

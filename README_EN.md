@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.0.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.1.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -121,8 +121,8 @@
 ### Management & Operations
 
 - **Setup Wizard** — First-launch step-by-step guidance with resume support
-- **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged
-- **Dynamic Configuration** — WebUI changes take effect immediately without restart
+- **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged; super administrators can set an IANA application timezone (restart required)
+- **Dynamic Configuration** — Ordinary WebUI changes take effect immediately; restart-required keys such as the application timezone are applied after restart
 - **AI API Timeout Control** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
 - **Per-user Config Overrides** — UserConfig → AppConfig → Settings fallback
 - **AI Provider Registry** — 20+ built-in vendors, protocol-family-aware model discovery and context windows
@@ -193,6 +193,8 @@ docker run -d -p 8000:8000 \
 ```
 
 This mode does not include the Host Updater. It can report available releases, but it cannot apply an update from the WebUI.
+
+`latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
 After first start, visit `http://localhost:8000/setup` and complete configuration via the Setup Wizard.
 

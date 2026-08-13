@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.0.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.1.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -121,8 +121,8 @@
 ### 管理与运维
 
 - **Setup Wizard** — 首次启动分步引导，支持断点续配
-- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录
-- **动态配置管理** — WebUI 修改即时生效，无需重启
+- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录；超级管理员可设置应用 IANA 时区（保存后重启）
+- **动态配置管理** — 普通 WebUI 配置修改即时生效；应用时区等重启键保存后按提示重启
 - **AI API 超时治理** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
 - **用户级配置覆盖** — UserConfig → AppConfig → Settings 逐级回退
 - **AI Provider 注册表** — 内置 20+ 厂商，协议族感知模型发现与上下文窗口
@@ -193,6 +193,8 @@ docker run -d -p 8000:8000 \
 ```
 
 此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
+
+`latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
 首次启动后访问 `http://localhost:8000/setup`，按 Setup Wizard 完成配置。
 

@@ -7,7 +7,6 @@ migrate the legacy ``activity_*`` tables used by the existing activity page.
 from uuid import uuid4
 
 from sqlalchemy import (
-    TIMESTAMP,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -27,6 +26,7 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base, utc_now
+from backend.models.time_types import UTCDateTime
 
 OBSERVABILITY_PREFIX = "activity_observability_"
 ENDPOINT_FINGERPRINT_LENGTH = 64
@@ -64,7 +64,7 @@ class ActivityResourceIdentity(Base):
     resource_number = Column(String(100), nullable=False)
     # Mutable repository display name; identity is the external repository ID.
     repo_full_name = Column(String(255), nullable=False)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     sessions = relationship(
         "backend.models.activity_observability_models.ActivityObservabilitySession",
@@ -108,9 +108,9 @@ class ActivityObservabilitySession(Base):
     )
     # Event 和 Outbox 的 sequence 由服务层在此计数器上原子分配。
     session_event_sequence = Column(BigInteger, nullable=False, default=0)
-    last_active_at = Column(TIMESTAMP, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    archived_at = Column(TIMESTAMP, nullable=True)
+    last_active_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    archived_at = Column(UTCDateTime, nullable=True)
 
     resource_identity = relationship(
         "ActivityResourceIdentity", back_populates="sessions"
@@ -171,9 +171,9 @@ class ActivityThread(Base):
     # Monotonic fencing counter used when an expired lease is taken over.
     lease_fencing_token = Column(BigInteger, nullable=False, default=0)
     last_seq = Column(BigInteger, nullable=False, default=0)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    last_active_at = Column(TIMESTAMP, nullable=True)
-    archived_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    last_active_at = Column(UTCDateTime, nullable=True)
+    archived_at = Column(UTCDateTime, nullable=True)
 
     session = relationship(
         "backend.models.activity_observability_models.ActivityObservabilitySession",
@@ -223,10 +223,10 @@ class ActivityTrigger(Base):
     metadata_json = Column(OBSERVABILITY_TEXT, nullable=True)
     base_sha = Column(String(255), nullable=True)
     head_sha = Column(String(255), nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    leased_at = Column(TIMESTAMP, nullable=True)
-    consumed_at = Column(TIMESTAMP, nullable=True)
-    cancelled_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    leased_at = Column(UTCDateTime, nullable=True)
+    consumed_at = Column(UTCDateTime, nullable=True)
+    cancelled_at = Column(UTCDateTime, nullable=True)
 
     session = relationship(
         "backend.models.activity_observability_models.ActivityObservabilitySession",
@@ -291,10 +291,10 @@ class ActivityInvocation(Base):
     final_head_sha = Column(String(255), nullable=True)
     error_message = Column(OBSERVABILITY_TEXT, nullable=True)
     result_summary_json = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
-    cancelled_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
+    cancelled_at = Column(UTCDateTime, nullable=True)
 
     session = relationship(
         "backend.models.activity_observability_models.ActivityObservabilitySession",
@@ -335,7 +335,7 @@ class ActivityInvocationTrigger(Base):
         ForeignKey(f"{OBSERVABILITY_PREFIX}triggers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     invocation = relationship(
         "backend.models.activity_observability_models.ActivityInvocation",
@@ -374,7 +374,7 @@ class ActivityObservabilityRoleBindingSnapshot(Base):
         comment="小写 64 位 SHA-256 十六进制 endpoint 摘要，不保存 endpoint URL。",
     )
     config_snapshot_version = Column(Integer, nullable=False)
-    captured_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    captured_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     work_units = relationship(
         "backend.models.activity_observability_models.ActivityInvocationWorkUnit",
@@ -452,10 +452,10 @@ class ActivityInvocationWorkUnit(Base):
     final_thinking_mode = Column(String(100), nullable=True)
     is_primary = Column(Boolean, nullable=False, default=False)
     error_message = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
-    cancelled_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
+    cancelled_at = Column(UTCDateTime, nullable=True)
 
     invocation = relationship(
         "backend.models.activity_observability_models.ActivityInvocation",
@@ -536,7 +536,7 @@ class ActivityWorkUnitResult(Base):
     status = Column(String(50), nullable=False, default="generated")
     payload_json = Column(OBSERVABILITY_TEXT, nullable=True)
     requires_publication = Column(Boolean, nullable=False, default=False)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     work_unit = relationship(
         "backend.models.activity_observability_models.ActivityInvocationWorkUnit",
@@ -641,9 +641,9 @@ class ActivityModelAttempt(Base):
         nullable=True,
         comment="仅用于明确无 transcript 的调用，例如 thread_id=NULL 的 embedding。",
     )
-    started_at = Column(TIMESTAMP, nullable=True)
-    first_token_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    first_token_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
     http_status = Column(Integer, nullable=True)
     stop_reason = Column(String(100), nullable=True)
     error_category = Column(String(100), nullable=True)
@@ -667,15 +667,15 @@ class ActivityModelAttempt(Base):
     )
     reasoning_tokens_source = Column(String(100), nullable=False, default="provider")
     reasoning_availability = Column(String(50), nullable=False, default="unavailable")
-    reasoning_started_at = Column(TIMESTAMP, nullable=True)
-    reasoning_completed_at = Column(TIMESTAMP, nullable=True)
+    reasoning_started_at = Column(UTCDateTime, nullable=True)
+    reasoning_completed_at = Column(UTCDateTime, nullable=True)
     provider_event_metadata_json = Column(OBSERVABILITY_TEXT, nullable=True)
     cached_input_tokens = Column(BigInteger, nullable=True)
     cached_input_tokens_availability = Column(
         String(50), nullable=False, default="unavailable"
     )
     cached_input_tokens_source = Column(String(100), nullable=False, default="provider")
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     work_unit = relationship(
         "backend.models.activity_observability_models.ActivityInvocationWorkUnit",
@@ -760,7 +760,7 @@ class ActivityCanonicalContextRevision(Base):
         nullable=True,
     )
     status = Column(String(50), nullable=False, default="ready")
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     thread = relationship(
         "backend.models.activity_observability_models.ActivityThread",
@@ -842,7 +842,7 @@ class ActivityContextSnapshot(Base):
     reasoning_context_tokens_source = Column(
         String(100), nullable=False, default="provider"
     )
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 class ActivityContextOperation(Base):
@@ -907,8 +907,8 @@ class ActivityContextOperation(Base):
     summary_artifact_reference = Column(String(255), nullable=True)
     status = Column(String(50), nullable=False, default="pending")
     error_message = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+    completed_at = Column(UTCDateTime, nullable=True)
 
 
 class ActivityThreadLease(Base):
@@ -944,9 +944,9 @@ class ActivityThreadLease(Base):
         ),
         nullable=True,
     )
-    heartbeat_at = Column(TIMESTAMP, nullable=False, default=utc_now)
-    expires_at = Column(TIMESTAMP, nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False, default=utc_now)
+    heartbeat_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    expires_at = Column(UTCDateTime, nullable=False)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
 
 
 class ActivityObservabilityMessage(Base):
@@ -1014,7 +1014,7 @@ class ActivityObservabilityMessage(Base):
     content = Column(OBSERVABILITY_TEXT, nullable=True)
     message_json = Column(OBSERVABILITY_TEXT, nullable=False)
     tool_call_id = Column(String(255), nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 class ActivityToolExecution(Base):
@@ -1066,10 +1066,10 @@ class ActivityToolExecution(Base):
     result_hash = Column(OBSERVABILITY_ASCII_512, nullable=True)
     result_storage_ref = Column(String(255), nullable=True)
     status = Column(String(50), nullable=False, default="pending")
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
     error_message = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 class ActivityNativeArtifact(Base):
@@ -1104,9 +1104,9 @@ class ActivityNativeArtifact(Base):
     capture_error = Column(String(100), nullable=True)
     payload_safe_summary = Column(OBSERVABILITY_TEXT, nullable=True)
     payload_hash = Column(OBSERVABILITY_ASCII_512, nullable=True)
-    retention_expires_at = Column(TIMESTAMP, nullable=True)
+    retention_expires_at = Column(UTCDateTime, nullable=True)
     replay_allowed = Column(Boolean, nullable=False, default=False)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 class ActivityPublication(Base):
@@ -1142,10 +1142,10 @@ class ActivityPublication(Base):
     http_status = Column(Integer, nullable=True)
     reconciliation_json = Column(OBSERVABILITY_TEXT, nullable=True)
     error_message = Column(OBSERVABILITY_TEXT, nullable=True)
-    started_at = Column(TIMESTAMP, nullable=True)
-    completed_at = Column(TIMESTAMP, nullable=True)
-    timed_out_at = Column(TIMESTAMP, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
+    timed_out_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
     work_unit_result = relationship(
         "backend.models.activity_observability_models.ActivityWorkUnitResult",
@@ -1215,7 +1215,7 @@ class ActivityObservabilityEvent(Base):
     event_type = Column(String(100), nullable=False)
     visibility = Column(String(50), nullable=False)
     projection_json = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 def _never_render_compat_constraint(*args, **kwargs):
@@ -1270,12 +1270,12 @@ class ActivityOutbox(Base):
     status = Column(String(50), nullable=False, default="pending")
     payload_json = Column(OBSERVABILITY_TEXT, nullable=False)
     attempt_count = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(TIMESTAMP, nullable=True)
-    claimed_at = Column(TIMESTAMP, nullable=True)
+    next_attempt_at = Column(UTCDateTime, nullable=True)
+    claimed_at = Column(UTCDateTime, nullable=True)
     claim_token = Column(String(255), nullable=True)
-    published_at = Column(TIMESTAMP, nullable=True)
+    published_at = Column(UTCDateTime, nullable=True)
     last_error = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 class ActivityArtifactAccessLog(Base):
@@ -1298,7 +1298,7 @@ class ActivityArtifactAccessLog(Base):
     authorization_scope = Column(String(255), nullable=True)
     outcome = Column(String(50), nullable=False)
     metadata_json = Column(OBSERVABILITY_TEXT, nullable=True)
-    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
 
 
 ActivitySession = ActivityObservabilitySession

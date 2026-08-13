@@ -4,7 +4,6 @@ import asyncio
 import subprocess
 import time
 import uuid
-from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -18,6 +17,7 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.github_app import GitHubAppClient
+from backend.core.time_service import now_utc
 from backend.models.database import (
     CommentSeverity,
     CommentType,
@@ -2004,7 +2004,7 @@ class ReviewWorker:
                         PRStatus.CANCELLED,
                         PRStatus.FAILED,
                     ):
-                        record.completed_at = datetime.utcnow()
+                        record.completed_at = now_utc()
                     if overall_score is not None:
                         record.overall_score = overall_score
                     if decision is not None:

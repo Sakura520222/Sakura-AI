@@ -1029,7 +1029,8 @@ async def test_create_role_binding_snapshot_persists_stable_candidate_chain(
     assert row.candidate_chain_json == (
         '[["openai","requested-label-model"],["openai","fallback-label-model"]]'
     )
-    assert row.captured_at == label_snapshot.captured_at.replace(tzinfo=None)
+    # UTCDateTime keeps instants timezone-aware at the domain boundary.
+    assert row.captured_at == label_snapshot.captured_at
 
 
 @pytest.mark.asyncio

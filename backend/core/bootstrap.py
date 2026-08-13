@@ -9,14 +9,14 @@ import json
 import os
 import secrets
 import tempfile
-import time
-from datetime import UTC, datetime
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Literal
 
 from loguru import logger
 from starlette.responses import JSONResponse, RedirectResponse
+
+from backend.core.time_service import monotonic, now_utc
 
 SetupState = Literal["not_configured", "in_progress", "completed"]
 
@@ -96,7 +96,7 @@ def write_connection_config(
         "setup_completed": setup_completed,
     }
     if setup_completed:
-        config["completed_at"] = datetime.now(UTC).isoformat()
+        config["completed_at"] = now_utc().isoformat()
 
     # 在同一目录中先写临时文件，再用 os.replace 原子替换目标。这样即使
     # 进程在写入过程中崩溃，启动时也只会看到完整的旧文件或完整的新文件，
@@ -174,7 +174,7 @@ def check_setup_state() -> SetupState:
 def is_bootstrap_mode() -> bool:
     """当前是否处于 bootstrap 模式（带 TTL 缓存）"""
     global _state_cache, _cache_ts
-    now = time.time()
+    now = monotonic()
     if _state_cache is not None and (now - _cache_ts) < _CACHE_TTL:
         return _state_cache != "completed"
     _state_cache = check_setup_state()

@@ -14,12 +14,12 @@ from builtins import BaseExceptionGroup, ExceptionGroup
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.activity_observability_models import (
     ActivityInvocation,
@@ -681,7 +681,7 @@ class ActivityIntegrationService:
                     protocol_family=stored.protocol_family,
                     endpoint_fingerprint=stored.endpoint_fingerprint,
                     config_snapshot_version=stored.config_snapshot_version,
-                    captured_at=stored.captured_at.replace(tzinfo=UTC),
+                    captured_at=stored.captured_at,
                 )
             except TypeError, ValueError, json.JSONDecodeError:
                 pass
@@ -837,7 +837,7 @@ class ActivityIntegrationService:
     async def _resolve_snapshot(self, role: str) -> RoleConfigSnapshot:
         if self._role_snapshot_resolver is not None:
             return await self._role_snapshot_resolver(role)
-        now = datetime.now(UTC)
+        now = now_utc()
         model = "unresolved"
         return RoleConfigSnapshot(
             role=role,
@@ -954,8 +954,10 @@ class ActivityIntegrationService:
         now = utc_now()
         for invocation, thread, work_unit, lease in rows:
             expires = lease.expires_at
-            if expires is not None and expires.tzinfo is None:
-                expires = expires.replace(tzinfo=UTC)
+            if expires is not None and (
+                expires.tzinfo is None or expires.utcoffset() is None
+            ):
+                raise ValueError("thread lease expiry must be timezone-aware")
             if expires is not None and expires > now:
                 return (
                     invocation,

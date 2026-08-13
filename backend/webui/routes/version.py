@@ -13,7 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from backend import __version__
+from backend.core.build_info import get_build_info
 from backend.core.config import get_settings
+from backend.services.container_registry import (
+    REPOSITORY as OFFICIAL_REGISTRY_REPOSITORY,
+)
+from backend.services.container_registry import (
+    ContainerRegistryClient,
+    ContainerRegistryError,
+)
 from backend.services.update_checker import is_newer_version, read_cache
 from backend.services.updater_client import (
     UpdaterActionError,
@@ -35,6 +43,16 @@ from backend.webui.helpers.admin_log import log_admin_action
 router = APIRouter(tags=["Version"])
 
 _VALID_MODES = {"image", "source"}
+_registry_client: ContainerRegistryClient | None = None
+
+
+def _get_registry_client() -> ContainerRegistryClient:
+    """Reuse the short-TTL client so last-known-good survives requests."""
+
+    global _registry_client
+    if _registry_client is None or not isinstance(_registry_client, ContainerRegistryClient):
+        _registry_client = ContainerRegistryClient(OFFICIAL_REGISTRY_REPOSITORY)
+    return _registry_client
 
 
 def build_version_info(
@@ -96,6 +114,7 @@ def build_version_info(
         available = None
     return {
         "current_version": __version__,
+        "build": get_build_info(),
         "deployment_type": mode,
         "deployment_mode": mode,
         "update_supported": update_supported,
@@ -154,6 +173,21 @@ async def get_version_releases(user: dict = Depends(require_super_admin)):
         },
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@router.get("/version/images")
+async def get_version_images(user: dict = Depends(require_super_admin)):
+    """Return the read-only, digest-grouped official GHCR catalog."""
+
+    try:
+        payload = await _get_registry_client().list_images()
+    except (ContainerRegistryError, ValueError):
+        return JSONResponse(
+            {"error": "registry_unavailable"},
+            status_code=503,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @router.post("/version/check")
@@ -216,6 +250,40 @@ async def _read_action_body(request: Request) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _confirm_channel_switch(body: dict) -> tuple[bool | None, JSONResponse | None]:
+    """Accept only a JSON boolean; an omitted field is the safe default false."""
+
+    if "confirm_channel_switch" not in body:
+        return False, None
+    value = body["confirm_channel_switch"]
+    if type(value) is not bool:
+        return None, JSONResponse({"error": "invalid_confirm_channel_switch"}, status_code=422)
+    return value, None
+
+
+async def _resolve_catalog_target(body: dict) -> tuple[dict | None, JSONResponse | None]:
+    """Re-resolve a browser snapshot against the current authoritative head."""
+
+    target = body.get("target")
+    if target is None:
+        return None, None
+    if not isinstance(target, dict) or target.get("channel") not in {"stable", "development"}:
+        return None, JSONResponse({"error": "invalid_target"}, status_code=422)
+    try:
+        catalog = await _get_registry_client().list_images()
+    except (ContainerRegistryError, ValueError):
+        return None, JSONResponse({"error": "registry_unavailable"}, status_code=503)
+    if catalog.get("stale"):
+        return None, JSONResponse({"error": "stale_catalog"}, status_code=409)
+    head = (catalog.get("heads") or {}).get(target.get("channel"))
+    required = ("version", "tag", "digest")
+    if target.get("channel") == "development":
+        required += ("revision",)
+    if not isinstance(head, dict) or any(target.get(key) != head.get(key) for key in required):
+        return None, JSONResponse({"error": "target_not_selectable"}, status_code=409)
+    return target, None
+
+
 def _validate_target(target: object) -> bool:
     # Reuse the strict discovery parser; it accepts only X.Y.Z (no v prefix,
     # prerelease, or build metadata in P0).
@@ -244,12 +312,22 @@ async def updater_preflight(
     _csrf: str = Depends(require_csrf_header),
 ):
     body = await _read_action_body(request)
+    confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+    if confirm_error is not None:
+        return confirm_error
+    target_object, target_error = await _resolve_catalog_target(body)
+    if target_error is not None:
+        return target_error
     target = body.get("target_version")
-    if not _validate_target(target):
+    if target_object is None and not _validate_target(target):
         return JSONResponse({"error": "invalid_target_version"}, status_code=422)
     try:
         return JSONResponse(
-            await UpdaterClient().preflight(target),
+            await UpdaterClient().preflight(
+                target if isinstance(target, str) else None,
+                target=target_object,
+                confirm_channel_switch=confirm_channel_switch is True,
+            ),
             headers={"Cache-Control": "no-store"},
         )
     except Exception as exc:
@@ -264,11 +342,21 @@ async def updater_update(
     _csrf: str = Depends(require_csrf_header),
 ):
     body = await _read_action_body(request)
+    confirm_channel_switch, confirm_error = _confirm_channel_switch(body)
+    if confirm_error is not None:
+        return confirm_error
+    target_object, target_error = await _resolve_catalog_target(body)
+    if target_error is not None:
+        return target_error
     target = body.get("target_version")
     if target is not None and not _validate_target(target):
         return JSONResponse({"error": "invalid_target_version"}, status_code=422)
     try:
-        payload = await UpdaterClient().update(target)
+        payload = await UpdaterClient().update(
+            target,
+            target=target_object,
+            confirm_channel_switch=confirm_channel_switch is True,
+        )
         response = JSONResponse(
             payload,
             headers={"Cache-Control": "no-store"},
@@ -284,7 +372,13 @@ async def updater_update(
                 "deployment",
                 job_id,
                 {
-                    "target_version": target,
+                    "target_version": (
+                        target_object.get("version") if target_object else target
+                    ),
+                    "target_channel": target_object.get("channel") if target_object else None,
+                    "target_revision": target_object.get("revision") if target_object else None,
+                    "target_digest": target_object.get("digest") if target_object else None,
+                    "confirm_channel_switch": confirm_channel_switch is True,
                     "job_id": job_id,
                     "deployment_mode": get_settings().sakura_deploy_mode or "unknown",
                 },

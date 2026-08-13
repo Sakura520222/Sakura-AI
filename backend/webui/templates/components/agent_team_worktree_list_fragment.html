@@ -36,7 +36,7 @@
                     <span>{{ wt.size_label }}</span>
                     <span>{{ wt.file_count }} {{ _('agent_team.workspace_files') }}</span>
                     {% if wt.modified_at %}
-                    <span>{{ wt.modified_at.strftime('%m-%d %H:%M') }}</span>
+                    <span>{{ wt.modified_at|format_datetime_short }}</span>
                     {% endif %}
                 </div>
             </div>

@@ -3,13 +3,13 @@
 为 AI 审查员提供互联网搜索能力，用于查找文档、最佳实践等。
 """
 
-import time
 from typing import Any
 
 import httpx
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.time_service import monotonic
 
 
 class WebSearchToolHandler:
@@ -44,7 +44,7 @@ class WebSearchToolHandler:
 
     async def _load_config(self) -> None:
         """从数据库加载配置（覆盖环境变量默认值），带 TTL 缓存"""
-        if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
+        if monotonic() - self._last_config_load < self._CONFIG_CACHE_TTL:
             return
 
         try:
@@ -79,7 +79,7 @@ class WebSearchToolHandler:
             if config_values.get("web_search_timeout"):
                 self._timeout = int(config_values["web_search_timeout"])
 
-            self._last_config_load = time.time()
+            self._last_config_load = monotonic()
 
         except (ValueError, TypeError) as e:
             logger.warning(f"Web 搜索配置值格式无效，使用环境变量默认值: {e}")

@@ -188,9 +188,11 @@ def _manifest_hash(manifest_json: str) -> str:
 
 
 def _aware(value: datetime | None) -> datetime | None:
-    if value is None or value.tzinfo is not None:
+    if value is None:
         return value
-    return value.replace(tzinfo=UTC)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("context timestamps must be timezone-aware")
+    return value.astimezone(UTC)
 
 
 class ContextService:

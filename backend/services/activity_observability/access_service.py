@@ -5,6 +5,7 @@ It never trusts a browser-provided repository, role, or cursor claim: every chil
 object is resolved through its Session and the configured repository authorizer.
 """
 
+
 from __future__ import annotations
 
 import base64
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_settings
+from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.activity_observability_models import (
     ActivityCanonicalContextRevision,
     ActivityContextOperation,
@@ -138,13 +140,13 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+        raise ValueError("activity timestamps must be aware")
     return value.astimezone(UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
     value = _as_utc(value)
-    return value.isoformat() if value is not None else None
+    return format_rfc3339(value) if value is not None else None
 
 
 def _is_admin(user: dict[str, Any]) -> bool:
@@ -859,7 +861,7 @@ class ActivityAccessService:
                 projection_version or config.projection_version
             ):
                 raise CursorResetRequiredError("projection version changed")
-            now = (_as_utc(self.now()) or datetime.now(UTC)).timestamp()
+            now = (_as_utc(self.now()) or now_utc()).timestamp()
             if now >= int(body["expires_at"]):
                 raise CursorResetRequiredError("cursor expired")
             if int(body["last_scanned_sequence"]) < 0:
