@@ -25,6 +25,12 @@ Install the updater editable package before running the full suite. `run_ruff.py
 
 Use four-space indentation, English identifiers, and async-first I/O. Chinese or bilingual comments are acceptable. Keep route handlers thin and delegate business logic to services; use `loguru` for application logging and follow the root `ruff.toml` (`py314`) configuration. User-visible WebUI text must update both `backend/webui/translations/zh-CN.yaml` and `en.yaml`. Pytest and `pytest-asyncio` are used; name files `test_*.py` and functions `test_*`. Mock MySQL, Redis, GitHub, AI providers, and ChromaDB in unit tests. CI runs Ruff and pytest but does not enforce a coverage threshold.
 
+## Architecture Contracts
+
+- **Unified time**: get timestamps from `backend/core/time_service.py` and use the timezone-aware types in `backend/models/time_types.py`; never call `datetime.now()` directly or store naive datetimes.
+- **Docker image channels**: updates run on `stable`/`development` channels coordinated across `backend/services/container_registry.py` (registry queries), `backend/core/build_info.py` (current channel/version), and the updater's `registry.py` (channel and digest resolution) — change all three plus the WebUI version manager page together.
+- **Setup backup restore**: backup import must not overwrite deployment-time connection settings (DB connection string, Redis address); `backend/core/setup_service.py` preserves them, and any newly imported field must bypass them too.
+
 ## Commits and Pull Requests
 
 Use English Conventional Commits, for example `feat(updater): add socket recovery` or `fix(ruff): align Python 3.14 rules`. Follow Gitflow: daily work uses `feature/*` from `develop` and targets `develop`; `release/*` and `hotfix/*` follow the repository’s release flow. Do not push directly to `main` or `develop`. PRs should explain behavior changes, list validation commands, note configuration/database/deployment impact, link related issues when applicable, and include screenshots for WebUI changes. Keep `README.md` and `README_EN.md` aligned for user-facing changes.
