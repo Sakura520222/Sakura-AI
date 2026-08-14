@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.config import get_settings
 from backend.core.time_service import get_time_service
-from backend.services.ai_reviewer.constants import SAKURA_AI_REPO_URL, SEVERITY_EMOJI
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 from backend.webui.deps import get_webui_url
 
 if TYPE_CHECKING:
