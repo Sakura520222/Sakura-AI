@@ -69,7 +69,7 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:68",
+        "position": "backend/main.py:75",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },
