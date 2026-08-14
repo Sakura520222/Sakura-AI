@@ -182,3 +182,46 @@ async def test_force_refresh_bypasses_fresh_catalog_cache():
     refreshed = await client.list_images(force_refresh=True)
     assert calls == ["token", "tags"]
     assert refreshed is not cached
+
+
+@pytest.mark.asyncio
+async def test_failed_force_refresh_persists_stale_cache_until_success():
+    client = ContainerRegistryClient(ttl=3600)
+    cached = {
+        "repository": client.repository,
+        "fetched_at": "2026-08-13T00:00:00Z",
+        "stale": False,
+        "images": [{"channel": "development", "version": "3.1.0"}],
+        "heads": {"stable": None, "development": {"version": "3.1.0"}},
+    }
+    client._cache = cached
+    client._cache_at = float("inf")
+    attempts = []
+
+    async def fail():
+        attempts.append("token")
+        raise ContainerRegistryError("registry unavailable", status_code=503)
+
+    client._token = fail
+    failed_refresh = await client.list_images(force_refresh=True)
+    assert failed_refresh["stale"] is True
+    assert client._cache is failed_refresh
+
+    cached_read = await client.list_images()
+    assert cached_read is failed_refresh
+    assert cached_read["stale"] is True
+    assert attempts == ["token"]
+
+    async def token():
+        attempts.append("recovered")
+        return "registry-token"
+
+    async def tags(_token):
+        return []
+
+    client._token = token
+    client._tags = tags
+    recovered = await client.list_images(force_refresh=True)
+    assert recovered["stale"] is False
+    assert client._cache is recovered
+    assert attempts == ["token", "recovered"]

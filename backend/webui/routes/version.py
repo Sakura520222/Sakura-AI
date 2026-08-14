@@ -69,14 +69,17 @@ def build_version_info(
         update_info: 可选的更新检查缓存数据。None 时相关字段为 null。
         updater_info: 可选的 updater /v1/status envelope（连上时）。None 表示未连接。
 
-    update_available 即时 derive：is_newer_version(__version__, latest)。
+    stable 的 update_available 即时 derive：is_newer_version(__version__, latest)。
+    development 则只信任 updater 最近一次同通道 readiness 快照中的
+    target_newer（该值由当前 digest 与 edge digest 比较得出）。
     - 无缓存（update_info=None）→ None
     - 有缓存且 latest 有值 → derive 布尔
     - 有缓存但 latest 为 None（空列表/失败无 last-known-good）→ False
 
     updater 连接状态：image 模式下 updater 已连且 protocol v1 兼容时，
-    ``update_supported`` 为真；``update_available`` 仍只代表 Backend GitHub
-    discovery，Host readiness 由 ``update_ready`` 单独表示。
+    ``update_supported`` 为真；stable 的 ``update_available`` 代表 Backend
+    GitHub discovery，development 的该字段代表 updater digest discovery；
+    Host 全部门槛是否通过仍由 ``update_ready`` 单独表示。
     updater_info 的版本字段取自 envelope 顶层（spec §7.2，data 不重复）。
     """
     mode = deploy_mode if deploy_mode in _VALID_MODES else "unknown"
@@ -109,15 +112,36 @@ def build_version_info(
         reason = "unknown_deployment"
 
     build = get_build_info()
-    # Stable Release discovery is not an update signal for a development
-    # deployment. Development availability is derived from the exact edge
-    # digest returned by the updater readiness request instead.
-    ui = {} if build.get("channel") == "development" else (update_info or {})
-    latest = ui.get("latest_version")
-    if ui:
-        available = is_newer_version(__version__, latest) if latest else False
+    if build.get("channel") == "development":
+        # Stable Release discovery is not an update signal for a development
+        # deployment. Only reuse an updater snapshot whose target belongs to
+        # the same channel; a prior explicit stable preflight must not create a
+        # development badge.
+        target = updater_data.get("target")
+        readiness = updater_data.get("readiness")
+        matching_target = (
+            target
+            if protocol_compatible
+            and isinstance(target, dict)
+            and target.get("channel") == "development"
+            else {}
+        )
+        latest_value = matching_target.get("version")
+        latest = latest_value if isinstance(latest_value, str) else None
+        target_newer = (
+            readiness.get("target_newer")
+            if latest is not None and isinstance(readiness, dict)
+            else None
+        )
+        available = target_newer if type(target_newer) is bool else None
+        ui = {}
     else:
-        available = None
+        ui = update_info or {}
+        latest = ui.get("latest_version")
+        if ui:
+            available = is_newer_version(__version__, latest) if latest else False
+        else:
+            available = None
     return {
         "current_version": __version__,
         "build": build,
