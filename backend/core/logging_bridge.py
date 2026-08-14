@@ -21,6 +21,19 @@ _URL_PASSWORD_PATTERN = re.compile(
 )
 _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 
+# 时间占位符必须用 strftime 规范，不能用 loguru 迷你语言（YYYY-MM-DD ... ZZ）：
+# 其 Z/ZZ token 依赖 tzinfo.utcoffset(None)，ZoneInfo 返回 None 会令格式化崩溃、
+# 记录被丢弃；而标准库桥接写入的 time 是普通 stdlib datetime，也解释不了迷你语言。
+# %z 按记录自身时刻取偏移，跨 DST 不漂移。
+CONSOLE_LOG_FORMAT = (
+    "<green>{time:%Y-%m-%d %H:%M:%S.%f%z}</green>"
+    " | <level>{level: <8}</level>"
+    " | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
+)
+FILE_LOG_FORMAT = (
+    "{time:%Y-%m-%d %H:%M:%S.%f%z} | {level: <8} | {name}:{function} - {message}"
+)
+
 
 def _cleanup_expired_app_logs(_log_paths: list[str] | None = None) -> None:
     """删除超过保留期限的应用日志，包含历史启动与轮转文件。"""
@@ -143,12 +156,12 @@ def configure_logging(*, started_at: datetime | None = None) -> None:
     logger.remove()
     logger.add(
         sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS ZZ}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+        format=CONSOLE_LOG_FORMAT,
         level="INFO",
     )
     logger.add(
         str(app_log_path),
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | {level: <8} | {name}:{function} - {message}",
+        format=FILE_LOG_FORMAT,
         rotation="500 MB",
         retention=_cleanup_expired_app_logs,
         level="DEBUG",
