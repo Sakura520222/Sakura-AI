@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from starlette.requests import Request
@@ -41,14 +42,159 @@ def test_template_uses_tabs_safe_dom_and_target_snapshot():
     assert "confirm_channel_switch" in template
     assert "registry-panel-other" in template
     assert "CURRENT_BUILD_CHANNEL" in template
+    assert 'version_manager.current_channel' in template
+    assert 'version_manager.current_revision' in template
+    assert "currentChannelTarget" in template
+    assert "operationTarget" in template
     assert "CURRENT_BUILD_CHANNEL !== image.channel" in template
     assert "const candidate" in template
     assert "registryEmpty:" in template
+    assert "registry_unavailable:" in template
+    assert "stale_catalog:" in template
+    assert "channel_head_unavailable:" in template
     assert "developmentRisk:" in template
     assert "channelSwitchRisk:" in template
     assert "build.channel" in template
     assert "build.revision" in template
     assert "readinessChecks.innerHTML" not in template
+
+
+@pytest.mark.asyncio
+async def test_default_readiness_uses_current_development_channel_head(monkeypatch):
+    digest = "sha256:" + "6" * 64
+    revision = "e" * 40
+    tag = f"dev-20260814010000-v3.1.0-{revision}"
+    target = {
+        "channel": "development",
+        "version": "3.1.0",
+        "revision": revision,
+        "tag": tag,
+        "digest": digest,
+    }
+    refreshes = []
+
+    class FakeRegistry:
+        def __init__(self, repository):
+            assert repository
+
+        async def list_images(self, *, force_refresh=False):
+            refreshes.append(force_refresh)
+            return {
+                "stale": False,
+                "heads": {
+                    "development": {
+                        **target,
+                        "canonical_tag": tag,
+                    }
+                },
+            }
+
+    calls = []
+
+    class FakeUpdater:
+        async def preflight(
+            self,
+            target_version=None,
+            *,
+            target=None,
+            confirm_channel_switch=False,
+        ):
+            calls.append((target_version, target, confirm_channel_switch))
+            return {
+                "protocol_version": 1,
+                "updater_version": "0.1.1",
+                "data": {
+                    "can_update": True,
+                    "checks": [{"name": "target_newer", "passed": True}],
+                },
+            }
+
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": revision},
+    )
+    monkeypatch.setattr(
+        version_routes,
+        "get_settings",
+        lambda: SimpleNamespace(sakura_deploy_mode="image"),
+    )
+    monkeypatch.setattr(version_routes, "_registry_client", None)
+    monkeypatch.setattr(version_routes, "ContainerRegistryClient", FakeRegistry)
+    monkeypatch.setattr(version_routes, "UpdaterClient", FakeUpdater)
+
+    response = await version_routes.updater_readiness(user={}, _csrf="")
+    body = json.loads(response.body)
+    assert response.status_code == 200
+    assert refreshes == [False]
+    assert calls == [(None, target, False)]
+    assert body["data"]["target"] == target
+    assert body["data"]["update_available"] is True
+    assert body["data"]["update_ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_manual_check_force_refreshes_current_stable_channel(monkeypatch):
+    digest = "sha256:" + "7" * 64
+    target = {
+        "channel": "stable",
+        "version": "3.1.0",
+        "tag": "v3.1.0",
+        "digest": digest,
+    }
+    refreshes = []
+
+    class FakeRegistry:
+        def __init__(self, repository):
+            assert repository
+
+        async def list_images(self, *, force_refresh=False):
+            refreshes.append(force_refresh)
+            return {"stale": False, "heads": {"stable": target}}
+
+    class FakeUpdater:
+        async def preflight(
+            self,
+            target_version=None,
+            *,
+            target=None,
+            confirm_channel_switch=False,
+        ):
+            assert target == expected_target
+            return {
+                "protocol_version": 1,
+                "updater_version": "0.1.1",
+                "data": {
+                    "can_update": False,
+                    "checks": [{"name": "target_newer", "passed": False}],
+                },
+            }
+
+    expected_target = target
+    monkeypatch.setattr(version_routes, "get_build_info", lambda: {"channel": "stable"})
+    monkeypatch.setattr(
+        version_routes,
+        "get_settings",
+        lambda: SimpleNamespace(sakura_deploy_mode="image"),
+    )
+    monkeypatch.setattr(version_routes, "_registry_client", None)
+    monkeypatch.setattr(version_routes, "ContainerRegistryClient", FakeRegistry)
+    monkeypatch.setattr(version_routes, "UpdaterClient", FakeUpdater)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/version/check",
+            "app": SimpleNamespace(state=SimpleNamespace()),
+        }
+    )
+
+    response = await version_routes.trigger_check(request, user={}, _csrf="")
+    body = json.loads(response.body)
+    assert response.status_code == 200
+    assert refreshes == [True]
+    assert body["data"]["target"] == target
+    assert body["data"]["update_available"] is False
 
 
 def test_all_channel_readiness_checks_are_localized_in_both_languages():

@@ -82,6 +82,34 @@ async def test_activate_writes_env_and_uses_explicit_compose_env_file(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_activate_persists_development_tag_and_digest(tmp_path, monkeypatch):
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        "SAKURA_AI_IMAGE=ghcr.io/example/app:v3.1.0\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n"
+        "OTHER=keep\n",
+        encoding="utf-8",
+    )
+    target = (
+        "ghcr.io/example/app:dev-20260814010000-v3.1.0-"
+        + "a" * 40
+        + "@sha256:"
+        + "b" * 64
+    )
+
+    async def fake_exec(*argv, **kwargs):
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter("/srv/docker-compose.prod.yml", str(env))
+    await adapter.activate(target)
+
+    content = env.read_text(encoding="utf-8")
+    assert f"SAKURA_AI_IMAGE={target}\n" in content
+    assert "OTHER=keep\n" in content
+
+
+@pytest.mark.asyncio
 async def test_activate_rejects_invalid_persisted_compose_project(tmp_path, monkeypatch):
     env = tmp_path / "deployment.env"
     env.write_text(
