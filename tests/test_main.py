@@ -71,7 +71,7 @@ def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path)
 
     assert add.call_args_list[1] == call(
         str(app_log_path),
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | {level: <8} | {name}:{function} - {message}",
+        format=logging_bridge.FILE_LOG_FORMAT,
         rotation="500 MB",
         retention=cleanup,
         level="DEBUG",

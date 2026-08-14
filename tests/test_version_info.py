@@ -4,6 +4,7 @@ build_version_info 接收明确的 deploy_mode 参数，不读取任何环境变
 真正的纯函数，route 层负责从 Settings 读后传参。
 """
 
+import backend.webui.routes.version as version_routes
 from backend import __version__
 from backend.services.update_checker import is_newer_version
 from backend.webui.routes.version import build_version_info
@@ -169,3 +170,69 @@ def test_host_readiness_snapshot_is_mapped_from_updater_status():
     assert info["update_ready"] is True
     assert info["readiness"] == readiness
     assert info["target"] == target
+
+
+def test_development_build_does_not_reuse_stable_release_update_state(monkeypatch):
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": "a" * 40},
+    )
+    info = build_version_info(
+        "image",
+        update_info={
+            "latest_version": "99.0.0",
+            "last_checked": "2026-08-14T01:00:00Z",
+            "check_error": None,
+        },
+    )
+
+    assert info["build"]["channel"] == "development"
+    assert info["latest_version"] is None
+    assert info["update_available"] is None
+    assert info["last_checked"] is None
+
+
+def test_development_build_uses_matching_updater_digest_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": "a" * 40},
+    )
+    info = build_version_info(
+        "image",
+        update_info={"latest_version": "99.0.0"},
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.2",
+            "data": {
+                "target": {"channel": "development", "version": "3.1.0"},
+                "readiness": {"target_newer": True},
+            },
+        },
+    )
+
+    assert info["latest_version"] == "3.1.0"
+    assert info["update_available"] is True
+
+
+def test_development_build_ignores_nonmatching_stable_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": "a" * 40},
+    )
+    info = build_version_info(
+        "image",
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.2",
+            "data": {
+                "target": {"channel": "stable", "version": "3.2.0"},
+                "readiness": {"target_newer": True},
+            },
+        },
+    )
+
+    assert info["latest_version"] is None
+    assert info["update_available"] is None

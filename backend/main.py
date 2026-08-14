@@ -1,8 +1,15 @@
 """Sakura AI 主应用"""
 
+import argparse
 import asyncio
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from backend.core.logging_bridge import configure_logging
 
@@ -687,15 +694,168 @@ async def webui_fallback(request: Request, path: str):
     raise HTTPException(status_code=404, detail="Not Found")
 
 
-if __name__ == "__main__":
+def _parse_launch_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m backend.main",
+        description="Sakura AI 启动器：监督循环 + 应用子进程",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="以应用子进程模式运行（由监督循环拉起，一般不手动使用）",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="监听地址")
+    parser.add_argument(
+        "--port", type=int, default=None, help="监听端口，默认读取配置 app_port"
+    )
+    parser.add_argument("--log-level", default=None, help="日志级别，默认读取配置")
+    parser.add_argument(
+        "--no-reload",
+        action="store_true",
+        help="关闭代码热重载（监督循环仍会处理应用的重启请求）",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_serve(args: argparse.Namespace) -> int:
+    """应用子进程：单进程 uvicorn，以退出码向监督者表达重启意图。"""
+
     import uvicorn
 
-    uvicorn.run(
+    from backend.core import server_runtime
+
+    config = uvicorn.Config(
         "backend.main:app",
-        host="0.0.0.0",
-        port=settings.app_port,
-        reload=True,
-        log_level=settings.log_level.lower(),
+        host=args.host,
+        port=args.port if args.port is not None else settings.app_port,
+        log_level=(args.log_level or settings.log_level).lower(),
         log_config=None,
         timeout_graceful_shutdown=15,
     )
+    server = uvicorn.Server(config)
+    server_runtime.register_server(server)
+    server.run()
+    if server_runtime.restart_requested():
+        return server_runtime.RESTART_EXIT_CODE
+    return 0
+
+
+def _spawn_child(args: argparse.Namespace) -> subprocess.Popen:
+    command = [
+        sys.executable,
+        "-m",
+        "backend.main",
+        "--serve",
+        "--host",
+        args.host,
+    ]
+    if args.port is not None:
+        command += ["--port", str(args.port)]
+    if args.log_level is not None:
+        command += ["--log-level", args.log_level]
+    return subprocess.Popen(command)
+
+
+def _start_reload_watcher(
+    root: Path,
+    changed: threading.Event,
+    stop: threading.Event,
+) -> threading.Thread:
+    """后台线程监视 *.py 变化；PythonFilter 默认忽略 .venv、node_modules 等。"""
+
+    from watchfiles import PythonFilter, watch
+
+    def _watch() -> None:
+        for changes in watch(
+            root,
+            watch_filter=PythonFilter(),
+            stop_event=stop,
+            ignore_permission_denied=True,
+        ):
+            paths = sorted({str(path) for _kind, path in changes})
+            if paths:
+                logger.info("检测到代码文件变化: {}", ", ".join(paths))
+                changed.set()
+
+    thread = threading.Thread(
+        target=_watch, daemon=True, name="sakura-reload-watcher"
+    )
+    thread.start()
+    return thread
+
+
+def _run_supervisor(
+    args: argparse.Namespace,
+    *,
+    spawn: Callable[[argparse.Namespace], subprocess.Popen] = _spawn_child,
+    start_watcher: Callable[..., threading.Thread] = _start_reload_watcher,
+    poll_interval: float = 0.2,
+) -> int:
+    """监督循环：拉起应用子进程，按约定退出码重启，代码变化热重载。
+
+    uvicorn 自带的 --reload reloader 只响应文件变化、不感知应用的重启
+    请求，worker 退出后既不会被拉起也不会退出，因此监督循环自己完成
+    热重载与重启这两件事。
+    """
+
+    from backend.core import server_runtime
+
+    reload_enabled = not args.no_reload
+    root = Path(__file__).resolve().parent.parent
+    while True:
+        changed = threading.Event()
+        stop = threading.Event()
+        watcher = (
+            start_watcher(root, changed, stop) if reload_enabled else None
+        )
+        proc = spawn(args)
+        logger.info(
+            "应用子进程已启动 (pid={})，代码热重载: {}",
+            proc.pid,
+            "开启" if reload_enabled else "关闭",
+        )
+        exit_code: int | None = None
+        try:
+            while True:
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    break
+                if changed.is_set():
+                    logger.info("检测到代码变化，正在重启应用...")
+                    break
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            logger.info("收到中断信号，正在停止应用子进程...")
+            stop.set()
+            _terminate_child(proc)
+            return 130
+        stop.set()
+        if watcher is not None:
+            watcher.join(timeout=2)
+        if exit_code is None:
+            # 代码变化触发：请求子进程停机并重新拉起。
+            _terminate_child(proc)
+            continue
+        if exit_code == server_runtime.RESTART_EXIT_CODE:
+            logger.info("应用请求重启，正在重新拉起...")
+            continue
+        return exit_code
+
+
+def _terminate_child(proc: subprocess.Popen) -> None:
+    """优雅请求子进程停机；超时后强杀兜底（与 uvicorn 停机超时对齐）。"""
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        logger.warning("应用子进程停机超时，强制结束")
+        proc.kill()
+        proc.wait()
+
+
+if __name__ == "__main__":
+    _launch_args = _parse_launch_args(sys.argv[1:])
+    if _launch_args.serve:
+        sys.exit(_run_serve(_launch_args))
+    sys.exit(_run_supervisor(_launch_args))

@@ -63,13 +63,13 @@ TIME_BOUNDARY_ALLOWLIST = TIME_PRIMITIVE_ALLOWLIST + (
 FROMTIMESTAMP_ALLOWLIST = (
     {
         "file": "backend/core/logging_bridge.py",
-        "position": "backend/core/logging_bridge.py:82",
+        "position": "backend/core/logging_bridge.py:95",
         "category": "stdlib-logrecord-boundary",
         "reason": "LogRecord.created is a Unix instant and is immediately made aware UTC.",
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:68",
+        "position": "backend/main.py:75",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },

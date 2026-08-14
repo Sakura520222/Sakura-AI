@@ -85,6 +85,9 @@ ENV_FIELD_GROUPS = {
 
 # Setup 页面可以从备份中预填的字段。未列出的配置仍会在完成 Setup 时恢复，
 # 但不会把不需要展示的密钥（例如 WebUI 会话密钥）回传给浏览器。
+# database_url 与 redis_url 会返回给前端，但前端默认不覆盖当前部署已预填的值
+# （见 setup_wizard.html inspectBackup）：彻底清空数据库后重新 Setup 时保留当前
+# 部署的连接地址；部署者可通过页面选项主动用备份值覆盖，以支持跨环境迁移。
 SETUP_BACKUP_PREFILL_KEYS = frozenset(
     {
         "database_url",
@@ -696,20 +699,30 @@ class SetupService:
             return {"success": False, "message": f"配置失败: {error_message}"}
 
     def trigger_restart(self) -> None:
-        """触发应用重启（通过 SIGTERM 信号）"""
-        logger.info("Setup 完成，正在触发应用重启...")
+        """请求应用优雅停机并重启。
+
+        进程由 ``python -m backend.main`` 监督循环或容器重启策略管理时，
+        通过登记的 uvicorn Server 优雅停机（含 lifespan shutdown），由
+        监督者重新拉起；未登记 Server（如 uvicorn CLI 直启）时退回
+        SIGTERM 自行退出，交给外部环境重启。
+        """
+        logger.info("正在请求应用重启...")
         try:
-            # Uvicorn 会先等待 HTTP 长连接结束，再进入 lifespan shutdown。
-            # 先唤醒所有 SSE 生成器，避免 EventSource 让重启无限等待。
+            # 优雅停机会等待 HTTP 长连接结束；先唤醒所有 SSE 生成器，
+            # 避免 EventSource 让停机无限等待。
             from backend.webui.sse import sse_manager
 
             sse_manager.close_all()
         except Exception as exc:
-            # SSE 清理失败不能阻止重启；Uvicorn 的强制停机超时会继续兜底。
+            # SSE 清理失败不能阻止重启；停机超时会继续兜底。
             logger.warning(
                 "重启前关闭 SSE 长连接失败: error_type={}",
                 type(exc).__name__,
             )
+        from backend.core import server_runtime
+
+        if server_runtime.request_restart():
+            return
         os.kill(os.getpid(), signal.SIGTERM)
 
 
