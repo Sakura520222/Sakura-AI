@@ -7,7 +7,11 @@ from typing import Any
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
-from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
+from backend.services.ai_reviewer.constants import (
+    SEVERITY_EMOJI,
+    append_review_signature,
+    review_signature_footer,
+)
 from backend.services.label_service import label_service
 
 
@@ -160,7 +164,10 @@ class CommentService:
                         # 只有当有有效评论时才创建 review
                         if validated_comments:
                             review = await self.create_batch_inline_comments(
-                                pr, validated_comments, overall_body=review_body
+                                pr,
+                                validated_comments,
+                                overall_body=review_body,
+                                output_language=output_language,
                             )
                             logger.info(
                                 "✓ 已创建带行内评论的审查 (Review ID: {})",
@@ -224,6 +231,7 @@ class CommentService:
             pr: GitHub PR 对象
         """
         try:
+            footer = review_signature_footer(self._is_english(output_language))
             if self._is_english(output_language):
                 error_body = f"""# ❌ Review Failed
 
@@ -237,7 +245,7 @@ Please check system logs or contact the administrator.
 
 ---
 
-*This comment was generated automatically by [Sakura AI](https://github.com/Sakura520222/Sakura-AI).*
+{footer}
 """
             else:
                 error_body = f"""# ❌ 审查失败
@@ -252,7 +260,7 @@ Please check system logs or contact the administrator.
 
 ---
 
-*此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。*
+{footer}
 """
 
             if pr:
@@ -353,13 +361,8 @@ Please check system logs or contact the administrator.
             lines.append(label_section)
 
         # 添加页脚
-        footer = (
-            "This comment was generated automatically by [Sakura AI](https://github.com/Sakura520222/Sakura-AI)."
-            if is_en
-            else "此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。"
-        )
         lines.append("\n---\n")
-        lines.append(f"*{footer}*")
+        lines.append(review_signature_footer(is_en))
 
         return "\n".join(lines)
 
@@ -396,7 +399,11 @@ Please check system logs or contact the administrator.
             raise
 
     async def create_batch_inline_comments(
-        self, pr: Any, inline_comments: list, overall_body: str = ""
+        self,
+        pr: Any,
+        inline_comments: list,
+        overall_body: str = "",
+        output_language: str | None = None,
     ):
         """批量创建行内评论
 
@@ -414,6 +421,7 @@ Please check system logs or contact the administrator.
                     }
                 ]
             overall_body: 整体评论内容（可选）
+            output_language: 输出语言（可选，None 时使用全局配置）
 
         Returns:
             GitHub Review 对象
@@ -424,6 +432,7 @@ Please check system logs or contact the administrator.
                 return None
 
             logger.info("开始批量创建 {} 条行内评论", len(inline_comments))
+            is_en = self._is_english(output_language)
 
             # 构建 GitHub API 需要的评论格式
             comments = []
@@ -433,10 +442,12 @@ Please check system logs or contact the administrator.
                     body = comment_data["body"]
                     severity = comment_data.get("severity", "suggestion")
 
-                    # 添加严重程度标记
+                    # 添加严重程度标记与统一落款
                     severity_emoji = SEVERITY_EMOJI.get(severity, "💡")
 
-                    formatted_body = f"{severity_emoji} {body}"
+                    formatted_body = append_review_signature(
+                        f"{severity_emoji} {body}", is_en
+                    )
 
                     # 构建评论字典
                     comment_dict = {

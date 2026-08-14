@@ -38,6 +38,35 @@ SEVERITY_EMOJI: dict[str, str] = {
     "suggestions": "💡",
 }
 
+# =============================================================================
+# 审查评论落款 / Review comment signature
+# =============================================================================
+# 所有发布到 GitHub 的 AI 审查评论（整体评论与行内评论）统一携带的落款，
+# 中英文文案的唯一来源 / Canonical zh/en wording of the signature that
+# every AI review comment (overall body and inline) carries on GitHub.
+SAKURA_AI_REPO_URL = "https://github.com/Sakura520222/Sakura-AI"
+
+
+def review_signature_footer(is_english: bool) -> str:
+    """构建审查评论落款文本（不含分隔线）/ Build the signature line."""
+    if is_english:
+        return (
+            f"*This comment was generated automatically "
+            f"by [Sakura AI]({SAKURA_AI_REPO_URL}).*"
+        )
+    return f"*此评论由 [Sakura AI]({SAKURA_AI_REPO_URL}) 自动生成。*"
+
+
+def append_review_signature(body: str, is_english: bool) -> str:
+    """幂等地为评论正文追加落款（正文已含落款时原样返回）。
+
+    重试或降级重发同一评论时可能重复经过此函数，落款不能叠加。
+    """
+    footer = review_signature_footer(is_english)
+    if footer in body:
+        return body
+    return f"{body.rstrip()}\n\n---\n\n{footer}"
+
 # 问题类别
 ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 
