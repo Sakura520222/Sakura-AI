@@ -10,6 +10,7 @@ from github import Github, GithubIntegration
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.services.ai_reviewer.constants import append_review_signature
 
 settings = get_settings()
 
@@ -894,6 +895,7 @@ class GitHubAppClient:
         bot_username: str | None = None,
         enable_idempotency_check: bool = True,
         raise_on_error: bool = False,
+        output_language: str | None = None,
     ) -> bool | dict[str, object]:
         """提交审查决定到GitHub（包含行内评论）
 
@@ -907,6 +909,7 @@ class GitHubAppClient:
             bot_username: 机器人用户名（用于幂等性检查）
             enable_idempotency_check: 是否启用幂等性检查
             raise_on_error: 将异常交给调用方分类（用于 Publication 状态机）
+            output_language: 输出语言（None 时使用全局配置），行内评论落款跟随此语言
 
         Returns:
             是否成功提交
@@ -939,6 +942,16 @@ class GitHubAppClient:
             # 构建行内评论格式
             comments = []
             if inline_comments:
+                # 每条行内评论统一落款（跟随输出语言）/ Every inline
+                # comment carries the unified signature in the output
+                # language; empty/None output_language falls back to the
+                # global config, mirroring comment_service._is_english.
+                effective_language = (
+                    output_language
+                    if output_language is not None
+                    else settings.output_language
+                )
+                is_english = effective_language == "en"
                 logger.info(f"准备提交 {len(inline_comments)} 条行内评论:")
                 for i, comment in enumerate(inline_comments, 1):
                     file_path = comment.get("file_path")
@@ -949,7 +962,9 @@ class GitHubAppClient:
                     comment_dict = {
                         "path": file_path,
                         "line": line_number,
-                        "body": comment.get("body", ""),
+                        "body": append_review_signature(
+                            comment.get("body", ""), is_english
+                        ),
                     }
                     # 添加 start_line 支持（跨多行评论）
                     if start_line:

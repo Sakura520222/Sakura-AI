@@ -9,7 +9,7 @@ from loguru import logger
 
 from backend.core.config import get_settings
 from backend.core.time_service import get_time_service
-from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
+from backend.services.ai_reviewer.constants import SAKURA_AI_REPO_URL, SEVERITY_EMOJI
 from backend.webui.deps import get_webui_url
 
 if TYPE_CHECKING:
@@ -150,9 +150,7 @@ class ScanReportService:
                     lines.append("")
 
         lines.append("---")
-        lines.append(
-            "*此报告由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成*"
-        )
+        lines.append(f"*此报告由 [Sakura AI]({SAKURA_AI_REPO_URL}) 自动生成*")
 
         return "\n".join(lines)
 
