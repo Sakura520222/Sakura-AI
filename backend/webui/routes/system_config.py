@@ -263,7 +263,7 @@ async def test_connection(
 
 
 def _schedule_application_restart(delay_seconds: float = 2.0) -> None:
-    """响应发出后复用 Setup 的 SIGTERM 重启机制。"""
+    """响应发出后复用 Setup 的应用重启机制（优雅停机，由监督者/容器拉起）。"""
 
     from backend.core.setup_service import setup_service
 

@@ -100,8 +100,7 @@ def main() -> int:
     command = [
         str(server_python),
         "-m",
-        "uvicorn",
-        "backend.main:app",
+        "backend.main",
         "--host",
         args.host,
         "--port",
@@ -109,8 +108,8 @@ def main() -> int:
         "--log-level",
         args.log_level,
     ]
-    if not args.no_reload:
-        command.append("--reload")
+    if args.no_reload:
+        command.append("--no-reload")
 
     print("Sakura AI 本地 Setup Wizard 调试模式")
     print(f"访问地址: http://{args.host}:{args.port}/setup")
