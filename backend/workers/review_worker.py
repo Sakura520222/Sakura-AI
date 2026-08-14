@@ -2289,6 +2289,7 @@ class ReviewWorker:
                     review_body=review_body,
                     inline_comments=inline_comments,
                     bot_username=bot_username,
+                    output_language=output_language,
                 )
             else:
                 for attempt in range(max_retries + 1):
@@ -2302,6 +2303,7 @@ class ReviewWorker:
                         inline_comments=inline_comments,
                         bot_username=bot_username,
                         enable_idempotency_check=enable_idempotency,
+                        output_language=output_language,
                     )
                     # 兼容旧 bool 返回
                     if isinstance(_submit_result, bool):
@@ -2406,6 +2408,7 @@ class ReviewWorker:
         review_body: str,
         inline_comments: list[dict[str, Any]],
         bot_username: str | None,
+        output_language: str | None = None,
     ) -> tuple[bool, dict[str, Any]]:
         """Publish exactly once under the authoritative Publication state machine."""
         external_key = (
@@ -2446,6 +2449,7 @@ class ReviewWorker:
                 # The Publication marker and state machine are authoritative.
                 enable_idempotency_check=False,
                 raise_on_error=True,
+                output_language=output_language,
             )
             if isinstance(response, dict):
                 captured.update(response)
