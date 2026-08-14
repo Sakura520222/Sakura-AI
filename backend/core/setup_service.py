@@ -85,6 +85,9 @@ ENV_FIELD_GROUPS = {
 
 # Setup 页面可以从备份中预填的字段。未列出的配置仍会在完成 Setup 时恢复，
 # 但不会把不需要展示的密钥（例如 WebUI 会话密钥）回传给浏览器。
+# database_url 与 redis_url 会返回给前端，但前端默认不覆盖当前部署已预填的值
+# （见 setup_wizard.html inspectBackup）：彻底清空数据库后重新 Setup 时保留当前
+# 部署的连接地址；部署者可通过页面选项主动用备份值覆盖，以支持跨环境迁移。
 SETUP_BACKUP_PREFILL_KEYS = frozenset(
     {
         "database_url",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -58,6 +59,12 @@ def _setup_backup_content() -> str:
 @pytest.mark.asyncio
 async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    # 当前部署未通过环境变量预填 database_url。
+    monkeypatch.setattr(
+        setup_route,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=""),
+    )
 
     response = await setup_route.inspect_config_backup(
         _Request({"content": _setup_backup_content()})
@@ -67,11 +74,58 @@ async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
     payload = _response_json(response)
     assert payload["success"] is True
     assert payload["sections"] == [GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION]
+    # 备份中的连接地址会返回给前端，由前端按部署者选择决定是否覆盖当前部署预填值。
     assert payload["setup_values"]["database_url"].startswith("mysql+asyncmy://")
+    assert payload["setup_values"]["redis_url"] == "redis://redis:6379/0"
     assert payload["setup_values"]["github_private_key"] == "private-key"
     assert payload["setup_values"]["embedding_api_key"] == "embedding-secret"
     assert "webui_secret_key" not in payload["setup_values"]
+    assert payload["backup_has_connection"] is True
+    # 备份已提供 database_url，无需手动填写。
     assert payload["requires_database_url"] is False
+
+
+@pytest.mark.asyncio
+async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    # 当前部署已通过环境变量预填 database_url 时，无需再提示手动提供。
+    monkeypatch.setattr(
+        setup_route,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="mysql+asyncmy://env@db/sakura"),
+    )
+
+    response = await setup_route.inspect_config_backup(
+        _Request({"content": _setup_backup_content()})
+    )
+
+    payload = _response_json(response)
+    assert response.status_code == 200
+    assert payload["requires_database_url"] is False
+
+
+@pytest.mark.asyncio
+async def test_setup_backup_inspection_without_connection_requires_manual_database(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    monkeypatch.setattr(
+        setup_route,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=""),
+    )
+    # 旧版备份（scope=all 不含 system 段）不含连接地址。
+    document = build_backup_document(
+        [BackupRecord("github_app_id", "123456", "github_app_id")],
+        "global",
+    )
+
+    response = await setup_route.inspect_config_backup(
+        _Request({"content": serialize_config_backup(document).decode()})
+    )
+
+    payload = _response_json(response)
+    assert response.status_code == 200
+    assert payload["backup_has_connection"] is False
+    assert payload["requires_database_url"] is True
 
 
 @pytest.mark.asyncio

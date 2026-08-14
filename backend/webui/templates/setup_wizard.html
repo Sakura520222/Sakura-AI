@@ -162,6 +162,13 @@
                                    class="mt-1 text-xs text-amber-700 dark:text-amber-300">
                                     {{ _("setup.backup_needs_database") }}
                                 </p>
+                                <label x-show="showOverwriteConnectionOption" x-cloak
+                                       class="mt-2 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200 cursor-pointer">
+                                    <input type="checkbox" class="mt-0.5"
+                                           :checked="overwriteConnection"
+                                           @change="toggleOverwriteConnection()">
+                                    <span>{{ _("setup.backup_overwrite_connection") }}</span>
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -632,6 +639,10 @@ function setupWizard() {
             tooLarge: {{ _("setup.backup_too_large") | tojson }},
             readFailed: {{ _("setup.backup_read_failed") | tojson }},
         },
+        // 连接地址（database_url/redis_url）默认保护当前部署预填值；部署者可勾选覆盖。
+        overwriteConnection: false,
+        backupConnection: null,
+        prefilledConnection: null,
 
         get canProceed() {
             switch (this.currentStep) {
@@ -656,6 +667,39 @@ function setupWizard() {
                 .replace('{filename}', this.backupFileName)
                 .replace('{sections}', sections)
                 .replace('{count}', String(this.backupSummary.total_count));
+        },
+
+        // 备份含连接地址、且当前部署已预填连接地址时，才展示"用备份覆盖"选项；
+        // 全新部署无预填值时直接采用备份值，无需此选项。
+        get showOverwriteConnectionOption() {
+            if (!this.backupSummary?.backup_has_connection) return false;
+            return Boolean(
+                this.prefilledConnection &&
+                (this.prefilledConnection.database_url.trim() || this.prefilledConnection.redis_url.trim()),
+            );
+        },
+
+        toggleOverwriteConnection() {
+            this.overwriteConnection = !this.overwriteConnection;
+            if (this.overwriteConnection) {
+                this._applyBackupConnection();
+            } else if (this.prefilledConnection) {
+                this.form.database_url = this.prefilledConnection.database_url;
+                this.form.redis_url = this.prefilledConnection.redis_url;
+            }
+            // 连接参数已变更，必须重新执行连接测试。
+            this.testResults.database = null;
+            this.testResults.redis = null;
+        },
+
+        _applyBackupConnection() {
+            if (!this.backupConnection) return;
+            if (this.backupConnection.database_url) {
+                this.form.database_url = this.backupConnection.database_url;
+            }
+            if (this.backupConnection.redis_url) {
+                this.form.redis_url = this.backupConnection.redis_url;
+            }
         },
 
         generateOAuthCallback() {
@@ -722,9 +766,37 @@ function setupWizard() {
                     throw new Error(data.message || this.backupMessages.readFailed);
                 }
 
-                for (const [key, value] of Object.entries(data.setup_values || {})) {
+                // 首次导入时记录当前部署预填的连接地址，作为"不覆盖"时的回退值。
+                if (!this.prefilledConnection) {
+                    this.prefilledConnection = {
+                        database_url: this.form.database_url,
+                        redis_url: this.form.redis_url,
+                    };
+                }
+                // 连接地址单独取出，由部署者通过页面选项决定是否采用，不随其他字段一起覆盖。
+                const setupValues = { ...(data.setup_values || {}) };
+                this.backupConnection = {
+                    database_url: setupValues.database_url || '',
+                    redis_url: setupValues.redis_url || '',
+                };
+                delete setupValues.database_url;
+                delete setupValues.redis_url;
+
+                for (const [key, value] of Object.entries(setupValues)) {
                     if (Object.prototype.hasOwnProperty.call(this.form, key) && typeof value === 'string') {
                         this.form[key] = value;
+                    }
+                }
+                if (this.overwriteConnection) {
+                    this._applyBackupConnection();
+                } else {
+                    // 当前为空的连接字段直接采用备份值；已有预填值（如镜像部署环境变量）
+                    // 则保留，部署者可通过下方选项主动覆盖。
+                    if (!this.form.database_url && this.backupConnection.database_url) {
+                        this.form.database_url = this.backupConnection.database_url;
+                    }
+                    if (!this.form.redis_url && this.backupConnection.redis_url) {
+                        this.form.redis_url = this.backupConnection.redis_url;
                     }
                 }
                 this.backupContent = content;

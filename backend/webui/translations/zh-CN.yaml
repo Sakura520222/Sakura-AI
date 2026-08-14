@@ -2244,6 +2244,7 @@ setup:
   backup_loaded: "已读取 {filename}：{sections}，共 {count} 项配置。"
   backup_admin_required: "管理员用户不会随备份导入，请继续完成向导以创建本次部署的超级管理员。"
   backup_needs_database: "此备份不含数据库连接信息，请在下一步手动填写数据库地址。"
+  backup_overwrite_connection: "使用备份中的数据库/Redis 连接地址覆盖当前部署（跨环境迁移时勾选；默认保留当前部署的连接地址）。"
   backup_too_large: "备份文件超过 5 MiB 限制"
   backup_read_failed: "无法读取或校验备份文件"
 
