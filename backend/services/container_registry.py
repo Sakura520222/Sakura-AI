@@ -275,7 +275,11 @@ class ContainerRegistryClient:
                 raise
             stale = dict(self._cache)
             stale["stale"] = True
-            return stale
+            # Persist the trust downgrade. Otherwise a forced refresh failure
+            # inside the TTL window is followed by a normal cache hit that
+            # presents the same old channel heads as fresh/selectable.
+            self._cache = stale
+            return self._cache
 
 
 __all__ = [

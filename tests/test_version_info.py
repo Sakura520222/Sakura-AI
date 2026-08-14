@@ -191,3 +191,48 @@ def test_development_build_does_not_reuse_stable_release_update_state(monkeypatc
     assert info["latest_version"] is None
     assert info["update_available"] is None
     assert info["last_checked"] is None
+
+
+def test_development_build_uses_matching_updater_digest_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": "a" * 40},
+    )
+    info = build_version_info(
+        "image",
+        update_info={"latest_version": "99.0.0"},
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.2",
+            "data": {
+                "target": {"channel": "development", "version": "3.1.0"},
+                "readiness": {"target_newer": True},
+            },
+        },
+    )
+
+    assert info["latest_version"] == "3.1.0"
+    assert info["update_available"] is True
+
+
+def test_development_build_ignores_nonmatching_stable_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        version_routes,
+        "get_build_info",
+        lambda: {"channel": "development", "revision": "a" * 40},
+    )
+    info = build_version_info(
+        "image",
+        updater_info={
+            "protocol_version": 1,
+            "updater_version": "0.1.2",
+            "data": {
+                "target": {"channel": "stable", "version": "3.2.0"},
+                "readiness": {"target_newer": True},
+            },
+        },
+    )
+
+    assert info["latest_version"] is None
+    assert info["update_available"] is None
