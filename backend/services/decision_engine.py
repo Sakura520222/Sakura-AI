@@ -4,6 +4,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.branding import append_review_signature
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.language_utils import output_text
 from backend.models.database import ReviewDecision
@@ -497,7 +498,9 @@ class DecisionEngine:
             if inline_section:
                 body += "\n\n" + inline_section
 
-        return body
+        # 整体评论统一落款（模板路径与降级路径在此汇合）/ Append the
+        # unified signature; template and fallback paths converge here.
+        return append_review_signature(body, output_lang == "en")
 
 
 # 全局实例
