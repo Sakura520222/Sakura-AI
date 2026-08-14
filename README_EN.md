@@ -169,7 +169,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`/opt/sakura-ai` and its Compose definition are managed by root so the persistent root updater never executes deployment files that an unprivileged account can replace. The launcher persists the fixed `sakura-ai` Compose project and passes it explicitly to every Compose operation, so placing the file under `docker/` cannot put persistent volumes in the generic `docker_*` namespace. This entry point creates and protects the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the version that is actually running. New releases are checked automatically, but installation is only started after a super administrator confirms it in the WebUI Version Manager. macOS, Windows, and container-only deployments do not currently support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+`sudo ./start.sh --prod` generates the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager. macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
 
 > **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
 >
@@ -196,7 +196,15 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup` and complete configuration via the Setup Wizard.
+After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart):
+
+```bash
+# In /opt/sakura-ai: tail live logs / extract the first-deploy token
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+```
+
+For persisted DEBUG logs, error filtering, and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 ### Source Development
 
@@ -261,7 +269,7 @@ python -m pytest -q                  # Run tests
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 ```
 
-First launch enters Bootstrap mode — visit `http://localhost:8000/setup` to complete configuration via the Setup Wizard. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks).
+First launch enters Bootstrap mode — a one-time verification token is printed to the terminal; enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks).
 
 > Run logs are written to `logs/app_*.log` (one file per startup, 500 MB rotation, 10-day retention; passwords and tokens are auto-redacted). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
