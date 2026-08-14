@@ -49,6 +49,9 @@ def test_template_uses_tabs_safe_dom_and_target_snapshot():
     assert "CURRENT_BUILD_CHANNEL !== image.channel" in template
     assert "const candidate" in template
     assert "registryEmpty:" in template
+    assert "registry_unavailable:" in template
+    assert "stale_catalog:" in template
+    assert "channel_head_unavailable:" in template
     assert "developmentRisk:" in template
     assert "channelSwitchRisk:" in template
     assert "build.channel" in template

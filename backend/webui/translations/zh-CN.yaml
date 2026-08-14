@@ -1533,6 +1533,7 @@ version_manager:
   registry_not_selectable: "不可更新"
   registry_stale: "目录来自缓存；暂不可发起更新"
   registry_unavailable: "GHCR 目录暂不可用"
+  channel_head_unavailable: "当前通道暂时没有可用的最新镜像"
   registry_selected: "已选择目标，请先执行预检"
   registry_details: "版本 {version} · revision {revision} · digest {digest} · aliases {aliases}"
   development_risk: "开发版可能不稳定且没有正式 Release。确认切换？"

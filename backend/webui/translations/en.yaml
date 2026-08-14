@@ -1533,6 +1533,7 @@ version_manager:
   registry_not_selectable: "Not selectable"
   registry_stale: "Showing cached data; updates are disabled"
   registry_unavailable: "GHCR catalog is unavailable"
+  channel_head_unavailable: "The current channel does not have an available head image"
   registry_selected: "Target selected; run preflight before updating"
   registry_details: "Version {version} · revision {revision} · digest {digest} · aliases {aliases}"
   development_risk: "Development builds may be unstable and have no formal Release. Continue?"
