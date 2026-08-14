@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.core.github_app import GitHubAppClient
-from backend.models.database import ReviewDecision
-from backend.services.ai_reviewer.constants import (
+from backend.core.branding import (
     SAKURA_AI_REPO_URL,
     append_review_signature,
     review_signature_footer,
 )
+from backend.core.github_app import GitHubAppClient
+from backend.models.database import ReviewDecision
 from backend.services.decision_engine import DecisionEngine
 
 SIGNATURE_ZH = f"*此评论由 [Sakura AI]({SAKURA_AI_REPO_URL}) 自动生成。*"

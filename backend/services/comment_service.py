@@ -6,12 +6,9 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.branding import append_review_signature, review_signature_footer
 from backend.core.config import get_settings, get_strategy_config
-from backend.services.ai_reviewer.constants import (
-    SEVERITY_EMOJI,
-    append_review_signature,
-    review_signature_footer,
-)
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 from backend.services.label_service import label_service
 
 

@@ -9,8 +9,8 @@ import httpx
 from github import Github, GithubIntegration
 from loguru import logger
 
+from backend.core.branding import append_review_signature
 from backend.core.config import get_settings
-from backend.services.ai_reviewer.constants import append_review_signature
 
 settings = get_settings()
 

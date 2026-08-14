@@ -4,13 +4,11 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.branding import append_review_signature
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.language_utils import output_text
 from backend.models.database import ReviewDecision
-from backend.services.ai_reviewer.constants import (
-    SEVERITY_EMOJI,
-    append_review_signature,
-)
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 
 
 class DecisionEngine:

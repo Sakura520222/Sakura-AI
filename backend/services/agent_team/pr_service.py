@@ -15,11 +15,11 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import AgentTeamSourceType
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
-from backend.services.ai_reviewer.constants import SAKURA_AI_REPO_URL
 
 
 def _normalize_git_path(raw_path: str) -> str:
