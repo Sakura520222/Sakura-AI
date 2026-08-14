@@ -41,7 +41,9 @@ jobs:
     name: 构建并推送 ${{ inputs.channel }}
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.build.outputs.digest }}   # 供 Docker Hub 按 digest 同步
+      # 稳定版本标签已存在时，materialize 会复用其不可变 digest；
+      # Docker Hub 必须同步最终发布 digest，而不是本次临时构建 digest。
+      digest: ${{ steps.materialize.outputs.digest }}
       immutable_tag: ${{ steps.tags.outputs.immutable_tag }}
     steps:
       - name: 检出代码（固定到 source_ref）
@@ -160,12 +162,26 @@ jobs:
           }
           SOURCE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
           IMMUTABLE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.immutable_tag }}"
+          PUBLISHED_DIGEST="$DIGEST"
           existing_error=$(mktemp)
           if existing=$(crane digest "$IMMUTABLE" 2>"$existing_error"); then
-            if [ "$existing" != "$DIGEST" ]; then
-              echo "immutable tag already points to a different digest; refusing overwrite" >&2
+            [[ "$existing" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "existing immutable tag returned an invalid digest; refusing publication" >&2
               rm -f "$existing_error"
               exit 1
+            }
+            if [ "$existing" != "$DIGEST" ]; then
+              if [ "${{ inputs.channel }}" = "stable" ]; then
+                # A released SemVer tag is authoritative and immutable.  Main
+                # pushes still perform the requested build, but a repeated
+                # version must keep using the digest published previously.
+                echo "stable immutable tag already exists; reusing digest $existing"
+                PUBLISHED_DIGEST="$existing"
+              else
+                echo "development immutable tag already points to a different digest; refusing overwrite" >&2
+                rm -f "$existing_error"
+                exit 1
+              fi
             fi
           else
             # Only an explicit missing-manifest response permits first
@@ -213,6 +229,7 @@ jobs:
             echo "unsupported channel; refusing alias materialization" >&2
             exit 1
           fi
+          echo "digest=$PUBLISHED_DIGEST" >> "$GITHUB_OUTPUT"
 
   sync-dockerhub:
     name: 同步 Docker Hub（非阻塞）

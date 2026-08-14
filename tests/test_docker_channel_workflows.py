@@ -38,10 +38,24 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert text.count("uses: imjasonh/setup-crane@v0.4") >= 2
     assert 'existing_error=$(mktemp)' in text
     assert 'unable to verify immutable tag; refusing publication' in text
+    assert 'existing immutable tag returned an invalid digest' in text
     assert 'crane copy "$SOURCE" "$IMMUTABLE"' in text
     assert "push-by-digest=true" in text
     assert "name-canonical=true" in text
     assert 'SOURCE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"' in text
+    assert "digest: ${{ steps.materialize.outputs.digest }}" in text
+    assert 'PUBLISHED_DIGEST="$DIGEST"' in text
+    assert 'PUBLISHED_DIGEST="$existing"' in text
+    assert 'echo "digest=$PUBLISHED_DIGEST" >> "$GITHUB_OUTPUT"' in text
+    assert "stable immutable tag already exists; reusing digest" in text
+    assert (
+        "development immutable tag already points to a different digest; "
+        "refusing overwrite"
+    ) in text
+    assert (
+        'echo "immutable tag already points to a different digest; refusing overwrite"'
+        not in text
+    )
     assert "BUILD_TAG=" not in text
     assert "build_tag=" not in text
     assert "crane copy \"$SOURCE\" \"docker.io/${IMAGE_NAME}:${{ needs.build-and-publish.outputs.immutable_tag }}\"" in text
