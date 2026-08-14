@@ -63,7 +63,7 @@ TIME_BOUNDARY_ALLOWLIST = TIME_PRIMITIVE_ALLOWLIST + (
 FROMTIMESTAMP_ALLOWLIST = (
     {
         "file": "backend/core/logging_bridge.py",
-        "position": "backend/core/logging_bridge.py:82",
+        "position": "backend/core/logging_bridge.py:95",
         "category": "stdlib-logrecord-boundary",
         "reason": "LogRecord.created is a Unix instant and is immediately made aware UTC.",
     },
