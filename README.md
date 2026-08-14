@@ -169,7 +169,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`/opt/sakura-ai` 及其中的 Compose 定义由 root 管理，避免持久运行的 root updater 执行普通用户可篡改的部署文件。启动脚本会把固定的 `sakura-ai` Compose 项目名写入部署状态，并在每次 Compose 操作中显式传入，持久化卷不会因配置文件位于 `docker/` 目录而落入通用的 `docker_*` 命名空间。该入口会生成并保护部署状态、启动全部容器，并为当前实际运行版本下载、校验和启动 Host Updater。系统会自动检查新版本；实际更新仍由超级管理员在 WebUI 版本管理器中手动确认触发，不会无人值守安装。macOS、Windows 和仅容器部署当前不支持 Host Updater，详见[部署指南](docs/DEPLOYMENT.md)。
+`sudo ./start.sh --prod` 会自动生成部署状态、启动全部容器，并为当前版本下载、校验和启动 Host Updater。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
 
 > **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
 >
@@ -196,7 +196,15 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`，按 Setup Wizard 完成配置。
+首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）：
+
+```bash
+# 在 /opt/sakura-ai 下查看实时日志 / 提取首次部署 Token
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+```
+
+落盘 DEBUG 日志、错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 ### 源码开发
 
@@ -261,7 +269,7 @@ python -m pytest -q                  # 运行测试
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
 ```
 
-首次启动进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 完成 Setup Wizard 配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
+首次启动进入 Bootstrap 模式，终端会打印一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
 
 > 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
