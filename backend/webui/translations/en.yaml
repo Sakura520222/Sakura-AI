@@ -1468,7 +1468,7 @@ version_manager:
   update_submit_failed: "Failed to submit update: {error}"
   update_progress_title: "Updating Sakura AI"
   update_progress_preparing: "Preparing update"
-  update_progress_description: "The percentage shows update-stage progress, not image download bytes. Do not shut down the host or change deployment settings while the update runs."
+  update_progress_description: "Do not shut down the host or change deployment settings while the update runs."
   update_progress_reconnecting: "The service is restarting; reconnecting to the update job..."
   update_progress_refreshing: "Update complete; refreshing the page..."
   update_progress_close: "Close"

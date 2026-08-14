@@ -1468,7 +1468,7 @@ version_manager:
   update_submit_failed: "提交更新失败：{error}"
   update_progress_title: "正在更新 Sakura AI"
   update_progress_preparing: "正在准备更新"
-  update_progress_description: "以下百分比表示更新阶段进度，不代表镜像下载字节进度。更新期间请勿关闭主机或修改部署配置。"
+  update_progress_description: "更新期间请勿关闭主机或修改部署配置。"
   update_progress_reconnecting: "服务正在重启，正在重新连接更新任务..."
   update_progress_refreshing: "更新完成，正在刷新页面..."
   update_progress_close: "关闭"
