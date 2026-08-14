@@ -240,9 +240,13 @@ class ContainerRegistryClient:
             raise ContainerRegistryError("registry manifest digest header missing")
         return digest.lower()
 
-    async def list_images(self) -> dict[str, Any]:
+    async def list_images(self, *, force_refresh: bool = False) -> dict[str, Any]:
         now = monotonic()
-        if self._cache is not None and now - self._cache_at < self.ttl:
+        if (
+            not force_refresh
+            and self._cache is not None
+            and now - self._cache_at < self.ttl
+        ):
             return self._cache
         try:
             token = await self._token()

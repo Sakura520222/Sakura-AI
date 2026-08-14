@@ -151,3 +151,34 @@ async def test_cached_catalog_becomes_stale_on_non404_refresh_failure():
     payload = await client.list_images()
     assert payload["stale"] is True
     assert payload["images"] == previous["images"]
+
+
+@pytest.mark.asyncio
+async def test_force_refresh_bypasses_fresh_catalog_cache():
+    client = ContainerRegistryClient(ttl=3600)
+    cached = {
+        "repository": client.repository,
+        "fetched_at": "2026-08-13T00:00:00Z",
+        "stale": False,
+        "images": [],
+        "heads": {"stable": None, "development": None},
+    }
+    client._cache = cached
+    client._cache_at = float("inf")
+    calls = []
+
+    async def token():
+        calls.append("token")
+        return "registry-token"
+
+    async def tags(_token):
+        calls.append("tags")
+        return []
+
+    client._token = token
+    client._tags = tags
+
+    assert await client.list_images() is cached
+    refreshed = await client.list_images(force_refresh=True)
+    assert calls == ["token", "tags"]
+    assert refreshed is not cached

@@ -7,6 +7,8 @@ update_available 是 derived state：必须用当前进程 __version__ + cached 
 即时计算（is_newer_version），不信任缓存里可能陈旧的布尔值（外部升级后旧缓存会误报）。
 """
 
+import json
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,7 +108,11 @@ def build_version_info(
     else:
         reason = "unknown_deployment"
 
-    ui = update_info or {}
+    build = get_build_info()
+    # Stable Release discovery is not an update signal for a development
+    # deployment. Development availability is derived from the exact edge
+    # digest returned by the updater readiness request instead.
+    ui = {} if build.get("channel") == "development" else (update_info or {})
     latest = ui.get("latest_version")
     if ui:
         available = is_newer_version(__version__, latest) if latest else False
@@ -114,7 +120,7 @@ def build_version_info(
         available = None
     return {
         "current_version": __version__,
-        "build": get_build_info(),
+        "build": build,
         "deployment_type": mode,
         "deployment_mode": mode,
         "update_supported": update_supported,
@@ -198,9 +204,19 @@ async def trigger_check(
 ):
     """手动触发一次更新检查（super_admin + CSRF）。
 
-    复用 app.state.update_checker（lifespan 创建的唯一实例，含 _check_lock）。
-    后台任务未启动（dev/bootstrap）时返回 503。
+    镜像部署按当前 build channel 强制刷新 GHCR head，并用结构化 digest
+    目标调用 updater；源码/旧镜像回退到 Release checker。
     """
+    build = get_build_info()
+    channel = build.get("channel") if isinstance(build, dict) else None
+    mode = get_settings().sakura_deploy_mode or "unknown"
+    if mode == "image" and channel in {"stable", "development"}:
+        try:
+            data = await _check_current_channel(force_refresh=True)
+        except Exception as exc:
+            return _updater_error(exc)
+        return JSONResponse(data, headers={"Cache-Control": "no-store, max-age=0"})
+
     checker = getattr(request.app.state, "update_checker", None)
     if checker is None:
         return JSONResponse(
@@ -209,10 +225,7 @@ async def trigger_check(
             headers={"Cache-Control": "no-store, max-age=0"},
         )
     data = await checker.check_once()
-    return JSONResponse(
-        data,
-        headers={"Cache-Control": "no-store, max-age=0"},
-    )
+    return JSONResponse(data, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 def _updater_error(exc: Exception) -> JSONResponse:
@@ -226,7 +239,12 @@ def _updater_error(exc: Exception) -> JSONResponse:
         body = exc.body if isinstance(exc.body, dict) else {"error": "updater_error"}
         if exc.status_code >= 500:
             code = body.get("error")
-            if code in {"release_unavailable", "protocol_error", "updater_not_ready"}:
+            if code in {
+                "registry_unavailable",
+                "release_unavailable",
+                "protocol_error",
+                "updater_not_ready",
+            }:
                 payload = {"error": code}
                 detail = body.get("detail")
                 if (
@@ -235,7 +253,11 @@ def _updater_error(exc: Exception) -> JSONResponse:
                     and all(character.isalnum() or character in "._-" for character in detail)
                 ):
                     payload["detail"] = detail
-                status_code = 503 if code == "updater_not_ready" else 502
+                status_code = (
+                    503
+                    if code in {"registry_unavailable", "updater_not_ready"}
+                    else 502
+                )
                 return JSONResponse(payload, status_code=status_code)
             return JSONResponse({"error": "updater_internal_error"}, status_code=502)
         return JSONResponse(body, status_code=exc.status_code)
@@ -292,15 +314,96 @@ def _validate_target(target: object) -> bool:
     return isinstance(target, str) and _parse_semver(target) is not None
 
 
+async def _resolve_current_channel_target(
+    *, force_refresh: bool = False
+) -> tuple[dict | None, JSONResponse | None]:
+    """Resolve the running image channel to its current authoritative head."""
+
+    build = get_build_info()
+    channel = build.get("channel") if isinstance(build, dict) else None
+    mode = get_settings().sakura_deploy_mode or "unknown"
+    if mode != "image" or channel not in {"stable", "development"}:
+        return None, None
+    try:
+        catalog = await _get_registry_client().list_images(
+            force_refresh=force_refresh
+        )
+    except (ContainerRegistryError, ValueError):
+        return None, JSONResponse({"error": "registry_unavailable"}, status_code=503)
+    if catalog.get("stale"):
+        return None, JSONResponse({"error": "stale_catalog"}, status_code=409)
+    head = (catalog.get("heads") or {}).get(channel)
+    required = ("version", "tag", "digest")
+    if channel == "development":
+        required += ("revision",)
+    if not isinstance(head, dict) or any(not head.get(key) for key in required):
+        return None, JSONResponse({"error": "channel_head_unavailable"}, status_code=409)
+    target = {
+        "channel": channel,
+        "version": head["version"],
+        "tag": head["tag"],
+        "digest": head["digest"],
+    }
+    if channel == "development":
+        target["revision"] = head["revision"]
+    return target, None
+
+
+def _annotate_channel_readiness(envelope: dict, target: dict) -> dict:
+    """Attach the exact channel target and availability to an updater envelope."""
+
+    payload = dict(envelope)
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return payload
+    data = dict(data)
+    checks = data.get("checks")
+    target_newer = None
+    if isinstance(checks, list):
+        target_newer = next(
+            (
+                bool(item.get("passed"))
+                for item in checks
+                if isinstance(item, dict) and item.get("name") == "target_newer"
+            ),
+            None,
+        )
+    data["target"] = target
+    data["update_ready"] = data.get("can_update") is True
+    if target_newer is not None:
+        data["update_available"] = target_newer
+    payload["data"] = data
+    return payload
+
+
+async def _check_current_channel(*, force_refresh: bool = False) -> dict:
+    target, target_error = await _resolve_current_channel_target(
+        force_refresh=force_refresh
+    )
+    if target_error is not None:
+        raise UpdaterActionError(target_error.status_code, json.loads(target_error.body))
+    client = UpdaterClient()
+    if target is None:
+        return await client.check()
+    envelope = await client.preflight(
+        target=target,
+        confirm_channel_switch=False,
+    )
+    return _annotate_channel_readiness(envelope, target)
+
+
 @router.post("/version/readiness")
 async def updater_readiness(
     user: dict = Depends(require_super_admin),
     _csrf: str = Depends(require_csrf_header),
 ):
-    """Read-only host readiness (distinct from GitHub discovery state)."""
+    """Read-only readiness for the running build's current update channel."""
 
     try:
-        return JSONResponse(await UpdaterClient().check(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            await _check_current_channel(),
+            headers={"Cache-Control": "no-store"},
+        )
     except Exception as exc:
         return _updater_error(exc)
 
