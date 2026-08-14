@@ -280,8 +280,15 @@ async def inspect_config_backup(request: Request):
                 "counts": counts,
                 "total_count": sum(counts.values()),
                 "setup_values": setup_values,
-                "requires_database_url": not bool(
+                # 备份是否含连接地址：前端据此决定是否展示"用备份覆盖当前部署"选项。
+                "backup_has_connection": bool(
                     setup_values.get("database_url", "").strip()
+                    or setup_values.get("redis_url", "").strip()
+                ),
+                # 是否需手动提供 database_url：当前部署已预填或备份已提供时均可省略。
+                "requires_database_url": not bool(
+                    (get_settings().database_url or "").strip()
+                    or setup_values.get("database_url", "").strip()
                 ),
             }
         )

@@ -2244,6 +2244,7 @@ setup:
   backup_loaded: "Loaded {filename}: {sections}, {count} settings in total."
   backup_admin_required: "Administrator users are not imported. Continue the wizard to create the super administrator for this deployment."
   backup_needs_database: "This backup has no database connection setting. Enter the database URL manually in the next step."
+  backup_overwrite_connection: "Overwrite this deployment's database/Redis connection with the backup values (for cross-environment migration; the current deployment's addresses are kept by default)."
   backup_too_large: "The backup exceeds the 5 MiB limit"
   backup_read_failed: "The backup could not be read or validated"
 
