@@ -54,8 +54,33 @@
   <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
     <h2 class="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ _("version_manager.deployment") }}</h2>
     <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      {% set current_build = version_info.build or {} %}
+      {% set current_channel = current_build.channel or "unknown" %}
+      {% if current_channel == "stable" %}
+        {% set current_channel_label = _("version_manager.channel_stable") %}
+      {% elif current_channel == "development" %}
+        {% set current_channel_label = _("version_manager.channel_development") %}
+      {% elif current_channel == "source" %}
+        {% set current_channel_label = _("version_manager.channel_source") %}
+      {% else %}
+        {% set current_channel_label = _("version_manager.channel_unknown") %}
+      {% endif %}
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_version") }}</dt>
-           <dd class="font-mono font-medium">v{{ version_info.current_version }}</dd></div>
+           <dd class="flex flex-wrap items-center gap-2 font-mono font-medium">
+             <span>v{{ version_info.current_version }}</span>
+             <span class="rounded-full bg-sakura-50 px-2 py-0.5 text-xs text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">
+               {{ current_channel_label }}
+             </span>
+             {% if current_channel == "development" and current_build.revision %}
+             <span class="text-xs text-gray-400">@{{ current_build.revision[:8] }}</span>
+             {% endif %}
+           </dd></div>
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_channel") }}</dt>
+           <dd>{{ current_channel_label }}</dd></div>
+      {% if current_build.revision %}
+      <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.current_revision") }}</dt>
+           <dd class="break-all font-mono text-xs">{{ current_build.revision }}</dd></div>
+      {% endif %}
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.deployment_mode") }}</dt>
            {% set deployment_code = version_info.deployment_type or "unknown" %}
            <dd>{{ _("version_manager.deployment_" ~ deployment_code) if deployment_code in ["image", "source"] else _("version_manager.unknown_deployment") }}</dd></div>
@@ -194,6 +219,7 @@ let registryCatalog = null;
 let selectedRegistryTarget = null;
 let selectedRegistryVersion = null;
 let selectedRegistryConfirmed = false;
+let currentChannelTarget = null;
 
 function registryText(value) {
   return value === null || value === undefined || value === '' ? '—' : String(value);
@@ -287,6 +313,7 @@ const updateProgressReconnect = document.getElementById('update-progress-reconne
 const updateProgressError = document.getElementById('update-progress-error');
 const updateProgressClose = document.getElementById('update-progress-close');
 const VM_I18N = {
+  refresh: {{ _("common.refresh") | tojson }},
   checking: {{ _("version_manager.checking") | tojson }},
   preflight: {{ _("version_manager.preflight_running") | tojson }},
   submitting: {{ _("version_manager.update_submitting") | tojson }},
@@ -298,6 +325,7 @@ const VM_I18N = {
   readinessError: {{ _("version_manager.readiness_error") | tojson }},
   preflightPassed: {{ _("version_manager.preflight_passed") | tojson }},
   preflightFailed: {{ _("version_manager.preflight_failed") | tojson }},
+  channelUpToDate: {{ _("version_manager.channel_up_to_date") | tojson }},
   preflightError: {{ _("version_manager.preflight_error") | tojson }},
   updateStatus: {{ _("version_manager.update_status") | tojson }},
   updateSuccess: {{ _("version_manager.update_success") | tojson }},
@@ -334,7 +362,8 @@ const VM_I18N = {
     job_not_found: {{ _("version_manager.error_job_not_found") | tojson }},
     protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_protocol_error: {{ _("version_manager.error_protocol") | tojson }},
-    updater_internal_error: {{ _("version_manager.error_internal") | tojson }}
+    updater_internal_error: {{ _("version_manager.error_internal") | tojson }},
+    command_timeout: {{ _("version_manager.error_command_timeout") | tojson }}
   },
   stateLabels: {
     idle: {{ _("version_manager.state_idle") | tojson }},
@@ -556,9 +585,17 @@ function showReadiness(data) {
   const payload = data && data.data ? data.data : data || {};
   readinessCard.classList.remove('hidden');
   const target = payload.target || {};
+  const targetIdentity = [target.channel, target.revision ? String(target.revision).slice(0, 8) : null]
+    .filter(Boolean).join(' · ');
   readinessTarget.textContent = target.version
-    ? vmFormat(VM_I18N.target, {version: target.version}) + (target.image ? ' · ' + target.image : '')
+    ? vmFormat(VM_I18N.target, {version: target.version})
+      + (targetIdentity ? ' · ' + targetIdentity : '')
+      + (target.image ? ' · ' + target.image : '')
     : VM_I18N.noTarget;
+  if (!selectedRegistryTarget && target && (target.channel === 'stable' || target.channel === 'development')
+      && target.tag && target.digest) {
+    currentChannelTarget = target;
+  }
   while (readinessChecks.firstChild) readinessChecks.removeChild(readinessChecks.firstChild);
   const checks = payload.readiness || payload.checks || {};
   (Array.isArray(checks) ? checks : Object.entries(checks).map(([name, passed]) => ({name, passed}))).forEach((check) => {
@@ -585,6 +622,7 @@ async function preflightRegistryTarget(target) {
 }
 
 async function loadReadiness() {
+  if (!selectedRegistryTarget) currentChannelTarget = null;
   try {
     const data = await requestJson('/version/readiness', { method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'} });
     showReadiness(data);
@@ -604,13 +642,21 @@ recheckButton.addEventListener('click', async function() {
   this.disabled = true;
   this.textContent = VM_I18N.checking;
   try {
-    const r = await fetch('/version/check', {
-      method: 'POST',
-      headers: { 'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json' }
+    const data = await requestJson('/version/check', {
+      method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'}
     });
-    if (r.ok) { location.reload(); }
-    else { this.textContent = VM_I18N.error; this.disabled = false; }
-  } catch (e) { this.textContent = VM_I18N.error; this.disabled = false; }
+    const readiness = showReadiness(data);
+    const ready = readiness.can_update === true || readiness.update_ready === true;
+    const upToDate = readiness.update_available === false;
+    setStatus(upToDate ? VM_I18N.channelUpToDate : (ready ? VM_I18N.preflightPassed : VM_I18N.preflightFailed),
+      upToDate || ready ? 'ok' : 'error');
+    this.textContent = VM_I18N.refresh;
+    this.disabled = false;
+  } catch (error) {
+    this.textContent = VM_I18N.error;
+    this.disabled = false;
+    setStatus(vmFormat(VM_I18N.readinessError, {error: vmUpdaterError(error)}), 'error');
+  }
 });
 
 preflightButton.addEventListener('click', async function() {
@@ -631,6 +677,13 @@ preflightButton.addEventListener('click', async function() {
   readiness = await loadReadiness();
   const target = selectedRegistryTarget ? selectedRegistryTarget.version : readiness && readiness.target && readiness.target.version;
   if (!target) return;
+  if (currentChannelTarget) {
+    const ready = readiness.can_update === true || readiness.update_ready === true;
+    const upToDate = readiness.update_available === false;
+    setStatus(upToDate ? VM_I18N.channelUpToDate : (ready ? VM_I18N.preflightPassed : VM_I18N.preflightFailed),
+      upToDate || ready ? 'ok' : 'error');
+    return;
+  }
   this.disabled = true;
   setStatus(VM_I18N.preflight, null);
   try {
@@ -705,7 +758,8 @@ async function pollJob(jobId) {
           return;
         }
         if (job.state === 'failed') {
-          const detail = job.error || job.error_code || VM_I18N.unknownState;
+          const detail = VM_I18N.errorLabels[job.error_code]
+            || job.error || job.error_code || VM_I18N.unknownState;
           markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});
           setStatus(vmFormat(VM_I18N.updateFailed, {error: detail}), 'error');
           return;
@@ -770,7 +824,8 @@ updateButton.addEventListener('click', async function() {
   } else {
     readiness = await loadReadiness();
   }
-  const target = selectedRegistryTarget ? selectedRegistryTarget.version : readiness && readiness.target && readiness.target.version;
+  const operationTarget = selectedRegistryTarget || currentChannelTarget;
+  const target = operationTarget ? operationTarget.version : readiness && readiness.target && readiness.target.version;
   if (!target) {
     markProgressError(vmFormat(VM_I18N.readinessError, {error: VM_I18N.noTarget}));
     return;
@@ -780,7 +835,13 @@ updateButton.addEventListener('click', async function() {
     setStatus(VM_I18N.preflightFailed, 'error');
     return;
   }
-  if (!selectedRegistryTarget && (readiness.update_ready === false || readiness.update_available === false)) {
+  if (!selectedRegistryTarget && currentChannelTarget
+      && readiness.can_update !== true && readiness.update_ready !== true) {
+    markProgressError(VM_I18N.preflightFailed);
+    setStatus(VM_I18N.preflightFailed, 'error');
+    return;
+  }
+  if (!operationTarget && (readiness.update_ready === false || readiness.update_available === false)) {
     markProgressError(VM_I18N.preflightFailed);
     setStatus(VM_I18N.preflightFailed, 'error');
     return;
@@ -791,7 +852,9 @@ updateButton.addEventListener('click', async function() {
   try {
     const body = await requestJson('/version/update', {
       method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
-      body: JSON.stringify(selectedRegistryTarget ? {target: selectedRegistryTarget, confirm_channel_switch: selectedRegistryConfirmed} : {target_version: selectedRegistryVersion || target})
+      body: JSON.stringify(operationTarget
+        ? {target: operationTarget, confirm_channel_switch: selectedRegistryTarget ? selectedRegistryConfirmed : false}
+        : {target_version: selectedRegistryVersion || target})
     });
     const data = body && body.data ? body.data : body;
     if (!data.job_id) throw new Error(VM_I18N.missingJobId);
@@ -816,6 +879,9 @@ const persistedJobId = sessionStorage.getItem(JOB_STORAGE_KEY);
 if (persistedJobId) {
   openProgressModal({jobId: persistedJobId});
   pollJob(persistedJobId);
+}
+if (CURRENT_BUILD_CHANNEL === 'stable' || CURRENT_BUILD_CHANNEL === 'development') {
+  selectRegistryTab(CURRENT_BUILD_CHANNEL);
 }
 loadReadiness();
 loadRegistryCatalog();

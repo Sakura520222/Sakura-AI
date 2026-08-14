@@ -52,3 +52,12 @@ def test_version_proxy_drops_untrusted_internal_error_details():
 
     assert response.status_code == 502
     assert json.loads(response.body) == {"error": "updater_internal_error"}
+
+
+def test_version_proxy_preserves_registry_unavailable_status():
+    response = _updater_error(
+        UpdaterActionError(503, {"error": "registry_unavailable"})
+    )
+
+    assert response.status_code == 503
+    assert json.loads(response.body) == {"error": "registry_unavailable"}

@@ -137,6 +137,66 @@ async def test_update_success_clears_active_gate(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_update_retries_one_timed_out_pull_and_records_retry(tmp_path):
+    class _TimeoutOnceAdapter(_Adapter):
+        async def pull(self, image):
+            self.calls.append(("pull", image))
+            if sum(call[0] == "pull" for call in self.calls) == 1:
+                error = RuntimeError("pull timed out")
+                error.error_code = "command_timeout"
+                raise error
+
+    path = str(tmp_path / "state.json")
+    adapter = _TimeoutOnceAdapter()
+    orchestrator = JobOrchestrator(
+        path,
+        adapter,
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "success"
+    assert job.retry_count == 1
+    assert [call[0] for call in adapter.calls].count("pull") == 2
+    assert [call[0] for call in adapter.calls][-2:] == ["activate", "health"]
+
+
+@pytest.mark.asyncio
+async def test_update_stops_before_activation_after_second_pull_timeout(tmp_path):
+    class _TimeoutAdapter(_Adapter):
+        async def pull(self, image):
+            self.calls.append(("pull", image))
+            error = RuntimeError("pull timed out")
+            error.error_code = "command_timeout"
+            raise error
+
+    path = str(tmp_path / "state.json")
+    adapter = _TimeoutAdapter()
+    orchestrator = JobOrchestrator(
+        path,
+        adapter,
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "failed"
+    assert job.error_code == "command_timeout"
+    assert job.retry_count == 1
+    assert [call[0] for call in adapter.calls].count("pull") == 2
+    assert not any(call[0] in {"activate", "health"} for call in adapter.calls)
+
+
+@pytest.mark.asyncio
 async def test_cancelled_job_keeps_active_gate_for_reconcile(tmp_path):
     path = str(tmp_path / "state.json")
     orchestrator = JobOrchestrator(

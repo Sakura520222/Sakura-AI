@@ -654,6 +654,29 @@ class JobOrchestrator:
             store.active_job_id = None
             self._persist(store)
 
+    async def _pull_with_timeout_retry(self, job: JobState) -> None:
+        """Retry one timed-out Docker pull; Docker resumes already downloaded layers."""
+
+        while True:
+            try:
+                await self.adapter.pull(job.target_image)
+                return
+            except Exception as exc:
+                if (
+                    getattr(exc, "error_code", None) != "command_timeout"
+                    or job.retry_count >= 1
+                ):
+                    raise
+                job.retry_count += 1
+                self._save_job(job)
+                self._log(
+                    job,
+                    "docker pull timed out; retrying with cached layers",
+                    level="warning",
+                    step="downloading",
+                    error_code="command_timeout_retry",
+                )
+
     @staticmethod
     def _error_details(exc: Exception) -> tuple[str, str, list[str] | None]:
         error_code = str(getattr(exc, "error_code", "update_failed"))
@@ -727,7 +750,7 @@ class JobOrchestrator:
                 job.from_image = materialized
             self._save_job(job)
             self._transition(job, "downloading", "downloading")
-            await self.adapter.pull(job.target_image)
+            await self._pull_with_timeout_retry(job)
             self._transition(job, "activating", "activating")
             await self.adapter.activate(job.target_image)
             self._transition(job, "restarting", "restarting")
