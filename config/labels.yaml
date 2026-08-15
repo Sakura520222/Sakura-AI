@@ -55,7 +55,7 @@ labels:
 recommendation:
   enabled: true
   confidence_threshold: 0.7
-  auto_create: false
+  auto_create: true
 
 # 标签冲突规则
 # 当 PR 已有 key 中的标签时，不会自动添加 value 列表中的标签。
