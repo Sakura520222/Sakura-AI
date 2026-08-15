@@ -48,12 +48,16 @@ services:
       MYSQL_DATABASE: sakura_ai
       MYSQL_USER: sakura
       MYSQL_PASSWORD: ${SAKURA_DB_PASSWORD:?SAKURA_DB_PASSWORD must be set}
-      MYSQL_RANDOM_ROOT_PASSWORD: "yes"   # 应用只用普通用户，root 密码随机生成并输出到容器日志
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    command:
+      - --performance-schema=OFF
+      - --innodb-buffer-pool-size=64M
+      - --innodb-redo-log-capacity=32M
+      - --max-connections=40
+      - --mysqlx=OFF
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      # 真正执行查询以验证：服务启动、普通用户存在、密码正确、库存在、用户可连接
-      # （mysqladmin ping 收到 Access denied 仍返回 0，不验证凭据）
       test:
         [
           "CMD-SHELL",
