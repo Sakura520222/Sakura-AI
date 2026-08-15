@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -73,8 +74,8 @@ def test_image_mode_routes_updater_to_production_compose(action: str):
     result = _run_start_sh("image", action, project="sakura-ai")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "--compose-file docker/docker-compose.prod.yml" in result.stdout
-    assert "--compose-file docker/docker-compose.yml" not in result.stdout
+    assert "/docker/docker-compose.prod.yml --deployment-env" in result.stdout
+    assert "/docker/docker-compose.yml --deployment-env" not in result.stdout
 
 
 @pytest.mark.parametrize("action", ["ensure_updater_running", "cmd_updater start"])
@@ -82,8 +83,8 @@ def test_source_mode_routes_updater_to_development_compose(action: str):
     result = _run_start_sh("source", action)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "--compose-file docker/docker-compose.yml" in result.stdout
-    assert "--compose-file docker/docker-compose.prod.yml" not in result.stdout
+    assert "/docker/docker-compose.yml --deployment-env" in result.stdout
+    assert "/docker/docker-compose.prod.yml --deployment-env" not in result.stdout
 
 
 @pytest.mark.parametrize("mode", [None, "unknown"])
@@ -92,6 +93,66 @@ def test_invalid_deployment_mode_has_no_compose_fallback(mode: str | None):
 
     assert result.returncode != 0
     assert "SAKURA_DEPLOY_MODE must be 'source' or 'image'" in result.stderr
+
+
+def test_live_unmanaged_socket_blocks_duplicate_updater_start():
+    command = """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+updater_backend() {
+    printf 'BACKEND:%s\n' "$*"
+    return 1
+}
+updater_socket_health_payload() { printf '{}\n'; }
+updater_binary_is_safe() { printf 'UNEXPECTED_BINARY_CHECK\n'; return 0; }
+ensure_updater_running
+"""
+    result = subprocess.run(
+        ["bash"],
+        cwd=ROOT,
+        env={**os.environ, "TERM": "dumb"},
+        input=command.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    assert result.returncode != 0
+    assert "refusing duplicate start" in stderr
+    assert "UNEXPECTED_BINARY_CHECK" not in stdout
+    assert "BACKEND:install" not in stdout
+    assert "BACKEND:start" not in stdout
+
+
+def test_updater_runtime_inputs_are_anchored_when_script_is_called_elsewhere(tmp_path):
+    project = tmp_path / "project"
+    caller = tmp_path / "caller"
+    project.mkdir()
+    caller.mkdir()
+    shutil.copyfile(ROOT / "start.sh", project / "start.sh")
+    command = """
+set -u
+export _START_SH_SOURCED=1
+source ../project/start.sh
+printf 'SOURCE=%s\n' "$UPDATER_SOURCE_COMPOSE_FILE"
+printf 'PROD=%s\n' "$UPDATER_PROD_COMPOSE_FILE"
+printf 'ENV=%s\n' "$UPDATER_DEPLOYMENT_ENV_FILE"
+"""
+    result = subprocess.run(
+        ["bash"],
+        cwd=caller,
+        env={**os.environ, "TERM": "dumb"},
+        input=command.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    assert result.returncode == 0, stdout + result.stderr.decode("utf-8", errors="replace")
+    assert "/docker/docker-compose.yml" in stdout
+    assert "/docker/docker-compose.prod.yml" in stdout
+    assert "/.deploy/deployment.env" in stdout
+    assert "/caller/" not in stdout
 
 
 def test_mode_parser_does_not_source_or_evaluate_deployment_file():
