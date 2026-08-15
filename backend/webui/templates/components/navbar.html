@@ -32,8 +32,8 @@
             </template>
         </div>
 
-        <!-- 主题切换按钮 -->
-        <button @click="theme = theme === 'light' ? 'dark' : 'light'"
+        <!-- 主题切换按钮：toggleTheme 始终以本按钮中心为圆心做圆形扩散过渡 -->
+        <button data-theme-toggle @click="toggleTheme()"
                 class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
                 :title="theme === 'light' ? '{{ _('nav.toggle_dark') }}' : '{{ _('nav.toggle_light') }}'"
                 :aria-label="theme === 'light' ? '{{ _('nav.toggle_dark') }}' : '{{ _('nav.toggle_light') }}'">
