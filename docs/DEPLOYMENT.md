@@ -345,10 +345,13 @@ Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检�
 通过 `start.sh` 脚本管理 updater 守护进程：
 
 ```bash
-./start.sh updater install|start|stop|status
+./start.sh updater install|reinstall|uninstall|start|stop|status
 ```
 
 action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
+
+- `reinstall` 是推荐的同步命令：先确认没有后台部署和活动更新任务，再停止已验证的 daemon、原子安装对应 Release 的 binary、重新启动并输出状态。这样可避免后台 `start.sh --prod` 在手工 `stop/install/start` 之间重新拉起 daemon 的竞态。
+- `uninstall` 只删除已验证 updater 的 binary、daemon metadata、日志、锁和任务状态；若 socket 仍由无法验证身份的监听者占用，会 fail-closed 并要求管理员先检查监听进程，不会盲目 kill。
 
 ### WebUI 更新后同步 Host Updater
 
@@ -361,13 +364,10 @@ cd /opt/sakura-ai
 curl --fail --silent --show-error http://localhost:8000/health
 ```
 
-只有人工确认上述响应中的 `version` 等于 WebUI 更新的目标版本后，才能停止旧 daemon、安装 updater，再启动并验证：
+只有人工确认上述响应中的 `version` 等于 WebUI 更新的目标版本后，才能重新安装 updater：
 
 ```bash
-sudo ./start.sh updater stop
-sudo ./start.sh updater install
-sudo ./start.sh updater start
-sudo ./start.sh updater status
+sudo ./start.sh updater reinstall
 
 sudo curl --fail --silent --show-error \
   --unix-socket /run/sakura-ai/updater.sock \
@@ -400,12 +400,10 @@ sudo ./start.sh updater start     # 启动守护进程
 - 下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。
 - atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
 
-Linux 原子替换 binary 后，已经运行的 daemon 会继续使用旧 inode，不会自动切换到新版本。重复安装时推荐先停止 daemon，再安装和启动：
+Linux 原子替换 binary 后，已经运行的 daemon 会继续使用旧 inode，不会自动切换到新版本。重复安装时推荐使用带竞态门禁的一体化命令：
 
 ```bash
-sudo ./start.sh updater stop
-sudo ./start.sh updater install
-sudo ./start.sh updater start
+sudo ./start.sh updater reinstall
 ```
 
 如果已经在 daemon 运行期间执行了 `install`，则至少需要显式重启：
@@ -429,6 +427,27 @@ SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater st
 - 生产部署必须位于 root-owned、group/other 不可写的目录链中；推荐固定使用 `/opt/sakura-ai`。updater 启动时会对 binary、Compose 和 `deployment.env` 逐级 `lstat` 并 fail-closed，拒绝 symlink、非 root owner、共享写权限或非 `0600` 的部署状态
 - updater 不依赖 systemd 或 cron 自启；宿主机重启后，在 `/opt/sakura-ai` 运行 `sudo ./start.sh updater start`，或再次执行 `sudo ./start.sh --prod`。`start` 会重新创建 tmpfs 中消失的 `/run/sakura-ai` 后再拉起 daemon；这只恢复更新服务，不会自动安装应用更新
 
+## 十、卸载
+
+默认卸载会停止仍在后台运行的部署 runner，确认没有活动 updater 更新任务，删除 Compose 容器/网络并卸载 Host Updater，但保留 MySQL、Redis、配置、ChromaDB、日志、工作区和 Skills 等 Docker 数据卷，同时保留 `.deploy/deployment.env`，方便以后用原密码和原数据重新部署：
+
+```bash
+cd /opt/sakura-ai
+sudo ./start.sh uninstall
+```
+
+命令会要求输入 `UNINSTALL`。自动化环境必须显式传入 `--yes`，不会因为 stdin 非交互而默认确认。
+
+完全清理必须显式使用 `--purge` 并输入 `PURGE SAKURA-AI`：
+
+```bash
+sudo ./start.sh uninstall --purge
+```
+
+`--purge` 会永久删除 Compose 数据卷（包括 MySQL/Redis 数据）以及 `.deploy` 部署状态，无法由脚本恢复。项目源码、脚本和宿主机 bind-mount 目录不会自动递归删除；脚本会输出项目路径，管理员检查后再自行处理。可审计的非交互清理需要同时提供 `--purge --yes`。
+
+生产部署的镜像拉取在后台 runner 中使用 Docker Compose 原生 TTY 进度渲染器。`Ctrl+C` 只退出 `tail` 查看，拉取与启动继续运行；重新连接后可用 `./start.sh --attach` 继续查看，或用 `./start.sh --status` 查看当前 `pull/start/health` 阶段。若宿主 Compose 版本不支持 `--progress`，脚本会明确警告并回退到普通拉取输出。
+
 ---
 
-*最后更新：2026-8-13 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-15 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
