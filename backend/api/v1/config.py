@@ -192,8 +192,9 @@ async def save_ai_account(
     account_id = (body.id or "").strip()
     existing = await account_store.get_account(account_id) if account_id else None
 
-    # API key 处理：空或脱敏 → 保留原值 / keep existing when blank or masked
-    api_key = body.api_key
+    # API key 处理：空或脱敏 → 保留原值；新 key 去除首尾空白
+    # / keep existing when blank or masked; strip surrounding whitespace from new keys
+    api_key = body.api_key.strip()
     if (not api_key or "****" in api_key) and existing is not None:
         api_key = existing.api_key
 
