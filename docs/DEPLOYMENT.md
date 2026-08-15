@@ -350,7 +350,8 @@ Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检�
 
 action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
 
-- `reinstall` 是推荐的同步命令：先确认没有后台部署和活动更新任务，再停止已验证的 daemon、原子安装对应 Release 的 binary、重新启动并输出状态。这样可避免后台 `start.sh --prod` 在手工 `stop/install/start` 之间重新拉起 daemon 的竞态。
+- `reinstall` 是推荐的同步命令：先确认没有后台部署，再通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，然后停止已验证的 daemon、原子安装对应 Release 的 binary、重新启动并输出状态。安装或校验失败时会尝试用保留的安全 binary 恢复原 daemon。这样既避免检查任务与停止 daemon 之间的竞态，也避免后台 `start.sh --prod` 在手工 `stop/install/start` 之间重新拉起 daemon。
+- 不支持 `/v1/lifecycle/prepare-stop` 的旧 daemon 无法提供原子任务门禁，`reinstall` 会 fail-closed。升级这类旧版本时，应先在 WebUI 确认没有活动任务，再显式执行 `sudo ./start.sh updater stop`，随后执行 `install` 和 `start`；新 daemon 启动后即可使用一体化 `reinstall`。
 - `uninstall` 只删除已验证 updater 的 binary、daemon metadata、日志、锁和任务状态；若 socket 仍由无法验证身份的监听者占用，会 fail-closed 并要求管理员先检查监听进程，不会盲目 kill。
 
 ### WebUI 更新后同步 Host Updater
