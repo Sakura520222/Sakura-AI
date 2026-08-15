@@ -13,7 +13,9 @@
 #   ./start.sh --stop         # 停止正在进行的构建
 #   ./start.sh --ps           # 查看服务容器状态
 #   ./start.sh --down         # 停止服务
-#   ./start.sh updater [action]  # 管理 host updater daemon（install/start/stop/status）
+#   ./start.sh uninstall      # 卸载服务（默认保留 Docker 数据卷）
+#   ./start.sh uninstall --purge  # 同时删除 Docker 数据卷和 .deploy 状态
+#   ./start.sh updater [action]  # 管理 host updater daemon（含 reinstall/uninstall）
 #   ./start.sh --help         # 显示帮助
 
 set -euo pipefail
@@ -30,9 +32,10 @@ COMPOSE_PROJECT=""
 DEFAULT_PROD_COMPOSE_PROJECT="sakura-ai"
 DEPLOY_DIR=".deploy"
 BUILD_LOG="$DEPLOY_DIR/build.log"
-PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / start / health / done
+PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / pull / start / health / done
 PHASE_RESULT="$DEPLOY_DIR/phase_result" # 上一阶段结果: ok / fail
 PID_FILE="$DEPLOY_DIR/build.pid"
+RUNNER_IDENTITY_FILE="$DEPLOY_DIR/build-runner.identity"
 HASH_FILE="$DEPLOY_DIR/requirements.hash"
 DOCKERFILE_HASH_FILE="$DEPLOY_DIR/dockerfile.hash"
 HEALTH_TIMEOUT=90
@@ -62,8 +65,105 @@ set_phase() {
 get_phase()  { cat "$PHASE_FILE" 2>/dev/null || echo "none"; }
 get_result() { cat "$PHASE_RESULT" 2>/dev/null || echo ""; }
 
+runner_pid_file_path() {
+    if [[ "$PID_FILE" == /* ]]; then
+        printf '%s\n' "$PID_FILE"
+    else
+        printf '%s/%s\n' "$UPDATER_PROJECT_ROOT" "$PID_FILE"
+    fi
+}
+
+runner_identity_file_path() {
+    if [[ "$RUNNER_IDENTITY_FILE" == /* ]]; then
+        printf '%s\n' "$RUNNER_IDENTITY_FILE"
+    else
+        printf '%s/%s\n' "$UPDATER_PROJECT_ROOT" "$RUNNER_IDENTITY_FILE"
+    fi
+}
+
+runner_read_pid() {
+    local pid pid_file
+    pid_file=$(runner_pid_file_path) || return 1
+    [[ -f "$pid_file" ]] || return 1
+    pid=$(cat "$pid_file" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$pid"
+}
+
+runner_pid_is_live() {
+    local pid
+    pid=$(runner_read_pid) || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+runner_process_starttime() {
+    local pid="$1" stat_line fields
+    [[ -r "/proc/$pid/stat" ]] || return 1
+    IFS= read -r stat_line < "/proc/$pid/stat" || return 1
+    [[ "$stat_line" == *") "* ]] || return 1
+    fields="${stat_line##*) }"
+    # After pid/comm, field 3 is the first token; starttime is field 22.
+    set -- $fields
+    [[ $# -ge 20 && "${20}" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "${20}"
+}
+
+runner_process_command_matches() {
+    local pid="$1" expected_runner="$2" arg
+    local -a argv=()
+    [[ -r "/proc/$pid/cmdline" ]] || return 1
+    while IFS= read -r -d '' arg; do
+        argv+=("$arg")
+    done < "/proc/$pid/cmdline"
+    [[ ${#argv[@]} -ge 2 ]] || return 1
+    [[ "${argv[0]##*/}" == "bash" && "${argv[1]}" == "$expected_runner" ]]
+}
+
+runner_identity_matches() {
+    local pid expected_starttime expected_runner current_starttime identity_file
+    pid=$(runner_read_pid) || return 1
+    identity_file=$(runner_identity_file_path) || return 1
+    [[ -f "$identity_file" ]] || return 1
+    {
+        IFS= read -r expected_starttime
+        IFS= read -r expected_runner
+    } < "$identity_file" || return 1
+    [[ "$expected_starttime" =~ ^[0-9]+$ && -n "$expected_runner" ]] || return 1
+    current_starttime=$(runner_process_starttime "$pid") || return 1
+    [[ "$current_starttime" == "$expected_starttime" ]] || return 1
+    runner_process_command_matches "$pid" "$expected_runner"
+}
+
+runner_write_identity() {
+    local pid="$1" expected_runner="$2" starttime="" identity_file tmp attempts=0
+    # setsid/nohup exec into bash asynchronously. Wait only for the exact child
+    # identity; a dead or different PID never gets recorded as the runner.
+    while [[ "$attempts" -lt 50 ]]; do
+        if starttime=$(runner_process_starttime "$pid") \
+            && runner_process_command_matches "$pid" "$expected_runner"; then
+            break
+        fi
+        kill -0 "$pid" 2>/dev/null || return 1
+        sleep 0.02
+        attempts=$((attempts + 1))
+    done
+    [[ -n "$starttime" && "$attempts" -lt 50 ]] || return 1
+    identity_file=$(runner_identity_file_path) || return 1
+    tmp="$identity_file.tmp.$$"
+    if ! printf '%s\n%s\n' "$starttime" "$expected_runner" > "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    mv -f -- "$tmp" "$identity_file"
+    runner_identity_matches
+}
+
+clear_runner_identity() {
+    rm -f -- "$(runner_pid_file_path)" "$(runner_identity_file_path)"
+}
+
 is_running() {
-    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+    runner_identity_matches
 }
 
 wait_for_pid() {
@@ -78,6 +178,21 @@ wait_for_pid() {
     echo ""
     wait "$pid"
     return $?
+}
+
+compose_pull_with_native_progress() {
+    local compose_help=""
+    # The deployment runner is detached, so Compose would normally downgrade to
+    # noisy plain layer logs. Force its native TTY renderer; tail/--attach passes
+    # the control stream to the administrator's terminal while the pull itself
+    # remains owned by the background runner after Ctrl+C or SSH disconnect.
+    compose_help=$(docker compose --help 2>/dev/null || true)
+    if [[ "$compose_help" == *--progress* ]]; then
+        $COMPOSE --ansi always --progress tty pull
+    else
+        warn "当前 Docker Compose 不支持原生 TTY 进度条，回退到普通拉取输出"
+        $COMPOSE pull
+    fi
 }
 
 # ============================================================
@@ -338,12 +453,81 @@ updater_health_payload() {
 # application /health check above: a live UDS listener without matching daemon
 # metadata indicates a checkout-replacement orphan and must block a duplicate
 # start instead of racing to unlink or bind the same socket.
-updater_socket_health_payload() {
-    curl --fail --silent --show-error \
+# Lifecycle safety needs a transport probe, not a health check. Any listener
+# that completes an HTTP exchange is live even when it returns 404 or 500.
+updater_socket_listener_responds() {
+    local http_status curl_rc=0
+    if http_status=$(curl --silent --show-error \
         --connect-timeout 2 --max-time 5 \
+        --output /dev/null --write-out '%{http_code}' \
         --unix-socket "$UPDATER_SOCKET_PATH" \
         --header 'Accept: application/json' \
-        http://localhost/v1/health
+        http://localhost/v1/health); then
+        [[ "$http_status" =~ ^[0-9]{3}$ && "$http_status" != "000" ]]
+        return $?
+    else
+        curl_rc=$?
+    fi
+    # curl 7 is a failed connect (no listener/stale socket). Once a connection
+    # was accepted, malformed, reset, empty, or timed-out HTTP is still proof
+    # of a live listener and lifecycle operations must fail closed.
+    [[ "$curl_rc" -ne 7 ]]
+}
+
+updater_require_root() {
+    local uid
+    uid=$(updater_current_uid) || return 1
+    if [[ "$uid" != "0" ]]; then
+        fail "updater lifecycle operation requires root" >&2
+        return 1
+    fi
+}
+
+updater_deployment_is_running() {
+    runner_identity_matches
+}
+
+updater_require_idle_deployment() {
+    if updater_deployment_is_running; then
+        fail "deployment is still running in the background; updater lifecycle changes are blocked" >&2
+        fail "wait for ./start.sh --status to finish, or explicitly stop it with ./start.sh --stop" >&2
+        return 1
+    fi
+    if runner_pid_is_live; then
+        fail "build.pid refers to a live process whose runner identity cannot be verified" >&2
+        fail "refusing updater lifecycle changes without matching starttime and command metadata" >&2
+        return 1
+    fi
+}
+
+updater_prepare_stop() {
+    if ! updater_socket_listener_responds; then
+        return 0
+    fi
+    if curl --fail --silent --show-error \
+        --connect-timeout 2 --max-time 5 \
+        --request POST \
+        --unix-socket "$UPDATER_SOCKET_PATH" \
+        --header 'Accept: application/json' \
+        http://localhost/v1/lifecycle/prepare-stop >/dev/null; then
+        return 0
+    fi
+    if updater_socket_listener_responds; then
+        fail "updater refused the atomic lifecycle gate; an update may be active or the daemon is incompatible" >&2
+        fail "wait for active updates to finish; older daemons must be stopped explicitly before replacement" >&2
+        return 1
+    fi
+}
+
+updater_cancel_stop() {
+    if updater_socket_listener_responds; then
+        curl --fail --silent --show-error \
+            --connect-timeout 2 --max-time 5 \
+            --request POST \
+            --unix-socket "$UPDATER_SOCKET_PATH" \
+            --header 'Accept: application/json' \
+            http://localhost/v1/lifecycle/cancel-stop >/dev/null 2>&1 || true
+    fi
 }
 
 resolve_running_image_version() {
@@ -879,13 +1063,127 @@ cmd_updater_install() {
     fi
 }
 
+updater_existing_state_dir_is_safe() {
+    local state_dir="$UPDATER_STATE_DIR" owner
+    if ! updater_path_exists "$state_dir"; then
+        return 0
+    fi
+    if updater_path_is_symlink "$state_dir" || [[ ! -d "$state_dir" ]]; then
+        fail "refusing unsafe updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if ! owner=$(updater_directory_owner_uid "$state_dir") || [[ "$owner" != "0" ]]; then
+        fail "refusing non-root updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if ! updater_directory_is_safe "$state_dir" 0; then
+        fail "refusing group/other-writable updater state directory: $state_dir" >&2
+        return 1
+    fi
+}
+
+stop_verified_updater() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    if updater_binary_is_safe "$binary"; then
+        updater_backend stop \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" || return $?
+    elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]] && ! updater_path_exists "$binary"; then
+        updater_backend stop \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" || return $?
+    elif updater_path_exists "$binary"; then
+        fail "refusing to execute unsafe updater binary while stopping: $binary" >&2
+        return 126
+    fi
+    if updater_socket_listener_responds; then
+        fail "updater socket is still live after stop; refusing to replace or remove files" >&2
+        fail "inspect the verified listener with: sudo ss -xlpn | grep -F '$UPDATER_SOCKET_PATH'" >&2
+        return 1
+    fi
+}
+
+cmd_updater_reinstall() {
+    local was_running=0 install_rc=0 start_rc=0 stop_rc=0
+    updater_require_root || return $?
+    updater_require_idle_deployment || return $?
+    if updater_socket_listener_responds; then
+        was_running=1
+    fi
+    updater_prepare_stop || return $?
+    if stop_verified_updater; then
+        :
+    else
+        stop_rc=$?
+        updater_cancel_stop
+        return "$stop_rc"
+    fi
+    if cmd_updater_install; then
+        :
+    else
+        install_rc=$?
+        if [[ "$was_running" -eq 1 ]]; then
+            warn "updater reinstallation failed; restarting the preserved installed binary" >&2
+            if ! ensure_updater_running; then
+                fail "updater reinstallation failed and the preserved daemon could not be restarted" >&2
+            fi
+        fi
+        return "$install_rc"
+    fi
+    if ensure_updater_running; then
+        :
+    else
+        start_rc=$?
+        return "$start_rc"
+    fi
+    ok "updater 已重新安装并启动"
+    updater_backend status \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH"
+}
+
+cmd_updater_uninstall() {
+    local stop_rc=0
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    updater_require_root || return $?
+    updater_require_idle_deployment || return $?
+    updater_existing_state_dir_is_safe || return $?
+    if [[ "$binary" != "$UPDATER_STATE_DIR/sakura-ai-updater" ]]; then
+        fail "refusing unexpected updater binary path during uninstall: $binary" >&2
+        return 1
+    fi
+    updater_prepare_stop || return $?
+    if stop_verified_updater; then
+        :
+    else
+        stop_rc=$?
+        updater_cancel_stop
+        return "$stop_rc"
+    fi
+
+    # Only exact, updater-owned paths under the verified state directory are removed.
+    rm -f -- \
+        "$binary" \
+        "$UPDATER_STATE_DIR/daemon-meta.json" \
+        "$UPDATER_STATE_DIR/updater.log" \
+        "$UPDATER_STATE_DIR/updater.lock" \
+        "$UPDATER_STATE_DIR/update-state.json" \
+        "$UPDATER_STATE_DIR/install.lock"
+    rm -rf -- "$UPDATER_STATE_DIR/tmp"
+    rmdir -- "$UPDATER_STATE_DIR" 2>/dev/null || true
+    if [[ -S "$UPDATER_SOCKET_PATH" || -L "$UPDATER_SOCKET_PATH" ]]; then
+        rm -f -- "$UPDATER_SOCKET_PATH"
+    fi
+    ok "updater 已卸载"
+}
+
 ensure_updater_running() {
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
         return 0
     fi
-    if updater_socket_health_payload >/dev/null 2>&1; then
+    if updater_socket_listener_responds; then
         fail "updater socket is live but daemon metadata is missing or stale; refusing duplicate start" >&2
         fail "stop the verified listener process, then run: sudo ./start.sh updater install && sudo ./start.sh updater start" >&2
         return 1
@@ -947,6 +1245,12 @@ cmd_updater() {
         install)
             cmd_updater_install "$@"
             ;;
+        reinstall)
+            cmd_updater_reinstall "$@"
+            ;;
+        uninstall)
+            cmd_updater_uninstall "$@"
+            ;;
         start)
             ensure_updater_running "$@"
             ;;
@@ -957,7 +1261,7 @@ cmd_updater() {
             ;;
         *)
             fail "未知 updater 子命令: $action"
-            echo "用法: ./start.sh updater [install|start|stop|status|is-running]" >&2
+            echo "用法: ./start.sh updater [install|reinstall|uninstall|start|stop|status|is-running]" >&2
             return 1
             ;;
     esac
@@ -991,9 +1295,13 @@ detect_compose() {
 # ============================================================
 
 cmd_status() {
-    local build_active=0
+    local build_active=0 runner_verified=0
     if is_running; then
         build_active=1
+        runner_verified=1
+    elif runner_pid_is_live; then
+        build_active=1
+        warn "build.pid is live but runner identity is unverified; lifecycle signals are disabled"
     fi
 
     # updater daemon 状态快照。构建仍在运行或应用尚未健康时只报告状态，不提前
@@ -1026,7 +1334,7 @@ cmd_status() {
 
     if [[ "$build_active" -eq 1 ]]; then
         local pid
-        pid=$(cat "$PID_FILE")
+        pid=$(runner_read_pid)
         local phase
         phase=$(get_phase)
         echo ""
@@ -1038,6 +1346,9 @@ cmd_status() {
         echo "──────────────────────────"
         echo ""
         echo "💡 使用 ./start.sh --attach 查看完整实时日志"
+        if [[ "$runner_verified" -ne 1 ]]; then
+            warn "该进程缺少匹配的 starttime/command 元数据；请人工检查，脚本不会向其发送信号"
+        fi
     else
         local phase result
         phase=$(get_phase)
@@ -1061,6 +1372,10 @@ cmd_status() {
 
 cmd_attach() {
     if ! is_running; then
+        if runner_pid_is_live; then
+            fail "build.pid refers to a live process whose runner identity cannot be verified"
+            exit 1
+        fi
         fail "没有正在进行的构建进程"
         exit 1
     fi
@@ -1076,20 +1391,30 @@ cmd_attach() {
 
 cmd_stop() {
     if ! is_running; then
+        if runner_pid_is_live; then
+            fail "build.pid refers to a live process whose runner identity cannot be verified"
+            exit 1
+        fi
         fail "没有正在进行的构建进程"
         exit 1
     fi
     local pid
-    pid=$(cat "$PID_FILE")
+    pid=$(runner_read_pid)
     warn "正在终止构建进程 (PID: $pid)..."
-    kill "$pid" 2>/dev/null || true
-    # Also kill the entire process group
-    kill -- -"$pid" 2>/dev/null || true
+    runner_identity_matches || {
+        fail "refusing to signal an unverified build runner"
+        exit 1
+    }
+    # Signal the process group first while the verified session leader exists;
+    # signalling the leader first could let it exit before its children receive TERM.
+    kill -TERM -- -"$pid" 2>/dev/null || true
+    runner_identity_matches && kill -TERM "$pid" 2>/dev/null || true
     sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
-        kill -9 "$pid" 2>/dev/null || true
+    if runner_identity_matches; then
+        kill -KILL -- -"$pid" 2>/dev/null || true
+        runner_identity_matches && kill -KILL "$pid" 2>/dev/null || true
     fi
-    rm -f "$PID_FILE"
+    clear_runner_identity
     ok "已终止"
 }
 
@@ -1206,11 +1531,17 @@ build_runner() {
             info "--rebuild 生产模式：重新拉取最新镜像"
         fi
         # 不写本地哈希：镜像版本由 GHCR 发布管理，本地 requirements/Dockerfile 哈希无意义
-        set_phase "start"
         info "停止现有容器..."
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
-        info "启动服务（拉取最新镜像）..."
-        if $COMPOSE up -d --pull always >> "$BUILD_LOG" 2>&1; then
+        set_phase "pull"
+        info "拉取最新镜像（Docker 原生进度条）..."
+        if ! compose_pull_with_native_progress; then
+            set_phase "pull" "fail"
+            return 1
+        fi
+        set_phase "start"
+        info "启动服务..."
+        if $COMPOSE up -d >> "$BUILD_LOG" 2>&1; then
             ok "服务已启动"
         else
             set_phase "start" "fail"
@@ -1258,7 +1589,7 @@ build_runner() {
     $COMPOSE ps >> "$BUILD_LOG" 2>&1 || true
     echo "" >> "$BUILD_LOG"
 
-    rm -f "$PID_FILE"
+    clear_runner_identity
 }
 
 # ============================================================
@@ -1279,6 +1610,7 @@ show_menu() {
     echo -e "  ${BOLD}[7]${RESET} 停止服务"
     echo -e "  ${BOLD}[8]${RESET} 生产镜像部署 (--prod)"
     echo -e "  ${BOLD}[9]${RESET} Updater daemon 管理"
+    echo -e "  ${BOLD}[10]${RESET} 卸载 Sakura AI"
     echo -e "  ${BOLD}[0]${RESET} 退出"
     echo ""
 
@@ -1294,13 +1626,14 @@ show_menu() {
         7) do_down        ;;
         8) do_start false true ;;
         9) do_updater_menu ;;
+        10) cmd_uninstall ;;
         0) info "已退出" ; exit 0 ;;
         *) warn "无效选项: $choice" ; exit 1 ;;
     esac
 }
 
 # Updater daemon 管理子菜单（host updater CLI 的交互入口）
-# 复用 cmd_updater：install/start/stop/status 对应底层同名子命令。
+# 复用 cmd_updater：包括 install/reinstall/uninstall 与 daemon 生命周期操作。
 do_updater_menu() {
     echo ""
     echo -e "${BOLD}Updater daemon 管理${RESET}"
@@ -1310,6 +1643,8 @@ do_updater_menu() {
     echo -e "  ${BOLD}[2]${RESET} 启动 updater daemon"
     echo -e "  ${BOLD}[3]${RESET} 停止 updater daemon"
     echo -e "  ${BOLD}[4]${RESET} 查看 updater daemon 状态"
+    echo -e "  ${BOLD}[5]${RESET} 重新安装并启动 updater"
+    echo -e "  ${BOLD}[6]${RESET} 卸载 updater"
     echo -e "  ${BOLD}[0]${RESET} 返回"
     echo ""
 
@@ -1320,6 +1655,8 @@ do_updater_menu() {
         2) cmd_updater start  ;;
         3) cmd_updater stop   ;;
         4) cmd_updater status ;;
+        5) cmd_updater reinstall ;;
+        6) cmd_updater uninstall ;;
         0) return 0 ;;
         *) warn "无效选项: $choice" ; return 1 ;;
     esac
@@ -1337,6 +1674,125 @@ do_ps() {
     fi
     echo ""
     $compose_cmd ps
+}
+
+confirm_sakura_uninstall() {
+    local purge="$1" assume_yes="$2" expected answer
+    if [[ "$assume_yes" == "true" ]]; then
+        return 0
+    fi
+    if [[ ! -t 0 ]]; then
+        fail "uninstall confirmation requires an interactive terminal; pass --yes for automation" >&2
+        return 1
+    fi
+    echo ""
+    warn "即将停止并删除 Sakura AI 容器、网络和 Host Updater。"
+    if [[ "$purge" == "true" ]]; then
+        warn "--purge 还会永久删除 Compose 数据卷（包括 MySQL/Redis）和 .deploy 状态。"
+        expected="PURGE SAKURA-AI"
+    else
+        info "Docker 数据卷和 .deploy/deployment.env 将保留，可供以后重新部署。"
+        expected="UNINSTALL"
+    fi
+    read -r -p "输入 '$expected' 继续: " answer
+    if [[ "$answer" != "$expected" ]]; then
+        fail "确认内容不匹配，已取消卸载" >&2
+        return 1
+    fi
+}
+
+stop_deployment_for_uninstall() {
+    local pid elapsed=0
+    if ! updater_deployment_is_running; then
+        if runner_pid_is_live; then
+            fail "refusing to signal live PID from build.pid without verified runner identity" >&2
+            return 1
+        fi
+        clear_runner_identity
+        return 0
+    fi
+    pid=$(runner_read_pid) || return 1
+    warn "正在停止后台部署进程 (PID: $pid)..."
+    runner_identity_matches || return 1
+    kill -TERM -- -"$pid" 2>/dev/null || true
+    runner_identity_matches && kill -TERM "$pid" 2>/dev/null || true
+    while runner_identity_matches && [[ "$elapsed" -lt 10 ]]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if runner_identity_matches; then
+        kill -KILL -- -"$pid" 2>/dev/null || true
+        runner_identity_matches && kill -KILL "$pid" 2>/dev/null || true
+    fi
+    clear_runner_identity
+}
+
+sakura_compose_uninstall() {
+    local purge="$1"
+    local -a compose_cmd=(docker compose)
+    command -v docker >/dev/null 2>&1 || {
+        fail "Docker 未安装，无法卸载 Compose 服务" >&2
+        return 1
+    }
+    docker compose version >/dev/null 2>&1 || {
+        fail "Docker Compose V2 未安装" >&2
+        return 1
+    }
+    select_compose_from_deployment_mode || return $?
+    if [[ -f "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+        compose_cmd+=(--env-file "$UPDATER_DEPLOYMENT_ENV_FILE")
+    fi
+    if [[ -n "$COMPOSE_PROJECT" ]]; then
+        compose_cmd+=(--project-name "$COMPOSE_PROJECT")
+    fi
+    compose_cmd+=(-f "$COMPOSE_FILE" down --remove-orphans)
+    if [[ "$purge" == "true" ]]; then
+        compose_cmd+=(--volumes)
+    fi
+    "${compose_cmd[@]}"
+}
+
+purge_sakura_deployment_state() {
+    local target="$UPDATER_PROJECT_ROOT/$DEPLOY_DIR"
+    local expected="$UPDATER_PROJECT_ROOT/.deploy"
+    if [[ "$target" != "$expected" || "$target" == "/" || "$target" == "$UPDATER_PROJECT_ROOT" ]]; then
+        fail "refusing unsafe deployment state target: $target" >&2
+        return 1
+    fi
+    if updater_path_is_symlink "$target"; then
+        fail "refusing symlinked deployment state target: $target" >&2
+        return 1
+    fi
+    rm -rf -- "$target"
+}
+
+cmd_uninstall() {
+    local purge=false assume_yes=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --purge) purge=true ;;
+            --yes) assume_yes=true ;;
+            *)
+                fail "未知卸载参数: $arg" >&2
+                echo "用法: ./start.sh uninstall [--purge] [--yes]" >&2
+                return 1
+                ;;
+        esac
+    done
+    updater_require_root || return $?
+    confirm_sakura_uninstall "$purge" "$assume_yes" || return $?
+    stop_deployment_for_uninstall || return $?
+
+    info "正在删除 Sakura AI Compose 服务..."
+    sakura_compose_uninstall "$purge" || return $?
+    cmd_updater_uninstall || return $?
+    if [[ "$purge" == "true" ]]; then
+        purge_sakura_deployment_state || return $?
+        ok "Sakura AI 已完全卸载；Compose 数据卷和部署状态已删除"
+    else
+        ok "Sakura AI 已卸载；Docker 数据卷和部署状态已保留"
+    fi
+    info "项目源码/脚本目录未删除，可手动检查后移除: $UPDATER_PROJECT_ROOT"
 }
 
 do_down() {
@@ -1399,7 +1855,7 @@ do_start() {
     # If a build is already running, attach to it
     if is_running; then
         local pid
-        pid=$(cat "$PID_FILE")
+        pid=$(runner_read_pid)
         warn "构建进程已在运行 (PID: $pid)"
         echo ""
         info "附加到日志 (Ctrl+C 退出查看，不会中断构建)..."
@@ -1408,6 +1864,11 @@ do_start() {
         tail -f "$BUILD_LOG" || true
         trap - INT
         exit 0
+    fi
+    if runner_pid_is_live; then
+        fail "build.pid refers to a live process whose runner identity cannot be verified"
+        fail "refusing to start a second deployment runner; inspect PID $(runner_read_pid) manually"
+        exit 1
     fi
 
     # If previous run completed successfully, do a clean start
@@ -1438,6 +1899,7 @@ set -euo pipefail
 export _START_SH_SOURCED=1
 cd "${abs_script_dir}"
 source "${abs_script_dir}/start.sh"
+trap 'clear_runner_identity' EXIT
 export prod="${prod}"
 build_runner "${rebuild}" "${prod}"
 RUNNER_EOF
@@ -1448,7 +1910,14 @@ RUNNER_EOF
     #   nohup  → ignore SIGHUP when SSH disconnects
     setsid nohup bash "$runner_script" >> "$BUILD_LOG" 2>&1 &
     local bg_pid=$!
-    echo "$bg_pid" > "$PID_FILE"
+    echo "$bg_pid" > "$(runner_pid_file_path)"
+    if ! runner_write_identity "$bg_pid" "$runner_script"; then
+        fail "后台构建进程身份记录失败；拒绝留下不可验证的 runner"
+        kill -TERM -- -"$bg_pid" 2>/dev/null || true
+        kill -TERM "$bg_pid" 2>/dev/null || true
+        clear_runner_identity
+        return 1
+    fi
 
     disown "$bg_pid" 2>/dev/null || true
 
@@ -1470,6 +1939,12 @@ RUNNER_EOF
 }
 
 main() {
+    if [[ "${1:-}" == "uninstall" ]]; then
+        shift
+        cmd_uninstall "$@"
+        exit $?
+    fi
+
     # updater 子命令（位置参数，优先于 flag 解析）
     if [[ "${1:-}" == "updater" ]]; then
         shift
@@ -1503,7 +1978,8 @@ main() {
                 echo "  --ps        查看服务容器状态"
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
-                echo "  updater [action]  管理 host updater daemon（生产 install/start 需 root；action 默认 status）"
+                echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 删除数据卷"
+                echo "  updater [action]  管理 host updater daemon（含 reinstall/uninstall；生产操作需 root）"
                 echo ""
                 echo "断线续跑:"
                 echo "  构建过程在后台运行，SSH 断开不会中断。"

@@ -85,6 +85,46 @@ def test_health_returns_envelope(tmp_path):
     assert r.json()["data"]["ok"] is True
 
 
+def test_lifecycle_gate_endpoints_delegate_to_orchestrator(tmp_path):
+    class _Orchestrator:
+        async def prepare_stop(self):
+            return {"prepared": True}
+
+        async def cancel_stop(self):
+            return {"prepared": False}
+
+    client = TestClient(
+        create_app(str(tmp_path / "update-state.json"), orchestrator=_Orchestrator())
+    )
+    prepared = client.post("/v1/lifecycle/prepare-stop")
+    cancelled = client.post("/v1/lifecycle/cancel-stop")
+
+    assert prepared.status_code == 200
+    assert prepared.json()["data"] == {"prepared": True}
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"] == {"prepared": False}
+
+
+def test_lifecycle_prepare_stop_maps_active_job_to_conflict(tmp_path):
+    class _Conflict(RuntimeError):
+        def __init__(self):
+            self.job_id = "upd_active"
+
+    _Conflict.__name__ = "UpdateInProgressError"
+
+    class _Orchestrator:
+        async def prepare_stop(self):
+            raise _Conflict()
+
+    client = TestClient(
+        create_app(str(tmp_path / "update-state.json"), orchestrator=_Orchestrator())
+    )
+    response = client.post("/v1/lifecycle/prepare-stop")
+
+    assert response.status_code == 409
+    assert response.json() == {"error": "update_in_progress", "job_id": "upd_active"}
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="UDS is POSIX-only")
 @pytest.mark.asyncio
 async def test_serve_over_prebound_uds(tmp_path):
