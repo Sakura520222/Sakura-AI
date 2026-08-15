@@ -98,6 +98,8 @@ def _action_error(exc: Exception) -> JSONResponse:
             "update_in_progress",
             **({"job_id": details.pop("job_id")} if "job_id" in details else {}),
         )
+    if "maintenance" in name:
+        return _error_response(503, "updater_maintenance")
     if "targetnotfound" in name or name in {
         "releasenotfound",
         "releasenotfounderror",
@@ -285,6 +287,30 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
                 if target is not None:
                     data.setdefault("target", target)
             return envelope(data, status_code=202)
+        except Exception as exc:
+            return _action_error(exc)
+
+    @app.post("/v1/lifecycle/prepare-stop")
+    async def prepare_stop() -> JSONResponse:
+        """Atomically close update submission before host lifecycle changes."""
+
+        orchestrator_value = _orchestrator_or_error()
+        if isinstance(orchestrator_value, JSONResponse):
+            return orchestrator_value
+        try:
+            return envelope(_as_data(await orchestrator_value.prepare_stop()))
+        except Exception as exc:
+            return _action_error(exc)
+
+    @app.post("/v1/lifecycle/cancel-stop")
+    async def cancel_stop() -> JSONResponse:
+        """Undo a prepared stop if the host lifecycle operation aborts."""
+
+        orchestrator_value = _orchestrator_or_error()
+        if isinstance(orchestrator_value, JSONResponse):
+            return orchestrator_value
+        try:
+            return envelope(_as_data(await orchestrator_value.cancel_stop()))
         except Exception as exc:
             return _action_error(exc)
 
