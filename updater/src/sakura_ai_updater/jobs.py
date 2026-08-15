@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from sakura_ai_updater import PROTOCOL_VERSION
-from sakura_ai_updater.deployment import DeploymentStateProvider
+from sakura_ai_updater.deployment import DeploymentError, DeploymentStateProvider
 from sakura_ai_updater.job_logs import JobLogStore
 from sakura_ai_updater.registry import (
     DevelopmentTarget,
@@ -301,6 +301,35 @@ class JobOrchestrator:
         usage = await asyncio.to_thread(shutil.disk_usage, directory)
         return usage.free >= self.disk_space_threshold, usage.free
 
+    async def _current_state(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Read running image identity as a structured preflight gate.
+
+        Deployment identity failures are expected fail-closed readiness results,
+        not updater protocol crashes. This keeps the IPC response typed and
+        actionable instead of turning a local Docker metadata mismatch into an
+        opaque HTTP 500/Backend 502.
+        """
+
+        state_method = getattr(self.deployment, "current_state", None)
+        if state_method is None:
+            return {}, self._check("current_image_identity_valid", True)
+        try:
+            value = state_method()
+            state = await value if inspect.isawaitable(value) else value
+        except DeploymentError as exc:
+            return {}, self._check(
+                "current_image_identity_valid",
+                False,
+                str(exc),
+            )
+        if not isinstance(state, dict):
+            return {}, self._check(
+                "current_image_identity_valid",
+                False,
+                "current deployment state is malformed",
+            )
+        return state, self._check("current_image_identity_valid", True)
+
     async def preflight(
         self,
         target_version: str | dict[str, Any],
@@ -325,11 +354,8 @@ class JobOrchestrator:
                 self._check("target_identity_valid", True),
                 self._check("target_channel_head", True),
             ]
-            current_state = {}
-            state_method = getattr(self.deployment, "current_state", None)
-            if state_method is not None:
-                value = state_method()
-                current_state = await value if inspect.isawaitable(value) else value
+            current_state, identity_check = await self._current_state()
+            checks.append(identity_check)
             current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
             current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
             same_channel = current_channel == "development"
@@ -395,11 +421,7 @@ class JobOrchestrator:
             current_version = await self.deployment.resolve_current_version()
             min_version = _value(manifest, "min_upgrade_from", "0.0.0")
             mode = self.deployment.read_deploy_mode()
-            current_state = {}
-            state_method = getattr(self.deployment, "current_state", None)
-            if state_method is not None:
-                state_value = state_method()
-                current_state = await state_value if inspect.isawaitable(state_value) else state_value
+            current_state, identity_check = await self._current_state()
             current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
             current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
             requires_confirmation = current_channel != "stable"
@@ -412,6 +434,7 @@ class JobOrchestrator:
             checks: list[dict[str, Any]] = [
                 self._check("manifest_found", True),
                 self._check("manifest_valid", True),
+                identity_check,
                 self._check("deployment_mode_image", mode == "image", f"mode={mode!r}"),
                 self._check(
                     "protocol_compatible",
@@ -770,6 +793,32 @@ class JobOrchestrator:
             else:
                 await self.adapter.health_check(job.target_version)
             self._transition(job, "success", "complete")
+            completed_checks = [
+                {
+                    **item,
+                    "passed": False,
+                    "detail": "target digest is now running",
+                }
+                if item.get("name") in {"target_newer", "already_current"}
+                else dict(item)
+                for item in result["checks"]
+            ]
+            self._remember_readiness(
+                can_update=False,
+                checks=completed_checks,
+                target_version=job.target_version or "",
+                target_image=job.target_image or "",
+                channel=job.target_channel,
+                target_extra={
+                    key: value
+                    for key, value in {
+                        "revision": job.target_revision,
+                        "tag": job.target_tag,
+                        "digest": job.target_digest,
+                    }.items()
+                    if value is not None
+                },
+            )
             self._log(job, "update completed", step="complete")
             self._clear_active_gate(job)
         except asyncio.CancelledError:
