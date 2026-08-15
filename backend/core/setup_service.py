@@ -246,6 +246,8 @@ class SetupService:
         与旧版一致以兼容现有前端：{success, message, models, provider,
         default_model, context_window_k}。
         """
+        # 去除首尾空白或换行
+        api_key = api_key.strip()
         if not api_key:
             return {"success": False, "message": "API Key 不能为空"}
 
@@ -304,7 +306,13 @@ class SetupService:
 
             if isinstance(e, AIError):
                 if e.category.value == "auth_invalid":
-                    return {"success": False, "message": "API Key 无效"}
+                    return {
+                        "success": False,
+                        "message": (
+                            "API 鉴权失败：上游拒绝了当前凭证，请检查 API Key 是否过期、"
+                            "令牌权限/渠道是否可用，以及 API Base URL 是否正确"
+                        ),
+                    }
                 if e.category.value == "network":
                     return {
                         "success": False,
