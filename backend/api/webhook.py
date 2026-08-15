@@ -1581,7 +1581,7 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
         action = issue_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "edited", "reopened", "closed", "deleted"]
+        supported_actions = ["opened", "reopened", "closed", "deleted"]
         if action not in supported_actions:
             logger.info(f"忽略 Issue 动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
@@ -1593,15 +1593,6 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
             return JSONResponse(
                 content={"status": "ignored", "reason": "bot self-event"}
             )
-
-        # 过滤 Bot 触发的 edited 事件（如自动改写标题）
-        if action == "edited" and bot_username:
-            sender = payload.get("sender", {}).get("login", "")
-            if sender == bot_username:
-                logger.info("跳过 Bot 触发的 Issue edited 事件")
-                return JSONResponse(
-                    content={"status": "ignored", "reason": "bot edited event"}
-                )
 
         # deleted 事件：清理数据库记录和向量索引 / deleted event: clean up DB and vector index
         if action == "deleted":
