@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from sakura_ai_updater.adapters.image import HealthCheckVersionMismatch, ImageAdapter
+from sakura_ai_updater.deployment import DeploymentError
 from sakura_ai_updater.jobs import JobOrchestrator
 from sakura_ai_updater.state import load_state
 
@@ -131,6 +132,11 @@ class _UnknownChannelDeployment(_Deployment):
         return {}
 
 
+class _InvalidImageIdentityDeployment(_Deployment):
+    async def current_state(self):
+        raise DeploymentError("running image has no matching repository digest")
+
+
 @pytest.mark.asyncio
 async def test_same_development_digest_is_not_updateable(monkeypatch, tmp_path):
     async def verify(self, target):
@@ -146,6 +152,34 @@ async def test_same_development_digest_is_not_updateable(monkeypatch, tmp_path):
     ).preflight(_target())
     assert result["can_update"] is False
     assert any(item["name"] == "target_newer" and not item["passed"] for item in result["checks"])
+
+
+@pytest.mark.asyncio
+async def test_deployment_identity_error_is_a_failed_check_not_protocol_error(
+    monkeypatch, tmp_path
+):
+    async def verify(self, target):
+        return target
+
+    monkeypatch.setattr("sakura_ai_updater.jobs.RegistryClient.verify_target", verify)
+    result = await JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        object(),
+        _InvalidImageIdentityDeployment(),
+        disk_space_threshold=1,
+    ).preflight(_target(), confirm_channel_switch=True)
+
+    identity = next(
+        item for item in result["checks"]
+        if item["name"] == "current_image_identity_valid"
+    )
+    assert result["can_update"] is False
+    assert identity == {
+        "name": "current_image_identity_valid",
+        "passed": False,
+        "detail": "running image has no matching repository digest",
+    }
 
 
 @pytest.mark.asyncio

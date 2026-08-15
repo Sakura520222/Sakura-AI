@@ -86,6 +86,7 @@ def _make_backend(tmp_path: Path, **kwargs) -> DaemonBackend:
         "state_dir": str(tmp_path / "state"),
         "socket_path": str(tmp_path / "updater.sock"),
         "binary_path": str(tmp_path / "sakura-ai-updater"),
+        "run_dir": str(tmp_path / "run"),
         "startup_timeout": 0.2,
         "stop_timeout": 0.2,
         "poll_interval": 0.01,
@@ -1269,6 +1270,7 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     gid_idx = argv.index("--socket-gid")
     assert argv[gid_idx + 1] == str(daemon_mod.DEFAULT_GID)
     assert popen_kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert popen_kwargs["cwd"] == os.path.abspath(os.sep)
 
 
 def test_start_dev_mode_does_not_force_pyinstaller_reset(tmp_path, monkeypatch):
@@ -1290,3 +1292,4 @@ def test_start_dev_mode_does_not_force_pyinstaller_reset(tmp_path, monkeypatch):
     backend.start()
 
     assert "PYINSTALLER_RESET_ENVIRONMENT" not in popen_kwargs["env"]
+    assert popen_kwargs["cwd"] == os.path.abspath(os.sep)

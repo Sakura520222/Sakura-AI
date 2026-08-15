@@ -290,8 +290,46 @@ async def test_pinned_digest_must_match_running_manifest(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    with pytest.raises(DeploymentError, match="does not match pinned"):
+    with pytest.raises(DeploymentError, match="do not match pinned"):
         await DeploymentStateProvider(str(env)).capture_from_digest()
+
+
+@pytest.mark.asyncio
+async def test_pinned_digest_does_not_require_docker_to_retain_source_tag(
+    tmp_path, monkeypatch
+):
+    """Docker may expose only repository@digest after pulling tag@digest."""
+
+    digest = "sha256:" + "a" * 64
+    image_id = "sha256:" + "b" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE=ghcr.io/example/app:dev-build@{digest}\n",
+        encoding="utf-8",
+    )
+
+    async def fake_exec(*argv, **kwargs):
+        command = tuple(argv)
+        if command == ("docker", "inspect", "--format={{.Image}}", "sakura-ai"):
+            return _Process(image_id.encode() + b"\n")
+        assert command == (
+            "docker",
+            "image",
+            "inspect",
+            "--format={{json .}}",
+            image_id,
+        )
+        return _Process(
+            json.dumps(
+                {
+                    "RepoTags": [f"ghcr.io/example/app@{digest}"],
+                    "RepoDigests": [f"ghcr.io/example/app@{digest}"],
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert await DeploymentStateProvider(str(env)).capture_from_digest() == digest
 
 
 def test_select_registry_digest_ignores_other_repository_entries():
