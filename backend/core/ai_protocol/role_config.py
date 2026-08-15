@@ -319,7 +319,8 @@ def _build_candidate_from_account(
     return ResolvedModel(
         provider=decl,
         model=metadata,
-        credential=account.api_key,
+        # 去除首尾空白或换行
+        credential=(account.api_key or "").strip(),
         endpoint=endpoint,
         protocol=family,
         account_id=str(account.id) if getattr(account, "id", None) else None,
