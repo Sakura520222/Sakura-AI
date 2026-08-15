@@ -13,7 +13,9 @@
 #   ./start.sh --stop         # 停止正在进行的构建
 #   ./start.sh --ps           # 查看服务容器状态
 #   ./start.sh --down         # 停止服务
-#   ./start.sh updater [action]  # 管理 host updater daemon（install/start/stop/status）
+#   ./start.sh uninstall      # 卸载服务（默认保留 Docker 数据卷）
+#   ./start.sh uninstall --purge  # 同时删除 Docker 数据卷和 .deploy 状态
+#   ./start.sh updater [action]  # 管理 host updater daemon（含 reinstall/uninstall）
 #   ./start.sh --help         # 显示帮助
 
 set -euo pipefail
@@ -30,7 +32,7 @@ COMPOSE_PROJECT=""
 DEFAULT_PROD_COMPOSE_PROJECT="sakura-ai"
 DEPLOY_DIR=".deploy"
 BUILD_LOG="$DEPLOY_DIR/build.log"
-PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / start / health / done
+PHASE_FILE="$DEPLOY_DIR/phase"         # 当前阶段: preflight / build / pip / pull / start / health / done
 PHASE_RESULT="$DEPLOY_DIR/phase_result" # 上一阶段结果: ok / fail
 PID_FILE="$DEPLOY_DIR/build.pid"
 HASH_FILE="$DEPLOY_DIR/requirements.hash"
@@ -78,6 +80,21 @@ wait_for_pid() {
     echo ""
     wait "$pid"
     return $?
+}
+
+compose_pull_with_native_progress() {
+    local compose_help=""
+    # The deployment runner is detached, so Compose would normally downgrade to
+    # noisy plain layer logs. Force its native TTY renderer; tail/--attach passes
+    # the control stream to the administrator's terminal while the pull itself
+    # remains owned by the background runner after Ctrl+C or SSH disconnect.
+    compose_help=$(docker compose --help 2>/dev/null || true)
+    if [[ "$compose_help" == *--progress* ]]; then
+        $COMPOSE --ansi always --progress tty pull
+    else
+        warn "当前 Docker Compose 不支持原生 TTY 进度条，回退到普通拉取输出"
+        $COMPOSE pull
+    fi
 }
 
 # ============================================================
@@ -344,6 +361,56 @@ updater_socket_health_payload() {
         --unix-socket "$UPDATER_SOCKET_PATH" \
         --header 'Accept: application/json' \
         http://localhost/v1/health
+}
+
+updater_socket_status_payload() {
+    curl --fail --silent --show-error \
+        --connect-timeout 2 --max-time 5 \
+        --unix-socket "$UPDATER_SOCKET_PATH" \
+        --header 'Accept: application/json' \
+        http://localhost/v1/status
+}
+
+updater_require_root() {
+    local uid
+    uid=$(updater_current_uid) || return 1
+    if [[ "$uid" != "0" ]]; then
+        fail "updater lifecycle operation requires root" >&2
+        return 1
+    fi
+}
+
+updater_deployment_is_running() {
+    local pid_file="$PID_FILE" pid
+    if [[ "$pid_file" != /* ]]; then
+        pid_file="$UPDATER_PROJECT_ROOT/$pid_file"
+    fi
+    [[ -f "$pid_file" ]] || return 1
+    pid=$(cat "$pid_file" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+updater_require_idle_deployment() {
+    if updater_deployment_is_running; then
+        fail "deployment is still running in the background; updater lifecycle changes are blocked" >&2
+        fail "wait for ./start.sh --status to finish, or explicitly stop it with ./start.sh --stop" >&2
+        return 1
+    fi
+}
+
+updater_require_no_active_job() {
+    local payload
+    if ! updater_socket_health_payload >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! payload=$(updater_socket_status_payload 2>/dev/null); then
+        fail "updater is live but its job state cannot be inspected; refusing lifecycle change" >&2
+        return 1
+    fi
+    if [[ "$payload" =~ \"has_active_job\"[[:space:]]*:[[:space:]]*true ]]; then
+        fail "an updater job is active; wait for it to finish before reinstalling or uninstalling" >&2
+        return 1
+    fi
 }
 
 resolve_running_image_version() {
@@ -879,6 +946,83 @@ cmd_updater_install() {
     fi
 }
 
+updater_existing_state_dir_is_safe() {
+    local state_dir="$UPDATER_STATE_DIR" owner
+    if ! updater_path_exists "$state_dir"; then
+        return 0
+    fi
+    if updater_path_is_symlink "$state_dir" || [[ ! -d "$state_dir" ]]; then
+        fail "refusing unsafe updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if ! owner=$(updater_directory_owner_uid "$state_dir") || [[ "$owner" != "0" ]]; then
+        fail "refusing non-root updater state directory: $state_dir" >&2
+        return 1
+    fi
+    if ! updater_directory_is_safe "$state_dir" 0; then
+        fail "refusing group/other-writable updater state directory: $state_dir" >&2
+        return 1
+    fi
+}
+
+stop_verified_updater() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    if updater_binary_is_safe "$binary"; then
+        updater_backend stop \
+            --state-dir "$UPDATER_STATE_DIR" \
+            --socket-path "$UPDATER_SOCKET_PATH" || return $?
+    elif updater_path_exists "$binary"; then
+        fail "refusing to execute unsafe updater binary while stopping: $binary" >&2
+        return 126
+    fi
+    if updater_socket_health_payload >/dev/null 2>&1; then
+        fail "updater socket is still live after stop; refusing to replace or remove files" >&2
+        fail "inspect the verified listener with: sudo ss -xlpn | grep -F '$UPDATER_SOCKET_PATH'" >&2
+        return 1
+    fi
+}
+
+cmd_updater_reinstall() {
+    updater_require_root || return $?
+    updater_require_idle_deployment || return $?
+    updater_require_no_active_job || return $?
+    stop_verified_updater || return $?
+    cmd_updater_install || return $?
+    ensure_updater_running || return $?
+    ok "updater 已重新安装并启动"
+    updater_backend status \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH"
+}
+
+cmd_updater_uninstall() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    updater_require_root || return $?
+    updater_require_idle_deployment || return $?
+    updater_require_no_active_job || return $?
+    updater_existing_state_dir_is_safe || return $?
+    if [[ "$binary" != "$UPDATER_STATE_DIR/sakura-ai-updater" ]]; then
+        fail "refusing unexpected updater binary path during uninstall: $binary" >&2
+        return 1
+    fi
+    stop_verified_updater || return $?
+
+    # Only exact, updater-owned paths under the verified state directory are removed.
+    rm -f -- \
+        "$binary" \
+        "$UPDATER_STATE_DIR/daemon-meta.json" \
+        "$UPDATER_STATE_DIR/updater.log" \
+        "$UPDATER_STATE_DIR/updater.lock" \
+        "$UPDATER_STATE_DIR/update-state.json" \
+        "$UPDATER_STATE_DIR/install.lock"
+    rm -rf -- "$UPDATER_STATE_DIR/tmp"
+    rmdir -- "$UPDATER_STATE_DIR" 2>/dev/null || true
+    if [[ -S "$UPDATER_SOCKET_PATH" || -L "$UPDATER_SOCKET_PATH" ]]; then
+        rm -f -- "$UPDATER_SOCKET_PATH"
+    fi
+    ok "updater 已卸载"
+}
+
 ensure_updater_running() {
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
@@ -947,6 +1091,12 @@ cmd_updater() {
         install)
             cmd_updater_install "$@"
             ;;
+        reinstall)
+            cmd_updater_reinstall "$@"
+            ;;
+        uninstall)
+            cmd_updater_uninstall "$@"
+            ;;
         start)
             ensure_updater_running "$@"
             ;;
@@ -957,7 +1107,7 @@ cmd_updater() {
             ;;
         *)
             fail "未知 updater 子命令: $action"
-            echo "用法: ./start.sh updater [install|start|stop|status|is-running]" >&2
+            echo "用法: ./start.sh updater [install|reinstall|uninstall|start|stop|status|is-running]" >&2
             return 1
             ;;
     esac
@@ -1206,11 +1356,17 @@ build_runner() {
             info "--rebuild 生产模式：重新拉取最新镜像"
         fi
         # 不写本地哈希：镜像版本由 GHCR 发布管理，本地 requirements/Dockerfile 哈希无意义
-        set_phase "start"
         info "停止现有容器..."
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
-        info "启动服务（拉取最新镜像）..."
-        if $COMPOSE up -d --pull always >> "$BUILD_LOG" 2>&1; then
+        set_phase "pull"
+        info "拉取最新镜像（Docker 原生进度条）..."
+        if ! compose_pull_with_native_progress; then
+            set_phase "pull" "fail"
+            return 1
+        fi
+        set_phase "start"
+        info "启动服务..."
+        if $COMPOSE up -d --pull never >> "$BUILD_LOG" 2>&1; then
             ok "服务已启动"
         else
             set_phase "start" "fail"
@@ -1279,6 +1435,7 @@ show_menu() {
     echo -e "  ${BOLD}[7]${RESET} 停止服务"
     echo -e "  ${BOLD}[8]${RESET} 生产镜像部署 (--prod)"
     echo -e "  ${BOLD}[9]${RESET} Updater daemon 管理"
+    echo -e "  ${BOLD}[10]${RESET} 卸载 Sakura AI"
     echo -e "  ${BOLD}[0]${RESET} 退出"
     echo ""
 
@@ -1294,13 +1451,14 @@ show_menu() {
         7) do_down        ;;
         8) do_start false true ;;
         9) do_updater_menu ;;
+        10) cmd_uninstall ;;
         0) info "已退出" ; exit 0 ;;
         *) warn "无效选项: $choice" ; exit 1 ;;
     esac
 }
 
 # Updater daemon 管理子菜单（host updater CLI 的交互入口）
-# 复用 cmd_updater：install/start/stop/status 对应底层同名子命令。
+# 复用 cmd_updater：包括 install/reinstall/uninstall 与 daemon 生命周期操作。
 do_updater_menu() {
     echo ""
     echo -e "${BOLD}Updater daemon 管理${RESET}"
@@ -1310,6 +1468,8 @@ do_updater_menu() {
     echo -e "  ${BOLD}[2]${RESET} 启动 updater daemon"
     echo -e "  ${BOLD}[3]${RESET} 停止 updater daemon"
     echo -e "  ${BOLD}[4]${RESET} 查看 updater daemon 状态"
+    echo -e "  ${BOLD}[5]${RESET} 重新安装并启动 updater"
+    echo -e "  ${BOLD}[6]${RESET} 卸载 updater"
     echo -e "  ${BOLD}[0]${RESET} 返回"
     echo ""
 
@@ -1320,6 +1480,8 @@ do_updater_menu() {
         2) cmd_updater start  ;;
         3) cmd_updater stop   ;;
         4) cmd_updater status ;;
+        5) cmd_updater reinstall ;;
+        6) cmd_updater uninstall ;;
         0) return 0 ;;
         *) warn "无效选项: $choice" ; return 1 ;;
     esac
@@ -1337,6 +1499,124 @@ do_ps() {
     fi
     echo ""
     $compose_cmd ps
+}
+
+confirm_sakura_uninstall() {
+    local purge="$1" assume_yes="$2" expected answer
+    if [[ "$assume_yes" == "true" ]]; then
+        return 0
+    fi
+    if [[ ! -t 0 ]]; then
+        fail "uninstall confirmation requires an interactive terminal; pass --yes for automation" >&2
+        return 1
+    fi
+    echo ""
+    warn "即将停止并删除 Sakura AI 容器、网络和 Host Updater。"
+    if [[ "$purge" == "true" ]]; then
+        warn "--purge 还会永久删除 Compose 数据卷（包括 MySQL/Redis）和 .deploy 状态。"
+        expected="PURGE SAKURA-AI"
+    else
+        info "Docker 数据卷和 .deploy/deployment.env 将保留，可供以后重新部署。"
+        expected="UNINSTALL"
+    fi
+    read -r -p "输入 '$expected' 继续: " answer
+    if [[ "$answer" != "$expected" ]]; then
+        fail "确认内容不匹配，已取消卸载" >&2
+        return 1
+    fi
+}
+
+stop_deployment_for_uninstall() {
+    local pid_file="$PID_FILE" pid elapsed=0
+    if [[ "$pid_file" != /* ]]; then
+        pid_file="$UPDATER_PROJECT_ROOT/$pid_file"
+    fi
+    if ! updater_deployment_is_running; then
+        rm -f -- "$pid_file"
+        return 0
+    fi
+    pid=$(cat "$pid_file")
+    warn "正在停止后台部署进程 (PID: $pid)..."
+    kill "$pid" 2>/dev/null || true
+    kill -- -"$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && [[ "$elapsed" -lt 10 ]]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        kill -9 -- -"$pid" 2>/dev/null || true
+    fi
+    rm -f -- "$pid_file"
+}
+
+sakura_compose_uninstall() {
+    local purge="$1"
+    local -a compose_cmd=(docker compose)
+    command -v docker >/dev/null 2>&1 || {
+        fail "Docker 未安装，无法卸载 Compose 服务" >&2
+        return 1
+    }
+    docker compose version >/dev/null 2>&1 || {
+        fail "Docker Compose V2 未安装" >&2
+        return 1
+    }
+    select_compose_from_deployment_mode || return $?
+    if [[ -f "$UPDATER_DEPLOYMENT_ENV_FILE" ]]; then
+        compose_cmd+=(--env-file "$UPDATER_DEPLOYMENT_ENV_FILE")
+    fi
+    if [[ -n "$COMPOSE_PROJECT" ]]; then
+        compose_cmd+=(--project-name "$COMPOSE_PROJECT")
+    fi
+    compose_cmd+=(-f "$COMPOSE_FILE" down --remove-orphans)
+    if [[ "$purge" == "true" ]]; then
+        compose_cmd+=(--volumes)
+    fi
+    "${compose_cmd[@]}"
+}
+
+purge_sakura_deployment_state() {
+    local target="$UPDATER_PROJECT_ROOT/$DEPLOY_DIR"
+    local expected="$UPDATER_PROJECT_ROOT/.deploy"
+    if [[ "$target" != "$expected" || "$target" == "/" || "$target" == "$UPDATER_PROJECT_ROOT" ]]; then
+        fail "refusing unsafe deployment state target: $target" >&2
+        return 1
+    fi
+    if updater_path_is_symlink "$target"; then
+        fail "refusing symlinked deployment state target: $target" >&2
+        return 1
+    fi
+    rm -rf -- "$target"
+}
+
+cmd_uninstall() {
+    local purge=false assume_yes=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --purge) purge=true ;;
+            --yes) assume_yes=true ;;
+            *)
+                fail "未知卸载参数: $arg" >&2
+                echo "用法: ./start.sh uninstall [--purge] [--yes]" >&2
+                return 1
+                ;;
+        esac
+    done
+    updater_require_root || return $?
+    confirm_sakura_uninstall "$purge" "$assume_yes" || return $?
+    stop_deployment_for_uninstall || return $?
+    updater_require_no_active_job || return $?
+
+    info "正在删除 Sakura AI Compose 服务..."
+    sakura_compose_uninstall "$purge" || return $?
+    cmd_updater_uninstall || return $?
+    if [[ "$purge" == "true" ]]; then
+        purge_sakura_deployment_state || return $?
+        ok "Sakura AI 已完全卸载；Compose 数据卷和部署状态已删除"
+    else
+        ok "Sakura AI 已卸载；Docker 数据卷和部署状态已保留"
+    fi
+    info "项目源码/脚本目录未删除，可手动检查后移除: $UPDATER_PROJECT_ROOT"
 }
 
 do_down() {
@@ -1470,6 +1750,12 @@ RUNNER_EOF
 }
 
 main() {
+    if [[ "${1:-}" == "uninstall" ]]; then
+        shift
+        cmd_uninstall "$@"
+        exit $?
+    fi
+
     # updater 子命令（位置参数，优先于 flag 解析）
     if [[ "${1:-}" == "updater" ]]; then
         shift
@@ -1503,7 +1789,8 @@ main() {
                 echo "  --ps        查看服务容器状态"
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
-                echo "  updater [action]  管理 host updater daemon（生产 install/start 需 root；action 默认 status）"
+                echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 删除数据卷"
+                echo "  updater [action]  管理 host updater daemon（含 reinstall/uninstall；生产操作需 root）"
                 echo ""
                 echo "断线续跑:"
                 echo "  构建过程在后台运行，SSH 断开不会中断。"
