@@ -171,8 +171,6 @@ sudo ./start.sh --prod
 
 `sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
 
-> **MySQL 内存占用：** 全量部署的 MySQL 8.4 内置低内存调优（关闭 performance_schema 与 X Plugin、64MB InnoDB 缓冲池、40 连接上限），空闲内存约 200MB，而默认配置约 500MB。既有部署升级时重新下载 `docker/docker-compose.prod.yml` 并重跑 `sudo ./start.sh --prod` 即可应用（只重建 mysql 容器，数据卷保留）。
-
 > **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
 >
 > ```bash
