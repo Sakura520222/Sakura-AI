@@ -39,7 +39,7 @@ async def probe_account(
     返回结构：{success, message, models, provider, default_model, context_window_k}。
     与 setup_service.test_ai_api 对齐，便于前端复用。
     """
-    # 用户经常从网页/聊天工具复制令牌，首尾空白或换行不应参与鉴权。
+    # 去除首尾空白或换行
     api_key = api_key.strip()
 
     if not api_key and provider_id not in (
