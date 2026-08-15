@@ -42,6 +42,8 @@ sudo ./start.sh --prod
 
 推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名，避免配置文件所在的 `docker/` 目录把网络和持久化卷错误命名为通用的 `docker_*`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
 
+> **MySQL 低内存调优：** compose 为 MySQL 8.4 显式设置了 `performance-schema=OFF`、`innodb-buffer-pool-size=64M`、`innodb-redo-log-capacity=32M`、`max-connections=40` 并关闭 X Plugin，空闲内存约 200MB（默认配置约 500MB）。代价是 `sys`/`performance_schema` 监控表不可用；业务数据量增长到数十 MB 以上时可酌情调大缓冲池。应用侧连接池上限为 30（`pool_size=10` + `max_overflow=20`，见 `backend/models/database.py`），40 连接仍有约 9 个余量。既有部署v3.1.1重新下载 `docker-compose.prod.yml` 后重跑 `sudo ./start.sh --prod` 即可生效，`up -d` 只重建 mysql 容器，`mysql_data` 数据卷保留。
+
 **macOS（仅容器，不包含 Host Updater）**：
 
 ```bash
