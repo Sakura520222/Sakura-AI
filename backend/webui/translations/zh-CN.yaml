@@ -1479,6 +1479,7 @@ version_manager:
   update_progress_failed_title: "更新未完成"
   update_progress_health_mismatch: "更新任务已完成，但健康检查未确认目标版本；页面不会自动刷新。"
   update_progress_poll_failed: "无法继续跟踪更新任务：{error}"
+  update_progress_poll_deferred: "暂时无法确认更新结果：{error}。任务信息已保留，请稍后刷新页面继续检查。"
   unknown_state: "未知"
   empty_job_response: "更新任务响应为空"
   missing_job_id: "更新响应缺少任务 ID"
