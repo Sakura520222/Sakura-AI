@@ -116,6 +116,12 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
     assert "if (isTransientPollError(error))" in template
     assert "continue;" in template
 
+    timeout = template.index("transientFor >= POLL_RECOVERY_TIMEOUT_MS")
+    legacy = template.index("!hasExactDigestTarget(progressTarget)", timeout)
+    preserve = template.index("markProgressError(message, {preserveJob: true});", legacy)
+    bounded_failure = template.index("markProgressError(message);", preserve)
+    assert timeout < legacy < preserve < bounded_failure
+
     permanent_error = template.index("const message = vmFormat(VM_I18N.progressPollFailed")
     terminal = template.index("markProgressError(message);", permanent_error)
     stale = template.index("error.status === 404", terminal)
@@ -155,7 +161,8 @@ def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():
     start = template.index("function markProgressError(")
     end = template.index("function isTransientPollError(", start)
     function = template[start:end]
-    assert "{allowRetry = false} = {}" in function
+    assert "{allowRetry = false, preserveJob = false} = {}" in function
+    assert "!preserveJob && progressJobId" in function
     assert "updateButton.disabled = !allowRetry" in function
     assert "updateButton.disabled = false" not in function
 

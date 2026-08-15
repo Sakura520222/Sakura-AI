@@ -1479,6 +1479,7 @@ version_manager:
   update_progress_failed_title: "Update did not complete"
   update_progress_health_mismatch: "The update job completed, but the health check did not confirm the target version; the page will not refresh automatically."
   update_progress_poll_failed: "Unable to continue tracking the update job: {error}"
+  update_progress_poll_deferred: "Unable to confirm the update result yet: {error}. The job has been preserved; refresh the page later to continue checking."
   unknown_state: "Unknown"
   empty_job_response: "The update job response was empty"
   missing_job_id: "The update response did not include a job ID"

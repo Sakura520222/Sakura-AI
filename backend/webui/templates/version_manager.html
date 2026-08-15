@@ -359,6 +359,7 @@ const VM_I18N = {
   progressFailedTitle: {{ _("version_manager.update_progress_failed_title") | tojson }},
   progressHealthMismatch: {{ _("version_manager.update_progress_health_mismatch") | tojson }},
   progressPollFailed: {{ _("version_manager.update_progress_poll_failed") | tojson }},
+  progressPollDeferred: {{ _("version_manager.update_progress_poll_deferred") | tojson }},
   unknownState: {{ _("version_manager.unknown_state") | tojson }},
   emptyJobResponse: {{ _("version_manager.empty_job_response") | tojson }},
   missingJobId: {{ _("version_manager.missing_job_id") | tojson }},
@@ -581,8 +582,9 @@ function hasExactDigestTarget(target) {
     && (target.channel !== 'development' || /^[0-9a-f]{40}$/.test(target.revision || '')));
 }
 
-function markProgressError(message, {allowRetry = false} = {}) {
-  if (progressJobId && sessionStorage.getItem(JOB_STORAGE_KEY) === progressJobId) {
+function markProgressError(message, {allowRetry = false, preserveJob = false} = {}) {
+  if (!preserveJob && progressJobId
+      && sessionStorage.getItem(JOB_STORAGE_KEY) === progressJobId) {
     clearPersistedJob();
   }
   progressTerminal = true;
@@ -879,6 +881,15 @@ async function pollJob(jobId) {
             return;
           }
           if (transientFor >= POLL_RECOVERY_TIMEOUT_MS) {
+            if (!hasExactDigestTarget(progressTarget)) {
+              // A job id written by an older page has no target digest. Do not
+              // infer success from the newly running build, and do not discard
+              // the only handle that can recover the authoritative job later.
+              const message = vmFormat(VM_I18N.progressPollDeferred, {error: vmUpdaterError(error)});
+              markProgressError(message, {preserveJob: true});
+              setStatus(message, 'error');
+              return;
+            }
             const message = vmFormat(VM_I18N.progressPollFailed, {error: vmUpdaterError(error)});
             markProgressError(message);
             setStatus(message, 'error');
