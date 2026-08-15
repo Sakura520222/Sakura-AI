@@ -65,6 +65,10 @@ class UpdateInProgressError(UpdateOrchestrationError):
         self.job_id = job_id
 
 
+class UpdaterMaintenanceError(UpdateOrchestrationError):
+    """The daemon is quiesced for a verified lifecycle operation."""
+
+
 class TargetNotFoundError(UpdateOrchestrationError):
     """The requested release/manifest does not exist."""
 
@@ -153,6 +157,7 @@ class JobOrchestrator:
         self.deployment = deployment
         self.disk_space_threshold = disk_space_threshold
         self._lock = asyncio.Lock()
+        self._accepting_updates = True
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._logs = JobLogStore(log_capacity)
         # ``/v1/status`` is intentionally a cheap, synchronous projection.  Keep
@@ -567,6 +572,29 @@ class JobOrchestrator:
             return job
         return None
 
+    async def prepare_stop(self) -> dict[str, bool]:
+        """Atomically reject new jobs after proving that no job is active.
+
+        Lifecycle callers must use this gate before signalling the daemon.  It
+        shares the destructive-update lock, so a submit either commits its
+        durable active job first (and this call fails) or observes maintenance
+        mode before it can commit a new job.
+        """
+
+        async with self._lock:
+            active = self._active_job()
+            if active is not None:
+                raise UpdateInProgressError(active.job_id)
+            self._accepting_updates = False
+            return {"prepared": True}
+
+    async def cancel_stop(self) -> dict[str, bool]:
+        """Re-open submissions when a prepared lifecycle operation aborts."""
+
+        async with self._lock:
+            self._accepting_updates = True
+            return {"prepared": False}
+
     async def submit_update(
         self,
         target_version: str | dict[str, Any] | None = None,
@@ -575,6 +603,8 @@ class JobOrchestrator:
     ) -> str:
         """Validate and enqueue one destructive update task."""
 
+        if not self._accepting_updates:
+            raise UpdaterMaintenanceError("updater is preparing to stop")
         if self._lock.locked():
             active = self._active_job()
             raise UpdateInProgressError(active.job_id if active else "unknown")
@@ -601,6 +631,8 @@ class JobOrchestrator:
         if not preflight["can_update"]:
             raise PreflightFailedError(preflight["checks"], preflight)
         async with self._lock:
+            if not self._accepting_updates:
+                raise UpdaterMaintenanceError("updater is preparing to stop")
             active = self._active_job()
             if active is not None:
                 raise UpdateInProgressError(active.job_id)

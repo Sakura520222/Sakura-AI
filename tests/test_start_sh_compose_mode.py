@@ -104,7 +104,7 @@ updater_backend() {
     printf 'BACKEND:%s\n' "$*"
     return 1
 }
-updater_socket_health_payload() { printf '{}\n'; }
+updater_socket_listener_responds() { return 0; }
 updater_binary_is_safe() { printf 'UNEXPECTED_BINARY_CHECK\n'; return 0; }
 ensure_updater_running
 """

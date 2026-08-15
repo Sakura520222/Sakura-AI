@@ -12,5 +12,5 @@ def test_updater_lifecycle_forwards_host_paths_without_update_commands():
     assert 'UPDATER_SOURCE_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.yml"' in script
     assert 'UPDATER_PROD_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.prod.yml"' in script
     assert '$UPDATER_PROJECT_ROOT/$DEPLOYMENT_ENV_FILE' in script
-    assert "updater_socket_health_payload" in script
+    assert "updater_socket_listener_responds" in script
     assert "refusing duplicate start" in script

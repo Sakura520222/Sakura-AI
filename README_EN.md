@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.1.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.1.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -169,18 +169,22 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` generates the deployment state, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager. macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
+`sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager. macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
 
 > **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
 >
 > ```bash
-> sudo ./start.sh updater stop
-> sudo ./start.sh updater install
-> sudo ./start.sh updater start
-> sudo ./start.sh updater status
+> sudo ./start.sh updater reinstall
 > ```
 >
-> `install` selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not run `install` if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
+> `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops, installs, starts, and reports the new daemon state; if installation fails, it attempts to restore the existing daemon. If an older updater does not support the atomic maintenance gate, the command fails closed and requires the administrator to stop that legacy daemon explicitly first. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
+
+Uninstall preserves Docker data volumes by default. Only explicit `--purge` removes the volumes and `.deploy` state:
+
+```bash
+sudo ./start.sh uninstall          # Preserve data for a later redeployment
+sudo ./start.sh uninstall --purge  # Permanently delete database/cache volumes and deployment state
+```
 
 **Web image only** (bring your own MySQL/Redis):
 
