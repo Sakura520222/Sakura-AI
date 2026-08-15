@@ -193,9 +193,10 @@
 // 只走 Backend proxy；浏览器永远不接触 UDS 或宿主 Docker。
 const CSRF_TOKEN = "{{ csrf_token }}";
 const CURRENT_BUILD_CHANNEL = {{ (version_info.build or {}).channel | tojson }};
-const CURRENT_BUILD_REVISION = {{ (version_info.build or {}).revision | tojson }};
+const CURRENT_BUILD_DIGEST = {{ (version_info.build or {}).digest | tojson }};
 const CURRENT_BUILD_VERSION = {{ version_info.current_version | tojson }};
 const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
+const JOB_TARGET_STORAGE_KEY = 'sakura-ai-update-job-target';
 const POLL_RECOVERY_TIMEOUT_MS = 120000;
 const HEALTH_RECOVERY_DELAY_MS = 5000;
 const recheckButton = document.getElementById('recheck-btn');
@@ -231,10 +232,11 @@ function registryText(value) {
 
 function isCurrentRegistryImage(image) {
   if (!image || image.channel !== CURRENT_BUILD_CHANNEL) return false;
-  if (image.channel === 'development') {
-    return Boolean(image.revision && CURRENT_BUILD_REVISION
-      && image.revision === CURRENT_BUILD_REVISION);
+  if (CURRENT_BUILD_DIGEST) {
+    return Boolean(image.digest && image.digest === CURRENT_BUILD_DIGEST);
   }
+  // Stable version tags are immutable. A development revision can be rebuilt
+  // to a new digest, so leave it selectable when exact digest proof is absent.
   return image.channel === 'stable' && image.version === CURRENT_BUILD_VERSION;
 }
 
@@ -529,9 +531,59 @@ function closeProgressModal() {
   progressPreviousFocus = null;
 }
 
+function normalizedProgressTarget(value) {
+  if (!value || typeof value !== 'object'
+      || typeof value.version !== 'string'
+      || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value.version)) return null;
+  const target = {version: value.version};
+  if (value.channel === 'stable' || value.channel === 'development') {
+    target.channel = value.channel;
+  }
+  if (typeof value.revision === 'string'
+      && /^[0-9a-f]{40}$/.test(value.revision)) target.revision = value.revision;
+  if (typeof value.digest === 'string'
+      && /^sha256:[0-9a-f]{64}$/.test(value.digest)) {
+    target.digest = value.digest;
+  }
+  return target;
+}
+
+function persistJob(jobId, target) {
+  sessionStorage.setItem(JOB_STORAGE_KEY, jobId);
+  const normalized = normalizedProgressTarget(target);
+  if (normalized) {
+    sessionStorage.setItem(JOB_TARGET_STORAGE_KEY, JSON.stringify(normalized));
+  } else {
+    sessionStorage.removeItem(JOB_TARGET_STORAGE_KEY);
+  }
+}
+
+function restoreProgressTarget() {
+  try {
+    return normalizedProgressTarget(JSON.parse(
+      sessionStorage.getItem(JOB_TARGET_STORAGE_KEY) || 'null'
+    ));
+  } catch (_) {
+    sessionStorage.removeItem(JOB_TARGET_STORAGE_KEY);
+    return null;
+  }
+}
+
+function clearPersistedJob() {
+  sessionStorage.removeItem(JOB_STORAGE_KEY);
+  sessionStorage.removeItem(JOB_TARGET_STORAGE_KEY);
+}
+
+function hasExactDigestTarget(target) {
+  return Boolean(target && typeof target === 'object'
+    && (target.channel === 'stable' || target.channel === 'development')
+    && /^sha256:[0-9a-f]{64}$/.test(target.digest || '')
+    && (target.channel !== 'development' || /^[0-9a-f]{40}$/.test(target.revision || '')));
+}
+
 function markProgressError(message, {allowRetry = false} = {}) {
   if (progressJobId && sessionStorage.getItem(JOB_STORAGE_KEY) === progressJobId) {
-    sessionStorage.removeItem(JOB_STORAGE_KEY);
+    clearPersistedJob();
   }
   progressTerminal = true;
   renderProgress({kind: 'error', message});
@@ -741,9 +793,12 @@ async function verifyHealth(expected) {
     const target = typeof expected === 'string' ? {version: expected} : expected;
     const payload = body && body.data ? body.data : body;
     if (!payload || payload.version !== target.version) return false;
+    if (target.digest && (!payload.build || payload.build.digest !== target.digest)) return false;
     if (target.channel === 'stable' || target.channel === 'development') {
       if (!payload.build || payload.build.channel !== target.channel) return false;
-      return target.channel !== 'development' || payload.build.revision === target.revision;
+      if (target.channel === 'development'
+          && payload.build.revision !== target.revision) return false;
+      return true;
     }
     return true;
   } catch (_) { return false; }
@@ -768,8 +823,10 @@ async function pollJob(jobId) {
           progressTarget = job.target_channel ? {
             version: job.target_version,
             channel: job.target_channel,
-            revision: job.target_revision
+            revision: job.target_revision,
+            digest: job.target_digest
           } : job.target_version;
+          persistJob(jobId, progressTarget);
           updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion});
         }
         transientSince = null;
@@ -781,7 +838,7 @@ async function pollJob(jobId) {
           setUpdateProgress(UPDATE_PROGRESS.success);
           const target = progressTarget || job.target_version || progressTargetVersion;
           if (target && await verifyHealth(target)) {
-            sessionStorage.removeItem(JOB_STORAGE_KEY);
+            clearPersistedJob();
             progressTerminal = true;
             setStatus(vmFormat(VM_I18N.updateSuccess, {version: target.version || target}), 'ok');
             renderProgress({kind: 'success', message: VM_I18N.progressRefreshing});
@@ -810,8 +867,9 @@ async function pollJob(jobId) {
           transientSince = transientSince || Date.now();
           const transientFor = Date.now() - transientSince;
           if (transientFor >= HEALTH_RECOVERY_DELAY_MS
-              && progressTarget && await verifyHealth(progressTarget)) {
-            sessionStorage.removeItem(JOB_STORAGE_KEY);
+              && hasExactDigestTarget(progressTarget)
+              && await verifyHealth(progressTarget)) {
+            clearPersistedJob();
             progressTerminal = true;
             setUpdateProgress(UPDATE_PROGRESS.success);
             setStatus(vmFormat(VM_I18N.updateSuccess, {version: progressTargetVersion}), 'ok');
@@ -915,12 +973,12 @@ updateButton.addEventListener('click', async function() {
     const data = body && body.data ? body.data : body;
     if (!data.job_id) throw new Error(VM_I18N.missingJobId);
     progressJobId = data.job_id;
-    sessionStorage.setItem(JOB_STORAGE_KEY, data.job_id);
+    persistJob(data.job_id, progressTarget);
     await pollJob(data.job_id);
   } catch (error) {
     if (error.status === 409 && error.body && error.body.job_id) {
       progressJobId = error.body.job_id;
-      sessionStorage.setItem(JOB_STORAGE_KEY, error.body.job_id);
+      persistJob(error.body.job_id, progressTarget);
       await pollJob(error.body.job_id);
     } else {
       const message = vmFormat(VM_I18N.updateSubmitFailed, {error: (error.body && error.body.error) || error.message});
@@ -933,7 +991,10 @@ updateButton.addEventListener('click', async function() {
 // A page reload after Web container restart resumes the same host job.
 const persistedJobId = sessionStorage.getItem(JOB_STORAGE_KEY);
 if (persistedJobId) {
-  openProgressModal({jobId: persistedJobId});
+  progressTarget = restoreProgressTarget();
+  progressTargetVersion = progressTarget && progressTarget.version
+    ? progressTarget.version : '';
+  openProgressModal({jobId: persistedJobId, targetVersion: progressTargetVersion});
   pollJob(persistedJobId);
 }
 if (CURRENT_BUILD_CHANNEL === 'stable' || CURRENT_BUILD_CHANNEL === 'development') {
