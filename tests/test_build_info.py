@@ -11,12 +11,14 @@ def test_build_info_defaults_to_safe_source_identity(monkeypatch):
         "SAKURA_BUILD_CHANNEL",
         "SAKURA_BUILD_REVISION",
         "SAKURA_BUILD_CREATED",
+        "SAKURA_AI_IMAGE",
     ):
         monkeypatch.delenv(key, raising=False)
     assert get_build_info() == {
         "channel": "source",
         "revision": None,
         "created_at": None,
+        "digest": None,
     }
 
 
@@ -24,10 +26,16 @@ def test_build_info_normalizes_image_identity(monkeypatch):
     monkeypatch.setenv("SAKURA_BUILD_CHANNEL", "development")
     monkeypatch.setenv("SAKURA_BUILD_REVISION", "a" * 40)
     monkeypatch.setenv("SAKURA_BUILD_CREATED", "2026-08-13T04:00:00+08:00")
+    digest = "sha256:" + "b" * 64
+    monkeypatch.setenv(
+        "SAKURA_AI_IMAGE",
+        f"ghcr.io/sakura520222/sakura-ai:dev-build@{digest}",
+    )
     assert get_build_info() == {
         "channel": "development",
         "revision": "a" * 40,
         "created_at": "2026-08-12T20:00:00.000000Z",
+        "digest": digest,
     }
 
 
@@ -35,10 +43,12 @@ def test_build_info_rejects_untrusted_values(monkeypatch):
     monkeypatch.setenv("SAKURA_BUILD_CHANNEL", "edge")
     monkeypatch.setenv("SAKURA_BUILD_REVISION", "short")
     monkeypatch.setenv("SAKURA_BUILD_CREATED", "not-a-timestamp")
+    monkeypatch.setenv("SAKURA_AI_IMAGE", "ghcr.io/example/app:latest")
     assert get_build_info() == {
         "channel": "source",
         "revision": None,
         "created_at": None,
+        "digest": None,
     }
 
 
@@ -47,12 +57,18 @@ async def test_health_preserves_top_level_version_and_exposes_build(monkeypatch)
     monkeypatch.setenv("SAKURA_BUILD_CHANNEL", "stable")
     monkeypatch.setenv("SAKURA_BUILD_REVISION", "c" * 40)
     monkeypatch.setenv("SAKURA_BUILD_CREATED", "2026-08-13T04:00:00Z")
+    digest = "sha256:" + "e" * 64
+    monkeypatch.setenv(
+        "SAKURA_AI_IMAGE",
+        f"ghcr.io/sakura520222/sakura-ai:v3.1.1@{digest}",
+    )
     payload = await health()
     assert payload["version"]
     assert payload["build"] == {
         "channel": "stable",
         "revision": "c" * 40,
         "created_at": "2026-08-13T04:00:00.000000Z",
+        "digest": digest,
     }
 
 
@@ -62,3 +78,17 @@ def test_build_info_rejects_non_rfc3339_created_at(monkeypatch):
     monkeypatch.setenv("SAKURA_BUILD_CREATED", "2026-08-13 04:00:00+00:00")
 
     assert get_build_info()["created_at"] is None
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/sakura520222/sakura-ai@sha256:" + "a" * 64,
+        "ghcr.io/sakura520222/sakura-ai:dev@sha256:short",
+        "ghcr.io/sakura520222/sakura-ai:dev@sha256:" + "A" * 64,
+        "ghcr.io/sakura520222/sakura-ai:dev",
+    ],
+)
+def test_build_info_rejects_unpinned_or_malformed_image_digest(monkeypatch, image):
+    monkeypatch.setenv("SAKURA_AI_IMAGE", image)
+    assert get_build_info()["digest"] is None

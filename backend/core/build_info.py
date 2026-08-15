@@ -3,7 +3,9 @@
 The module deliberately has no dependency on deployment configuration.  In a
 source checkout the environment variables are absent and the returned
 ``channel`` is ``source``; an image build supplies the four ``SAKURA_BUILD_*``
-variables through the Dockerfile.
+variables through the Dockerfile. Image deployments also expose the exact
+``SAKURA_AI_IMAGE`` selected by deployment.env so health consumers can verify
+the running manifest digest rather than inferring identity from a revision.
 """
 
 from __future__ import annotations
@@ -14,6 +16,9 @@ import re
 from backend.core.time_service import format_rfc3339, parse_rfc3339
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+_IMAGE_DIGEST_RE = re.compile(
+    r"^.+:[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$"
+)
 _CHANNELS = {"stable", "development"}
 
 
@@ -24,6 +29,13 @@ def _created(value: str | None) -> str | None:
         return format_rfc3339(parse_rfc3339(value))
     except ValueError:
         return None
+
+
+def _image_digest(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = _IMAGE_DIGEST_RE.fullmatch(value.strip())
+    return match.group("digest") if match is not None else None
 
 
 def get_build_info() -> dict[str, str | None]:
@@ -38,6 +50,7 @@ def get_build_info() -> dict[str, str | None]:
         "channel": channel,
         "revision": revision,
         "created_at": created_at,
+        "digest": _image_digest(os.environ.get("SAKURA_AI_IMAGE")),
     }
 
 

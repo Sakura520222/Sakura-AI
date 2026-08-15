@@ -18,6 +18,8 @@
 
 set -euo pipefail
 
+UPDATER_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ============================================================
 # 配置
 # ============================================================
@@ -191,12 +193,13 @@ init_deployment_env() {
 # Host Updater daemon management
 # ============================================================
 
-UPDATER_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPDATER_STATE_DIR="${UPDATER_STATE_DIR:-$UPDATER_PROJECT_ROOT/$DEPLOY_DIR/updater}"
 UPDATER_BINARY="$UPDATER_STATE_DIR/sakura-ai-updater"
 UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
-UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$DEPLOYMENT_ENV_FILE}"
-UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-backend/__init__.py}"
+UPDATER_SOURCE_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.yml"
+UPDATER_PROD_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.prod.yml"
+UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$UPDATER_PROJECT_ROOT/$DEPLOYMENT_ENV_FILE}"
+UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-$UPDATER_PROJECT_ROOT/backend/__init__.py}"
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
 UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
 
@@ -269,11 +272,11 @@ select_compose_from_deployment_mode() {
 
     case "$mode" in
         image)
-            COMPOSE_FILE="$PROD_COMPOSE_FILE"
+            COMPOSE_FILE="$UPDATER_PROD_COMPOSE_FILE"
             select_production_compose_project "$UPDATER_DEPLOYMENT_ENV_FILE"
             ;;
         source)
-            COMPOSE_FILE="docker/docker-compose.yml"
+            COMPOSE_FILE="$UPDATER_SOURCE_COMPOSE_FILE"
             COMPOSE_PROJECT=""
             ;;
         *)

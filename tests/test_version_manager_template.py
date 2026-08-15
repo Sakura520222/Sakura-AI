@@ -83,7 +83,7 @@ def test_version_manager_has_accessible_monotonic_progress_modal_and_refresh_gat
         assert f"{state}:" in template or f"{state}]" in template
 
     health_check = template.index("await verifyHealth(target)")
-    clear_job = template.index("sessionStorage.removeItem(JOB_STORAGE_KEY)", health_check)
+    clear_job = template.index("clearPersistedJob();", health_check)
     reload_page = template.index("scheduleRefresh();", health_check)
     assert health_check < clear_job < reload_page
 
@@ -109,7 +109,9 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
     assert "POLL_RECOVERY_TIMEOUT_MS" in template
     assert "transientFor >= POLL_RECOVERY_TIMEOUT_MS" in template
     assert "transientFor >= HEALTH_RECOVERY_DELAY_MS" in template
-    assert "progressTarget && await verifyHealth(progressTarget)" in template
+    assert "hasExactDigestTarget(progressTarget)" in template
+    assert "await verifyHealth(progressTarget)" in template
+    assert "payload.build.digest !== target.digest" in template
     assert "error instanceof TypeError" in template
     assert "if (isTransientPollError(error))" in template
     assert "continue;" in template
@@ -124,12 +126,28 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
 
 def test_registry_catalog_disables_the_exact_running_build():
     template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
-    assert "const CURRENT_BUILD_REVISION" in template
+    assert "const CURRENT_BUILD_DIGEST" in template
     assert "const CURRENT_BUILD_VERSION" in template
     assert "function isCurrentRegistryImage(image)" in template
-    assert "image.revision === CURRENT_BUILD_REVISION" in template
+    assert "image.digest === CURRENT_BUILD_DIGEST" in template
+    assert "CURRENT_BUILD_REVISION" not in template
+    assert "image.revision ===" not in template
     assert "image.version === CURRENT_BUILD_VERSION" in template
     assert "action.disabled = isCurrent ||" in template
+
+
+def test_persisted_job_recovery_keeps_exact_target_digest_across_reload():
+    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    assert "const JOB_TARGET_STORAGE_KEY" in template
+    assert "function normalizedProgressTarget(value)" in template
+    assert "function persistJob(jobId, target)" in template
+    assert "JSON.stringify(normalized)" in template
+    assert "function restoreProgressTarget()" in template
+    assert "progressTarget = restoreProgressTarget();" in template
+    assert "digest: job.target_digest" in template
+    assert "persistJob(data.job_id, progressTarget);" in template
+    assert "persistJob(error.body.job_id, progressTarget);" in template
+    assert "function clearPersistedJob()" in template
 
 
 def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():
