@@ -1511,6 +1511,7 @@ version_manager:
   check_protocol_compatible: "协议兼容"
   check_target_newer: "目标版本更新"
   check_min_upgrade_from: "满足最低升级版本"
+  check_current_image_identity_valid: "当前运行镜像身份有效"
   check_target_identity_valid: "目标镜像身份有效"
   check_target_channel_head: "目标是当前通道最新版本"
   check_channel_switch_confirmed: "已确认切换更新通道"

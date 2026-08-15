@@ -1511,6 +1511,7 @@ version_manager:
   check_protocol_compatible: "Protocol compatible"
   check_target_newer: "Target version is newer"
   check_min_upgrade_from: "Minimum upgrade version satisfied"
+  check_current_image_identity_valid: "Running image identity is valid"
   check_target_identity_valid: "Target image identity is valid"
   check_target_channel_head: "Target is the current channel head"
   check_channel_switch_confirmed: "Update channel switch confirmed"

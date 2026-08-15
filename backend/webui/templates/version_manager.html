@@ -193,7 +193,11 @@
 // 只走 Backend proxy；浏览器永远不接触 UDS 或宿主 Docker。
 const CSRF_TOKEN = "{{ csrf_token }}";
 const CURRENT_BUILD_CHANNEL = {{ (version_info.build or {}).channel | tojson }};
+const CURRENT_BUILD_REVISION = {{ (version_info.build or {}).revision | tojson }};
+const CURRENT_BUILD_VERSION = {{ version_info.current_version | tojson }};
 const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
+const POLL_RECOVERY_TIMEOUT_MS = 120000;
+const HEALTH_RECOVERY_DELAY_MS = 5000;
 const recheckButton = document.getElementById('recheck-btn');
 const preflightButton = document.getElementById('preflight-btn');
 const updateButton = document.getElementById('update-btn');
@@ -225,6 +229,15 @@ function registryText(value) {
   return value === null || value === undefined || value === '' ? '—' : String(value);
 }
 
+function isCurrentRegistryImage(image) {
+  if (!image || image.channel !== CURRENT_BUILD_CHANNEL) return false;
+  if (image.channel === 'development') {
+    return Boolean(image.revision && CURRENT_BUILD_REVISION
+      && image.revision === CURRENT_BUILD_REVISION);
+  }
+  return image.channel === 'stable' && image.version === CURRENT_BUILD_VERSION;
+}
+
 function renderRegistryPanel(channel) {
   const panel = registryPanels[channel];
   while (panel.firstChild) panel.removeChild(panel.firstChild);
@@ -240,6 +253,7 @@ function renderRegistryPanel(channel) {
     return;
   }
   images.forEach((image) => {
+    const isCurrent = isCurrentRegistryImage(image);
     const row = document.createElement('article');
     row.className = 'mb-3 rounded-xl border border-gray-200 p-3 dark:border-gray-700';
     const title = document.createElement('div');
@@ -251,9 +265,11 @@ function renderRegistryPanel(channel) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'rounded-lg border px-2 py-1 text-xs disabled:opacity-50';
-    action.disabled = image.selectable !== true || registryCatalog.stale === true;
-    action.textContent = image.selectable ? VM_I18N.registrySelect : (image.legacy_reason || VM_I18N.registryNotSelectable);
-    if (image.selectable) action.addEventListener('click', () => {
+    action.disabled = isCurrent || image.selectable !== true || registryCatalog.stale === true;
+    action.textContent = isCurrent
+      ? VM_I18N.current
+      : image.selectable ? VM_I18N.registrySelect : (image.legacy_reason || VM_I18N.registryNotSelectable);
+    if (image.selectable && !isCurrent) action.addEventListener('click', () => {
       const candidate = {
         channel: image.channel, version: image.version, revision: image.revision,
         tag: image.canonical_tag, digest: image.digest
@@ -354,6 +370,7 @@ const VM_I18N = {
   registryUnavailable: {{ _("version_manager.registry_unavailable") | tojson }},
   registrySelected: {{ _("version_manager.registry_selected") | tojson }},
   registryDetails: {{ _("version_manager.registry_details") | tojson }},
+  current: {{ _("version_manager.current") | tojson }},
   developmentRisk: {{ _("version_manager.development_risk") | tojson }},
   channelSwitchRisk: {{ _("version_manager.channel_switch_risk") | tojson }},
   errorLabels: {
@@ -399,6 +416,7 @@ const VM_I18N = {
     protocol_compatible: {{ _("version_manager.check_protocol_compatible") | tojson }},
     target_newer: {{ _("version_manager.check_target_newer") | tojson }},
     min_upgrade_from: {{ _("version_manager.check_min_upgrade_from") | tojson }},
+    current_image_identity_valid: {{ _("version_manager.check_current_image_identity_valid") | tojson }},
     target_identity_valid: {{ _("version_manager.check_target_identity_valid") | tojson }},
     target_channel_head: {{ _("version_manager.check_target_channel_head") | tojson }},
     channel_switch_confirmed: {{ _("version_manager.check_channel_switch_confirmed") | tojson }},
@@ -431,6 +449,7 @@ const UPDATE_PROGRESS = Object.freeze({
 });
 let lastProgress = 0;
 let progressTargetVersion = '';
+let progressTarget = null;
 let progressJobId = '';
 let progressTerminal = false;
 let progressPreviousFocus = null;
@@ -483,6 +502,7 @@ function openProgressModal({jobId = '', targetVersion = '', initial = false} = {
     lastProgress = 0;
     progressJobId = '';
     progressTargetVersion = '';
+    progressTarget = null;
     setUpdateProgress(0);
   }
   progressJobId = jobId || progressJobId;
@@ -520,14 +540,19 @@ function markProgressError(message, {allowRetry = false} = {}) {
 }
 
 function isTransientPollError(error) {
-  // Fetch rejects with TypeError for connection loss. A 503 from the Backend
-  // proxy without a permanent updater code is also expected while the Web
-  // container or Host Updater restarts. All other HTTP/protocol failures are
-  // deterministic until user action.
+  // Fetch rejects with TypeError for connection loss. During activation the
+  // Web container and its reverse-proxy connection may briefly return an
+  // unstructured 500/502/503/504. Retry those only inside pollJob's bounded
+  // recovery window; typed configuration/protocol errors remain terminal.
   const errorCode = error && error.body && error.body.error;
+  const permanentCodes = new Set([
+    'job_not_found', 'protocol_error', 'updater_protocol_error',
+    'updater_not_ready', 'registry_unavailable', 'release_unavailable',
+    'channel_head_unavailable', 'stale_catalog'
+  ]);
   return Boolean(
     error && (
-      (error.status === 503 && (!errorCode || errorCode === 'updater_unavailable')) ||
+      ([500, 502, 503, 504].includes(error.status) && !permanentCodes.has(errorCode)) ||
       (error instanceof TypeError && typeof error.status !== 'number')
     )
   );
@@ -624,13 +649,18 @@ async function preflightRegistryTarget(target) {
   return readiness;
 }
 
-async function loadReadiness() {
+async function loadReadiness(attempt = 0) {
   if (!selectedRegistryTarget) currentChannelTarget = null;
   try {
     const data = await requestJson('/version/readiness', { method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Accept': 'application/json'} });
     showReadiness(data);
     return data && data.data ? data.data : data;
   } catch (error) {
+    if (isTransientPollError(error) && attempt < 2) {
+      setStatus(VM_I18N.reconnecting, null);
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      return loadReadiness(attempt + 1);
+    }
     if (error.status === 503 && error.body && error.body.error === 'updater_unavailable') {
       setStatus(VM_I18N.notConnected, 'error');
     } else {
@@ -727,6 +757,7 @@ async function pollJob(jobId) {
     updateButton.disabled = true;
     setStatus(vmFormat(VM_I18N.reconnectingJob, {job_id: jobId}), null);
     renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
+    let transientSince = null;
     while (sessionStorage.getItem(JOB_STORAGE_KEY) === jobId) {
       try {
         const body = await requestJson('/version/jobs/' + encodeURIComponent(jobId), {headers: {'Accept': 'application/json'}});
@@ -734,19 +765,21 @@ async function pollJob(jobId) {
         if (!job) throw new Error(VM_I18N.emptyJobResponse);
         if (job.target_version) {
           progressTargetVersion = job.target_version;
+          progressTarget = job.target_channel ? {
+            version: job.target_version,
+            channel: job.target_channel,
+            revision: job.target_revision
+          } : job.target_version;
           updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion});
         }
+        transientSince = null;
         setUpdateProgress(progressForJob(job));
         const state = vmStateLabel(job.state);
         setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
         renderProgress({state: job.state, step: job.step});
         if (job.state === 'success' || job.state === 'complete') {
           setUpdateProgress(UPDATE_PROGRESS.success);
-          const target = job.target_channel ? {
-            version: job.target_version || progressTargetVersion,
-            channel: job.target_channel,
-            revision: job.target_revision
-          } : (job.target_version || progressTargetVersion);
+          const target = progressTarget || job.target_version || progressTargetVersion;
           if (target && await verifyHealth(target)) {
             sessionStorage.removeItem(JOB_STORAGE_KEY);
             progressTerminal = true;
@@ -774,6 +807,25 @@ async function pollJob(jobId) {
           // id and last progress value, and retry without marking the update failed.
           setStatus(VM_I18N.reconnecting, null);
           renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
+          transientSince = transientSince || Date.now();
+          const transientFor = Date.now() - transientSince;
+          if (transientFor >= HEALTH_RECOVERY_DELAY_MS
+              && progressTarget && await verifyHealth(progressTarget)) {
+            sessionStorage.removeItem(JOB_STORAGE_KEY);
+            progressTerminal = true;
+            setUpdateProgress(UPDATE_PROGRESS.success);
+            setStatus(vmFormat(VM_I18N.updateSuccess, {version: progressTargetVersion}), 'ok');
+            renderProgress({kind: 'success', message: VM_I18N.progressRefreshing});
+            updateButton.disabled = false;
+            scheduleRefresh();
+            return;
+          }
+          if (transientFor >= POLL_RECOVERY_TIMEOUT_MS) {
+            const message = vmFormat(VM_I18N.progressPollFailed, {error: vmUpdaterError(error)});
+            markProgressError(message);
+            setStatus(message, 'error');
+            return;
+          }
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
@@ -851,6 +903,7 @@ updateButton.addEventListener('click', async function() {
   }
   updateButton.disabled = true;
   progressTargetVersion = target;
+  progressTarget = operationTarget || target;
   updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: target});
   try {
     const body = await requestJson('/version/update', {
