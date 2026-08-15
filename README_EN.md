@@ -171,6 +171,8 @@ sudo ./start.sh --prod
 
 `sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager. macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
 
+> **MySQL memory footprint:** The bundled MySQL 8.4 ships with low-memory tuning (performance_schema and X Plugin disabled, 64MB InnoDB buffer pool, 40-connection limit), idling around 200MB instead of ~500MB on defaults. Existing deployments can apply this by re-downloading `docker/docker-compose.prod.yml` and re-running `sudo ./start.sh --prod` (only the mysql container is recreated; the data volume is preserved).
+
 > **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
 >
 > ```bash

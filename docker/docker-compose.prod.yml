@@ -49,6 +49,15 @@ services:
       MYSQL_USER: sakura
       MYSQL_PASSWORD: ${SAKURA_DB_PASSWORD:?SAKURA_DB_PASSWORD must be set}
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"   # 应用只用普通用户，root 密码随机生成并输出到容器日志
+    # 低内存调优：业务数据量小（审查记录/计费/配置），默认配置空闲即占 500MB+；
+    # 关闭 performance_schema 后 sys 表监控不可用，应用连接池上限为 20（见
+    # backend/models/database.py pool_size=10 + max_overflow），40 连接余量充足
+    command:
+      - --performance-schema=OFF
+      - --innodb-buffer-pool-size=64M
+      - --innodb-redo-log-capacity=32M
+      - --max-connections=40
+      - --mysqlx=OFF   # 应用仅用经典协议（asyncmy/3306），关闭 X Plugin 省线程与内存
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
