@@ -134,6 +134,10 @@ async def test_update_success_clears_active_gate(tmp_path):
     assert store.current_job.started_at and store.current_job.started_at.endswith("Z")
     assert store.current_job.updated_at and store.current_job.updated_at.endswith("Z")
     assert [call[0] for call in adapter.calls] == ["preflight", "preflight", "pull", "activate", "health"]
+    assert orchestrator.readiness_snapshot is not None
+    assert orchestrator.readiness_snapshot["update_ready"] is False
+    assert orchestrator.readiness_snapshot["readiness"]["target_newer"] is False
+    assert orchestrator.readiness_snapshot["target"]["version"] == "3.1.0"
 
 
 @pytest.mark.asyncio

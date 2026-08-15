@@ -191,7 +191,8 @@ init_deployment_env() {
 # Host Updater daemon management
 # ============================================================
 
-UPDATER_STATE_DIR="$DEPLOY_DIR/updater"
+UPDATER_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UPDATER_STATE_DIR="${UPDATER_STATE_DIR:-$UPDATER_PROJECT_ROOT/$DEPLOY_DIR/updater}"
 UPDATER_BINARY="$UPDATER_STATE_DIR/sakura-ai-updater"
 UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
 UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$DEPLOYMENT_ENV_FILE}"
@@ -328,6 +329,18 @@ updater_health_payload() {
         --connect-timeout 2 --max-time 5 \
         --header 'Accept: application/json' \
         "$UPDATER_HEALTH_URL"
+}
+
+# Probe the Host Updater itself. This is deliberately separate from the
+# application /health check above: a live UDS listener without matching daemon
+# metadata indicates a checkout-replacement orphan and must block a duplicate
+# start instead of racing to unlink or bind the same socket.
+updater_socket_health_payload() {
+    curl --fail --silent --show-error \
+        --connect-timeout 2 --max-time 5 \
+        --unix-socket "$UPDATER_SOCKET_PATH" \
+        --header 'Accept: application/json' \
+        http://localhost/v1/health
 }
 
 resolve_running_image_version() {
@@ -868,6 +881,11 @@ ensure_updater_running() {
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
         return 0
+    fi
+    if updater_socket_health_payload >/dev/null 2>&1; then
+        fail "updater socket is live but daemon metadata is missing or stale; refusing duplicate start" >&2
+        fail "stop the verified listener process, then run: sudo ./start.sh updater install && sudo ./start.sh updater start" >&2
+        return 1
     fi
     warn "updater daemon 未运行，正在拉起..."
 

@@ -102,11 +102,14 @@ def test_version_manager_failure_path_is_closeable_without_refresh():
     assert template.index("markProgressError(") < template.index("scheduleRefresh();")
 
 
-def test_polling_retries_only_transient_errors_and_recovers_stale_jobs():
+def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
     template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
     assert "function isTransientPollError(error)" in template
-    assert "error.status === 503" in template
-    assert "errorCode === 'updater_unavailable'" in template
+    assert "[500, 502, 503, 504].includes(error.status)" in template
+    assert "POLL_RECOVERY_TIMEOUT_MS" in template
+    assert "transientFor >= POLL_RECOVERY_TIMEOUT_MS" in template
+    assert "transientFor >= HEALTH_RECOVERY_DELAY_MS" in template
+    assert "progressTarget && await verifyHealth(progressTarget)" in template
     assert "error instanceof TypeError" in template
     assert "if (isTransientPollError(error))" in template
     assert "continue;" in template
@@ -117,6 +120,16 @@ def test_polling_retries_only_transient_errors_and_recovers_stale_jobs():
     readiness = template.index("await loadReadiness();", stale)
     stop = template.index("return;", readiness)
     assert permanent_error < terminal < stale < readiness < stop
+
+
+def test_registry_catalog_disables_the_exact_running_build():
+    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    assert "const CURRENT_BUILD_REVISION" in template
+    assert "const CURRENT_BUILD_VERSION" in template
+    assert "function isCurrentRegistryImage(image)" in template
+    assert "image.revision === CURRENT_BUILD_REVISION" in template
+    assert "image.version === CURRENT_BUILD_VERSION" in template
+    assert "action.disabled = isCurrent ||" in template
 
 
 def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():

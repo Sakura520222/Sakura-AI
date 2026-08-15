@@ -186,20 +186,27 @@ class DaemonBackend:
         compose_file: str | None = None,
         deployment_env: str | None = None,
     ):
-        self.state_dir = state_dir
-        self.socket_path = socket_path
-        self.binary_path = binary_path or os.path.join(state_dir, DEFAULT_BINARY_NAME)
+        # The daemon may outlive a checkout replacement. Freeze every child
+        # filesystem argument before spawning so it never resolves state or
+        # deployment paths through a deleted inherited working directory.
+        self.state_dir = os.path.abspath(state_dir)
+        self.socket_path = os.path.abspath(socket_path)
+        self.binary_path = os.path.abspath(
+            binary_path or os.path.join(self.state_dir, DEFAULT_BINARY_NAME)
+        )
         self.startup_timeout = startup_timeout
         self.stop_timeout = stop_timeout
         self.poll_interval = poll_interval
-        self.run_dir = run_dir
+        self.run_dir = os.path.abspath(run_dir)
         self.gid = gid
         self.group = group
         # These paths are passed explicitly to the child daemon.  ``None`` keeps
         # backwards compatibility for callers that only exercise lifecycle
         # management; production bootstrap supplies absolute configured paths.
-        self.compose_file = compose_file
-        self.deployment_env = deployment_env
+        self.compose_file = os.path.abspath(compose_file) if compose_file is not None else None
+        self.deployment_env = (
+            os.path.abspath(deployment_env) if deployment_env is not None else None
+        )
         # Dev mode: socket 用当前用户 uid/gid（非 root 无法 chown 到 root:9472）
         if os.environ.get("SAKURA_UPDATER_DEV") == "1":
             self._socket_uid = getattr(os, "getuid", lambda: 0)()
@@ -597,6 +604,7 @@ class DaemonBackend:
             try:
                 child = subprocess.Popen(
                     argv,
+                    cwd=os.path.abspath(os.sep),
                     start_new_session=True,
                     shell=False,
                     stdin=subprocess.DEVNULL,

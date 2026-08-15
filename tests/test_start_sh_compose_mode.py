@@ -94,6 +94,36 @@ def test_invalid_deployment_mode_has_no_compose_fallback(mode: str | None):
     assert "SAKURA_DEPLOY_MODE must be 'source' or 'image'" in result.stderr
 
 
+def test_live_unmanaged_socket_blocks_duplicate_updater_start():
+    command = """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+updater_backend() {
+    printf 'BACKEND:%s\n' "$*"
+    return 1
+}
+updater_socket_health_payload() { printf '{}\n'; }
+updater_binary_is_safe() { printf 'UNEXPECTED_BINARY_CHECK\n'; return 0; }
+ensure_updater_running
+"""
+    result = subprocess.run(
+        ["bash"],
+        cwd=ROOT,
+        env={**os.environ, "TERM": "dumb"},
+        input=command.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    assert result.returncode != 0
+    assert "refusing duplicate start" in stderr
+    assert "UNEXPECTED_BINARY_CHECK" not in stdout
+    assert "BACKEND:install" not in stdout
+    assert "BACKEND:start" not in stdout
+
+
 def test_mode_parser_does_not_source_or_evaluate_deployment_file():
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
     helper_start = script.index("read_deployment_value()")

@@ -233,27 +233,17 @@ class DeploymentStateProvider:
         *,
         expected_repository: str,
         expected_tag: str,
+        expected_digest: str | None = None,
     ) -> str:
-        """Select one manifest digest matching the current repository/tag.
+        """Select the registry manifest digest for the deployment image.
 
-        ``RepoTags`` proves that the inspected local image is the image named
-        by deployment.env.  ``RepoDigests`` is the registry identity used for
-        the immutable reference.  Multiple repositories are normal (mirrors),
-        but multiple different digests for the expected repository are
-        ambiguous and therefore fail closed.
+        A digest-pinned deployment is already named by immutable repository and
+        digest identity. Docker is allowed to omit the source tag from
+        ``RepoTags`` after pulling ``tag@digest``, so pinned refs are proven by
+        an exact matching ``RepoDigests`` entry. Mutable tag refs still require
+        both the expected ``RepoTags`` entry and one unambiguous repository
+        digest; they fail closed if either proof is missing.
         """
-
-        tags = metadata.get("RepoTags")
-        if not isinstance(tags, list):
-            raise DeploymentError("docker image metadata has no RepoTags")
-        normalized_tags = {
-            str(tag).strip().lower() for tag in tags if isinstance(tag, str)
-        }
-        if expected_tag.lower() not in normalized_tags:
-            raise DeploymentError(
-                f"running image is not tagged as the deployment image {expected_tag!r}"
-            )
-
         repo_digests = metadata.get("RepoDigests")
         if not isinstance(repo_digests, list):
             raise DeploymentError("docker image metadata has no RepoDigests")
@@ -269,6 +259,31 @@ class DeploymentStateProvider:
                     f"invalid registry digest for {expected_repository!r}: {digest!r}"
                 )
             candidates.add(digest.lower())
+
+        if expected_digest is not None:
+            normalized_expected = expected_digest.lower()
+            if not _REGISTRY_DIGEST_RE.fullmatch(normalized_expected):
+                raise DeploymentError(
+                    f"invalid pinned deployment digest: {expected_digest!r}"
+                )
+            if normalized_expected not in candidates:
+                raise DeploymentError(
+                    f"running repository digests do not match pinned deployment "
+                    f"digest {normalized_expected!r}"
+                )
+            return normalized_expected
+
+        tags = metadata.get("RepoTags")
+        if not isinstance(tags, list):
+            raise DeploymentError("docker image metadata has no RepoTags")
+        normalized_tags = {
+            str(tag).strip().lower() for tag in tags if isinstance(tag, str)
+        }
+        if expected_tag.lower() not in normalized_tags:
+            raise DeploymentError(
+                f"running image is not tagged as the deployment image {expected_tag!r}"
+            )
+
         if len(candidates) != 1:
             if not candidates:
                 raise DeploymentError(
@@ -301,12 +316,8 @@ class DeploymentStateProvider:
             metadata,
             expected_repository=expected_repository,
             expected_tag=expected_tag,
+            expected_digest=expected_digest,
         )
-        if expected_digest is not None and running_digest != expected_digest:
-            raise DeploymentError(
-                f"running manifest digest {running_digest!r} does not match pinned "
-                f"deployment digest {expected_digest!r}"
-            )
         return running_digest
 
     async def materialize_current_anchor(self) -> str:
