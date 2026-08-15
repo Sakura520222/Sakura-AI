@@ -7,6 +7,7 @@ from sakura_ai_updater.jobs import (
     JobOrchestrator,
     PreflightFailedError,
     UpdateInProgressError,
+    UpdaterMaintenanceError,
 )
 from sakura_ai_updater.state import load_state, reconcile_interrupted_job
 
@@ -138,6 +139,55 @@ async def test_update_success_clears_active_gate(tmp_path):
     assert orchestrator.readiness_snapshot["update_ready"] is False
     assert orchestrator.readiness_snapshot["readiness"]["target_newer"] is False
     assert orchestrator.readiness_snapshot["target"]["version"] == "3.1.0"
+
+
+@pytest.mark.asyncio
+async def test_prepare_stop_atomically_blocks_submit_finishing_preflight(tmp_path):
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    entered_preflight = asyncio.Event()
+    release_preflight = asyncio.Event()
+    original_preflight = orchestrator.preflight
+
+    async def blocked_preflight(*args, **kwargs):
+        entered_preflight.set()
+        await release_preflight.wait()
+        return await original_preflight(*args, **kwargs)
+
+    orchestrator.preflight = blocked_preflight
+    submit = asyncio.create_task(orchestrator.submit_update("3.1.0"))
+    await entered_preflight.wait()
+
+    assert await orchestrator.prepare_stop() == {"prepared": True}
+    release_preflight.set()
+    with pytest.raises(UpdaterMaintenanceError):
+        await submit
+    assert load_state(orchestrator.state_path).active_job_id is None
+
+    assert await orchestrator.cancel_stop() == {"prepared": False}
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+
+@pytest.mark.asyncio
+async def test_prepare_stop_rejects_an_active_job_without_closing_gate(tmp_path):
+    adapter = _Adapter(cancel=True)
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        adapter,
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    with pytest.raises(UpdateInProgressError) as caught:
+        await orchestrator.prepare_stop()
+    assert caught.value.job_id == job_id
 
 
 @pytest.mark.asyncio

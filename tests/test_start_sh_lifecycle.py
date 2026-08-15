@@ -26,7 +26,7 @@ def _run_bash(command: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_updater_reinstall_is_ordered_stop_install_start_status():
+def test_updater_reinstall_is_ordered_prepare_stop_install_start_status():
     result = _run_bash(
         """
 set -u
@@ -34,7 +34,8 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { printf 'ROOT\n'; }
 updater_require_idle_deployment() { printf 'IDLE\n'; }
-updater_require_no_active_job() { printf 'NO_JOB\n'; }
+updater_socket_listener_responds() { return 0; }
+updater_prepare_stop() { printf 'PREPARE\n'; }
 stop_verified_updater() { printf 'STOP\n'; }
 cmd_updater_install() { printf 'INSTALL\n'; }
 ensure_updater_running() { printf 'START\n'; }
@@ -44,7 +45,7 @@ cmd_updater_reinstall
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    markers = ["ROOT", "IDLE", "NO_JOB", "STOP", "INSTALL", "START", "STATUS:status"]
+    markers = ["ROOT", "IDLE", "PREPARE", "STOP", "INSTALL", "START", "STATUS:status"]
     positions = [result.stdout.index(marker) for marker in markers]
     assert positions == sorted(positions)
 
@@ -68,7 +69,7 @@ cmd_updater_reinstall
     assert "UNEXPECTED" not in result.stdout
 
 
-def test_updater_lifecycle_refuses_an_active_update_job():
+def test_updater_lifecycle_refuses_when_atomic_stop_gate_is_rejected():
     result = _run_bash(
         """
 set -u
@@ -76,16 +77,104 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { :; }
 updater_require_idle_deployment() { :; }
-updater_socket_health_payload() { printf '{}\n'; }
-updater_socket_status_payload() { printf '{"data":{"has_active_job": true}}\n'; }
+updater_prepare_stop() { printf 'ACTIVE_JOB\n' >&2; return 1; }
 stop_verified_updater() { printf 'UNEXPECTED_STOP\n'; }
 cmd_updater_reinstall
 """
     )
 
     assert result.returncode != 0
-    assert "an updater job is active" in result.stderr
+    assert "ACTIVE_JOB" in result.stderr
     assert "UNEXPECTED_STOP" not in result.stdout
+
+
+def test_updater_reinstall_restarts_preserved_binary_after_install_failure():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+updater_require_root() { :; }
+updater_require_idle_deployment() { :; }
+updater_socket_listener_responds() { return 0; }
+updater_prepare_stop() { :; }
+stop_verified_updater() { printf 'STOP\n'; }
+cmd_updater_install() { printf 'INSTALL_FAIL\n'; return 23; }
+ensure_updater_running() { printf 'RESTORE_OLD\n'; }
+cmd_updater_reinstall
+"""
+    )
+
+    assert result.returncode == 23, result.stdout + result.stderr
+    assert "STOP" in result.stdout
+    assert "INSTALL_FAIL" in result.stdout
+    assert "RESTORE_OLD" in result.stdout
+
+
+def test_socket_probe_treats_http_500_as_a_live_listener():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+curl() { printf '500'; return 0; }
+updater_socket_listener_responds
+"""
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_socket_probe_treats_malformed_http_as_a_live_listener():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+curl() { return 52; }
+updater_socket_listener_responds
+"""
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_atomic_stop_gate_fails_closed_when_live_daemon_rejects_endpoint():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+curl() {
+  if [[ "$*" == *'/v1/lifecycle/prepare-stop'* ]]; then return 22; fi
+  printf '500'
+  return 0
+}
+updater_prepare_stop
+"""
+    )
+
+    assert result.returncode != 0
+    assert "refused the atomic lifecycle gate" in result.stderr
+
+
+def test_dev_mode_stop_uses_backend_when_binary_is_absent():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+export SAKURA_UPDATER_DEV=1
+updater_binary_is_safe() { return 1; }
+updater_path_exists() { return 1; }
+updater_backend() { printf 'BACKEND:%s\n' "$*"; }
+updater_socket_listener_responds() { return 1; }
+stop_verified_updater
+"""
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "BACKEND:stop" in result.stdout
 
 
 def test_updater_uninstall_removes_only_managed_state_files():
@@ -108,8 +197,8 @@ touch "$UPDATER_BINARY" \
   "$UPDATER_STATE_DIR/tmp/runtime"
 updater_require_root() { :; }
 updater_require_idle_deployment() { :; }
-updater_require_no_active_job() { :; }
 updater_existing_state_dir_is_safe() { :; }
+updater_prepare_stop() { :; }
 stop_verified_updater() { printf 'STOPPED\n'; }
 cmd_updater_uninstall
 [[ ! -e "$UPDATER_STATE_DIR" ]]
@@ -162,7 +251,6 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { printf 'ROOT\n'; }
 stop_deployment_for_uninstall() { printf 'STOP_DEPLOYMENT\n'; }
-updater_require_no_active_job() { printf 'NO_JOB\n'; }
 sakura_compose_uninstall() { printf 'COMPOSE_PURGE=%s\n' "$1"; }
 cmd_updater_uninstall() { printf 'REMOVE_UPDATER\n'; }
 purge_sakura_deployment_state() { printf 'PURGE_STATE\n'; }
@@ -248,5 +336,59 @@ def test_start_sh_help_documents_destructive_scope_and_lifecycle_commands():
 
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
     assert 'set_phase "pull"' in script
-    assert "$COMPOSE up -d --pull never" in script
+    assert "$COMPOSE up -d --pull never" not in script
     assert "$COMPOSE up -d --pull always" not in script
+
+
+def test_uninstall_refuses_to_signal_live_pid_without_matching_runner_identity():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+PID_FILE="$case_dir/build.pid"
+RUNNER_IDENTITY_FILE="$case_dir/build-runner.identity"
+printf '4242\n' > "$PID_FILE"
+kill() {
+  if [[ "$1" == '-0' ]]; then return 0; fi
+  printf 'UNEXPECTED_SIGNAL:%s\n' "$*"
+  return 0
+}
+stop_deployment_for_uninstall
+"""
+    )
+
+    assert result.returncode != 0
+    assert "without verified runner identity" in result.stderr
+    assert "UNEXPECTED_SIGNAL" not in result.stdout
+
+
+def test_runner_identity_requires_matching_starttime_and_command():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+PID_FILE="$case_dir/build.pid"
+RUNNER_IDENTITY_FILE="$case_dir/build-runner.identity"
+printf '4242\n' > "$PID_FILE"
+printf '12345\n.deploy/_runner.sh\n' > "$RUNNER_IDENTITY_FILE"
+runner_process_starttime() { printf '%s\n' "${FAKE_STARTTIME:-12345}"; }
+runner_process_command_matches() {
+  [[ "$1" == '4242' && "$2" == '.deploy/_runner.sh' ]]
+}
+runner_identity_matches
+FAKE_STARTTIME=99999
+if runner_identity_matches; then
+  printf 'UNEXPECTED_MATCH\n'
+  exit 1
+fi
+"""
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "UNEXPECTED_MATCH" not in result.stdout
