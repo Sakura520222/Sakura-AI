@@ -1534,7 +1534,7 @@ build_runner() {
         info "停止现有容器..."
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
         set_phase "pull"
-        info "拉取最新镜像（Docker 原生进度条）..."
+        info "拉取最新镜像"
         if ! compose_pull_with_native_progress; then
             set_phase "pull" "fail"
             return 1
