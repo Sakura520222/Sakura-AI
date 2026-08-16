@@ -5,7 +5,7 @@
 # 重新运行脚本时会自动跳过已完成的阶段。
 #
 # 用法:
-#   ./start.sh                # 启动（自动检测是否需要构建）
+#   ./start.sh                # 交互式菜单（支持更新镜像、切换 stable/development 频道）
 #   ./start.sh --rebuild      # 强制重建镜像
 #   ./start.sh --prod         # 生产模式：拉取 GHCR 镜像一键部署（跳过本地构建）
 #   ./start.sh --status       # 查看当前构建/运行状态
@@ -173,7 +173,7 @@ wait_for_pid() {
     while kill -0 "$pid" 2>/dev/null; do
         sleep 2
         elapsed=$((elapsed + 2))
-        printf "\r⏳ %s 进行中... %ds " "$label" "$elapsed"
+        printf "\r%s 进行中... %ds " "$label" "$elapsed"
     done
     echo ""
     wait "$pid"
@@ -302,6 +302,42 @@ init_deployment_env() {
     sync -d "$tmp" 2>/dev/null || sync 2>/dev/null || true
     mv "$tmp" "$DEPLOYMENT_ENV_FILE"
     info "已初始化部署状态: $DEPLOYMENT_ENV_FILE (mode=$mode)"
+}
+
+# 原子更新 deployment.env 的 SAKURA_AI_IMAGE：保留其余键值与 0600 权限。
+# 与 init_deployment_env 相同的 durability 顺序（tmp -> chmod -> sync -> mv）。
+# 用于菜单的手动镜像更新 / stable-development 频道切换；调用方必须先确认
+# 没有后台部署 runner 或 updater 活动 job，避免与 daemon 的 atomic write 竞争。
+write_deployment_env_image() {
+    local new_image="$1" tmp replaced=0 line
+    if [[ ! -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        fail "缺少部署状态文件: $DEPLOYMENT_ENV_FILE" >&2
+        return 1
+    fi
+    tmp="$DEPLOY_DIR/.deployment.env.image.$$"
+    : > "$tmp"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == SAKURA_AI_IMAGE=* ]]; then
+            printf 'SAKURA_AI_IMAGE=%s\n' "$new_image" >> "$tmp"
+            replaced=1
+        else
+            printf '%s\n' "$line" >> "$tmp"
+        fi
+    done < "$DEPLOYMENT_ENV_FILE"
+    if [[ "$replaced" != "1" ]]; then
+        printf 'SAKURA_AI_IMAGE=%s\n' "$new_image" >> "$tmp"
+    fi
+    if ! chmod 600 "$tmp"; then
+        rm -f "$tmp"
+        fail "无法将 deployment.env 权限设置为 0600；拒绝写入" >&2
+        return 1
+    fi
+    sync -d "$tmp" 2>/dev/null || sync 2>/dev/null || true
+    if ! mv -f -- "$tmp" "$DEPLOYMENT_ENV_FILE"; then
+        rm -f "$tmp"
+        fail "deployment.env 原子替换失败" >&2
+        return 1
+    fi
 }
 
 # ============================================================
@@ -1340,12 +1376,12 @@ cmd_status() {
         echo ""
         info "构建进程正在运行 (PID: $pid, 阶段: $phase)"
         echo ""
-        echo "📋 最近日志 (最后 20 行):"
+        echo "最近日志 (最后 20 行):"
         echo "──────────────────────────"
         tail -20 "$BUILD_LOG" 2>/dev/null || echo "(无日志)"
         echo "──────────────────────────"
         echo ""
-        echo "💡 使用 ./start.sh --attach 查看完整实时日志"
+        echo "使用 ./start.sh --attach 查看完整实时日志"
         if [[ "$runner_verified" -ne 1 ]]; then
             warn "该进程缺少匹配的 starttime/command 元数据；请人工检查，脚本不会向其发送信号"
         fi
@@ -1585,7 +1621,7 @@ build_runner() {
     echo "==============================" >> "$BUILD_LOG"
     ok "启动流程完成" | tee -a "$BUILD_LOG"
     echo "" >> "$BUILD_LOG"
-    echo "📊 服务状态:" >> "$BUILD_LOG"
+    echo "服务状态:" >> "$BUILD_LOG"
     $COMPOSE ps >> "$BUILD_LOG" 2>&1 || true
     echo "" >> "$BUILD_LOG"
 
@@ -1596,70 +1632,477 @@ build_runner() {
 # 主入口
 # ============================================================
 
-show_menu() {
-    echo ""
-    echo -e "${BOLD}🚀 Sakura AI 启动脚本${RESET}"
-    echo -e "${BOLD}==========================${RESET}"
-    echo ""
-    echo -e "  ${BOLD}[1]${RESET} 启动服务 (自动检测构建)"
-    echo -e "  ${BOLD}[2]${RESET} 强制重建镜像并启动"
-    echo -e "  ${BOLD}[3]${RESET} 查看构建/运行状态"
-    echo -e "  ${BOLD}[4]${RESET} 附加到构建日志"
-    echo -e "  ${BOLD}[5]${RESET} 停止正在进行的构建"
-    echo -e "  ${BOLD}[6]${RESET} 查看服务容器状态"
-    echo -e "  ${BOLD}[7]${RESET} 停止服务"
-    echo -e "  ${BOLD}[8]${RESET} 生产镜像部署 (--prod)"
-    echo -e "  ${BOLD}[9]${RESET} Updater daemon 管理"
-    echo -e "  ${BOLD}[10]${RESET} 卸载 Sakura AI"
-    echo -e "  ${BOLD}[0]${RESET} 退出"
-    echo ""
+# ============================================================
+# 交互画面渲染 / Interactive screen rendering
+# ============================================================
 
-    local choice
-    read -rp "  请选择操作: " choice
-    case "$choice" in
-        1) do_start false ;;
-        2) do_start true  ;;
-        3) cmd_status     ;;
-        4) cmd_attach     ;;
-        5) cmd_stop       ;;
-        6) do_ps          ;;
-        7) do_down        ;;
-        8) do_start false true ;;
-        9) do_updater_menu ;;
-        10) cmd_uninstall ;;
-        0) info "已退出" ; exit 0 ;;
-        *) warn "无效选项: $choice" ; exit 1 ;;
+# 画面 = 标题 + 文本行缓冲。ui_line/ui_blank 向缓冲追加文本，ui_render 清屏
+# 后整体重绘；新增或删除菜单项、状态行只需增删对应的 ui_* 调用，渲染逻辑
+# 本身不用改。
+UI_TITLE=""
+UI_LINES=()
+
+ui_title() { UI_TITLE="$1"; }
+ui_reset() { UI_LINES=(); }
+ui_blank() { UI_LINES+=(""); }
+ui_line()  { UI_LINES+=("$1"); }
+
+ui_render() {
+    clear 2>/dev/null || printf '\033[2J\033[H'
+    echo -e "${BOLD}${UI_TITLE}${RESET}"
+    echo -e "${BOLD}==========================${RESET}"
+    local line
+    for line in ${UI_LINES[@]+"${UI_LINES[@]}"}; do
+        echo -e "$line"
+    done
+    ui_reset
+}
+
+# 交互动作结束后暂停，等待回车再重绘画面。
+ui_pause() {
+    local prompt="${1:-按回车键返回菜单...}" _
+    echo ""
+    read -rp "$prompt" _ || exit 0
+}
+
+# ============================================================
+# 镜像频道工具 / Image channel helpers
+# ============================================================
+
+# 频道约定与 backend/services/container_registry.py 一致：
+#   stable      标签 vX.Y.Z，移动别名 latest
+#   development 标签 dev-<timestamp>-vX.Y.Z-<sha>，移动别名 edge
+DEFAULT_IMAGE_REPOSITORY="ghcr.io/sakura520222/sakura-ai"
+
+# 取镜像引用的 repository 部分（去掉 :tag 与 @digest）。
+image_repo_of() {
+    local image="${1%%@*}"
+    local tail="${image##*/}"
+    if [[ "$tail" == *:* ]]; then
+        printf '%s\n' "${image%:*}"
+    else
+        printf '%s\n' "$image"
+    fi
+}
+
+# 取镜像引用的 tag 部分；无 tag（仅 repository 或 digest-pinned）时输出空串。
+image_tag_of() {
+    local image="${1%%@*}"
+    local tail="${image##*/}"
+    if [[ "$tail" == *:* ]]; then
+        printf '%s\n' "${image##*:}"
+    fi
+}
+
+# 依据 tag 判定频道：latest / vX.Y.Z -> stable；edge / dev-* -> development。
+image_channel_of() {
+    local tag
+    tag=$(image_tag_of "$1")
+    case "$tag" in
+        latest|v*.*)          printf 'stable\n' ;;
+        edge|dev-*)           printf 'development\n' ;;
+        *)                    printf 'unknown\n' ;;
     esac
+}
+
+# 频道对应的移动别名 tag（CI 维护其指向各自频道 head）。
+channel_alias() {
+    case "$1" in
+        stable)      printf 'latest\n' ;;
+        development) printf 'edge\n' ;;
+        *)           return 1 ;;
+    esac
+}
+
+# ============================================================
+# Updater IPC / Updater daemon v1 IPC over UDS
+# ============================================================
+# 与 WebUI（backend/services/updater_client.py）调用的是同一组端点；这里用
+# curl --unix-socket 触发完整的 job 流水线（preflight/pull/activate/health）。
+UPDATE_JOB_TIMEOUT=900
+
+updater_ipc_get() {
+    local path="$1"
+    curl --silent --connect-timeout 2 --max-time 10 \
+        --unix-socket "$UPDATER_SOCKET_PATH" \
+        -H 'Accept: application/json' \
+        "http://localhost$path" 2>/dev/null
+}
+
+# 从紧凑 JSON 中提取第一个字符串字段值；失败返回非零。
+updater_ipc_field() {
+    local key="$1" payload="$2" pattern
+    pattern="\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+    [[ "$payload" =~ $pattern ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+updater_daemon_is_running() {
+    updater_backend is-running \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1
+}
+
+updater_has_active_job() {
+    local payload
+    payload=$(updater_ipc_get /v1/status) || return 1
+    [[ -n "$payload" ]] || return 1
+    [[ "$payload" =~ \"has_active_job\"[[:space:]]*:[[:space:]]*true ]]
+}
+
+# 轮询 job 直至终态（success / failed / rolled_back）。
+updater_ipc_wait_job() {
+    local job_id="$1" payload state last="" elapsed=0
+    info "等待 updater job 完成 ($job_id)..."
+    while true; do
+        payload=$(updater_ipc_get "/v1/jobs/$job_id") || payload=""
+        if state=$(updater_ipc_field state "$payload"); then
+            if [[ "$state" != "$last" ]]; then
+                info "job 状态: $state"
+                last="$state"
+            fi
+            case "$state" in
+                success)                return 0 ;;
+                failed|rolled_back)     return 1 ;;
+            esac
+        fi
+        if [[ "$elapsed" -ge "$UPDATE_JOB_TIMEOUT" ]]; then
+            warn "等待超时 (${UPDATE_JOB_TIMEOUT}s)；job 可能仍在后台执行"
+            return 1
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+}
+
+# 失败时输出 job 日志（原始 JSON）辅助诊断。
+updater_ipc_show_job_logs() {
+    local job_id="$1" payload
+    payload=$(updater_ipc_get "/v1/jobs/$job_id/logs") || payload=""
+    if [[ -z "$payload" ]]; then
+        warn "无法获取 job 日志"
+        return 0
+    fi
+    echo ""
+    info "job 日志 (原始 JSON):"
+    echo "$payload"
+}
+
+# ============================================================
+# 镜像更新与频道切换 / Image update and channel switch
+# ============================================================
+
+require_image_deployment() {
+    local mode
+    mode=$(read_deployment_mode)
+    if [[ "$mode" != "image" ]]; then
+        warn "当前部署模式不是生产镜像 (${mode:-未初始化})；该操作仅适用于 image 部署"
+        info "可先执行「生产镜像部署」完成 image 模式初始化"
+        return 1
+    fi
+}
+
+require_idle_image_deployment() {
+    if is_running; then
+        warn "后台部署正在进行；请等待完成或先停止正在进行的构建"
+        return 1
+    fi
+    if runner_pid_is_live; then
+        fail "build.pid refers to a live process whose runner identity cannot be verified"
+        return 1
+    fi
+    if updater_daemon_is_running && updater_has_active_job; then
+        warn "updater 正在执行更新 job；请等待其完成后再操作"
+        return 1
+    fi
+}
+
+# 轻量 /health 摘要（短超时），仅用于菜单头展示。
+menu_health_summary() {
+    local payload version="" channel="" revision="" pattern
+    payload=$(curl --silent --connect-timeout 1 --max-time 2 \
+        -H 'Accept: application/json' "$UPDATER_HEALTH_URL" 2>/dev/null) || return 1
+    [[ -n "$payload" ]] || return 1
+    version=$(updater_ipc_field version "$payload") || return 1
+    pattern="\"build\".*\"channel\"[[:space:]]*:[[:space:]]*\"([a-z]+)\""
+    if [[ "$payload" =~ $pattern ]]; then
+        channel="${BASH_REMATCH[1]}"
+    fi
+    pattern="\"revision\"[[:space:]]*:[[:space:]]*\"([0-9a-f]{7,40})\""
+    if [[ "$channel" == "development" && "$payload" =~ $pattern ]]; then
+        revision="+${BASH_REMATCH[1]:0:7}"
+    fi
+    printf 'v%s (%s%s)' "$version" "${channel:-unknown}" "$revision"
+    return 0
+}
+
+# 轮询 /health 直至就绪；成功后打印运行版本与频道。
+menu_wait_healthy() {
+    local elapsed=0 payload version channel revision pattern
+    info "等待服务启动..."
+    while [[ "$elapsed" -lt "$HEALTH_TIMEOUT" ]]; do
+        payload=$(curl --silent --connect-timeout 2 --max-time 5 \
+            -H 'Accept: application/json' "$UPDATER_HEALTH_URL" 2>/dev/null) || payload=""
+        if [[ -n "$payload" ]]; then
+            version=$(updater_ipc_field version "$payload") || version="?"
+            channel=""
+            pattern="\"build\".*\"channel\"[[:space:]]*:[[:space:]]*\"([a-z]+)\""
+            if [[ "$payload" =~ $pattern ]]; then
+                channel="${BASH_REMATCH[1]}"
+            fi
+            revision=""
+            pattern="\"revision\"[[:space:]]*:[[:space:]]*\"([0-9a-f]{7,40})\""
+            if [[ "$channel" == "development" && "$payload" =~ $pattern ]]; then
+                revision="+${BASH_REMATCH[1]:0:7}"
+            fi
+            ok "服务已就绪: v${version} (${channel:-unknown}${revision})"
+            return 0
+        fi
+        sleep 3
+        elapsed=$((elapsed + 3))
+    done
+    warn "服务启动超时 (${HEALTH_TIMEOUT}s)"
+    return 1
+}
+
+# 手动 Compose 更新路径：拉取频道别名镜像 -> 记录到 deployment.env -> up -d。
+# 只重建镜像发生变化的 web 容器（与 updater ImageAdapter.activate 一致），
+# 不会 down 掉 MySQL/Redis。
+apply_channel_image() {
+    local channel="$1" repository channel_tag image compose_cmd
+    if ! channel_tag=$(channel_alias "$channel"); then
+        fail "无法识别目标频道: $channel"
+        return 1
+    fi
+    repository=$(image_repo_of "$(read_deployment_value "SAKURA_AI_IMAGE")")
+    if [[ -z "$repository" ]]; then
+        repository="$DEFAULT_IMAGE_REPOSITORY"
+    fi
+    image="$repository:$channel_tag"
+
+    info "拉取镜像: $image"
+    docker pull "$image" || return 1
+
+    write_deployment_env_image "$image" || return 1
+    ok "部署状态已指向: $image"
+
+    select_compose_for_operation true
+    compose_cmd=$(detect_compose)
+    if [[ -z "$compose_cmd" ]]; then
+        fail "Docker Compose 未安装"
+        return 1
+    fi
+    COMPOSE="$compose_cmd"
+    info "应用新镜像..."
+    $COMPOSE up -d || return 1
+    menu_wait_healthy
+}
+
+# 更新当前频道的镜像到最新（菜单 [3]）。
+# 优先复用 host updater daemon 的 job 流水线；daemon 不可用时回退为
+# 直接 Compose 拉取频道别名。
+cmd_update_image() {
+    local image channel payload job_id
+    require_image_deployment || return 1
+    require_idle_image_deployment || return 1
+
+    image=$(read_deployment_value "SAKURA_AI_IMAGE")
+    channel=$(image_channel_of "$image")
+    info "当前镜像: ${image:-未记录}"
+    info "目标频道: $channel"
+
+    if updater_daemon_is_running; then
+        info "通过 host updater daemon 更新当前频道..."
+        if ! payload=$(curl --fail --silent --show-error \
+            --connect-timeout 2 --max-time 300 \
+            --unix-socket "$UPDATER_SOCKET_PATH" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json' \
+            --request POST --data '{}' http://localhost/v1/update 2>&1); then
+            fail "updater 更新提交失败: $payload"
+            return 1
+        fi
+        if ! job_id=$(updater_ipc_field job_id "$payload"); then
+            fail "updater 响应缺少 job_id: $payload"
+            return 1
+        fi
+        if updater_ipc_wait_job "$job_id"; then
+            ok "镜像更新完成"
+            return 0
+        fi
+        fail "镜像更新未成功 (job: $job_id)"
+        updater_ipc_show_job_logs "$job_id"
+        return 1
+    fi
+
+    warn "host updater daemon 未运行；回退为手动 Compose 更新"
+    if [[ "$channel" != "stable" && "$channel" != "development" ]]; then
+        fail "当前镜像无法识别频道；手动更新仅支持 stable/development 别名"
+        return 1
+    fi
+    apply_channel_image "$channel"
+}
+
+# 切换 stable/development 频道（菜单 [4]）：
+# 拉取目标频道别名 -> 更新 deployment.env -> up -d -> 等待健康检查。
+cmd_switch_channel() {
+    local image channel repository choice target confirm
+    require_image_deployment || return 1
+    require_idle_image_deployment || return 1
+
+    image=$(read_deployment_value "SAKURA_AI_IMAGE")
+    channel=$(image_channel_of "$image")
+    repository=$(image_repo_of "$image")
+    if [[ -z "$repository" ]]; then
+        repository="$DEFAULT_IMAGE_REPOSITORY"
+    fi
+
+    echo ""
+    info "当前镜像: ${image:-未记录}"
+    info "当前频道: $channel"
+    echo ""
+    echo -e "  ${BOLD}[1]${RESET} stable      正式频道 ($repository:latest)"
+    echo -e "  ${BOLD}[2]${RESET} development 开发频道 ($repository:edge)"
+    echo -e "  ${BOLD}[0]${RESET} 取消"
+    echo ""
+    read -rp "  切换到: " choice
+    case "$choice" in
+        1) target=stable ;;
+        2) target=development ;;
+        *) info "已取消"; return 0 ;;
+    esac
+
+    if [[ "$target" == "$channel" ]]; then
+        info "已在 $target 频道；将执行频道内更新"
+    else
+        warn "切换频道会替换运行中的 web 镜像并重启服务"
+        read -rp "  确认切换到 $target? (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+            info "已取消"
+            return 0
+        fi
+    fi
+    apply_channel_image "$target"
+}
+
+# ============================================================
+# 主菜单 / Main menu
+# ============================================================
+
+# 状态头与菜单项都是 UI_LINES 里的普通文本行；调整画面只需增删 ui_* 调用。
+render_main_menu() {
+    local mode mode_label image channel health phase daemon
+    mode=$(read_deployment_mode)
+    case "$mode" in
+        image)  mode_label="image (生产镜像)" ;;
+        source) mode_label="source (源码构建)" ;;
+        *)      mode_label="未初始化" ;;
+    esac
+    image=$(read_deployment_value "SAKURA_AI_IMAGE")
+    channel=$(image_channel_of "$image")
+    health=$(menu_health_summary) || health="不可达"
+    phase=$(get_phase)
+    if is_running; then
+        phase="部署进行中 ($phase)"
+    else
+        phase="空闲 (上次: $phase)"
+    fi
+    if updater_daemon_is_running; then
+        daemon="运行中"
+    else
+        daemon="未运行"
+    fi
+
+    ui_title "Sakura AI 管理菜单"
+    ui_blank
+    ui_line "  ${DIM}部署模式: ${mode_label}${RESET}"
+    if [[ "$mode" == "image" ]]; then
+        ui_line "  ${DIM}当前镜像: ${image:-未记录}${RESET}"
+        ui_line "  ${DIM}镜像频道: ${channel}${RESET}"
+    fi
+    ui_line "  ${DIM}运行版本: ${health}${RESET}"
+    ui_line "  ${DIM}后台任务: ${phase}${RESET}"
+    ui_line "  ${DIM}Updater : ${daemon}${RESET}"
+    ui_blank
+    ui_line "  ${BOLD}[1]${RESET} 启动服务 (自动检测构建)"
+    ui_line "  ${BOLD}[2]${RESET} 强制重建镜像并启动"
+    ui_line "  ${BOLD}[3]${RESET} 更新镜像 (当前频道)"
+    ui_line "  ${BOLD}[4]${RESET} 切换镜像频道 (正式/开发)"
+    ui_line "  ${BOLD}[5]${RESET} 查看构建/运行状态"
+    ui_line "  ${BOLD}[6]${RESET} 附加到构建日志"
+    ui_line "  ${BOLD}[7]${RESET} 停止正在进行的构建"
+    ui_line "  ${BOLD}[8]${RESET} 查看服务容器状态"
+    ui_line "  ${BOLD}[9]${RESET} 停止服务"
+    ui_line "  ${BOLD}[10]${RESET} 生产镜像部署"
+    ui_line "  ${BOLD}[11]${RESET} Updater daemon 管理"
+    ui_line "  ${BOLD}[12]${RESET} 卸载 Sakura AI"
+    ui_line "  ${BOLD}[0]${RESET} 退出"
+    ui_blank
+}
+
+# 在子 shell 中执行菜单动作：动作内部的 exit 与失败都不会终止菜单循环。
+menu_run() {
+    echo ""
+    ( "$@" ) || true
+    ui_pause
+}
+
+menu_loop() {
+    local choice
+    while true; do
+        render_main_menu
+        ui_render
+        read -rp "  请选择操作: " choice || exit 0
+        case "$choice" in
+            1)  menu_run do_start false ;;
+            2)  menu_run do_start true ;;
+            3)  menu_run cmd_update_image ;;
+            4)  menu_run cmd_switch_channel ;;
+            5)  menu_run cmd_status ;;
+            6)  menu_run cmd_attach ;;
+            7)  menu_run cmd_stop ;;
+            8)  menu_run do_ps ;;
+            9)  menu_run do_down ;;
+            10) menu_run do_start false true ;;
+            11) updater_menu_loop ;;
+            12) menu_run cmd_uninstall ;;
+            0)  info "已退出" ; exit 0 ;;
+            *)  warn "无效选项: $choice" ; sleep 1 ;;
+        esac
+    done
 }
 
 # Updater daemon 管理子菜单（host updater CLI 的交互入口）
 # 复用 cmd_updater：包括 install/reinstall/uninstall 与 daemon 生命周期操作。
-do_updater_menu() {
-    echo ""
-    echo -e "${BOLD}Updater daemon 管理${RESET}"
-    echo -e "${BOLD}--------------------------${RESET}"
-    echo ""
-    echo -e "  ${BOLD}[1]${RESET} 安装 updater (需 root)"
-    echo -e "  ${BOLD}[2]${RESET} 启动 updater daemon"
-    echo -e "  ${BOLD}[3]${RESET} 停止 updater daemon"
-    echo -e "  ${BOLD}[4]${RESET} 查看 updater daemon 状态"
-    echo -e "  ${BOLD}[5]${RESET} 重新安装并启动 updater"
-    echo -e "  ${BOLD}[6]${RESET} 卸载 updater"
-    echo -e "  ${BOLD}[0]${RESET} 返回"
-    echo ""
+render_updater_menu() {
+    ui_title "Updater daemon 管理"
+    ui_blank
+    ui_line "  ${BOLD}[1]${RESET} 安装 updater (需 root)"
+    ui_line "  ${BOLD}[2]${RESET} 启动 updater daemon"
+    ui_line "  ${BOLD}[3]${RESET} 停止 updater daemon"
+    ui_line "  ${BOLD}[4]${RESET} 查看 updater daemon 状态"
+    ui_line "  ${BOLD}[5]${RESET} 重新安装并启动 updater"
+    ui_line "  ${BOLD}[6]${RESET} 卸载 updater"
+    ui_line "  ${BOLD}[0]${RESET} 返回主菜单"
+    ui_blank
+}
 
+updater_menu_loop() {
     local choice
-    read -rp "  请选择操作: " choice
-    case "$choice" in
-        1) cmd_updater install ;;
-        2) cmd_updater start  ;;
-        3) cmd_updater stop   ;;
-        4) cmd_updater status ;;
-        5) cmd_updater reinstall ;;
-        6) cmd_updater uninstall ;;
-        0) return 0 ;;
-        *) warn "无效选项: $choice" ; return 1 ;;
-    esac
+    while true; do
+        render_updater_menu
+        ui_render
+        read -rp "  请选择操作: " choice || exit 0
+        case "$choice" in
+            1) menu_run cmd_updater install ;;
+            2) menu_run cmd_updater start  ;;
+            3) menu_run cmd_updater stop   ;;
+            4) menu_run cmd_updater status ;;
+            5) menu_run cmd_updater reinstall ;;
+            6) menu_run cmd_updater uninstall ;;
+            0) return 0 ;;
+            *) warn "无效选项: $choice" ; sleep 1 ;;
+        esac
+    done
 }
 
 do_ps() {
@@ -1816,7 +2259,7 @@ do_start() {
     local prod=${2:-false}
 
     echo ""
-    echo -e "${BOLD}🚀 Sakura AI 启动脚本${RESET}"
+    echo -e "${BOLD}Sakura AI 启动脚本${RESET}"
     echo -e "${BOLD}==========================${RESET}"
 
     # Check Docker
@@ -1969,7 +2412,7 @@ main() {
                 echo "用法: ./start.sh [选项]"
                 echo ""
                 echo "选项:"
-                echo "  (无参数)    交互式菜单"
+                echo "  (无参数)    交互式菜单（支持更新镜像、切换 stable/development 频道）"
                 echo "  --rebuild   强制重建镜像并启动"
                 echo "  --prod      生产模式：拉取 GHCR 镜像一键部署（跳过本地构建）"
                 echo "  --status    查看当前构建/运行状态"
@@ -2005,7 +2448,7 @@ main() {
 
     # No subcommand args -> interactive menu
     if [[ -z "$cmd" && "$rebuild" == "false" && "$prod" == "false" ]]; then
-        show_menu
+        menu_loop
     else
         do_start "$rebuild" "$prod"
     fi
