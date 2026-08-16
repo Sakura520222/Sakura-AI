@@ -231,8 +231,9 @@ class ProfessionalReviewAgent:
             sakura_ref=sakura_ref,
         )
         tool_schemas = get_tool_definitions("reviewer")
-        # 工具循环不设轮次上限：依赖模型自然停止（submit_review / 纯文本完成），
-        # 整体时长由 agent_team_timeout_seconds 超时兜底。
+        # 工具循环不设轮次与时长上限：依赖模型自然停止（submit_review / 纯文本
+        # 完成）与手动取消（cancel_check / cancel_event）。agent_team_timeout_seconds
+        # 仅约束单次 AI 请求的 HTTP 超时，不约束整体轮数与时长。
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):

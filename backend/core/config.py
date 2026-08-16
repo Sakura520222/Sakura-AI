@@ -760,7 +760,6 @@ class Settings(BaseSettings):
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_max_iterations_per_task: int = 3
-    agent_team_max_runtime_minutes: int = 60
     agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_pr_closed_loop_enabled: bool = True
@@ -1232,7 +1231,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_max_iterations_per_task",
-                    "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_pr_closed_loop_enabled",
                     "agent_team_pr_review_pass_score",
@@ -1659,7 +1657,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
-    "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_pr_closed_loop_enabled": "启用 Agent PR 闭环",
     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",

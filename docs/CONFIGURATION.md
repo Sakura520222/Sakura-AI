@@ -40,9 +40,9 @@
 |---|---|
 | `issue_max_directory_depth` | 原为死配置（无消费点），直接删除 |
 | `agent_team_max_lines_changed` | 原为死配置（无消费点），直接删除 |
-| `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds` | 全栈专家与审查专家工具循环不设轮次上限，依赖模型自然停止（无工具调用即交付），整体时长由 `agent_team_max_runtime_minutes` 超时兜底 |
+| `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds` | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止（无工具调用即交付）与手动取消 |
 | `context_enhancement.max_tool_iterations`（节叶） | PR 审查工具循环不设轮次上限，时长由 `review_timeout_seconds` 超时兜底 |
-| `issue_max_tool_iterations` | Issue 分析工具循环不设轮次上限（删除了直查 DB 的旁路读取）；时长由任务超时兜底 |
+| `issue_max_tool_iterations` | Issue 分析工具循环不设轮次与时长上限（删除了直查 DB 的旁路读取），依赖模型自然停止（无工具调用即交付）；PR 审查路径的任务级超时不适用于 Issue 分析 |
 | `agent_team_max_files_changed` | 修改文件数硬检查删除（顺带删除 pr_service 中硬编码 >20 文件检查），Agent 不再因改动规模被拒 |
 | `fetch_url_max_calls_per_session` | 会话抓取计数删除，不再限制抓取次数 |
 | `issue_max_analysis_versions` | 分析版本永不归档，行自然增长 |
@@ -75,7 +75,7 @@
 
 ### Sakura 平铺键 → 合并入 `strategy.context_enhancement.sakura_memory` 嵌套节
 
-`sakura_memory_enabled`、`sakura_reflection_enabled`、`sakura_issue_reflection_enabled`、`sakura_consolidation_interval`、`sakura_max_memory_chars`、`sakura_max_sakura_chars`、`sakura_auto_init`、`sakura_auto_create_subdirs`、`sakura_consolidation_partial_commit`、`sakura_knowledge_extraction_enabled`、`sakura_extraction_min_reflections` 共 11 键——单一事实源改为节存储嵌套节（见「项目记忆系统」节，全局配置页「上下文增强」卡片内编辑）；`sakura_extraction_max_iterations` / `sakura_consolidation_max_iterations` 2 键删除轮次上限（模型自然停止 + 超时兜底）。
+`sakura_memory_enabled`、`sakura_reflection_enabled`、`sakura_issue_reflection_enabled`、`sakura_consolidation_interval`、`sakura_max_memory_chars`、`sakura_max_sakura_chars`、`sakura_auto_init`、`sakura_auto_create_subdirs`、`sakura_consolidation_partial_commit`、`sakura_knowledge_extraction_enabled`、`sakura_extraction_min_reflections` 共 11 键——单一事实源改为节存储嵌套节（见「项目记忆系统」节，全局配置页「上下文增强」卡片内编辑）；`sakura_extraction_max_iterations` / `sakura_consolidation_max_iterations` 2 键删除轮次上限（依赖模型自然停止，不设时长上限）。
 
 ## 配置备份
 
@@ -142,7 +142,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 位置 | 键名 | 说明 |
 |---|---|---|
 | WebUI 配置管理 | `enable_pr_dependency_graph` | 总开关 |
-| WebUI 配置管理 | `pr_dependency_graph_mode` | `ai` 模型分析 / `static` 静态 import 解析（更省成本） |
+| 全局配置页「PR 依赖图」节表单 | `pr_dependency_graph_mode` | `ai` 模型分析 / `static` 静态 import 解析（更省成本）；旧平铺键仅保持兼容读取 |
 | WebUI 配置管理 | `pr_dependency_graph_max_nodes` | 最大节点数 |
 | WebUI 配置管理 | `pr_dependency_graph_max_files` | 最大文件数 |
 
@@ -204,8 +204,8 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
-| 全局配置页「标签」分区 | PR 标签推荐 | 开关与置信度 |
-| 全局配置页「Issue 标签行为」组 | `issue_auto_create_labels` / `issue_confidence_threshold` | Issue 标签 |
+| 标签配置·推荐设置（PR 与 Issue 统一） | `label.recommendation.enabled` / `confidence_threshold` | 开关与置信度 |
+| 标签配置·推荐设置（PR 与 Issue 统一） | `label.recommendation.auto_create` | 自动创建标签（原 `issue_auto_create_labels` 已并入） |
 
 ---
 
@@ -217,7 +217,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 全局配置页「Agent 专家团队」组 | `agent_team_workspace_root` | 工作区根目录 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_repo_allowlist` | 仓库白名单（普通用户仅能操作自己名下且匹配的仓库） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_enable_context_compression` 等 | 上下文压缩 |
-| —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次上限，依赖模型自然停止，整体时长由 `agent_team_max_runtime_minutes` 超时兜底 |
+| —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止与手动取消 |
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
 | 全局配置页「Agent 专家团队」组 | 验证命令黑名单 | 控制可执行的验证命令 |
@@ -248,7 +248,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 全局配置页「上下文增强」卡片 | `context_enhancement.sakura_memory.knowledge_extraction.enabled` / `min_reflections` | 自动知识提取开关与触发间隔（默认 15 轮反思） |
 | 全局配置页「上下文增强」卡片 | `context_enhancement.sakura_memory.reflection.max_comments` / `max_changed_files` / `max_new_commits` | 反思 prompt 包含的最大评论/变更文件/新增提交条数（默认 30/30/20） |
 
-> 反思、合并与知识提取由 `main` 或 `summary` 角色绑定决定实际账号和模型，不支持在该功能中另配凭据或模型。评论正文与 PR 描述完整传入、不截断。提取/合并 Agent 的工具循环不设轮次上限（模型自然停止 + 任务超时兜底）。WebUI「Sakura 记忆管理」页面支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。
+> 反思、合并与知识提取由 `main` 或 `summary` 角色绑定决定实际账号和模型，不支持在该功能中另配凭据或模型。评论正文与 PR 描述完整传入、不截断。提取/合并 Agent 的工具循环不设轮次与时长上限（依赖模型自然停止）。WebUI「Sakura 记忆管理」页面支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。
 
 详见 [项目记忆系统使用指南](SAKURA_MEMORY_GUIDE.md)。
 

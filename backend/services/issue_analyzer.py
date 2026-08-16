@@ -540,8 +540,8 @@ class IssueAnalyzer:
         # 获取启用的工具
         enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)
 
-        # 多轮对话循环（带工具调用）：不设轮次上限，依赖模型自然停止，
-        # 整体时长由任务超时兜底。
+        # 多轮对话循环（带工具调用）：不设轮次与时长上限，依赖模型自然停止
+        # （无工具调用即交付最终结果）。
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
