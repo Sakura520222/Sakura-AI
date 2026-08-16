@@ -65,8 +65,8 @@ class ScanReportService:
 
         report_info = {}
 
-        # 创建 GitHub Issue
-        if settings.scan_auto_create_issue and scan.total_findings > 0:
+        # 创建 GitHub Issue（自动创建已固定开启，有发现才报告）
+        if scan.total_findings > 0:
             issue_info = await self._create_github_issue(scan, findings)
             if issue_info:
                 report_info.update(issue_info)

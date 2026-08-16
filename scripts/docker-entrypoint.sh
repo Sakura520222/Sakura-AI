@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # /app/config is a persistent volume because Setup writes connection.json and
-# super-admin WebUI routes edit strategies.yaml/labels.yaml.  The image keeps
-# immutable defaults outside that volume; merge only adds new default keys and
-# never overwrites an existing user value.
+# legacy deployments keep strategies.yaml/labels.yaml there.  Strategy/label
+# configuration now lives in the app_config table; the merge script keeps its
+# machinery but manages no files today (a future packaged YAML can opt in),
+# so a leftover yaml in the volume is left untouched.
 config_dir="${SAKURA_CONFIG_DIR:-/app/config}"
 defaults_dir="${SAKURA_DEFAULT_CONFIG_DIR:-/app/config-defaults}"
 merge_script="${SAKURA_CONFIG_MERGE_SCRIPT:-/app/scripts/merge_packaged_config.py}"

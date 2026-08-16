@@ -34,7 +34,6 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
-from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
     has_missing_tool_results,
@@ -232,16 +231,8 @@ class ProfessionalReviewAgent:
             sakura_ref=sakura_ref,
         )
         tool_schemas = get_tool_definitions("reviewer")
-        max_tool_rounds = await resolve_clamped_int_config(
-            "agent_team_reviewer_max_tool_rounds",
-        )
-
-        # 重置 fetch_url 会话调用计数
-        from backend.services.agent_team.tools.fetch_url_tool import (
-            reset_fetch_url_session,
-        )
-
-        await reset_fetch_url_session()
+        # 工具循环不设轮次上限：依赖模型自然停止（submit_review / 纯文本完成），
+        # 整体时长由 agent_team_timeout_seconds 超时兜底。
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
@@ -265,8 +256,10 @@ class ProfessionalReviewAgent:
 
         tool_calls_count = 0
         token_tracker = TokenTracker()
+        round_num = 0
 
-        for round_num in range(1, max_tool_rounds + 1):
+        while True:
+            round_num += 1
             if cancel_check and cancel_check():
                 return ReviewResult(
                     passed=False,
@@ -408,15 +401,6 @@ class ProfessionalReviewAgent:
                     prompt_tokens=token_tracker.prompt_tokens,
                     completion_tokens=token_tracker.completion_tokens,
                 )
-
-        return ReviewResult(
-            verdict="reject",
-            score=0,
-            summary=f"达到最大审查轮次 ({max_tool_rounds})",
-            tool_calls_count=tool_calls_count,
-            prompt_tokens=token_tracker.prompt_tokens,
-            completion_tokens=token_tracker.completion_tokens,
-        )
 
     async def _execute_tool_calls(
         self,

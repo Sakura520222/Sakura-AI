@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_settings
+from backend.core.config import get_sakura_memory_config, get_settings
 from backend.services.ai_reviewer.constants import (
     BASE_TOOLS,
     DIFF_TOOLS,
@@ -161,7 +161,7 @@ class ToolManager:
                         logger.debug("已启用 fetch_url 工具")
 
             # 检查 .sakura/ 文档工具 / Check .sakura/ doc tools
-            if settings.sakura_memory_enabled:
+            if get_sakura_memory_config().get("enabled", True):
                 for tool_name in SAKURA_TOOLS:
                     tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
                     if tool_def:

@@ -25,7 +25,6 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
@@ -39,7 +38,6 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
-from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
     has_missing_tool_results,
@@ -226,16 +224,8 @@ class FullStackExpertAgent:
         )
         ctx = self._build_context(skills_context)
         tool_schemas = get_tool_definitions("fullstack")
-        max_tool_rounds = await resolve_clamped_int_config(
-            "agent_team_max_tool_rounds",
-        )
-
-        # 重置 fetch_url 会话调用计数
-        from backend.services.agent_team.tools.fetch_url_tool import (
-            reset_fetch_url_session,
-        )
-
-        await reset_fetch_url_session()
+        # 工具循环不设轮次上限：依赖模型自然停止（finish_task / 纯文本完成），
+        # 整体时长由 agent_team_timeout_seconds 超时兜底。
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
@@ -258,8 +248,10 @@ class FullStackExpertAgent:
 
         tool_calls_count = 0
         token_tracker = TokenTracker()
+        round_num = 0
 
-        for round_num in range(1, max_tool_rounds + 1):
+        while True:
+            round_num += 1
             if cancel_check and cancel_check():
                 return FullStackResult(
                     success=False,
@@ -277,7 +269,6 @@ class FullStackExpertAgent:
                     pending_tool_calls,
                     ctx,
                     round_num,
-                    max_tool_rounds=max_tool_rounds,
                     iteration=iteration,
                     max_iterations=max_iterations,
                 )
@@ -383,7 +374,6 @@ class FullStackExpertAgent:
                 message.tool_calls,
                 ctx,
                 round_num,
-                max_tool_rounds=max_tool_rounds,
                 iteration=iteration,
                 max_iterations=max_iterations,
             )
@@ -406,42 +396,18 @@ class FullStackExpertAgent:
                     completion_tokens=token_tracker.completion_tokens,
                 )
 
-        modified_files = sorted(ctx.modified_files)
-        if modified_files:
-            summary = (
-                f"达到最大工具调用轮次 ({max_tool_rounds})，"
-                f"已修改 {len(modified_files)} 个文件但未调用 finish_task"
-            )
-            error = "max_rounds_reached_with_changes"
-        else:
-            summary = f"达到最大工具调用轮次 ({max_tool_rounds})"
-            error = "max_rounds_reached"
-
-        return FullStackResult(
-            success=False,
-            summary=summary,
-            modified_files=modified_files,
-            tool_calls_count=tool_calls_count,
-            error=error,
-            prompt_tokens=token_tracker.prompt_tokens,
-            completion_tokens=token_tracker.completion_tokens,
-        )
-
     async def _execute_tool_calls(
         self,
         tool_calls: list[Any],
         ctx: ToolContext,
         round_num: int,
-        max_tool_rounds: int = 30,
         iteration: int = 1,
         max_iterations: int = 3,
     ) -> dict[str, Any] | None:
         terminal_output: dict[str, Any] | None = None
-        settings = get_settings()
-        max_files = getattr(settings, "agent_team_max_files_changed", 8)
         progress_suffix = (
-            f"\n\n[进度: 第 {round_num}/{max_tool_rounds} 轮"
-            f" | 已修改 {len(ctx.modified_files)}/{max_files} 个文件"
+            f"\n\n[进度: 第 {round_num} 轮"
+            f" | 已修改 {len(ctx.modified_files)} 个文件"
             f" | 迭代 {iteration}/{max_iterations}]"
         )
         for tool_call in tool_calls:

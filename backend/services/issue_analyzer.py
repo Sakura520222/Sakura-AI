@@ -15,7 +15,6 @@ from backend.core.config import (
 )
 from backend.core.model_context import get_model_context_manager
 from backend.core.time_service import now_utc
-from backend.models.database import AppConfig, async_session
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
@@ -273,7 +272,7 @@ class IssueAnalyzer:
     async def _fetch_issue_comments(
         self, github_app, repo_owner: str, repo_name: str, issue_number: int
     ) -> list[dict[str, Any]] | None:
-        """获取 Issue 评论，受 issue_max_comments_in_context 配置控制数量"""
+        """获取 Issue 评论（不限制条数，全部纳入上下文）"""
         if issue_number <= 0:
             return None
 
@@ -296,13 +295,6 @@ class IssueAnalyzer:
         if not comments:
             return None
 
-        try:
-            max_count = int(
-                await get_dynamic_config("issue_max_comments_in_context") or 0
-            )
-        except ValueError, TypeError:
-            max_count = 0
-
         raw_comments = []
         for c in comments:
             author = getattr(c.user, "login", "unknown") if c.user else "unknown"
@@ -315,9 +307,6 @@ class IssueAnalyzer:
             )
 
         # 按时间正序排列（旧 → 新），便于 AI 理解对话发展
-        if max_count > 0:
-            raw_comments = raw_comments[-max_count:]
-
         return raw_comments
 
     def _parse_analysis_result(self, response_text: str) -> dict[str, Any]:
@@ -551,29 +540,8 @@ class IssueAnalyzer:
         # 获取启用的工具
         enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)
 
-        # 多轮对话循环（带工具调用）
-        max_iterations = settings.issue_max_tool_iterations
-        try:
-            if async_session is not None:
-                async with async_session() as session:
-                    from sqlalchemy import select
-
-                    result = await session.execute(
-                        select(AppConfig).where(
-                            AppConfig.key_name == "issue_max_tool_iterations"
-                        )
-                    )
-                    cfg = result.scalar_one_or_none()
-                    if cfg:
-                        try:
-                            max_iterations = int(cfg.key_value)
-                        except ValueError, TypeError:
-                            logger.warning(
-                                "Invalid issue_max_tool_iterations config: {}",
-                                cfg.key_value,
-                            )
-        except Exception as exc:
-            logger.warning("读取 issue_max_tool_iterations 配置失败: {}", exc)
+        # 多轮对话循环（带工具调用）：不设轮次上限，依赖模型自然停止，
+        # 整体时长由任务超时兜底。
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
@@ -588,7 +556,7 @@ class IssueAnalyzer:
             else model_ctx_mgr.calculate_safe_context(context_model, 0.8)
         )
 
-        while iteration < max_iterations:
+        while True:
             iteration += 1
 
             try:
@@ -779,64 +747,3 @@ class IssueAnalyzer:
                             await event_callback("message", error_tool_msg)
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
-
-        # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
-        logger.warning(
-            f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
-        )
-        messages.append(
-            {
-                "role": "user",
-                "content": "已达到最大工具调用次数，请基于已有信息立即返回最终分析结果，必须使用系统要求的 <SAKURA_ISSUE_ANALYSIS> 信封协议。",
-            }
-        )
-        try:
-            final_response = await self.api_client.call_with_retry(
-                model="",
-                messages=messages,
-                temperature=0.3,
-                role="main",
-                context=invocation_context,
-                observer=observer,
-            )
-            tracker.accumulate(final_response)
-            tracker.log_context_usage(
-                final_response,
-                role_context_window,
-                max_iterations + 1,
-            )
-            last_content = final_response.choices[0].message.content or ""
-        except Exception as e:
-            logger.error("最终 API 调用失败: {}", e)
-            last_content = ""
-
-        if last_content:
-            result = await self._parse_or_repair_analysis(
-                last_content,
-                messages,
-                tracker,
-                event_callback=event_callback,
-                publication_coordinator=publication_coordinator,
-                invocation_context=invocation_context,
-                observer=observer,
-            )
-        else:
-            result = safe_issue_protocol_failure(
-                IssueProtocolError("empty final analysis response")
-            )
-
-        result["prompt_tokens"] = tracker.prompt_tokens
-        result["completion_tokens"] = tracker.completion_tokens
-        result["tool_rounds"] = max_iterations
-        result["estimated_cost"] = tracker.calculate_cost(
-            settings.issue_price_per_1k_prompt,
-            settings.issue_price_per_1k_completion,
-        )
-        if publication_coordinator is not None and invocation_context is not None:
-            result = await coordinate_publication(
-                publication_coordinator,
-                kind="issue_analysis",
-                result=result,
-                context=invocation_context,
-            )
-        return result

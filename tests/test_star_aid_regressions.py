@@ -330,6 +330,7 @@ async def test_resolve_summary_language_config_overrides_owner_preference(monkey
         primary_language="Python",
         readme_excerpt="readme",
         lang="zh-CN",
+        max_tokens=16000,
     )
 
     # content 为空时返回空，触发上层重试/失败，绝不把思考过程当摘要
