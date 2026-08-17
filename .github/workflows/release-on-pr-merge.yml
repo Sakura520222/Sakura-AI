@@ -12,6 +12,9 @@ concurrency:
 jobs:
   generate-release:
     name: 生成 Release 说明
+    # sakura-ai-bot 直接推送（记忆合并、reflection 等 chore 提交）不触发发布；
+    # 下游 job 均依赖本 job 的 result == 'success'，跳过即整链不跑。
+    if: github.actor != 'sakura-ai-bot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
