@@ -156,13 +156,32 @@ class _FakeAsyncSession:
     async def execute(self, statement):
         entity = statement.column_descriptions[0].get("entity")
         if entity is AgentTeamTask:
-            # 与生产 _find_task() 一致：仅按 repo_owner + repo_name + branch_name 匹配
+            # 与生产 _find_task() 一致：策略 1 按 repo + branch_name 匹配；
+            # 策略 2 追加 source_type=pr_review + source_issue_number=pr_number。
+            pairs = {}
+            for sub in getattr(statement.whereclause, "clauses", []) or []:
+                left = getattr(sub, "left", None)
+                right = getattr(sub, "right", None)
+                if left is None or not hasattr(left, "key"):
+                    continue
+                pairs[left.key] = getattr(right, "value", right)
             tasks = [
                 task
                 for task in self.state.tasks
                 if task.repo_owner == self.state.current_review.repo_owner
                 and task.repo_name == self.state.current_review.repo_name
-                and task.branch_name == self.state.current_review.branch
+                and (
+                    "source_issue_number" not in pairs
+                    or task.source_issue_number == pairs["source_issue_number"]
+                )
+                and (
+                    "source_type" not in pairs
+                    or task.source_type == pairs["source_type"]
+                )
+                and (
+                    "branch_name" not in pairs
+                    or task.branch_name == pairs["branch_name"]
+                )
             ]
             tasks.sort(key=lambda task: task.updated_at, reverse=True)
             self.state.current_task_id = tasks[0].id if tasks else None
@@ -252,6 +271,7 @@ def _task(
     return AgentTeamTask(
         id=task_id,
         source_type="manual_issue",
+        source_issue_number=7,
         repo_full_name="owner/repo",
         repo_owner="owner",
         repo_name="repo",
@@ -267,10 +287,11 @@ def _task(
     )
 
 
-def _completed_review(review_id=201, score=9, head_sha="head-1"):
+def _completed_review(review_id=201, score=9, head_sha="head-1", pr_number=7):
     return PRReview(
         id=review_id,
         pr_id=7,
+        pr_number=pr_number,
         repo_owner="owner",
         repo_name="repo",
         title="Review",
@@ -455,3 +476,60 @@ async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(
     assert memory_bridge.scheduled == []
     assert len(memory_bridge.feedback) == 1
     assert "Critical issue still blocks the PR." in memory_bridge.feedback[0].content
+
+
+@pytest.mark.asyncio
+async def test_strategy2_loop_back_binds_to_same_pr_task(memory_bridge):
+    """源 PR 再次审查时，策略 2 应按 pr_number 回环到同源 Agent 任务。"""
+
+    looped_task = _task(task_id=301, head_sha="head-2")
+    looped_task.source_type = "pr_review"
+    looped_task.source_issue_number = 506
+    looped_task.branch_name = "feature/agent-fix-506"
+    looped_task.updated_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        seconds=10
+    )
+    review = _completed_review(review_id=401, head_sha="head-2", pr_number=506)
+    review.branch = "dependabot/github_actions/develop/x"
+
+    memory_bridge.tasks.append(looped_task)
+    memory_bridge.reviews[review.id] = review
+
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
+
+    assert result.handled is True
+    assert result.task_id == looped_task.id
+    assert result.action == "completed"
+    assert looped_task.status == AgentTeamTaskStatus.COMPLETED.value
+
+
+@pytest.mark.asyncio
+async def test_strategy2_never_binds_to_other_pr_task(memory_bridge):
+    """同 repo 其他 PR 的非终态任务不得被本 PR 的审查结果错误驱动。"""
+
+    other_pr_task = _task(task_id=302, head_sha="head-3")
+    other_pr_task.source_type = "pr_review"
+    other_pr_task.source_issue_number = 515
+    other_pr_task.branch_name = "feature/agent-fix-515"
+    review = _completed_review(review_id=402, head_sha="head-3", pr_number=506)
+    review.branch = "feature/agent-fix-506"
+
+    memory_bridge.tasks.append(other_pr_task)
+    memory_bridge.reviews[review.id] = review
+
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
+
+    assert result.handled is False
+    assert result.reason == "task_not_found"
+    assert other_pr_task.status == AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
+    assert memory_bridge.commit_count == 0
+    assert memory_bridge.scheduled == []
+    assert memory_bridge.feedback == []
