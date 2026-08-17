@@ -2480,7 +2480,7 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
             repo_name,
             repo_full_name,
             pr_number,
-            f"🤖 Agent 修复任务已创建（ID: {task_id}）{branch_info}\n\n"
+            f"Agent 修复任务已创建（ID: {task_id}）{branch_info}\n\n"
             f"将基于 PR #{pr_number} 的审查意见创建独立修复分支并提交 PR。\n"
             f"由 @{commenter} 触发",
         )
