@@ -169,7 +169,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
+`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装；也可以直接运行 `sudo ./start.sh` 进入交互式管理菜单，在 WebUI 之外完成更新当前频道镜像、切换 stable/development 频道等操作（stable 频道优先复用 Host Updater 的更新流水线，development 频道或 daemon 未运行时回退为 Compose 直接拉取频道别名镜像）。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
 
 > **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
 >
