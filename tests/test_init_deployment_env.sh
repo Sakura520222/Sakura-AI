@@ -16,6 +16,18 @@ report() { if [ "$1" -eq 0 ]; then echo "[OK] $2"; pass=$((pass+1)); else echo "
 assert_contains() { local file="$1" needle="$2" name="$3"; grep -q "$needle" "$file" && report 0 "$name" || report 1 "$name (expected '$needle' in $file)"; }
 assert_not_contains() { local file="$1" needle="$2" name="$3"; grep -q "$needle" "$file" && report 1 "$name (unexpected '$needle' in $file)" || report 0 "$name"; }
 
+# 全局 docker mock：默认 MySQL 数据卷不存在（全新部署场景），各用例可按需
+# 覆盖 FAKE_MYSQL_VOLUME=1；D 系列用例会重新定义完整 mock。
+docker() {
+    case "$1" in
+        volume)
+            [[ "$2" == "inspect" ]] || return 1
+            [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 # 场景 1：source 首次初始化（prod=false）
 W1=$(mktemp -d)
 prod=false DEPLOY_DIR="$W1" DEPLOYMENT_ENV_FILE="$W1/deployment.env" init_deployment_env >/dev/null
@@ -49,19 +61,34 @@ prod=false DEPLOY_DIR="$W3" DEPLOYMENT_ENV_FILE="$W3/deployment.env" init_deploy
 assert_contains "$W3/deployment.env" "custom:preserved" "S3: 已有状态不被覆盖"
 assert_contains "$W3/deployment.env" "SAKURA_DEPLOY_MODE=image" "S3: 已有 mode 不被改回 source"
 
-# 场景 3b：不完整的 image 状态无兼容或补写路径
+# 场景 3b：缺数据库密码的 image 状态在 MySQL 卷不存在时自动补全
 W3b=$(mktemp -d)
 printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=custom:preserved\n' > "$W3b/deployment.env"
 prod=false DEPLOY_DIR="$W3b" DEPLOYMENT_ENV_FILE="$W3b/deployment.env" init_deployment_env >/dev/null 2>&1
-[ "$?" -ne 0 ] && report 0 "S3b: 不完整生产状态直接无效" || report 1 "S3b: 不完整状态未 fail-closed"
-assert_not_contains "$W3b/deployment.env" "SAKURA_DB_PASSWORD=" "S3b: 未偷偷追加新密码"
+rc=$?
+password_w3b=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$W3b/deployment.env")
+[[ "$rc" -eq 0 && "$password_w3b" =~ ^[0-9a-f]{64}$ ]] \
+    && assert_contains "$W3b/deployment.env" "COMPOSE_PROJECT_NAME=sakura-ai" "S3b: 缺密码/项目名自动补全（卷不存在）" \
+    && assert_contains "$W3b/deployment.env" "custom:preserved" "S3b: 已有镜像引用保留" \
+    || report 1 "S3b: 缺密码补全失败 rc=$rc"
 
-# 场景 3c：生产项目字段缺失时无补写兼容
+# 场景 3b-2：MySQL 卷已存在时拒绝自动生成密码（fail-closed）
+W3b2=$(mktemp -d)
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=custom:preserved\n' > "$W3b2/deployment.env"
+FAKE_MYSQL_VOLUME=1 prod=false DEPLOY_DIR="$W3b2" DEPLOYMENT_ENV_FILE="$W3b2/deployment.env" init_deployment_env >/dev/null 2>&1
+[ "$?" -ne 0 ] && ! grep -q '^SAKURA_DB_PASSWORD=' "$W3b2/deployment.env" \
+    && report 0 "S3b-2: 卷存在时拒绝猜测密码" || report 1 "S3b-2"
+
+# 场景 3c：缺项目名的 image 状态自动补全固定项目名（保留既有密码）
 W3c=$(mktemp -d)
 printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=custom:preserved\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$W3c/deployment.env"
 prod=false DEPLOY_DIR="$W3c" DEPLOYMENT_ENV_FILE="$W3c/deployment.env" init_deployment_env >/dev/null 2>&1
-[ "$?" -ne 0 ] && report 0 "S3c: 缺少固定项目名的生产状态直接无效" || report 1 "S3c: 缺少项目名的状态未 fail-closed"
-assert_not_contains "$W3c/deployment.env" "COMPOSE_PROJECT_NAME=" "S3c: 未补写兼容字段"
+rc=$?
+password_w3c=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$W3c/deployment.env")
+[[ "$rc" -eq 0 ]] \
+    && assert_contains "$W3c/deployment.env" "COMPOSE_PROJECT_NAME=sakura-ai" "S3c: 缺项目名自动补全" \
+    && [[ "$password_w3c" == "$(printf '%064d' 0)" ]] && report 0 "S3c: 已有密码不被轮换" \
+    || report 1 "S3c: 缺项目名补全失败 rc=$rc"
 
 # 场景 4：atomic write 不残留临时文件
 W4=$(mktemp -d)
@@ -84,6 +111,10 @@ docker() {
     case "$1" in
         pull) return 0 ;;
         compose) return 0 ;;
+        volume)
+            [[ "$2" == "inspect" ]] || return 1
+            [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]
+            ;;
         image)
             [[ "$2" == "inspect" ]] || return 1
             if [[ -n "$FAKE_REPO_DIGESTS" ]]; then
@@ -129,6 +160,57 @@ DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV" apply_channel_image d
 [ "$?" -ne 0 ] && assert_contains "$DIGEST_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:$FAKE_IMAGE_DIGEST" "D5: 失败后 deployment.env 保持原值" \
     && report 0 "D5: 解析失败拒绝写入" || report 1 "D5: 解析失败后 deployment.env 被修改"
 FAKE_REPO_DIGESTS=""
+
+# D6: 残缺部署状态（缺 COMPOSE_PROJECT_NAME）→ 中止，不执行 compose up
+DIGEST_ENV6="$DIGEST_DIR/deployment6.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV6"
+: > "$COMPOSE_CALLS"
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV6" apply_channel_image development >/dev/null 2>&1
+rc=$?
+assert_contains "$DIGEST_ENV6" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:$FAKE_IMAGE_DIGEST" "D6: 镜像引用仍被记录"
+[ "$rc" -ne 0 ] && [ ! -s "$COMPOSE_CALLS" ] \
+    && report 0 "D6: 残缺部署状态中止且不执行 compose" || report 1 "D6: rc=$rc compose 被调用"
+
+# --- E 系列: 部署状态自动补全与 updater 自动拉起 ---
+# E1: 完全残缺（无密码/项目名/镜像）+ 卷不存在 → 自动补全全部
+E1_ENV="$DIGEST_DIR/e1.env"
+printf 'SAKURA_DEPLOY_MODE=image\n' > "$E1_ENV"
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$E1_ENV" init_deployment_env >/dev/null 2>&1
+rc=$?
+E1_PW=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$E1_ENV")
+[[ "$rc" -eq 0 && "$E1_PW" =~ ^[0-9a-f]{64}$ ]] \
+    && assert_contains "$E1_ENV" "COMPOSE_PROJECT_NAME=sakura-ai" "E1: 项目名自动补全" \
+    && assert_contains "$E1_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest" "E1: 镜像引用自动补全" \
+    || report 1 "E1: 完全残缺补全失败 rc=$rc"
+[ "$(grep -c '^$' "$E1_ENV")" -eq 0 ] && report 0 "E1: 补全后无空行" || report 1 "E1: 补全后残留空行"
+
+# E2: MySQL 卷已存在 + 缺密码 → 拒绝自动生成（fail-closed）
+E2_ENV="$DIGEST_DIR/e2.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge\nCOMPOSE_PROJECT_NAME=sakura-ai\n' > "$E2_ENV"
+FAKE_MYSQL_VOLUME=1 DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$E2_ENV" init_deployment_env >/dev/null 2>&1
+[ "$?" -ne 0 ] && ! grep -q '^SAKURA_DB_PASSWORD=' "$E2_ENV" \
+    && report 0 "E2: 卷存在时拒绝自动生成密码" || report 1 "E2: 卷存在时未拒绝"
+
+# E3: 卷存在 + 显式环境变量密码 → 补写该密码（用户恢复路径）
+E3_ENV="$DIGEST_DIR/e3.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge\nCOMPOSE_PROJECT_NAME=sakura-ai\n' > "$E3_ENV"
+E3_PW=$(printf '%064d' 7)
+FAKE_MYSQL_VOLUME=1 SAKURA_DB_PASSWORD="$E3_PW" DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$E3_ENV" init_deployment_env >/dev/null 2>&1
+assert_contains "$E3_ENV" "SAKURA_DB_PASSWORD=$E3_PW" "E3: 环境变量密码被补写"
+
+# E4: 完整合法状态不触发补全（内容不变）
+E4_ENV="$DIGEST_DIR/e4.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:%s\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\n' "$FAKE_IMAGE_DIGEST" 8 > "$E4_ENV"
+E4_BEFORE=$(cat "$E4_ENV")
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$E4_ENV" init_deployment_env >/dev/null 2>&1
+[[ "$(cat "$E4_ENV")" == "$E4_BEFORE" ]] && report 0 "E4: 完整状态不重写" || report 1 "E4: 完整状态被修改"
+
+# E5: 镜像部署成功后自动拉起 host updater daemon
+ENSURE_LOG="$DIGEST_DIR/ensure.log"
+ensure_updater_running() { echo ENSURE >> "$ENSURE_LOG"; return 0; }
+: > "$ENSURE_LOG"
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV" apply_channel_image development >/dev/null 2>&1
+grep -q '^ENSURE$' "$ENSURE_LOG" && report 0 "E5: 部署后自动 ensure updater" || report 1 "E5: 未自动 ensure updater"
 
 rm -rf "$DIGEST_DIR"
 

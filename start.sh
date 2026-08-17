@@ -226,6 +226,60 @@ generate_deployment_db_password() {
     printf '%s' "$generated"
 }
 
+# MySQL 数据卷是否已存在（compose 项目名固定 sakura-ai 前缀 + mysql_data 卷）。
+# 用于判断能否安全地自动生成新数据库密码：卷已存在意味着 MySQL 数据已按旧
+# 密码初始化，猜测/轮换密码会与既有数据脱节。
+deployment_mysql_volume_exists() {
+    docker volume inspect "${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data" >/dev/null 2>&1
+}
+
+# 原子补全 deployment.env 的多个键值（KEY=VALUE 参数），保留其余行与 0600
+# 权限。与 write_deployment_env_image 相同的 durability 顺序；调用方只传解析
+# 后的最终值，未缺失的键写回原值，保证幂等。
+write_deployment_env_keys() {
+    local tmp="" arg key replaced line
+    if [[ ! -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        fail "缺少部署状态文件: $DEPLOYMENT_ENV_FILE" >&2
+        return 1
+    fi
+    tmp="$DEPLOY_DIR/.deployment.env.keys.$$"
+    : > "$tmp"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        replaced=0
+        for arg in "$@"; do
+            if [[ "$line" == "${arg%%=*}="* ]]; then
+                printf '%s\n' "$arg" >> "$tmp"
+                replaced=1
+                break
+            fi
+        done
+        if [[ "$replaced" -eq 0 ]]; then
+            printf '%s\n' "$line" >> "$tmp"
+        fi
+    done < "$DEPLOYMENT_ENV_FILE"
+    # 追加文件中不存在的键（原文件尾无换行时先补换行；
+    # 命令替换会剥离尾部换行符，输出为空即表示以换行结尾）
+    if [[ -s "$tmp" ]] && [[ -n "$(tail -c 1 "$tmp")" ]]; then
+        printf '\n' >> "$tmp"
+    fi
+    for arg in "$@"; do
+        if ! grep -q "^${arg%%=*}=" "$tmp"; then
+            printf '%s\n' "$arg" >> "$tmp"
+        fi
+    done
+    if ! chmod 600 "$tmp"; then
+        rm -f "$tmp"
+        fail "无法将 deployment.env 权限设置为 0600；拒绝写入数据库凭据" >&2
+        return 1
+    fi
+    sync -d "$tmp" 2>/dev/null || sync 2>/dev/null || true
+    if ! mv -f -- "$tmp" "$DEPLOYMENT_ENV_FILE"; then
+        rm -f "$tmp"
+        fail "deployment.env 原子替换失败" >&2
+        return 1
+    fi
+}
+
 init_deployment_env() {
     local mode="source"
     if ${prod:-false}; then
@@ -236,12 +290,14 @@ init_deployment_env() {
         local persisted_mode=""
         local persisted_password=""
         local persisted_project=""
+        local persisted_image=""
         local line
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
                 SAKURA_DEPLOY_MODE=*) persisted_mode="${line#SAKURA_DEPLOY_MODE=}" ;;
                 SAKURA_DB_PASSWORD=*) persisted_password="${line#SAKURA_DB_PASSWORD=}" ;;
                 COMPOSE_PROJECT_NAME=*) persisted_project="${line#COMPOSE_PROJECT_NAME=}" ;;
+                SAKURA_AI_IMAGE=*) persisted_image="${line#SAKURA_AI_IMAGE=}" ;;
             esac
         done < "$DEPLOYMENT_ENV_FILE"
 
@@ -249,13 +305,43 @@ init_deployment_env() {
             source)
                 ;;
             image)
+                local need_write=0
+                # 自动补全缺失的部署状态（数据库凭据/项目名/镜像引用），让残缺
+                # 文件也能直接部署：
+                # - 缺数据库密码：仅当 MySQL 数据卷不存在（全新部署）才生成新
+                #   密码；卷已存在时密码必须与既有数据一致，无法猜测，fail-closed。
+                # - 项目名缺失补固定值 sakura-ai；已存在但不合法仍拒绝（不覆盖）。
+                # - 镜像缺失补默认 latest（频道别名，后续更新会 pin 成 digest 引用）。
                 if [[ ! "$persisted_password" =~ ^[0-9a-f]{64}$ ]]; then
-                    fail "invalid production deployment state: SAKURA_DB_PASSWORD must be 64 lowercase hexadecimal characters" >&2
-                    return 1
+                    if [[ "${SAKURA_DB_PASSWORD:-}" =~ ^[0-9a-f]{64}$ ]]; then
+                        persisted_password="$SAKURA_DB_PASSWORD"
+                        need_write=1
+                    elif ! deployment_mysql_volume_exists; then
+                        persisted_password="$(generate_deployment_db_password)" || return 1
+                        need_write=1
+                    else
+                        fail "deployment.env 缺少数据库密码，且 MySQL 数据卷 ${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data 已存在；无法自动生成" >&2
+                        fail "恢复：从备份还原 deployment.env，或设置环境变量 SAKURA_DB_PASSWORD=<原密码> 后重新运行" >&2
+                        return 1
+                    fi
                 fi
-                if [[ "$persisted_project" != "$DEFAULT_PROD_COMPOSE_PROJECT" ]]; then
+                if [[ -z "$persisted_project" ]]; then
+                    persisted_project="$DEFAULT_PROD_COMPOSE_PROJECT"
+                    need_write=1
+                elif [[ "$persisted_project" != "$DEFAULT_PROD_COMPOSE_PROJECT" ]]; then
                     fail "invalid production deployment state: COMPOSE_PROJECT_NAME must be '$DEFAULT_PROD_COMPOSE_PROJECT'" >&2
                     return 1
+                fi
+                if [[ -z "$persisted_image" ]]; then
+                    persisted_image="ghcr.io/sakura520222/sakura-ai:latest"
+                    need_write=1
+                fi
+                if [[ "$need_write" -eq 1 ]]; then
+                    write_deployment_env_keys \
+                        "SAKURA_DB_PASSWORD=$persisted_password" \
+                        "COMPOSE_PROJECT_NAME=$persisted_project" \
+                        "SAKURA_AI_IMAGE=$persisted_image" || return 1
+                    info "已补全部署状态: $DEPLOYMENT_ENV_FILE"
                 fi
                 ;;
             *)
@@ -352,6 +438,7 @@ UPDATER_PROD_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.prod.yml"
 UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$UPDATER_PROJECT_ROOT/$DEPLOYMENT_ENV_FILE}"
 UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-$UPDATER_PROJECT_ROOT/backend/__init__.py}"
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
+UPDATER_RELEASE_API_URL="https://api.github.com/repos/Sakura520222/Sakura-AI/releases/latest"
 UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
 
 # 依据持久化部署模式选择 updater 使用的 Compose 定义。
@@ -771,6 +858,26 @@ updater_prepare_state_dir() {
     fi
 }
 
+# 最近 stable Release 的 updater 版本（GitHub releases/latest API）。
+# development 镜像版本可能超前 stable Release（没有对应的 updater 资产），
+# install 下载 404 时回退使用最近 stable 版本的 updater binary。
+resolve_latest_stable_updater_version() {
+    local payload_file="" headers_file="" tag=""
+    payload_file=$(mktemp) || return 1
+    headers_file=$(mktemp) || { rm -f -- "$payload_file"; return 1; }
+    if ! updater_curl "$UPDATER_RELEASE_API_URL" "$payload_file" "$headers_file"; then
+        rm -f -- "$payload_file" "$headers_file"
+        return 1
+    fi
+    rm -f -- "$headers_file"
+    tag=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([0-9][0-9.]*\)".*$/\1/p' "$payload_file" | head -n 1)
+    rm -f -- "$payload_file"
+    if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 1
+    fi
+    printf '%s\n' "$tag"
+}
+
 resolve_updater_app_version() {
     local deploy_mode="" image_version="" running_version="" package_version="" line image version
 
@@ -852,7 +959,7 @@ resolve_updater_asset() {
 
 install_updater_binary() {
     local binary="$UPDATER_BINARY" lock_path lock_fd=""
-    local version asset binary_url sums_url
+    local version stable_version asset binary_url sums_url
     local binary_tmp="" sums_tmp="" binary_headers_tmp="" sums_headers_tmp=""
     local expected_hash actual_hash
 
@@ -928,9 +1035,24 @@ install_updater_binary() {
     binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
     sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
     if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
-        fail "updater binary download failed; old binary unchanged" >&2
-        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
-        return 1
+        # 目标版本无 Release 资产（development 镜像版本超前 stable 发布）；
+        # 回退到最近 stable Release 的 updater binary（updater 随 stable 发布）。
+        if stable_version=$(resolve_latest_stable_updater_version) \
+            && [[ "$stable_version" != "$version" ]]; then
+            warn "v${version} 无对应 Release 资产（development 构建超前 stable），回退使用最近 stable v${stable_version} 的 updater" >&2
+            version="$stable_version"
+            binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
+            sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
+            if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+                fail "updater binary download failed (incl. stable fallback); old binary unchanged" >&2
+                updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+                return 1
+            fi
+        else
+            fail "updater binary download failed; old binary unchanged" >&2
+            updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+            return 1
+        fi
     fi
     if ! updater_validate_content_length "$binary_tmp" "$binary_headers_tmp"; then
         fail "updater binary Content-Length mismatch; old binary unchanged" >&2
@@ -1096,6 +1218,15 @@ cmd_updater_install() {
 
     if [[ "$was_running" -eq 1 ]]; then
         warn "updater binary installed while daemon was already running; restart-required (not restarting automatically)" >&2
+        return 0
+    fi
+    # 安装完成后自动拉起 daemon（daemon 未运行时；与 ensure_updater_running
+    # 的引导语义一致，避免"已安装但未运行"的中间状态）。
+    if updater_start_daemon; then
+        :
+    else
+        warn "updater 已安装但 daemon 启动失败" >&2
+        return 1
     fi
 }
 
@@ -1213,6 +1344,21 @@ cmd_updater_uninstall() {
     ok "updater 已卸载"
 }
 
+# 拉起 updater daemon（install 与 ensure_updater_running 共用；避免递归）。
+updater_start_daemon() {
+    select_compose_from_deployment_mode
+    if ! updater_backend start \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --compose-file "$COMPOSE_FILE" \
+        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE"; then
+        fail "updater 启动失败" >&2
+        fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式" >&2
+        return 1
+    fi
+    ok "updater daemon 已运行"
+}
+
 ensure_updater_running() {
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
@@ -1252,8 +1398,9 @@ ensure_updater_running() {
         fail "refusing unsafe updater executable: $binary" >&2
         return 126
     else
+        # cmd_updater_install 成功即已完成安装并启动 daemon，直接返回。
         if cmd_updater_install; then
-            :
+            return 0
         else
             install_rc=$?
             fail "updater bootstrap failed; see previous error" >&2
@@ -1261,17 +1408,7 @@ ensure_updater_running() {
         fi
     fi
 
-    select_compose_from_deployment_mode
-    if ! updater_backend start \
-        --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH" \
-        --compose-file "$COMPOSE_FILE" \
-        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE"; then
-        fail "updater 启动失败"
-        fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式"
-        return 1
-    fi
-    ok "updater daemon 已运行"
+    updater_start_daemon
 }
 
 cmd_updater() {
@@ -1911,7 +2048,7 @@ apply_channel_image() {
     write_deployment_env_image "$image" || return 1
     ok "部署状态已指向: $image"
 
-    select_compose_for_operation true
+    select_compose_for_operation true || return 1
     compose_cmd=$(detect_compose)
     if [[ -z "$compose_cmd" ]]; then
         fail "Docker Compose 未安装"
@@ -1921,6 +2058,8 @@ apply_channel_image() {
     info "应用新镜像..."
     $COMPOSE up -d || return 1
     menu_wait_healthy
+    # 与 do_start 一致：镜像部署完成后自动拉起 host updater daemon（失败不阻断）
+    ensure_updater_running || warn "updater daemon 未拉起（更新功能不可用，服务不受影响）"
 }
 
 # 更新当前频道的镜像到最新（菜单 [3]）。
@@ -1933,6 +2072,9 @@ cmd_update_image() {
     local image channel payload job_id body_file http_status pattern
     require_image_deployment || return 1
     require_idle_image_deployment || return 1
+    # 补全残缺部署状态（缺数据库密码/项目名/镜像时自动补写），确保后续镜像
+    # 解析与 updater 安装有完整的权威状态。
+    init_deployment_env || return 1
 
     image=$(read_deployment_value "SAKURA_AI_IMAGE")
     channel=$(image_channel_of "$image")
@@ -2014,6 +2156,8 @@ cmd_switch_channel() {
     local image channel repository choice target confirm
     require_image_deployment || return 1
     require_idle_image_deployment || return 1
+    # 与 cmd_update_image 一致：残缺部署状态先自动补全。
+    init_deployment_env || return 1
 
     image=$(read_deployment_value "SAKURA_AI_IMAGE")
     channel=$(image_channel_of "$image")
