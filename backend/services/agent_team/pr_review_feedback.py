@@ -237,47 +237,29 @@ class AgentTeamPRReviewFeedbackService:
         # #build_pr_review_task_draft）按 repo + pr_number 阻止同 PR 重复任务，但
         # 不同 PR 可并存非终态任务，因此这里必须限定 pr_number，防止错绑其他
         # PR 的 Agent 任务。
-        if review.pr_number is None:
-            # 历史数据 pr_number 可能为空（列 nullable），无法精确关联时保持原
-            # repo 级回退，宁可少处理也不错绑。
-            statement = (
-                select(AgentTeamTask)
-                .where(
-                    AgentTeamTask.repo_owner == review.repo_owner,
-                    AgentTeamTask.repo_name == review.repo_name,
-                    AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
-                    AgentTeamTask.status.notin_(
-                        [
-                            AgentTeamTaskStatus.FAILED.value,
-                            AgentTeamTaskStatus.CANCELLED.value,
-                            AgentTeamTaskStatus.ABANDONED.value,
-                            AgentTeamTaskStatus.COMPLETED.value,
-                        ]
-                    ),
-                )
-                .order_by(AgentTeamTask.updated_at.desc())
-                .limit(1)
-            )
-        else:
-            statement = (
-                select(AgentTeamTask)
-                .where(
-                    AgentTeamTask.repo_owner == review.repo_owner,
-                    AgentTeamTask.repo_name == review.repo_name,
-                    AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
-                    AgentTeamTask.source_issue_number == review.pr_number,
-                    AgentTeamTask.status.notin_(
-                        [
-                            AgentTeamTaskStatus.FAILED.value,
-                            AgentTeamTaskStatus.CANCELLED.value,
-                            AgentTeamTaskStatus.ABANDONED.value,
-                            AgentTeamTaskStatus.COMPLETED.value,
-                        ]
-                    ),
-                )
-                .order_by(AgentTeamTask.updated_at.desc())
-                .limit(1)
-            )
+        conditions = [
+            AgentTeamTask.repo_owner == review.repo_owner,
+            AgentTeamTask.repo_name == review.repo_name,
+            AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+            AgentTeamTask.status.notin_(
+                [
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.ABANDONED.value,
+                    AgentTeamTaskStatus.COMPLETED.value,
+                ]
+            ),
+        ]
+        # 历史数据 pr_number 可能为空（列 nullable），无法精确关联时保持原
+        # repo 级回退，宁可少处理也不错绑。
+        if review.pr_number is not None:
+            conditions.append(AgentTeamTask.source_issue_number == review.pr_number)
+        statement = (
+            select(AgentTeamTask)
+            .where(*conditions)
+            .order_by(AgentTeamTask.updated_at.desc())
+            .limit(1)
+        )
         result = await session.execute(statement)
         return result.scalars().first()
 
