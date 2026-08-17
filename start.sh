@@ -1899,10 +1899,13 @@ apply_channel_image() {
 }
 
 # 更新当前频道的镜像到最新（菜单 [3]）。
-# 优先复用 host updater daemon 的 job 流水线；daemon 不可用时回退为
-# 直接 Compose 拉取频道别名。
+# stable + daemon 运行时复用 updater 的 job 流水线（preflight/pull/activate/
+# health）；其余情况（development 频道、daemon 未运行）回退为直接 Compose 拉取
+# 频道别名。updater 的空 body 目标固定解析为最新 stable Release（jobs.check()），
+# development 频道更新要求结构化 target（WebUI 从镜像目录选择），CLI 端不重复
+# 实现 GHCR 目录解析，故 development 不走 daemon 路径。
 cmd_update_image() {
-    local image channel payload job_id
+    local image channel payload job_id body_file http_status pattern
     require_image_deployment || return 1
     require_idle_image_deployment || return 1
 
@@ -1911,33 +1914,71 @@ cmd_update_image() {
     info "当前镜像: ${image:-未记录}"
     info "目标频道: $channel"
 
-    if updater_daemon_is_running; then
-        info "通过 host updater daemon 更新当前频道..."
-        if ! payload=$(curl --fail --silent --show-error \
-            --connect-timeout 2 --max-time 300 \
-            --unix-socket "$UPDATER_SOCKET_PATH" \
-            -H 'Content-Type: application/json' -H 'Accept: application/json' \
-            --request POST --data '{}' http://localhost/v1/update 2>&1); then
-            fail "updater 更新提交失败: $payload"
-            return 1
-        fi
-        if ! job_id=$(updater_ipc_field job_id "$payload"); then
-            fail "updater 响应缺少 job_id: $payload"
-            return 1
-        fi
-        if updater_ipc_wait_job "$job_id"; then
-            ok "镜像更新完成"
-            return 0
-        fi
-        fail "镜像更新未成功 (job: $job_id)"
-        updater_ipc_show_job_logs "$job_id"
+    if [[ "$channel" != "stable" && "$channel" != "development" ]]; then
+        fail "当前镜像无法识别频道；镜像更新仅支持 stable/development 别名"
         return 1
     fi
 
-    warn "host updater daemon 未运行；回退为手动 Compose 更新"
-    if [[ "$channel" != "stable" && "$channel" != "development" ]]; then
-        fail "当前镜像无法识别频道；手动更新仅支持 stable/development 别名"
+    if [[ "$channel" == "stable" ]] && updater_daemon_is_running; then
+        info "通过 host updater daemon 更新 stable 频道..."
+        body_file=$(mktemp) || return 1
+        # 不用 --fail：422 preflight_failed 的响应体需要读取并分类。
+        if ! http_status=$(curl --silent --show-error \
+            --connect-timeout 2 --max-time 300 \
+            --unix-socket "$UPDATER_SOCKET_PATH" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json' \
+            --request POST --data '{}' \
+            --output "$body_file" \
+            --write-out '%{http_code}' \
+            http://localhost/v1/update); then
+            rm -f -- "$body_file"
+            fail "无法连接 host updater daemon"
+            return 1
+        fi
+        payload=$(cat "$body_file" 2>/dev/null) || payload=""
+        rm -f -- "$body_file"
+
+        if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+            if ! job_id=$(updater_ipc_field job_id "$payload"); then
+                fail "updater 响应缺少 job_id: $payload"
+                return 1
+            fi
+            if updater_ipc_wait_job "$job_id"; then
+                ok "镜像更新完成"
+                return 0
+            fi
+            fail "镜像更新未成功 (job: $job_id)"
+            updater_ipc_show_job_logs "$job_id"
+            return 1
+        fi
+
+        pattern="\"error\"[[:space:]]*:[[:space:]]*\"preflight_failed\""
+        if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
+            # already_current 未通过 = 目标 digest 与运行 digest 相同：已是最新。
+            pattern="\"name\":\"already_current\"[[:space:]]*,[[:space:]]*\"passed\":false"
+            if [[ "$payload" =~ $pattern ]]; then
+                ok "stable 频道已是最新版本，无需更新"
+                return 0
+            fi
+            pattern="\"name\":\"channel_switch_confirmed\"[[:space:]]*,[[:space:]]*\"passed\":false"
+            if [[ "$payload" =~ $pattern ]]; then
+                fail "updater 检测到运行中容器不在 stable 频道，未带频道切换确认，拒绝更新"
+                info "请使用菜单 [4] 切换频道，或在 WebUI 版本管理器中操作"
+                return 1
+            fi
+            fail "updater 预检未通过 (422):"
+            echo "$payload"
+            return 1
+        fi
+
+        fail "updater 更新提交失败 (HTTP $http_status): $payload"
         return 1
+    fi
+
+    if updater_daemon_is_running; then
+        info "development 频道刷新直接使用 Compose 别名镜像（updater 空 body 目标固定为 stable）"
+    else
+        warn "host updater daemon 未运行；回退为手动 Compose 更新"
     fi
     apply_channel_image "$channel"
 }
