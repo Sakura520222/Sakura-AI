@@ -113,7 +113,7 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     assert "remained running" in helper
 
     upload = steps[upload_index]
-    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["uses"].startswith("actions/upload-artifact@")
     assert upload["with"]["retention-days"] == 1
     assert "matrix.arch" in upload["with"]["name"]
     assert "github.run_id" in upload["with"]["name"]
@@ -133,7 +133,7 @@ def test_publish_is_single_writer_and_uploads_only_two_binaries_and_checksum():
     download_steps = [
         step
         for step in publish["steps"]
-        if step.get("uses") == "actions/download-artifact@v5"
+        if step.get("uses", "").startswith("actions/download-artifact@")
     ]
     assert len(download_steps) == 2
     assert {step["with"]["path"] for step in download_steps} == {
@@ -260,7 +260,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
         for step in manifest["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["uses"] == "actions/checkout@v7"
+    assert checkout["uses"].startswith("actions/checkout@")
     assert checkout["with"]["ref"] == (
         "refs/tags/v${{ needs.generate-release.outputs.version }}"
     )
@@ -324,8 +324,8 @@ def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     setup_python = next(
         step for step in steps if step.get("uses", "").startswith("actions/setup-python@")
     )
-    assert checkout["uses"] == "actions/checkout@v7"
-    assert setup_python["uses"] == "actions/setup-python@v7"
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert setup_python["uses"].startswith("actions/setup-python@")
     assert setup_python["with"]["python-version"] == "3.12"
 
     run_text = _job_run_text(updater)

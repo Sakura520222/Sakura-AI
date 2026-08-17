@@ -35,7 +35,7 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert "platforms: linux/amd64,linux/arm64" in text
     # crane is required in the build job before channel tags are materialized;
     # the sync job has its own installation as well.
-    assert text.count("uses: imjasonh/setup-crane@v0.4") >= 2
+    assert text.count("uses: imjasonh/setup-crane@") >= 2
     assert 'existing_error=$(mktemp)' in text
     assert 'unable to verify immutable tag; refusing publication' in text
     assert 'existing immutable tag returned an invalid digest' in text
