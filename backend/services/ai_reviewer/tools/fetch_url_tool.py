@@ -85,7 +85,6 @@ class FetchUrlToolHandler:
         "fetch_url_timeout",
         "fetch_url_max_content_length",
         "fetch_url_max_download_size",
-        "fetch_url_max_calls_per_session",
         "fetch_url_domain_policy",
         "fetch_url_domain_list",
         "fetch_url_force_https",
@@ -100,7 +99,6 @@ class FetchUrlToolHandler:
         self._timeout: int = settings.fetch_url_timeout
         self._max_content_length: int = settings.fetch_url_max_content_length
         self._max_download_size: int = settings.fetch_url_max_download_size
-        self._max_calls_per_session: int = settings.fetch_url_max_calls_per_session
         self._domain_policy: str = settings.fetch_url_domain_policy
         self._domain_list: str = settings.fetch_url_domain_list
         self._force_https: bool = settings.fetch_url_force_https
@@ -109,12 +107,6 @@ class FetchUrlToolHandler:
         )
         self._max_redirects: int = settings.fetch_url_max_redirects
         self._last_config_load: float = 0.0
-        self._session_call_count: int = 0
-        self._session_lock = asyncio.Lock()
-
-    async def reset_session(self) -> None:
-        async with self._session_lock:
-            self._session_call_count = 0
 
     async def _load_config(self) -> None:
         if monotonic() - self._last_config_load < self._CONFIG_CACHE_TTL:
@@ -147,10 +139,6 @@ class FetchUrlToolHandler:
             if config_values.get("fetch_url_max_download_size") is not None:
                 self._max_download_size = int(
                     config_values["fetch_url_max_download_size"]
-                )
-            if config_values.get("fetch_url_max_calls_per_session") is not None:
-                self._max_calls_per_session = int(
-                    config_values["fetch_url_max_calls_per_session"]
                 )
             if config_values.get("fetch_url_domain_policy") is not None:
                 self._domain_policy = config_values["fetch_url_domain_policy"]
@@ -445,31 +433,7 @@ class FetchUrlToolHandler:
         """抓取网页并转换为纯文本"""
         start_time = monotonic()
 
-        # Check session call limit (protected by lock)
-        async with self._session_lock:
-            self._session_call_count += 1
-            call_num = self._session_call_count
-
-        if call_num > self._max_calls_per_session:
-            logger.warning(
-                f"URL 抓取调用次数超限: 第 {call_num} 次，"
-                f"上限 {self._max_calls_per_session}"
-            )
-            return {
-                "url": url,
-                "content": "",
-                "error": f"已达到单次会话最大抓取次数限制 ({self._max_calls_per_session})",
-            }
-
         await self._load_config()
-
-        # Re-check limit after config reload
-        if call_num > self._max_calls_per_session:
-            return {
-                "url": url,
-                "content": "",
-                "error": f"已达到单次会话最大抓取次数限制 ({self._max_calls_per_session})",
-            }
 
         resolved_ip = ""
         security_events: list[str] = []
@@ -509,7 +473,6 @@ class FetchUrlToolHandler:
                 download_bytes=download_bytes,
                 text_length=len(text),
                 truncated=truncated,
-                call_num=call_num,
                 security_events=security_events,
             )
 
@@ -538,7 +501,6 @@ class FetchUrlToolHandler:
                 download_bytes=download_bytes,
                 text_length=0,
                 truncated=False,
-                call_num=call_num,
                 security_events=security_events,
             )
             return {"url": url, "content": "", "error": str(e)}
@@ -554,7 +516,6 @@ class FetchUrlToolHandler:
                 download_bytes=download_bytes,
                 text_length=0,
                 truncated=False,
-                call_num=call_num,
                 security_events=security_events + [f"异常: {e}"],
             )
             return {"url": url, "content": "", "error": f"抓取失败: {e}"}
@@ -667,12 +628,11 @@ class FetchUrlToolHandler:
         download_bytes: int,
         text_length: int,
         truncated: bool,
-        call_num: int,
         security_events: list[str],
     ) -> None:
         """记录结构化审计日志"""
         parts = [
-            f"[fetch_url #{call_num}]",
+            "[fetch_url]",
             f"url={url}",
             f"ip={resolved_ip or 'N/A'}",
             f"status={status_code}",

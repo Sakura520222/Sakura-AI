@@ -303,13 +303,15 @@ async def test_early_cancel_finishes_execution_once(monkeypatch, cancel_check_co
         review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
     )
     monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_args: False)
-    monkeypatch.setattr(review_worker.settings, "auto_index_pr_changes", False)
     monkeypatch.setattr(review_worker.settings, "enable_code_index", False)
     monkeypatch.setattr(review_worker.settings, "enable_rag", False)
     monkeypatch.setattr(review_worker.settings, "enable_pr_summary", False)
     monkeypatch.setattr(review_worker.settings, "enable_pr_dependency_graph", False)
-    monkeypatch.setattr(review_worker.settings, "sakura_memory_enabled", False)
-    monkeypatch.setattr(review_worker.settings, "sakura_reflection_enabled", False)
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     monkeypatch.setattr(review_worker.settings, "enable_pr_issue_linking", False)
     monkeypatch.setattr(review_worker.settings, "enable_semantic_issue_linking", False)
     checks = 0
@@ -965,14 +967,11 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
 ):
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(
             settings,
             "enable_pr_issue_linking",
@@ -984,14 +983,16 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
             False,
         ),
     }
-    settings.auto_index_pr_changes = False
     settings.enable_code_index = False
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 
@@ -1163,27 +1164,26 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
     """
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(settings, "enable_pr_issue_linking", False),
         "enable_semantic_issue_linking": getattr(
             settings, "enable_semantic_issue_linking", False
         ),
     }
-    settings.auto_index_pr_changes = False
     settings.enable_code_index = False
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 
@@ -1375,28 +1375,27 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
     """
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(settings, "enable_pr_issue_linking", False),
         "enable_semantic_issue_linking": getattr(
             settings, "enable_semantic_issue_linking", False
         ),
     }
     # 关键：开启代码索引分支
-    settings.auto_index_pr_changes = True
     settings.enable_code_index = True
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 

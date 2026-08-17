@@ -35,11 +35,11 @@ def _get_knowledge_extraction_status(repo_state: SakuraMemoryState) -> dict:
         dict with keys: status (str), detail (str), min_reflections (int)
         status: "disabled" | "pending" | "ready"
     """
-    from backend.core.config import get_settings
+    from backend.core.config import get_sakura_memory_config
 
-    settings = get_settings()
-    enabled = settings.sakura_knowledge_extraction_enabled
-    interval = settings.sakura_extraction_min_reflections or 10
+    ke_config = get_sakura_memory_config().get("knowledge_extraction", {})
+    enabled = ke_config.get("enabled", True)
+    interval = ke_config.get("min_reflections", 15)
 
     if not enabled:
         return {"status": "disabled", "detail": "已禁用", "min_reflections": interval}

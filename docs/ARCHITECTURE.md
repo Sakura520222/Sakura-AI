@@ -140,7 +140,7 @@ Sakura-AI/
 │   ├── workers/           # 后台任务（review / issue / scan / agent_team / star_aid worker）
 │   ├── telegram/          # Telegram Bot（通知、命令、按钮菜单、权限）
 │   └── main.py            # FastAPI 应用入口
-├── config/                # YAML 配置文件（strategies.yaml、labels.yaml）
+├── config/                # Setup 连接配置（connection.json）
 ├── docker/                # Docker Compose 部署
 ├── docs/                  # 项目文档
 ├── scripts/               # 辅助脚本（dev_bootstrap 等）
@@ -161,9 +161,9 @@ Sakura-AI/
 
 ### 运行时配置优先级
 
-- 全局：**数据库 `app_config`（WebUI 管理） > Settings 默认值**
+- 全局：**数据库 `app_config`（WebUI 全局配置页 `/config` 管理） > Settings 默认值**
 - 用户偏好：**UserConfig > `app_config` > Settings 默认值**
-- YAML 文件（`config/strategies.yaml`、`config/labels.yaml`）管理审查策略与标签定义
+- 策略/标签：**数据库节键 `strategy.*` / `label.*`** 管理审查策略与标签定义，读取时与内置默认深度合并；经全局配置页 `/config` 的节表单保存（旧 `/config/general|strategies|labels` 页面 302 重定向到统一页）
 
 详见 [配置参考](CONFIGURATION.md)。
 
@@ -206,4 +206,4 @@ Sakura-AI/
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

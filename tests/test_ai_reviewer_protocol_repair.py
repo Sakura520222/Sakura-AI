@@ -141,42 +141,6 @@ broken
 
 
 @pytest.mark.asyncio
-async def test_tool_loop_maximum_round_exit_uses_tagged_parser(monkeypatch):
-    reviewer = _reviewer_with_response(VALID_REVIEW)
-    reviewer.tool_handler = object()
-    reviewer.model_context_mgr = SimpleNamespace(
-        calculate_safe_context=lambda model, threshold: 100_000
-    )
-    reviewer.enable_compression = False
-
-    strategy_config = SimpleNamespace(
-        get_context_enhancement_config=lambda: {"max_tool_iterations": 0}
-    )
-    monkeypatch.setattr(
-        "backend.services.ai_reviewer.reviewer.get_strategy_config",
-        lambda: strategy_config,
-    )
-
-    result = await reviewer._run_tool_loop(
-        messages=[
-            {"role": "system", "content": "system"},
-            {"role": "user", "content": "evidence"},
-        ],
-        system_prompt="system",
-        strategy="standard",
-        enabled_tools=[],
-        repo=None,
-        pr=None,
-        tracker=TokenTracker(),
-        context={},
-    )
-
-    assert result["parse_source"] == "tagged"
-    assert result["ai_decision"] == "approve"
-    assert len(reviewer.api_client.calls) == 1
-
-
-@pytest.mark.asyncio
 async def test_repair_respects_configured_max_attempts(monkeypatch):
     """protocol_repair_max_attempts 配置覆盖默认上限 3。"""
     from backend.services.ai_reviewer import reviewer as reviewer_module

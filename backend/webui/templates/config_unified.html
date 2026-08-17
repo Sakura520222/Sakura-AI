@@ -1,0 +1,987 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('config.general_title') }} - Sakura AI{% endblock %}
+
+{% block content %}
+{# 全局配置页：左侧锚点导航 + 分组卡片（页面整体滚动，导航随页面滚动）。
+   平铺键（全部 DYNAMIC 组）走单个 form 提交 /config/general/save；
+   策略/标签节表单各自独立 form 提交既有节保存端点。 #}
+{% set group_map = {} %}
+{% for g in dynamic_groups %}{% set _ = group_map.update({g.id: g}) %}{% endfor %}
+{% set extra_groups = [] %}
+{% for g in dynamic_groups if g.id not in ('review_basic', 'web_search', 'issue_analysis', 'agent_team') %}
+{% set _ = extra_groups.append(g) %}
+{% endfor %}
+{% set sm = context_enhancement.get('sakura_memory', {}) %}
+
+<div class="space-y-4">
+    <div>
+        <h1 class="text-2xl font-bold">{{ _('config.general_title') }}</h1>
+    </div>
+
+    <div class="flex gap-6 h-[calc(100vh-10rem)]">
+        <!-- 左侧锚点导航（独立滚动栏） -->
+        <nav class="hidden lg:block w-52 flex-shrink-0 overflow-y-auto" aria-label="{{ _('config.general_title') }}">
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-3 space-y-3">
+                <div>
+                    <p class="px-2 mb-1 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{{ _('config.nav_global') }}</p>
+                    <a href="#section-basic" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ group_map['review_basic'].label }}</a>
+                    <a href="#section-web-search" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ group_map['web_search'].label }}</a>
+                    <a href="#section-issue" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ group_map['issue_analysis'].label }}</a>
+                    <a href="#section-agent-team" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ group_map['agent_team'].label }}</a>
+                    {% for g in extra_groups %}
+                    <a href="#section-group-{{ g.id }}" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ g.label }}</a>
+                    {% endfor %}
+                </div>
+                <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
+                    <p class="px-2 mb-1 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{{ _('config.nav_strategy') }}</p>
+                    <a href="#section-strategy-strategies" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.review_strategies') }}</a>
+                    <a href="#section-strategy-filters" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.file_filters') }}</a>
+                    <a href="#section-strategy-context" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.context_enhancement') }}</a>
+                    <a href="#section-strategy-policy" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.review_policy') }}</a>
+                    <a href="#section-strategy-issue-analysis" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.issue_analysis') }}</a>
+                    <a href="#section-strategy-depgraph" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.dep_graph') }}</a>
+                    <a href="#section-strategy-pr-summary" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.pr_summary_section') }}</a>
+                </div>
+                <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
+                    <p class="px-2 mb-1 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{{ _('config.nav_labels') }}</p>
+                    <a href="#section-label-definitions" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('config.labels_definitions_title') }}</a>
+                    <a href="#section-label-recommendation" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('config.labels_recommendation_title') }}</a>
+                    <a href="#section-label-conflict" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('config.labels_conflict_title') }}</a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 右侧内容：平铺键表单 + 节表单（独立滚动栏） -->
+        <div id="config-scroll" class="flex-1 min-w-0 overflow-y-auto space-y-4">
+            <form method="POST" action="/config/general/save" id="configForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="space-y-4">
+                    {% with group=group_map['review_basic'], card_id='section-basic' %}
+                    {% include 'components/config_dynamic_card.html' %}
+                    {% endwith %}
+                    {% with group=group_map['web_search'], card_id='section-web-search' %}
+                    {% include 'components/config_dynamic_card.html' %}
+                    {% endwith %}
+                    {% with group=group_map['issue_analysis'], card_id='section-issue' %}
+                    {% include 'components/config_dynamic_card.html' %}
+                    {% endwith %}
+                    {% with group=group_map['agent_team'], card_id='section-agent-team' %}
+                    {% include 'components/config_dynamic_card.html' %}
+                    {% endwith %}
+
+                    <!-- 其余动态组 -->
+                    <div id="section-more" class="scroll-mt-20 space-y-4">
+                        {% for group in extra_groups %}
+                        {% with group=group, card_id='section-group-' ~ group.id %}
+                        {% include 'components/config_dynamic_card.html' %}
+                        {% endwith %}
+                        {% endfor %}
+                    </div>
+
+                    <div class="flex justify-end">
+                        <button type="submit"
+                                class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('common.save_config') }}
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- ======== 策略节表单 ======== -->
+
+            <!-- 策略分级（A7：分级条件保持可配置） -->
+            <section id="section-strategy-strategies" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.review_strategies') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="strategies">
+                    <div class="space-y-6">
+                        {% for key in ['quick', 'standard', 'deep', 'large'] %}
+                        {% set s = strategies.get(key, {}) %}
+                        {% set conds = s.get('conditions', {}) %}
+                        <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-5 space-y-4"
+                             x-data="{ expanded: {{ 'true' if loop.index == 1 else 'false' }} }">
+                            <div class="flex items-center justify-between cursor-pointer" @click="expanded = !expanded">
+                                <div class="flex items-center gap-3">
+                                    <span class="text-lg font-semibold">{{ s.get('name', key) }}</span>
+                                    <span class="text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded-full text-gray-600 dark:text-gray-400">{{ key }}</span>
+                                </div>
+                                <svg class="w-5 h-5 text-gray-400 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+                            <div x-show="expanded" x-cloak class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.strategy_name') }}</label>
+                                    <input type="text" name="strategy_{{ key }}_name"
+                                           value="{{ s.get('name', key) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_files') }}</label>
+                                        <input type="number" name="strategy_{{ key }}_max_files" min="1"
+                                               value="{{ conds.get('max_files', 999999) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_lines') }}</label>
+                                        <input type="number" name="strategy_{{ key }}_max_lines" min="1"
+                                               value="{{ conds.get('max_lines', 99999999) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.review_prompt') }}</label>
+                                    <textarea name="strategy_{{ key }}_prompt" rows="12"
+                                              class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ s.get('prompt', '') }}</textarea>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_strategies') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 文件过滤 -->
+            <section id="section-strategy-filters" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.file_filters') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="file_filters">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.skip_extensions') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.skip_extensions_desc') }}</p>
+                            <textarea name="skip_extensions" rows="6"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('skip_extensions', []) | join('\n') }}</textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.skip_paths') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.skip_paths_desc') }}</p>
+                            <textarea name="skip_paths" rows="6"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('skip_paths', []) | join('\n') }}</textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.code_extensions') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.code_extensions_desc') }}</p>
+                            <textarea name="code_extensions" rows="8"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('code_extensions', []) | join('\n') }}</textarea>
+                        </div>
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_filters') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 上下文增强 + Sakura 记忆嵌套节 -->
+            <section id="section-strategy-context" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.context_enhancement') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="context_enhancement">
+                    {% set ce = context_enhancement %}
+                    <div class="space-y-6">
+                        <div class="space-y-4">
+                            {% set toggle_fields = [
+                                ("enable_project_structure", _("strategy.enable_project_structure"), ce.get('enable_project_structure', true)),
+                                ("enable_ai_tools", _("strategy.enable_ai_tools"), ce.get('enable_ai_tools', true)),
+                            ] %}
+                            {% for field_id, label, checked in toggle_fields %}
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ label }}</label>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" name="{{ field_id }}" value="true"
+                                           {% if checked %}checked{% endif %}
+                                           class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_structure_files') }}</label>
+                                <input type="number" name="max_structure_files" min="1"
+                                       value="{{ ce.get('max_structure_files', 500) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_size') }}</label>
+                                <input type="number" name="max_file_size" min="1000"
+                                       value="{{ ce.get('max_file_size', 200000) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_files_for_deep_strategy') }}</label>
+                                <input type="number" name="max_files_for_deep_strategy" min="1"
+                                       value="{{ ce.get('max_files_for_deep_strategy', 10) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.file_read_limits') }}</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_lines') }}</label>
+                                    <input type="number" name="max_file_lines" min="50"
+                                           value="{{ ce.get('max_file_lines', 500) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_context') }}</label>
+                                    <input type="number" name="default_context_lines" min="0" max="500"
+                                           value="{{ ce.get('default_context_lines', 20) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_context') }}</label>
+                                    <input type="number" name="max_context_lines" min="1" max="500"
+                                           value="{{ ce.get('max_context_lines', 200) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{{ _('strategy.cross_file_search') }}</h3>
+                            {% set sif = ce.get('search_in_files', {}) %}
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('strategy.use_search_api') }}</label>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" name="sif_use_search_api" value="true"
+                                               {% if sif.get('use_search_api', true) %}checked{% endif %}
+                                               class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                    </label>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('strategy.skip_binary') }}</label>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" name="sif_skip_binary" value="true"
+                                               {% if sif.get('skip_binary', true) %}checked{% endif %}
+                                               class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                    </label>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_context') }}</label>
+                                        <input type="number" name="sif_default_context_lines" min="0"
+                                               value="{{ sif.get('default_context_lines', 3) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_max_results') }}</label>
+                                        <input type="number" name="sif_default_max_results" min="1"
+                                               value="{{ sif.get('default_max_results', 20) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.fallback_max_files') }}</label>
+                                        <input type="number" name="sif_max_files_to_search" min="1"
+                                               value="{{ sif.get('max_files_to_search', 100) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                        <p class="mt-1 text-xs text-gray-500">{{ _('strategy.fallback_max_files_desc') }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{{ _('strategy.git_tools') }}</h3>
+                            {% set gt = ce.get('git_tools', {}) %}
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_branch_count') }}</label>
+                                    <input type="number" name="gt_default_branch_count" min="1"
+                                           value="{{ gt.get('default_branch_count', 20) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_commit_count') }}</label>
+                                    <input type="number" name="gt_default_commit_count" min="1"
+                                           value="{{ gt.get('default_commit_count', 10) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <!-- Sakura 记忆嵌套节（A8：单一事实源 = strategy.context_enhancement.sakura_memory） -->
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{{ _('strategy.sakura_memory_section') }}</h3>
+                            <div class="space-y-4">
+                                {% set sakura_toggles = [
+                                    ("sakura_enabled", _("strategy.sakura_enabled"), sm.get('enabled', true)),
+                                    ("sakura_partial_commit", _("strategy.sakura_partial_commit"), sm.get('consolidation', {}).get('partial_commit', true)),
+                                    ("sakura_auto_init", _("strategy.sakura_auto_init"), sm.get('initialization', {}).get('auto_init', true)),
+                                    ("sakura_auto_create_subdirs", _("strategy.sakura_auto_create_subdirs"), sm.get('directory_convention', {}).get('auto_create_subdirs', true)),
+                                ] %}
+                                {% for field_id, label, checked in sakura_toggles %}
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ label }}</label>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" name="{{ field_id }}" value="true"
+                                               {% if checked %}checked{% endif %}
+                                               class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                    </label>
+                                </div>
+                                {% endfor %}
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.sakura_consolidation_interval') }}</label>
+                                        <input type="number" name="sakura_consolidation_interval" min="1"
+                                               value="{{ sm.get('consolidation', {}).get('interval', 5) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.sakura_min_reflections') }}</label>
+                                        <input type="number" name="sakura_min_reflections" min="1"
+                                               value="{{ sm.get('knowledge_extraction', {}).get('min_reflections', 15) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.sakura_max_memory_chars') }}</label>
+                                        <input type="number" name="sakura_max_memory_chars" min="1"
+                                               value="{{ sm.get('consolidation', {}).get('max_memory_chars', 2000) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.sakura_max_sakura_chars') }}</label>
+                                        <input type="number" name="sakura_max_sakura_chars" min="1"
+                                               value="{{ sm.get('consolidation', {}).get('max_sakura_chars', 3000) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_context') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 审查政策 -->
+            <section id="section-strategy-policy" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.review_policy') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="review_policy">
+                    {% set rp = review_policy %}
+                    {% set rt = rp.get('review_templates', {}) %}
+                    <div class="space-y-6">
+                        <div class="space-y-4">
+                            {% set rp_toggles = [
+                                ("rp_enabled", _("strategy.enable_auto_review"), rp.get('enabled', true)),
+                                ("block_on_critical", _("strategy.block_on_critical"), rp.get('block_on_critical', true)),
+                                ("enable_idempotency_check", _("strategy.enable_idempotency"), rp.get('enable_idempotency_check', true)),
+                            ] %}
+                            {% for field_id, label, checked in rp_toggles %}
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ label }}</label>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" name="{{ field_id }}" value="true"
+                                           {% if checked %}checked{% endif %}
+                                           class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.approve_threshold') }}</label>
+                                <input type="number" name="approve_threshold" min="1" max="10"
+                                       value="{{ rp.get('approve_threshold', 8) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <p class="mt-1 text-xs text-gray-500">{{ _('strategy.approve_threshold_desc') }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.block_threshold') }}</label>
+                                <input type="number" name="block_threshold" min="1" max="10"
+                                       value="{{ rp.get('block_threshold', 4) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <p class="mt-1 text-xs text-gray-500">{{ _('strategy.block_threshold_desc') }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.major_issue_limit') }}</label>
+                                <input type="number" name="max_major_issues" min="0"
+                                       value="{{ rp.get('max_major_issues', 1) }}"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.ignored_patterns') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.ignored_patterns_desc') }}</p>
+                            <textarea name="ignored_patterns" rows="4"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rp.get('ignored_patterns', []) | join('\n') }}</textarea>
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.comment_templates') }}</h3>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                                {{ _('strategy.template_variables') }}<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{strategy_name}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{summary}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{score}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{decision_reason}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{comment_summary}</code>
+                            </p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-green-700 dark:text-green-400 mb-1">{{ _('strategy.approve_template') }}</label>
+                                    <textarea name="template_approve" rows="6"
+                                              class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('approve', '') }}</textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-red-700 dark:text-red-400 mb-1">{{ _('strategy.request_changes_template') }}</label>
+                                    <textarea name="template_request_changes" rows="6"
+                                              class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('request_changes', '') }}</textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">{{ _('strategy.comment_template') }}</label>
+                                    <textarea name="template_comment" rows="6"
+                                              class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('comment', '') }}</textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_policy') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Issue 分析（节表单：模板/分类/优先级） -->
+            <section id="section-strategy-issue-analysis" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.issue_analysis') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="issue_analysis">
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-6">
+                        <p class="text-sm text-blue-700 dark:text-blue-300">{{ _('strategy.issue_config_hint') }}</p>
+                    </div>
+                    {% set ia = issue_analysis %}
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_system_prompt_desc') }}</p>
+                            <textarea name="issue_system_prompt" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('system_prompt', '') }}</textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_categories') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_categories_desc') }}</p>
+                            <div id="categories-container" class="space-y-2">
+                                {% for cat in ia.get('categories', []) %}
+                                <div class="flex items-start gap-2 category-row">
+                                    <input type="text" name="cat_name" value="{{ cat.get('name', '') }}" placeholder="name"
+                                           class="w-28 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <input type="text" name="cat_desc" value="{{ cat.get('description', '') }}" placeholder="description"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <input type="text" name="cat_keywords" value="{{ cat.get('keywords', []) | join(', ') }}" placeholder="keywords (comma separated)"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <button type="button" onclick="this.closest('.category-row').remove()"
+                                            class="px-2 py-1.5 text-red-500 hover:text-red-700 text-sm font-medium">&times;</button>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <button type="button" onclick="addCategoryRow()"
+                                    class="mt-2 px-3 py-1.5 text-sm text-pink-600 hover:text-pink-800 dark:text-pink-400 dark:hover:text-pink-300 border border-dashed border-pink-300 dark:border-pink-600 rounded-lg hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors">
+                                + {{ _('strategy.add_category') }}
+                            </button>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_priority_rules') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_priority_rules_desc') }}</p>
+                            {% set pr_rules = ia.get('priority_rules', {}) %}
+                            <div class="space-y-2">
+                                {% for pkey in ['critical', 'high', 'medium', 'low'] %}
+                                <div class="flex items-center gap-2">
+                                    <span class="w-20 text-xs font-medium text-gray-600 dark:text-gray-400 capitalize">{{ pkey }}</span>
+                                    <input type="text" name="priority_{{ pkey }}" value="{{ pr_rules.get(pkey, {}).get('keywords', []) | join(', ') }}"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none"
+                                           placeholder="keywords (comma separated)">
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_reference_keywords') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_reference_keywords_desc') }}</p>
+                            <input type="text" name="issue_reference_keywords"
+                                   value="{{ ia.get('issue_reference_keywords', []) | join(', ') }}"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_max_linked') }}</label>
+                            <input type="number" name="max_linked_issues_in_prompt" min="1" max="20"
+                                   value="{{ ia.get('max_linked_issues_in_prompt', 5) }}"
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-green-700 dark:text-green-400 mb-1">{{ _('strategy.issue_comment_template_zh') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                {{ _('strategy.issue_template_variables') }}<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{category}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{priority}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{feasibility}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{summary}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{labels}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{assignees}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{related_info}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{suggested_title_section}</code>
+                            </p>
+                            <textarea name="issue_comment_template" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template', '') }}</textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">{{ _('strategy.issue_comment_template_en') }}</label>
+                            <textarea name="issue_comment_template_en" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template_en', '') }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_issue_analysis') }}
+                        </button>
+                    </div>
+                </form>
+
+                <script>
+                function addCategoryRow() {
+                    const container = document.getElementById('categories-container');
+                    const row = document.createElement('div');
+                    row.className = 'flex items-start gap-2 category-row';
+                    row.innerHTML = `
+                        <input type="text" name="cat_name" value="" placeholder="name"
+                               class="w-28 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <input type="text" name="cat_desc" value="" placeholder="description"
+                               class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <input type="text" name="cat_keywords" value="" placeholder="keywords (comma separated)"
+                               class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <button type="button" onclick="this.closest('.category-row').remove()"
+                                class="px-2 py-1.5 text-red-500 hover:text-red-700 text-sm font-medium">&times;</button>
+                    `;
+                    container.appendChild(row);
+                }
+                </script>
+            </section>
+
+            <!-- 依赖图 -->
+            <section id="section-strategy-depgraph" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.dep_graph') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="depgraph">
+                    {% set dg = pr_dependency_graph %}
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('config.label.pr_dependency_graph_mode') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.depgraph_mode_desc') }}</p>
+                            <select name="pr_dependency_graph_mode"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <option value="ai" {% if dg.get('mode', 'ai') == 'ai' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_ai') }}</option>
+                                <option value="static" {% if dg.get('mode', 'ai') == 'static' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_static') }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.depgraph_prompt_desc') }}</p>
+                            <textarea name="depgraph_system_prompt" rows="10"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ dg.get('system_prompt', '') }}</textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.user_message_template') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.user_template_desc') }}</p>
+                            <textarea name="depgraph_user_template" rows="10"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ dg.get('user_template', '') }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_depgraph') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- PR 总结模板（A10：此前节存储已注册但无渲染表单） -->
+            <section id="section-strategy-pr-summary" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.pr_summary_section') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="pr_summary">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <textarea name="pr_summary_system_prompt" rows="10"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ pr_summary.get('system_prompt', '') }}</textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.user_message_template') }}</label>
+                            <textarea name="pr_summary_user_template" rows="10"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ pr_summary.get('user_template', '') }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_pr_summary') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- ======== 标签节表单 ======== -->
+
+            <!-- 标签推荐设置 -->
+            <section id="section-label-recommendation" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('config.labels_recommendation_title') }}</h2>
+                <form method="POST" action="/config/labels/save-settings">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.labels_rec_enabled') }}</label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('config.labels_rec_enabled_desc') }}</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="rec_enabled" value="true"
+                                       {% if recommendation.get('enabled', true) %}checked{% endif %}
+                                       class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                            </label>
+                        </div>
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ _('config.labels_confidence_threshold') }}</label>
+                            <input type="number" name="confidence_threshold" min="0.1" max="1.0" step="0.05"
+                                   value="{{ recommendation.get('confidence_threshold', 0.7) }}"
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.labels_confidence_threshold_desc') }}</p>
+                        </div>
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.labels_auto_create') }}</label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('config.labels_auto_create_desc') }}</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="auto_create" value="true"
+                                       {% if recommendation.get('auto_create', false) %}checked{% endif %}
+                                       class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('config.labels_save_recommendation') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 标签冲突规则 -->
+            <section id="section-label-conflict" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold">{{ _('config.labels_conflict_title') }}</h2>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('config.labels_conflict_desc') }}</p>
+                    </div>
+                    <button type="button" id="add-conflict-btn"
+                            class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                        + {{ _('config.labels_add_conflict') }}
+                    </button>
+                </div>
+                <form method="POST" action="/config/labels/save-conflict-rules" id="conflict-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm" id="conflict-table">
+                            <thead>
+                                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                                    <th class="text-left py-3 px-3 text-gray-500 dark:text-gray-400 font-medium w-48">{{ _('config.labels_col_existing') }}</th>
+                                    <th class="text-left py-3 px-3 text-gray-500 dark:text-gray-400 font-medium">{{ _('config.labels_col_blocked') }}</th>
+                                    <th class="text-right py-3 px-3 text-gray-500 dark:text-gray-400 font-medium w-16">{{ _('config.labels_col_actions') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 dark:divide-gray-700" id="conflict-tbody">
+                                {% for source, blocked in conflict_rules.items() %}
+                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                    <td class="py-2 px-3">
+                                        <input type="text" name="conflict_source_{{ loop.index0 }}"
+                                               value="{{ source }}"
+                                               class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+                                               placeholder="enhancement">
+                                    </td>
+                                    <td class="py-2 px-3">
+                                        <input type="text" name="conflict_blocked_{{ loop.index0 }}"
+                                               value="{{ blocked | join(', ') }}"
+                                               class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+                                               placeholder="bug">
+                                    </td>
+                                    <td class="py-2 px-3 text-right">
+                                        <button type="button" data-action="remove-conflict"
+                                                class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm">
+                                            {{ _('config.labels_btn_delete') }}
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% if not conflict_rules %}
+                    <p class="mt-3 text-sm text-gray-400 dark:text-gray-500 italic" id="conflict-empty-hint">
+                        {{ _('config.labels_conflict_empty') }}
+                    </p>
+                    {% endif %}
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('config.labels_save_conflict') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 标签定义 -->
+            <section id="section-label-definitions" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold">{{ _('config.labels_definitions_title') }}</h2>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('config.labels_definitions_desc') }}</p>
+                    </div>
+                    <button type="button" id="add-label-btn"
+                            class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                        + {{ _('config.labels_add_label') }}
+                    </button>
+                </div>
+                <form method="POST" action="/config/labels/save-labels" id="labels-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm" id="labels-table">
+                            <thead>
+                                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                                    <th class="text-left py-3 px-3 text-gray-500 dark:text-gray-400 font-medium w-20">{{ _('config.labels_col_color') }}</th>
+                                    <th class="text-left py-3 px-3 text-gray-500 dark:text-gray-400 font-medium w-40">{{ _('config.labels_col_name') }}</th>
+                                    <th class="text-left py-3 px-3 text-gray-500 dark:text-gray-400 font-medium">{{ _('config.labels_col_description') }}</th>
+                                    <th class="text-right py-3 px-3 text-gray-500 dark:text-gray-400 font-medium w-16">{{ _('config.labels_col_actions') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 dark:divide-gray-700" id="labels-tbody">
+                                {% for name, info in labels.items() %}
+                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                    <td class="py-2 px-3">
+                                        <input type="color" name="label_color_{{ loop.index0 }}"
+                                               value="#{{ info.get('color', '0366d6') }}"
+                                               class="w-8 h-8 rounded cursor-pointer border-0 p-0">
+                                    </td>
+                                    <td class="py-2 px-3">
+                                        <input type="text" name="label_name_{{ loop.index0 }}"
+                                               value="{{ name }}"
+                                               class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </td>
+                                    <td class="py-2 px-3">
+                                        <input type="text" name="label_desc_{{ loop.index0 }}"
+                                               value="{{ info.get('description', '') }}"
+                                               class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </td>
+                                    <td class="py-2 px-3 text-right">
+                                        <button type="button" data-action="remove-label"
+                                                class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm">
+                                            {{ _('config.labels_btn_delete') }}
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('config.labels_save_definitions') }}
+                        </button>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+/* jshint ignore:start */
+let labelIndex = {{ labels | length }};
+let conflictIndex = {{ conflict_rules | length }};
+/* jshint ignore:end */
+
+function addLabelRow() {
+    const tbody = document.getElementById('labels-tbody');
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors';
+    const idx = labelIndex++;
+    tr.innerHTML = `
+        <td class="py-2 px-3">
+            <input type="color" name="label_color_${idx}" value="#0366d6"
+                   class="w-8 h-8 rounded cursor-pointer border-0 p-0">
+        </td>
+        <td class="py-2 px-3">
+            <input type="text" name="label_name_${idx}" value=""
+                   placeholder="label-name"
+                   class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </td>
+        <td class="py-2 px-3">
+            <input type="text" name="label_desc_${idx}" value=""
+                   placeholder="Label description"
+                   class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </td>
+        <td class="py-2 px-3 text-right">
+            <button type="button" data-action="remove-label"
+                    class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm">
+                {{ _('config.labels_btn_delete') }}
+            </button>
+        </td>
+    `;
+    tbody.appendChild(tr);
+    tr.querySelector('input[type="text"]').focus();
+}
+
+function addConflictRow() {
+    const tbody = document.getElementById('conflict-tbody');
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors';
+    const idx = conflictIndex++;
+    tr.innerHTML = `
+        <td class="py-2 px-3">
+            <input type="text" name="conflict_source_${idx}" value=""
+                   placeholder="enhancement"
+                   class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </td>
+        <td class="py-2 px-3">
+            <input type="text" name="conflict_blocked_${idx}" value=""
+                   placeholder="bug"
+                   class="w-full px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </td>
+        <td class="py-2 px-3 text-right">
+            <button type="button" data-action="remove-conflict"
+                    class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm">
+                {{ _('config.labels_btn_delete') }}
+            </button>
+        </td>
+    `;
+    tbody.appendChild(tr);
+    const hint = document.getElementById('conflict-empty-hint');
+    if (hint) hint.style.display = 'none';
+    tr.querySelector('input[type="text"]').focus();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 添加标签 / 冲突规则按钮
+    var addBtn = document.getElementById('add-label-btn');
+    if (addBtn) addBtn.addEventListener('click', addLabelRow);
+    var addConflictBtn = document.getElementById('add-conflict-btn');
+    if (addConflictBtn) addConflictBtn.addEventListener('click', addConflictRow);
+
+    // 行删除（事件委托，兼容动态添加的行）
+    var tbody = document.getElementById('labels-tbody');
+    if (tbody) {
+        tbody.addEventListener('click', function(e) {
+            var btn = e.target.closest('[data-action="remove-label"]');
+            if (btn) btn.closest('tr').remove();
+        });
+    }
+    var conflictTbody = document.getElementById('conflict-tbody');
+    if (conflictTbody) {
+        conflictTbody.addEventListener('click', function(e) {
+            var btn = e.target.closest('[data-action="remove-conflict"]');
+            if (btn) btn.closest('tr').remove();
+        });
+    }
+
+    // 锚点只滚动右侧内容栏：原生 hash 跳转会带动所有可滚动祖先（含页面本身），
+    // 故拦截点击改为容器内 scrollBy，页面与左栏保持不动。
+    function scrollToSection(sectionId) {
+        var target = document.getElementById(sectionId);
+        var container = document.getElementById('config-scroll');
+        if (!target || !container) return;
+        var cRect = container.getBoundingClientRect();
+        var tRect = target.getBoundingClientRect();
+        container.scrollBy({ top: tRect.top - cRect.top - 12, behavior: 'smooth' });
+    }
+
+    // 保存后跳转 ?section= 定位到对应分区（同样只滚右栏）
+    var section = new URLSearchParams(window.location.search).get('section');
+    if (section) {
+        scrollToSection('section-' + section);
+        var params = new URLSearchParams(window.location.search);
+        params.delete('section');
+        var remaining = params.toString();
+        history.replaceState(null, '', window.location.pathname + (remaining ? '?' + remaining : ''));
+    }
+
+    // 锚点导航点击：拦截默认跳转 + 高亮
+    document.querySelectorAll('a.nav-anchor').forEach(function(link) {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            var hash = link.getAttribute('href');
+            if (hash && hash.charAt(0) === '#') {
+                scrollToSection(hash.slice(1));
+                history.replaceState(null, '', window.location.pathname + hash);
+            }
+            document.querySelectorAll('a.nav-anchor').forEach(function(other) {
+                other.classList.remove('bg-sakura-50', 'dark:bg-sakura-900/20', 'text-sakura-700', 'dark:text-sakura-400', 'font-semibold');
+            });
+            link.classList.add('bg-sakura-50', 'dark:bg-sakura-900/20', 'text-sakura-700', 'dark:text-sakura-400', 'font-semibold');
+        });
+    });
+});
+</script>
+{% endblock %}

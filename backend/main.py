@@ -34,7 +34,7 @@ from backend.core.bootstrap import (
     read_connection_config,
 )
 from backend.core.build_info import get_build_info
-from backend.core.config import Settings, get_settings
+from backend.core.config import Settings, get_sakura_memory_config, get_settings
 from backend.core.time_service import (
     SystemClock,
     format_rfc3339,
@@ -268,6 +268,30 @@ async def lifespan(app: FastAPI):
                     logger.exception("❌ 加载应用时区配置失败，停止启动")
                     raise
 
+                # 3.5 加载统一配置节覆盖（strategy.*/label.*）并刷新 facade 单例
+                try:
+                    from backend.core.config import (
+                        reload_label_config,
+                        reload_strategy_config,
+                    )
+                    from backend.core.config_sections import (
+                        load_section_configs,
+                        migrate_yaml_files_to_db,
+                    )
+                    from backend.models.database import async_session
+
+                    async with async_session() as session:
+                        # 一次性迁移旧 YAML 差异节（DB 无节键时才执行，幂等）
+                        await migrate_yaml_files_to_db(session)
+                        await load_section_configs(session)
+                    # 清除可能已构建的 lru_cache facade 单例，后续读取走新 store
+                    reload_strategy_config()
+                    reload_label_config()
+                    logger.info("✅ 统一配置节存储已加载（strategy/label）")
+                except Exception:
+                    logger.exception("❌ 加载统一配置节存储失败，停止启动")
+                    raise
+
                 # 打印关键配置（在动态配置加载后，确保显示实际值）
                 logger.info(f"📊 日志级别: {settings.log_level}")
                 logger.info(f"🌐 应用域名: {settings.app_domain}")
@@ -287,14 +311,18 @@ async def lifespan(app: FastAPI):
 
                 # 知识提取配置自检 / Knowledge extraction config self-check
                 try:
-                    ke_enabled = settings.sakura_knowledge_extraction_enabled
-                    ke_interval = settings.sakura_extraction_min_reflections
+                    ke_config = get_sakura_memory_config().get(
+                        "knowledge_extraction", {}
+                    )
+                    ke_enabled = ke_config.get("enabled", True)
+                    ke_interval = ke_config.get("min_reflections", 15)
                     logger.info(
                         f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
                     )
                     if ke_enabled and not ke_interval:
                         logger.warning(
-                            "⚠️ 知识提取已启用但 extraction_interval 为 0 或空，将使用默认值 10"
+                            "⚠️ 知识提取已启用但 min_reflections 为 0 或空，"
+                            "请检查 strategy.context_enhancement.sakura_memory 配置"
                         )
                 except Exception as e:
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
