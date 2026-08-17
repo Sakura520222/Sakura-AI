@@ -69,6 +69,69 @@ prod=true DEPLOY_DIR="$W4" DEPLOYMENT_ENV_FILE="$W4/deployment.env" init_deploym
 leftovers=$(find "$W4" -name '.deployment.env.*' 2>/dev/null | wc -l)
 [ "$leftovers" -eq 0 ] && report 0 "S4: 无临时文件残留" || report 1 "S4: 残留 $leftovers 个临时文件"
 
+# --- apply_channel_image / image_digest_of: 与 updater 一致的 digest-pinned 写入 ---
+# 部署状态必须记录 repo:tag@sha256:<digest> 不可变引用（updater deployment.py
+# 模型），而不是裸移动别名；否则 updater development 预检无法证明已部署身份，
+# WebUI 版本管理会一直提示有可用更新。
+DIGEST_DIR=$(mktemp -d)
+DIGEST_LOG="$DIGEST_DIR/docker.log"
+COMPOSE_CALLS="$DIGEST_DIR/compose.log"
+export COMPOSE_CALLS
+FAKE_IMAGE_DIGEST="382548dcdbb8acec722bf19cf4097f28c4f1856be126f3bc4baba8a530f244ae"
+FAKE_REPO_DIGESTS=""
+docker() {
+    printf 'docker %s\n' "$*" >> "$DIGEST_LOG"
+    case "$1" in
+        pull) return 0 ;;
+        compose) return 0 ;;
+        image)
+            [[ "$2" == "inspect" ]] || return 1
+            if [[ -n "$FAKE_REPO_DIGESTS" ]]; then
+                printf '%b\n' "$FAKE_REPO_DIGESTS"
+            else
+                printf 'ghcr.io/sakura520222/sakura-ai@sha256:%s\n' "$FAKE_IMAGE_DIGEST"
+            fi
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+menu_wait_healthy() { return 0; }
+
+DIGEST_ENV="$DIGEST_DIR/deployment.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV"
+
+# D1: 单条匹配 RepoDigests 提取 digest
+[ "$(image_digest_of "ghcr.io/sakura520222/sakura-ai:edge")" = "sha256:$FAKE_IMAGE_DIGEST" ] \
+    && report 0 "D1: image_digest_of 提取匹配 repository 的 digest" || report 1 "D1: image_digest_of"
+
+# D2: 无匹配 / 多条匹配 fail closed（与 updater _select_registry_digest 一致）
+FAKE_REPO_DIGESTS="other/repo@sha256:$(printf '%064d' 1)"
+image_digest_of "ghcr.io/sakura520222/sakura-ai:edge" >/dev/null 2>&1
+[ "$?" -ne 0 ] && report 0 "D2a: repository 不匹配时拒绝" || report 1 "D2a"
+FAKE_REPO_DIGESTS="ghcr.io/sakura520222/sakura-ai@sha256:$(printf '%064d' 1)\nghcr.io/sakura520222/sakura-ai@sha256:$(printf '%064d' 2)"
+image_digest_of "ghcr.io/sakura520222/sakura-ai:edge" >/dev/null 2>&1
+[ "$?" -ne 0 ] && report 0 "D2b: 多条 RepoDigests 拒绝（无法证明唯一身份）" || report 1 "D2b"
+FAKE_REPO_DIGESTS=""
+
+# D3: development 更新写 digest-pinned 引用而非裸 :edge
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV" apply_channel_image development >/dev/null 2>&1
+assert_contains "$DIGEST_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:$FAKE_IMAGE_DIGEST" "D3: development 更新写入 digest-pinned 引用"
+assert_not_contains "$DIGEST_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge$" "D3: 不残留裸移动别名"
+
+# D4: stable 更新同样 pin
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV" apply_channel_image stable >/dev/null 2>&1
+assert_contains "$DIGEST_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:$FAKE_IMAGE_DIGEST" "D4: stable 更新写入 digest-pinned 引用"
+
+# D5: digest 解析失败拒绝写入，deployment.env 保持原值
+FAKE_REPO_DIGESTS="other/repo@sha256:$(printf '%064d' 3)"
+DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV" apply_channel_image development >/dev/null 2>&1
+[ "$?" -ne 0 ] && assert_contains "$DIGEST_ENV" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:$FAKE_IMAGE_DIGEST" "D5: 失败后 deployment.env 保持原值" \
+    && report 0 "D5: 解析失败拒绝写入" || report 1 "D5: 解析失败后 deployment.env 被修改"
+FAKE_REPO_DIGESTS=""
+
+rm -rf "$DIGEST_DIR"
+
 echo ""
 echo "结果: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
