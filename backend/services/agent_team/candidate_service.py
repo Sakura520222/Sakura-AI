@@ -311,12 +311,14 @@ class AgentTeamCandidateService:
     ) -> dict[str, Any]:
         """基于 PR 审查记录构建 Agent 任务草稿，不落库。
 
-        查询该仓库最新已完成的 PRReview 及其 ReviewComment（不限 PR number），
-        按 severity → file_path → line_number → id 排序后拼接完整 summary。
+        查询该 PR（按 repo + PR number 精确匹配）最新已完成的 PRReview 及其
+        ReviewComment，按 severity → file_path → line_number → id 排序后拼接
+        完整 summary。
 
-        设计说明：匹配范围为仓库级最新审查，而非限定同一 PR number。
-        前提假设：同仓库同时刻仅有一个活跃 PR 的 /agent 任务（由 duplicate guard 保证）。
-        若 PR #A 已有审查但 PR #B 触发 /agent，将使用 PR #A 的审查结果作为上下文。
+        设计说明：必须限定同一 PR number。若仅按 repo 取"最新已完成审查"，
+        当 PR #A 与 PR #B 并发存在审查记录时，在 PR #B 触发 /agent 会错误地
+        携带 PR #A 的审查上下文（曾导致任务标题/内容与触发 PR 不符），
+        因此找不到本 PR 的已完成审查时直接报错，绝不回退到其他 PR。
         """
         if "/" not in repo_full_name:
             raise ValueError("仓库全名格式无效，应为 owner/repo")
@@ -329,13 +331,14 @@ class AgentTeamCandidateService:
                 "请在配置中添加该仓库或清空白名单以允许所有仓库。"
             )
 
-        # 查找最新已完成的 PRReview
+        # 查找本 PR 最新已完成的 PRReview（repo + pr_number 精确匹配）
         review = await db.scalar(
             select(PRReview)
             .where(
                 and_(
                     PRReview.repo_owner == repo_owner,
                     PRReview.repo_name == repo_name,
+                    PRReview.pr_number == pr_number,
                     PRReview.status == PRStatus.COMPLETED.value,
                 )
             )
@@ -344,8 +347,8 @@ class AgentTeamCandidateService:
         )
         if review is None:
             raise ValueError(
-                f"{repo_full_name} 没有已完成的 PR 审查记录，"
-                "请先触发 PR 审查后再使用 /agent 命令。"
+                f"{repo_full_name}#{pr_number} 没有已完成的 PR 审查记录，"
+                "请先在该 PR 上触发 PR 审查后再使用 /agent 命令。"
             )
 
         # duplicate guard: 同 repo + pr_review + 同源 PR number 仅允许一个非终态任务
