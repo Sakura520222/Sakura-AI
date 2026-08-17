@@ -115,13 +115,13 @@ jobs:
       contents: write
     steps:
       - name: Download amd64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: sakura-ai-updater-amd64-${{ github.run_id }}
           path: release-assets/amd64
 
       - name: Download arm64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: sakura-ai-updater-arm64-${{ github.run_id }}
           path: release-assets/arm64
