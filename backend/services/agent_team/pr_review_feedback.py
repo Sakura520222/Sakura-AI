@@ -250,35 +250,10 @@ class AgentTeamPRReviewFeedbackService:
                 ]
             ),
         ]
-            assert memory_bridge.feedback == []
-
-
-        @pytest.mark.asyncio
-        async def test_strategy2_falls_back_to_repo_level_when_review_pr_number_is_none(
-            memory_bridge,
-        ):
-            """历史数据 review.pr_number 为空（列 nullable）时保持 repo 级回退，不错绑。"""
-
-            legacy_task = _task(task_id=303, head_sha="head-4")
-            legacy_task.source_type = "pr_review"
-            legacy_task.source_issue_number = 7
-            legacy_task.branch_name = "feature/agent-fix-7"
-            review = _completed_review(review_id=403, head_sha="head-4")
-            review.pr_number = None
-            review.branch = "main"
-
-            memory_bridge.tasks.append(legacy_task)
-            memory_bridge.reviews[review.id] = review
-
-            result = (
-                await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
-                    review.id
-                )
-            )
-
-            assert result.handled is True
-            assert result.task_id == legacy_task.id
-            assert result.action == "completed"
+        # 历史数据 pr_number 可能为空（列 nullable），无法精确关联时保持原
+        # repo 级回退，宁可少处理也不错绑。
+        if review.pr_number is not None:
+            conditions.append(AgentTeamTask.source_issue_number == review.pr_number)
         statement = (
             select(AgentTeamTask)
             .where(*conditions)
