@@ -1714,6 +1714,25 @@ channel_alias() {
     esac
 }
 
+image_digest_of() {
+    local image="$1" repo line digest="" count=0
+    repo=$(image_repo_of "$image")
+    [[ -n "$repo" ]] || return 1
+    while IFS= read -r line; do
+        case "$line" in
+            "$repo"@sha256:*)
+                digest=${line#"$repo"@sha256:}
+                count=$((count + 1))
+                ;;
+        esac
+    done < <(docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$image" 2>/dev/null)
+    if [[ "$count" -eq 1 && "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+        printf 'sha256:%s\n' "$digest"
+        return 0
+    fi
+    return 1
+}
+
 # ============================================================
 # Updater IPC / Updater daemon v1 IPC over UDS
 # ============================================================
@@ -1869,7 +1888,7 @@ menu_wait_healthy() {
 # 只重建镜像发生变化的 web 容器（与 updater ImageAdapter.activate 一致），
 # 不会 down 掉 MySQL/Redis。
 apply_channel_image() {
-    local channel="$1" repository channel_tag image compose_cmd
+    local channel="$1" repository channel_tag image compose_cmd digest
     if ! channel_tag=$(channel_alias "$channel"); then
         fail "无法识别目标频道: $channel"
         return 1
@@ -1882,6 +1901,12 @@ apply_channel_image() {
 
     info "拉取镜像: $image"
     docker pull "$image" || return 1
+
+    if ! digest=$(image_digest_of "$image"); then
+        fail "无法解析镜像 digest: $image"
+        return 1
+    fi
+    image="$image@$digest"
 
     write_deployment_env_image "$image" || return 1
     ok "部署状态已指向: $image"
@@ -1976,7 +2001,7 @@ cmd_update_image() {
     fi
 
     if updater_daemon_is_running; then
-        info "development 频道刷新直接使用 Compose 别名镜像（updater 空 body 目标固定为 stable）"
+        info "development 频道刷新直接使用 Compose 别名镜像（updater 空 body 时目标固定为 stable）"
     else
         warn "host updater daemon 未运行；回退为手动 Compose 更新"
     fi
