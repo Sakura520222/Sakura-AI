@@ -86,10 +86,6 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 # ── 应用代码（显式 COPY，不用 COPY . .）──
 WORKDIR /app
 COPY backend ./backend
-# Keep immutable defaults outside the persistent /app/config volume.  The
-# entrypoint deep-merges these defaults into missing/new keys while preserving
-# every existing user value (including setup credentials in connection.json).
-COPY config ./config-defaults
 COPY scripts ./scripts
 COPY res ./res
 COPY requirements.txt .

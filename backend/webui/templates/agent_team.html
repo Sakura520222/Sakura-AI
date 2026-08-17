@@ -66,9 +66,6 @@
                     <button @click="activeTab = 'workspaces'; refreshWorkspaces()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 border border-purple-200 dark:border-purple-800/50 text-sm font-semibold rounded-2xl transition-all">
                         {{ _('agent_team.manage_workspaces') }}
                     </button>
-                    <button @click="activeTab = 'config'" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-2xl transition-all shadow-lg shadow-purple-500/20">
-                        {{ _('agent_team.open_config') }}
-                    </button>
                     {% endif %}
                 </div>
             </div>
@@ -106,7 +103,6 @@
         {% if is_admin %}
         <button @click="activeTab = 'candidates'" :class="activeTab === 'candidates' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_candidates') }}</button>
         <button @click="activeTab = 'workspaces'; refreshWorkspaces()" :class="activeTab === 'workspaces' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_workspaces') }}</button>
-        <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_config') }}</button>
         {% endif %}
     </div>
 
@@ -228,52 +224,6 @@
             <div id="manual-issue-error-user" class="mt-2 text-xs text-red-500 dark:text-red-400 hidden"></div>
         </div>
     </section>
-
-    {% if is_admin %}
-    <section x-show="activeTab === 'config'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
-        <div class="mb-5">
-            <h2 class="text-lg font-bold">{{ _('agent_team.dedicated_ai_config') }}</h2>
-            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_team.config_center_desc') }}</p>
-        </div>
-        <form method="post" action="/agent-team/config/save" class="space-y-4">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            {% for group in config_groups %}
-            <details class="rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden" {% if loop.first %}open{% endif %}>
-                <summary class="cursor-pointer select-none px-5 py-4 bg-gray-50/80 dark:bg-gray-900/50 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">
-                    <span class="font-semibold">{{ group.title }}</span>
-                    <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">{{ group.description }}</span>
-                </summary>
-                <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {% for item in group['items'] %}
-                    <div class="rounded-xl border border-gray-100 dark:border-gray-700/70 p-4 bg-white/50 dark:bg-gray-900/30">
-                        <label class="block text-sm font-semibold mb-1" for="{{ item.key }}">{{ item.label }}</label>
-                        {% if item.description %}<p class="text-xs text-gray-500 dark:text-gray-400 mb-2 leading-5">{{ item.description }}</p>{% endif %}
-                        {% if item.input_type == 'boolean' %}
-                        <label class="inline-flex items-center gap-3 text-sm cursor-pointer">
-                            <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value == 'True' or item.value == 'true' %}checked{% endif %} class="sr-only peer">
-                            <span class="relative w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-sakura-300 dark:peer-focus:ring-sakura-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sakura-500"></span>
-                            <span>{{ _('common.enabled') }}</span>
-                        </label>
-                        {% elif item.input_type == 'select' %}
-                        <select id="{{ item.key }}" name="{{ item.key }}" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
-                            {% for opt in item.select_options %}<option value="{{ opt.value }}" {% if opt.value == item.value %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
-                        </select>
-                        {% else %}
-                        <input id="{{ item.key }}" name="{{ item.key }}" type="{{ 'password' if item.input_type == 'password' else item.input_type }}" value="{{ '' if item.sensitive else item.value }}" placeholder="{{ item.value if item.sensitive else '' }}" {% if item.sensitive %}oninput="document.getElementById('{{ item.key }}_changed').value='true'"{% endif %} class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
-                        {% if item.sensitive %}<input type="hidden" id="{{ item.key }}_changed" name="{{ item.key }}_changed" value="false">{% endif %}
-                        {% if item.min_val is not none and item.max_val is not none %}<p class="mt-1 text-xs text-gray-400">{{ _('agent_team.range_hint') }} {{ item.min_val }} - {{ item.max_val }}</p>{% endif %}
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </details>
-            {% endfor %}
-            <div class="flex justify-end pt-2">
-                <button type="submit" class="px-5 py-2.5 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold shadow-lg shadow-sakura-500/20">{{ _('common.save_config') }}</button>
-            </div>
-        </form>
-    </section>
-    {% endif %}
 
     <!-- Manual Issue task preview/edit dialog -->
     <div x-show="issuePreview.show" x-cloak

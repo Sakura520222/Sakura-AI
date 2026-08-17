@@ -275,10 +275,97 @@ async def test_lifespan_resolves_persisted_timezone_after_database_load(monkeypa
         "get_localzone_name",
         Mock(side_effect=RuntimeError("system timezone unavailable")),
     )
+    # 3.5 段统一节配置加载：测试环境无真实 DB，stub 掉 session 与加载函数
+    class _NullSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    async def no_op_load_section_configs(_session):
+        return None
+
+    async def no_op_migrate_yaml_files(_db):
+        return []
+
+    monkeypatch.setattr(
+        "backend.models.database.async_session", lambda: _NullSession()
+    )
+    monkeypatch.setattr(
+        "backend.core.config_sections.load_section_configs",
+        no_op_load_section_configs,
+    )
+    monkeypatch.setattr(
+        "backend.core.config_sections.migrate_yaml_files_to_db",
+        no_op_migrate_yaml_files,
+    )
     app = FastAPI()
 
     async with main.lifespan(app):
         assert main.get_time_service().resolved_timezone == "UTC"
+
+
+@pytest.mark.anyio
+async def test_lifespan_loads_section_configs_after_dynamic_settings(monkeypatch):
+    """lifespan 应在动态配置加载后加载统一节配置存储并刷新 facade。"""
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    database_url = "mysql+asyncmy://db/app"
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main.settings, "app_timezone", "UTC")
+
+    async def no_op_init_db():
+        return None
+
+    async def no_op_dynamic_load(*, required_keys):
+        return None
+
+    monkeypatch.setattr("backend.models.init_db", no_op_init_db)
+    monkeypatch.setattr(
+        "backend.core.config.load_dynamic_configs_to_settings",
+        no_op_dynamic_load,
+    )
+
+    loaded_with = []
+    migrated_with = []
+
+    class _NullSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    async def record_load_section_configs(session):
+        loaded_with.append(session)
+
+    async def record_migrate_yaml_files(db):
+        migrated_with.append(db)
+
+    monkeypatch.setattr(
+        "backend.models.database.async_session", lambda: _NullSession()
+    )
+    monkeypatch.setattr(
+        "backend.core.config_sections.load_section_configs",
+        record_load_section_configs,
+    )
+    monkeypatch.setattr(
+        "backend.core.config_sections.migrate_yaml_files_to_db",
+        record_migrate_yaml_files,
+    )
+
+    app = FastAPI()
+    async with main.lifespan(app):
+        # 一次性迁移在节存储加载之前执行，两者共用同一 session
+        assert len(migrated_with) == 1
+        assert len(loaded_with) == 1
+        assert migrated_with[0] is loaded_with[0]
 
 
 @pytest.mark.anyio

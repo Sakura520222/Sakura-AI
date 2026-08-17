@@ -43,12 +43,6 @@ class HistoryContextService:
         Returns:
             AI 生成的历史审查摘要文本，查询失败返回 None
         """
-        settings = get_settings()
-
-        # 检查是否启用
-        if not settings.enable_incremental_history_context:
-            return None
-
         try:
             history_reviews = await self._query_history_reviews(
                 pr_id, repo_name, repo_owner
@@ -86,15 +80,11 @@ class HistoryContextService:
         repo_name: str,
         repo_owner: str,
     ) -> list[PRReview]:
-        """从数据库查询该 PR 的历史审查记录
+        """从数据库查询该 PR 的历史审查记录（全量，不设轮数上限）
 
         查询已完成的审查记录（含关联评论），按时间正序排列。
         """
-        from backend.core.config import get_settings
         from backend.models.database import async_session
-
-        settings = get_settings()
-        max_reviews = settings.incremental_history_max_reviews
 
         async with async_session() as session:
             stmt = (
@@ -110,7 +100,6 @@ class HistoryContextService:
                     )
                 )
                 .order_by(PRReview.created_at.asc())
-                .limit(max_reviews)
             )
 
             result = await session.execute(stmt)
@@ -204,7 +193,8 @@ class HistoryContextService:
             ],
             model="",
             temperature=HISTORY_SUMMARY_TEMPERATURE,
-            max_tokens=settings.incremental_history_summary_max_tokens,
+            # 输出上限折叠到全局 ai_max_tokens（AI 配置页）
+            max_tokens=settings.ai_max_tokens,
             role="summary",
         )
 

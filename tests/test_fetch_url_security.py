@@ -1,9 +1,8 @@
 """fetch_url_tool 安全测试
 
-覆盖：SSRF 绕过、URL 标准化、Content-Type、并发计数、域名策略等。
+覆盖：SSRF 绕过、URL 标准化、Content-Type、域名策略等。
 """
 
-import asyncio
 import socket
 from unittest.mock import patch
 
@@ -262,30 +261,6 @@ class TestDomainPolicy:
         self.handler._domain_list = "*.local"
         with pytest.raises(ValueError, match="黑名单"):
             self.handler._check_domain_policy("api.local")
-
-
-# ── 并发会话计数 ────────────────────────────────────────────────
-
-
-class TestConcurrentSessionCounter:
-    @pytest.mark.asyncio
-    async def test_concurrent_calls_counted(self):
-        handler = FetchUrlToolHandler()
-        handler._max_calls_per_session = 5
-
-        async def increment():
-            async with handler._session_lock:
-                handler._session_call_count += 1
-
-        await asyncio.gather(*[increment() for _ in range(5)])
-        assert handler._session_call_count == 5
-
-    @pytest.mark.asyncio
-    async def test_reset_session(self):
-        handler = FetchUrlToolHandler()
-        handler._session_call_count = 10
-        await handler.reset_session()
-        assert handler._session_call_count == 0
 
 
 # ── 可疑文本检测 ────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-Sakura AI is a Python 3.14+ FastAPI service for GitHub PR/Issue review, WebUI administration, Telegram notifications, RAG, billing, and repository scanning. The main application is under `backend/`: `main.py` owns application setup, while `core/`, `api/`, `services/`, `models/`, `webui/`, `workers/`, and `telegram/` contain infrastructure, routes, domain logic, persistence, UI, background jobs, and bot integration. Root tests live in `tests/`. The independent `updater/` package uses a `src/` layout and has its own `tests/`. Runtime defaults and deployment assets are in `config/`, `docker/`, `docs/`, `res/`, and `start.sh`.
+Sakura AI is a Python 3.14+ FastAPI service for GitHub PR/Issue review, WebUI administration, Telegram notifications, RAG, billing, and repository scanning. The main application is under `backend/`: `main.py` owns application setup, while `core/`, `api/`, `services/`, `models/`, `webui/`, `workers/`, and `telegram/` contain infrastructure, routes, domain logic, persistence, UI, background jobs, and bot integration. Root tests live in `tests/`. The independent `updater/` package uses a `src/` layout and has its own `tests/`. Runtime configuration is stored in the database `app_config` table (including `strategy.*`/`label.*` section keys); `config/` only holds `connection.json` for the Setup Wizard. Super-admin non-AI configuration is edited on the unified `/config` page; the AI config and system core config pages remain separate. Deployment assets are in `docker/`, `docs/`, `res/`, and `start.sh`.
 
 ## Setup, Build, and Development Commands
 

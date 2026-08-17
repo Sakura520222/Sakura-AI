@@ -7,12 +7,14 @@ import asyncio
 import json
 import re
 import threading
+from copy import deepcopy
 from datetime import timedelta
 from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.config_section_defaults import LABEL_SECTION_DEFAULTS
 from backend.core.github_app import GitHubAppClient
 from backend.core.time_service import now_utc
 
@@ -26,37 +28,8 @@ class LabelService:
     _lock = threading.Lock()
     _initialized = False
 
-    # 默认标签配置（当仓库没有标签时使用）
-    DEFAULT_LABELS = {
-        "bug": {"color": "d73a4a", "description": "Something isn't working"},
-        "documentation": {
-            "color": "0075ca",
-            "description": "Improvements or additions to documentation",
-        },
-        "duplicate": {
-            "color": "cfd3d7",
-            "description": "This issue or pull request already exists",
-        },
-        "enhancement": {"color": "a2eeef", "description": "New feature or request"},
-        "good first issue": {"color": "7057ff", "description": "Good for newcomers"},
-        "help wanted": {"color": "008672", "description": "Extra attention is needed"},
-        "invalid": {"color": "e4e669", "description": "This doesn't seem right"},
-        "question": {
-            "color": "d876e3",
-            "description": "Further information is requested",
-        },
-        "wontfix": {"color": "ffffff", "description": "This will not be worked on"},
-        "refactor": {
-            "color": "fbca04",
-            "description": "Code refactoring (non-functional change)",
-        },
-        "performance": {"color": "5319e7", "description": "Performance optimization"},
-        "test": {"color": "bfd4f2", "description": "Test related changes"},
-        "dependencies": {"color": "0366d6", "description": "Dependency updates"},
-        "ci": {"color": "ffefdb", "description": "CI/CD configuration changes"},
-        "style": {"color": "c5def5", "description": "Code style adjustments"},
-        "build": {"color": "ededed", "description": "Build system changes"},
-    }
+    # 默认标签配置（当仓库没有标签时使用；引用统一内置默认源，消除双默认源）
+    DEFAULT_LABELS = deepcopy(LABEL_SECTION_DEFAULTS["labels"])
 
     def __new__(cls):
         """确保只有一个实例"""
@@ -73,14 +46,14 @@ class LabelService:
             # 标签缓存：{repo_full_name: {"labels": dict, "updated_at": datetime}}
             self._label_cache: dict[str, dict[str, Any]] = {}
             self._cache_ttl = timedelta(hours=1)  # 缓存1小时
-            # 标签冲突规则（从 labels.yaml 加载）
+            # 标签冲突规则（从统一配置节存储加载）
             self._conflict_rules: dict[str, list[str]] = {}
             self._load_conflict_rules()
             self.__class__._initialized = True
             logger.info("LabelService单例初始化完成")
 
     def _load_conflict_rules(self) -> None:
-        """从 labels.yaml 加载标签冲突规则"""
+        """从统一配置节存储加载标签冲突规则"""
         try:
             from backend.core.config import get_label_config
 
@@ -97,16 +70,11 @@ class LabelService:
 
     @staticmethod
     def _default_conflict_rules() -> dict[str, list[str]]:
-        """默认标签冲突规则
+        """默认标签冲突规则（引用统一内置默认源 config_section_defaults）
 
         规则含义：当 PR 已有 key 中的标签时，不应自动添加 value 列表中的标签。
         """
-        return {
-            "enhancement": ["bug"],
-            "refactor": ["bug"],
-            "documentation": ["bug", "enhancement"],
-            "test": ["bug", "enhancement"],
-        }
+        return deepcopy(LABEL_SECTION_DEFAULTS["conflict_rules"])
 
     def check_label_conflict(
         self, existing_labels: list[str], new_label: str
@@ -128,13 +96,13 @@ class LabelService:
         return None
 
     def _get_default_labels(self) -> dict:
-        """获取默认标签（优先从 labels.yaml 加载）"""
+        """获取默认标签（优先从统一配置节存储加载）"""
         try:
             from backend.core.config import get_label_config
 
-            yaml_labels = get_label_config().get_labels()
-            if yaml_labels:
-                return yaml_labels
+            configured_labels = get_label_config().get_labels()
+            if configured_labels:
+                return configured_labels
         except Exception:
             pass
         return self.DEFAULT_LABELS

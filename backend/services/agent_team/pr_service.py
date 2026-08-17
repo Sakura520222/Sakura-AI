@@ -596,9 +596,7 @@ class AgentTeamPRService:
 
             client, _summary_role, _config = await create_agent_team_summary_client()
 
-            files_text = ", ".join(modified_files[:20])
-            if len(modified_files) > 20:
-                files_text += f" ... (共 {len(modified_files)} 个文件)"
+            files_text = ", ".join(modified_files)
 
             issue_hint = f"\n关联 Issue: #{issue_number}" if issue_number else ""
 
@@ -672,9 +670,7 @@ class AgentTeamPRService:
 
             client, _summary_role, _config = await create_agent_team_summary_client()
 
-            files_text = ", ".join(modified_files[:20])
-            if len(modified_files) > 20:
-                files_text += f" ... (共 {len(modified_files)} 个文件)"
+            files_text = ", ".join(modified_files)
 
             system_prompt = (
                 "你是一个代码提交信息生成助手。根据任务描述、实际修改文件和审查反馈，"

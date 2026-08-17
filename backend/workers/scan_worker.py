@@ -202,8 +202,8 @@ class ScanWorker:
         """扫描内部逻辑"""
         from backend.models.database import async_session
 
-        settings = get_settings()
-        budget = ScanTokenBudget(max_tokens=settings.scan_max_tokens_per_repo)
+        # Token 预算固定 0（不限），扫描轮次深度由模型自然停止决定
+        budget = ScanTokenBudget(max_tokens=0)
         repo_path = None
 
         try:

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.core.config import (
+    DYNAMIC_CONFIG_GROUPS,
     DYNAMIC_CONFIG_LABELS,
     DYNAMIC_CONFIG_RANGES,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
@@ -21,11 +22,9 @@ from backend.services.agent_team.candidate_service import (
     _select_ai_filter_model,
     candidates_to_dicts,
 )
-from backend.webui.routes.agent_team import (
-    AGENT_TEAM_ACTIVE_STATUSES,
-    AGENT_TEAM_CONFIG_KEYS,
-    _group_config_items,
-)
+from backend.webui.routes.agent_team import AGENT_TEAM_ACTIVE_STATUSES
+
+AGENT_TEAM_DYNAMIC_KEYS = set(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
 
 
 @pytest.mark.asyncio
@@ -151,9 +150,9 @@ def test_agent_pr_closed_loop_config_registered_for_webui():
     assert settings.agent_team_pr_closed_loop_enabled is True
     assert settings.agent_team_pr_review_pass_score == 8
     assert settings.agent_team_pr_review_blocking_severities == "critical,major"
-    assert "agent_team_pr_closed_loop_enabled" in AGENT_TEAM_CONFIG_KEYS
-    assert "agent_team_pr_review_pass_score" in AGENT_TEAM_CONFIG_KEYS
-    assert "agent_team_pr_review_blocking_severities" in AGENT_TEAM_CONFIG_KEYS
+    assert "agent_team_pr_closed_loop_enabled" in AGENT_TEAM_DYNAMIC_KEYS
+    assert "agent_team_pr_review_pass_score" in AGENT_TEAM_DYNAMIC_KEYS
+    assert "agent_team_pr_review_blocking_severities" in AGENT_TEAM_DYNAMIC_KEYS
     assert (
         DYNAMIC_CONFIG_LABELS["agent_team_pr_closed_loop_enabled"]
         == "启用 Agent PR 闭环"
@@ -217,37 +216,21 @@ def test_agent_team_config_includes_policy_keys():
         "agent_team_workspace_root",
         "agent_team_max_concurrent",
         "agent_team_max_iterations_per_task",
+        "agent_team_test_command_blocklist",
     }
 
-    assert required.issubset(set(AGENT_TEAM_CONFIG_KEYS))
+    assert required.issubset(AGENT_TEAM_DYNAMIC_KEYS)
 
-    # 温度/max_tokens/超时/压缩等模型相关配置已迁至新版 /config/ai 角色绑定，
-    # 不再在 /agent-team 配置页暴露（Agent 运行时仍可读 get_settings 默认值）。
-    retired_ai_keys = {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
-        "agent_team_timeout_seconds",
-        "agent_team_enable_context_compression",
-        "agent_team_context_compression_threshold",
-        "agent_team_context_summary_max_tokens",
-    }
-    assert retired_ai_keys.isdisjoint(set(AGENT_TEAM_CONFIG_KEYS))
+    # 模型 provider/凭据类配置已迁至新版 /config/ai 角色绑定，不在动态组暴露
+    # （温度/max_tokens 等推理参数仍保留在动态组，Agent 运行时可读）。
+    retired_ai_keys = {"agent_team_model_provider", "agent_team_model"}
+    assert retired_ai_keys.isdisjoint(AGENT_TEAM_DYNAMIC_KEYS)
 
 
 def test_agent_team_active_statuses_include_waiting_human():
     assert "queued" in AGENT_TEAM_ACTIVE_STATUSES
     assert "waiting_human" in AGENT_TEAM_ACTIVE_STATUSES
     assert "completed" not in AGENT_TEAM_ACTIVE_STATUSES
-
-
-def test_agent_team_config_grouping_preserves_all_items():
-    config_items = [{"key": key} for key in AGENT_TEAM_CONFIG_KEYS]
-
-    groups = _group_config_items(config_items, lang="zh-CN")
-    grouped_keys = [item["key"] for group in groups for item in group["items"]]
-
-    assert grouped_keys == AGENT_TEAM_CONFIG_KEYS
-    assert [group["key"] for group in groups] == ["basic", "guardrails", "skills"]
 
 
 def test_agent_candidate_dict_includes_ai_filter_reason():

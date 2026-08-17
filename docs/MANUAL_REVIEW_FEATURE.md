@@ -336,7 +336,7 @@ task_id = await submit_review_task(pr_info)
 ## 相关文档
 
 - [Telegram Bot 设置](./TELEGRAM_SETUP.md)
-- [审查策略配置](../config/strategies.yaml)
+- [审查策略配置](CONFIGURATION.md)
 - [API v1 参考文档](api-v1-reference.md)
 
 ## 更新历史
@@ -349,4 +349,4 @@ task_id = await submit_review_task(pr_info)
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

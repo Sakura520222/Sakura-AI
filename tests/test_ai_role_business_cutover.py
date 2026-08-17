@@ -93,7 +93,7 @@ async def test_history_context_ignores_injected_legacy_client_and_model(monkeypa
     service = history_context_service.HistoryContextService(
         legacy_client, model="legacy-model"
     )
-    settings = SimpleNamespace(incremental_history_summary_max_tokens=1234)
+    settings = SimpleNamespace(ai_max_tokens=1234)
     monkeypatch.setattr(history_context_service, "get_settings", lambda: settings)
 
     result = await service._generate_ai_summary("history")
@@ -157,6 +157,7 @@ async def test_star_aid_summary_uses_summary_role_client(monkeypatch):
         primary_language="Python",
         readme_excerpt="README",
         lang="zh-CN",
+        max_tokens=1234,
     )
 
     assert result == "summary"

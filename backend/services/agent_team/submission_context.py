@@ -11,7 +11,7 @@ from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import get_settings
 from backend.core.time_service import format_rfc3339
 from backend.models.agent_team_models import AgentTeamSourceType
 from backend.models.database import IssueAnalysis, IssueAnalysisStatus
@@ -168,11 +168,6 @@ async def load_issue_comments_for_context(
         return []
 
     try:
-        max_count = int(await get_dynamic_config("issue_max_comments_in_context") or 0)
-    except TypeError, ValueError:
-        max_count = 0
-
-    try:
         from backend.core.github_app import GitHubAppClient
 
         github_app = GitHubAppClient()
@@ -192,8 +187,6 @@ async def load_issue_comments_for_context(
         )
         return []
 
-    if max_count > 0:
-        comments = comments[-max_count:]
     return format_issue_comments(comments, get_settings().bot_username)
 
 

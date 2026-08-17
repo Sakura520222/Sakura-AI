@@ -44,13 +44,6 @@ def _get_fetch_url_handler() -> Any | None:
         return None
 
 
-async def reset_fetch_url_session() -> None:
-    """重置 fetch_url handler 的会话调用计数（在每个 Agent 任务开始时调用）。"""
-    handler = _get_fetch_url_handler()
-    if handler is not None:
-        await handler.reset_session()
-
-
 class FetchUrlTool(BaseTool):
     """抓取指定 URL 的网页内容并转换为纯文本。"""
 

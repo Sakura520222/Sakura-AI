@@ -129,15 +129,11 @@ Remove-Item Env:SAKURA_AI_IMAGE
 - 跨通道切换可能回到较旧的正式版本，WebUI 会显示风险并要求明确确认；同通道历史镜像仅供查看，不提供任意降级或回滚。
 - 生产 compose 不再内置数据库密码：首次部署必须将强随机的 64 位十六进制 `SAKURA_DB_PASSWORD` 保存到权限为 0600 的 `.deploy/deployment.env`，并始终通过 `--env-file .deploy/deployment.env` 启动；文件缺失或变量缺失时 Compose 会 fail-closed。使用仓库中的 `./start.sh --prod` 会自动完成生成、持久化和复用，**切勿提交该运行时文件**。
 
-### 1.5 config 卷三路合并
+### 1.5 config 卷与策略配置迁移
 
-生产镜像的 `config_data:/app/config` 卷会持久化 Setup 生成的 `connection.json` 以及 WebUI 可编辑的 `strategies.yaml`、`labels.yaml`。镜像内置的新版基线放在独立的 `/app/config-defaults`，容器会在卷内保存上一版 packaged baseline，并在每次启动时对这两个 YAML 做三路深度合并：
+生产镜像的 `config_data:/app/config` 卷持久化 Setup 生成的 `connection.json`。审查策略与标签定义已迁移到数据库 `app_config` 节键（`strategy.*` / `label.*`）：运行时按节与内置默认深度合并——管理员改动的叶子保留、升级新增的默认叶子自动出现——并随数据库卷持久化、纳入 WebUI 配置备份。全部非 AI 配置在全局配置页 `/config` 编辑（旧 `/config/general|strategies|labels` 页面自动重定向）；包含已移除历史配置键的旧备份在恢复时会被宽容跳过。
 
-- 自上次 baseline 以来未修改的值跟随新默认（包括 scalar/list）
-- 管理员改过的值和自定义键始终保留
-- 新默认键补入；已从默认删除且未被修改的键删除，被管理员改过的删除键仍保留
-- `connection.json` 与其它运行时文件不被触碰
-- 合并采用同目录原子替换并在批次失败时回滚；YAML 解析失败或无法安全处理的类型冲突 fail-closed，既有文件不会被覆盖
+镜像仍保留 packaged YAML 三路合并机制（`/app/config-defaults` 基线 + 卷内隐藏 baseline），但当前管理文件列表为空；旧部署卷内残留的 `strategies.yaml` / `labels.yaml` 不会被读取或修改，可在确认迁移完成后手动清理。
 
 ---
 
@@ -453,4 +449,4 @@ sudo ./start.sh uninstall --purge
 
 ---
 
-*最后更新：2026-8-15 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

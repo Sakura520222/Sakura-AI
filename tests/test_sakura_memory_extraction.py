@@ -160,16 +160,10 @@ async def test_post_reflection_checks_reuses_loaded_state_for_extraction(monkeyp
         extracted.append((repo_arg, repo_full_name, reflection_count))
         return True
 
-    settings = SimpleNamespace(
-        sakura_knowledge_extraction_enabled=True,
-        sakura_extraction_min_reflections=2,
-    )
-
     service.consolidate = fake_consolidate
     service._get_or_create_state = fail_state_lookup
     service._get_config = lambda: config
     service.extract_and_save_knowledge = fake_extract
-    monkeypatch.setattr("backend.core.config.get_settings", lambda: settings)
 
     await service._post_reflection_checks(repo, "owner/repo", 5, state, config)
 

@@ -1941,7 +1941,7 @@ Issue 分析详情。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data.strategies` | object | 策略配置（来自 `config/strategies.yaml`） |
+| `data.strategies` | object | 策略配置（数据库 `strategy.*` 节键，与内置默认深度合并） |
 
 ---
 
@@ -1955,7 +1955,7 @@ Issue 分析详情。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `section` | string | 策略 section 名称（如 `standard`、`strict`） |
+| `section` | string | 策略 section 名称（如 `strategies`、`file_filters`、`context_enhancement`、`review_policy`、`issue_analysis`、`depgraph`、`pr_summary`） |
 
 **请求体**：
 
@@ -3260,4 +3260,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-*Last updated: 2026-8-10 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*Last updated: 2026-8-16 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

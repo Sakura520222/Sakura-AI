@@ -751,9 +751,7 @@ def _reviewer_under_test(monkeypatch, *, enable_compression, observer=None):
     reviewer.compression_threshold = 0.85
     reviewer.context_compressor = _FakeCompressor()
 
-    strategy_config = SimpleNamespace(
-        get_context_enhancement_config=lambda: {"max_tool_iterations": 1}
-    )
+    strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
     monkeypatch.setattr(
         "backend.services.ai_reviewer.reviewer.get_strategy_config",
         lambda: strategy_config,

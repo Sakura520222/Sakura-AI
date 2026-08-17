@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+from itertools import count
 
 from loguru import logger
 
@@ -139,7 +140,6 @@ class SakuraAgentBase:
         self,
         system_prompt: str,
         model: str,
-        max_iterations: int,
         initial_user_message: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> None:
@@ -148,7 +148,10 @@ class SakuraAgentBase:
             messages.append({"role": "user", "content": initial_user_message})
         tools = self._get_tools()
 
-        for i in range(max_iterations):
+        # 工具循环不设轮次上限：依赖模型自然停止（无 tool_calls 即结束），
+        # 整体时长由外层超时与取消信号兜底。/ No iteration cap: the loop
+        # ends when the model stops calling tools; outer timeouts guard runtime.
+        for i in count():
             # 取消信号：外部取消已触发时立即中止 Agent 会话
             if cancel_event is not None and cancel_event.is_set():
                 raise ReviewCancelledError()
@@ -237,8 +240,6 @@ class SakuraAgentBase:
                 (response.content or "")[:200],
             )
             return
-
-        logger.warning("{} 达到最大迭代次数 {}", self.log_prefix, max_iterations)
 
     # ── 工具执行 ────────────────────────────────────────────────────────
 

@@ -61,7 +61,7 @@ def has_existing_review(
 
 ### 1. 配置文件
 
-- **config/strategies.yaml**
+- **config/strategies.yaml**（v3.1.3之后存储为数据库节键 `strategy.review_policy`，经 WebUI 审查策略页管理）
   - 添加 `review_policy` 配置段
   - 支持仓库级别的覆盖配置
   - 可配置的审查模板
@@ -250,4 +250,4 @@ FROM pr_reviews;
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

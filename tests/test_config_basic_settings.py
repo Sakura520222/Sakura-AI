@@ -175,7 +175,6 @@ def test_web_search_configs_have_range_limits_and_fetch_url_configs_do_not():
         "fetch_url_timeout",
         "fetch_url_max_content_length",
         "fetch_url_max_download_size",
-        "fetch_url_max_calls_per_session",
         "fetch_url_max_redirects",
     }
 

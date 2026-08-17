@@ -12,6 +12,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
+    get_sakura_memory_config,
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
@@ -692,7 +693,7 @@ class ReviewWorker:
                 )
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
-                if settings.auto_index_pr_changes and settings.enable_code_index:
+                if settings.enable_code_index:
                     try:
                         from backend.services.pr_code_indexer import get_pr_code_indexer
 
@@ -1666,10 +1667,10 @@ class ReviewWorker:
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
-                    if (
-                        settings.sakura_memory_enabled
-                        and settings.sakura_reflection_enabled
-                    ):
+                    sm_config = get_sakura_memory_config()
+                    if sm_config.get("enabled", True) and sm_config.get(
+                        "reflection", {}
+                    ).get("enabled", True):
                         from backend.services.sakura_memory_service import (
                             get_sakura_memory_service,
                         )

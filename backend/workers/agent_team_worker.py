@@ -237,18 +237,6 @@ class AgentTeamWorker:
                     current_phase="validating",
                 )
 
-                # 检查修改文件数量限制
-                try:
-                    await self._validate_max_files(outcome.modified_files)
-                except ValueError as exc:
-                    await self._update_task(
-                        task_id,
-                        status=AgentTeamTaskStatus.FAILED.value,
-                        current_phase="validation_failed",
-                        error_message=str(exc),
-                    )
-                    return task_id
-
                 # ── Phase 4: PUSHING ──
                 await self._update_task(
                     task_id,
@@ -629,19 +617,6 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.VALIDATING.value,
                 current_phase="validating",
             )
-            try:
-                await self._validate_max_files(outcome.modified_files)
-            except ValueError as exc:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.FAILED.value,
-                    current_phase="validation_failed",
-                    estimated_cost=estimated_cost,
-                    error_message=str(exc),
-                    failed_phase="validation_failed",
-                )
-                return task_id
 
             await self._update_task(
                 task_id,
@@ -883,19 +858,6 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.VALIDATING.value,
                 current_phase="validating",
             )
-            try:
-                await self._validate_max_files(outcome.modified_files)
-            except ValueError as exc:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.FAILED.value,
-                    current_phase="validation_failed",
-                    estimated_cost=estimated_cost,
-                    error_message=str(exc),
-                    failed_phase="validation_failed",
-                )
-                return task_id
 
             await self._update_task(
                 task_id,
@@ -977,12 +939,6 @@ class AgentTeamWorker:
             s.review_price_per_1k_completion,
         )
         return new_iteration_count, prompt_tokens, completion_tokens, estimated_cost
-
-    async def _validate_max_files(self, modified_files: list[str]) -> None:
-        """校验修改文件数量。超限时抛出 ValueError。"""
-        max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
-        if len(modified_files) > max_files:
-            raise ValueError(f"修改文件数 {len(modified_files)} 超过限制 {max_files}")
 
     async def _update_pr_body(
         self,

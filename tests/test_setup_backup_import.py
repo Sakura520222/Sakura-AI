@@ -12,6 +12,8 @@ from backend.core.setup_service import SetupService
 from backend.services.config_backup_service import (
     AI_SECTION,
     GLOBAL_SECTION,
+    LABEL_SECTION,
+    STRATEGY_SECTION,
     SYSTEM_SECTION,
     BackupRecord,
     ConfigImportResult,
@@ -73,7 +75,14 @@ async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
     assert response.status_code == 200
     payload = _response_json(response)
     assert payload["success"] is True
-    assert payload["sections"] == [GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION]
+    # v3 备份的 all 范围包含 strategy/label 两节
+    assert payload["sections"] == [
+        GLOBAL_SECTION,
+        AI_SECTION,
+        SYSTEM_SECTION,
+        STRATEGY_SECTION,
+        LABEL_SECTION,
+    ]
     # 备份中的连接地址会返回给前端，由前端按部署者选择决定是否覆盖当前部署预填值。
     assert payload["setup_values"]["database_url"].startswith("mysql+asyncmy://")
     assert payload["setup_values"]["redis_url"] == "redis://redis:6379/0"
@@ -194,6 +203,8 @@ async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
         GLOBAL_SECTION,
         AI_SECTION,
         SYSTEM_SECTION,
+        STRATEGY_SECTION,
+        LABEL_SECTION,
     }
 
 

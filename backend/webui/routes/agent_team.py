@@ -12,18 +12,7 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.config import (
-    DYNAMIC_CONFIG_RANGES,
-    DYNAMIC_CONFIG_SELECT_OPTIONS,
-    DYNAMIC_CONFIG_SENSITIVE_KEYS,
-    get_all_dynamic_config_keys,
-    get_dynamic_config,
-    get_dynamic_config_input_type,
-    get_settings,
-    invalidate_dynamic_config_cache,
-    mask_sensitive_value,
-    update_settings_field,
-)
+from backend.core.config import get_dynamic_config
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.agent_team_models import (
     AgentTeamConversationContext,
@@ -36,7 +25,7 @@ from backend.models.agent_team_models import (
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import AppConfig, IssueAnalysis
+from backend.models.database import IssueAnalysis
 from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
@@ -73,36 +62,10 @@ from backend.webui.deps import (
     require_auth,
     require_csrf,
     require_super_admin,
-    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
 
 router = APIRouter(prefix="/agent-team", tags=["WebUI Agent Team"])
-
-AGENT_TEAM_CONFIG_KEYS = [
-    "agent_team_enabled",
-    "agent_team_workspace_root",
-    "agent_team_repo_allowlist",
-    "agent_team_max_concurrent",
-    "agent_team_min_priority",
-    "agent_team_feasibility_keywords",
-    "agent_team_max_iterations_per_task",
-    "agent_team_max_tool_rounds",
-    "agent_team_reviewer_max_tool_rounds",
-    "agent_team_max_runtime_minutes",
-    "agent_team_draft_pr",
-    "agent_team_pr_closed_loop_enabled",
-    "agent_team_pr_review_pass_score",
-    "agent_team_pr_review_blocking_severities",
-    "agent_team_max_files_changed",
-    "agent_team_max_lines_changed",
-    "agent_team_run_tests",
-    "agent_team_auto_install_deps",
-    "agent_team_test_command_blocklist",
-    "agent_team_skills_enabled",
-    "agent_team_skills_root",
-]
 
 AGENT_TEAM_ACTIVE_STATUSES = [
     AgentTeamTaskStatus.QUEUED.value,
@@ -444,52 +407,6 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
     }
 
 
-AGENT_TEAM_CONFIG_GROUPS = [
-    {
-        "key": "basic",
-        "title_key": "agent_team.config_group_basic",
-        "description_key": "agent_team.config_group_basic_desc",
-        "keys": [
-            "agent_team_enabled",
-            "agent_team_workspace_root",
-            "agent_team_repo_allowlist",
-        ],
-    },
-    {
-        "key": "guardrails",
-        "title_key": "agent_team.config_group_guardrails",
-        "description_key": "agent_team.config_group_guardrails_desc",
-        "keys": [
-            "agent_team_max_concurrent",
-            "agent_team_min_priority",
-            "agent_team_feasibility_keywords",
-            "agent_team_max_iterations_per_task",
-            "agent_team_max_tool_rounds",
-            "agent_team_reviewer_max_tool_rounds",
-            "agent_team_max_runtime_minutes",
-            "agent_team_draft_pr",
-            "agent_team_pr_closed_loop_enabled",
-            "agent_team_pr_review_pass_score",
-            "agent_team_pr_review_blocking_severities",
-            "agent_team_max_files_changed",
-            "agent_team_max_lines_changed",
-            "agent_team_run_tests",
-            "agent_team_auto_install_deps",
-            "agent_team_test_command_blocklist",
-        ],
-    },
-    {
-        "key": "skills",
-        "title_key": "agent_team.config_group_skills",
-        "description_key": "agent_team.config_group_skills_desc",
-        "keys": [
-            "agent_team_skills_enabled",
-            "agent_team_skills_root",
-        ],
-    },
-]
-
-
 @router.get("/")
 async def agent_team_page(
     request: Request,
@@ -498,11 +415,8 @@ async def agent_team_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """Agent 专家团队独立页面。"""
-    lang = detect_language(user_prefs)
     is_admin = _is_admin(user)
     stats = await _load_stats(db, user=user)
-    config_items = await _load_config_items(db, lang=lang) if is_admin else []
-    config_groups = _group_config_items(config_items, lang=lang) if is_admin else []
     agent_quota = None
     if not is_admin:
         # 延迟导入避免循环引用
@@ -525,8 +439,6 @@ async def agent_team_page(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="agent_team",
-        config_items=config_items,
-        config_groups=config_groups,
         stats=stats,
         workspace_summary=_load_workspace_summary(),
         status_options=[status.value for status in AgentTeamTaskStatus],
@@ -676,115 +588,6 @@ async def task_detail_fragment(
         issue_analysis_context=format_issue_analysis_context(issue_analysis),
         issue_comments=issue_comments,
         agent_contexts=agent_contexts,
-    )
-
-
-@router.post("/config/save")
-async def save_agent_team_config(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
-    csrf_token: str = Depends(require_csrf),
-):
-    """保存 Agent 专家团队专用配置。"""
-    form = await request.form()
-    changed: dict[str, dict] = {}
-    settings = get_settings()
-
-    for key in AGENT_TEAM_CONFIG_KEYS:
-        is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-        if is_sensitive and form.get(f"{key}_changed") != "true":
-            continue
-
-        raw = form.get(key)
-        if raw is None:
-            field_type = type(getattr(settings, key, ""))
-            if field_type is bool:
-                raw = "false"
-            else:
-                continue
-        val = str(raw).strip()
-
-        if key in DYNAMIC_CONFIG_RANGES:
-            min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
-            try:
-                num_val = float(val)
-            except ValueError:
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.numeric_required",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                )
-            if not (min_v <= num_val <= max_v):
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.value_range",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                    min_v=min_v,
-                    max_v=max_v,
-                )
-
-        if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
-            valid_values = [opt["value"] for opt in DYNAMIC_CONFIG_SELECT_OPTIONS[key]]
-            if val not in valid_values:
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.value_invalid",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                )
-
-        result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
-        cfg = result.scalar_one_or_none()
-        if cfg is None:
-            cfg = AppConfig(key_name=key, key_value=val, description=key)
-            db.add(cfg)
-            changed[key] = {
-                "old": "(无)",
-                "new": mask_sensitive_value(val) if is_sensitive else val,
-                "raw_new": val,
-            }
-        elif cfg.key_value != val:
-            changed[key] = {
-                "old": mask_sensitive_value(cfg.key_value)
-                if is_sensitive
-                else cfg.key_value,
-                "new": mask_sensitive_value(val) if is_sensitive else val,
-                "raw_new": val,
-            }
-            cfg.key_value = val
-
-    if not changed:
-        return toast_redirect(
-            "/agent-team/", "toast.config_saved_live", lang=detect_language()
-        )
-
-    await db.commit()
-    invalidate_dynamic_config_cache(AGENT_TEAM_CONFIG_KEYS)
-    all_dynamic_keys = get_all_dynamic_config_keys()
-    for key, change in changed.items():
-        if key in all_dynamic_keys:
-            update_settings_field(key, change.get("raw_new", change["new"]))
-
-    log_changed = {
-        key: {"old": value["old"], "new": value["new"]}
-        for key, value in changed.items()
-    }
-    await log_admin_action(
-        db,
-        user["user_id"],
-        "agent_team_config_save",
-        "agent_team",
-        None,
-        log_changed,
-    )
-    return toast_redirect(
-        "/agent-team/", "toast.config_saved_live", lang=detect_language()
     )
 
 
@@ -1718,98 +1521,6 @@ async def _resume_agent_task_background(task_id: int) -> None:
         logger.error(
             "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc, exc_info=True
         )
-
-
-async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
-    from backend.webui.i18n import i18n as _i18n
-
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key_name.in_(AGENT_TEAM_CONFIG_KEYS))
-    )
-    config_map = {cfg.key_name: cfg.key_value for cfg in result.scalars().all()}
-    settings = get_settings()
-    items = []
-    for key in AGENT_TEAM_CONFIG_KEYS:
-        value = config_map.get(key, str(getattr(settings, key, "")))
-        default_val = str(getattr(settings, key, ""))
-        is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-
-        # 翻译标签 / Translate label
-        label_key = f"config.label.{key}"
-        translated_label = _i18n.t(label_key, lang=lang)
-        label = translated_label if translated_label != label_key else key
-
-        # 翻译描述 / Translate description
-        desc_key = f"config.desc.{key}"
-        translated_desc = _i18n.t(desc_key, lang=lang)
-        description = translated_desc if translated_desc != desc_key else ""
-
-        # 翻译 select options / Translate select options
-        raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
-        translated_options = []
-        for opt in raw_options:
-            opt_key = f"config.option.{key}_{opt['value']}"
-            opt_label = _i18n.t(opt_key, lang=lang)
-            translated_options.append(
-                {
-                    "value": opt["value"],
-                    "label": opt_label if opt_key != opt_label else opt["label"],
-                }
-            )
-
-        items.append(
-            {
-                "key": key,
-                "label": label,
-                "description": description,
-                "input_type": get_dynamic_config_input_type(key),
-                "value": mask_sensitive_value(value)
-                if is_sensitive and value
-                else value,
-                "default": mask_sensitive_value(default_val)
-                if is_sensitive and default_val
-                else default_val,
-                "sensitive": is_sensitive,
-                "select_options": translated_options,
-                "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
-                "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
-            }
-        )
-    return items
-
-
-def _group_config_items(config_items: list[dict], lang: str = "zh-CN") -> list[dict]:
-    """按界面分组组织 Agent Team 配置项。"""
-    from backend.webui.i18n import i18n as _i18n
-
-    item_map = {item["key"]: item for item in config_items}
-    groups = []
-    used_keys = set()
-    for group in AGENT_TEAM_CONFIG_GROUPS:
-        group_items = [item_map[key] for key in group["keys"] if key in item_map]
-        used_keys.update(item["key"] for item in group_items)
-        groups.append(
-            {
-                "key": group["key"],
-                "title": _i18n.t(group["title_key"], lang=lang),
-                "description": _i18n.t(group["description_key"], lang=lang),
-                "items": group_items,
-            }
-        )
-
-    remaining = [item for item in config_items if item["key"] not in used_keys]
-    if remaining:
-        groups.append(
-            {
-                "key": "advanced",
-                "title": _i18n.t("agent_team.config_group_advanced", lang=lang),
-                "description": _i18n.t(
-                    "agent_team.config_group_advanced_desc", lang=lang
-                ),
-                "items": remaining,
-            }
-        )
-    return groups
 
 
 async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:

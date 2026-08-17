@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
+from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config
 
 
 async def resolve_bool_config(key: str, fallback: bool) -> bool:
@@ -70,44 +70,3 @@ async def resolve_float_config(key: str, fallback: float) -> float:
         fallback,
     )
     return fallback
-
-
-async def resolve_clamped_int_config(
-    config_key: str,
-    settings_attr: str = "",
-    log_label: str = "",
-) -> int:
-    """Read an integer config from dynamic settings with range clamping.
-
-    Consolidates the pattern used by resolve_agent_team_max_tool_rounds
-    and resolve_reviewer_max_tool_rounds.
-    """
-    attr = settings_attr or config_key
-    settings = get_settings()
-    fallback = getattr(settings, attr)
-    label = log_label or config_key
-    try:
-        raw = await get_dynamic_config(config_key)
-        if raw is None:
-            return fallback
-        value = int(raw)
-        min_value, max_value = DYNAMIC_CONFIG_RANGES.get(config_key, (value, value))
-        if min_value <= value <= max_value:
-            return value
-        raise ValueError(f"value {value} outside range {min_value}-{max_value}")
-    except (TypeError, ValueError) as exc:
-        logger.warning(
-            "读取 {} 配置失败，使用默认值 {}: {}",
-            label,
-            fallback,
-            exc,
-        )
-        return fallback
-    except Exception as exc:
-        logger.warning(
-            "读取 {} 配置异常，使用默认值 {}: {}",
-            label,
-            fallback,
-            exc,
-        )
-        return fallback

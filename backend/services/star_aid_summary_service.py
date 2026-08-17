@@ -8,9 +8,8 @@
 - 总结失败时状态置 ``failed``，页面回退展示 GitHub description。
 - 新仓库展示后可异步触发；也支持页面按钮手动刷新。
 
-README 原文不会展示给用户；传给 AI 时按 ``star_aid_summary_readme_budget``
-控制输入预算，避免大 README 超出模型上下文。``star_aid_summary_max_tokens``
-控制输出预算，思考模型可调大以避免 content 为空。
+README 原文不会展示给用户；传给 AI 时不再截断（原字符预算配置已移除）。
+摘要输出上限统一走全局 ``ai_max_tokens``（AI 配置页）。
 """
 
 from __future__ import annotations
@@ -32,15 +31,13 @@ from backend.models.star_aid_models import (
 from backend.services import star_aid_github_service as gh
 from backend.services.ai_reviewer.api_client import AIApiClient
 
-_SUMMARY_MAX_TOKENS = 16000
 
-
-def prepare_readme_for_prompt(readme_text: str | None, *, budget: int = 6000) -> str:
+def prepare_readme_for_prompt(readme_text: str | None, *, budget: int = 0) -> str:
     """把 README 原文准备为 AI 输入。
 
     这是传给 LLM 的输入预算控制，不是面向最终用户的展示
-    截断——用户在页面上看到的是 AI 生成的摘要，而非 README 原文。``budget``
-    来自配置项 ``star_aid_summary_readme_budget``，``0`` 表示不限制。
+    截断——用户在页面上看到的是 AI 生成的摘要，而非 README 原文。
+    预算配置已移除，固定 ``budget=0``（全文传入，不截断）。
     """
     text = readme_text or ""
     budget = int(budget)
@@ -141,7 +138,7 @@ async def generate_summary(
     primary_language: str,
     readme_excerpt: str,
     lang: str,
-    max_tokens: int = _SUMMARY_MAX_TOKENS,
+    max_tokens: int,
 ) -> str:
     """调用 AI 生成摘要文本。
 
@@ -237,16 +234,13 @@ async def refresh_repository_summary(
     lang = await _resolve_summary_language(session, repo.owner_user_id)
     topics = json.loads(repo.topics_json) if repo.topics_json else []
 
-    # README 输入预算（模型 context 限制），0 表示不限
-    budget_raw = await get_dynamic_config("star_aid_summary_readme_budget")
-    budget = int(budget_raw) if budget_raw not in (None, "") else 6000
-    readme_input = prepare_readme_for_prompt(readme_text, budget=budget)
+    # README 全文传入（字符预算配置已移除，固定不截断）
+    readme_input = prepare_readme_for_prompt(readme_text, budget=0)
     if readme_sha is not None:
         repo.readme_sha = readme_sha
 
-    # 摘要输出 token 预算（思考模型需要更大值，否则 reasoning 占满后 content 为空）
-    max_tokens_raw = await get_dynamic_config("star_aid_summary_max_tokens")
-    max_tokens = int(max_tokens_raw) if max_tokens_raw not in (None, "") else 16000
+    # 摘要输出 token 上限折叠到全局 ai_max_tokens
+    max_tokens = get_settings().ai_max_tokens
 
     gen_kwargs = {
         "full_name": repo.full_name,

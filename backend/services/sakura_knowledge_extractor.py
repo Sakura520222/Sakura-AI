@@ -122,10 +122,8 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
             相对于 .sakura/ 的文件路径到新内容的映射（仅包含变更文件）
         """
         config = self._get_config()
-        ext_config = config.get("knowledge_extraction", {})
         consolidation_config = config.get("consolidation", {})
 
-        max_iterations = ext_config.get("max_iterations", 15)
         max_chars = consolidation_config.get("max_sakura_chars", 5000)
 
         self._repo = repo
@@ -144,16 +142,14 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         )
 
         logger.info(
-            "[extract] 开始提取: {}, model={}, max_iterations={}",
+            "[extract] 开始提取: {}, model={}",
             repo_full_name,
             effective_model,
-            max_iterations,
         )
 
         await self._run_agent_conversation(
             system_prompt,
             effective_model,
-            max_iterations,
             initial_user_message=user_message,
         )
 

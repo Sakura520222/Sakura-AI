@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
 
 
@@ -23,9 +23,6 @@ class CommitInfo(TypedDict):
     message: str
     body: NotRequired[str]  # commit 正文，可能为空
     author: str
-
-
-settings = get_settings()
 
 
 @dataclass
@@ -409,7 +406,7 @@ class PRAnalyzer:
     def _should_skip_review(
         self, code_file_count: int, code_changes: int, total_files: int
     ) -> tuple[bool, str | None]:
-        """判断是否应该跳过审查"""
+        """判断是否应该跳过审查（无代码文件/无变更时跳过；不设规模上限）"""
         # 检查是否有代码文件
         if code_file_count == 0:
             return True, "没有代码文件变更"
@@ -417,19 +414,6 @@ class PRAnalyzer:
         # 检查变更是否过小
         if code_changes == 0:
             return True, "没有代码变更"
-
-        # 检查是否超过最大限制
-        if code_file_count > settings.max_file_count:
-            return (
-                True,
-                f"文件数超过限制 ({code_file_count} > {settings.max_file_count})",
-            )
-
-        if code_changes > settings.max_line_count:
-            return (
-                True,
-                f"变更行数超过限制 ({code_changes} > {settings.max_line_count})",
-            )
 
         return False, None
 

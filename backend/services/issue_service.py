@@ -10,7 +10,12 @@ from loguru import logger
 from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
+from backend.core.config import (
+    get_dynamic_config,
+    get_label_config,
+    get_settings,
+    get_strategy_config,
+)
 from backend.core.github_app import GitHubAppClient
 from backend.core.time_service import now_utc
 from backend.models.database import (
@@ -318,7 +323,10 @@ class IssueService:
         Returns:
             应用结果字典
         """
-        threshold = await get_dynamic_config("issue_confidence_threshold")
+        # PR 与 Issue 标签统一阈值：读标签推荐设置（label.recommendation 节）
+        threshold = (
+            get_label_config().get_recommendation_settings().get("confidence_threshold", 0.7)
+        )
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
 
         if not suggested_labels:

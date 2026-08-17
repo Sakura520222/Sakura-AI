@@ -55,7 +55,7 @@ Sakura AI 内置项目记忆系统，通过 `.sakura/` 目录实现自我反思�
 > 🤖 = Sakura 自动生成和维护，你通常不需要手动编辑
 > 👤 = 用户自定义内容，你可以自由添加和管理
 >
-> 初始化时默认会创建 `rules/`、`docs/`、`plans/` 的占位文档，可通过 `sakura_auto_create_subdirs` 关闭。知识提取 Agent 可能更新这些分类文档，但不会修改 `memory/` 目录下的反思原始记录。
+> 初始化时默认会创建 `rules/`、`docs/`、`plans/` 的占位文档，可通过 `context_enhancement.sakura_memory.directory_convention.auto_create_subdirs` 关闭。知识提取 Agent 可能更新这些分类文档，但不会修改 `memory/` 目录下的反思原始记录。
 
 ---
 
@@ -67,14 +67,14 @@ Sakura 记忆系统采用三层知识架构，从宏观到微观逐层细化：
 
 - **定位**：宏观、稳定的项目知识
 - **内容**：项目简介、技术栈、架构决策、已知问题列表、常见审查模式
-- **字数限制**：默认 ≤ 5000 字符（可配置 `sakura_max_sakura_chars`）
+- **字数限制**：默认 ≤ 3000 字符（可配置 `context_enhancement.sakura_memory.consolidation.max_sakura_chars`）
 - **更新频率**：每 N 次反思合并更新一次（默认 N=5）
 
 ### 第二层：精炼记忆（memory.md）
 
 - **定位**：中观、精选的近期经验
 - **内容**：近期审查中发现的高频模式、值得关注的规范建议、关键经验教训
-- **字数限制**：默认 ≤ 2000 字符（可配置 `sakura_max_memory_chars`）
+- **字数限制**：默认 ≤ 2000 字符（可配置 `context_enhancement.sakura_memory.consolidation.max_memory_chars`）
 - **更新频率**：与 SAKURA.md 同步更新
 
 ### 第三层：反思历史（memory/*.md）
@@ -93,12 +93,12 @@ Sakura 记忆系统采用三层知识架构，从宏观到微观逐层细化：
 
 ### 1. 初始化（首次审查时自动触发）
 
-当 Sakura 第一次审查你的仓库时（且 `sakura_auto_init` 开启），会自动初始化 `.sakura/` 目录：
+当 Sakura 第一次审查你的仓库时（且 `context_enhancement.sakura_memory.initialization.auto_init` 开启），会自动初始化 `.sakura/` 目录：
 
 1. 收集仓库信息：语言统计、README 内容（最多 3000 字）、目录结构
 2. 调用 LLM 生成初始 `SAKURA.md`
 3. 创建 `memory.md` 占位文件
-4. 默认创建 `rules/`、`docs/`、`plans/` 子目录占位文档（由 `sakura_auto_create_subdirs` 控制）
+4. 默认创建 `rules/`、`docs/`、`plans/` 子目录占位文档（由 `directory_convention.auto_create_subdirs` 控制）
 5. 通过一次 Git 提交写入仓库（提交到默认分支）
 
 提交信息示例：
@@ -106,7 +106,7 @@ Sakura 记忆系统采用三层知识架构，从宏观到微观逐层细化：
 chore: initialize .sakura/ directory for Sakura AI
 ```
 
-> 💡 如果自动初始化未触发（如 `sakura_auto_init=false`），系统会在首次反思时自动补全初始化。
+> 💡 如果自动初始化未触发（如 `initialization.auto_init=false`），系统会在首次反思时自动补全初始化。
 
 ### 2. 反思（每次审查后）
 
@@ -123,7 +123,7 @@ chore: initialize .sakura/ directory for Sakura AI
 
 ### 3. 合并（每 N 次反思触发）
 
-当累计反思次数达到 `sakura_consolidation_interval`（默认 5）时：
+当累计反思次数达到 `context_enhancement.sakura_memory.consolidation.interval`（默认 5）时：
 
 1. 读取最近 N 篇反思文件
 2. 启动工具调用驱动的 `SakuraConsolidationAgent`
@@ -138,11 +138,11 @@ chore: initialize .sakura/ directory for Sakura AI
 chore(sakura): consolidate memory (reflection #5)
 ```
 
-合并 Agent 每个文件的最大工具调用轮数由 `sakura_consolidation_max_iterations` 控制。若开启 `sakura_consolidation_partial_commit`，单个目标文件生成失败时仍可提交其他成功生成的文件。
+合并 Agent 的工具循环不设轮次上限（依赖模型自然停止，整体时长由任务超时兜底）。若开启 `context_enhancement.sakura_memory.consolidation.partial_commit`，单个目标文件生成失败时仍可提交其他成功生成的文件。
 
 ### 4. 知识提取（周期性触发）
 
-当 `sakura_knowledge_extraction_enabled=true` 时，Sakura 会按照 `sakura_extraction_min_reflections`（默认 10）设定的间隔，周期性运行知识提取 Agent。2.12.0 起，知识提取不再是一次性开关，而是每当反思数量距上次提取达到间隔值时自动触发：
+当 `context_enhancement.sakura_memory.knowledge_extraction.enabled=true` 时，Sakura 会按照 `knowledge_extraction.min_reflections`（默认 15）设定的间隔，周期性运行知识提取 Agent。2.12.0 起，知识提取不再是一次性开关，而是每当反思数量距上次提取达到间隔值时自动触发：
 
 1. 浏览 `.sakura/` 目录结构
 2. 读取 `memory/` 下的反思文件，提取可复用知识
@@ -277,23 +277,23 @@ Sakura 为 AI 提供了三个专用工具来访问 `.sakura/` 下的文档和反
 
 ## 配置参考
 
-所有配置项均可在 **WebUI → 配置管理** 中调整（需要超级管理员权限）。
+所有配置项均可在 **WebUI → 全局配置页（`/config`）→ 策略节表单「上下文增强」→ Sakura 记忆卡片** 中调整（需要超级管理员权限）。
 
-| 配置项 | 类型 | 默认值 | 说明 |
+| 配置项（`strategy.context_enhancement.sakura_memory.*`） | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `sakura_memory_enabled` | bool | `true` | 启用/禁用整个记忆系统 |
-| `sakura_reflection_enabled` | bool | `true` | 启用/禁用审查后反思 |
-| `sakura_consolidation_interval` | int | `5` | 累计多少次反思后触发合并 |
-| `sakura_max_sakura_chars` | int | `5000` | SAKURA.md 最大字符数 |
-| `sakura_max_memory_chars` | int | `2000` | memory.md 最大字符数 |
-| `sakura_auto_init` | bool | `true` | 新仓库首次审查时自动初始化 `.sakura/` |
-| `sakura_auto_create_subdirs` | bool | `true` | 初始化时自动创建 `rules/`、`docs/`、`plans/` 子目录占位文档 |
-| `sakura_consolidation_partial_commit` | bool | `false` | 合并时单个文件失败后是否仍提交其他成功生成的文件 |
-| `sakura_issue_reflection_enabled` | bool | `true` | 启用 Issue 分析后的反思 |
-| `sakura_knowledge_extraction_enabled` | bool | `true` | 启用自动结构化知识提取 |
-| `sakura_extraction_min_reflections` | int | `10` | 知识提取间隔，每积累指定轮数反思后自动触发一次提取 |
-| `sakura_extraction_max_iterations` | int | `15` | 知识提取 Agent 最大工具调用轮数 |
-| `sakura_consolidation_max_iterations` | int | `20` | 合并 Agent 每个目标文件的最大工具调用轮数 |
+| `enabled` | bool | `true` | 启用/禁用整个记忆系统 |
+| `reflection.enabled` | bool | `true` | 启用/禁用审查后反思 |
+| `issue_reflection.enabled` | bool | `true` | 启用 Issue 分析后的反思 |
+| `consolidation.interval` | int | `5` | 累计多少次反思后触发合并 |
+| `consolidation.max_sakura_chars` | int | `3000` | SAKURA.md 最大字符数 |
+| `consolidation.max_memory_chars` | int | `2000` | memory.md 最大字符数 |
+| `consolidation.partial_commit` | bool | `true` | 合并时单个文件失败后是否仍提交其他成功生成的文件 |
+| `initialization.auto_init` | bool | `true` | 新仓库首次审查时自动初始化 `.sakura/` |
+| `directory_convention.auto_create_subdirs` | bool | `true` | 初始化时自动创建 `rules/`、`docs/`、`plans/` 子目录占位文档 |
+| `knowledge_extraction.enabled` | bool | `true` | 启用自动结构化知识提取 |
+| `knowledge_extraction.min_reflections` | int | `15` | 知识提取间隔，每积累指定轮数反思后自动触发一次提取 |
+
+> 提取/合并 Agent 的工具循环不设轮次上限（模型自然停止，任务超时兜底）；历史平铺键（`sakura_memory_enabled`、`sakura_consolidation_interval`、`sakura_extraction_max_iterations` 等）已随双轨合并移除，旧配置可在统一页「上下文增强」卡片中按上表节路径调整。
 
 > 反思、合并与知识提取的实际账号和模型由 `main` 或 `summary` 角色绑定决定（WebUI「AI 配置」），不支持在本功能中另配凭据或模型。历史 `sakura_reflection_model`、`sakura_issue_reflection_model`、`sakura_consolidation_model`、`sakura_use_summary_model`、`sakura_extraction_provider`、`sakura_extraction_api_base`、`sakura_extraction_api_key`、`sakura_extraction_model` 键已废弃，仅保留用于数据库迁移兼容，不再被业务读取。
 
@@ -309,25 +309,25 @@ Sakura 为 AI 提供了三个专用工具来访问 `.sakura/` 下的文档和反
 
 ### Q：反思文件会无限增长吗？
 
-不会。`memory/` 目录下的反思文件会持续累积，但合并时只读取最近 N 篇（N = `sakura_consolidation_interval`）。你可以手动清理旧的反思文件，不影响系统运行。
+不会。`memory/` 目录下的反思文件会持续累积，但合并时只读取最近 N 篇（N = `context_enhancement.sakura_memory.consolidation.interval`）。你可以手动清理旧的反思文件，不影响系统运行。
 
 ### Q：初始化后仓库里没有 rules/ 等目录？
 
-默认情况下，初始化会创建 `rules/`、`docs/`、`plans/` 子目录占位文档。如果关闭了 `sakura_auto_create_subdirs`，或仓库是在旧版本中初始化的，你可以直接在仓库中创建这些目录并放入 Markdown 文件，Sakura 会自动发现并索引。
+默认情况下，初始化会创建 `rules/`、`docs/`、`plans/` 子目录占位文档。如果关闭了 `directory_convention.auto_create_subdirs`，或仓库是在旧版本中初始化的，你可以直接在仓库中创建这些目录并放入 Markdown 文件，Sakura 会自动发现并索引。
 
 ### Q：Sakura 会自动修改 rules/docs/plans 里的用户文档吗？
 
-知识提取 Agent 可能会创建或更新 `rules/`、`docs/`、`plans/` 下的 Markdown 文件，用于沉淀反思中的稳定知识。它不会写入 `memory/` 目录。如果你希望完全手动维护分类文档，可以关闭 `sakura_knowledge_extraction_enabled`，或在 WebUI 中审查提取结果后再调整。
+知识提取 Agent 可能会创建或更新 `rules/`、`docs/`、`plans/` 下的 Markdown 文件，用于沉淀反思中的稳定知识。它不会写入 `memory/` 目录。如果你希望完全手动维护分类文档，可以关闭 `knowledge_extraction.enabled`，或在 WebUI 中审查提取结果后再调整。
 
 ### Q：如何禁用记忆系统？
 
-在 WebUI 配置管理中关闭 `sakura_memory_enabled`，或设置 `sakura_reflection_enabled=false` 仅禁用反思。已存在的 `.sakura/` 目录不会被删除。
+在 WebUI 全局配置页「上下文增强」卡片中关闭 `sakura_memory.enabled`，或设置 `reflection.enabled=false` 仅禁用反思。已存在的 `.sakura/` 目录不会被删除。
 
 ### Q：.sakura/ 目录占用了多少 Token？
 
-- `SAKURA.md`（最多 5000 字符）和 `memory.md`（最多 2000 字符）会直接注入 Prompt，共占用最多约 7000 字符的上下文空间
+- `SAKURA.md`（最多 3000 字符）和 `memory.md`（最多 2000 字符）会直接注入 Prompt，共占用最多约 5000 字符的上下文空间
 - `rules/`、`docs/`、`plans/` 下的文档通过 RAG 按需检索，不会每次都占用 Prompt 空间
-- 你可以通过 `sakura_max_sakura_chars` 和 `sakura_max_memory_chars` 调整字数上限
+- 你可以通过 `consolidation.max_sakura_chars` 和 `consolidation.max_memory_chars` 调整字数上限
 
 ### Q：我可以使用其他目录名吗？
 

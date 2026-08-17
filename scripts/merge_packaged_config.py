@@ -1,10 +1,14 @@
 """Three-way merge packaged YAML defaults into persistent container config.
 
-Only the two YAML files edited by the WebUI are handled here.  Sensitive and
-other mutable files (most importantly ``connection.json``) are deliberately
-outside this merge contract.  A hidden baseline in the persistent config
-volume records the previous packaged defaults so image upgrades can distinguish
-an unchanged default from an administrator override.
+The managed file list is currently empty: ``strategies.yaml`` and
+``labels.yaml`` were migrated into the ``app_config`` table (unified config
+store, 2026-08-16), whose leaf-level deep merge replaces this script's job for
+those files.  The merge machinery is kept so a future packaged YAML can opt in
+by adding its filename to ``CONFIG_FILENAMES``.  Sensitive and other mutable
+files (most importantly ``connection.json``) are deliberately outside this
+merge contract.  A hidden baseline in the persistent config volume records the
+previous packaged defaults so image upgrades can distinguish an unchanged
+default from an administrator override.
 """
 
 from __future__ import annotations
@@ -20,7 +24,9 @@ from typing import Any
 
 import yaml
 
-CONFIG_FILENAMES = ("strategies.yaml", "labels.yaml")
+# strategies.yaml/labels.yaml 已由统一配置存储接管（DB 深度合并语义），
+# 此处清单为空；如需新的打包默认 YAML，在此追加文件名即可复用合并机制。
+CONFIG_FILENAMES: tuple[str, ...] = ()
 BASELINE_DIRNAME = ".sakura-ai-packaged-baseline"
 _MISSING = object()
 

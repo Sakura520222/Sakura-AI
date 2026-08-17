@@ -29,7 +29,6 @@ from backend.services.protocol_repair import run_protocol_repair_loop
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
 from .compression import ContextCompressor
-from .constants import MAX_TOOL_ITERATIONS
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
@@ -411,11 +410,8 @@ class AIReviewer:
         """
         settings = get_settings()
         active_tool_handler = tool_handler or self.tool_handler
-        max_iterations = (
-            get_strategy_config()
-            .get_context_enhancement_config()
-            .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
-        )
+        # 工具循环不再设置轮次上限：依赖模型自然停止（无工具调用即交付），
+        # 整体时长由 review_timeout_seconds 超时兜底。
         # 优先用新版 unified config 解析的上下文窗口（来自角色绑定模型的内置元数据，
         # 如 deepseek-v4-flash 内置 1M tokens），避免 model_context 在未提供模型名时
         # 回退 128K 兜底（曾导致日志误报 102K 上限、过早触发压缩）。
@@ -436,7 +432,7 @@ class AIReviewer:
         _normalize_tool_calls_inplace(messages)
         iteration = 0
 
-        while iteration < max_iterations:
+        while True:
             iteration += 1
 
             # 取消信号：PR 关闭等外部信号已触发时，立即中止工具循环
@@ -608,7 +604,6 @@ class AIReviewer:
                         "progress",
                         {
                             "iteration": iteration,
-                            "max_iterations": max_iterations,
                             "token_usage": tracker.to_dict(),
                             "current_tokens": reported_context_tokens,
                             "safe_context": reported_context_window,
@@ -674,71 +669,6 @@ class AIReviewer:
                         "Provider usage",
                         post_compress_tokens,
                     )
-
-        # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
-        logger.warning(
-            "达到最大工具调用次数 ({})，引导 AI 交付最终审查结果",
-            max_iterations,
-        )
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Finalize the review now using the system output contract and the "
-                    "evidence already gathered. Do not call more tools."
-                ),
-            }
-        )
-        await self._append_pending_user_message_if_any(
-            messages,
-            pending_user_message_callback,
-            event_callback,
-        )
-        last_response = await self.api_client.call_with_retry(
-            model="",
-            messages=messages,
-            temperature=settings.ai_temperature,
-            role="main",
-            cancel_event=cancel_event,
-            context=invocation_context,
-            observer=observer,
-        )
-        tracker.accumulate(last_response)
-        tracker.log_context_usage(
-            last_response,
-            context_window_tokens,
-            max_iterations + 1,
-        )
-        review_text = last_response.choices[0].message.content or ""
-        if event_callback:
-            try:
-                await event_callback(
-                    "message",
-                    {
-                        "role": "assistant",
-                        "content": review_text,
-                    },
-                )
-            except Exception as exc:
-                logger.warning("event_callback failed: {}", exc)
-        result = await self._parse_or_repair_review(
-            review_text,
-            messages,
-            strategy,
-            tracker,
-            event_callback=event_callback,
-            invocation_context=invocation_context,
-            observer=observer,
-        )
-        result["token_usage"] = tracker.to_dict()
-        if publication_coordinator is not None and invocation_context is not None:
-            result = await coordinate_publication(
-                publication_coordinator,
-                kind="review",
-                result=result,
-                context=invocation_context,
-            )
-        return result
 
     async def _append_pending_user_message_if_any(
         self,
