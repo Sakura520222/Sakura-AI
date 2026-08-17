@@ -28,7 +28,7 @@ jobs:
       latest_digest: ${{ steps.check.outputs.latest_digest }}
     steps:
       - name: 检出代码（含 tag）
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
