@@ -68,6 +68,7 @@ _STRATEGY_SECTION_KEYS = {
     "issue_analysis": "strategy.issue_analysis",
     "depgraph": "strategy.pr_dependency_graph",
     "pr_summary": "strategy.pr_summary",
+    "scan": "strategy.scan",
 }
 
 # 表单仅覆盖部分字段的 section（patch 模式保留未展示字段的自定义覆盖，
@@ -236,6 +237,12 @@ async def save_strategies_section(
             data = {
                 "system_prompt": form.get("pr_summary_system_prompt", ""),
                 "user_template": form.get("pr_summary_user_template", ""),
+            }
+
+        elif section == "scan":
+            # 仓库扫描提示词 focus 节（英文强化契约由代码注入，此处仅配置 focus）
+            data = {
+                "system_prompt": form.get("scan_system_prompt", ""),
             }
 
         elif section == "issue_analysis":
@@ -1160,6 +1167,7 @@ async def unified_config_page(
         pr_dependency_graph=pr_dependency_graph,
         issue_analysis=strategy_data.get("issue_analysis", {}),
         pr_summary=strategy_data.get("pr_summary", {}),
+        scan=strategy_data.get("scan", {}),
         labels=label_data.get("labels", {}),
         recommendation=label_data.get("recommendation", {}),
         conflict_rules=label_data.get("conflict_rules", {}),

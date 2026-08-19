@@ -75,10 +75,12 @@
 ### Repository Scanning
 
 - **AI Full Repository Scan** — Periodic AI-powered scan detecting code quality issues and security vulnerabilities
-- **Auto-create Issues** — Detailed problem descriptions and fix suggestions
-- **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.
+- **Strict Scan Output Contract** — `<SAKURA_SCAN>` protocol envelope with multi-round format repair and safe degradation
+- **Live Scan Conversation Monitoring** — AI dialogue and tool calls during scans are recorded into activity observability in real time, visible on the WebUI activity page
+- **Auto-create Issues** — AI summary, trend comparison, severity/category matrix, hotspot files, and folded details; superseded report issues are closed automatically
+- **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.; the scan prompt focus is editable in the unified config page `strategy.scan` section
 - **Scan Management UI** — View scan list, details, and statistics in WebUI
-- **Scan Notifications** — Telegram Bot notifications on completion
+- **Scan Notifications** — Telegram Bot notifications on completion (with AI summary)
 
 ### Issue Analysis
 

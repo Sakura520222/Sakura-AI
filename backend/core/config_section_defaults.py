@@ -587,6 +587,27 @@ title when the original is unclear.
 """,
     },
 
+    # ---- 仓库扫描配置 ----
+    "scan": {
+        # 扫描系统提示词 focus（英文，强化型契约由代码注入）
+        "system_prompt": """\
+Audit the entire repository code base for security, performance, reliability,
+maintainability, and architecture defects.
+
+## Scan focus
+- Prioritize exploitable security issues first, then user-facing reliability
+  risks, then measurable performance hot spots, then maintainability debt.
+- Cover all five dimensions: security, performance, reliability,
+  maintainability, architecture; report "no findings" explicitly for healthy
+  dimensions instead of silently skipping them.
+- Read the actual code with tools before reporting; never infer defects from
+  file names, paths, or directory layout alone.
+- Prefer a small number of high-confidence, evidence-backed findings over an
+  exhaustive list of low-value style nits.
+- Do not report the same defect twice; merge duplicate observations per file.
+""",
+    },
+
     # ---- PR 总结配置 ----
     "pr_summary": {
         "system_prompt": """\

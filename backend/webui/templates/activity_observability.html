@@ -576,6 +576,7 @@ function activityObservability() {
             {value: 'all', label: {{ _('activity.filter_all') | tojson }}},
             {value: 'pr', label: {{ _('activity.filter_pr') | tojson }}},
             {value: 'issue', label: {{ _('activity.filter_issue') | tojson }}},
+            {value: 'scan', label: {{ _('activity.filter_scan') | tojson }}},
         ],
         sessions: [],
         selectedSessionId: null,
@@ -610,9 +611,10 @@ function activityObservability() {
         invocationFilter: 'all',
 
         get filteredSessions() {
-            return this.filter === 'all'
-                ? this.sessions
-                : this.sessions.filter(item => item.resource_type === this.filter);
+            if (this.filter === 'all') return this.sessions;
+            // 扫描会话的资源类型为 ephemeral（admission 语义），按 'scan' 筛选取别名
+            const expectedType = this.filter === 'scan' ? 'ephemeral' : this.filter;
+            return this.sessions.filter(item => item.resource_type === expectedType);
         },
         get selectedSession() {
             return this.sessions.find(item => item.session_id === this.selectedSessionId) || null;
@@ -1184,12 +1186,12 @@ function activityObservability() {
             return values[phase] || phase || '';
         },
         resourceLabel(type) {
-            return {pr: 'PR', issue: 'Issue', scan: 'Scan', ephemeral: 'AI'}[type] || String(type || 'AI');
+            return {pr: 'PR', issue: 'Issue', scan: 'Scan', ephemeral: 'Scan'}[type] || String(type || 'AI');
         },
         resourceBadgeClass(type) {
             if (type === 'pr') return 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300';
             if (type === 'issue') return 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300';
-            if (type === 'scan') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+            if (type === 'scan' || type === 'ephemeral') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
             return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
         },
         formatTime(value) {

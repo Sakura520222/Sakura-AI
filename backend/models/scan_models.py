@@ -64,6 +64,7 @@ class RepoScan(Base):
     commit_sha = Column(String(64), nullable=True)
     file_count = Column(Integer, default=0)
     code_file_count = Column(Integer, default=0)
+    indexed_chunks = Column(Integer, default=0)  # 代码索引产生的块数（区别于文件数）
 
     # 状态
     status = Column(
@@ -82,6 +83,8 @@ class RepoScan(Base):
     minor_count = Column(Integer, default=0)
     suggestion_count = Column(Integer, default=0)
     overall_health_score = Column(Integer, nullable=True)  # 0-100
+    summary = Column(Text, nullable=True)  # AI 一句话扫描总结
+    scan_rounds = Column(Integer, nullable=True)  # AI 工具调用轮次
 
     # Token 消耗与成本
     prompt_tokens = Column(Integer, default=0)

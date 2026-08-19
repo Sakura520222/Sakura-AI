@@ -32,6 +32,7 @@ EXPECTED_SECTION_KEYS = frozenset(
         "strategy.issue_analysis",
         "strategy.pr_summary",
         "strategy.pr_dependency_graph",
+        "strategy.scan",
         "label.definitions",
         "label.recommendation",
         "label.conflict_rules",
@@ -73,6 +74,7 @@ def test_registry_sections_map_to_facade_top_level_names():
         "issue_analysis",
         "pr_summary",
         "pr_dependency_graph",
+        "scan",
     ]
     assert label_sections == ["labels", "recommendation", "conflict_rules"]
 

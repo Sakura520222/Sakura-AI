@@ -737,11 +737,6 @@ class Settings(BaseSettings):
     scan_max_concurrent: int = 1  # 最大并发扫描数
     scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
-    # 扫描请求策略配置
-    scan_max_iterations: int = 200  # 扫描最大工具调用轮次
-    scan_context_safety_threshold: float = 0.8  # 扫描上下文安全阈值
-    scan_compression_threshold: float = 0.85  # 扫描压缩触发阈值
-    scan_temperature: float = 0.2  # 扫描 AI 温度参数
 
     # ========== Agent 专家团队模式配置 ==========
     agent_team_enabled: bool = (
@@ -855,6 +850,10 @@ class StrategyConfig:
     def get_issue_analysis_config(self) -> dict:
         """获取 Issue 分析配置"""
         return self.config.get("issue_analysis", {})
+
+    def get_scan_config(self) -> dict:
+        """获取仓库扫描配置"""
+        return self.config.get("scan", {})
 
     def get_context_enhancement_config(self) -> dict:
         """获取上下文增强配置"""
@@ -1177,10 +1176,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "scan_cooldown_hours": "同一仓库两次扫描之间的最小间隔（小时）",
                     "scan_send_telegram": "扫描完成后是否发送 Telegram 通知",
                     "scan_min_severity_for_issue": "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）",
-                    "scan_max_iterations": "扫描过程中 AI 工具调用的最大轮次数",
-                    "scan_context_safety_threshold": "扫描对话上下文安全阈值（0-1），超过后触发压缩",
-                    "scan_compression_threshold": "扫描对话压缩触发阈值（0-1），上下文占比达到该值时压缩历史",
-                    "scan_temperature": "扫描 AI 温度参数，越低越确定性，越高越创造性",
                 },
                 "keys": [
                     "enable_repo_scan",
@@ -1188,10 +1183,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "scan_cooldown_hours",
                     "scan_send_telegram",
                     "scan_min_severity_for_issue",
-                    "scan_max_iterations",
-                    "scan_context_safety_threshold",
-                    "scan_compression_threshold",
-                    "scan_temperature",
                 ],
             },
         ),
@@ -1491,10 +1482,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "agent_team_candidate_cache_ttl": (0, 3600),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
-    "scan_max_iterations": (1, 5000),
-    "scan_context_safety_threshold": (0.1, 1.0),
-    "scan_compression_threshold": (0.1, 1.0),
-    "scan_temperature": (0.0, 2.0),
     # Sakura 记忆系统
     "agent_team_max_tokens": (1024, 32768),
     "agent_team_context_compression_threshold": (0.1, 1.0),
@@ -1612,10 +1599,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "scan_cooldown_hours": "扫描冷却时间（小时）",
     "scan_send_telegram": "发送 Telegram 通知",
     "scan_min_severity_for_issue": "创建 Issue 最低严重性",
-    "scan_max_iterations": "扫描最大轮次",
-    "scan_context_safety_threshold": "扫描上下文安全阈值",
-    "scan_compression_threshold": "扫描压缩阈值",
-    "scan_temperature": "扫描 AI 温度",
     # Sakura 记忆系统
     # 国际化配置
     "default_language": "默认界面语言",

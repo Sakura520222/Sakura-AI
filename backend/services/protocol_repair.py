@@ -14,7 +14,7 @@ from backend.webui.sse import publish_event
 
 VIOLATION_SUFFIX = "\n\nSpecific violation in your previous response:\n{error}"
 
-_SIDE_BY_LABEL = {"审查": "review", "Issue 分析": "issue"}
+_SIDE_BY_LABEL = {"审查": "review", "Issue 分析": "issue", "扫描": "scan"}
 
 
 async def run_protocol_repair_loop(
