@@ -4,8 +4,8 @@
 
 {% block content %}
 {# 全局配置页：左侧锚点导航 + 分组卡片（页面整体滚动，导航随页面滚动）。
-   平铺键（全部 DYNAMIC 组）走单个 form 提交 /config/general/save；
-   策略/标签节表单各自独立 form 提交既有节保存端点。 #}
+   全部表单（平铺动态组 + 策略/标签节）由右上角唯一保存按钮一次提交
+   /config/save-all（后端顺序复用既有分区保存逻辑）。 #}
 {% set group_map = {} %}
 {% for g in dynamic_groups %}{% set _ = group_map.update({g.id: g}) %}{% endfor %}
 {% set extra_groups = [] %}
@@ -15,8 +15,12 @@
 {% set sm = context_enhancement.get('sakura_memory', {}) %}
 
 <div class="space-y-4">
-    <div>
+    <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold">{{ _('config.general_title') }}</h1>
+        <button type="button" id="save-all-btn"
+                class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+            {{ _('common.save_all') }}
+        </button>
     </div>
 
     <div class="flex gap-6 h-[calc(100vh-10rem)]">
@@ -78,13 +82,6 @@
                         {% endwith %}
                         {% endfor %}
                     </div>
-
-                    <div class="flex justify-end">
-                        <button type="submit"
-                                class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('common.save_config') }}
-                        </button>
-                    </div>
                 </div>
             </form>
 
@@ -141,11 +138,6 @@
                         </div>
                         {% endfor %}
                     </div>
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_strategies') }}
-                        </button>
-                    </div>
                 </form>
             </section>
 
@@ -174,11 +166,6 @@
                             <textarea name="code_extensions" rows="8"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('code_extensions', []) | join('\n') }}</textarea>
                         </div>
-                    </div>
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_filters') }}
-                        </button>
                     </div>
                 </form>
             </section>
@@ -379,12 +366,6 @@
                             </div>
                         </div>
                     </div>
-
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_context') }}
-                        </button>
-                    </div>
                 </form>
             </section>
 
@@ -477,12 +458,6 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
-
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_policy') }}
-                        </button>
                     </div>
                 </form>
             </section>
@@ -583,12 +558,6 @@
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template_en', '') }}</textarea>
                         </div>
                     </div>
-
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_issue_analysis') }}
-                        </button>
-                    </div>
                 </form>
 
                 <script>
@@ -641,12 +610,6 @@
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ dg.get('user_template', '') }}</textarea>
                         </div>
                     </div>
-
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_depgraph') }}
-                        </button>
-                    </div>
                 </form>
             </section>
 
@@ -667,12 +630,6 @@
                             <textarea name="pr_summary_user_template" rows="10"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ pr_summary.get('user_template', '') }}</textarea>
                         </div>
-                    </div>
-
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('strategy.save_pr_summary') }}
-                        </button>
                     </div>
                 </form>
             </section>
@@ -718,11 +675,6 @@
                                 <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
                             </label>
                         </div>
-                    </div>
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('config.labels_save_recommendation') }}
-                        </button>
                     </div>
                 </form>
             </section>
@@ -781,11 +733,6 @@
                         {{ _('config.labels_conflict_empty') }}
                     </p>
                     {% endif %}
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('config.labels_save_conflict') }}
-                        </button>
-                    </div>
                 </form>
             </section>
 
@@ -841,11 +788,6 @@
                                 {% endfor %}
                             </tbody>
                         </table>
-                    </div>
-                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            {{ _('config.labels_save_definitions') }}
-                        </button>
                     </div>
                 </form>
             </section>
@@ -980,6 +922,100 @@ document.addEventListener('DOMContentLoaded', function() {
                 other.classList.remove('bg-sakura-50', 'dark:bg-sakura-900/20', 'text-sakura-700', 'dark:text-sakura-400', 'font-semibold');
             });
             link.classList.add('bg-sakura-50', 'dark:bg-sakura-900/20', 'text-sakura-700', 'dark:text-sakura-400', 'font-semibold');
+        });
+    });
+
+    // ===== 统一保存：右上角唯一保存按钮一次提交全部表单 =====
+    var saveBtn = document.getElementById('save-all-btn');
+    var saveBtnLabel = saveBtn ? saveBtn.textContent : '';
+
+    function showToast(message, type) {
+        window.dispatchEvent(new CustomEvent('show-toast', {
+            detail: { message: message, type: type, duration: 8000 }
+        }));
+    }
+
+    function resetSaveBtn() {
+        saveBtn.disabled = false;
+        saveBtn.textContent = saveBtnLabel;
+    }
+
+    function saveAllConfig() {
+        var forms = Array.prototype.slice.call(
+            document.querySelectorAll('#config-scroll form')
+        );
+        if (!forms.length) return;
+
+        // 先跑原生校验（与单表单提交时的浏览器行为一致），失败聚焦首个错误字段
+        for (var i = 0; i < forms.length; i++) {
+            if (!forms[i].checkValidity()) {
+                forms[i].reportValidity();
+                return;
+            }
+        }
+
+        var csrfInput = forms[0].querySelector('input[name="csrf_token"]');
+        if (!csrfInput) {
+            showToast("{{ _('toast.save_failed') }}", 'error');
+            return;
+        }
+
+        var requests = forms.map(function(form) {
+            var fields = {};
+            new FormData(form).forEach(function(value, key) {
+                if (key === 'csrf_token') return;
+                if (Object.prototype.hasOwnProperty.call(fields, key)) {
+                    if (!Array.isArray(fields[key])) fields[key] = [fields[key]];
+                    fields[key].push(value);
+                } else {
+                    fields[key] = value;
+                }
+            });
+            var section = form.closest('section');
+            return {
+                action: form.getAttribute('action') || '',
+                anchor: section ? section.id : null,
+                fields: fields,
+            };
+        });
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = "{{ _('common.saving') }}";
+
+        fetch('/config/save-all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfInput.value,
+            },
+            body: JSON.stringify({ requests: requests }),
+        }).then(function(resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+        }).then(function(data) {
+            if (data.ok) {
+                window.location.href = '/config?_toast=' +
+                    encodeURIComponent(data.toast) + '&_toast_type=success';
+                return;
+            }
+            showToast(data.toast, 'error');
+            var firstFailed = (data.results || []).filter(function(r) {
+                return !r.ok && r.anchor;
+            })[0];
+            if (firstFailed) scrollToSection(firstFailed.anchor);
+            resetSaveBtn();
+        }).catch(function() {
+            showToast("{{ _('toast.save_failed') }}", 'error');
+            resetSaveBtn();
+        });
+    }
+
+    if (saveBtn) saveBtn.addEventListener('click', saveAllConfig);
+    // 表单内回车的隐式提交改为统一保存
+    document.querySelectorAll('#config-scroll form').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            saveAllConfig();
         });
     });
 });
