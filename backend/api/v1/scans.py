@@ -210,7 +210,7 @@ async def trigger_scan(
                 scan_id = await worker.create_scan_record(
                     repo_name=repo_name,
                     trigger_type="manual_api",
-                    triggered_by=f"api:{user['sub']}",
+                    triggered_by=f"api:{user.get('user_id') or user['sub']}",
                 )
                 task = create_registered_background_task(
                     worker.process_scan(scan_id), "scan_manual_api"

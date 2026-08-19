@@ -304,6 +304,12 @@ def _validate_pr_dependency_graph(data: dict) -> None:
             _validate_str(data[field], f"pr_dependency_graph.{field}")
 
 
+def _validate_scan(data: dict) -> None:
+    """仓库扫描：system_prompt 为字符串。"""
+    if "system_prompt" in data:
+        _validate_str(data["system_prompt"], "scan.system_prompt")
+
+
 def _validate_label_definitions(data: dict) -> None:
     """标签定义：颜色为 6 位十六进制、description 为字符串。"""
     if not isinstance(data, dict):
@@ -360,6 +366,7 @@ SECTION_VALIDATORS: OrderedDict[str, Any] = OrderedDict(
         ("strategy.issue_analysis", _validate_issue_analysis),
         ("strategy.pr_summary", _validate_pr_summary),
         ("strategy.pr_dependency_graph", _validate_pr_dependency_graph),
+        ("strategy.scan", _validate_scan),
         ("label.definitions", _validate_label_definitions),
         ("label.recommendation", _validate_label_recommendation),
         ("label.conflict_rules", _validate_label_conflict_rules),

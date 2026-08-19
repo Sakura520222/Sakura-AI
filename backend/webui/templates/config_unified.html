@@ -46,6 +46,7 @@
                     <a href="#section-strategy-issue-analysis" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.issue_analysis') }}</a>
                     <a href="#section-strategy-depgraph" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.dep_graph') }}</a>
                     <a href="#section-strategy-pr-summary" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.pr_summary_section') }}</a>
+                    <a href="#section-strategy-scan" class="nav-anchor block px-2 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400">{{ _('strategy.scan_section') }}</a>
                 </div>
                 <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
                     <p class="px-2 mb-1 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{{ _('config.nav_labels') }}</p>
@@ -629,6 +630,23 @@
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.user_message_template') }}</label>
                             <textarea name="pr_summary_user_template" rows="10"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ pr_summary.get('user_template', '') }}</textarea>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <!-- 仓库扫描提示词（英文强化契约由代码注入，此处仅配置 focus） -->
+            <section id="section-strategy-scan" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 scroll-mt-20">
+                <h2 class="text-lg font-semibold mb-4">{{ _('strategy.scan_section') }}</h2>
+                <form method="POST" action="/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="scan">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.scan_prompt_desc') }}</p>
+                            <textarea name="scan_system_prompt" rows="10"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ scan.get('system_prompt', '') }}</textarea>
                         </div>
                     </div>
                 </form>

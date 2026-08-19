@@ -834,6 +834,86 @@ class ActivityIntegrationService:
             role_snapshot=role_snapshot,
         )
 
+    async def start_scan_threaded_execution(
+        self,
+        resource: Mapping[str, Any],
+        *,
+        role_snapshot: RoleConfigSnapshot | None = None,
+        role: str = "scan",
+        task_id: int | None = None,
+        lease_ttl: Any = None,
+        publication_coordinator: Any = None,
+    ) -> ObservedExecutionBundle:
+        """Start a threaded scan execution whose AI dialogue is observable.
+
+        与 ``start_scan_execution`` 的区别：为扫描会话建立专属 Thread +
+        Work Unit 租约 + 初始上下文修订，使扫描期间的 assistant/tool 消息
+        可以经 ``tool_service.append_conversation_message`` 写入对话流，
+        WebUI 活动页即可实时看到扫描过程。
+        """
+        admitted = await self.admit_scan(
+            resource,
+            delivery_id=str(
+                resource.get("delivery_id") or resource.get("task_id") or task_id
+            ),
+            head_sha=resource.get("head_sha"),
+        )
+        async with self._session_scope() as db:
+            session = await db.get(
+                ActivityObservabilitySession, admitted.session_id, with_for_update=True
+            )
+            if session is None:
+                raise AdmissionError("scan session disappeared")
+            selected = await self._select_pending_triggers(
+                db, session.id, [admitted.trigger_id]
+            )
+            obs = ActivityObservabilityService(db=db)
+            invocation = await obs.create_invocation(
+                session.id, [t.id for t in selected]
+            )
+            invocation.task_type = "scan"
+            invocation.task_id = task_id
+            thread = await self._ensure_thread(db, session.id, role)
+            snapshot = role_snapshot or await self._resolve_snapshot(role)
+            work_unit = await obs.create_work_unit(
+                invocation.id,
+                role,
+                "primary_required",
+                True,
+                snapshot,
+                thread_id=thread.id,
+            )
+            context = self._lease_context or ContextService(db=db)
+            lease = await context.acquire_lease(thread.id, work_unit.id, ttl=lease_ttl)
+            if thread.current_revision_id is None:
+                await context.create_revision(
+                    thread.id,
+                    lease,
+                    expected_parent_revision_id=None,
+                    message_manifest=[],
+                    reason="initial",
+                    created_invocation_id=invocation.id,
+                    created_work_unit_id=work_unit.id,
+                )
+                thread = await db.get(ActivityThread, thread.id) or thread
+            await db.flush()
+            await self._commit_if_owned(db)
+            started = ReviewStartResult(
+                session=session,
+                invocation=invocation,
+                triggers=(),
+                thread=thread,
+                work_unit=work_unit,
+                lease=lease,
+                merged=False,
+            )
+
+        return await self.build_execution_bundle(
+            started,
+            publication_coordinator=publication_coordinator,
+            role_snapshot=snapshot,
+        )
+
     async def _resolve_snapshot(self, role: str) -> RoleConfigSnapshot:
         if self._role_snapshot_resolver is not None:
             return await self._role_snapshot_resolver(role)

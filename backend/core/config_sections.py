@@ -92,6 +92,14 @@ SECTION_REGISTRY: OrderedDict[str, dict[str, Any]] = OrderedDict(
             },
         ),
         (
+            "strategy.scan",
+            {
+                "target": "strategy",
+                "section": "scan",
+                "defaults": STRATEGY_SECTION_DEFAULTS["scan"],
+            },
+        ),
+        (
             "label.definitions",
             {
                 "target": "label",
