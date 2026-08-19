@@ -7,9 +7,11 @@ web_search 键经 general/save 通用循环保存、protocol_repair 单保存路
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 
 import pytest
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 
@@ -215,6 +217,23 @@ async def test_unified_page_renders_flat_groups_and_section_forms(
     # 左侧锚点导航
     assert 'id="configForm"' in html or 'name="csrf_token"' in html
 
+    # 右上角唯一保存按钮；10 个分区保存按钮文案已全部合并移除
+    # （导航栏另有退出登录 submit 按钮，故按按钮文案断言而非 type="submit"）
+    assert 'id="save-all-btn"' in html
+    for removed_label in (
+        "保存策略配置",
+        "保存过滤规则",
+        "保存上下文增强配置",
+        "保存审查政策",
+        "保存 Issue 分析配置",
+        "保存依赖图配置",
+        "保存 PR 总结模板",
+        "保存推荐设置",
+        "保存冲突规则",
+        "保存标签定义",
+    ):
+        assert removed_label not in html, removed_label
+
 
 # ---------- 分组重组（任务 5） ----------
 
@@ -411,3 +430,138 @@ async def test_general_save_rejects_unknown_web_search_provider(
         csrf_token="t",
     )
     assert calls and calls[0]["args"][1] == "toast.value_invalid"
+
+
+# ---------- 统一保存 save-all ----------
+
+
+class _JsonRequest:
+    """save-all 路由需要的 Request 接口（仅 json()）。"""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    async def json(self) -> dict:
+        return self._payload
+
+
+def test_save_all_endpoint_registered_with_admin_and_csrf_header():
+    """POST /config/save-all 需 super_admin + CSRF Header（JSON 请求）。"""
+    from backend.webui.deps import require_csrf_header
+
+    route = _route("/config/save-all", "POST")
+    calls = _dependency_calls(route)
+    assert require_super_admin in calls
+    assert require_csrf_header in calls
+
+
+@pytest.mark.asyncio
+async def test_save_all_dispatches_handlers_and_aggregates_results(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """save-all 按页面顺序调用各分区保存 handler，聚合单条 toast JSON。
+
+    strategies 表单透传 section；单项 error toast 标记该分区失败并回传 anchor。
+    """
+    from fastapi.responses import RedirectResponse
+
+    calls: list[tuple] = []
+
+    async def _ok_handler(request, db, user, csrf_token, **kwargs):
+        calls.append(("ok", tuple(sorted(kwargs))))
+        return RedirectResponse("/config?_toast=saved&_toast_type=success")
+
+    async def _fail_handler(request, db, user, csrf_token, **kwargs):
+        calls.append(("fail", tuple(sorted(kwargs))))
+        return RedirectResponse("/config?_toast=bad&_toast_type=error")
+
+    monkeypatch.setattr(config_routes, "save_general_config", _ok_handler)
+    monkeypatch.setattr(config_routes, "save_strategies_section", _ok_handler)
+    monkeypatch.setattr(config_routes, "save_labels_definitions", _ok_handler)
+    monkeypatch.setattr(config_routes, "save_recommendation_settings", _fail_handler)
+    monkeypatch.setattr(config_routes, "save_conflict_rules", _ok_handler)
+    monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
+
+    payload = {
+        "requests": [
+            {
+                "action": "/config/general/save",
+                "anchor": None,
+                "fields": {"max_review_iterations": "3"},
+            },
+            {
+                "action": "/config/strategies/save",
+                "anchor": "section-strategy-strategies",
+                "fields": {"section": "strategies", "strategy_quick_name": "快速"},
+            },
+            {
+                "action": "/config/labels/save-settings",
+                "anchor": "section-label-recommendation",
+                "fields": {"rec_enabled": "true", "confidence_threshold": "0.7"},
+            },
+        ]
+    }
+    response = await config_routes.save_all_config(
+        _JsonRequest(payload),
+        db=object(),
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+    data = json.loads(response.body)
+
+    # 全部 handler 均被调用，strategies 透传 section 参数
+    assert [name for name, _kwargs in calls] == ["ok", "ok", "fail"]
+    assert calls[1][1] == ("section",)
+
+    assert data["ok"] is False
+    failed = [r for r in data["results"] if not r["ok"]]
+    assert len(failed) == 1
+    assert failed[0]["anchor"] == "section-label-recommendation"
+    assert failed[0]["toast"] == "bad"
+    assert "1 项配置保存失败" in data["toast"]
+
+
+@pytest.mark.asyncio
+async def test_save_all_success_returns_aggregated_toast(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """全部成功时返回 ok=True 与成功 toast。"""
+    from fastapi.responses import RedirectResponse
+
+    async def _ok_handler(request, db, user, csrf_token, **kwargs):
+        return RedirectResponse("/config?_toast=saved&_toast_type=success")
+
+    for name in (
+        "save_general_config",
+        "save_strategies_section",
+        "save_labels_definitions",
+        "save_recommendation_settings",
+        "save_conflict_rules",
+    ):
+        monkeypatch.setattr(config_routes, name, _ok_handler)
+    monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
+
+    payload = {"requests": [{"action": "/config/general/save", "anchor": None, "fields": {}}]}
+    response = await config_routes.save_all_config(
+        _JsonRequest(payload),
+        db=object(),
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+    data = json.loads(response.body)
+    assert data["ok"] is True
+    assert data["results"][0]["ok"] is True
+    assert "全部配置已保存" in data["toast"]
+
+
+@pytest.mark.asyncio
+async def test_save_all_rejects_malformed_payload():
+    """非数组 requests → 400。"""
+    with pytest.raises(HTTPException) as exc_info:
+        await config_routes.save_all_config(
+            _JsonRequest({"requests": "nope"}),
+            db=object(),
+            user={"sub": "admin", "role": "super_admin", "user_id": 1},
+            csrf_token="t",
+        )
+    assert exc_info.value.status_code == 400

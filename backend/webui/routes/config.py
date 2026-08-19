@@ -1,17 +1,19 @@
 """WebUI 配置管理路由（超级管理员专用）
 
 全局配置页 /config（R3）：单页吃下平铺动态配置组与策略/标签节表单；
-保存链路保留既有 POST 端点（/config/general/save、/config/strategies/save、
-/config/labels/*），旧 GET 页面统一 302 到 /config。
+页面右上角统一保存按钮一次提交 /config/save-all（内部顺序复用既有
+保存 handler），既有 POST 端点保留，旧 GET 页面统一 302 到 /config。
 """
 
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import FormData
 
 from backend.core.config import BASIC_CONFIG_KEYS
 from backend.core.config_sections import get_sections_for_target
@@ -43,11 +45,12 @@ from backend.webui.deps import (
     get_user_preferences,
     render_template,
     require_csrf,
+    require_csrf_header,
     require_super_admin,
     toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import detect_language, i18n
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
@@ -517,6 +520,134 @@ async def save_conflict_rules(
         lang=detect_language(),
         count=len(conflict_rules),
     )
+
+
+# ========== POST: 统一保存全部配置 ==========
+
+
+class _FormOnlyRequest:
+    """save-all 复用既有保存 handler；handler 仅使用 request.form() 接口。"""
+
+    def __init__(self, fields: FormData) -> None:
+        self._fields = fields
+
+    async def form(self) -> FormData:
+        return self._fields
+
+
+def _payload_to_form_data(fields: dict) -> FormData:
+    """把 JSON 字段对象（值为字符串或字符串数组）转回表单语义的 FormData。"""
+    pairs: list[tuple[str, str]] = []
+    for key, value in fields.items():
+        values = value if isinstance(value, list) else [value]
+        pairs.extend(
+            (str(key), item if isinstance(item, str) else str(item)) for item in values
+        )
+    return FormData(pairs)
+
+
+@router.post("/save-all")
+async def save_all_config(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf_header),
+):
+    """统一保存页右上角唯一保存按钮：一次请求按页面顺序保存全部表单。
+
+    每个逻辑表单转发给既有保存 handler（general/strategies/labels），
+    从其 toast_redirect 的 Location 提取 _toast/_toast_type 判定成败，
+    聚合为单条 toast 返回 JSON；部分失败时逐项透出结果供前端定位分区。
+    """
+    body = await request.json()
+    items = body.get("requests") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="requests 必须是数组")
+
+    # 在函数内解析模块属性，保证可测试性（monkeypatch 生效）
+    handlers = {
+        "/config/general/save": save_general_config,
+        "/config/strategies/save": save_strategies_section,
+        "/config/labels/save-labels": save_labels_definitions,
+        "/config/labels/save-settings": save_recommendation_settings,
+        "/config/labels/save-conflict-rules": save_conflict_rules,
+    }
+
+    results: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="requests 项必须是对象")
+        action = str(item.get("action", ""))
+        anchor = item.get("anchor")
+        handler = handlers.get(action)
+        if handler is None:
+            results.append(
+                {
+                    "action": action,
+                    "anchor": anchor,
+                    "ok": False,
+                    "toast": f"未知保存目标: {action}",
+                }
+            )
+            continue
+
+        form = _payload_to_form_data(item.get("fields") or {})
+        kwargs = (
+            {"section": form.get("section", "")} if action.endswith("/strategies/save") else {}
+        )
+        try:
+            response = await handler(
+                _FormOnlyRequest(form),
+                db=db,
+                user=user,
+                csrf_token=csrf_token,
+                **kwargs,
+            )
+            query = dict(
+                parse_qsl(urlsplit(response.headers.get("location", "/")).query)
+            )
+            toast_type = query.get("_toast_type", "success")
+            results.append(
+                {
+                    "action": action,
+                    "anchor": anchor,
+                    "ok": toast_type != "error",
+                    "toast": query.get("_toast", ""),
+                }
+            )
+        except HTTPException as exc:
+            results.append(
+                {
+                    "action": action,
+                    "anchor": anchor,
+                    "ok": False,
+                    "toast": f"HTTP {exc.status_code}: {exc.detail}",
+                }
+            )
+        except Exception as exc:
+            # 批量保存不因单项异常中断：记录失败并继续后续分区
+            logger.error(f"save-all [{action}] 保存异常: {exc}", exc_info=True)
+            results.append(
+                {
+                    "action": action,
+                    "anchor": anchor,
+                    "ok": False,
+                    "toast": i18n.t("toast.save_failed", lang=detect_language()),
+                }
+            )
+
+    lang = detect_language()
+    failed = [result for result in results if not result["ok"]]
+    if failed:
+        message = i18n.t(
+            "toast.save_all_partial",
+            lang=lang,
+            count=len(failed),
+            error=failed[0]["toast"],
+        )
+        return JSONResponse({"ok": False, "toast": message, "results": results})
+    message = i18n.t("toast.save_all_success", lang=lang, count=len(results))
+    return JSONResponse({"ok": True, "toast": message, "results": results})
 
 
 # ========== GET: AI 账号配置页 ==========
