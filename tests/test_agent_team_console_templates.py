@@ -77,6 +77,34 @@ def test_agent_console_has_no_redundant_page_identity_header():
     assert "agent-console-toolbar" in page
 
 
+def test_live_is_primary_and_has_a_viewport_bounded_scroll_chain():
+    page = _read(PAGE)
+    live = _read(LIVE)
+
+    assert 'lg:h-[calc(100dvh-7rem)]' in page
+    assert 'id="agent-task-live"' in page
+    assert 'id="agent-task-detail-shell"' in page
+    assert page.index('id="agent-task-live"') < page.index(
+        'id="agent-task-detail-shell"'
+    )
+    assert 'id="agent-task-live" class="agent-panel flex min-h-0' in page
+    assert 'id="agent-task-detail-shell"' in page and "<details" in page
+    assert 'id="agent-task-detail" class="max-h-' in page
+    assert "overflow-y-auto" in page[page.index('id="agent-task-detail"') :]
+    assert "agent-task-detail-shell')?.removeAttribute('open')" in page
+    assert 'class="agent-live-panel flex h-[70dvh] min-h-[32rem] flex-col lg:h-full lg:min-h-0"' in live
+    assert 'id="live-messages"' in live
+    assert "min-h-0 flex-1 overflow-y-auto" in live
+
+
+def test_live_component_uses_one_alpine_init_path():
+    live = _read(LIVE)
+
+    assert 'x-data="agentTeamLiveView()"' in live
+    assert "init() {" in live
+    assert 'x-init="init()"' not in live
+
+
 def test_task_list_is_compact_selectable_and_keyboard_actionable():
     template = _read(LIST)
     assert 'data-task-action="select"' in template
