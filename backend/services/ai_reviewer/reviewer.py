@@ -746,8 +746,6 @@ class AIReviewer:
         """
         self._refresh_ai_clients()
         self._refresh_runtime_config()
-        if self.tool_handler.fetch_url_tool:
-            await self.tool_handler.fetch_url_tool.reset_session()
         try:
             file_count = len(context.get("files", []))
             logger.info(

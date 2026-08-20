@@ -744,12 +744,7 @@ class Settings(BaseSettings):
     )
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
-    agent_team_temperature: float = 0.2
-    agent_team_max_tokens: int = 8192
-    agent_team_enable_context_compression: bool = True
-    agent_team_context_compression_threshold: float = 0.85
-    agent_team_context_compression_keep_rounds: int = 4
-    agent_team_context_summary_max_tokens: int = 2048
+    # 推理参数（temperature/max_tokens）由 AI 配置页角色绑定 reasoning_params 决定
     agent_team_timeout_seconds: int = 600
     agent_team_max_concurrent: int = 1
     agent_team_min_priority: str = "high"
@@ -1195,9 +1190,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
-                    "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
-                    "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
-                    "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
@@ -1212,11 +1204,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled",
                     "agent_team_workspace_root",
                     "agent_team_repo_allowlist",
-                    "agent_team_temperature",
-                    "agent_team_max_tokens",
-                    "agent_team_enable_context_compression",
-                    "agent_team_context_compression_threshold",
-                    "agent_team_context_summary_max_tokens",
                     "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
@@ -1482,10 +1469,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "agent_team_candidate_cache_ttl": (0, 3600),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
-    # Sakura 记忆系统
-    "agent_team_max_tokens": (1024, 32768),
-    "agent_team_context_compression_threshold": (0.1, 1.0),
-    "agent_team_context_summary_max_tokens": (500, 8192),
     "agent_team_pr_review_pass_score": (1, 10),
     "max_concurrent_issues": (1, 500),
     # 初始用户配额
@@ -1630,11 +1613,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_enabled": "启用 Agent 专家团队",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_temperature": "温度参数",
-    "agent_team_max_tokens": "最大 Tokens",
-    "agent_team_enable_context_compression": "启用上下文压缩",
-    "agent_team_context_compression_threshold": "上下文压缩阈值",
-    "agent_team_context_summary_max_tokens": "上下文摘要最大 Tokens",
     "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",

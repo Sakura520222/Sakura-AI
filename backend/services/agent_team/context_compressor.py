@@ -1,232 +1,59 @@
-"""Agent Team context compression for model calls."""
+"""Agent Team context compression — thin bridge to UnifiedContextCompressor."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from loguru import logger
-
-from backend.core.config import get_settings
-from backend.core.model_context import get_model_context_manager
-from backend.services.agent_team.ai_client import create_agent_team_summary_client
-from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
-from backend.services.ai_reviewer.token_tracker import TokenTracker
-from backend.utils.config_utils import (
-    resolve_bool_config,
-    resolve_float_config,
-    resolve_int_config,
+from backend.core.ai_protocol.models import UnifiedMessage
+from backend.services.ai_reviewer.compression.unified_compressor import (
+    UnifiedContextCompressor,
 )
+from backend.services.ai_reviewer.unified_client import messages_from_legacy
 from backend.utils.message_utils import has_missing_tool_results
 
 
-class AgentTeamContextCompressor:
-    """Compress Agent Team messages without mutating persisted checkpoints."""
-
-    def __init__(
-        self,
-        target_model: str,
-        compressor_model: str | None = None,
-        *,
-        context_window_tokens: int | None = None,
-    ):
-        self.target_model = target_model
-        self.compressor_model = compressor_model or target_model
-        self.model_context_mgr = get_model_context_manager()
-        # 优先用新版 unified config 解析的上下文窗口（来自 resolve_role_model_context），
-        # 避免 model_context 在未注册模型时回退 128K 兜底导致过早压缩。
-        self._context_window_tokens = context_window_tokens
-
-    def _resolve_safe_context(self, safety_ratio: float) -> int:
-        """计算压缩预算 tokens，优先用新版 context_window_tokens。
-
-        Per-model 覆盖由 unified config 通过角色绑定的模型元数据提供，
-        不再依赖 model_context 的预定义表/兜底逻辑。
-        """
-        if self._context_window_tokens and self._context_window_tokens > 0:
-            return int(self._context_window_tokens * safety_ratio)
-        return self.model_context_mgr.calculate_safe_context(
-            self.target_model, safety_ratio=safety_ratio
-        )
-
-    async def build_model_messages(
-        self,
-        messages: list[dict[str, Any]],
-        token_tracker: TokenTracker | None = None,
-    ) -> list[dict[str, Any]]:
-        if not messages or _has_missing_tool_results(messages):
-            return messages
-        if not await resolve_bool_config("agent_team_enable_context_compression", True):
-            return messages
-
-        threshold = await resolve_float_config(
-            "agent_team_context_compression_threshold",
-            get_settings().agent_team_context_compression_threshold,
-        )
-        keep_rounds = await resolve_int_config(
-            "agent_team_context_compression_keep_rounds",
-            get_settings().agent_team_context_compression_keep_rounds,
-        )
-        summary_max_tokens = await resolve_int_config(
-            "agent_team_context_summary_max_tokens",
-            get_settings().agent_team_context_summary_max_tokens,
-        )
-        safe_context = self._resolve_safe_context(threshold)
-        current_tokens = estimate_messages_tokens(messages, self.model_context_mgr)
-        if current_tokens <= safe_context:
-            return messages
-
-        logger.info(
-            "Agent Team 上下文触发压缩: {} tokens > {} tokens (model={})",
-            current_tokens,
-            safe_context,
-            self.target_model,
-        )
-        return await self.compress_messages(
-            messages, keep_rounds, summary_max_tokens, token_tracker
-        )
-
-    async def compress_messages(
-        self,
-        messages: list[dict[str, Any]],
-        keep_rounds: int,
-        summary_max_tokens: int,
-        token_tracker: TokenTracker | None = None,
-    ) -> list[dict[str, Any]]:
-        system_msg, body = _split_system_message(messages)
-        blocks = _split_message_blocks(body)
-        if len(blocks) <= keep_rounds:
-            return messages
-
-        early_blocks = blocks[:-keep_rounds]
-        keep_blocks = blocks[-keep_rounds:]
-        early_messages = [message for block in early_blocks for message in block]
-        kept_messages = [message for block in keep_blocks for message in block]
-
-        try:
-            summary = await self._summarize_early_messages(
-                early_messages,
-                summary_max_tokens,
-                token_tracker,
-            )
-        except Exception as exc:
-            logger.warning("Agent Team 上下文压缩失败，回退保留最近块: {}", exc)
-            return _clean_messages(([system_msg] if system_msg else []) + kept_messages)
-
-        compressed = []
-        if system_msg:
-            compressed.append(system_msg)
-        compressed.append(
-            {
-                "role": "user",
-                "content": "## 已压缩的 Agent 历史上下文\n" + summary,
-            }
-        )
-        compressed.extend(kept_messages)
-        return _clean_messages(compressed)
-
-    async def _summarize_early_messages(
-        self,
-        messages: list[dict[str, Any]],
-        max_tokens: int,
-        token_tracker: TokenTracker | None = None,
-    ) -> str:
-        client, summary_role, config = await create_agent_team_summary_client()
-        prompt = _build_compression_prompt(messages, max_tokens)
-        response = await client.call_with_retry(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你负责压缩 Agent 专家团队执行历史，保留任务执行所需事实。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            model="",
-            temperature=0.2,
-            timeout=config.timeout_seconds,
-            max_tokens=max_tokens,
-            role=summary_role,
-        )
-        if token_tracker is not None:
-            token_tracker.accumulate(response)
-        return response.choices[0].message.content.strip()
-
-
-def _split_system_message(
+async def compress_agent_team_messages(
     messages: list[dict[str, Any]],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    if messages and messages[0].get("role") == "system":
-        return messages[0], messages[1:]
-    return None, messages
+    *,
+    candidate: Any,
+    token_tracker: Any | None = None,
+) -> list[dict[str, Any]]:
+    """使用 UnifiedContextCompressor 压缩 Agent Team 消息，返回 dict 列表。"""
+    if not candidate or not messages or has_missing_tool_results(messages):
+        return messages
+
+    # 每次从 Settings 现取配置（支持运行时刷新），用完即释放惰性 HTTP 客户端。
+    compressor = UnifiedContextCompressor.from_settings()
+    try:
+        compressed, result = await compressor.maybe_compress(
+            candidate, messages_from_legacy(messages), tracker=token_tracker
+        )
+    finally:
+        await compressor.aclose()
+    if not compressed:
+        return messages
+    return _from_unified_messages(result)
 
 
-def _split_message_blocks(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    blocks: list[list[dict[str, Any]]] = []
-    index = 0
-    while index < len(messages):
-        message = messages[index]
-        block = [message]
-        if message.get("role") == "assistant" and message.get("tool_calls"):
-            tool_call_ids = {
-                str(item.get("id")) for item in message.get("tool_calls") or []
-            }
-            index += 1
-            while index < len(messages):
-                next_message = messages[index]
-                if (
-                    next_message.get("role") == "tool"
-                    and str(next_message.get("tool_call_id")) in tool_call_ids
-                ):
-                    block.append(next_message)
-                    index += 1
-                    continue
-                break
-            blocks.append(block)
-            continue
-        blocks.append(block)
-        index += 1
-    return blocks
+def _from_unified_messages(messages: list[UnifiedMessage]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        d: dict[str, Any] = {"role": msg.role}
+        if msg.content is not None:
+            d["content"] = msg.content
+        if msg.tool_calls:
+            d["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                for tc in msg.tool_calls
+            ]
+        if msg.tool_call_id:
+            d["tool_call_id"] = msg.tool_call_id
+        result.append(d)
+    return result
 
 
-def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
-    """检查消息中是否存在缺少结果的工具调用。"""
-    return has_missing_tool_results(messages)
-
-
-def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {key: value for key, value in message.items() if key != "reasoning_content"}
-        for message in messages
-    ]
-
-
-def _build_compression_prompt(messages: list[dict[str, Any]], max_tokens: int) -> str:
-    text = []
-    for message in messages:
-        role = message.get("role", "")
-        content = message.get("content") or ""
-        if message.get("tool_calls"):
-            calls = []
-            for tool_call in message.get("tool_calls") or []:
-                function = tool_call.get("function") or {}
-                calls.append(
-                    f"- {function.get('name', '')}: {function.get('arguments', '')}"
-                )
-            content = "工具调用:\n" + "\n".join(calls)
-        text.append(f"## {role}\n{content}")
-
-    return f"""请将以下 Agent 专家团队历史压缩到 {max_tokens} tokens 以内。
-
-必须保留：
-- 原始任务目标和关键约束
-- 已读取/分析过的关键文件与结论
-- 已修改的文件、修改意图和风险
-- 已运行的命令或测试结果
-- 专业审查提出的问题、建议和未解决事项
-- 下一步执行应继续关注的事项
-
-不要输出无关寒暄，不要编造未发生的修改。
-
-## 历史消息
-
-{chr(10).join(text)}
-"""
+__all__ = ["compress_agent_team_messages"]

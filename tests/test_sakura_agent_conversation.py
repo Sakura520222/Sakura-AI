@@ -161,9 +161,9 @@ async def test_agent_conversation_records_tool_name_for_gemini_replay():
         languages="Python: 1",
     )
 
-    from backend.services.ai_reviewer.unified_client import _messages_from_legacy
+    from backend.services.ai_reviewer.unified_client import messages_from_legacy
 
-    replay_messages = _messages_from_legacy(captured["messages"][1])
+    replay_messages = messages_from_legacy(captured["messages"][1])
     request = UnifiedRequest(
         model="gemini-test",
         messages=replay_messages,

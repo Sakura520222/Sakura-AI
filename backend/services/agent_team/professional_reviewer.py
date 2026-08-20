@@ -22,7 +22,7 @@ from typing import Any
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
-from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
+from backend.services.agent_team.context_compressor import compress_agent_team_messages
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -221,10 +221,10 @@ class ProfessionalReviewAgent:
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
-        model, context_window_tokens = await client.resolve_role_model_context(
-            config.agent_role
+        candidate = await client.resolve_role_primary_candidate(config.agent_role)
+        context_window_tokens = (
+            candidate.model.context_window_tokens if candidate else None
         )
-        model = model or ""
         ctx = self._build_context(
             skills_context,
             github_repo=github_repo,
@@ -307,10 +307,9 @@ class ProfessionalReviewAgent:
                 except Exception:
                     pass
 
-            model_messages = await AgentTeamContextCompressor(
-                target_model=model,
-                context_window_tokens=context_window_tokens,
-            ).build_model_messages(self.messages, token_tracker)
+            model_messages = await compress_agent_team_messages(
+                self.messages, candidate=candidate, token_tracker=token_tracker
+            )
             await _publish_review_ai_request(
                 round_num,
                 task_id=self.checkpoint.task_id if self.checkpoint else None,
