@@ -177,5 +177,5 @@ def test_agent_sidebar_navigation_name_is_agent_only():
     i18n.reload()
     assert i18n.t("nav.agent_team", lang="zh-CN") == "Agent"
     assert i18n.t("nav.agent_team", lang="en") == "Agent"
-    assert i18n.t("config.ai_role_agent_team", lang="zh-CN") == "Implementation Agent 模型"
-    assert i18n.t("config.ai_role_agent_team", lang="en") == "Implementation Agent model"
+    assert i18n.t("config.ai_role_agent_team", lang="zh-CN") == "Agent 模型"
+    assert i18n.t("config.ai_role_agent_team", lang="en") == "Agent model"

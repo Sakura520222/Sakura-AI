@@ -1,4 +1,4 @@
-"""Agent Worker - implementation Agent 状态机
+"""Agent Worker - Agent 状态机
 
 状态流转：
   queued → cloning → editing → validating → pushing → pr_opened → completed

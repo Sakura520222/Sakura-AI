@@ -1,7 +1,7 @@
 """Legacy ``submit_review`` tool definition.
 
 This module remains import-compatible for historical tests/checkpoints, but the
-single implementation Agent registry deliberately does not register it. The
+single Agent registry deliberately does not register it. The
 external Sakura PR Review workflow owns review decisions now.
 """
 

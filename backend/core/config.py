@@ -1605,7 +1605,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_include_comments": "分析时包含评论对话",
-    # Implementation Agent
+    # Agent
     "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_repo_allowlist": "仓库白名单",
