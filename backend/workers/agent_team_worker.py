@@ -1,7 +1,7 @@
-"""Agent 专家团队 Worker - 完整状态机
+"""Agent Worker - implementation Agent 状态机
 
 状态流转：
-  queued → cloning → editing → self_reviewing → validating → pushing → pr_opened → completed
+  queued → cloning → editing → validating → pushing → pr_opened → completed
                                                                                          ↗
                                                iterating ─────────────────────────────────┘
   任何阶段失败 → failed
@@ -30,7 +30,6 @@ from backend.models.agent_team_models import (
     AgentTeamUserPrompt,
 )
 from backend.models.database import utc_now as _utc_now
-from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -41,6 +40,7 @@ from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
 from backend.services.agent_team.submission_context import (
     build_agent_task_summary,
+    load_agent_task_reference_context,
     load_sakura_memory,
     load_skills_context,
 )
@@ -48,9 +48,14 @@ from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
+    # A guidance admission failure is deliberately retryable even when the
+    # Agent has not modified a file. Preserve the marker so the worker can
+    # keep pending guidance queued for the next attempt.
+    if "guidance_admission_failed" in reason:
+        return reason
     if modified_files:
         return reason
-    return "全栈专家未能生成有效的代码修改"
+    return "Agent 未能生成有效的代码修改"
 
 
 class AgentTeamWorker:
@@ -58,8 +63,6 @@ class AgentTeamWorker:
 
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
-        config = await load_agent_team_ai_config()
-
         # 注册取消信号
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
@@ -71,11 +74,8 @@ class AgentTeamWorker:
             (
                 skills_summary,
                 skills_context,
-                skills_snapshot,
+                _skills_snapshot,
             ) = await load_skills_context()
-            ai_config_snapshot = config.safe_snapshot()
-            if skills_snapshot:
-                ai_config_snapshot["skills"] = skills_snapshot
 
             # ── Phase 1: CLONING ──
             await self._update_task(
@@ -83,7 +83,6 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.CLONING.value,
                 current_phase="cloning",
                 started_at=_utc_now(),
-                ai_config_snapshot=json.dumps(ai_config_snapshot, ensure_ascii=False),
             )
 
             git_service = AgentTeamGitWorkspaceService()
@@ -138,13 +137,9 @@ class AgentTeamWorker:
                 current_phase="editing",
             )
 
-            max_iterations = await self._resolve_max_iterations(task.max_iterations)
-            if task.max_iterations != max_iterations:
-                await self._update_task(task_id, max_iterations=max_iterations)
             sakura_info = await load_sakura_memory(repo_owner, repo_name)
-            # task.summary 在创建时已包含 issue context（由 submission_context 合并），
-            # 此处仅传入 summary 即可，无需重复加载 issue 分析和评论。
             task_context = build_agent_task_summary(task.summary or "")
+            reference_context = await self._load_task_reference_context(task)
 
             checkpoint = ConversationCheckpointService(task_id)
             resume_cursor = await checkpoint.get_resume_cursor() if resume else None
@@ -161,10 +156,10 @@ class AgentTeamWorker:
                 task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
-                max_iterations=max_iterations,
                 sakura_memory=sakura_info["text"],
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                reference_context=reference_context,
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
@@ -449,8 +444,6 @@ class AgentTeamWorker:
         self, task_id: int, review_id: int
     ) -> int:
         """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
-        await load_agent_team_ai_config()
-
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
             cancel_event = asyncio.Event()
@@ -474,20 +467,6 @@ class AgentTeamWorker:
                     status=AgentTeamTaskStatus.WAITING_HUMAN.value,
                     current_phase="waiting_human",
                     error_message="缺少可继续 PR 闭环的 workspace/branch/pr 信息",
-                )
-                return task_id
-
-            remaining_iterations = max(
-                0,
-                (task.max_iterations or 0) - (task.iteration_count or 0),
-            )
-            if remaining_iterations <= 0:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    error_message="Sakura PR Review 未通过，且已达到 Agent 最大迭代轮数",
                 )
                 return task_id
 
@@ -523,6 +502,7 @@ class AgentTeamWorker:
             ) = await load_skills_context()
             sakura_info = await load_sakura_memory(task.repo_owner, task.repo_name)
             task_context = build_agent_task_summary(task.summary or "")
+            reference_context = await self._load_task_reference_context(task)
 
             checkpoint = ConversationCheckpointService(task_id)
             loop_service = IterationLoopService(
@@ -537,17 +517,16 @@ class AgentTeamWorker:
                 task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
-                max_iterations=remaining_iterations,
                 sakura_memory=sakura_info["text"],
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                reference_context=reference_context,
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 initial_feedback=review_feedback,
                 cancel_check=cancel_event.is_set,
                 cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
-                skip_internal_review=True,
             )
 
             (
@@ -692,8 +671,6 @@ class AgentTeamWorker:
 
         由 submit_user_prompt 在可续跑终态时调度。
         """
-        await load_agent_team_ai_config()
-
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
             cancel_event = asyncio.Event()
@@ -717,20 +694,6 @@ class AgentTeamWorker:
                     status=AgentTeamTaskStatus.WAITING_HUMAN.value,
                     current_phase="waiting_human",
                     error_message="缺少可继续 follow-up 的 workspace/branch/pr 信息",
-                )
-                return task_id
-
-            remaining_iterations = max(
-                0,
-                (task.max_iterations or 0) - (task.iteration_count or 0),
-            )
-            if remaining_iterations <= 0:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    error_message="已达到 Agent 最大迭代轮数，无法继续 follow-up",
                 )
                 return task_id
 
@@ -762,6 +725,7 @@ class AgentTeamWorker:
             ) = await load_skills_context()
             sakura_info = await load_sakura_memory(task.repo_owner, task.repo_name)
             task_context = build_agent_task_summary(task.summary or "")
+            reference_context = await self._load_task_reference_context(task)
 
             checkpoint = ConversationCheckpointService(task_id)
             loop_service = IterationLoopService(
@@ -778,16 +742,15 @@ class AgentTeamWorker:
                 task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
-                max_iterations=remaining_iterations,
                 sakura_memory=sakura_info["text"],
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                reference_context=reference_context,
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
                 cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
-                skip_internal_review=True,
             )
 
             (
@@ -924,6 +887,27 @@ class AgentTeamWorker:
 
     # ── 辅助方法 ──────────────────────────────────────────
 
+    async def _load_task_reference_context(self, task: AgentTeamTask) -> str:
+        """Rebuild source material for ``<reference_context>`` at run time."""
+        try:
+            async with db_module.async_session() as session:
+                return await load_agent_task_reference_context(
+                    session,
+                    source_type=task.source_type,
+                    source_id=task.source_id,
+                    repo_owner=task.repo_owner,
+                    repo_name=task.repo_name,
+                    repo_full_name=task.repo_full_name,
+                    issue_number=task.source_issue_number,
+                )
+        except Exception as exc:
+            logger.debug(
+                "加载 Agent 任务引用上下文失败，继续使用用户目标: task_id={}, error={}",
+                task.id,
+                exc,
+            )
+            return ""
+
     def _accumulate_iteration_cost(
         self, task: AgentTeamTask, outcome
     ) -> tuple[int, int, int, int]:
@@ -1008,7 +992,10 @@ class AgentTeamWorker:
             AgentTeamTaskStatus.FAILED.value,
             AgentTeamTaskStatus.CANCELLED.value,
             AgentTeamTaskStatus.ABANDONED.value,
-        }:
+        } and not (
+            task.status == AgentTeamTaskStatus.FAILED.value
+            and "guidance_admission_failed" in str(task.error_message or "")
+        ):
             await self._expire_pending_prompts(task_id)
 
     async def _load_sakura_pr_review_feedback(
@@ -1158,14 +1145,6 @@ class AgentTeamWorker:
 
         return await get_dynamic_config(key)
 
-    async def _resolve_max_iterations(self, task_max_iterations: int | None) -> int:
-        """解析任务最大迭代轮数。"""
-        from backend.services.agent_team.ai_client import (
-            resolve_agent_team_max_iterations,
-        )
-
-        return await resolve_agent_team_max_iterations(task_max_iterations)
-
     async def _resolve_bool_config(self, key: str, fallback: bool) -> bool:
         """读取布尔动态配置，保留显式 False。"""
         from backend.services.agent_team.ai_client import resolve_agent_team_bool_config
@@ -1176,7 +1155,7 @@ class AgentTeamWorker:
         parts = [f"feat(agent): {task.title}"]
         if outcome.fullstack_result:
             parts.append("")
-            parts.append(f"Agent 全栈专家自动修改 ({outcome.iterations} 轮迭代)")
+            parts.append(f"Agent 自动修改（第 {outcome.iterations} 次执行）")
             parts.append(f"修改文件: {', '.join(outcome.modified_files)}")
             if outcome.review_result:
                 parts.append(

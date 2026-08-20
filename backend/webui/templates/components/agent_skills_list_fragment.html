@@ -1,66 +1,97 @@
-{% if skills %}
-<div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead>
-            <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                <th class="px-4 py-3">{{ _('agent_skills.skill') }}</th>
-                <th class="px-4 py-3">{{ _('agent_skills.source') }}</th>
-                <th class="px-4 py-3">{{ _('agent_skills.status') }}</th>
-                <th class="px-4 py-3">{{ _('agent_skills.updated_at') }}</th>
-                <th class="px-4 py-3 text-right">{{ _('common.actions') }}</th>
-            </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-            {% for skill in skills %}
-            <tr class="align-top">
-                <td class="px-4 py-4">
-                    <div class="font-semibold text-gray-900 dark:text-gray-100">{{ skill.name }}</div>
-                    <code class="mt-1 block text-xs text-sakura-600 dark:text-sakura-300">{{ skill.slug }}</code>
-                    {% if skill.description %}<p class="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-xl">{{ skill.description }}</p>{% endif %}
-                    {% if skill.when_to_use %}<p class="mt-1 text-xs text-gray-400 dark:text-gray-500 max-w-xl">{{ skill.when_to_use }}</p>{% endif %}
-                    <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 break-all">{{ skill.content_hash[:12] }}</div>
-                    {% if skill.file_count and skill.file_count > 1 %}
-                    <span class="inline-flex mt-1 rounded-full px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-300">{{ skill.file_count }} {{ _('agent_skills.files') }}</span>
-                    {% endif %}
-                </td>
-                <td class="px-4 py-4 text-sm text-gray-600 dark:text-gray-300">
-                    <span class="inline-flex rounded-full px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">{{ skill.source_type }}</span>
-                    {% if skill.source_url %}<div class="mt-2 max-w-xs truncate"><a href="{{ skill.source_url }}" target="_blank" rel="noopener noreferrer" class="text-sakura-600 dark:text-sakura-300 hover:underline">{{ skill.source_url }}</a></div>{% endif %}
-                    {% if skill.source_ref %}<div class="mt-1 text-xs text-gray-400">{{ skill.source_ref }}</div>{% endif %}
-                </td>
-                <td class="px-4 py-4">
-                    {% if skill.enabled %}
-                    <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">{{ _('agent_skills.enabled') }}</span>
-                    {% else %}
-                    <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _('agent_skills.disabled') }}</span>
-                    {% endif %}
-                </td>
-                <td class="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{{ skill.updated_at|format_datetime_short }}</td>
-                <td class="px-4 py-4">
-                    <div class="flex justify-end gap-2">
-                        <form method="post" action="/agent-skills/{{ skill.id }}/toggle">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <input type="hidden" name="enabled" value="{% if skill.enabled %}0{% else %}1{% endif %}">
-                            <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
-                                {% if skill.enabled %}{{ _('agent_skills.disable') }}{% else %}{{ _('agent_skills.enable') }}{% endif %}
-                            </button>
-                        </form>
-                        <form method="post" action="/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30">
-                                {{ _('common.delete') }}
-                            </button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{% if skill_rows %}
+<div class="hidden border-b border-gray-200 bg-gray-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-400 lg:grid lg:grid-cols-[minmax(16rem,2fr)_minmax(10rem,1fr)_minmax(12rem,1.25fr)_minmax(10rem,.8fr)_auto] lg:gap-4 lg:px-5">
+    <div>{{ _('agent_skills.skill') }}</div>
+    <div>{{ _('agent_skills.version_source') }}</div>
+    <div>{{ _('agent_skills.capabilities') }}</div>
+    <div>{{ _('agent_skills.status_validation') }}</div>
+    <div class="text-right">{{ _('common.actions') }}</div>
+</div>
+<div class="divide-y divide-gray-200 dark:divide-gray-700">
+    {% for row in skill_rows %}
+    {% set skill = row.skill %}
+    <article class="grid grid-cols-1 gap-3 px-4 py-4 text-sm lg:grid-cols-[minmax(16rem,2fr)_minmax(10rem,1fr)_minmax(12rem,1.25fr)_minmax(10rem,.8fr)_auto] lg:gap-4 lg:px-5">
+        <div class="min-w-0">
+            <div class="flex min-w-0 items-center gap-2">
+                <h3 class="truncate font-semibold text-gray-950 dark:text-white">{{ skill.name }}</h3>
+                <code class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-900 dark:text-gray-400">{{ skill.slug }}</code>
+            </div>
+            {% if skill.description %}<p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-600 dark:text-gray-300">{{ skill.description }}</p>{% else %}<p class="mt-1 text-xs italic text-gray-400">{{ _('agent_skills.no_description') }}</p>{% endif %}
+        </div>
+
+        <div class="min-w-0">
+            <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 lg:hidden">{{ _('agent_skills.version_source') }}</div>
+            <div class="flex flex-wrap items-center gap-1.5">
+                <span class="font-mono text-xs font-medium text-gray-800 dark:text-gray-200">{{ skill.version or _('agent_skills.unversioned') }}</span>
+                <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">{% if skill.source_type == 'github' %}{{ _('agent_skills.source_github') }}{% elif skill.source_type == 'upload' %}{{ _('agent_skills.source_upload') }}{% else %}{{ skill.source_type }}{% endif %}</span>
+            </div>
+            {% if skill.source_url %}<a href="{{ skill.source_url }}" target="_blank" rel="noopener noreferrer" title="{{ skill.source_url }}" class="mt-1 block truncate text-xs text-sakura-600 hover:underline dark:text-sakura-300">{{ skill.source_url }}</a>{% endif %}
+        </div>
+
+        <div>
+            <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 lg:hidden">{{ _('agent_skills.capabilities') }}</div>
+            <div class="flex flex-wrap gap-1">
+                {% for tool in row.allowed_tools[:5] %}<span class="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300">{{ tool }}</span>{% endfor %}
+                {% for argument in row.arguments[:3] %}<span class="rounded-md border border-gray-200 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 dark:border-gray-600 dark:text-gray-400">{{ argument }}</span>{% endfor %}
+                {% if not row.allowed_tools and not row.arguments %}<span class="text-xs text-gray-400">{{ _('agent_skills.no_capabilities') }}</span>{% endif %}
+            </div>
+        </div>
+
+        <div>
+            <div class="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 lg:hidden">{{ _('agent_skills.status_validation') }}</div>
+            <div class="flex flex-wrap gap-1.5">
+                {% if skill.enabled %}
+                <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>{{ _('agent_skills.enabled') }}</span>
+                {% else %}
+                <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"><span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>{{ _('agent_skills.disabled') }}</span>
+                {% endif %}
+                {% if skill.error_message %}<span title="{{ skill.error_message }}" class="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{{ _('agent_skills.validation_error') }}</span>{% else %}<span class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _('agent_skills.validated') }}</span>{% endif %}
+            </div>
+            <div class="mt-1.5 text-[11px] text-gray-400">{{ skill.updated_at|format_datetime_short }}</div>
+        </div>
+
+        <div class="flex items-start justify-start gap-1.5 lg:justify-end">
+            <form method="post" action="/agent-skills/{{ skill.id }}/toggle">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="enabled" value="{% if skill.enabled %}0{% else %}1{% endif %}">
+                <button type="submit" class="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">{% if skill.enabled %}{{ _('agent_skills.disable') }}{% else %}{{ _('agent_skills.enable') }}{% endif %}</button>
+            </form>
+            <form method="post" action="/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="rounded-lg px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-red-300 dark:hover:bg-red-950/30">{{ _('common.delete') }}</button>
+            </form>
+        </div>
+
+        <details class="group rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/50 lg:col-span-5">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-medium text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:text-gray-200">
+                <span>{{ _('agent_skills.show_details') }}</span>
+                <svg aria-hidden="true" class="h-4 w-4 text-gray-400 transition-transform group-open:rotate-180 motion-reduce:transition-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"/></svg>
+            </summary>
+            <div class="mt-3 grid gap-4 border-t border-gray-200 pt-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300 md:grid-cols-2 xl:grid-cols-4">
+                <div><h4 class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.trigger_condition') }}</h4><p class="mt-1 whitespace-pre-wrap leading-5">{{ skill.when_to_use or _('agent_skills.not_provided') }}</p></div>
+                <div>
+                    <h4 class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.allowed_tools') }}</h4><p class="mt-1 break-words font-mono leading-5">{{ row.allowed_tools|join(', ') if row.allowed_tools else _('agent_skills.not_provided') }}</p>
+                    <h4 class="mt-2 font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.arguments') }}</h4><p class="mt-1 break-words font-mono leading-5">{{ row.arguments|join(', ') if row.arguments else _('agent_skills.not_provided') }}</p>
+                </div>
+                <div>
+                    <h4 class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.requires') }}</h4><p class="mt-1 whitespace-pre-wrap leading-5">{{ skill.requires or _('agent_skills.not_provided') }}</p>
+                    <h4 class="mt-2 font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.content_hash') }}</h4><code class="mt-1 block break-all text-[10px]">{{ skill.content_hash }}</code>
+                </div>
+                <div>
+                    <h4 class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.file_manifest') }} <span class="font-normal text-gray-400">({{ row.files|length }})</span></h4>
+                    {% if row.files %}<ul class="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[10px] leading-5">{% for file in row.files %}<li class="truncate" title="{{ file }}">{{ file }}</li>{% endfor %}</ul>{% else %}<p class="mt-1">{{ _('agent_skills.no_files') }}</p>{% endif %}
+                    {% if skill.source_ref %}<p class="mt-2 break-all"><span class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.source_ref') }}:</span> <code>{{ skill.source_ref }}</code></p>{% endif %}
+                    {% if skill.source_path %}<p class="mt-1 break-all"><span class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.source_path') }}:</span> <code>{{ skill.source_path }}</code></p>{% endif %}
+                </div>
+                {% if skill.error_message %}<div class="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200 md:col-span-2 xl:col-span-4"><span class="font-semibold">{{ _('agent_skills.validation_error_detail') }}</span> {{ skill.error_message }}</div>{% endif %}
+            </div>
+        </details>
+    </article>
+    {% endfor %}
 </div>
 {% else %}
-<div class="rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 p-8 text-center text-gray-500 dark:text-gray-400">
-    <div class="text-base font-semibold text-gray-700 dark:text-gray-200">{{ _('agent_skills.no_skills') }}</div>
-    <p class="mt-2 text-sm">{{ _('agent_skills.no_skills_desc') }}</p>
+<div class="px-5 py-12 text-center">
+    <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-400 dark:bg-gray-700"><svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg></div>
+    <h3 class="mt-3 text-sm font-semibold text-gray-800 dark:text-gray-100">{% if has_filters %}{{ _('agent_skills.no_matches') }}{% else %}{{ _('agent_skills.no_skills') }}{% endif %}</h3>
+    <p class="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500 dark:text-gray-400">{% if has_filters %}{{ _('agent_skills.no_matches_desc') }}{% else %}{{ _('agent_skills.no_skills_desc') }}{% endif %}</p>
 </div>
 {% endif %}

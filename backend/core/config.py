@@ -738,18 +738,16 @@ class Settings(BaseSettings):
     scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
-    # ========== Agent 专家团队模式配置 ==========
+    # ========== Agent 模式配置 ==========
     agent_team_enabled: bool = (
-        False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
+        False  # 是否启用 Agent 模式（super_admin 手动使用）
     )
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
-    # 推理参数（temperature/max_tokens）由 AI 配置页角色绑定 reasoning_params 决定
-    agent_team_timeout_seconds: int = 600
+    # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
-    agent_team_max_iterations_per_task: int = 3
     agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_pr_closed_loop_enabled: bool = True
@@ -1184,10 +1182,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
         (
             "agent_team",
             {
-                "label": "Agent 专家团队",
+                "label": "Agent",
                 "icon": "bot",
                 "descriptions": {
-                    "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
+                    "agent_team_enabled": "启用后，超级管理员可手动创建和执行 Agent 任务；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
@@ -1204,11 +1202,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled",
                     "agent_team_workspace_root",
                     "agent_team_repo_allowlist",
-                    "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
-                    "agent_team_max_iterations_per_task",
                     "agent_team_draft_pr",
                     "agent_team_pr_closed_loop_enabled",
                     "agent_team_pr_review_pass_score",
@@ -1609,15 +1605,13 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_include_comments": "分析时包含评论对话",
-    # Agent 专家团队
-    "agent_team_enabled": "启用 Agent 专家团队",
+    # Implementation Agent
+    "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
-    "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_pr_closed_loop_enabled": "启用 Agent PR 闭环",
     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",

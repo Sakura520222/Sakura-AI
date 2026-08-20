@@ -1,15 +1,25 @@
 """Agent Team 取消信号传播与 User Prompt 消费测试。"""
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
-from backend.services.agent_team.fullstack_expert import FullStackResult
+from backend.services.agent_team.fullstack_expert import (
+    FullStackExpertAgent,
+    FullStackResult,
+)
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
-from backend.services.agent_team.iteration_loop import IterationLoopService
-from backend.services.agent_team.professional_reviewer import ReviewResult
+from backend.services.agent_team.iteration_loop import (
+    IterationLoopService,
+    PendingGuidance,
+)
+from backend.services.agent_team.prompt_config import (
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    build_implementation_user_message,
+)
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 # ── Fake agents ──────────────────────────────────────────────
@@ -38,32 +48,6 @@ class _FakeFullstackAgent:
         )
 
 
-@dataclass
-class _FakeReviewer:
-    workspace: str
-    workspace_service: object
-
-    async def review(self, **kwargs):
-        cancel_check = kwargs.get("cancel_check")
-        if cancel_check and cancel_check():
-            return ReviewResult(
-                passed=False,
-                verdict="cancelled",
-                score=0,
-                summary="cancelled",
-                findings=[],
-                tool_calls_count=0,
-            )
-        return ReviewResult(
-            passed=True,
-            verdict="pass",
-            score=9,
-            summary="looks good",
-            findings=[],
-            tool_calls_count=1,
-        )
-
-
 # ── Cancel signal propagation ────────────────────────────────
 
 
@@ -73,10 +57,6 @@ async def test_iteration_loop_stops_on_cancel_before_iteration(monkeypatch, tmp_
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
-    )
-    monkeypatch.setattr(
-        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
-        _FakeReviewer,
     )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
@@ -101,10 +81,6 @@ async def test_iteration_loop_passes_cancel_check_to_expert(monkeypatch, tmp_pat
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
-    )
-    monkeypatch.setattr(
-        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
-        _FakeReviewer,
     )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
@@ -146,20 +122,9 @@ async def test_iteration_loop_cancels_before_reviewer(monkeypatch, tmp_path):
                 tool_calls_count=1,
             )
 
-    class _ReviewerMustNotRun:
-        def __init__(self, workspace, workspace_service):
-            pass
-
-        async def review(self, **kwargs):
-            raise AssertionError("reviewer should not run when cancelled")
-
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FullstackThenCancel,
-    )
-    monkeypatch.setattr(
-        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
-        _ReviewerMustNotRun,
     )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
@@ -185,10 +150,6 @@ async def test_iteration_loop_without_cancel_check(monkeypatch, tmp_path):
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
     )
-    monkeypatch.setattr(
-        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
-        _FakeReviewer,
-    )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
     workspace = workspace_service.ensure_workspace("owner", "repo")
@@ -200,8 +161,8 @@ async def test_iteration_loop_without_cancel_check(monkeypatch, tmp_path):
     )
 
     assert outcome.success is True
-    assert outcome.review_result is not None
-    assert outcome.review_result.passed is True
+    assert outcome.review_result is None
+    assert outcome.modified_files == ["main.py"]
 
 
 # ── Prompt consumption (no DB) ───────────────────────────────
@@ -218,13 +179,175 @@ async def test_consume_pending_prompts_returns_empty_without_task_id(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_consume_pending_prompts_returns_empty_without_db(tmp_path):
-    """_consume_pending_prompts returns '' when DB is unavailable (graceful fallback)."""
+async def test_consume_pending_prompts_fails_closed_without_db(tmp_path):
+    """A missing DB session must not silently skip queued guidance."""
     workspace_service = AgentTeamWorkspaceService(tmp_path)
     workspace = workspace_service.ensure_workspace("owner", "repo")
     service = IterationLoopService(workspace, workspace_service, task_id=999)
-    result = await service._consume_pending_prompts()
-    assert result == ""
+    with pytest.raises(RuntimeError, match="读取 Agent pending guidance 失败"):
+        await service._consume_pending_prompts()
+
+
+@pytest.mark.asyncio
+async def test_consume_pending_prompts_fails_closed_when_db_read_raises(
+    monkeypatch, tmp_path
+):
+    """A queue read failure must block admission rather than skip guidance."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    service = IterationLoopService(workspace, workspace_service, task_id=999)
+
+    def broken_session():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.iteration_loop.db_module.async_session",
+        broken_session,
+    )
+
+    with pytest.raises(RuntimeError, match="读取 Agent pending guidance 失败"):
+        await service._consume_pending_prompts()
+
+
+class _NoCallAIClient:
+    def __init__(self):
+        self.calls = 0
+
+    async def resolve_role_primary_candidate(self, role):
+        return None
+
+    async def call_with_retry(self, *args, **kwargs):
+        self.calls += 1
+        raise AssertionError("model call must be blocked after guidance failure")
+
+
+async def _fake_agent_client(client):
+    return client, SimpleNamespace(agent_role="agent_team")
+
+
+@pytest.mark.asyncio
+async def test_agent_stops_before_model_call_when_guidance_callback_fails(
+    monkeypatch, tmp_path
+):
+    client = _NoCallAIClient()
+    monkeypatch.setattr(
+        "backend.services.agent_team.fullstack_expert.create_agent_team_client",
+        lambda: _fake_agent_client(client),
+    )
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    agent = FullStackExpertAgent(workspace, workspace_service=workspace_service)
+
+    async def fail_guidance():
+        raise RuntimeError("queue read failed")
+
+    result = await agent.execute(
+        task_title="test",
+        task_summary="test",
+        guidance_callback=fail_guidance,
+    )
+
+    assert result.success is False
+    assert result.error == "guidance_admission_failed"
+    assert "停止模型调用" in result.summary
+    assert client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_stops_before_model_call_when_guidance_checkpoint_fails(
+    monkeypatch, tmp_path
+):
+    client = _NoCallAIClient()
+    monkeypatch.setattr(
+        "backend.services.agent_team.fullstack_expert.create_agent_team_client",
+        lambda: _fake_agent_client(client),
+    )
+
+    class FailingCheckpoint:
+        async def append_guidance_message(self, *args, **kwargs):
+            raise RuntimeError("checkpoint unavailable")
+
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    agent = FullStackExpertAgent(
+        workspace,
+        workspace_service=workspace_service,
+        checkpoint=FailingCheckpoint(),
+        session_id=1,
+        initial_messages=[{"role": "system", "content": "legacy"}],
+    )
+
+    async def guidance():
+        return PendingGuidance("keep this exact body", (42,))
+
+    result = await agent.execute(
+        task_title="test",
+        task_summary="test",
+        guidance_callback=guidance,
+    )
+
+    assert result.success is False
+    assert result.error == "guidance_admission_failed"
+    assert client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_stops_before_model_call_when_guidance_ack_fails(
+    monkeypatch, tmp_path
+):
+    client = _NoCallAIClient()
+    monkeypatch.setattr(
+        "backend.services.agent_team.fullstack_expert.create_agent_team_client",
+        lambda: _fake_agent_client(client),
+    )
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    agent = FullStackExpertAgent(workspace, workspace_service=workspace_service)
+
+    async def guidance():
+        return PendingGuidance("keep this exact body", (42,))
+
+    async def fail_ack(prompt_ids):
+        raise RuntimeError("ack unavailable")
+
+    result = await agent.execute(
+        task_title="test",
+        task_summary="test",
+        guidance_callback=guidance,
+        guidance_ack_callback=fail_ack,
+    )
+
+    assert result.success is False
+    assert result.error == "guidance_admission_failed"
+    assert client.calls == 0
+
+
+def test_guidance_body_is_verbatim_and_ids_are_metadata_only():
+    body = "请只修复这个回归。\n不要添加包装标题。"
+    guidance = PendingGuidance(body, (42,), items=((42, body),))
+
+    assert str(guidance) == body
+    assert guidance.items == ((42, body),)
+    assert guidance.prompt_ids == (42,)
+    assert "human_guidance" not in str(guidance)
+    assert "管理员指导" not in str(guidance)
+
+
+def test_production_agent_prompt_is_static_english_and_user_builder_is_dynamic():
+    assert "You are Sakura" in IMPLEMENTATION_SYSTEM_PROMPT
+    assert "任务" not in IMPLEMENTATION_SYSTEM_PROMPT
+    assert "管理员指导" not in IMPLEMENTATION_SYSTEM_PROMPT
+    user_message = build_implementation_user_message(
+        task_title="Fix parser",
+        task_summary="Preserve the original input.",
+        source_type="issue",
+        source_issue_number=7,
+        feedback="review note",
+    )
+    assert "<task_request>" in user_message
+    assert "Fix parser" in user_message
+    assert "review note" in user_message
+    assert "You are Sakura" not in user_message
 
 
 # ── Worker cancel event helpers ──────────────────────────────

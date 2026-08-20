@@ -1,4 +1,9 @@
-"""Agent Team conversational handoff context service."""
+"""Persisted context for the single implementation Agent.
+
+The database table intentionally keeps its historical role columns. New rows,
+however, are written with ``source_role='agent'`` and ``target_role='agent'``;
+old ``fullstack``/``reviewer`` rows are read as historical context only.
+"""
 
 from __future__ import annotations
 
@@ -9,52 +14,55 @@ from sqlalchemy import desc, select
 from backend.models import database as db_module
 from backend.models.agent_team_models import AgentTeamConversationContext
 from backend.services.agent_team.fullstack_expert import FullStackResult
-from backend.services.agent_team.professional_reviewer import (
-    ReviewFinding,
-    ReviewResult,
-)
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 
 
 class AgentTeamConversationContextService:
-    """Persist and build structured handoff context between Agent roles."""
+    """Store and load execution context for one implementation Agent."""
 
     def __init__(self, task_id: int | None):
         self.task_id = task_id
+
+    async def record_agent_turn(
+        self,
+        iteration_number: int,
+        result: FullStackResult,
+    ) -> None:
+        """Record one implementation run without creating a role handoff."""
+        if not self.task_id:
+            return
+        await self._record_context(
+            iteration_number=iteration_number,
+            source_role="agent",
+            target_role="agent",
+            summary=_build_agent_summary(iteration_number, result),
+            modified_files=list(result.modified_files or []),
+            unresolved_items=[],
+        )
 
     async def record_fullstack_turn(
         self,
         iteration_number: int,
         result: FullStackResult,
     ) -> None:
-        if not self.task_id:
-            return
-        summary = _build_fullstack_summary(iteration_number, result)
-        await self._record_context(
-            iteration_number=iteration_number,
-            source_role="fullstack",
-            target_role="reviewer",
-            summary=summary,
-            modified_files=result.modified_files,
-            unresolved_items=[],
-        )
+        """Compatibility alias for callers from before the role migration."""
+        await self.record_agent_turn(iteration_number, result)
 
-    async def record_reviewer_turn(
+    async def build_agent_context(
         self,
-        iteration_number: int,
-        result: ReviewResult,
-    ) -> None:
+        before_iteration: int,
+        limit: int = 6,
+    ) -> str:
+        """Build context from both new and legacy role rows.
+
+        Reading historical ``fullstack``/``reviewer`` rows keeps checkpoint and
+        context recovery useful after deployment, while the resulting text is
+        presented to the implementation Agent as ordinary user-layer context.
+        """
         if not self.task_id:
-            return
-        unresolved_items = _review_unresolved_items(result)
-        await self._record_context(
-            iteration_number=iteration_number,
-            source_role="reviewer",
-            target_role="fullstack",
-            summary=_build_reviewer_summary(iteration_number, result),
-            modified_files=[],
-            unresolved_items=unresolved_items,
-        )
+            return ""
+        contexts = await self._load_all_contexts(before_iteration, limit)
+        return _format_contexts(contexts, target_role="agent")
 
     async def build_handoff_context(
         self,
@@ -62,26 +70,18 @@ class AgentTeamConversationContextService:
         before_iteration: int,
         limit: int = 6,
     ) -> str:
+        """Compatibility loader for old target-role queries.
+
+        New callers should use :meth:`build_agent_context`. A request for the
+        new ``agent`` role reads all historical context; old role labels retain
+        their filtered read behavior but never cause a new reviewer session.
+        """
+        if target_role == "agent":
+            return await self.build_agent_context(before_iteration, limit)
         if not self.task_id:
             return ""
         contexts = await self._load_contexts(target_role, before_iteration, limit)
-        if not contexts:
-            return ""
-        parts = ["## 专家对话上下文"]
-        for item in contexts:
-            parts.append(
-                f"### 第 {item.iteration_number} 轮 {item.source_role} → {target_role}\n"
-                f"{item.summary}"
-            )
-            unresolved = _loads_list(item.unresolved_items_json)
-            if unresolved:
-                parts.append("未解决事项:\n" + "\n".join(f"- {x}" for x in unresolved))
-            modified_files = _loads_list(item.modified_files_json)
-            if modified_files:
-                parts.append(
-                    "相关文件:\n" + "\n".join(f"- `{x}`" for x in modified_files)
-                )
-        return "\n\n".join(parts)
+        return _format_contexts(contexts, target_role=target_role)
 
     async def build_role_memory(
         self,
@@ -89,21 +89,27 @@ class AgentTeamConversationContextService:
         before_iteration: int,
         limit: int = 4,
     ) -> str:
+        """Load historical role memory without writing a role handoff."""
         if not self.task_id:
             return ""
-        contexts = await self._load_role_contexts(role_name, before_iteration, limit)
+        if role_name == "agent":
+            contexts = await self._load_all_contexts(before_iteration, limit)
+        else:
+            # Legacy callers may ask for fullstack/reviewer memory while
+            # restoring old data. This is read-only compatibility behavior.
+            contexts = await self._load_role_contexts(role_name, before_iteration, limit)
         if not contexts:
             return ""
-        parts = [f"## {role_name} 历史记忆"]
+        parts = ["## Agent 历史执行上下文"]
         for item in contexts:
-            parts.append(f"### 第 {item.iteration_number} 轮\n{item.summary}")
+            parts.append(f"### 第 {item.iteration_number} 次执行\n{item.summary}")
         return "\n\n".join(parts)
 
     async def _record_context(
         self,
         iteration_number: int,
         source_role: str,
-        target_role: str,
+        target_role: str | None,
         summary: str,
         modified_files: list[str],
         unresolved_items: list[str],
@@ -123,6 +129,23 @@ class AgentTeamConversationContextService:
             )
             session.add(context)
             await session.commit()
+
+    async def _load_all_contexts(
+        self,
+        before_iteration: int,
+        limit: int,
+    ) -> list[AgentTeamConversationContext]:
+        async with db_module.async_session() as session:
+            result = await session.execute(
+                select(AgentTeamConversationContext)
+                .where(
+                    AgentTeamConversationContext.task_id == self.task_id,
+                    AgentTeamConversationContext.iteration_number < before_iteration,
+                )
+                .order_by(desc(AgentTeamConversationContext.iteration_number))
+                .limit(limit)
+            )
+            return list(reversed(result.scalars().all()))
 
     async def _load_contexts(
         self,
@@ -163,9 +186,9 @@ class AgentTeamConversationContextService:
             return list(reversed(result.scalars().all()))
 
 
-def _build_fullstack_summary(iteration_number: int, result: FullStackResult) -> str:
+def _build_agent_summary(iteration_number: int, result: FullStackResult) -> str:
     parts = [
-        f"第 {iteration_number} 轮全栈专家完成代码修改。",
+        f"第 {iteration_number} 次 Agent 执行完成。",
         f"执行结果: {'成功' if result.success else '未完全成功'}",
         f"总结: {result.summary}",
         f"风险等级: {result.risk_level}",
@@ -175,30 +198,26 @@ def _build_fullstack_summary(iteration_number: int, result: FullStackResult) -> 
     return "\n".join(parts)
 
 
-def _build_reviewer_summary(iteration_number: int, result: ReviewResult) -> str:
-    parts = [
-        f"第 {iteration_number} 轮专业审查完成。",
-        f"审查结论: {result.verdict}，分数: {result.score}/10",
-        f"总结: {result.summary}",
-    ]
-    if result.findings:
-        parts.append("发现的问题:")
-        parts.extend(_format_finding(item) for item in result.findings)
-    if result.improvement_suggestions:
-        parts.append("改进建议:")
-        parts.extend(f"- {item}" for item in result.improvement_suggestions)
-    return "\n".join(parts)
-
-
-def _review_unresolved_items(result: ReviewResult) -> list[str]:
-    items = [_format_finding(item) for item in result.findings]
-    items.extend(result.improvement_suggestions)
-    return items
-
-
-def _format_finding(finding: ReviewFinding) -> str:
-    suggestion = f" 建议: {finding.suggestion}" if finding.suggestion else ""
-    return f"- [{finding.severity}] {finding.file}: {finding.message}{suggestion}"
+def _format_contexts(
+    contexts: list[AgentTeamConversationContext],
+    target_role: str,
+) -> str:
+    if not contexts:
+        return ""
+    parts = ["## Agent 历史执行上下文"]
+    for item in contexts:
+        source_role = item.source_role or "legacy"
+        parts.append(
+            f"### 第 {item.iteration_number} 次执行 ({source_role} → {target_role})\n"
+            f"{item.summary}"
+        )
+        unresolved = _loads_list(item.unresolved_items_json)
+        if unresolved:
+            parts.append("未解决事项:\n" + "\n".join(f"- {x}" for x in unresolved))
+        modified_files = _loads_list(item.modified_files_json)
+        if modified_files:
+            parts.append("相关文件:\n" + "\n".join(f"- `{x}`" for x in modified_files))
+    return "\n\n".join(parts)
 
 
 def _loads_list(raw: str | None) -> list[str]:
@@ -211,3 +230,6 @@ def _loads_list(raw: str | None) -> list[str]:
     if not isinstance(data, list):
         return []
     return [str(item) for item in data]
+
+
+__all__ = ["AgentTeamConversationContextService"]

@@ -167,20 +167,10 @@ class AgentTeamPRReviewFeedbackService:
                     action="completed",
                 )
 
-            iteration_count = int(getattr(task, "iteration_count", 0) or 0)
-            max_iterations = int(getattr(task, "max_iterations", 0) or 0)
-            at_iteration_limit = (
-                max_iterations > 0 and iteration_count >= max_iterations
-            )
-            if outcome == AgentPRReviewOutcome.WAITING_HUMAN or at_iteration_limit:
+            if outcome == AgentPRReviewOutcome.WAITING_HUMAN:
                 task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
                 task.current_phase = AgentTeamTaskStatus.WAITING_HUMAN.value
-                if at_iteration_limit:
-                    task.error_message = (
-                        "达到 Agent 最大迭代轮数，请人工处理 Sakura PR Review 反馈。"
-                    )
-                else:
-                    task.error_message = "Sakura PR Review 结果需要人工确认。"
+                task.error_message = "Sakura PR Review 结果需要人工确认。"
                 await session.commit()
                 return AgentPRReviewFeedbackResult(
                     True,

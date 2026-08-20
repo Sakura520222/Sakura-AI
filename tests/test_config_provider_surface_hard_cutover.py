@@ -63,11 +63,17 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
         assert LEGACY_SUPPLIER_KEYS.isdisjoint(registry)
 
     assert {"ai_temperature", "ai_max_tokens"}.issubset(Settings.model_fields)
-    # temperature/max_tokens 已移除：推理参数由 /config/ai 角色绑定 reasoning_params 决定。
-    assert {"agent_team_timeout_seconds"}.issubset(Settings.model_fields)
-    assert {
+    # Agent 专属任务时限和轮数上限不再属于 Settings 或动态配置 surface。
+    removed_agent_limits = {
         "agent_team_timeout_seconds",
-    }.issubset(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
+        "agent_team_max_iterations_per_task",
+    }
+    assert removed_agent_limits.isdisjoint(Settings.model_fields)
+    assert removed_agent_limits.isdisjoint(
+        DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"]
+    )
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_LABELS)
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_RANGES)
 
 
 def test_agent_team_webui_surface_excludes_legacy_supplier_keys():

@@ -40,6 +40,9 @@ _AI_FILTER_MAX_ITEMS = 60
 _AI_FILTER_TEXT_LIMIT = 900
 # 候选池单次 GitHub 状态检查最大条目数，避免超出 API 速率限制。
 _MAX_GITHUB_STATE_CHECKS = 30
+DEFAULT_AGENT_TASK_GOAL = (
+    "Implement the requested changes described by the referenced source."
+)
 
 
 @dataclass(frozen=True)
@@ -156,14 +159,18 @@ class AgentTeamCandidateService:
             "priority": candidate.priority,
             "candidate_score": candidate.candidate_score,
             "status": AgentTeamTaskStatus.QUEUED.value,
-            "max_iterations": await self._load_max_iterations_per_task(),
             "base_branch": base_branch,
         }
         values.update(overrides or {})
+        # Candidate summaries are source findings/AI analysis, not an
+        # administrator-authored goal.  Keep the editable override as the
+        # goal when supplied; otherwise use a neutral goal and let runtime
+        # prompt assembly place the source record in ``reference_context``.
+        if not str((overrides or {}).get("summary") or "").strip():
+            values["summary"] = DEFAULT_AGENT_TASK_GOAL
         task = AgentTeamTask(
             **values,
             started_by=started_by,
-            ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
         await db.commit()
@@ -269,10 +276,11 @@ class AgentTeamCandidateService:
             "repo_name": repo_name,
             "title": title,
             "summary": summary,
+            "task_goal": DEFAULT_AGENT_TASK_GOAL,
+            "issue_body": getattr(issue, "body", "") or "",
             "priority": priority,
             "candidate_score": candidate_score,
             "status": AgentTeamTaskStatus.QUEUED.value,
-            "max_iterations": await self._load_max_iterations_per_task(),
         }
 
     async def create_task_from_manual_issue(
@@ -289,12 +297,16 @@ class AgentTeamCandidateService:
         values = await self.build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
+        draft_goal = values.pop("task_goal", None)
+        values.pop("issue_body", None)
+        values.pop("reference_context", None)
         values["base_branch"] = base_branch
         values.update(overrides or {})
+        if not str((overrides or {}).get("summary") or "").strip():
+            values["summary"] = draft_goal or DEFAULT_AGENT_TASK_GOAL
         task = AgentTeamTask(
             **values,
             started_by=started_by,
-            ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
         await db.commit()
@@ -468,7 +480,6 @@ class AgentTeamCandidateService:
             "priority": priority,
             "candidate_score": _PRIORITY_SCORE.get(priority, 30),
             "status": AgentTeamTaskStatus.QUEUED.value,
-            "max_iterations": await self._load_max_iterations_per_task(),
         }
 
     async def create_task_from_pr_review(
@@ -496,20 +507,11 @@ class AgentTeamCandidateService:
             **values,
             started_by=started_by,
             pr_head_sha=head_sha,
-            ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
         await db.commit()
         await db.refresh(task)
         return task
-
-    async def _load_max_iterations_per_task(self) -> int:
-        """读取 Agent 单任务最大迭代轮数"""
-        from backend.services.agent_team.ai_client import (
-            resolve_agent_team_max_iterations,
-        )
-
-        return await resolve_agent_team_max_iterations()
 
     async def _collect_issue_candidates(
         self, db: AsyncSession, allowlist: set[str], limit: int
@@ -680,7 +682,6 @@ class AgentTeamCandidateService:
                 messages=messages,
                 model="",
                 temperature=0.1,
-                timeout=config.timeout_seconds,
                 role="agent_team",
             )
         except AIError as exc:

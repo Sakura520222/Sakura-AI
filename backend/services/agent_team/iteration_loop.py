@@ -1,10 +1,9 @@
-"""Agent 专家团队 - 迭代反馈循环服务
+"""Single implementation-Agent execution service.
 
-管理全栈专家 → 专业审查的迭代循环：
-1. 全栈专家通过工具调用自主完成代码修改
-2. 专业审查通过工具调用自主审查代码
-3. 审查未通过时，将反馈返回给全栈专家继续修改
-4. 最多迭代 max_iterations 轮
+The historical implementation ran a fullstack Agent followed by an internal
+professional reviewer.  Agent Team now executes one implementation Agent per
+worker run.  External Sakura PR Review remains the feedback boundary; its
+feedback schedules another run of the same implementation Agent.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 from loguru import logger
 
@@ -34,9 +33,9 @@ from backend.services.agent_team.fullstack_expert import (
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
-from backend.services.agent_team.professional_reviewer import (
-    ProfessionalReviewAgent,
-    ReviewResult,
+from backend.services.agent_team.prompt_config import (
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    build_implementation_user_message,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -44,13 +43,18 @@ from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 @dataclass
 class IterationOutcome:
-    """迭代循环最终结果。"""
+    """Result of one implementation Agent execution.
+
+    ``fullstack_result`` and ``review_result`` remain as compatibility fields
+    for the existing persistence/API shape.  New runs populate only
+    ``fullstack_result``; no internal review result is produced.
+    """
 
     success: bool
     reason: str
     iterations: int
     fullstack_result: FullStackResult | None = None
-    review_result: ReviewResult | None = None
+    review_result: Any | None = None
     modified_files: list[str] = field(default_factory=list)
     total_tool_calls: int = 0
     prompt_tokens: int = 0
@@ -58,7 +62,7 @@ class IterationOutcome:
 
 
 class IterationLoopService:
-    """迭代反馈循环服务。"""
+    """Run one implementation Agent and persist its checkpoint."""
 
     def __init__(
         self,
@@ -80,6 +84,7 @@ class IterationLoopService:
         self.resume_cursor = resume_cursor
         self.resume_index = resume_index
         self.conversation_context = AgentTeamConversationContextService(task_id)
+        self._active_agent: FullStackExpertAgent | None = None
 
     async def run(
         self,
@@ -87,293 +92,357 @@ class IterationLoopService:
         task_summary: str,
         source_type: str = "",
         source_issue_number: int | None = None,
-        max_iterations: int = 3,
         sakura_memory: str = "",
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
+        reference_context: str = "",
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
         cancel_check: Callable[[], bool] | None = None,
         initial_feedback: str = "",
         iteration_offset: int = 0,
-        skip_internal_review: bool = False,
         cancel_event: asyncio.Event | None = None,
+        # Kept as a source-compatible no-op for callers from before the
+        # migration.  Product execution no longer reads or enforces it.
+        max_iterations: int | None = None,
+        skip_internal_review: bool = False,
     ) -> IterationOutcome:
-        """运行迭代循环。"""
-        total_tool_calls = 0
+        """Execute exactly one implementation Agent.
+
+        ``max_iterations`` and ``skip_internal_review`` are accepted only so
+        old integrations can deploy without a synchronized API migration. They
+        are deliberately ignored: the worker controls lifecycle through
+        cancellation, natural completion, errors, and the external PR review
+        state machine.
+        """
+        del github_repo, sakura_ref, max_iterations, skip_internal_review
+
         tracker = TokenTracker()
-        feedback = initial_feedback
         resume_cursor = self.resume_cursor
-        start_iteration = resume_cursor.iteration_number if resume_cursor else 1
-        total_max = max_iterations + iteration_offset
+        run_number = self._run_number(resume_cursor, iteration_offset)
 
-        for iteration in range(start_iteration, max_iterations + 1):
-            if cancel_check and cancel_check():
-                return IterationOutcome(
-                    success=False,
-                    reason="任务已取消",
-                    iterations=iteration - 1,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
-                )
-            display_iteration = iteration + iteration_offset
-            logger.info(
-                "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
-                display_iteration,
-                total_max,
-                task_title,
+        if cancel_check and cancel_check():
+            return IterationOutcome(
+                success=False,
+                reason="任务已取消",
+                iterations=0,
             )
 
-            fullstack_handoff_context = (
-                await self.conversation_context.build_handoff_context(
-                    "fullstack", iteration
-                )
+        try:
+            execution_context = await self.conversation_context.build_agent_context(
+                run_number
             )
-            fullstack_role_memory = await self.conversation_context.build_role_memory(
-                "fullstack", iteration
-            )
-            reviewer_handoff_context = ""
-            reviewer_role_memory = ""
+        except Exception as exc:
+            # Context is an optional historical aid. A database/context read
+            # failure must not prevent the implementation Agent from running.
+            logger.warning("读取 Agent 历史上下文失败: {}", exc)
+            execution_context = ""
 
-            # 消费待处理的管理员指导，合入 feedback 跨迭代传递
-            iteration_guidance = await self._consume_pending_prompts()
-            if iteration_guidance and feedback:
-                feedback = f"{feedback}\n\n{iteration_guidance}"
-            elif iteration_guidance:
-                feedback = iteration_guidance
+        initial_user_message = build_implementation_user_message(
+            task_title=task_title,
+            task_summary=task_summary,
+            source_type=source_type,
+            source_issue_number=source_issue_number,
+            sakura_memory=sakura_memory,
+            skills_summary=skills_summary,
+            reference_context=reference_context,
+            feedback=initial_feedback,
+            handoff_context=execution_context,
+            role_memory_context="",
+        )
 
-            # ── 全栈专家执行 ──
-            if resume_cursor and resume_cursor.role_name == "reviewer":
-                fs_result = await self._restore_fullstack_result(iteration)
-            elif (
-                resume_cursor
-                and resume_cursor.role_name == "fullstack"
-                and resume_cursor.status == "completed"
-            ):
-                fs_result = await self._restore_fullstack_result(iteration)
-                resume_cursor = None
-            else:
-                expert = await self._create_agent(
-                    "fullstack", iteration, resume_cursor, FullStackExpertAgent
-                )
-                fs_result = await expert.execute(
-                    task_title=task_title,
-                    task_summary=task_summary,
-                    source_type=source_type,
-                    source_issue_number=source_issue_number,
-                    sakura_memory=sakura_memory,
-                    skills_summary=skills_summary,
-                    skills_context=skills_context,
-                    feedback=feedback,
-                    handoff_context=fullstack_handoff_context,
-                    role_memory_context=fullstack_role_memory,
-                    iteration=iteration,
-                    max_iterations=max_iterations,
-                    cancel_check=cancel_check,
-                    guidance_callback=self._consume_pending_prompts,
-                    cancel_event=cancel_event,
-                )
-                total_tool_calls += fs_result.tool_calls_count
-                tracker.add_tokens(fs_result.prompt_tokens, fs_result.completion_tokens)
-                await self._complete_session(
-                    getattr(expert, "session_id", None), fs_result.tool_calls_count
-                )
-                if self.checkpoint and getattr(expert, "session_id", None):
-                    try:
-                        await self.checkpoint.save_session_result(
-                            expert.session_id,
-                            {
-                                "success": fs_result.success,
-                                "summary": fs_result.summary,
-                                "modified_files": fs_result.modified_files,
-                                "risk_level": fs_result.risk_level,
-                                "test_result": fs_result.test_result,
-                                "tool_calls_count": fs_result.tool_calls_count,
-                                "error": fs_result.error,
-                            },
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "保存 fullstack 结构化结果失败，将使用消息解析回退: {}", exc
-                        )
-                if resume_cursor and resume_cursor.role_name == "fullstack":
-                    resume_cursor = None
-
-            can_review_partial_changes = (
-                fs_result.error == "max_rounds_reached_with_changes"
-            )
-            if not fs_result.success and not can_review_partial_changes:
-                return IterationOutcome(
-                    success=False,
-                    reason=f"全栈专家执行失败: {fs_result.error or fs_result.summary}",
-                    iterations=iteration,
-                    fullstack_result=fs_result,
-                    modified_files=fs_result.modified_files,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
-                )
-
-            if not fs_result.success:
-                logger.info(
-                    "全栈专家达到工具轮次上限但已修改 {} 个文件，继续进入专业审查: {}",
-                    len(fs_result.modified_files),
-                    fs_result.error or fs_result.summary,
-                )
-
-            if not fs_result.modified_files:
-                return IterationOutcome(
-                    success=False,
-                    reason="全栈专家未修改任何文件",
-                    iterations=iteration,
-                    fullstack_result=fs_result,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
-                )
-
-            logger.info(
-                "全栈专家完成: {} 个文件被修改, 总结: {}",
-                len(fs_result.modified_files),
-                fs_result.summary[:100],
-            )
-            await self.conversation_context.record_fullstack_turn(iteration, fs_result)
-
-            # 闭环迭代时跳过内部审查，直接交给外部 Sakura PR Review
-            if skip_internal_review:
-                logger.info("闭环迭代模式：跳过内部审查，直接交给外部 Sakura PR Review")
-                return IterationOutcome(
-                    success=True,
-                    reason="闭环迭代：跳过内部审查",
-                    iterations=iteration,
-                    fullstack_result=fs_result,
-                    review_result=None,
-                    modified_files=fs_result.modified_files,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
-                )
-
-            reviewer_handoff_context = (
-                await self.conversation_context.build_handoff_context(
-                    "reviewer", iteration + 1
-                )
-            )
-            reviewer_role_memory = await self.conversation_context.build_role_memory(
-                "reviewer", iteration
-            )
-
-            # ── 专业审查 ──
-            if cancel_check and cancel_check():
-                return IterationOutcome(
-                    success=False,
-                    reason="任务已取消",
-                    iterations=iteration,
-                    fullstack_result=fs_result,
-                    modified_files=fs_result.modified_files,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
-                )
-            diff_summary = ""
-            try:
-                diff_summary = await self.git_workspace_service.get_diff_summary(
-                    self.workspace
-                )
-            except Exception:
-                logger.warning("获取 diff summary 失败，审查员将不携带 diff 摘要")
-
-            reviewer = await self._create_agent(
-                "reviewer", iteration, resume_cursor, ProfessionalReviewAgent
-            )
-            rev_result = await reviewer.review(
+        agent = await self._create_agent(
+            "agent",
+            run_number,
+            resume_cursor,
+            FullStackExpertAgent,
+            initial_user_message=(
+                initial_user_message
+                if resume_cursor and resume_cursor.role_name == "fullstack"
+                else None
+            ),
+        )
+        self._active_agent = agent
+        try:
+            result = await agent.execute(
                 task_title=task_title,
                 task_summary=task_summary,
-                modified_files=fs_result.modified_files,
-                fullstack_summary=fs_result.summary,
-                diff_summary=diff_summary,
-                handoff_context=reviewer_handoff_context,
-                role_memory_context=reviewer_role_memory,
+                source_type=source_type,
+                source_issue_number=source_issue_number,
+                sakura_memory=sakura_memory,
                 skills_summary=skills_summary,
                 skills_context=skills_context,
-                github_repo=github_repo,
-                sakura_ref=sakura_ref,
-                user_guidance="",
+                reference_context=reference_context,
+                feedback=initial_feedback,
+                handoff_context=execution_context,
+                role_memory_context="",
+                iteration=run_number,
                 cancel_check=cancel_check,
                 guidance_callback=self._consume_pending_prompts,
+                guidance_ack_callback=self._ack_pending_prompts,
                 cancel_event=cancel_event,
             )
-            total_tool_calls += rev_result.tool_calls_count
-            tracker.add_tokens(rev_result.prompt_tokens, rev_result.completion_tokens)
-            await self._complete_session(
-                getattr(reviewer, "session_id", None), rev_result.tool_calls_count
-            )
-            if resume_cursor and resume_cursor.role_name == "reviewer":
-                resume_cursor = None
+        finally:
+            self._active_agent = None
 
-            logger.info(
-                "审查结果: verdict={}, score={}, findings={}",
-                rev_result.verdict,
-                rev_result.score,
-                len(rev_result.findings),
-            )
-            await self.conversation_context.record_reviewer_turn(iteration, rev_result)
-
-            # 每轮迭代汇总 token 使用
-            logger.info(
-                "📊 Agent 第 {}/{} 轮完成 | 累计 tokens: {}+{}, api_calls={}",
-                iteration,
-                max_iterations,
-                tracker.prompt_tokens,
-                tracker.completion_tokens,
-                tracker.api_call_count,
-            )
-
-            if rev_result.passed:
-                return IterationOutcome(
-                    success=True,
-                    reason=f"审查通过 (第 {iteration} 轮, 分数 {rev_result.score})",
-                    iterations=iteration,
-                    fullstack_result=fs_result,
-                    review_result=rev_result,
-                    modified_files=fs_result.modified_files,
-                    total_tool_calls=total_tool_calls,
-                    prompt_tokens=tracker.prompt_tokens,
-                    completion_tokens=tracker.completion_tokens,
+        tracker.add_tokens(result.prompt_tokens, result.completion_tokens)
+        session_id = getattr(agent, "session_id", None)
+        await self._complete_session(session_id, result.tool_calls_count)
+        if self.checkpoint and session_id:
+            try:
+                await self.checkpoint.save_session_result(
+                    session_id,
+                    {
+                        "success": result.success,
+                        "summary": result.summary,
+                        "modified_files": result.modified_files,
+                        "risk_level": result.risk_level,
+                        "test_result": result.test_result,
+                        "tool_calls_count": result.tool_calls_count,
+                        "error": result.error,
+                    },
                 )
+            except Exception as exc:
+                logger.warning("保存 Agent 结构化结果失败: {}", exc)
 
-            # ── 未通过：准备反馈 ──
-            if iteration < max_iterations:
-                feedback = self._build_feedback(rev_result, iteration=iteration)
-                logger.info("准备第 {} 轮迭代反馈", iteration + 1)
-            else:
-                # 最后一轮也提交（即使未通过），让外部决定
-                logger.info("达到最大迭代次数 {}，以当前状态提交", max_iterations)
+        if cancel_check and cancel_check():
+            return IterationOutcome(
+                success=False,
+                reason="任务已取消",
+                iterations=1,
+                fullstack_result=result,
+                modified_files=list(result.modified_files or []),
+                total_tool_calls=result.tool_calls_count,
+                prompt_tokens=tracker.prompt_tokens,
+                completion_tokens=tracker.completion_tokens,
+            )
+
+        if not result.success:
+            return IterationOutcome(
+                success=False,
+                reason=f"Agent 执行失败: {result.error or result.summary}",
+                iterations=1,
+                fullstack_result=result,
+                modified_files=list(result.modified_files or []),
+                total_tool_calls=result.tool_calls_count,
+                prompt_tokens=tracker.prompt_tokens,
+                completion_tokens=tracker.completion_tokens,
+            )
+
+        if not result.modified_files:
+            return IterationOutcome(
+                success=False,
+                reason="Agent 未修改任何文件",
+                iterations=1,
+                fullstack_result=result,
+                modified_files=[],
+                total_tool_calls=result.tool_calls_count,
+                prompt_tokens=tracker.prompt_tokens,
+                completion_tokens=tracker.completion_tokens,
+            )
+
+        try:
+            await self.conversation_context.record_agent_turn(run_number, result)
+        except Exception as exc:
+            logger.warning("保存 Agent 执行上下文失败: {}", exc)
 
         return IterationOutcome(
-            success=rev_result.passed if rev_result else False,
-            reason=f"达到最大迭代次数 {max_iterations}"
-            + (f"，最终分数 {rev_result.score}" if rev_result else ""),
-            iterations=max_iterations,
-            fullstack_result=fs_result,
-            review_result=rev_result,
-            modified_files=fs_result.modified_files if fs_result else [],
-            total_tool_calls=total_tool_calls,
+            success=True,
+            reason="Agent 执行完成",
+            iterations=1,
+            fullstack_result=result,
+            modified_files=list(result.modified_files),
+            total_tool_calls=result.tool_calls_count,
             prompt_tokens=tracker.prompt_tokens,
             completion_tokens=tracker.completion_tokens,
         )
 
-    async def _restore_fullstack_result(self, iteration: int) -> FullStackResult:
+    @staticmethod
+    def _run_number(
+        resume_cursor: ResumeCursor | None,
+        iteration_offset: int,
+    ) -> int:
+        if resume_cursor and resume_cursor.iteration_number > 0:
+            return resume_cursor.iteration_number
+        return max(1, int(iteration_offset or 0) + 1)
+
+    async def _create_agent(
+        self,
+        role_name: str,
+        iteration: int,
+        resume_cursor: ResumeCursor | None,
+        agent_class: type[FullStackExpertAgent] = FullStackExpertAgent,
+        initial_user_message: str | None = None,
+    ) -> FullStackExpertAgent:
+        """Create/resume the single Agent session.
+
+        ``fullstack`` and ``reviewer`` cursors are historical input only. They
+        never get resumed as new role sessions; a new ``role_name='agent'``
+        session is created. Fullstack history can be copied into that session;
+        reviewer history is intentionally not treated as implementation state.
+        """
+        initial_messages: list[dict[str, Any]] | None = None
+        session_id: int | None = None
+        can_resume = (
+            self.checkpoint
+            and resume_cursor
+            and resume_cursor.role_name == "agent"
+            and resume_cursor.iteration_number == iteration
+        )
+        if can_resume:
+            session_id = resume_cursor.session_id
+            initial_messages = await self.checkpoint.load_messages(session_id)
+        elif self.checkpoint:
+            if resume_cursor and resume_cursor.role_name == "fullstack":
+                try:
+                    initial_messages = await self.checkpoint.load_messages(
+                        resume_cursor.session_id
+                    )
+                except Exception as exc:
+                    logger.warning("读取历史 implementation checkpoint 失败: {}", exc)
+                    initial_messages = None
+            agent_session = await self.checkpoint.create_session(
+                iteration,
+                "agent",
+                resume_index=self.resume_index,
+            )
+            session_id = agent_session.id
+            if initial_messages:
+                initial_messages = _normalize_legacy_messages(
+                    initial_messages,
+                    initial_user_message=initial_user_message,
+                )
+                for message in initial_messages:
+                    await self.checkpoint.append_message(session_id, message)
         if not self.checkpoint:
-            raise RuntimeError("缺少 checkpoint，无法恢复 fullstack 结果")
+            # Keep the simple two-argument constructor used by local fakes and
+            # by integrations that run without persistence.
+            return agent_class(self.workspace, self.workspace_service)
+        return agent_class(
+            self.workspace,
+            self.workspace_service,
+            checkpoint=self.checkpoint,
+            session_id=session_id,
+            initial_messages=initial_messages,
+        )
+
+    async def _complete_session(
+        self,
+        session_id: int | None,
+        tool_calls_count: int,
+    ) -> None:
+        if self.checkpoint and session_id:
+            await self.checkpoint.complete_session(session_id, tool_calls_count)
+
+    async def _consume_pending_prompts(self) -> PendingGuidance | str:
+        """Load the next queued guidance item for model admission.
+
+        The implementation Agent persists this item as a user message through
+        ``append_guidance_message``. That checkpoint operation consumes the
+        queue rows in the same transaction; the fallback callback acknowledges
+        them only after a normal message append succeeds.
+        """
+        if not self.task_id:
+            return ""
+
+        try:
+            from sqlalchemy import select
+
+            async with db_module.async_session() as session:
+                result = await session.execute(
+                    select(AgentTeamUserPrompt)
+                    .where(
+                        AgentTeamUserPrompt.task_id == self.task_id,
+                        AgentTeamUserPrompt.status == "pending",
+                    )
+                    .order_by(
+                        AgentTeamUserPrompt.created_at,
+                        AgentTeamUserPrompt.id,
+                    )
+                )
+                prompts = [
+                    (int(prompt.id), str(prompt.content))
+                    for prompt in result.scalars().all()
+                ]
+        except Exception as exc:
+            logger.warning("读取 Agent pending guidance 失败 (task_id={}): {}", self.task_id, exc)
+            # Do not fail open: the implementation Agent must not make the
+            # next model call while queued human guidance cannot be read.
+            raise RuntimeError("读取 Agent pending guidance 失败") from exc
+
+        if not prompts:
+            return ""
+
+        # If a worker crashed after the checkpoint transaction but before the
+        # queue state was observed, the stable IDs in restored messages make a
+        # retry idempotent. Acknowledging those rows is safe because the append
+        # already succeeded.
+        active_agent = self._active_agent
+        existing_ids = {
+            prompt_id
+            for message in getattr(active_agent, "messages", [])
+            for prompt_id in _guidance_ids_from_message(message)
+        }
+        already_admitted = [
+            prompt_id for prompt_id, _ in prompts if prompt_id in existing_ids
+        ]
+        if already_admitted:
+            await self._ack_pending_prompts(tuple(already_admitted))
+            prompts = [
+                item for item in prompts if item[0] not in set(already_admitted)
+            ]
+        if not prompts:
+            return ""
+        # Keep every queued item as its own user message.  A separator or an
+        # audit prefix would change the submitted guidance body, so stable IDs
+        # travel only in message metadata and the queue/event audit trail.
+        prompt_ids = tuple(prompt_id for prompt_id, _ in prompts)
+        return PendingGuidance(
+            prompts[0][1],
+            prompt_ids,
+            items=tuple(prompts),
+        )
+
+    async def _ack_pending_prompts(self, prompt_ids: tuple[int, ...] | list[int]) -> None:
+        """Mark guidance consumed after its user message is checkpointed."""
+        if not self.task_id or not prompt_ids:
+            return
+        try:
+            from sqlalchemy import select
+
+            async with db_module.async_session() as session:
+                result = await session.execute(
+                    select(AgentTeamUserPrompt).where(
+                        AgentTeamUserPrompt.task_id == self.task_id,
+                        AgentTeamUserPrompt.id.in_(tuple(int(item) for item in prompt_ids)),
+                        AgentTeamUserPrompt.status == "pending",
+                    )
+                )
+                for prompt in result.scalars().all():
+                    prompt.status = "consumed"
+                    prompt.consumed_at = utc_now()
+                await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "标记 Agent guidance consumed 失败 (task_id={}): {}",
+                self.task_id,
+                exc,
+            )
+            # The message may be retried only while the queue row remains
+            # pending.  Surface the failure so the caller blocks the model
+            # request instead of silently proceeding without durable audit.
+            raise RuntimeError("标记 Agent guidance consumed 失败") from exc
+
+    async def _restore_fullstack_result(self, iteration: int) -> FullStackResult:
+        """Read a legacy fullstack result for checkpoint compatibility."""
+        if not self.checkpoint:
+            raise RuntimeError("缺少 checkpoint，无法恢复历史 Agent 结果")
         session_id = await self.checkpoint.get_latest_completed_session(
             iteration, "fullstack"
         )
         if session_id is None:
-            raise RuntimeError("缺少已完成的 fullstack session，无法续跑 reviewer")
+            raise RuntimeError("缺少历史 implementation session")
 
-        # Prefer structured result payload
         payload = await self.checkpoint.load_session_result(session_id)
         if payload and isinstance(payload, dict):
             return FullStackResult(
@@ -385,12 +454,11 @@ class IterationLoopService:
                 tool_calls_count=payload.get("tool_calls_count", 0),
                 error=payload.get("error", ""),
             )
-
-        # Fallback: legacy message-based recovery for sessions before migration
         return await self._restore_fullstack_result_from_messages(session_id)
 
     async def _restore_fullstack_result_from_messages(
-        self, session_id: int
+        self,
+        session_id: int,
     ) -> FullStackResult:
         messages = await self.checkpoint.load_messages(session_id)
         for message in reversed(messages):
@@ -414,130 +482,89 @@ class IterationLoopService:
                 risk_level=payload.get("risk_level", "medium"),
                 test_result=payload.get("test_result", ""),
             )
-        raise RuntimeError("无法从 fullstack messages 中恢复完成结果")
+        raise RuntimeError("无法从历史 Agent messages 中恢复完成结果")
 
-    async def _create_agent(
-        self,
-        role_name: str,
-        iteration: int,
-        resume_cursor: ResumeCursor | None,
-        agent_class: type[FullStackExpertAgent | ProfessionalReviewAgent],
-    ):
-        initial_messages = None
-        session_id = None
-        if (
-            self.checkpoint
-            and resume_cursor
-            and resume_cursor.role_name == role_name
-            and resume_cursor.iteration_number == iteration
-        ):
-            session_id = resume_cursor.session_id
-            initial_messages = await self.checkpoint.load_messages(session_id)
-        elif self.checkpoint:
-            agent_session = await self.checkpoint.create_session(
-                iteration,
-                role_name,
-                resume_index=self.resume_index,
-            )
-            session_id = agent_session.id
-        if not self.checkpoint:
-            return agent_class(self.workspace, self.workspace_service)
-        return agent_class(
-            self.workspace,
-            self.workspace_service,
-            checkpoint=self.checkpoint,
-            session_id=session_id,
-            initial_messages=initial_messages,
+
+class PendingGuidance(str):
+    """String-compatible guidance item carrying a stable queue ID."""
+
+    def __new__(
+        cls,
+        content: str,
+        prompt_ids: tuple[int, ...],
+        *,
+        items: tuple[tuple[int, str], ...] | None = None,
+    ) -> Self:
+        value = super().__new__(cls, content)
+        value.prompt_ids = tuple(prompt_ids)
+        value.items = tuple(
+            items
+            or ((value.prompt_ids[0], content),)
+            if value.prompt_ids
+            else ()
         )
+        return value
 
-    async def _complete_session(
-        self, session_id: int | None, tool_calls_count: int
-    ) -> None:
-        if self.checkpoint and session_id:
-            await self.checkpoint.complete_session(session_id, tool_calls_count)
 
-    def _build_feedback(self, review: ReviewResult, iteration: int = 0) -> str:
-        """将审查结果转为结构化反馈文本。"""
-        parts = [
-            f"## 审查反馈 - 迭代 {iteration} (分数: {review.score}/10)\n",
-            f"### 审查总结\n{review.summary}\n",
-        ]
+def _guidance_ids_from_message(message: Any) -> tuple[int, ...]:
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return ()
+    metadata = message.get("metadata")
+    raw_ids = message.get("guidance_ids")
+    if raw_ids is None and isinstance(metadata, dict):
+        raw_ids = metadata.get("guidance_ids")
+    if isinstance(raw_ids, (list, tuple)):
+        parsed: list[int] = []
+        for raw_id in raw_ids:
+            try:
+                parsed.append(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+        if parsed:
+            return tuple(parsed)
+    content = str(message.get("content") or "")
+    prefix = "[human_guidance:"
+    if not content.startswith(prefix):
+        return ()
+    try:
+        return (int(content[len(prefix) :].split("]", 1)[0]),)
+    except (TypeError, ValueError):
+        return ()
 
-        # 按严重性分组
-        blocking = [f for f in review.findings if f.severity in ("critical", "major")]
-        optional = [f for f in review.findings if f.severity in ("minor", "suggestion")]
 
-        if blocking:
-            parts.append("### 必须修复（阻塞）")
-            # 按文件分组
-            by_file: dict[str, list[Any]] = {}
-            for f in blocking:
-                by_file.setdefault(f.file, []).append(f)
-            for file_path, items in sorted(by_file.items()):
-                parts.append(f"\n**{file_path}**")
-                for item in items:
-                    line = f"- [{item.severity}] {item.message}"
-                    if item.suggestion:
-                        line += f"\n  修复建议: {item.suggestion}"
-                    parts.append(line)
-            parts.append("")
+def _normalize_legacy_messages(
+    messages: list[dict[str, Any]],
+    *,
+    initial_user_message: str | None = None,
+) -> list[dict[str, Any]]:
+    """Copy legacy fullstack history under the current static system policy."""
+    normalized = [dict(message) for message in messages]
+    for message in normalized:
+        if message.get("role") == "system":
+            message["content"] = IMPLEMENTATION_SYSTEM_PROMPT
+            break
+    else:
+        normalized.insert(0, {"role": "system", "content": IMPLEMENTATION_SYSTEM_PROMPT})
 
-        if optional:
-            parts.append("### 可选改进")
-            for f in optional:
-                line = f"- [{f.severity}] {f.file}: {f.message}"
-                if f.suggestion:
-                    line += f"\n  建议: {f.suggestion}"
-                parts.append(line)
-            parts.append("")
-
-        if review.improvement_suggestions:
-            parts.append("### 改进建议")
-            for s in review.improvement_suggestions:
-                parts.append(f"- {s}")
-            parts.append("")
-
-        parts.append("### 重要提示")
-        parts.append("- 仅解决上述问题，不要重新设计未标记的区域")
-        parts.append("- 不要撤销之前的修复")
-        parts.append("- 修复后运行代码检查和测试验证")
-        return "\n".join(parts)
-
-    async def _consume_pending_prompts(self) -> str:
-        """消费 pending 状态的管理员 Prompt，返回格式化指导文本。"""
-        if not self.task_id:
-            return ""
-        try:
-            from sqlalchemy import select
-
-            async with db_module.async_session() as session:
-                result = await session.execute(
-                    select(AgentTeamUserPrompt)
-                    .where(
-                        AgentTeamUserPrompt.task_id == self.task_id,
-                        AgentTeamUserPrompt.status == "pending",
-                    )
-                    .order_by(AgentTeamUserPrompt.created_at)
-                )
-                prompts = result.scalars().all()
-                if not prompts:
-                    return ""
-
-                parts = []
-                for prompt in prompts:
-                    prompt.status = "consumed"
-                    prompt.consumed_at = utc_now()
-                    parts.append(prompt.content)
-                await session.commit()
-
-            logger.info(
-                "已消费 {} 条管理员 Prompt (task_id={})",
-                len(parts),
-                self.task_id,
+    if initial_user_message is not None:
+        for index, message in enumerate(normalized):
+            if message.get("role") != "user":
+                continue
+            # A legacy guidance message is real user input and must remain
+            # byte-for-byte unchanged. Replace only the old first-run user
+            # message, which has no guidance metadata.
+            if not _guidance_ids_from_message(message):
+                normalized[index] = {
+                    "role": "user",
+                    "content": initial_user_message,
+                }
+                break
+        else:
+            normalized.insert(
+                1,
+                {"role": "user", "content": initial_user_message},
             )
-            return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
-                f"- {p}" for p in parts
-            )
-        except Exception as exc:
-            logger.warning("消费管理员 Prompt 失败 (task_id={}): {}", self.task_id, exc)
-            return ""
+    return normalized
+
+
+__all__ = ["IterationLoopService", "IterationOutcome", "PendingGuidance"]

@@ -22,8 +22,7 @@ from backend.services.agent_team.tools.file_utils import (
 from backend.services.agent_team.tools.grep_tool import MAX_GREP_KEYWORD_LENGTH
 from backend.services.agent_team.tools.registry import (
     create_executor,
-    get_fullstack_tools,
-    get_reviewer_tools,
+    get_agent_tools,
     get_tool_definitions,
     tool_registry,
 )
@@ -192,8 +191,8 @@ def test_unified_diff():
 # ── Registry ──────────────────────────────────────────
 
 
-def test_registry_has_all_fullstack_tools():
-    tools = get_fullstack_tools()
+def test_registry_has_all_agent_tools():
+    tools = get_agent_tools()
     names = {t.name for t in tools}
     expected = {
         "read_file",
@@ -216,18 +215,19 @@ def test_registry_has_all_fullstack_tools():
     assert expected == names
 
 
-def test_registry_has_all_reviewer_tools():
-    tools = get_reviewer_tools()
+def test_registry_has_no_reviewer_split_or_submit_review_tool():
+    tools = get_agent_tools()
     names = {t.name for t in tools}
     assert "use_skill" in names
-    assert "submit_review" in names
-    assert "write_file" not in names
-    assert "edit_file" not in names
+    assert "finish_task" in names
+    assert "write_file" in names
+    assert "edit_file" in names
+    assert "submit_review" not in names
 
 
 def test_get_tool_definitions():
-    schemas = get_tool_definitions("fullstack")
-    assert len(schemas) == len(get_fullstack_tools())
+    schemas = get_tool_definitions("agent")
+    assert len(schemas) == len(get_agent_tools())
     names = {s["function"]["name"] for s in schemas}
     assert "edit_file" in names
     assert "replace_lines" in names
@@ -235,7 +235,7 @@ def test_get_tool_definitions():
 
 
 def test_get_tool_definitions_zai_requires_all_properties():
-    schemas = get_tool_definitions("fullstack", provider="zai")
+    schemas = get_tool_definitions("agent", provider="zai")
 
     for schema in schemas:
         params = schema["function"]["parameters"]
@@ -247,7 +247,8 @@ def test_get_tool_definitions_zai_requires_all_properties():
 
 def test_tool_registry_by_name():
     assert "edit_file" in tool_registry
-    assert "submit_review" in tool_registry
+    assert "finish_task" in tool_registry
+    assert "submit_review" not in tool_registry
 
 
 # ── ReadTool ──────────────────────────────────────────
@@ -431,16 +432,16 @@ async def test_finish_task(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_submit_review(tmp_path):
+async def test_agent_finish_task_is_terminal(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
-    executor = create_executor("reviewer")
+    executor = create_executor("agent")
 
     result = await executor.execute_raw(
-        "submit_review", {"verdict": "pass", "score": 8, "summary": "Good"}, ctx
+        "finish_task", {"summary": "Good", "risk_level": "low"}, ctx
     )
     assert result.success
     assert result.is_terminal
-    assert result.output["verdict"] == "pass"
+    assert result.output["summary"] == "Good"
 
 
 @pytest.mark.asyncio

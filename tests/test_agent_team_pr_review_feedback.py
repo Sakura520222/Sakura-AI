@@ -445,7 +445,7 @@ async def test_stale_review_head_sha_is_ignored(memory_bridge):
 
 
 @pytest.mark.asyncio
-async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(
+async def test_blocking_review_can_schedule_after_legacy_iteration_limit(
     memory_bridge,
 ):
     task = _task(iteration_count=3, max_iterations=3)
@@ -468,12 +468,12 @@ async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(
 
     assert result.handled is True
     assert result.task_id == task.id
-    assert result.action == "waiting_human"
-    assert task.status == AgentTeamTaskStatus.WAITING_HUMAN.value
-    assert task.current_phase == AgentTeamTaskStatus.WAITING_HUMAN.value
-    assert "达到 Agent 最大迭代轮数" in task.error_message
+    assert result.action == "scheduled_iteration"
+    assert task.status == AgentTeamTaskStatus.ITERATING.value
+    assert task.current_phase == AgentTeamTaskStatus.ITERATING.value
+    assert task.error_message is None
     assert memory_bridge.commit_count == 1
-    assert memory_bridge.scheduled == []
+    assert memory_bridge.scheduled == [(task.id, review.id)]
     assert len(memory_bridge.feedback) == 1
     assert "Critical issue still blocks the PR." in memory_bridge.feedback[0].content
 
