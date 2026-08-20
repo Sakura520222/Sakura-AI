@@ -192,10 +192,10 @@ def _effective_reasoning_snapshot(
     )
 
 
-def _messages_from_legacy(
+def messages_from_legacy(
     messages: list[dict[str, Any]],
 ) -> list[UnifiedMessage]:
-    """旧版 dict 消息 → UnifiedMessage（向后兼容门面调用）/ Legacy dict → Unified."""
+    """旧版 dict 消息 → UnifiedMessage（公共转换，供 agent_team 等复用）/ Legacy dict → Unified."""
     result: list[UnifiedMessage] = []
     for msg in messages:
         role = msg.get("role", "user")
@@ -488,7 +488,7 @@ class UnifiedAIClient:
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
-            else _messages_from_legacy(messages)  # type: ignore[arg-type]
+            else messages_from_legacy(messages)  # type: ignore[arg-type]
         )
         unified_tools = (
             tools
@@ -821,7 +821,7 @@ class UnifiedAIClient:
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
-            else _messages_from_legacy(messages)  # type: ignore[arg-type]
+            else messages_from_legacy(messages)  # type: ignore[arg-type]
         )
         requested_candidate = candidates[0]
         max_candidates = (

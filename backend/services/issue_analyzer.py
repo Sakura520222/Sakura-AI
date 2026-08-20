@@ -432,8 +432,6 @@ class IssueAnalyzer:
         """
         self._refresh_ai_client()
         self._refresh_runtime_config()
-        if self.tool_handler.fetch_url_tool:
-            await self.tool_handler.fetch_url_tool.reset_session()
 
         settings = get_settings()
         output_language = await get_user_dynamic_config(

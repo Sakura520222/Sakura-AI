@@ -34,8 +34,6 @@ async def test_load_agent_team_ai_config_uses_only_role_and_policy(monkeypatch):
     async def fake_get_dynamic_config(key: str):
         requested_keys.append(key)
         values = {
-            "agent_team_temperature": 0.25,
-            "agent_team_max_tokens": 4096,
             "agent_team_timeout_seconds": 300,
             # Legacy values must not be read or reflected in the snapshot.
             "ai_provider": "legacy-provider",
@@ -68,7 +66,7 @@ async def test_load_agent_team_ai_config_uses_only_role_and_policy(monkeypatch):
     assert config.summary_role == "summary"
     assert config.timeout_seconds == 300
     # temperature/max_tokens 已迁至新版 /config/ai 角色绑定的 reasoning_params，
-    # load 不再读取这两个 key（即使数据库存在也不读）。
+    # load 不再读取（配置面已移除对应键，数据库残留同样被忽略）。
     assert set(requested_keys) == {"agent_team_timeout_seconds"}
     snapshot = config.safe_snapshot()
     assert snapshot == {
@@ -139,10 +137,6 @@ async def _async_value(value):
 
 def test_agent_team_provider_options_are_removed_from_dynamic_surface():
     assert "agent_team_model_provider" not in DYNAMIC_CONFIG_SELECT_OPTIONS
-
-
-def test_agent_team_max_tokens_range_is_provider_safe():
-    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tokens"] == (1024, 32768)
 
 
 def test_agent_pr_closed_loop_config_registered_for_webui():

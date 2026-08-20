@@ -26,7 +26,7 @@ from typing import Any
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
-from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
+from backend.services.agent_team.context_compressor import compress_agent_team_messages
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -219,8 +219,9 @@ class FullStackExpertAgent:
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
-        model, context_window_tokens = await client.resolve_role_model_context(
-            config.agent_role
+        candidate = await client.resolve_role_primary_candidate(config.agent_role)
+        context_window_tokens = (
+            candidate.model.context_window_tokens if candidate else None
         )
         ctx = self._build_context(skills_context)
         tool_schemas = get_tool_definitions("fullstack")
@@ -309,10 +310,9 @@ class FullStackExpertAgent:
                 except Exception:
                     pass
 
-            model_messages = await AgentTeamContextCompressor(
-                target_model=model,
-                context_window_tokens=context_window_tokens,
-            ).build_model_messages(self.messages, token_tracker)
+            model_messages = await compress_agent_team_messages(
+                self.messages, candidate=candidate, token_tracker=token_tracker
+            )
             await _publish_ai_request(
                 "fullstack",
                 round_num,
