@@ -14,7 +14,7 @@ async def resolve_agent_team_max_iterations(
     """Compatibility shim for callers that still pass a legacy run value.
 
     The value is no longer read from Settings or dynamic configuration, and
-    the implementation Agent does not use it as a lifecycle limit. Keeping
+    the Agent does not use it as a lifecycle limit. Keeping
     this import-compatible helper lets older route/worker deployments start
     while they migrate away from the retired task field.
     """
@@ -38,7 +38,7 @@ async def resolve_agent_team_bool_config(key: str, fallback: bool) -> bool:
 
 @dataclass(frozen=True)
 class AgentTeamAIConfig:
-    """Implementation Agent 的角色绑定信息。
+    """Agent 的角色绑定信息。
 
     单次 AI 传输的连接、读取、重试和取消保护由统一协议客户端负责。Agent
     不再携带一个会终止整项任务的 timeout 或 max-iterations 快照。
@@ -86,7 +86,7 @@ class AgentTeamAIConfig:
 
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
-    """加载唯一 implementation Agent 的角色绑定。
+    """加载唯一 Agent 的角色绑定。
 
     temperature/max_tokens 以及单次请求的超时和重试策略由 unified client
     按角色绑定实时解析；这里不读取 Agent 专属动态配置。

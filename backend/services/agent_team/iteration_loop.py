@@ -1,9 +1,9 @@
 """Single implementation-Agent execution service.
 
 The historical implementation ran a fullstack Agent followed by an internal
-professional reviewer.  Agent Team now executes one implementation Agent per
+professional reviewer.  Agent Team now executes one Agent per
 worker run.  External Sakura PR Review remains the feedback boundary; its
-feedback schedules another run of the same implementation Agent.
+feedback schedules another run of the same Agent.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 @dataclass
 class IterationOutcome:
-    """Result of one implementation Agent execution.
+    """Result of one Agent execution.
 
     ``fullstack_result`` and ``review_result`` remain as compatibility fields
     for the existing persistence/API shape.  New runs populate only
@@ -62,7 +62,7 @@ class IterationOutcome:
 
 
 class IterationLoopService:
-    """Run one implementation Agent and persist its checkpoint."""
+    """Run one Agent and persist its checkpoint."""
 
     def __init__(
         self,
@@ -107,7 +107,7 @@ class IterationLoopService:
         max_iterations: int | None = None,
         skip_internal_review: bool = False,
     ) -> IterationOutcome:
-        """Execute exactly one implementation Agent.
+        """Execute exactly one Agent.
 
         ``max_iterations`` and ``skip_internal_review`` are accepted only so
         old integrations can deploy without a synchronized API migration. They
@@ -134,7 +134,7 @@ class IterationLoopService:
             )
         except Exception as exc:
             # Context is an optional historical aid. A database/context read
-            # failure must not prevent the implementation Agent from running.
+            # failure must not prevent the Agent from running.
             logger.warning("读取 Agent 历史上下文失败: {}", exc)
             execution_context = ""
 
@@ -337,7 +337,7 @@ class IterationLoopService:
     async def _consume_pending_prompts(self) -> PendingGuidance | str:
         """Load the next queued guidance item for model admission.
 
-        The implementation Agent persists this item as a user message through
+        The Agent persists this item as a user message through
         ``append_guidance_message``. That checkpoint operation consumes the
         queue rows in the same transaction; the fallback callback acknowledges
         them only after a normal message append succeeds.
@@ -366,7 +366,7 @@ class IterationLoopService:
                 ]
         except Exception as exc:
             logger.warning("读取 Agent pending guidance 失败 (task_id={}): {}", self.task_id, exc)
-            # Do not fail open: the implementation Agent must not make the
+            # Do not fail open: the Agent must not make the
             # next model call while queued human guidance cannot be read.
             raise RuntimeError("读取 Agent pending guidance 失败") from exc
 

@@ -1,4 +1,4 @@
-"""Implementation Agent task submission context helpers."""
+"""Agent task submission context helpers."""
 
 
 from __future__ import annotations
@@ -616,7 +616,7 @@ def build_agent_submission_context_preview(
     execution_expectations: str = "",
     system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
 ) -> str:
-    """Build the role-separated preview used by the Implementation Agent."""
+    """Build the role-separated preview used by the Agent."""
     user_message = build_implementation_user_message(
         task_title=task_title,
         task_summary=task_summary,

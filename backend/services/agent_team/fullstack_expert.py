@@ -1,4 +1,4 @@
-"""Sakura Implementation Agent using controlled tool calls.
+"""Sakura Agent using controlled tool calls.
 
 The historical module and class names remain import-compatible for callers
 that have not migrated yet. User-visible identity and runtime role values
@@ -45,7 +45,7 @@ FULLSTACK_SYSTEM_PROMPT = IMPLEMENTATION_SYSTEM_PROMPT
 
 @dataclass
 class FullStackResult:
-    """Implementation Agent execution result."""
+    """Agent execution result."""
 
     success: bool
     summary: str
@@ -118,7 +118,7 @@ def _normalize_guidance_item(guidance: Any) -> tuple[str, tuple[int, ...], dict[
 
 
 class FullStackExpertAgent:
-    """Compatibility class for the single Implementation Agent."""
+    """Compatibility class for the single Agent."""
 
     def __init__(
         self,
@@ -265,7 +265,7 @@ class FullStackExpertAgent:
         guidance_ack_callback: Callable[[tuple[int, ...]], Any] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> FullStackResult:
-        """Run the implementation Agent until completion or cancellation."""
+        """Run the Agent until completion or cancellation."""
         client, config = await create_agent_team_client()
         candidate = await client.resolve_role_primary_candidate(config.agent_role)
         context_window_tokens = (
@@ -322,7 +322,7 @@ class FullStackExpertAgent:
                     prompt_tokens=token_tracker.prompt_tokens,
                     completion_tokens=token_tracker.completion_tokens,
                 )
-            logger.debug("Implementation Agent tool call round {}", round_num)
+            logger.debug("Agent tool call round {}", round_num)
 
             pending_tool_calls = _get_missing_tool_calls(self.messages)
             if pending_tool_calls:
@@ -500,7 +500,7 @@ class FullStackExpertAgent:
         terminal_output: dict[str, Any] | None = None
         for tool_call in tool_calls:
             fn_name = tool_call.function.name
-            logger.info("Implementation Agent tool: {} (round={})", fn_name, round_num)
+            logger.info("Agent tool: {} (round={})", fn_name, round_num)
 
             if self.checkpoint and self.session_id:
                 await self.checkpoint.mark_tool_call_running(

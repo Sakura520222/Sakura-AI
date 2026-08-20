@@ -1,4 +1,4 @@
-"""Structural contracts for the compact Implementation Agent console."""
+"""Structural contracts for the compact Agent console."""
 
 from pathlib import Path
 

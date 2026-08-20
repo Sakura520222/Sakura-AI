@@ -1,4 +1,4 @@
-"""Persisted context for the single implementation Agent.
+"""Persisted context for the single Agent.
 
 The database table intentionally keeps its historical role columns. New rows,
 however, are written with ``source_role='agent'`` and ``target_role='agent'``;
@@ -18,7 +18,7 @@ from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 
 
 class AgentTeamConversationContextService:
-    """Store and load execution context for one implementation Agent."""
+    """Store and load execution context for one Agent."""
 
     def __init__(self, task_id: int | None):
         self.task_id = task_id
@@ -57,7 +57,7 @@ class AgentTeamConversationContextService:
 
         Reading historical ``fullstack``/``reviewer`` rows keeps checkpoint and
         context recovery useful after deployment, while the resulting text is
-        presented to the implementation Agent as ordinary user-layer context.
+        presented to the Agent as ordinary user-layer context.
         """
         if not self.task_id:
             return ""

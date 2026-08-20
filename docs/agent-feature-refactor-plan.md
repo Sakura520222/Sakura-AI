@@ -53,7 +53,7 @@ Sakura PR Review 流程负责。现有 `/agent-team`、`agent_team_*` 数据表�
 
 ## 3. 后端目标架构
 
-### 3.1 单一 Implementation Agent
+### 3.1 单一 Agent
 
 运行路径应收敛为：
 
@@ -61,7 +61,7 @@ Sakura PR Review 流程负责。现有 `/agent-team`、`agent_team_*` 数据表�
 task queued/resumed/follow-up
   -> prepare/restore workspace and checkpoint
   -> start one implementation session
-  -> implementation Agent tool loop
+  -> Agent tool loop
   -> validate/push/open or update PR
   -> optional external Sakura PR Review
   -> complete / schedule another implementation run / wait for human
@@ -302,7 +302,7 @@ Skills 页的单一工作是“发现、判断状态、安装/更新和启停技
 
 实现者应先用结构索引确认最新调用关系，预期主要涉及：
 
-- `backend/services/agent_team/fullstack_expert.py`（或重命名后的 implementation agent）
+- `backend/services/agent_team/fullstack_expert.py`（或重命名后的 Agent）
 - `backend/services/agent_team/iteration_loop.py`
 - `backend/services/agent_team/professional_reviewer.py`
 - `backend/services/agent_team/conversation_context.py`
