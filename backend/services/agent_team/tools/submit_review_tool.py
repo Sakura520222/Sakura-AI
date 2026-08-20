@@ -1,6 +1,8 @@
-"""SubmitReview 工具 - 审查角色提交审查结果
+"""Legacy ``submit_review`` tool definition.
 
-终止工具，调用后审查 Agent 循环结束。
+This module remains import-compatible for historical tests/checkpoints, but the
+single implementation Agent registry deliberately does not register it. The
+external Sakura PR Review workflow owns review decisions now.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolRe
 
 
 class SubmitReviewTool(BaseTool):
-    """审查角色提交审查结果。"""
+    """Compatibility-only legacy review result tool; never registered."""
 
     name = "submit_review"
 

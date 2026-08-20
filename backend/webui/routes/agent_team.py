@@ -27,16 +27,13 @@ from backend.models.agent_team_models import (
 )
 from backend.models.database import IssueAnalysis
 from backend.models.database import utc_now as _utc_now
-from backend.services.agent_team.ai_client import (
-    load_agent_team_ai_config,
-    resolve_agent_team_max_iterations,
-)
 from backend.services.agent_team.candidate_service import (
+    DEFAULT_AGENT_TASK_GOAL,
     AgentTeamCandidateService,
     CandidateServiceError,
     candidates_to_dicts,
 )
-from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
+from backend.services.agent_team.prompt_config import build_implementation_user_message
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
     build_agent_task_summary,
@@ -192,7 +189,6 @@ def _parse_task_overrides(
     status: str | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
-    max_iterations: str | None = None,
 ) -> dict:
     overrides = {}
     for key, value in {
@@ -227,12 +223,6 @@ def _parse_task_overrides(
         if score < 0 or score > 100:
             raise ValueError("candidate_score 必须在 0-100 之间")
         overrides["candidate_score"] = score
-
-    iterations = _parse_optional_int(max_iterations, "max_iterations")
-    if iterations is not None:
-        if iterations < 1:
-            raise ValueError("max_iterations 必须大于 0")
-        overrides["max_iterations"] = iterations
 
     for key, value in {
         "source_id": source_id,
@@ -362,9 +352,24 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
         issue_number=draft.get("source_issue_number"),
         issue_analysis_context=issue_analysis_context,
         issue_comments=issue_comments,
+        issue_body=draft.get("issue_body") or "",
     )
-    agent_task_context = build_agent_task_summary(
-        draft.get("summary") or "", issue_context_markdown
+    # ``summary`` in a source draft is often Issue text or an AI-generated
+    # analysis.  Only an explicit task goal may enter ``task_originator_goal``;
+    # all source material stays in the reference section.
+    draft_goal = draft.get("task_goal")
+    if draft_goal is None:
+        # Compatibility for callers constructing an old draft shape: the
+        # editable summary is treated as the administrator's goal.
+        draft_goal = draft.get("summary") or ""
+    agent_task_context = build_agent_task_summary(draft_goal)
+    reference_context = "\n\n".join(
+        item
+        for item in (
+            issue_context_markdown,
+            str(draft.get("reference_context") or "").strip(),
+        )
+        if item
     )
     sakura_memory = ""
     skills_summary = ""
@@ -378,19 +383,21 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
         skills_summary = skills_summary or ""
     except Exception as exc:
         logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
-    fullstack_user_message = build_fullstack_user_message(
+    fullstack_user_message = build_implementation_user_message(
         task_title=draft.get("title") or "",
         task_summary=agent_task_context,
         source_type=draft.get("source_type") or "",
         source_issue_number=draft.get("source_issue_number"),
         sakura_memory=sakura_memory,
         skills_summary=skills_summary,
+        reference_context=reference_context,
     )
     return {
         "issue_analysis": issue_analysis_context,
         "issue_comments": issue_comments,
         "issue_context_markdown": issue_context_markdown,
         "agent_task_context": agent_task_context,
+        "reference_context": reference_context,
         "fullstack_user_message": fullstack_user_message,
         "full_submission_preview": build_agent_submission_context_preview(
             task_title=draft.get("title") or "",
@@ -399,6 +406,7 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
             source_issue_number=draft.get("source_issue_number"),
             sakura_memory=sakura_memory,
             skills_summary=skills_summary,
+            reference_context=reference_context,
         ),
         "runtime_context": {
             "sakura_memory": sakura_memory,
@@ -695,23 +703,8 @@ async def create_task_from_candidate(
     status: str = Form(""),
     branch_name: str = Form(""),
     base_branch: str = Form(""),
-    max_iterations: str = Form(""),
 ):
     """从候选来源创建 Agent 任务。"""
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse(
-            {"success": False, "message": str(e)},
-            status_code=200,
-        )
-    except Exception:
-        logger.exception("创建 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
     service = AgentTeamCandidateService()
     candidates = await service.collect_candidates(
         db, limit=100, ai_filter_requirement=ai_filter_requirement
@@ -744,7 +737,6 @@ async def create_task_from_candidate(
             status=status,
             branch_name=branch_name,
             base_branch=base_branch,
-            max_iterations=max_iterations,
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
@@ -753,7 +745,6 @@ async def create_task_from_candidate(
         db,
         candidate,
         started_by=user["sub"],
-        ai_config_snapshot=config.safe_snapshot(),
         base_branch=base_branch.strip() or None,
         overrides=overrides,
     )
@@ -771,7 +762,6 @@ async def create_task_from_candidate(
             "status": task.status,
             "base_branch": task.base_branch,
             "branch_name": task.branch_name,
-            "max_iterations": task.max_iterations,
         },
     )
 
@@ -822,8 +812,15 @@ async def preview_task_from_issue(
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
+    draft_json: str = Form(""),
 ):
-    """从指定 Issue 构建可编辑任务草稿。"""
+    """从指定 Issue 构建可编辑任务草稿和生产提交预览。
+
+    The client may send only the small set of editable fields from the draft.
+    Repository/source identity and all reference material are always rebuilt
+    from the server-side Issue draft, so the browser cannot approximate or
+    replace the production submission context.
+    """
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
     except ValueError as e:
@@ -843,7 +840,37 @@ async def preview_task_from_issue(
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
-        submission_context = await _build_manual_issue_submission_context(db, draft)
+        if isinstance(draft_json, str) and draft_json.strip():
+            try:
+                edited_draft = json.loads(draft_json)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"success": False, "message": "Invalid preview draft"},
+                    status_code=200,
+                )
+            if not isinstance(edited_draft, dict):
+                return JSONResponse(
+                    {"success": False, "message": "Invalid preview draft"},
+                    status_code=200,
+                )
+            for field in (
+                "title",
+                "summary",
+                "priority",
+                "base_branch",
+                "branch_name",
+                "status",
+                "candidate_score",
+            ):
+                if field in edited_draft:
+                    draft[field] = edited_draft[field]
+        context_draft = dict(draft)
+        context_draft["task_goal"] = (
+            str(draft.get("summary") or "").strip() or DEFAULT_AGENT_TASK_GOAL
+        )
+        submission_context = await _build_manual_issue_submission_context(
+            db, context_draft
+        )
     except CandidateServiceError:
         return JSONResponse(
             {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
@@ -856,7 +883,12 @@ async def preview_task_from_issue(
         )
     return JSONResponse(
         jsonable_encoder(
-            {"success": True, "draft": draft, "submission_context": submission_context}
+            {
+                "success": True,
+                "draft": draft,
+                "submission_context": submission_context,
+                "preview_source": "server_production_builder",
+            }
         )
     )
 
@@ -881,7 +913,6 @@ async def create_task_from_issue(
     status: str = Form(""),
     branch_name: str = Form(""),
     base_branch: str = Form(""),
-    max_iterations: str = Form(""),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
     try:
@@ -905,21 +936,6 @@ async def create_task_from_issue(
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse(
-            {"success": False, "message": str(e)},
-            status_code=200,
-        )
-    except Exception:
-        logger.exception("从 Issue 创建 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
-    try:
         overrides = _parse_task_overrides(
             title=title,
             summary=summary,
@@ -934,7 +950,6 @@ async def create_task_from_issue(
             status=status,
             branch_name=branch_name,
             base_branch=base_branch,
-            max_iterations=max_iterations,
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
@@ -949,6 +964,8 @@ async def create_task_from_issue(
         "repo_name": overrides.get("repo_name"),
         "title": overrides.get("title") or title or "",
         "summary": overrides.get("summary") or summary or "",
+        "task_goal": overrides.get("summary") or summary or DEFAULT_AGENT_TASK_GOAL,
+        "issue_body": "",
     }
     if not draft_for_context["repo_owner"] or not draft_for_context["repo_name"]:
         full_name = draft_for_context["repo_full_name"] or repo_full_name
@@ -971,7 +988,6 @@ async def create_task_from_issue(
             repo_full_name=repo_full_name,
             issue_number=issue_number,
             started_by=user["sub"],
-            ai_config_snapshot=config.safe_snapshot(),
             base_branch=base_branch.strip() or None,
             overrides=overrides,
         )
@@ -1000,7 +1016,6 @@ async def create_task_from_issue(
             "status": task.status,
             "base_branch": task.base_branch,
             "branch_name": task.branch_name,
-            "max_iterations": task.max_iterations,
         },
     )
 
@@ -1045,26 +1060,12 @@ async def retry_task(
     if not ok:
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception:
-        logger.exception("重试 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = None
-    task.max_iterations = await resolve_agent_team_max_iterations()
     task.started_at = None
     task.completed_at = None
     task.error_message = None
-    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
     await db.commit()
 
     # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
@@ -1123,25 +1124,12 @@ async def resume_task(
             status_code=200,
         )
 
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception:
-        logger.exception("续跑 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = "resuming"
     task.resume_count = (task.resume_count or 0) + 1
     task.completed_at = None
     task.error_message = None
-    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
     await db.commit()
 
     background_tasks.add_task(_resume_agent_task_background, task_id)
@@ -1665,7 +1653,6 @@ async def list_active_tasks(
                     "pr_number": t.pr_number,
                     "pr_url": t.pr_url,
                     "iteration_count": t.iteration_count,
-                    "max_iterations": t.max_iterations,
                     "updated_at": format_rfc3339(t.updated_at) if t.updated_at else None,
                     "completed_at": format_rfc3339(t.completed_at)
                     if t.completed_at

@@ -58,7 +58,6 @@ class AgentToolExecutor:
             "search_in_files": self._handle_search_in_files,
             "run_command": self._handle_run_command,
             "finish_task": self._handle_finish_task,
-            "submit_review": self._handle_submit_review,
         }.get(function_name)
 
         if not handler:
@@ -278,15 +277,4 @@ class AgentToolExecutor:
             "modified_files": args.get("modified_files", []),
             "risk_level": args.get("risk_level", "medium"),
             "test_result": args.get("test_result", ""),
-        }
-
-    async def _handle_submit_review(self, args: dict) -> dict:
-        """审查角色提交审查结果。"""
-        return {
-            "_review": True,
-            "verdict": args.get("verdict", "reject"),
-            "score": args.get("score", 0),
-            "summary": args.get("summary", ""),
-            "findings": args.get("findings", []),
-            "improvement_suggestions": args.get("improvement_suggestions", []),
         }

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+import asyncio
+import json
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.agent_team.skill_service import AgentSkillService
@@ -21,6 +25,84 @@ from backend.webui.i18n import detect_language
 router = APIRouter(prefix="/agent-skills", tags=["WebUI Agent Skills"])
 
 
+def _metadata_list(raw_value: str | None) -> list[str]:
+    """Parse a list-like Skill metadata field for compact UI tags."""
+    if not raw_value:
+        return []
+    try:
+        value = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+async def _skill_rows(
+    service: AgentSkillService,
+    skills: list[Any],
+) -> list[dict[str, Any]]:
+    """Build presentation rows, including safe local file manifests."""
+    file_lists = await asyncio.gather(
+        *(service.list_skill_files(skill.slug) for skill in skills),
+        return_exceptions=True,
+    )
+    rows: list[dict[str, Any]] = []
+    for skill, file_list in zip(skills, file_lists, strict=True):
+        rows.append(
+            {
+                "skill": skill,
+                "allowed_tools": _metadata_list(skill.allowed_tools),
+                "arguments": _metadata_list(skill.arguments),
+                "files": file_list if isinstance(file_list, list) else [],
+            }
+        )
+    return rows
+
+
+def _filter_skills(
+    skills: list[Any],
+    *,
+    query: str = "",
+    status: str = "",
+    source: str = "",
+) -> list[Any]:
+    """Apply the Skills ledger filters without changing persistence order."""
+    normalized_query = query.strip().casefold()
+    normalized_status = status.strip().casefold()
+    normalized_source = source.strip().casefold()
+
+    filtered: list[Any] = []
+    for skill in skills:
+        if normalized_status == "enabled" and not skill.enabled:
+            continue
+        if normalized_status == "disabled" and skill.enabled:
+            continue
+        if normalized_source and str(skill.source_type).casefold() != normalized_source:
+            continue
+        if normalized_query:
+            searchable = "\n".join(
+                str(value or "")
+                for value in (
+                    skill.name,
+                    skill.slug,
+                    skill.description,
+                    skill.when_to_use,
+                    skill.version,
+                    skill.source_type,
+                    skill.source_url,
+                    skill.source_ref,
+                    skill.allowed_tools,
+                    skill.arguments,
+                    skill.requires,
+                )
+            ).casefold()
+            if normalized_query not in searchable:
+                continue
+        filtered.append(skill)
+    return filtered
+
+
 @router.get("/")
 async def agent_skills_page(
     request: Request,
@@ -32,6 +114,9 @@ async def agent_skills_page(
     service = AgentSkillService()
     skills = await service.list_skills(db)
     root = await service.resolve_root()
+    source_types = sorted(
+        {str(skill.source_type).strip() for skill in skills if skill.source_type}
+    )
     return render_template(
         "agent_skills.html",
         request,
@@ -40,6 +125,10 @@ async def agent_skills_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="agent_skills",
         skills=skills,
+        skill_rows=await _skill_rows(service, skills),
+        total_skills=len(skills),
+        enabled_skills=sum(1 for skill in skills if skill.enabled),
+        source_types=source_types,
         skills_root=str(root),
     )
 
@@ -50,9 +139,19 @@ async def agent_skills_list_fragment(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
+    q: str = Query("", max_length=200),
+    status: str = Query("", max_length=20),
+    source: str = Query("", max_length=50),
 ):
     """Agent Skills 列表片段。"""
-    skills = await AgentSkillService().list_skills(db)
+    service = AgentSkillService()
+    all_skills = await service.list_skills(db)
+    skills = _filter_skills(
+        all_skills,
+        query=q,
+        status=status,
+        source=source,
+    )
     return render_template(
         "components/agent_skills_list_fragment.html",
         request,
@@ -60,6 +159,9 @@ async def agent_skills_list_fragment(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         skills=skills,
+        skill_rows=await _skill_rows(service, skills),
+        result_count=len(skills),
+        has_filters=bool(q.strip() or status.strip() or source.strip()),
     )
 
 

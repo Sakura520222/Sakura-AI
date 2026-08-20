@@ -1,610 +1,91 @@
-<div x-data="agentTeamLiveView()" x-init="init()" class="flex flex-col h-[calc(100vh-320px)] min-h-[500px]">
-    <!-- Header: task selector + status -->
-    <div class="flex items-center gap-3 mb-4">
-        <div class="flex-1">
-            <select x-model="selectedTaskId" @change="onTaskSelected()" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
-                <option value="">{{ _('agent_team.live_select_task') }}</option>
-                <template x-for="t in activeTasks" :key="t.id">
-                    <option :value="t.id" x-text="'#' + t.id + ' - ' + t.title + ' (' + t.status + ')' + (t.branch_name ? ' [' + t.branch_name + ']' : '')"></option>
-                </template>
-            </select>
-        </div>
+<div x-data="agentTeamLiveView()" x-init="init()" class="agent-live-panel flex min-h-[34rem] flex-col">
+    <header class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-2 dark:border-gray-700">
+        <div class="min-w-0"><div class="text-xs font-semibold text-gray-800 dark:text-gray-200">{{ _('agent_team.live') }}</div><div class="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-400" x-text="selectedTaskSummary()"></div></div>
         <div class="flex items-center gap-2">
-            <button @click="refreshLiveView()"
-                    :disabled="isRefreshing"
-                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-sakura-200 dark:border-sakura-800 bg-white dark:bg-gray-900 text-xs font-medium text-sakura-700 dark:text-sakura-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                <svg :class="isRefreshing ? 'animate-spin' : ''" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19A9 9 0 0019 5M19 5h-5M5 19h5"/></svg>
-                <span x-show="!isRefreshing">{{ _('agent_team.live_refresh') }}</span>
-                <span x-show="isRefreshing">{{ _('agent_team.live_refreshing') }}</span>
-            </button>
-            <span x-show="isConnected" class="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                {{ _('agent_team.live_connected') }}
-            </span>
-            <span x-show="!isConnected" class="flex items-center gap-1 text-xs text-gray-400">
-                <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                {{ _('agent_team.live_disconnected') }}
-            </span>
+            <button type="button" @click="refreshLiveView()" :disabled="isRefreshing" class="agent-focus inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-gray-700 hover:border-sakura-300 hover:text-sakura-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-sakura-700 dark:hover:text-sakura-300"><span aria-hidden="true">↻</span><span x-text="isRefreshing ? '{{ _('agent_team.live_refreshing') }}' : '{{ _('agent_team.live_refresh') }}'"></span></button>
+            <span class="inline-flex items-center gap-1 text-[11px]" role="status" aria-live="polite"><span class="h-1.5 w-1.5 rounded-full" :class="isConnected ? 'bg-emerald-500' : 'bg-gray-400'"></span><span x-text="isConnected ? '{{ _('agent_team.live_connected') }}' : '{{ _('agent_team.live_disconnected') }}'"></span></span>
         </div>
-    </div>
+    </header>
 
-    <!-- Messages area -->
-    <div id="live-messages" class="flex-1 overflow-y-auto rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-3 scroll-smooth">
-        <!-- Empty state -->
-        <div x-show="!selectedTaskId" class="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-500">
-            <svg class="w-16 h-16 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-            <p class="text-sm">{{ _('agent_team.live_empty_hint') }}</p>
-        </div>
+    <div id="live-messages" class="agent-live-messages relative mt-3 min-h-0 flex-1 overflow-y-auto rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-950/30" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0">
+        <div x-show="!selectedTaskId" class="flex min-h-64 items-center justify-center px-4 text-center text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</div>
+        <div x-show="selectedTaskId && isLoading" class="flex min-h-64 items-center justify-center text-xs text-gray-500 dark:text-gray-400">{{ _('common.loading') }}</div>
+        <div x-show="selectedTaskId && !isLoading && displayItems.length === 0" class="flex min-h-64 items-center justify-center px-4 text-center text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.live_empty_hint') }}</div>
 
-        <!-- Loading -->
-        <div x-show="selectedTaskId && isLoading" class="flex items-center justify-center h-full">
-            <div class="flex items-center gap-2 text-gray-400">
-                <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <span class="text-sm">{{ _('common.loading') }}</span>
-            </div>
-        </div>
+        <div class="agent-rail space-y-2">
+            <template x-for="(item, idx) in displayItems" :key="item.key">
+                <article class="agent-rail-event" :data-event-key="item.key">
+                    <span class="agent-rail-node" :class="item.type === 'thinking' || item.type === 'phase' ? 'agent-rail-node-current' : ''" aria-hidden="true"></span>
+                    <div x-show="item.type === 'session'" class="border-b border-gray-100 pb-1 text-[10px] font-semibold uppercase tracking-[.12em] text-gray-500 dark:border-gray-800 dark:text-gray-400" x-text="item.label"></div>
+                    <div x-show="item.type === 'phase'" class="text-[11px] font-semibold text-sakura-700 dark:text-sakura-300" x-text="item.label"></div>
+                    <div x-show="item.type === 'thinking'" class="flex items-center gap-2 rounded-md border border-sakura-200 bg-sakura-50 px-2.5 py-2 text-xs text-sakura-700 dark:border-sakura-900/60 dark:bg-sakura-950/20 dark:text-sakura-300"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-sakura-500"></span><span x-text="item.label"></span></div>
 
-        <!-- Message stream — single root element per item for Alpine.js -->
-        <template x-for="(item, idx) in displayItems" :key="item.key">
-            <div>
-                <!-- Session divider -->
-                <div x-show="item.type === 'session'" class="flex items-center gap-3 py-2">
-                    <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
-                    <span class="text-xs font-semibold px-3 py-1 rounded-full"
-                          :class="item.role === 'fullstack' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'"
-                          x-text="item.label"></span>
-                    <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
-                </div>
-
-                <!-- Phase status -->
-                <div x-show="item.type === 'phase'" class="flex justify-center py-1">
-                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                        <span class="w-1.5 h-1.5 rounded-full bg-sakura-500"></span>
-                        <span x-text="item.label"></span>
-                    </span>
-                </div>
-
-                <!-- AI thinking -->
-                <div x-show="item.type === 'thinking'" class="flex justify-start">
-                    <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        <span x-text="item.label"></span>
-                    </div>
-                </div>
-
-                <!-- Assistant message -->
-                <div x-show="item.type === 'assistant'" class="flex justify-start gap-1">
-                    <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
-                         :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
-                        <div x-show="item.content" x-html="item.htmlContent"></div>
-                        <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-3 space-y-2">
+                    <div x-show="item.type === 'assistant'" class="rounded-md border border-gray-200 bg-gray-50 p-2.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900/70 dark:text-gray-300">
+                        <div x-show="item.content" :class="item.collapsed ? 'max-h-28 overflow-hidden' : ''" class="prose prose-sm max-w-none dark:prose-invert"><div x-html="item.htmlContent"></div></div>
+                        <div x-show="item.toolCalls && item.toolCalls.length" class="mt-2 space-y-1.5">
                             <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
-                                <div class="rounded-xl border px-3 py-2 not-prose"
-                                     :class="tc.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : tc.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'">
-                                    <div class="flex items-center gap-2 text-xs font-semibold">
-                                        <span x-show="tc.status === 'running' || tc.status === 'pending'" class="inline-flex w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                                        <span x-show="tc.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
-                                        <span x-show="tc.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
-                                        <span class="text-gray-800 dark:text-gray-100" x-text="tc.title"></span>
-                                        <span class="text-gray-400 dark:text-gray-500" x-text="tc.statusLabel"></span>
-                                    </div>
-                                    <div x-show="tc.detailRows && tc.detailRows.length > 0" class="mt-2 space-y-1">
-                                        <template x-for="row in (tc.detailRows || [])" :key="row.label + row.value">
-                                            <div class="grid grid-cols-[4.5rem_1fr] gap-2 text-xs text-gray-600 dark:text-gray-400">
-                                                <span class="font-medium text-gray-500 dark:text-gray-500" x-text="row.label"></span>
-                                                <span class="break-all" x-text="row.value"></span>
-                                            </div>
-                                        </template>
-                                    </div>
-                                    <div x-show="tc.error" class="mt-2 text-xs text-red-600 dark:text-red-400 break-all" x-text="tc.error"></div>
-                                </div>
+                                <details class="rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-950/50">
+                                    <summary class="agent-focus flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[11px] font-semibold"><span class="h-1.5 w-1.5 rounded-full" :class="tc.status === 'failed' ? 'bg-red-500' : tc.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-500'"></span><span class="min-w-0 flex-1 truncate" x-text="tc.title"></span><span class="agent-mono text-[10px] font-normal text-gray-500" x-text="tc.statusLabel"></span></summary>
+                                    <div class="space-y-1 border-t border-gray-200 px-2 py-1.5 text-[10px] dark:border-gray-700"><template x-for="row in (tc.detailRows || [])" :key="row.label + row.value"><div class="grid grid-cols-[4rem_1fr] gap-2"><span class="text-gray-500" x-text="row.label"></span><span class="break-all" x-text="row.value"></span></div></template><div x-show="tc.error" class="break-all text-red-600 dark:text-red-400" x-text="tc.error"></div></div>
+                                </details>
                             </template>
                         </div>
+                        <button x-show="item.isLong" type="button" @click="toggleCollapse(item.key)" class="agent-focus mt-1 text-[10px] text-gray-500 hover:text-sakura-700 dark:text-gray-400 dark:hover:text-sakura-300"><span x-text="item.collapsed ? '{{ _('agent_team.live_expand') }}' : '{{ _('agent_team.live_collapse') }}'"></span></button>
                     </div>
-                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
-                        <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
-                        <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
-                    </button>
-                </div>
 
-                <!-- Tool result -->
-                <div x-show="item.type === 'tool_result'" class="flex justify-start gap-1">
-                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs border"
-                         :class="item.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'">
-                        <div class="flex items-center gap-2 font-semibold text-gray-700 dark:text-gray-300">
-                            <span>{{ _('agent_team.live_tool_result') }}</span>
-                            <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">{{ _('agent_team.live_tool_error') }}</span>
-                        </div>
-                        <div x-show="item.toolTitle" class="mt-1 text-gray-500 dark:text-gray-500" x-text="item.toolTitle"></div>
-                        <pre x-show="!item.collapsed" class="mt-2 whitespace-pre-wrap break-all font-mono" x-text="item.content"></pre>
-                    </div>
-                    <button x-show="item.isLong || item.content" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
-                        <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
-                        <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
-                    </button>
-                </div>
+                    <div x-show="item.type === 'tool_result'" class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] dark:border-gray-700 dark:bg-gray-900/70"><div class="flex items-center justify-between gap-2 font-semibold"><span>{{ _('agent_team.live_tool_result') }}</span><span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">{{ _('agent_team.live_tool_error') }}</span></div><div x-show="item.toolTitle" class="mt-1 text-gray-500" x-text="item.toolTitle"></div><pre x-show="!item.collapsed" class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[10px]" x-text="item.content"></pre><button x-show="item.isLong" type="button" @click="toggleCollapse(item.key)" class="agent-focus mt-1 text-[10px] text-gray-500 hover:text-sakura-700" x-text="item.collapsed ? '{{ _('agent_team.live_expand') }}' : '{{ _('agent_team.live_collapse') }}'"></button></div>
 
-                <!-- User input (initial task input or injected guidance) -->
-                <div x-show="item.type === 'user_input'" class="flex justify-end">
-                    <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200">
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="text-xs font-semibold" x-text="item.isInitial ? _('agent_team.live_initial_input') : _('agent_team.live_user_guidance')"></span>
-                        </div>
-                        <div x-show="item.isLong" class="mt-1">
-                            <div x-show="item.collapsed" class="whitespace-pre-wrap line-clamp-4" x-text="item.content"></div>
-                            <div x-show="!item.collapsed" class="whitespace-pre-wrap" x-text="item.content"></div>
-                        </div>
-                        <div x-show="!item.isLong" class="whitespace-pre-wrap" x-text="item.content"></div>
-                        <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="mt-1 text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-300">
-                            <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
-                            <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- User prompt -->
-                <div x-show="item.type === 'prompt'" class="flex justify-end">
-                    <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-200">
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="text-xs font-semibold">{{ _('agent_team.live_admin_guidance') }}</span>
-                            <span class="text-xs px-1.5 py-0.5 rounded-full"
-                                  :class="item.status === 'pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : item.status === 'consumed' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
-                                  x-text="item.status"></span>
-                        </div>
-                        <p class="whitespace-pre-wrap" x-text="item.content"></p>
-                    </div>
-                </div>
-            </div>
-        </template>
-
-        <!-- Thinking indicator for current AI request -->
-        <div x-show="isThinking" class="flex justify-start">
-            <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <span>{{ _('agent_team.live_thinking') }}</span>
-            </div>
+                    <div x-show="item.type === 'user_input'" class="rounded-md border border-gray-200 bg-white px-2.5 py-2 text-[11px] dark:border-gray-700 dark:bg-gray-900/70"><div class="mb-1 text-[10px] font-semibold text-gray-500" x-text="item.isInitial ? '{{ _('agent_team.live_initial_input') }}' : '{{ _('agent_team.live_user_guidance') }}'"></div><div :class="item.collapsed ? 'line-clamp-4' : ''" class="whitespace-pre-wrap break-words" x-text="item.content"></div><button x-show="item.isLong" type="button" @click="toggleCollapse(item.key)" class="agent-focus mt-1 text-[10px] text-gray-500 hover:text-sakura-700" x-text="item.collapsed ? '{{ _('agent_team.live_expand') }}' : '{{ _('agent_team.live_collapse') }}'"></button></div>
+                    <div x-show="item.type === 'prompt'" class="rounded-md border border-sakura-200 bg-sakura-50 px-2.5 py-2 text-[11px] dark:border-sakura-900/60 dark:bg-sakura-950/20"><div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-sakura-700 dark:text-sakura-300"><span>{{ _('agent_team.live_admin_guidance') }}</span><span class="agent-mono rounded bg-white/70 px-1.5 py-0.5 font-normal dark:bg-gray-900/60" x-text="item.status"></span></div><p class="whitespace-pre-wrap break-words" x-text="item.content"></p></div>
+                </article>
+            </template>
+            <div x-show="isThinking" class="agent-rail-event"><span class="agent-rail-node agent-rail-node-current" aria-hidden="true"></span><div class="flex items-center gap-2 rounded-md border border-sakura-200 bg-sakura-50 px-2.5 py-2 text-xs text-sakura-700 dark:border-sakura-900/60 dark:bg-sakura-950/20"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-sakura-500"></span>{{ _('agent_team.live_thinking') }}</div></div>
         </div>
     </div>
 
-    <!-- Prompt input -->
-    <div class="mt-3 flex gap-2">
-        <textarea x-model="promptText"
-                  @keydown.ctrl.enter="sendPrompt()"
-                  @keydown.meta.enter="sendPrompt()"
-                  :disabled="!selectedTaskId || !canSendPrompt"
-                  rows="2"
-                  :placeholder="selectedTaskId && canSendPrompt ? _('agent_team.live_prompt_placeholder') : _('agent_team.live_prompt_disabled')"
-                  class="flex-1 rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm resize-none focus:ring-2 focus:ring-sakura-500 focus:border-sakura-500 disabled:opacity-50"></textarea>
-        <button @click="sendPrompt()"
-                :disabled="!selectedTaskId || !canSendPrompt || !promptText.trim() || isSending"
-                class="px-5 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors self-end">
-            <span x-show="!isSending">{{ _('agent_team.live_send_guidance') }}</span>
-            <span x-show="isSending" class="flex items-center gap-1">
-                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-            </span>
-        </button>
-    </div>
+    <div x-show="_userScrolledUp" class="mt-2 flex justify-center"><button type="button" @click="scrollToLatest()" class="agent-focus rounded-full border border-sakura-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-sakura-700 shadow-sm hover:bg-sakura-50 dark:border-sakura-700 dark:bg-gray-900 dark:text-sakura-300">↓ {{ _('agent_team.live_refresh') }}</button></div>
+
+    <form class="mt-3 flex items-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-700" @submit.prevent="sendPrompt()">
+        <div class="min-w-0 flex-1"><label for="agent-guidance-input" class="mb-1 block text-[11px] font-semibold text-gray-700 dark:text-gray-200">{{ _('agent_team.live_admin_guidance') }}</label><textarea id="agent-guidance-input" x-model="promptText" @keydown.ctrl.enter.prevent="sendPrompt()" @keydown.meta.enter.prevent="sendPrompt()" :disabled="!selectedTaskId || !canSendPrompt" rows="2" :placeholder="selectedTaskId && canSendPrompt ? '{{ _('agent_team.live_prompt_placeholder') }}' : '{{ _('agent_team.live_prompt_disabled') }}'" aria-describedby="agent-guidance-help" class="agent-focus w-full resize-none rounded-md border-gray-300 bg-white text-xs focus:border-sakura-500 focus:ring-sakura-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-900"></textarea><p id="agent-guidance-help" class="mt-1 text-[10px] text-gray-500 dark:text-gray-400" x-text="canSendPrompt ? '{{ _('agent_team.live_prompt_placeholder') }}' : (promptDisabledReason || '{{ _('agent_team.live_prompt_disabled') }}')"></p></div>
+        <button type="submit" :disabled="!selectedTaskId || !canSendPrompt || !promptText.trim() || isSending" class="agent-focus shrink-0 rounded-md bg-sakura-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sakura-600 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-700"><span x-text="isSending ? '…' : '{{ _('agent_team.live_send_guidance') }}'"></span></button>
+    </form>
 </div>
 
 <script>
 function agentTeamLiveView() {
     return {
-        selectedTaskId: '',
-        activeTasks: [],
-        displayItems: [],
-        isLoading: false,
-        isRefreshing: false,
-        isConnected: false,
-        isThinking: false,
-        isSending: false,
-        canSendPrompt: false,
-        promptDisabledReason: '',
-        promptText: '',
-        _lastMsgId: 0,
-        _messages: [],
-        _sessions: [],
-        _toolCalls: {},
-        _prompts: [],
-        _sseHandlers: [],
-        _collapsedState: {},
-        _userScrolledUp: false,
-        _incrementalTimer: null,
-
-        init() {
-            this._setupSSEListeners();
-            this.loadActiveTasks();
-            this._setupScrollDetection();
-        },
-
-        _setupScrollDetection() {
-            var self = this;
-            this.$nextTick(function() {
-                var el = document.getElementById('live-messages');
-                if (!el) return;
-                el.addEventListener('scroll', function() {
-                    var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-                    self._userScrolledUp = !nearBottom;
-                });
-            });
-        },
-
-        _setupSSEListeners() {
-            var self = this;
-            var events = [
-                'sse:agent:task_updated', 'sse:agent:session_started', 'sse:agent:session_completed',
-                'sse:agent:message_added', 'sse:agent:tool_started', 'sse:agent:tool_completed',
-                'sse:agent:tool_failed', 'sse:agent:ai_request', 'sse:agent:prompt_received'
-            ];
-            events.forEach(function(name) {
-                function handler(e) { self._onSSEEvent(name, e.detail); }
-                window.addEventListener(name, handler);
-                self._sseHandlers.push({ name: name, handler: handler });
-            });
-            this.isConnected = true;
-        },
-
-        _onSSEEvent(eventName, data) {
-            if (!this.selectedTaskId || String(data.task_id) !== String(this.selectedTaskId)) {
-                if (eventName === 'sse:agent:task_updated') this.loadActiveTasks();
-                return;
-            }
-
-            if (eventName === 'sse:agent:ai_request') {
-                this.isThinking = true;
-                this._pushDisplayItem({ type: 'thinking', label: data.role === 'fullstack' ? '{{ _("agent_team.live_fullstack_thinking") }}' : '{{ _("agent_team.live_reviewer_thinking") }}', key: 'thinking-' + Date.now() });
-                this._scrollToBottom();
-            } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') {
-                this.isThinking = false;
-                this._scheduleIncremental();
-            } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') {
-                this._scheduleIncremental();
-            } else if (eventName === 'sse:agent:task_updated') {
-                this.loadActiveTasks();
-                this._pushDisplayItem({ type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now() });
-                this._scrollToBottom();
-            } else if (eventName === 'sse:agent:prompt_received') {
-                this._loadPrompts();
-            }
-        },
-
-        async loadActiveTasks() {
-            try {
-                var resp = await fetch('/agent-team/api/active-tasks');
-                if (!resp.ok) return;
-                var data = await resp.json();
-                if (data.success) this.activeTasks = data.tasks || [];
-            } catch(e) { /* ignore */ }
-        },
-
-        async refreshLiveView() {
-            if (this.isRefreshing) return;
-            this.isRefreshing = true;
-            try {
-                await this.loadActiveTasks();
-                if (this.selectedTaskId) {
-                    this._resetStreamState(false);
-                    await this._loadFull();
-                }
-            } finally {
-                this.isRefreshing = false;
-            }
-        },
-
-        _resetStreamState(resetCollapsed) {
-            this.displayItems = [];
-            this._lastMsgId = 0;
-            this._messages = [];
-            this._sessions = [];
-            this._toolCalls = {};
-            this._prompts = [];
-            if (resetCollapsed) this._collapsedState = {};
-        },
-
-        async onTaskSelected() {
-            if (!this.selectedTaskId) {
-                this._resetStreamState(true);
-                this.canSendPrompt = false;
-                this.promptDisabledReason = '';
-                return;
-            }
-            this._resetStreamState(true);
-            this._userScrolledUp = false;
-            await this._loadFull();
-        },
-
-        watchTask(taskId) {
-            this.selectedTaskId = String(taskId);
-            this.onTaskSelected();
-        },
-
-        async _loadFull() {
-            this.isLoading = true;
-            try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=0&limit=200');
-                var data = await resp.json();
-                if (!data.success) return;
-                this.canSendPrompt = data.can_send_prompt !== false;
-                this.promptDisabledReason = data.prompt_disabled_reason || '';
-                this._processStreamData(data);
-                this._rebuildDisplay();
-            } catch(e) { /* ignore */ }
-            this.isLoading = false;
-        },
-
-        _scheduleIncremental() {
-            if (this._incrementalTimer) return;
-            var self = this;
-            this._incrementalTimer = setTimeout(function() {
-                self._incrementalTimer = null;
-                self._loadIncremental();
-            }, 300);
-        },
-
-        async _loadIncremental() {
-            if (!this.selectedTaskId || this.isLoading) return;
-            try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=' + this._lastMsgId + '&limit=50');
-                var data = await resp.json();
-                if (!data.success) return;
-                if ((!data.messages || data.messages.length === 0) && (!data.tool_calls || data.tool_calls.length === 0) && (!data.prompts || data.prompts.length === 0)) return;
-                this._processStreamData(data);
-                this._rebuildDisplay();
-            } catch(e) { /* ignore */ }
-        },
-
-        async _loadPrompts() {
-            if (!this.selectedTaskId) return;
-            try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/prompts');
-                var data = await resp.json();
-                if (data.success) this._prompts = data.prompts || [];
-                this._rebuildDisplay();
-            } catch(e) { /* ignore */ }
-        },
-
-        parseToolArguments(argumentsJson) {
-            if (!argumentsJson) return {};
-            if (typeof argumentsJson === 'object') return argumentsJson;
-            try {
-                return JSON.parse(argumentsJson);
-            } catch(e) {
-                return { raw: String(argumentsJson) };
-            }
-        },
-
-        describeToolAction(name, args, status) {
-            var tool = String(name || '').toLowerCase();
-            var running = status === 'running' || status === 'pending';
-            if (tool === 'read' || tool.indexOf('read_file') >= 0 || tool.indexOf('read') >= 0) {
-                return running ? '{{ _("agent_team.live_tool_read_file_running") }}' : '{{ _("agent_team.live_tool_read_file_completed") }}';
-            }
-            if (tool === 'bash' || tool.indexOf('shell') >= 0 || tool.indexOf('command') >= 0) {
-                return running ? '{{ _("agent_team.live_tool_bash_running") }}' : '{{ _("agent_team.live_tool_bash_completed") }}';
-            }
-            if (tool === 'grep' || tool === 'glob' || tool.indexOf('search') >= 0 || tool.indexOf('grep') >= 0) {
-                return running ? '{{ _("agent_team.live_tool_search_running") }}' : '{{ _("agent_team.live_tool_search_completed") }}';
-            }
-            if (tool === 'edit' || tool === 'write' || tool.indexOf('edit') >= 0 || tool.indexOf('write') >= 0) {
-                return running ? '{{ _("agent_team.live_tool_edit_running") }}' : '{{ _("agent_team.live_tool_edit_completed") }}';
-            }
-            return running ? '{{ _("agent_team.live_tool_generic_running") }}' : '{{ _("agent_team.live_tool_generic_completed") }}';
-        },
-
-        buildToolCallView(tc) {
-            var args = this.parseToolArguments(tc.arguments_json);
-            var detailRows = [{ label: '{{ _("agent_team.live_tool_name") }}', value: tc.name || '' }];
-            var candidates = [
-                ['{{ _("agent_team.live_tool_path") }}', args.file_path || args.path || args.pattern],
-                ['{{ _("agent_team.live_tool_command") }}', args.command],
-                ['{{ _("agent_team.live_tool_query") }}', args.query || args.pattern],
-                ['{{ _("agent_team.live_tool_details") }}', args.description || args.raw]
-            ];
-            candidates.forEach(function(item) {
-                if (item[1] !== undefined && item[1] !== null && String(item[1]) !== '') {
-                    detailRows.push({ label: item[0], value: String(item[1]) });
-                }
-            });
-            return {
-                id: tc.id,
-                status: tc.status || 'running',
-                statusLabel: tc.status || '',
-                title: this.describeToolAction(tc.name, args, tc.status),
-                detailRows: detailRows,
-                error: tc.error_message || ''
-            };
-        },
-
-        _processStreamData(data) {
-            var self = this;
-
-            if (data.sessions) {
-                data.sessions.forEach(function(s) {
-                    if (!self._sessions.find(function(x) { return x.id === s.id; })) {
-                        self._sessions.push(s);
-                    }
-                });
-            }
-
-            if (data.tool_calls) {
-                data.tool_calls.forEach(function(tc) {
-                    self._toolCalls[tc.tool_call_id] = tc;
-                });
-            }
-
-            if (data.messages) {
-                data.messages.forEach(function(m) {
-                    if (m.id > self._lastMsgId) self._lastMsgId = m.id;
-                    if (!self._messages.find(function(x) { return x.id === m.id; })) {
-                        self._messages.push(m);
-                    }
-                });
-            }
-
-            if (data.prompts) {
-                this._prompts = data.prompts;
-            }
-        },
-
+        selectedTaskId: '', activeTasks: [], displayItems: [], isLoading: false, isRefreshing: false, isConnected: false, isThinking: false, isSending: false, canSendPrompt: false, promptDisabledReason: '', promptText: '', _lastMsgId: 0, _messages: [], _sessions: [], _toolCalls: {}, _prompts: [], _sseHandlers: [], _collapsedState: {}, _userScrolledUp: false, _incrementalTimer: null, _scrollElement: null, _scrollHandler: null, _visibilityHandler: null,
+        init() { window.agentTeamLiveState = this; this._setupSSEListeners(); this.loadActiveTasks(); this._setupScrollDetection(); this._visibilityHandler = () => { this.isConnected = !document.hidden; if (!document.hidden && this.selectedTaskId) this._scheduleIncremental(); }; document.addEventListener('visibilitychange', this._visibilityHandler); },
+        selectedTaskSummary() { if (!this.selectedTaskId) return '{{ _('agent_team.select_task_hint') }}'; const task = this.activeTasks.find((item) => String(item.id) === String(this.selectedTaskId)); return task ? `#${task.id} · ${task.title || ''} · ${task.status || ''}` : `#${this.selectedTaskId}`; },
+        _setupScrollDetection() { this.$nextTick(() => { const element = document.getElementById('live-messages'); if (!element) return; this._scrollElement = element; this._scrollHandler = () => { this._userScrolledUp = element.scrollHeight - element.scrollTop - element.clientHeight >= 80; }; element.addEventListener('scroll', this._scrollHandler, {passive: true}); }); },
+        _setupSSEListeners() { const events = ['sse:agent:task_updated', 'sse:agent:session_started', 'sse:agent:session_completed', 'sse:agent:message_added', 'sse:agent:tool_started', 'sse:agent:tool_completed', 'sse:agent:tool_failed', 'sse:agent:ai_request', 'sse:agent:prompt_received']; events.forEach((name) => { const handler = (event) => this._onSSEEvent(name, event.detail || {}); window.addEventListener(name, handler); this._sseHandlers.push({name, handler}); }); this.isConnected = !document.hidden; },
+        _onSSEEvent(eventName, data) { if (!this.selectedTaskId || String(data.task_id) !== String(this.selectedTaskId)) { if (eventName === 'sse:agent:task_updated') this.loadActiveTasks(); return; } if (eventName === 'sse:agent:ai_request') { this.isThinking = true; this._pushDisplayItem({type: 'thinking', label: '{{ _('agent_team.live_thinking') }}', key: 'thinking-' + Date.now()}); this._scrollToBottom(); } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') { this.isThinking = false; this._scheduleIncremental(); } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') this._scheduleIncremental(); else if (eventName === 'sse:agent:task_updated') { this.loadActiveTasks(); this._pushDisplayItem({type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now()}); this._scrollToBottom(); } else if (eventName === 'sse:agent:prompt_received') this._loadPrompts(); },
+        async loadActiveTasks() { try { const response = await fetch('/agent-team/api/active-tasks'); if (!response.ok) return; const data = await response.json(); if (data.success) this.activeTasks = data.tasks || []; } catch (error) { this.isConnected = false; } },
+        async refreshLiveView() { if (this.isRefreshing) return; this.isRefreshing = true; try { await this.loadActiveTasks(); if (this.selectedTaskId) { this._resetStreamState(false); await this._loadFull(); } } finally { this.isRefreshing = false; } },
+        _resetStreamState(resetCollapsed) { this.displayItems = []; this._lastMsgId = 0; this._messages = []; this._sessions = []; this._toolCalls = {}; this._prompts = []; if (resetCollapsed) this._collapsedState = {}; },
+        async onTaskSelected() { if (!this.selectedTaskId) { this._resetStreamState(true); this.canSendPrompt = false; this.promptDisabledReason = ''; return; } this._resetStreamState(true); this._userScrolledUp = false; await this._loadFull(); },
+        watchTask(taskId) { this.selectedTaskId = String(taskId || ''); this.onTaskSelected(); },
+        async _loadFull() { this.isLoading = true; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/stream-data?after_id=0&limit=200'); const data = await response.json(); if (!data.success) return; this.canSendPrompt = data.can_send_prompt !== false; this.promptDisabledReason = data.prompt_disabled_reason || ''; this._processStreamData(data); this._rebuildDisplay(); } catch (error) { this.isConnected = false; } finally { this.isLoading = false; } },
+        _scheduleIncremental() { if (this._incrementalTimer) return; this._incrementalTimer = setTimeout(() => { this._incrementalTimer = null; this._loadIncremental(); }, 300); },
+        async _loadIncremental() { if (!this.selectedTaskId || this.isLoading) return; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/stream-data?after_id=' + this._lastMsgId + '&limit=50'); const data = await response.json(); if (!data.success) return; if (data.messages.length === 0 && data.tool_calls.length === 0 && data.prompts.length === 0) return; this._processStreamData(data); this._rebuildDisplay(); } catch (error) { this.isConnected = false; } },
+        async _loadPrompts() { if (!this.selectedTaskId) return; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/prompts'); const data = await response.json(); if (data.success) this._prompts = data.prompts || []; this._rebuildDisplay(); } catch (error) { this.isConnected = false; } },
+        parseToolArguments(argumentsJson) { if (!argumentsJson) return {}; if (typeof argumentsJson === 'object') return argumentsJson; try { return JSON.parse(argumentsJson); } catch (error) { return {raw: String(argumentsJson)}; } },
+        describeToolAction(name, args, status) { const tool = String(name || '').toLowerCase(); const running = status === 'running' || status === 'pending'; if (tool === 'read' || tool.includes('read_file') || tool.includes('read')) return running ? '{{ _('agent_team.live_tool_read_file_running') }}' : '{{ _('agent_team.live_tool_read_file_completed') }}'; if (tool === 'bash' || tool.includes('shell') || tool.includes('command')) return running ? '{{ _('agent_team.live_tool_bash_running') }}' : '{{ _('agent_team.live_tool_bash_completed') }}'; if (tool === 'grep' || tool === 'glob' || tool.includes('search')) return running ? '{{ _('agent_team.live_tool_search_running') }}' : '{{ _('agent_team.live_tool_search_completed') }}'; if (tool === 'edit' || tool === 'write' || tool.includes('edit') || tool.includes('write')) return running ? '{{ _('agent_team.live_tool_edit_running') }}' : '{{ _('agent_team.live_tool_edit_completed') }}'; return running ? '{{ _('agent_team.live_tool_generic_running') }}' : '{{ _('agent_team.live_tool_generic_completed') }}'; },
+        buildToolCallView(tc) { const args = this.parseToolArguments(tc.arguments_json); const detailRows = [{label: '{{ _('agent_team.live_tool_name') }}', value: tc.name || ''}]; [['{{ _('agent_team.live_tool_path') }}', args.file_path || args.path || args.pattern], ['{{ _('agent_team.live_tool_command') }}', args.command], ['{{ _('agent_team.live_tool_query') }}', args.query || args.pattern], ['{{ _('agent_team.live_tool_details') }}', args.description || args.raw]].forEach((item) => { if (item[1] !== undefined && item[1] !== null && String(item[1]) !== '') detailRows.push({label: item[0], value: String(item[1])}); }); return {id: tc.id, status: tc.status || 'running', statusLabel: tc.status || '', title: this.describeToolAction(tc.name, args, tc.status), detailRows, error: tc.error_message || ''}; },
+        _processStreamData(data) { if (data.sessions) data.sessions.forEach((session) => { if (!this._sessions.find((item) => item.id === session.id)) this._sessions.push(session); }); if (data.tool_calls) data.tool_calls.forEach((toolCall) => { this._toolCalls[toolCall.tool_call_id] = toolCall; }); if (data.messages) data.messages.forEach((message) => { if (message.id > this._lastMsgId) this._lastMsgId = message.id; if (!this._messages.find((item) => item.id === message.id)) this._messages.push(message); }); if (data.prompts) this._prompts = data.prompts; },
         _rebuildDisplay() {
-            var items = [];
-            var sessions = this._sessions.slice().sort(function(a, b) { return a.id - b.id; });
-            var messages = this._messages.slice().sort(function(a, b) { return a.id - b.id; });
-            var self = this;
-
-            var bySession = {};
-            messages.forEach(function(m) {
-                if (!bySession[m.session_id]) bySession[m.session_id] = [];
-                bySession[m.session_id].push(m);
-            });
-
-            var tcByMsg = {};
-            Object.values(self._toolCalls).forEach(function(tc) {
-                if (tc.assistant_message_id) {
-                    if (!tcByMsg[tc.assistant_message_id]) tcByMsg[tc.assistant_message_id] = [];
-                    tcByMsg[tc.assistant_message_id].push(tc);
-                }
-            });
-
-            // Helper: parse ISO date string to timestamp
-            function toTs(iso) { return iso ? new Date(iso).getTime() : 0; }
-
-            sessions.forEach(function(session) {
-                var roleLabel = session.role_name === 'fullstack'
-                    ? '{{ _("agent_team.live_iteration_fullstack") }} ' + session.iteration_number + ' - Fullstack Expert'
-                    : '{{ _("agent_team.live_iteration_reviewer") }} ' + session.iteration_number + ' - Professional Reviewer';
-                items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id, _ts: toTs(session.started_at) });
-
-                var sessionMsgs = bySession[session.id] || [];
-                var isFirstInSession = true;
-                sessionMsgs.forEach(function(m) {
-                    if (m.role === 'system') return;
-
-                    if (m.role === 'user') {
-                        var content = m.content || '';
-                        var key = 'msg-' + m.id;
-                        var isLong = content.length > 500;
-                        items.push({
-                            type: 'user_input',
-                            content: content,
-                            isInitial: isFirstInSession,
-                            isLong: isLong,
-                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
-                            key: key,
-                            _ts: toTs(m.created_at)
-                        });
-                        isFirstInSession = false;
-                        return;
-                    }
-                    isFirstInSession = false;
-
-                    if (m.role === 'assistant') {
-                        var content = m.content || '';
-                        var htmlContent = '';
-                        try { htmlContent = DOMPurify.sanitize(marked.parse(content)); } catch(e) { htmlContent = content; }
-                        var msgToolCalls = tcByMsg[m.id] || null;
-                        var key = 'msg-' + m.id;
-                        var isLong = content.length > 500;
-                        items.push({
-                            type: 'assistant',
-                            content: content,
-                            htmlContent: htmlContent,
-                            toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls.map(function(tc) { return self.buildToolCallView(tc); }) : null,
-                            isLong: isLong,
-                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
-                            key: key,
-                            _ts: toTs(m.created_at)
-                        });
-                    } else if (m.role === 'tool') {
-                        var tc = self._toolCalls[m.tool_call_id];
-                        var content = m.content || '';
-                        var key = 'msg-' + m.id;
-                        var isLong = content.length > 0;
-                        var toolView = tc ? self.buildToolCallView(tc) : null;
-                        items.push({
-                            type: 'tool_result',
-                            content: content,
-                            status: tc && tc.status ? tc.status : 'completed',
-                            toolTitle: toolView ? toolView.title : '',
-                            isLong: isLong,
-                            collapsed: self._collapsedState[key] !== undefined ? self._collapsedState[key] : true,
-                            key: key,
-                            _ts: toTs(m.created_at)
-                        });
-                    }
-                });
-            });
-
-            // Insert prompts with timestamps for chronological ordering
-            this._prompts.forEach(function(p) {
-                items.push({
-                    type: 'prompt',
-                    content: p.content,
-                    status: p.status,
-                    key: 'prompt-' + p.id,
-                    _ts: toTs(p.created_at)
-                });
-            });
-            // Sort all items chronologically, but keep session dividers before their content
-            items.sort(function(a, b) {
-                if (a._ts === 0 && b._ts === 0) return 0;
-                if (a._ts === 0) return -1;
-                if (b._ts === 0) return 1;
-                return a._ts - b._ts;
-            });
-
-            this.displayItems = items;
-            this._scrollToBottom();
+            const items = []; const sessions = this._sessions.slice().sort((a, b) => a.id - b.id); const messages = this._messages.slice().sort((a, b) => a.id - b.id); const bySession = {}; const toolCallsByMessage = {};
+            messages.forEach((message) => { (bySession[message.session_id] ||= []).push(message); }); Object.values(this._toolCalls).forEach((toolCall) => { if (toolCall.assistant_message_id) (toolCallsByMessage[toolCall.assistant_message_id] ||= []).push(toolCall); });
+            const timestamp = (value) => value ? new Date(value).getTime() : 0;
+            sessions.forEach((session) => { items.push({type: 'session', label: `{{ _('agent_team.live_thinking') }} · ${session.iteration_number || ''}`, key: 'session-' + session.id, _ts: timestamp(session.started_at)}); let initial = true; (bySession[session.id] || []).forEach((message) => { if (message.role === 'system') return; const content = message.content || ''; const key = 'msg-' + message.id; if (message.role === 'user') { const long = content.length > 500; items.push({type: 'user_input', content, isInitial: initial, isLong: long, collapsed: long ? (this._collapsedState[key] !== undefined ? this._collapsedState[key] : true) : false, key, _ts: timestamp(message.created_at)}); initial = false; return; } initial = false; if (message.role === 'assistant') { let htmlContent = ''; try { htmlContent = DOMPurify.sanitize(marked.parse(content)); } catch (error) { htmlContent = DOMPurify.sanitize(String(content)); } const long = content.length > 500; items.push({type: 'assistant', content, htmlContent, toolCalls: (toolCallsByMessage[message.id] || []).map((toolCall) => this.buildToolCallView(toolCall)), isLong: long, collapsed: long ? (this._collapsedState[key] !== undefined ? this._collapsedState[key] : true) : false, key, _ts: timestamp(message.created_at)}); } else if (message.role === 'tool') { const toolCall = this._toolCalls[message.tool_call_id]; const long = content.length > 0; const toolView = toolCall ? this.buildToolCallView(toolCall) : null; items.push({type: 'tool_result', content, status: toolCall?.status || 'completed', toolTitle: toolView?.title || '', isLong: long, collapsed: this._collapsedState[key] !== undefined ? this._collapsedState[key] : true, key, _ts: timestamp(message.created_at)}); } }); });
+            this._prompts.forEach((prompt) => items.push({type: 'prompt', content: prompt.content, status: prompt.status, key: 'prompt-' + prompt.id, _ts: timestamp(prompt.created_at)})); items.sort((a, b) => (a._ts || 0) - (b._ts || 0)); this.displayItems = items; this._scrollToBottom();
         },
-
-        toggleCollapse(key) {
-            if (this._collapsedState[key] === undefined) {
-                this._collapsedState[key] = false;
-            } else {
-                this._collapsedState[key] = !this._collapsedState[key];
-            }
-            for (var i = 0; i < this.displayItems.length; i++) {
-                if (this.displayItems[i].key === key) {
-                    this.displayItems[i].collapsed = this._collapsedState[key];
-                    break;
-                }
-            }
-        },
-
-        _pushDisplayItem(item) {
-            this.displayItems.push(item);
-        },
-
-        _scrollToBottom() {
-            if (this._userScrolledUp) return;
-            var self = this;
-            this.$nextTick(function() {
-                var el = document.getElementById('live-messages');
-                if (el) el.scrollTop = el.scrollHeight;
-            });
-        },
-
-        async sendPrompt() {
-            if (!this.selectedTaskId || !this.promptText.trim() || this.isSending) return;
-            this.isSending = true;
-            try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/prompts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'content=' + encodeURIComponent(this.promptText)
-                });
-                var data = await resp.json();
-                if (data.success) {
-                    this.promptText = '';
-                    this._loadPrompts();
-                } else {
-                    window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.error || '{{ _("agent_team.request_failed") }}', type: 'error'}}));
-                }
-            } catch(e) {
-                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _("agent_team.request_failed") }}', type: 'error'}}));
-            }
-            this.isSending = false;
-        },
-
+        toggleCollapse(key) { this._collapsedState[key] = this._collapsedState[key] === undefined ? false : !this._collapsedState[key]; const item = this.displayItems.find((entry) => entry.key === key); if (item) item.collapsed = this._collapsedState[key]; },
+        _pushDisplayItem(item) { this.displayItems.push(item); },
+        _scrollToBottom(force = false) { if (!force && this._userScrolledUp) return; this.$nextTick(() => { const element = document.getElementById('live-messages'); if (element) element.scrollTop = element.scrollHeight; }); },
+        scrollToLatest() { this._userScrolledUp = false; this._scrollToBottom(true); },
+        async sendPrompt() { if (!this.selectedTaskId || !this.promptText.trim() || this.isSending) return; this.isSending = true; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/prompts', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams({content: this.promptText})}); const data = await response.json(); if (data.success) { this.promptText = ''; this._loadPrompts(); } else window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.error || '{{ _('agent_team.request_failed') }}', type: 'error'}})); } catch (error) { window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})); } finally { this.isSending = false; } },
+        destroy() { this._sseHandlers.forEach((entry) => window.removeEventListener(entry.name, entry.handler)); if (this._scrollElement && this._scrollHandler) this._scrollElement.removeEventListener('scroll', this._scrollHandler); if (this._visibilityHandler) document.removeEventListener('visibilitychange', this._visibilityHandler); if (this._incrementalTimer) clearTimeout(this._incrementalTimer); if (window.agentTeamLiveState === this) delete window.agentTeamLiveState; }
     };
 }
 </script>

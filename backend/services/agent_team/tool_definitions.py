@@ -1,12 +1,12 @@
-"""Agent 专家团队 - 工具定义
+"""Agent implementation tool definitions.
 
-定义全栈专家和专业审查角色可用的 function calling 工具。
+定义唯一实现 Agent 可用的 function calling 工具。
 这些工具通过 OpenAI 兼容的 function calling 机制暴露给 AI。
 """
 
 from __future__ import annotations
 
-# 全栈专家可用工具
+# 可用工具
 AGENT_READ_FILE_TOOL = {
     "type": "function",
     "function": {
@@ -279,56 +279,6 @@ AGENT_FINISH_TOOL = {
     },
 }
 
-# 审查专用工具
-AGENT_REVIEW_FINISH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "submit_review",
-        "description": "提交审查结果。在完成所有文件审查后调用。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "verdict": {
-                    "type": "string",
-                    "enum": ["pass", "needs_improvement", "reject"],
-                    "description": "审查结论",
-                },
-                "score": {
-                    "type": "integer",
-                    "description": "评分 1-10，>=7 为通过",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "审查总结",
-                },
-                "findings": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "severity": {
-                                "type": "string",
-                                "enum": ["critical", "major", "minor", "suggestion"],
-                            },
-                            "file": {"type": "string"},
-                            "message": {"type": "string"},
-                            "suggestion": {"type": "string"},
-                        },
-                        "required": ["severity", "file", "message"],
-                    },
-                    "description": "审查发现列表",
-                },
-                "improvement_suggestions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "改进建议",
-                },
-            },
-            "required": ["verdict", "score", "summary"],
-        },
-    },
-}
-
 # 工具集合
 FULLSTACK_EXPERT_TOOLS = [
     AGENT_READ_FILE_TOOL,
@@ -340,12 +290,4 @@ FULLSTACK_EXPERT_TOOLS = [
     AGENT_SEARCH_IN_FILES_TOOL,
     AGENT_RUN_COMMAND_TOOL,
     AGENT_FINISH_TOOL,
-]
-
-REVIEWER_TOOLS = [
-    AGENT_READ_FILE_TOOL,
-    AGENT_LIST_DIRECTORY_TOOL,
-    AGENT_SEARCH_IN_FILES_TOOL,
-    AGENT_RUN_COMMAND_TOOL,
-    AGENT_REVIEW_FINISH_TOOL,
 ]

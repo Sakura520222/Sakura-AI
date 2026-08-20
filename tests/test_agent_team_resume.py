@@ -7,8 +7,50 @@ from backend.services.agent_team.context_compressor import (
     compress_agent_team_messages,
 )
 from backend.services.agent_team.fullstack_expert import _get_missing_tool_calls
+from backend.services.agent_team.iteration_loop import _normalize_legacy_messages
+from backend.services.agent_team.prompt_config import (
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    build_implementation_user_message,
+)
 from backend.services.ai_reviewer.unified_client import messages_from_legacy
 from backend.workers.agent_team_worker import _parse_rate_limit_reset_at
+
+
+def test_legacy_fullstack_resume_replaces_only_system_and_initial_user():
+    initial_user = build_implementation_user_message(
+        task_title="Current task",
+        task_summary="Current objective",
+        source_type="issue",
+        source_issue_number=7,
+    )
+    guidance = {
+        "role": "user",
+        "content": "keep this guidance exactly",
+        "metadata": {"guidance_ids": [42]},
+    }
+    assistant = {"role": "assistant", "content": "historical response"}
+    tool = {"role": "tool", "content": "historical tool result"}
+
+    normalized = _normalize_legacy_messages(
+        [
+            {"role": "system", "content": "old fullstack policy"},
+            {"role": "user", "content": "old dynamic initial prompt"},
+            assistant,
+            guidance,
+            tool,
+        ],
+        initial_user_message=initial_user,
+    )
+
+    assert normalized[0] == {
+        "role": "system",
+        "content": IMPLEMENTATION_SYSTEM_PROMPT,
+    }
+    assert normalized[1] == {"role": "user", "content": initial_user}
+    assert normalized[2] is not assistant
+    assert normalized[2] == assistant
+    assert normalized[3] == guidance
+    assert normalized[4] == tool
 
 
 def test_missing_tool_calls_skip_existing_tool_results():

@@ -87,11 +87,7 @@ def service(monkeypatch):
     async def empty_allowlist():
         return set()
 
-    async def max_iterations():
-        return 3
-
     monkeypatch.setattr(svc, "_load_repo_allowlist", empty_allowlist)
-    monkeypatch.setattr(svc, "_load_max_iterations_per_task", max_iterations)
     return svc
 
 

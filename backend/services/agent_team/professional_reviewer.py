@@ -1,4 +1,8 @@
-"""Agent 专家团队 - 专业审查角色（工具调用模式）
+"""Legacy professional-review Agent implementation.
+
+The runtime no longer instantiates this class. Sakura PR Review is the
+external review boundary; this module remains import-compatible for historical
+result/checkpoint readers only.
 
 通过 function calling 让 AI 自主调用工具审查代码：
 - read_file: 读取修改后的文件
@@ -318,7 +322,6 @@ class ProfessionalReviewAgent:
             response = await client.call_with_retry(
                 messages=model_messages,
                 model="",
-                timeout=config.timeout_seconds,
                 tools=tool_schemas,
                 tool_choice="auto",
                 role="agent_team",

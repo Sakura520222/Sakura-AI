@@ -95,11 +95,11 @@ async def test_candidate_preview_hides_service_exception(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_task_creation_hides_ai_config_exception(monkeypatch):
+async def test_task_creation_does_not_use_removed_ai_config_validation(monkeypatch):
     monkeypatch.setattr(
-        agent_team,
-        "load_agent_team_ai_config",
-        AsyncMock(side_effect=RuntimeError(_SECRET)),
+        agent_team.AgentTeamCandidateService,
+        "collect_candidates",
+        AsyncMock(return_value=[]),
     )
 
     response = await agent_team.create_task_from_candidate(
@@ -109,7 +109,8 @@ async def test_task_creation_hides_ai_config_exception(monkeypatch):
         csrf_token="token",
     )
 
-    _assert_secret_is_hidden(response, "AI 配置加载失败，请稍后重试")
+    assert response.status_code == 404
+    assert _SECRET.encode() not in response.body
 
 
 @pytest.mark.asyncio
