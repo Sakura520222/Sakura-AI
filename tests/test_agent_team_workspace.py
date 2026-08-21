@@ -185,6 +185,37 @@ def test_delete_workspace_removes_repository_directory(tmp_path):
     assert not workspace.exists()
 
 
+def test_delete_workspace_removes_readonly_files(tmp_path):
+    # git 松散对象文件在磁盘上为只读，Windows 会拒绝删除（WinError 5）
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = service.ensure_workspace("owner", "repo")
+    git_object = workspace / "base" / ".git" / "objects" / "11"
+    git_object.mkdir(parents=True)
+    target = git_object / "fda44eab4737bd8b265dddc94f978b3a3c909a"
+    target.write_bytes(b"data")
+    target.chmod(0o444)
+
+    deleted_path = service.delete_workspace("owner", "repo")
+
+    assert deleted_path == workspace
+    assert not workspace.exists()
+
+
+def test_delete_worktree_removes_readonly_files(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    service.ensure_workspace("owner", "repo")
+    worktree = service.get_worktrees_root_path("owner", "repo") / "1-feature"
+    readonly_file = worktree / "readonly.txt"
+    readonly_file.parent.mkdir(parents=True)
+    readonly_file.write_text("x", encoding="utf-8")
+    readonly_file.chmod(0o444)
+
+    deleted_path = service.delete_worktree("owner", "repo", "1-feature")
+
+    assert deleted_path == worktree
+    assert not worktree.exists()
+
+
 @pytest.mark.asyncio
 async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
