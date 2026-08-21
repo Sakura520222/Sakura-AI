@@ -221,6 +221,8 @@ pip install -r requirements.txt
 python -m backend.main
 ```
 
+> 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。
+
 > 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
 
 ---

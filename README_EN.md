@@ -221,6 +221,8 @@ pip install -r requirements.txt
 python -m backend.main
 ```
 
+> In local development, changes under `backend/` are hot-reloaded at module level inside the app subprocess (no process restart); changes to process-level modules such as `backend/main.py` or database models log a hint to restart manually. In-app restart requests (Setup completion, admin restart button) still respawn the whole process via the supervision loop.
+
 > Deployment details (image tags, pinned versions, GitHub App creation, database setup, full Setup Wizard flow, Host Updater daemon, upgrade and password rotation) are in the [Deployment Guide](docs/DEPLOYMENT.md) (Chinese).
 
 ---
