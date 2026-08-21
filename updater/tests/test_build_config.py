@@ -10,12 +10,12 @@ CHECKER_PATH = BUILD / "check_glibc.py"
 ROOT = Path(__file__).parents[2]
 
 BUILD_IMAGE = (
-    "python:3.12-slim-bullseye@"
-    "sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db"
+    "python:3.14-slim-bookworm@"
+    "sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52"
 )
 RUNTIME_IMAGE = (
-    "debian:bullseye-slim@"
-    "sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792"
+    "debian:bookworm-slim@"
+    "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
 )
 
 
@@ -47,13 +47,13 @@ def test_root_ci_installs_updater_before_recursive_tests():
     assert "pip install -e './updater[dev]'" in python_quality
 
 
-def test_build_script_has_pinned_bullseye_and_outer_elf_gate():
+def test_build_script_has_pinned_bookworm_and_outer_elf_gate():
     script = (BUILD / "build.sh").read_text(encoding="utf-8")
     checker = CHECKER_PATH.read_text(encoding="utf-8")
 
     assert BUILD_IMAGE in script
-    assert "Python 3.12" in script or "3.12" in script
-    assert "2.31" in script
+    assert "Python 3.14" in script or "3.14" in script
+    assert "2.36" in script
     assert "apt-get" in script
     assert "binutils" in script
     assert "build-essential" in script
@@ -71,7 +71,7 @@ def test_build_script_has_pinned_bullseye_and_outer_elf_gate():
     assert "bootloader" in checker.lower()
     assert "CArchive" in checker
     assert "readelf" in checker
-    assert "(2, 31)" in checker
+    assert "(2, 36)" in checker
     assert "embedded" in checker.lower()
 
 

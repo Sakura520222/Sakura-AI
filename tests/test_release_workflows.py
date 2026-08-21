@@ -13,12 +13,12 @@ RELEASE_PATH = ROOT / ".github" / "workflows" / "release-on-pr-merge.yml"
 DOCKER_PUBLISH_PATH = ROOT / ".github" / "workflows" / "docker-publish.yml"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
 BUILD_IMAGE = (
-    "python:3.12-slim-bullseye@"
-    "sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db"
+    "python:3.14-slim-bookworm@"
+    "sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52"
 )
 RUNTIME_IMAGE = (
-    "debian:bullseye-slim@"
-    "sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792"
+    "debian:bookworm-slim@"
+    "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
 )
 EXPECTED_ASSETS = {
     "amd64": "sakura-ai-updater-linux-amd64",
@@ -324,7 +324,7 @@ def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     )
     assert checkout["uses"].startswith("actions/checkout@")
     assert setup_python["uses"].startswith("actions/setup-python@")
-    assert setup_python["with"]["python-version"] == "3.12"
+    assert setup_python["with"]["python-version"] == "3.14"
 
     run_text = _job_run_text(updater)
     assert "pip install -e './updater[dev]' ruff" in run_text

@@ -73,7 +73,7 @@ $dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
-macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新；请手动拉取目标镜像并重新运行 Compose。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机。
+macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新；请手动拉取目标镜像并重新运行 Compose。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机，且要求 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+，见下方"九、Host Updater 守护进程"）。
 
 首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。
 
@@ -139,7 +139,7 @@ Remove-Item Env:SAKURA_AI_IMAGE
 
 ## 二、环境要求
 
-- Linux 服务器（推荐 Ubuntu 20.04+）
+- Linux 服务器（使用 Host Updater 自动更新要求 glibc ≥ 2.36，即 Debian 12+/Ubuntu 24.04+；仅容器部署无此限制）
 - Docker 和 Docker Compose V2（镜像部署；旧版 `docker-compose` V1 不受支持）/ Python 3.14+（源码部署）
 - 公网 IP 和域名
 - GitHub 账号
@@ -335,6 +335,8 @@ $COMPOSE logs web | grep -A6 "Setup Wizard"
 ## 九、Host Updater 守护进程
 
 Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认更新后，Host Updater 执行预检、拉取镜像、原子更新部署状态、重建容器并校验新版本健康状态。它不会无人值守安装更新。
+
+**运行环境要求**：自 2026-08-21 起，updater 发布二进制在 Python 3.14 Bookworm（glibc 2.36）环境中构建，宿主机需要 glibc ≥ 2.36（Debian 12+、Ubuntu 24.04+）。更早版本基于 Bullseye（glibc 2.31）构建，可运行于更老的发行版；宿主机仍为 Ubuntu 20.04/22.04 或 Debian 11 等旧系统时，请勿升级到新二进制（自动更新确认前请先确认发行版满足要求），或改为仅容器部署并手动更新镜像。
 
 通过本指南推荐的 `sudo ./start.sh --prod` 首次部署时，updater 会随应用自动完成安装和启动，无需再单独执行下面的管理命令。
 
