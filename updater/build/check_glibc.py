@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-GLIBC_CEILING = (2, 31)
+GLIBC_CEILING = (2, 36)
 _GLIBC_NEED_RE = re.compile(r"\bGLIBC_(\d+)\.(\d+)")
 
 

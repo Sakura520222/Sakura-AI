@@ -40,7 +40,7 @@ TIME_PRIMITIVE_ALLOWLIST = (
     },
     {
         "file": "updater/src/sakura_ai_updater/time.py",
-        "position": "updater/src/sakura_ai_updater/time.py:13",
+        "position": "updater/src/sakura_ai_updater/time.py:15",
         "primitive": "datetime.now(UTC)",
         "category": "updater-protocol-time",
         "reason": "Updater emits independent UTC RFC3339 Z protocol timestamps.",
@@ -75,19 +75,19 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1350",
+        "position": "backend/webui/routes/agent_team.py:1351",
         "category": "filesystem-metadata-boundary",
         "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1584",
+        "position": "backend/webui/routes/agent_team.py:1585",
         "category": "filesystem-metadata-boundary",
         "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/services/activity_observability/conversation_service.py",
-        "position": "backend/services/activity_observability/conversation_service.py:55",
+        "position": "backend/services/activity_observability/conversation_service.py:54",
         "category": "epoch-sentinel",
         "reason": "The observability projection uses Unix epoch as an explicit no-value sentinel.",
     },

@@ -29,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# bullseye-slim is intentionally minimal. Package failures are harness
+# bookworm-slim is intentionally minimal. Package failures are harness
 # infrastructure failures, not binary compatibility evidence.
 if ! apt-get update; then
     printf 'fresh runtime infrastructure failure: apt-get update failed\n' >&2

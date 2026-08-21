@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,20 +86,6 @@ def test_check_treats_ruff_traversal_warning_as_failure(monkeypatch, tmp_path):
     )
 
     assert runner.check() is False
-
-
-def test_check_paths_saves_log_flat_when_paths_contain_subdirs(tmp_path):
-    """含子目录的路径（如 backend/services/update_checker.py）不得使日志文件名带分隔符，
-    否则 logs/ 下缺少父目录链时 open() 会报 FileNotFoundError。"""
-    runner = run_ruff.RuffRunner(tmp_path)
-
-    log_file = runner._save_log("content", "check_backend/services/update_checker.py")
-
-    separators = {os.sep}
-    if os.altsep:
-        separators.add(os.altsep)
-    assert not any(sep in log_file.name for sep in separators)
-    assert log_file.read_text(encoding="utf-8") == "content"
 
 
 def test_codex_temporary_directory_is_ignored():

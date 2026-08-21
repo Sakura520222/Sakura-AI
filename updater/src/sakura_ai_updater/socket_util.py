@@ -1,7 +1,6 @@
 """UDS socket 文件 lifecycle（live/stale 真检测 + owned 清理）。
 
-Python 3.12 的 ``asyncio.create_unix_server`` 无 ``cleanup_socket`` 参数（3.13 才加），
-直接用 ``uvicorn.Server.serve()`` 也绕过 ``uvicorn.run()`` wrapper 的 socket 清理。故
+直接用 ``uvicorn.Server.serve()`` 会绕过 ``uvicorn.run()`` wrapper 的 socket 清理，故
 updater 自己管理 socket 文件。
 
 **不创建父目录**：``/run/sakura-ai`` 创建/bootstrap 属 Slice 3b；本模块要求父目录已存在，

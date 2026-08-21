@@ -281,7 +281,7 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 
 > 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
-> Updater 是独立的 Python 3.12+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。
+> Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
 ---
 

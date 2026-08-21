@@ -281,7 +281,7 @@ First launch enters Bootstrap mode — a one-time verification token is printed 
 
 > Run logs are written to `logs/app_*.log` (one file per startup, 500 MB rotation, 10-day retention; passwords and tokens are auto-redacted). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
-> The Updater is an independent Python 3.12+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development.
+> The Updater is an independent Python 3.14+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development. Its release binaries are built on Bookworm (glibc 2.36) and require the host to run glibc ≥ 2.36 (Debian 12+ / Ubuntu 24.04+).
 
 ---
 
