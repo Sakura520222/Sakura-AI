@@ -210,6 +210,11 @@ def test_composite_summary_foreign_keys_require_explicit_pointer_clear_before_de
         is None
     )
 
+    # Core 级 delete 绕过 ORM identity map，残留对象会在 SQLite 重用主键时触发
+    # flush 替换警告；第二轮前先清空。/ Core-level deletes bypass the ORM identity
+    # map; clear stale objects before round two reuses the freed primary keys.
+    session.expunge_all()
+
     activity_session = _session(session, 31)
     invocation = _invocation(session, activity_session)
     work_unit = _work_unit(session, invocation)
