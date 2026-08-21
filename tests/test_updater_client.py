@@ -31,9 +31,7 @@ def test_is_valid_v1_envelope_shapes():
     assert is_valid_v1_envelope({"protocol_version": 1, "data": {}}) is False
     # updater_version 非 str
     assert (
-        is_valid_v1_envelope(
-            {"protocol_version": 1, "updater_version": 1, "data": {}}
-        )
+        is_valid_v1_envelope({"protocol_version": 1, "updater_version": 1, "data": {}})
         is False
     )
     # data 非 dict
@@ -53,7 +51,9 @@ async def test_get_status_returns_none_when_unreachable():
     """连不存在的 socket → None（跨平台；/version/info 据此标 disconnected）。"""
     from backend.services.updater_client import UpdaterClient
 
-    client = UpdaterClient(socket_path="/tmp/sakura-updater-not-exist.sock", timeout=1.0)
+    client = UpdaterClient(
+        socket_path="/tmp/sakura-updater-not-exist.sock", timeout=1.0
+    )
     result = await client.get_status()
     assert result is None
 

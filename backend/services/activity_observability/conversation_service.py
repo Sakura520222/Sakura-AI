@@ -1,6 +1,5 @@
 """Conversation-first, role-aware projection over observability storage."""
 
-
 from __future__ import annotations
 
 import base64

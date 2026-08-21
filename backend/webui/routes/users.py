@@ -1,6 +1,5 @@
 """WebUI 用户管理路由"""
 
-
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger

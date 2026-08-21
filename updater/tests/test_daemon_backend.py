@@ -52,7 +52,9 @@ SIGTERM = getattr(signal, "SIGTERM", 15)
 SIGKILL = getattr(signal, "SIGKILL", 9)
 
 
-def _patch_proc_open(monkeypatch, pid: int, *, stat: str | None = None, cmdline: bytes | None = None):
+def _patch_proc_open(
+    monkeypatch, pid: int, *, stat: str | None = None, cmdline: bytes | None = None
+):
     """Serve fake /proc/{pid}/stat and /proc/{pid}/cmdline via builtins.open.
 
     命中 ``/proc/<pid>/stat`` 或 ``/proc/<pid>/cmdline`` 时：有数据则返回 mock，
@@ -175,7 +177,9 @@ def _patch_trusted_path_tree(
     """把临时目录映射为 Linux root-owned 安全路径，可精确注入不安全 inode。"""
 
     real_lstat = daemon_mod.os.lstat
-    normalized_modes = {os.path.abspath(path): mode for path, mode in file_modes.items()}
+    normalized_modes = {
+        os.path.abspath(path): mode for path, mode in file_modes.items()
+    }
     normalized_overrides = {
         os.path.abspath(path): value for path, value in (overrides or {}).items()
     }
@@ -194,7 +198,9 @@ def _patch_trusted_path_tree(
     monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
 
 
-def _patch_same_process_primitives(monkeypatch, *, alive=True, starttime="555666", argv=()):
+def _patch_same_process_primitives(
+    monkeypatch, *, alive=True, starttime="555666", argv=()
+):
     monkeypatch.setattr(daemon_mod, "_pid_alive", lambda pid: alive)
     monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: starttime)
     monkeypatch.setattr(daemon_mod, "_read_proc_cmdline", lambda pid: argv)
@@ -272,20 +278,32 @@ def test_read_proc_starttime_returns_none_on_error(monkeypatch):
 
 def test_matches_identity_dev_module_exact_adjacent_args():
     # identity 'sakura_ai_updater' 只匹配精确相邻的 ("-m", "sakura_ai_updater")（argv[1:3]）
-    assert _matches_identity(("python", "-m", "sakura_ai_updater", "--serve"), "sakura_ai_updater")
+    assert _matches_identity(
+        ("python", "-m", "sakura_ai_updater", "--serve"), "sakura_ai_updater"
+    )
     assert _matches_identity(("python", "-m", "sakura_ai_updater"), "sakura_ai_updater")
-    assert _matches_identity(("python", "-m", "sakura_ai_updater", "x"), "sakura_ai_updater")
+    assert _matches_identity(
+        ("python", "-m", "sakura_ai_updater", "x"), "sakura_ai_updater"
+    )
     assert not _matches_identity(("python", "sakura_ai_updater"), "sakura_ai_updater")
     assert not _matches_identity(("python", "-m", "other_module"), "sakura_ai_updater")
-    assert not _matches_identity(("python", "-m", "sakura_ai_updater_x"), "sakura_ai_updater")
+    assert not _matches_identity(
+        ("python", "-m", "sakura_ai_updater_x"), "sakura_ai_updater"
+    )
     assert not _matches_identity((), "sakura_ai_updater")
 
 
 def test_matches_identity_binary_basename_only():
     # identity 'sakura-ai-updater' 只匹配 argv[0] 的 basename
-    assert _matches_identity(("/srv/.deploy/updater/sakura-ai-updater",), "sakura-ai-updater")
-    assert not _matches_identity(("/usr/bin/sakura-ai-updater.bak",), "sakura-ai-updater")
-    assert not _matches_identity(("python", "-m", "sakura_ai_updater"), "sakura-ai-updater")
+    assert _matches_identity(
+        ("/srv/.deploy/updater/sakura-ai-updater",), "sakura-ai-updater"
+    )
+    assert not _matches_identity(
+        ("/usr/bin/sakura-ai-updater.bak",), "sakura-ai-updater"
+    )
+    assert not _matches_identity(
+        ("python", "-m", "sakura_ai_updater"), "sakura-ai-updater"
+    )
     assert not _matches_identity((), "sakura-ai-updater")
 
 
@@ -300,7 +318,9 @@ def test_matches_identity_unknown_identity_never_matches():
 
 def test_is_same_process_true_when_all_checks_pass(monkeypatch):
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("python", "-m", "sakura_ai_updater"),
     )
     assert _is_same_process(1234, "555666", "sakura_ai_updater") is True
@@ -353,7 +373,11 @@ def test_write_pid_meta_is_atomic_replace(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     calls = []
     real_replace = os.replace
-    monkeypatch.setattr(daemon_mod.os, "replace", lambda src, dst: calls.append((src, dst)) or real_replace(src, dst))
+    monkeypatch.setattr(
+        daemon_mod.os,
+        "replace",
+        lambda src, dst: calls.append((src, dst)) or real_replace(src, dst),
+    )
     monkeypatch.setattr(daemon_mod.os, "fsync", lambda fd: calls.append(("fsync", fd)))
     backend._write_pid_meta(1, "111", "sakura_ai_updater")
     srcs = [c[0] for c in calls if isinstance(c, tuple) and c[0] != "fsync"]
@@ -398,7 +422,9 @@ def test_is_running_true_for_dev_module_identity(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(1234, "555666", "sakura_ai_updater")
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("python", "-m", "sakura_ai_updater", "--serve"),
     )
     assert backend.is_running() is True
@@ -408,7 +434,9 @@ def test_is_running_true_for_binary_identity(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(1234, "555666", "sakura-ai-updater")
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("/srv/.deploy/updater/sakura-ai-updater", "--serve"),
     )
     assert backend.is_running() is True
@@ -418,7 +446,9 @@ def test_is_running_false_when_cmdline_identity_mismatch(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(1234, "555666", "sakura_ai_updater")
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("/usr/bin/unrelated",),
     )
     assert backend.is_running() is False
@@ -447,7 +477,9 @@ def test_resolve_executable_uses_binary_when_executable(tmp_path, monkeypatch):
     assert identity == "sakura-ai-updater"
 
 
-def test_resolve_executable_rejects_symlink_even_when_target_is_executable(tmp_path, monkeypatch):
+def test_resolve_executable_rejects_symlink_even_when_target_is_executable(
+    tmp_path, monkeypatch
+):
     target = tmp_path / "real-updater"
     target.write_text("#!/bin/sh\n")
     target.chmod(0o755)
@@ -459,7 +491,9 @@ def test_resolve_executable_rejects_symlink_even_when_target_is_executable(tmp_p
         backend._resolve_executable()
 
 
-def test_resolve_executable_rejects_group_or_other_writable_binary(tmp_path, monkeypatch):
+def test_resolve_executable_rejects_group_or_other_writable_binary(
+    tmp_path, monkeypatch
+):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o775)
@@ -480,7 +514,9 @@ def test_resolve_executable_rejects_non_root_owner_in_production(tmp_path, monke
         backend._resolve_executable()
 
 
-def test_resolve_executable_dev_fallback_ignores_unsafe_existing_binary(tmp_path, monkeypatch):
+def test_resolve_executable_dev_fallback_ignores_unsafe_existing_binary(
+    tmp_path, monkeypatch
+):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
@@ -492,7 +528,9 @@ def test_resolve_executable_dev_fallback_ignores_unsafe_existing_binary(tmp_path
     assert identity == "sakura_ai_updater"
 
 
-def test_safe_executable_requires_regular_root_owned_private_executable(tmp_path, monkeypatch):
+def test_safe_executable_requires_regular_root_owned_private_executable(
+    tmp_path, monkeypatch
+):
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o700)
@@ -554,7 +592,9 @@ def test_start_is_idempotent_when_already_running(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(1234, "555666", "sakura_ai_updater")
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("python", "-m", "sakura_ai_updater"),
     )
     popen_calls = []
@@ -657,7 +697,9 @@ def test_validate_production_paths_rejects_untrusted_inputs(
         backend._validate_production_paths()
 
 
-def test_start_dev_mode_does_not_require_trusted_production_paths(tmp_path, monkeypatch):
+def test_start_dev_mode_does_not_require_trusted_production_paths(
+    tmp_path, monkeypatch
+):
     backend = _make_backend(tmp_path)
     monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
     monkeypatch.setattr(
@@ -723,7 +765,8 @@ def test_start_writes_meta_only_after_health_ready(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
     health_calls = []
     monkeypatch.setattr(
-        backend, "_health_ready",
+        backend,
+        "_health_ready",
         lambda *a: health_calls.append(True) or (len(health_calls) >= 2),
     )
     backend.start()
@@ -823,18 +866,24 @@ def test_cleanup_child_sigkills_when_terminate_waits_timeout(tmp_path, monkeypat
 # =============================================================================
 
 
-def _make_stop_backend(tmp_path, monkeypatch, *, identity="sakura_ai_updater", pid=1234):
+def _make_stop_backend(
+    tmp_path, monkeypatch, *, identity="sakura_ai_updater", pid=1234
+):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(pid, "555666", identity)
     kills = []
-    monkeypatch.setattr(daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None)
+    monkeypatch.setattr(
+        daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None
+    )
     return backend, kills
 
 
 def test_stop_without_meta_is_noop(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     kills = []
-    monkeypatch.setattr(daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None)
+    monkeypatch.setattr(
+        daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None
+    )
     backend.stop()
     assert kills == []
 
@@ -845,7 +894,9 @@ def test_stop_with_bad_meta_is_noop(tmp_path, monkeypatch):
     os.makedirs(backend.state_dir, exist_ok=True)
     Path(backend._pid_meta_path).write_text("{corrupt", encoding="utf-8")
     kills = []
-    monkeypatch.setattr(daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None)
+    monkeypatch.setattr(
+        daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None
+    )
     backend.stop()
     assert kills == []
     assert not os.path.exists(backend._pid_meta_path)
@@ -864,7 +915,9 @@ def test_stop_sigterm_then_no_sigkill_when_pid_reused(tmp_path, monkeypatch):
     """初次一致 → SIGTERM；随后 identity 变化（PID reuse）→ 不再发任何信号（含 SIGKILL）。"""
     backend, kills = _make_stop_backend(tmp_path, monkeypatch)
     same = iter([True, False])
-    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: next(same))
+    monkeypatch.setattr(
+        daemon_mod, "_is_same_process", lambda pid, st, ident: next(same)
+    )
     backend.stop()
     assert kills == [(1234, SIGTERM)]
     assert not os.path.exists(backend._pid_meta_path)
@@ -874,8 +927,12 @@ def test_stop_sigkills_only_when_same_process_survives_timeout(tmp_path, monkeyp
     """SIGTERM 后超时仍为同一进程 → 才 SIGKILL。"""
     backend, kills = _make_stop_backend(tmp_path, monkeypatch)
     monkeypatch.setattr(daemon_mod, "_SIGKILL", SIGKILL)  # Windows 无 SIGKILL，注入
-    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)  # 始终同进程
-    monkeypatch.setattr(daemon_mod, "_pid_alive", lambda pid: True)  # SIGTERM 无效，进程仍存活
+    monkeypatch.setattr(
+        daemon_mod, "_is_same_process", lambda pid, st, ident: True
+    )  # 始终同进程
+    monkeypatch.setattr(
+        daemon_mod, "_pid_alive", lambda pid: True
+    )  # SIGTERM 无效，进程仍存活
     backend.stop()
     assert SIGTERM in [s for _, s in kills]
     assert SIGKILL in [s for _, s in kills]
@@ -930,7 +987,9 @@ def test_status_reports_running_with_pid(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
     backend._write_pid_meta(1234, "555666", "sakura_ai_updater")
     _patch_same_process_primitives(
-        monkeypatch, alive=True, starttime="555666",
+        monkeypatch,
+        alive=True,
+        starttime="555666",
         argv=("python", "-m", "sakura_ai_updater"),
     )
     status = backend.status()
@@ -1091,16 +1150,22 @@ def test_ensure_run_dir_uses_os_chown_root_and_expected_gid(tmp_path, monkeypatc
     backend = _make_backend(tmp_path, run_dir=str(tmp_path / "run"))
     chown_calls, chmod_calls = [], []
     monkeypatch.setattr(
-        daemon_mod.os, "chown", lambda p, u, g: chown_calls.append((p, u, g)) or None,
+        daemon_mod.os,
+        "chown",
+        lambda p, u, g: chown_calls.append((p, u, g)) or None,
         raising=False,  # Windows os 模块无 chown 属性，注入即可
     )
     monkeypatch.setattr(
-        daemon_mod.os, "chmod", lambda p, m: chmod_calls.append((p, m)) or None,
+        daemon_mod.os,
+        "chmod",
+        lambda p, m: chmod_calls.append((p, m)) or None,
         raising=False,
     )
     subprocess_calls = []
     monkeypatch.setattr(
-        daemon_mod.subprocess, "run", lambda *a, **k: subprocess_calls.append(a) or _completed(0)
+        daemon_mod.subprocess,
+        "run",
+        lambda *a, **k: subprocess_calls.append(a) or _completed(0),
     )
     backend.ensure_run_dir()
     assert chown_calls == [(backend.run_dir, 0, DEFAULT_GID)]
@@ -1118,7 +1183,9 @@ def test_install_runs_bootstrap_sequence(tmp_path, monkeypatch):
     _patch_euid(monkeypatch, uid=0)  # root 放行
     calls = []
     monkeypatch.setattr(backend, "ensure_group", lambda: calls.append("ensure_group"))
-    monkeypatch.setattr(backend, "ensure_run_dir", lambda: calls.append("ensure_run_dir"))
+    monkeypatch.setattr(
+        backend, "ensure_run_dir", lambda: calls.append("ensure_run_dir")
+    )
     backend.install()
     assert calls == ["ensure_group", "ensure_run_dir"]
     assert os.path.isdir(backend.state_dir)
@@ -1147,7 +1214,8 @@ def _run_main(monkeypatch, capsys, argv):
 
 def test_cli_backend_status_outputs_json(monkeypatch, capsys, tmp_path):
     code, _backend, captured = _run_main(
-        monkeypatch, capsys,
+        monkeypatch,
+        capsys,
         ["backend", "status", "--state-dir", str(tmp_path / "state")],
     )
     assert code in (None, 0)
@@ -1161,7 +1229,8 @@ def test_cli_backend_is_running_exit_code(monkeypatch, capsys, tmp_path):
     import sakura_ai_updater.__main__ as main_mod
 
     monkeypatch.setattr(
-        main_mod, "create_backend",
+        main_mod,
+        "create_backend",
         lambda *a, **kw: _make_backend(tmp_path),
     )
     with pytest.raises(SystemExit) as excinfo:

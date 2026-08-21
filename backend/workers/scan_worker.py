@@ -288,9 +288,7 @@ class ScanWorker:
 
             # 8. 解析输出语言（用户自定义优先，回退全局）
             user_id = _parse_trigger_user_id(triggered_by)
-            output_language = await get_user_dynamic_config(
-                "output_language", user_id
-            )
+            output_language = await get_user_dynamic_config("output_language", user_id)
 
             # 9. 使用 AIReviewer 工具链进行全仓扫描
             scan_result, scan_rounds = await self._full_scan_with_tools(
@@ -709,18 +707,14 @@ class ScanWorker:
                 if not tool_calls:
                     # AI 完成分析：信封协议解析（失败进入累积式修复循环）
                     review_text = response.choices[0].message.content
-                    logger.info(
-                        f"全仓扫描对话完成（{iteration} 轮），进入协议解析..."
-                    )
+                    logger.info(f"全仓扫描对话完成（{iteration} 轮），进入协议解析...")
 
                     try:
                         max_attempts = int(
-                            await get_dynamic_config(
-                                "protocol_repair_max_attempts"
-                            )
+                            await get_dynamic_config("protocol_repair_max_attempts")
                             or 3
                         )
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         max_attempts = 3
 
                     await _event_callback(

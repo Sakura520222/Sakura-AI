@@ -452,7 +452,9 @@ success / failed
 
 ```python
 await asyncio.create_subprocess_exec(
-    "docker", "pull", f"ghcr.io/sakura520222/sakura-ai:v{target_version}",
+    "docker",
+    "pull",
+    f"ghcr.io/sakura520222/sakura-ai:v{target_version}",
 )
 ```
 
@@ -542,15 +544,20 @@ restarting → health_checking（含版本验证 gate）→ success / failed
 
 ```python
 class UpdaterServiceBackend(Protocol):
-    def detect(self) -> bool: ...           # 此后端在当前环境是否可用
-    def install(self) -> None: ...          # 安装为系统服务
+    def detect(self) -> bool: ...  # 此后端在当前环境是否可用
+    def install(self) -> None: ...  # 安装为系统服务
     def uninstall(self) -> None: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def is_running(self) -> bool: ...
 
+
 class SystemdBackend(UpdaterServiceBackend): ...
+
+
 class DaemonBackend(UpdaterServiceBackend): ...
+
+
 # 未来：OpenRCBackend / RunitBackend
 ```
 

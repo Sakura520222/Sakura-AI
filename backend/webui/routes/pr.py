@@ -107,8 +107,12 @@ async def export_pr_csv(
                 r.status,
                 r.decision or "",
                 r.overall_score or "",
-                get_time_service().format_display(r.created_at, seconds=False) if r.created_at else "",
-                get_time_service().format_display(r.completed_at, seconds=False) if r.completed_at else "",
+                get_time_service().format_display(r.created_at, seconds=False)
+                if r.created_at
+                else "",
+                get_time_service().format_display(r.completed_at, seconds=False)
+                if r.completed_at
+                else "",
             ]
         )
 

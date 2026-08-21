@@ -16,9 +16,7 @@ import re
 from backend.core.time_service import format_rfc3339, parse_rfc3339
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
-_IMAGE_DIGEST_RE = re.compile(
-    r"^.+:[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$"
-)
+_IMAGE_DIGEST_RE = re.compile(r"^.+:[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$")
 _CHANNELS = {"stable", "development"}
 
 

@@ -27,13 +27,17 @@ def test_backend_channel_switch_confirmation_defaults_to_false_and_accepts_bool(
     parsed, error = version_routes._confirm_channel_switch({})
     assert parsed is False
     assert error is None
-    parsed, error = version_routes._confirm_channel_switch({"confirm_channel_switch": True})
+    parsed, error = version_routes._confirm_channel_switch(
+        {"confirm_channel_switch": True}
+    )
     assert parsed is True
     assert error is None
 
 
 def test_template_uses_tabs_safe_dom_and_target_snapshot():
-    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     assert 'role="tablist"' in template
     assert 'role="tabpanel"' in template
     assert "/version/images" in template
@@ -42,8 +46,8 @@ def test_template_uses_tabs_safe_dom_and_target_snapshot():
     assert "confirm_channel_switch" in template
     assert "registry-panel-other" in template
     assert "CURRENT_BUILD_CHANNEL" in template
-    assert 'version_manager.current_channel' in template
-    assert 'version_manager.current_revision' in template
+    assert "version_manager.current_channel" in template
+    assert "version_manager.current_revision" in template
     assert "currentChannelTarget" in template
     assert "operationTarget" in template
     assert "CURRENT_BUILD_CHANNEL !== image.channel" in template
@@ -198,7 +202,9 @@ async def test_manual_check_force_refreshes_current_stable_channel(monkeypatch):
 
 
 def test_all_channel_readiness_checks_are_localized_in_both_languages():
-    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     translations = [
         (ROOT / "backend/webui/translations/zh-CN.yaml").read_text(encoding="utf-8"),
         (ROOT / "backend/webui/translations/en.yaml").read_text(encoding="utf-8"),
@@ -212,7 +218,7 @@ def test_all_channel_readiness_checks_are_localized_in_both_languages():
     }
     for check_name, translation_key in labels.items():
         assert f"{check_name}:" in template
-        assert f'version_manager.{translation_key}' in template
+        assert f"version_manager.{translation_key}" in template
         for locale in translations:
             assert f"  {translation_key}:" in locale
 
@@ -287,13 +293,22 @@ async def test_preflight_accepts_revalidated_development_target(monkeypatch):
         async def list_images(self):
             return {
                 "stale": False,
-                "heads": {"development": {"version": "3.0.2", "revision": "d" * 40, "tag": tag, "digest": digest}},
+                "heads": {
+                    "development": {
+                        "version": "3.0.2",
+                        "revision": "d" * 40,
+                        "tag": tag,
+                        "digest": digest,
+                    }
+                },
             }
 
     calls = []
 
     class FakeUpdater:
-        async def preflight(self, target_version=None, *, target=None, confirm_channel_switch=False):
+        async def preflight(
+            self, target_version=None, *, target=None, confirm_channel_switch=False
+        ):
             calls.append((target_version, target, confirm_channel_switch))
             return {"data": {"can_update": False}}
 
@@ -346,7 +361,9 @@ async def test_backend_revalidates_and_forwards_stable_head_target(monkeypatch):
     calls = []
 
     class FakeUpdater:
-        async def preflight(self, target_version=None, *, target=None, confirm_channel_switch=False):
+        async def preflight(
+            self, target_version=None, *, target=None, confirm_channel_switch=False
+        ):
             calls.append((target_version, target, confirm_channel_switch))
             return {"data": {"can_update": True}}
 
@@ -397,7 +414,9 @@ async def test_structured_update_audit_records_target_version(monkeypatch):
     expected_target = target
 
     class FakeUpdater:
-        async def update(self, target_version=None, *, target=None, confirm_channel_switch=False):
+        async def update(
+            self, target_version=None, *, target=None, confirm_channel_switch=False
+        ):
             assert target_version is None
             assert target == expected_target
             assert confirm_channel_switch is True

@@ -410,7 +410,7 @@ def parse_markdown_frontmatter(raw: str) -> tuple[dict[str, Any], str]:
     data = yaml.safe_load(match.group(1)) or {}
     if not isinstance(data, dict):
         data = {}
-    return data, raw[match.end():]
+    return data, raw[match.end() :]
 
 
 def parse_bool(value: Any, default: bool = False) -> bool:
@@ -488,12 +488,18 @@ def parse_skill_frontmatter(
         description=description,
         has_user_specified_description=has_description,
         allowed_tools=as_string_list(data.get("allowed-tools")),
-        argument_hint=str(data["argument-hint"]) if data.get("argument-hint") is not None else None,
+        argument_hint=str(data["argument-hint"])
+        if data.get("argument-hint") is not None
+        else None,
         argument_names=parse_argument_names(data.get("arguments")),
-        when_to_use=str(data["when_to_use"]) if data.get("when_to_use") is not None else None,
+        when_to_use=str(data["when_to_use"])
+        if data.get("when_to_use") is not None
+        else None,
         version=str(data["version"]) if data.get("version") is not None else None,
         model=model,
-        disable_model_invocation=parse_bool(data.get("disable-model-invocation"), False),
+        disable_model_invocation=parse_bool(
+            data.get("disable-model-invocation"), False
+        ),
         user_invocable=parse_bool(data.get("user-invocable"), True),
         hooks=data.get("hooks") if isinstance(data.get("hooks"), dict) else None,
         context=context,
@@ -529,7 +535,9 @@ def substitute_arguments(content: str, args: str, arg_names: list[str]) -> str:
 
     # 简化版：按空格切分命名参数。生产环境可换成 shell-like parser。
     values = args.split()
-    mapping = {name: values[i] if i < len(values) else "" for i, name in enumerate(arg_names)}
+    mapping = {
+        name: values[i] if i < len(values) else "" for i, name in enumerate(arg_names)
+    }
     for name, value in mapping.items():
         content = content.replace(f"${name}", value)
         content = content.replace("${" + name + "}", value)
@@ -539,7 +547,9 @@ def substitute_arguments(content: str, args: str, arg_names: list[str]) -> str:
 SHELL_INLINE_RE = re.compile(r"!`([^`]+)`")
 
 
-async def execute_shell_injections(content: str, skill: SkillCommand, context: ToolUseContext) -> str:
+async def execute_shell_injections(
+    content: str, skill: SkillCommand, context: ToolUseContext
+) -> str:
     """可选能力：执行 !`cmd` 并替换为输出。
 
     注意：Claude Code 对 MCP skills 禁止 shell injection。Python 项目建议默认关闭，
@@ -551,7 +561,9 @@ async def execute_shell_injections(content: str, skill: SkillCommand, context: T
     return content
 
 
-async def expand_skill_prompt(skill: SkillCommand, args: str, context: ToolUseContext) -> list[dict]:
+async def expand_skill_prompt(
+    skill: SkillCommand, args: str, context: ToolUseContext
+) -> list[dict]:
     final = skill.markdown_content
 
     if skill.base_dir:
@@ -621,7 +633,9 @@ def create_skill_command(
     )
 
 
-def load_skills_from_skills_dir(base_path: Path, source: SkillSource) -> list[tuple[SkillCommand, Path]]:
+def load_skills_from_skills_dir(
+    base_path: Path, source: SkillSource
+) -> list[tuple[SkillCommand, Path]]:
     """只支持 skill-name/SKILL.md。"""
     if not base_path.exists() or not base_path.is_dir():
         return []
@@ -645,7 +659,9 @@ def load_skills_from_skills_dir(base_path: Path, source: SkillSource) -> list[tu
     return results
 
 
-def load_legacy_commands_dir(commands_dir: Path, source: SkillSource) -> list[tuple[SkillCommand, Path]]:
+def load_legacy_commands_dir(
+    commands_dir: Path, source: SkillSource
+) -> list[tuple[SkillCommand, Path]]:
     """兼容旧 commands 目录：支持 name.md 和 name/SKILL.md。"""
     if not commands_dir.exists() or not commands_dir.is_dir():
         return []
@@ -699,11 +715,19 @@ class SkillRegistry:
         loaded: list[tuple[SkillCommand, Path]] = []
 
         if self.managed_root:
-            loaded += load_skills_from_skills_dir(self.managed_root / ".claude" / "skills", "policySettings")
+            loaded += load_skills_from_skills_dir(
+                self.managed_root / ".claude" / "skills", "policySettings"
+            )
 
-        loaded += load_skills_from_skills_dir(self.user_home / ".claude" / "skills", "userSettings")
-        loaded += load_skills_from_skills_dir(self.cwd / ".claude" / "skills", "projectSettings")
-        loaded += load_legacy_commands_dir(self.cwd / ".claude" / "commands", "projectSettings")
+        loaded += load_skills_from_skills_dir(
+            self.user_home / ".claude" / "skills", "userSettings"
+        )
+        loaded += load_skills_from_skills_dir(
+            self.cwd / ".claude" / "skills", "projectSettings"
+        )
+        loaded += load_legacy_commands_dir(
+            self.cwd / ".claude" / "commands", "projectSettings"
+        )
 
         # realpath 去重：同一文件通过 symlink/重复父目录出现时 first-wins。
         seen_files: set[Path] = set()
@@ -809,7 +833,9 @@ class DynamicSkillDiscovery:
                 self.registry.dynamic_skills[skill.name] = skill
         return added
 
-    def activate_conditional_skills_for_paths(self, file_paths: list[Path]) -> list[str]:
+    def activate_conditional_skills_for_paths(
+        self, file_paths: list[Path]
+    ) -> list[str]:
         activated: list[str] = []
         cwd = self.registry.cwd.resolve()
 
@@ -821,7 +847,10 @@ class DynamicSkillDiscovery:
                     rel = file_path.resolve().relative_to(cwd).as_posix()
                 except ValueError:
                     continue
-                if any(fnmatch(rel, pattern) or rel.startswith(pattern.rstrip("/") + "/") for pattern in skill.paths):
+                if any(
+                    fnmatch(rel, pattern) or rel.startswith(pattern.rstrip("/") + "/")
+                    for pattern in skill.paths
+                ):
                     self.registry.dynamic_skills[name] = skill
                     self.registry.conditional_skills.pop(name, None)
                     self.registry.activated_conditional.add(name)
@@ -925,7 +954,9 @@ class SkillTool:
             raise ValueError(f"Skill {command_name} cannot be used by model")
         return command_name
 
-    def check_permissions(self, command_name: str, args: str | None, context: ToolUseContext) -> PermissionDecision:
+    def check_permissions(
+        self, command_name: str, args: str | None, context: ToolUseContext
+    ) -> PermissionDecision:
         skill = self.registry.find(command_name)
         if skill is None:
             return PermissionDecision("deny", f"Unknown skill: {command_name}")
@@ -943,11 +974,17 @@ class SkillTool:
             return False
 
         if any(matches(rule) for rule in deny):
-            return PermissionDecision("deny", "Skill execution blocked by permission rules")
+            return PermissionDecision(
+                "deny", "Skill execution blocked by permission rules"
+            )
         if any(matches(rule) for rule in allow):
-            return PermissionDecision("allow", updated_input={"skill": command_name, "args": args})
+            return PermissionDecision(
+                "allow", updated_input={"skill": command_name, "args": args}
+            )
         if skill_has_only_safe_properties(skill):
-            return PermissionDecision("allow", updated_input={"skill": command_name, "args": args})
+            return PermissionDecision(
+                "allow", updated_input={"skill": command_name, "args": args}
+            )
 
         return PermissionDecision(
             "ask",
@@ -955,7 +992,9 @@ class SkillTool:
             updated_input={"skill": command_name, "args": args},
         )
 
-    async def call(self, skill_name: str, args: str | None, context: ToolUseContext) -> dict[str, Any]:
+    async def call(
+        self, skill_name: str, args: str | None, context: ToolUseContext
+    ) -> dict[str, Any]:
         command_name = self.validate_input(skill_name)
         skill = self.registry.find(command_name)
         assert skill is not None
@@ -964,14 +1003,24 @@ class SkillTool:
             return await self._execute_forked(skill, args or "", context)
 
         blocks = await expand_skill_prompt(skill, args or "", context)
-        content = "\n\n".join(block.get("text", "") for block in blocks if block.get("type") == "text")
+        content = "\n\n".join(
+            block.get("text", "") for block in blocks if block.get("type") == "text"
+        )
 
-        skill_path = str(skill.base_dir / "SKILL.md") if skill.base_dir else f"{skill.source}:{skill.name}"
+        skill_path = (
+            str(skill.base_dir / "SKILL.md")
+            if skill.base_dir
+            else f"{skill.source}:{skill.name}"
+        )
         self.invoked_store.add(skill.name, skill_path, content, context.agent_id)
 
         if skill.hooks:
             context.app_state.setdefault("pending_skill_hooks", []).append(
-                {"skill": skill.name, "hooks": skill.hooks, "skill_root": str(skill.base_dir) if skill.base_dir else None}
+                {
+                    "skill": skill.name,
+                    "hooks": skill.hooks,
+                    "skill_root": str(skill.base_dir) if skill.base_dir else None,
+                }
             )
 
         # new_messages 等价于 Claude Code 的 meta user message。
@@ -996,7 +1045,9 @@ class SkillTool:
             "toolResult": f"Launching skill: {command_name}",
         }
 
-    async def _execute_forked(self, skill: SkillCommand, args: str, context: ToolUseContext) -> dict[str, Any]:
+    async def _execute_forked(
+        self, skill: SkillCommand, args: str, context: ToolUseContext
+    ) -> dict[str, Any]:
         agent_id = f"agent_{uuid.uuid4().hex}"
         blocks = await expand_skill_prompt(skill, args, context)
         prompt = "\n".join(block.get("text", "") for block in blocks)
@@ -1014,11 +1065,13 @@ class SkillTool:
             "status": "forked",
             "agentId": agent_id,
             "result": result_text,
-            "toolResult": f"Skill \"{skill.name}\" completed (forked execution).\n\nResult:\n{result_text}",
+            "toolResult": f'Skill "{skill.name}" completed (forked execution).\n\nResult:\n{result_text}',
         }
 
 
-async def run_sub_agent_placeholder(prompt: str, skill: SkillCommand, context: ToolUseContext, agent_id: str) -> str:
+async def run_sub_agent_placeholder(
+    prompt: str, skill: SkillCommand, context: ToolUseContext, agent_id: str
+) -> str:
     return "Skill execution completed"
 ```
 
@@ -1054,7 +1107,12 @@ class HookManager:
     def __init__(self) -> None:
         self.hooks: dict[str, list[SessionHook]] = {event: [] for event in HOOK_EVENTS}
 
-    def register_skill_hooks(self, hooks_config: dict[str, Any], skill_name: str, skill_root: str | None = None) -> int:
+    def register_skill_hooks(
+        self,
+        hooks_config: dict[str, Any],
+        skill_name: str,
+        skill_root: str | None = None,
+    ) -> int:
         count = 0
         for event in HOOK_EVENTS:
             matchers = hooks_config.get(event)
@@ -1063,13 +1121,17 @@ class HookManager:
             for matcher in matchers:
                 matcher_text = matcher.get("matcher", "")
                 for hook in matcher.get("hooks", []):
-                    self.hooks[event].append(SessionHook(event, matcher_text, hook, skill_name, skill_root))
+                    self.hooks[event].append(
+                        SessionHook(event, matcher_text, hook, skill_name, skill_root)
+                    )
                     count += 1
         return count
 
     def remove_once_hook_after_success(self, session_hook: SessionHook) -> None:
         if session_hook.hook.get("once"):
-            self.hooks[session_hook.event] = [h for h in self.hooks[session_hook.event] if h is not session_hook]
+            self.hooks[session_hook.event] = [
+                h for h in self.hooks[session_hook.event] if h is not session_hook
+            ]
 ```
 
 ---
@@ -1109,9 +1171,17 @@ class InvokedSkillStore:
     def __init__(self) -> None:
         self._items: dict[str, InvokedSkillInfo] = {}
 
-    def add(self, skill_name: str, skill_path: str, content: str, agent_id: str | None = None) -> None:
+    def add(
+        self,
+        skill_name: str,
+        skill_path: str,
+        content: str,
+        agent_id: str | None = None,
+    ) -> None:
         key = f"{agent_id or ''}:{skill_name}"
-        self._items[key] = InvokedSkillInfo(skill_name, skill_path, content, time.time(), agent_id)
+        self._items[key] = InvokedSkillInfo(
+            skill_name, skill_path, content, time.time(), agent_id
+        )
 
     def for_agent(self, agent_id: str | None) -> dict[str, InvokedSkillInfo]:
         return {k: v for k, v in self._items.items() if v.agent_id == agent_id}
@@ -1184,7 +1254,9 @@ class BundledSkillDefinition:
 class BundledSkillRegistry:
     def __init__(self, root: Path | None = None) -> None:
         nonce = secrets.token_hex(12)
-        self.root = root or (Path(os.getenv("TMPDIR", "/tmp")) / f"agent-skills-{nonce}")
+        self.root = root or (
+            Path(os.getenv("TMPDIR", "/tmp")) / f"agent-skills-{nonce}"
+        )
         self.skills: dict[str, SkillCommand] = {}
 
     def register(self, definition: BundledSkillDefinition) -> SkillCommand:
@@ -1271,18 +1343,24 @@ async def fetch_mcp_skills_for_client(client: Any) -> list[SkillCommand]:
 
     listed = await client.request({"method": "resources/list"})
     resources = listed.get("resources", [])
-    skill_resources = [r for r in resources if str(r.get("uri", "")).startswith("skill://")]
+    skill_resources = [
+        r for r in resources if str(r.get("uri", "")).startswith("skill://")
+    ]
 
     commands: list[SkillCommand] = []
     for resource in skill_resources:
         uri = resource["uri"]
         try:
-            read_result = await client.request({"method": "resources/read", "params": {"uri": uri}})
-            text_parts = [c.get("text") for c in read_result.get("contents", []) if c.get("text")]
+            read_result = await client.request(
+                {"method": "resources/read", "params": {"uri": uri}}
+            )
+            text_parts = [
+                c.get("text") for c in read_result.get("contents", []) if c.get("text")
+            ]
             text = "\n".join(text_parts)
             if not text:
                 continue
-            raw_name = uri[len("skill://"):]
+            raw_name = uri[len("skill://") :]
             skill_name = f"mcp__{normalize_name_for_mcp(client.name)}__{raw_name}"
             commands.append(
                 create_skill_command(
@@ -1335,10 +1413,34 @@ from .models import SkillCommand
 
 
 STOP_WORDS = {
-    "a", "an", "the", "is", "are", "to", "of", "in", "for", "on", "with",
-    "and", "or", "if", "this", "that", "use", "using", "used", "you", "your",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "and",
+    "or",
+    "if",
+    "this",
+    "that",
+    "use",
+    "using",
+    "used",
+    "you",
+    "your",
 }
-FIELD_WEIGHT = {"name": 3.0, "when_to_use": 2.0, "description": 1.0, "allowed_tools": 0.3}
+FIELD_WEIGHT = {
+    "name": 3.0,
+    "when_to_use": 2.0,
+    "description": 1.0,
+    "allowed_tools": 0.3,
+}
 
 
 def is_cjk(ch: str) -> bool:
@@ -1355,7 +1457,7 @@ def tokenize(text: str) -> list[str]:
             while i < len(lower) and is_cjk(lower[i]):
                 run += lower[i]
                 i += 1
-            tokens.extend(run[j:j + 2] for j in range(max(0, len(run) - 1)))
+            tokens.extend(run[j : j + 2] for j in range(max(0, len(run) - 1)))
         elif re.match(r"[a-z0-9]", lower[i]):
             word = ""
             while i < len(lower) and re.match(r"[a-z0-9\-_]", lower[i]):
@@ -1373,8 +1475,15 @@ def stem(word: str) -> str:
     if word and is_cjk(word[0]):
         return word
     for suffix, min_len, cut in [
-        ("ing", 5, 3), ("tion", 5, 4), ("ness", 5, 4), ("ment", 5, 4),
-        ("ers", 4, 1), ("er", 4, 2), ("es", 4, 2), ("ed", 4, 2), ("ly", 4, 2),
+        ("ing", 5, 3),
+        ("tion", 5, 4),
+        ("ness", 5, 4),
+        ("ment", 5, 4),
+        ("ers", 4, 1),
+        ("er", 4, 2),
+        ("es", 4, 2),
+        ("ed", 4, 2),
+        ("ly", 4, 2),
     ]:
         if word.endswith(suffix) and len(word) > min_len:
             return word[:-cut]
@@ -1443,33 +1552,52 @@ class SkillSearchIndex:
 
         for skill in skills:
             name_tokens = tokenize_and_stem(skill.name)
-            name_parts = [stem(p) for p in re.split(r"[-_]", skill.name.lower()) if len(p) >= 3]
+            name_parts = [
+                stem(p) for p in re.split(r"[-_]", skill.name.lower()) if len(p) >= 3
+            ]
             desc_tokens = tokenize_and_stem(skill.description or "")
             when_tokens = tokenize_and_stem(skill.when_to_use or "")
             tool_tokens = tokenize_and_stem(" ".join(skill.allowed_tools))
 
-            all_tokens = list(set(name_tokens + name_parts + desc_tokens + when_tokens + tool_tokens))
-            tf = compute_weighted_tf([
-                (name_tokens + name_parts, FIELD_WEIGHT["name"]),
-                (when_tokens, FIELD_WEIGHT["when_to_use"]),
-                (desc_tokens, FIELD_WEIGHT["description"]),
-                (tool_tokens, FIELD_WEIGHT["allowed_tools"]),
-            ])
+            all_tokens = list(
+                set(name_tokens + name_parts + desc_tokens + when_tokens + tool_tokens)
+            )
+            tf = compute_weighted_tf(
+                [
+                    (name_tokens + name_parts, FIELD_WEIGHT["name"]),
+                    (when_tokens, FIELD_WEIGHT["when_to_use"]),
+                    (desc_tokens, FIELD_WEIGHT["description"]),
+                    (tool_tokens, FIELD_WEIGHT["allowed_tools"]),
+                ]
+            )
             token_lists.append(all_tokens)
             raw_vectors.append(tf)
-            self.entries.append(SkillIndexEntry(skill, skill.name.lower().replace("-", " ").replace("_", " "), all_tokens, tf))
+            self.entries.append(
+                SkillIndexEntry(
+                    skill,
+                    skill.name.lower().replace("-", " ").replace("_", " "),
+                    all_tokens,
+                    tf,
+                )
+            )
 
         idf = compute_idf(token_lists)
         for entry, vector in zip(self.entries, raw_vectors):
-            entry.vector = {term: tf * idf.get(term, 0.0) for term, tf in vector.items()}
+            entry.vector = {
+                term: tf * idf.get(term, 0.0) for term, tf in vector.items()
+            }
         self.idf = idf
 
-    def search(self, query: str, limit: int = 5, min_score: float = 0.10) -> list[SearchResult]:
+    def search(
+        self, query: str, limit: int = 5, min_score: float = 0.10
+    ) -> list[SearchResult]:
         query_tokens = tokenize_and_stem(query)
         if not query_tokens:
             return []
         tf = compute_weighted_tf([(query_tokens, 1.0)])
-        query_vec = {term: value * self.idf.get(term, 0.0) for term, value in tf.items()}
+        query_vec = {
+            term: value * self.idf.get(term, 0.0) for term, value in tf.items()
+        }
         query_lower = query.lower().replace("-", " ").replace("_", " ")
 
         results: list[SearchResult] = []
@@ -1478,7 +1606,11 @@ class SkillSearchIndex:
             if len(entry.skill.name) >= 4 and entry.normalized_name in query_lower:
                 score = max(score, 0.75)
             if score >= min_score:
-                results.append(SearchResult(entry.skill.name, entry.skill.description, score, entry.skill))
+                results.append(
+                    SearchResult(
+                        entry.skill.name, entry.skill.description, score, entry.skill
+                    )
+                )
         return sorted(results, key=lambda r: r.score, reverse=True)[:limit]
 ```
 
@@ -1609,7 +1741,9 @@ def render_skills_list(skills: list[SkillCommand]) -> str:
 Python Agent 主循环可以按以下方式接入：
 
 ```python
-async def handle_model_tool_use(tool_name: str, tool_input: dict, context: ToolUseContext):
+async def handle_model_tool_use(
+    tool_name: str, tool_input: dict, context: ToolUseContext
+):
     if tool_name == "Skill":
         result = await skill_tool.call(
             tool_input["skill"],
@@ -1646,6 +1780,7 @@ discover_skills_tool = DiscoverSkillsTool(registry)
 
 ```python
 discovery = DynamicSkillDiscovery(registry)
+
 
 def after_file_operation(paths: list[Path]):
     dirs = discovery.discover_skill_dirs_for_paths(paths)

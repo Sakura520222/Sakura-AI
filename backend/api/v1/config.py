@@ -55,7 +55,7 @@ def _mask_sensitive(value: str, key: str) -> str:
     if key.startswith("ai_account."):
         try:
             account = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return "****"
         if not isinstance(account, dict):
             return "****"
@@ -387,7 +387,7 @@ async def put_ai_strategy_settings(
             lo, hi = _AI_STRATEGY_RANGES[key]
             try:
                 numeric = float(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return error_response(f"{key} 取值无效")
             if not (lo <= numeric <= hi):
                 return error_response(f"{key} 取值需在 {lo}~{hi} 之间")

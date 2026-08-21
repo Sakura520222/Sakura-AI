@@ -5,7 +5,6 @@ It never trusts a browser-provided repository, role, or cursor claim: every chil
 object is resolved through its Session and the configured repository authorizer.
 """
 
-
 from __future__ import annotations
 
 import base64

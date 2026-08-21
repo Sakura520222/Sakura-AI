@@ -95,7 +95,9 @@ async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(monkeypatch):
+async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(
+    monkeypatch,
+):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
     # 当前部署已通过环境变量预填 database_url 时，无需再提示手动提供。
     monkeypatch.setattr(
@@ -114,7 +116,9 @@ async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(monk
 
 
 @pytest.mark.asyncio
-async def test_setup_backup_inspection_without_connection_requires_manual_database(monkeypatch):
+async def test_setup_backup_inspection_without_connection_requires_manual_database(
+    monkeypatch,
+):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
     monkeypatch.setattr(
         setup_route,

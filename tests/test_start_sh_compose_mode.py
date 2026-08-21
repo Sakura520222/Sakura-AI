@@ -21,7 +21,7 @@ def _run_start_sh(
     deployment_line = (
         f"printf 'SAKURA_DEPLOY_MODE=%s\\n' '{mode}' > \"$deployment_file\""
         if mode is not None
-        else ": > \"$deployment_file\""
+        else ': > "$deployment_file"'
     )
     project_line = (
         f"printf 'COMPOSE_PROJECT_NAME=%s\\n' '{project}' >> \"$deployment_file\""
@@ -148,7 +148,9 @@ printf 'ENV=%s\n' "$UPDATER_DEPLOYMENT_ENV_FILE"
         check=False,
     )
     stdout = result.stdout.decode("utf-8", errors="replace")
-    assert result.returncode == 0, stdout + result.stderr.decode("utf-8", errors="replace")
+    assert result.returncode == 0, stdout + result.stderr.decode(
+        "utf-8", errors="replace"
+    )
     assert "/docker/docker-compose.yml" in stdout
     assert "/docker/docker-compose.prod.yml" in stdout
     assert "/.deploy/deployment.env" in stdout
@@ -182,7 +184,7 @@ def test_start_mode_honors_persisted_image_deployment(
     deployment_line = (
         f"printf 'SAKURA_DEPLOY_MODE=%s\\n' '{persisted_mode}' > \"$DEPLOYMENT_ENV_FILE\""
         if persisted_mode is not None
-        else ": > \"$DEPLOYMENT_ENV_FILE\""
+        else ': > "$DEPLOYMENT_ENV_FILE"'
     )
     command = f"""
 set -u
@@ -239,7 +241,9 @@ cmd_status
     assert "等待应用健康后再恢复" in output
 
 
-@pytest.mark.parametrize(("action", "verb"), [("do_ps false", "ps"), ("do_down false", "down")])
+@pytest.mark.parametrize(
+    ("action", "verb"), [("do_ps false", "ps"), ("do_down false", "down")]
+)
 def test_service_commands_route_persisted_image_mode_to_fixed_project(
     action: str,
     verb: str,

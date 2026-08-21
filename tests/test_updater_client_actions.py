@@ -30,7 +30,9 @@ async def test_actions_preserve_typed_errors(monkeypatch):
         await client.preflight("3.1.0")
 
     async def conflict(*args, **kwargs):
-        raise UpdaterActionError(409, {"error": "update_in_progress", "job_id": "upd_existing"})
+        raise UpdaterActionError(
+            409, {"error": "update_in_progress", "job_id": "upd_existing"}
+        )
 
     monkeypatch.setattr(client, "_request", conflict)
     with pytest.raises(UpdaterActionError) as exc:
@@ -64,7 +66,9 @@ async def test_action_paths_and_json_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_action_requests_use_long_timeout_but_job_polling_stays_short(monkeypatch):
+async def test_action_requests_use_long_timeout_but_job_polling_stays_short(
+    monkeypatch,
+):
     client = UpdaterClient(
         socket_path="/tmp/unused.sock",
         timeout=2.0,

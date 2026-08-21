@@ -51,7 +51,9 @@ class _AuthFailingAdapter:
 
 
 @pytest.mark.asyncio
-async def test_probe_account_auth_error_is_actionable_without_upstream_leak(monkeypatch):
+async def test_probe_account_auth_error_is_actionable_without_upstream_leak(
+    monkeypatch,
+):
     monkeypatch.setattr(
         account_probe,
         "validate_provider_base_url",

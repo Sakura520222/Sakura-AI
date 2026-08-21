@@ -107,9 +107,7 @@ class Plan(Base):
     description = Column(Text, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     orders = relationship("Order", back_populates="plan", lazy="selectin")
     redeem_codes = relationship("RedeemCode", back_populates="plan", lazy="selectin")
@@ -144,9 +142,7 @@ class Order(Base):
     metadata_json = Column(Text, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     plan = relationship("Plan", back_populates="orders", lazy="selectin")
 
@@ -174,9 +170,7 @@ class RedeemCode(Base):
     )
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     plan = relationship("Plan", back_populates="redeem_codes", lazy="selectin")
 
@@ -221,9 +215,7 @@ class UserSubscription(Base):
     )
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "plan_id", name="uq_user_plan_sub"),)
 
@@ -281,9 +273,7 @@ class RefundRequest(Base):
     error_message = Column(Text, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     order = relationship("Order", lazy="selectin")
     user = relationship("TelegramUser", foreign_keys=[user_id], lazy="selectin")

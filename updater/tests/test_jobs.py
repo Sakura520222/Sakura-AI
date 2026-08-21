@@ -82,7 +82,9 @@ class _Adapter:
 async def test_preflight_four_gates_are_explicit(tmp_path):
     path = str(tmp_path / "state.json")
     deployment = _Deployment(mode="source", current="3.2.0")
-    orchestrator = JobOrchestrator(path, _Adapter(), _Release(), deployment, disk_space_threshold=1)
+    orchestrator = JobOrchestrator(
+        path, _Adapter(), _Release(), deployment, disk_space_threshold=1
+    )
     result = await orchestrator.preflight("3.1.0")
     failed = {item["name"] for item in result["checks"] if not item["passed"]}
     assert {"deployment_mode_image", "target_newer"}.issubset(failed)
@@ -126,7 +128,9 @@ async def test_update_success_clears_active_gate(tmp_path):
     path = str(tmp_path / "state.json")
     deployment = _Deployment()
     adapter = _Adapter()
-    orchestrator = JobOrchestrator(path, adapter, _Release(), deployment, disk_space_threshold=1)
+    orchestrator = JobOrchestrator(
+        path, adapter, _Release(), deployment, disk_space_threshold=1
+    )
     job_id = await orchestrator.submit_update("3.1.0")
     await orchestrator.wait_for_job(job_id)
     store = load_state(path)
@@ -134,7 +138,13 @@ async def test_update_success_clears_active_gate(tmp_path):
     assert store.current_job and store.current_job.state == "success"
     assert store.current_job.started_at and store.current_job.started_at.endswith("Z")
     assert store.current_job.updated_at and store.current_job.updated_at.endswith("Z")
-    assert [call[0] for call in adapter.calls] == ["preflight", "preflight", "pull", "activate", "health"]
+    assert [call[0] for call in adapter.calls] == [
+        "preflight",
+        "preflight",
+        "pull",
+        "activate",
+        "health",
+    ]
     assert orchestrator.readiness_snapshot is not None
     assert orchestrator.readiness_snapshot["update_ready"] is False
     assert orchestrator.readiness_snapshot["readiness"]["target_newer"] is False
@@ -276,7 +286,9 @@ async def test_cancelled_job_keeps_active_gate_for_reconcile(tmp_path):
 @pytest.mark.asyncio
 async def test_concurrent_submit_is_rejected(tmp_path):
     path = str(tmp_path / "state.json")
-    orchestrator = JobOrchestrator(path, _Adapter(cancel=True), _Release(), _Deployment(), disk_space_threshold=1)
+    orchestrator = JobOrchestrator(
+        path, _Adapter(cancel=True), _Release(), _Deployment(), disk_space_threshold=1
+    )
     first = await orchestrator.submit_update("3.1.0")
     with pytest.raises(UpdateInProgressError) as caught:
         await orchestrator.submit_update("3.1.0")

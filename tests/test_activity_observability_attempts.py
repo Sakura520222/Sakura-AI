@@ -1119,7 +1119,9 @@ def test_candidate_parts_uses_effective_protocol_without_snapshot():
         protocol=ProtocolFamily.ANTHROPIC_NATIVE,
     )
 
-    assert _candidate_parts(candidate)["protocol"] == ProtocolFamily.ANTHROPIC_NATIVE.value
+    assert (
+        _candidate_parts(candidate)["protocol"] == ProtocolFamily.ANTHROPIC_NATIVE.value
+    )
 
 
 def test_artifact_identity_uses_effective_protocol_without_snapshot():

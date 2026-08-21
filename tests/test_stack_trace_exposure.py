@@ -135,9 +135,7 @@ async def test_user_config_unexpected_error_logs_traceback_and_sanitizes(
 
     db = AsyncMock()
     db.execute = AsyncMock(
-        side_effect=RuntimeError(
-            "db connection lost: pool exhausted, host=internal-db"
-        )
+        side_effect=RuntimeError("db connection lost: pool exhausted, host=internal-db")
     )
 
     body = UserConfigUpdateRequest(configs={"output_language": "en"})

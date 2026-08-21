@@ -69,9 +69,7 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
         "agent_team_max_iterations_per_task",
     }
     assert removed_agent_limits.isdisjoint(Settings.model_fields)
-    assert removed_agent_limits.isdisjoint(
-        DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"]
-    )
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
     assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_LABELS)
     assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_RANGES)
 
@@ -83,10 +81,7 @@ def test_agent_team_webui_surface_excludes_legacy_supplier_keys():
     from fastapi.routing import APIRoute
 
     assert all(
-        not (
-            isinstance(route, APIRoute)
-            and route.path == "/agent-team/config/save"
-        )
+        not (isinstance(route, APIRoute) and route.path == "/agent-team/config/save")
         for route in agent_team_router.routes
     )
 
@@ -107,10 +102,7 @@ def test_ai_retry_zero_is_valid_in_api_and_webui():
     template = (
         Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_ai.html"
     ).read_text(encoding="utf-8")
-    assert (
-        'min="0" max="20" x-model.number="strategy.ai_api_max_retries"'
-        in template
-    )
+    assert 'min="0" max="20" x-model.number="strategy.ai_api_max_retries"' in template
 
 
 @pytest.mark.asyncio

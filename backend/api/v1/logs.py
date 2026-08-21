@@ -1,4 +1,5 @@
 """API v1 日志查询端点"""
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession

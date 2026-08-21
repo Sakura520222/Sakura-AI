@@ -39,7 +39,13 @@ async def test_latest_materializes_to_concrete_tag_and_digest(tmp_path, monkeypa
         command = tuple(argv)
         if command == ("docker", "inspect", "--format={{.Image}}", "sakura-ai"):
             return _Process(image_id.encode() + b"\n")
-        assert command == ("docker", "image", "inspect", "--format={{json .}}", image_id)
+        assert command == (
+            "docker",
+            "image",
+            "inspect",
+            "--format={{json .}}",
+            image_id,
+        )
         metadata = {
             "RepoTags": [
                 "ghcr.io/example/app:latest",
@@ -96,7 +102,9 @@ async def test_digest_pinned_image_is_not_materialized(
     async def fail_inspect(*argv, **kwargs):
         raise AssertionError("digest-pinned refs must not inspect running container")
 
-    monkeypatch.setattr(DeploymentStateProvider, "_read_health_sync", staticmethod(fail_health))
+    monkeypatch.setattr(
+        DeploymentStateProvider, "_read_health_sync", staticmethod(fail_health)
+    )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_inspect)
     provider = DeploymentStateProvider(str(env))
     assert await provider.materialize_current_anchor() == image_ref
@@ -124,7 +132,9 @@ async def test_concrete_tag_still_uses_health_version_authority(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_current_state_reports_running_digest_and_from_digest(tmp_path, monkeypatch):
+async def test_current_state_reports_running_digest_and_from_digest(
+    tmp_path, monkeypatch
+):
     digest = "sha256:" + "a" * 64
     image_id = "sha256:" + "b" * 64
     env = tmp_path / "deployment.env"
@@ -142,7 +152,13 @@ async def test_current_state_reports_running_digest_and_from_digest(tmp_path, mo
         command = tuple(argv)
         if command == ("docker", "inspect", "--format={{.Image}}", "sakura-ai"):
             return _Process(image_id.encode() + b"\n")
-        assert command == ("docker", "image", "inspect", "--format={{json .}}", image_id)
+        assert command == (
+            "docker",
+            "image",
+            "inspect",
+            "--format={{json .}}",
+            image_id,
+        )
         metadata = {
             "RepoTags": ["ghcr.io/example/app:v3.0.0"],
             "RepoDigests": [f"ghcr.io/example/app@{digest}"],
@@ -212,15 +228,19 @@ async def test_capture_from_digest_fails_closed_for_ambiguous_or_mismatched_meta
 ):
     image_id = "sha256:" + "b" * 64
     env = tmp_path / "deployment.env"
-    env.write_text(
-        "SAKURA_AI_IMAGE=ghcr.io/example/app:latest\n", encoding="utf-8"
-    )
+    env.write_text("SAKURA_AI_IMAGE=ghcr.io/example/app:latest\n", encoding="utf-8")
 
     async def fake_exec(*argv, **kwargs):
         command = tuple(argv)
         if command == ("docker", "inspect", "--format={{.Image}}", "sakura-ai"):
             return _Process(image_id.encode() + b"\n")
-        assert command == ("docker", "image", "inspect", "--format={{json .}}", image_id)
+        assert command == (
+            "docker",
+            "image",
+            "inspect",
+            "--format={{json .}}",
+            image_id,
+        )
         return _Process(json.dumps(metadata).encode())
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
@@ -230,7 +250,9 @@ async def test_capture_from_digest_fails_closed_for_ambiguous_or_mismatched_meta
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("image_ref", ["sakura-ai:latest", "example/app:latest"])
-async def test_local_image_reference_cannot_materialize(tmp_path, monkeypatch, image_ref):
+async def test_local_image_reference_cannot_materialize(
+    tmp_path, monkeypatch, image_ref
+):
     env = tmp_path / "deployment.env"
     env.write_text(f"SAKURA_AI_IMAGE={image_ref}\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -279,7 +301,13 @@ async def test_pinned_digest_must_match_running_manifest(tmp_path, monkeypatch):
         command = tuple(argv)
         if command == ("docker", "inspect", "--format={{.Image}}", "sakura-ai"):
             return _Process(image_id.encode() + b"\n")
-        assert command == ("docker", "image", "inspect", "--format={{json .}}", image_id)
+        assert command == (
+            "docker",
+            "image",
+            "inspect",
+            "--format={{json .}}",
+            image_id,
+        )
         return _Process(
             json.dumps(
                 {

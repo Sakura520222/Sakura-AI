@@ -42,9 +42,7 @@ def _workflow_triggers(document: dict) -> dict:
 
 def _job_run_text(job: dict) -> str:
     return "\n".join(
-        step.get("run", "")
-        for step in job.get("steps", [])
-        if isinstance(step, dict)
+        step.get("run", "") for step in job.get("steps", []) if isinstance(step, dict)
     )
 
 
@@ -68,8 +66,7 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     build = jobs["build-updater"]
     matrix = build["strategy"]["matrix"]["include"]
     assert {
-        (entry["arch"], entry["runner"], entry["platform"])
-        for entry in matrix
+        (entry["arch"], entry["runner"], entry["platform"]) for entry in matrix
     } == {
         ("amd64", "ubuntu-24.04", "linux/amd64"),
         ("arm64", "ubuntu-24.04-arm", "linux/arm64"),
@@ -92,7 +89,7 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     assert RUNTIME_IMAGE in text
     assert "updater/build/build.sh" in build_text
     assert "check_glibc.py" in build_text or "build.sh" in build_text
-    assert "--platform \"${{ matrix.platform }}\"" in build_text
+    assert '--platform "${{ matrix.platform }}"' in build_text
     assert "gh release" not in build_text
 
     runtime_text = steps[runtime_index]["run"]
@@ -107,7 +104,7 @@ def test_updater_workflow_is_reusable_native_matrix_with_two_gates():
     assert "backend start" in helper
     assert "backend status" in helper
     assert "backend is-running" in helper
-    assert 'socket_path=/run/sakura-ai/updater.sock' in helper
+    assert "socket_path=/run/sakura-ai/updater.sock" in helper
     assert 'curl --unix-socket "$socket_path"' in helper
     assert "backend stop" in helper
     assert "remained running" in helper
@@ -144,18 +141,14 @@ def test_publish_is_single_writer_and_uploads_only_two_binaries_and_checksum():
     publish_text = _job_run_text(publish)
     for asset in EXPECTED_ASSETS.values():
         assert asset in publish_text
-    assert "release_dir=\"$source_root/final\"" in publish_text
+    assert 'release_dir="$source_root/final"' in publish_text
     assert "find" in publish_text
     assert "! -L" in publish_text
     assert "-s" in publish_text
     assert "sha256sum" in publish_text
     checksum_index = publish_text.index("sha256sum")
-    amd64_index = publish_text.index(
-        '"sakura-ai-updater-linux-amd64"', checksum_index
-    )
-    arm64_index = publish_text.index(
-        '"sakura-ai-updater-linux-arm64"', checksum_index
-    )
+    amd64_index = publish_text.index('"sakura-ai-updater-linux-amd64"', checksum_index)
+    arm64_index = publish_text.index('"sakura-ai-updater-linux-arm64"', checksum_index)
     assert amd64_index < arm64_index
     assert "SHA256SUMS" in publish_text
     assert "wc -l" in publish_text or "mapfile" in publish_text
@@ -187,11 +180,13 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
             assert "gh release edit" not in workflow_text
     assert ".assets[].name" not in text
     check_assets = next(
-        step for step in build["steps"] if step.get("name") == "检查并清理 Release 附件状态"
+        step
+        for step in build["steps"]
+        if step.get("name") == "检查并清理 Release 附件状态"
     )
     cleanup_text = check_assets["run"]
-    assert 'Sakura-AI-v${VERSION}.tar.gz' in cleanup_text
-    assert 'Sakura-AI-v${VERSION}.zip' in cleanup_text
+    assert "Sakura-AI-v${VERSION}.tar.gz" in cleanup_text
+    assert "Sakura-AI-v${VERSION}.zip" in cleanup_text
     assert "gh release delete-asset" in cleanup_text
     assert "for asset in" not in cleanup_text
     assert "source upload" not in cleanup_text.lower()
@@ -232,8 +227,7 @@ def test_docker_hub_stable_sync_tags_the_copied_docker_hub_image():
         in run_text
     )
     assert (
-        'crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest'
-        in run_text
+        'crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest' in run_text
     )
     assert 'crane tag "$SOURCE" latest' not in run_text
     assert 'crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"' in run_text
@@ -276,7 +270,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     )
 
     run_text = _job_run_text(manifest)
-    assert 'VERSION: ${{ needs.generate-release.outputs.version }}' in text
+    assert "VERSION: ${{ needs.generate-release.outputs.version }}" in text
     assert "docker manifest inspect" in run_text
     assert "update-manifest.json" in run_text
     assert 'gh release upload "$TAG_NAME" update-manifest.json --clobber' in run_text
@@ -320,9 +314,13 @@ def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     assert updater["runs-on"] == "ubuntu-latest"
     assert updater["permissions"] == {"contents": "read"}
     steps = updater["steps"]
-    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
     setup_python = next(
-        step for step in steps if step.get("uses", "").startswith("actions/setup-python@")
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/setup-python@")
     )
     assert checkout["uses"].startswith("actions/checkout@")
     assert setup_python["uses"].startswith("actions/setup-python@")

@@ -52,7 +52,9 @@ def test_non_terminal_active_job_marked_failed_interrupted():
     assert changed is True
     assert result.current_job.state == "failed"
     assert result.current_job.error_code == ERROR_CODE_INTERRUPTED
-    assert result.current_job.error == "updater process restarted mid-update"  # 锁定默认文案
+    assert (
+        result.current_job.error == "updater process restarted mid-update"
+    )  # 锁定默认文案
     assert result.active_job_id is None
 
 

@@ -129,7 +129,9 @@ def parse_manifest(
             details.append(f"missing={','.join(missing)}")
         if unknown:
             details.append(f"unknown={','.join(unknown)}")
-        raise ManifestError("invalid manifest keys" + (f" ({'; '.join(details)})" if details else ""))
+        raise ManifestError(
+            "invalid manifest keys" + (f" ({'; '.join(details)})" if details else "")
+        )
 
     schema_version = _require_integer(root["schema_version"], "schema_version")
     if schema_version != MANIFEST_SCHEMA_VERSION:

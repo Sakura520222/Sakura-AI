@@ -162,8 +162,12 @@ class Tool(Protocol[InputT, OutputT]):
     def is_read_only(self, input: InputT) -> bool: ...
     def is_concurrency_safe(self, input: InputT) -> bool: ...
     def get_path(self, input: InputT) -> str | None: ...
-    def validate_input(self, input: InputT, context: ToolContext) -> ValidationResult: ...
-    def check_permissions(self, input: InputT, context: ToolContext) -> PermissionDecision: ...
+    def validate_input(
+        self, input: InputT, context: ToolContext
+    ) -> ValidationResult: ...
+    def check_permissions(
+        self, input: InputT, context: ToolContext
+    ) -> PermissionDecision: ...
     def call(self, input: InputT, context: ToolContext) -> OutputT: ...
     def map_result(self, output: OutputT, tool_use_id: str) -> dict[str, Any]: ...
 ```
@@ -197,7 +201,9 @@ class BaseTool(Generic[InputT, OutputT]):
     def validate_input(self, input: InputT, context: ToolContext) -> ValidationResult:
         return ValidationResult(result=True)
 
-    def check_permissions(self, input: InputT, context: ToolContext) -> PermissionDecision:
+    def check_permissions(
+        self, input: InputT, context: ToolContext
+    ) -> PermissionDecision:
         return PermissionDecision(behavior="allow", updated_input=input)
 ```
 
@@ -332,7 +338,9 @@ class ReadFileState:
 ### 4.2 写前新鲜度检查
 
 ```python
-def assert_file_not_modified_since_read(path: str, content_now: str, state: ReadFileState) -> None:
+def assert_file_not_modified_since_read(
+    path: str, content_now: str, state: ReadFileState
+) -> None:
     p = Path(path).resolve()
     last = state.get(str(p))
     if last is None:
@@ -407,7 +415,9 @@ def path_matches(patterns: list[str], path: str) -> bool:
 
 def check_read_permission(path: str, ctx: ToolPermissionContext) -> PermissionDecision:
     if path_matches(ctx.read_deny, path):
-        return PermissionDecision(behavior="deny", message="Read denied by permission rules")
+        return PermissionDecision(
+            behavior="deny", message="Read denied by permission rules"
+        )
     if ctx.mode == "bypassPermissions" or path_matches(ctx.read_allow, path):
         return PermissionDecision(behavior="allow")
     return PermissionDecision(behavior="ask", message=f"Allow reading {path}?")
@@ -415,7 +425,9 @@ def check_read_permission(path: str, ctx: ToolPermissionContext) -> PermissionDe
 
 def check_write_permission(path: str, ctx: ToolPermissionContext) -> PermissionDecision:
     if path_matches(ctx.write_deny, path):
-        return PermissionDecision(behavior="deny", message="Write denied by permission rules")
+        return PermissionDecision(
+            behavior="deny", message="Write denied by permission rules"
+        )
     if ctx.mode == "bypassPermissions" or path_matches(ctx.write_allow, path):
         return PermissionDecision(behavior="allow")
     return PermissionDecision(behavior="ask", message=f"Allow editing {path}?")
@@ -463,9 +475,18 @@ class ReadOutput(BaseModel):
 
 
 BLOCKED_DEVICE_PATHS = {
-    "/dev/zero", "/dev/random", "/dev/urandom", "/dev/full",
-    "/dev/stdin", "/dev/tty", "/dev/console",
-    "/dev/stdout", "/dev/stderr", "/dev/fd/0", "/dev/fd/1", "/dev/fd/2",
+    "/dev/zero",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/full",
+    "/dev/stdin",
+    "/dev/tty",
+    "/dev/console",
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/fd/0",
+    "/dev/fd/1",
+    "/dev/fd/2",
 }
 
 
@@ -486,7 +507,9 @@ class ReadTool(BaseTool[ReadInput, ReadOutput]):
     def get_path(self, input: ReadInput) -> str:
         return expand_path(input.file_path)
 
-    def validate_input(self, input: ReadInput, context: ToolContext) -> ValidationResult:
+    def validate_input(
+        self, input: ReadInput, context: ToolContext
+    ) -> ValidationResult:
         full_path = expand_path(input.file_path, context.cwd)
         if full_path in BLOCKED_DEVICE_PATHS:
             return ValidationResult(
@@ -506,8 +529,12 @@ class ReadTool(BaseTool[ReadInput, ReadOutput]):
             )
         return ValidationResult(result=True)
 
-    def check_permissions(self, input: ReadInput, context: ToolContext) -> PermissionDecision:
-        ctx = context.permission_context or ToolPermissionContext(mode="bypassPermissions")
+    def check_permissions(
+        self, input: ReadInput, context: ToolContext
+    ) -> PermissionDecision:
+        ctx = context.permission_context or ToolPermissionContext(
+            mode="bypassPermissions"
+        )
         return check_read_permission(expand_path(input.file_path, context.cwd), ctx)
 
     def call(self, input: ReadInput, context: ToolContext) -> ReadOutput:
@@ -522,8 +549,10 @@ class ReadTool(BaseTool[ReadInput, ReadOutput]):
         total = len(lines)
         start = input.offset
         end = total if input.limit is None else min(total, start + input.limit - 1)
-        selected = lines[start - 1:end]
-        content = "\n".join(f"{i}: {line}" for i, line in enumerate(selected, start=start))
+        selected = lines[start - 1 : end]
+        content = "\n".join(
+            f"{i}: {line}" for i, line in enumerate(selected, start=start)
+        )
 
         if context.read_file_state:
             context.read_file_state.set(
@@ -607,12 +636,7 @@ class EditOutput(BaseModel):
 
 
 def normalize_quotes(text: str) -> str:
-    return (
-        text.replace("‘", "'")
-        .replace("’", "'")
-        .replace("“", '"')
-        .replace("”", '"')
-    )
+    return text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
 
 
 def normalize_whitespace(text: str) -> str:
@@ -627,27 +651,31 @@ def find_actual_string(file_content: str, search: str) -> str | None:
     normalized_search = normalize_quotes(search)
     idx = normalized_file.find(normalized_search)
     if idx != -1:
-        return file_content[idx: idx + len(search)]
+        return file_content[idx : idx + len(search)]
 
     ws_file = normalize_whitespace(file_content)
     ws_search = normalize_whitespace(search)
     idx = ws_file.find(ws_search)
     if idx != -1:
         # 简化版：多数代码场景中长度差异较小；复杂场景可按 TS 版本维护 offset 映射。
-        return file_content[idx: idx + len(search)]
+        return file_content[idx : idx + len(search)]
 
     combined_file = normalize_whitespace(normalized_file)
     combined_search = normalize_whitespace(normalized_search)
     idx = combined_file.find(combined_search)
     if idx != -1:
-        return file_content[idx: idx + len(search)]
+        return file_content[idx : idx + len(search)]
 
     return None
 
 
 def detect_line_ending(raw: bytes) -> str:
     sample = raw[:4096]
-    return "\r\n" if sample.count(b"\r\n") > sample.count(b"\n") - sample.count(b"\r\n") else "\n"
+    return (
+        "\r\n"
+        if sample.count(b"\r\n") > sample.count(b"\n") - sample.count(b"\r\n")
+        else "\n"
+    )
 
 
 def read_text_with_metadata(path: str) -> tuple[str, str, str]:
@@ -658,8 +686,12 @@ def read_text_with_metadata(path: str) -> tuple[str, str, str]:
     return text.replace("\r\n", "\n"), encoding, line_ending
 
 
-def write_text_preserving(path: str, content_lf: str, encoding: str, line_ending: str) -> None:
-    final = content_lf.replace("\n", line_ending) if line_ending == "\r\n" else content_lf
+def write_text_preserving(
+    path: str, content_lf: str, encoding: str, line_ending: str
+) -> None:
+    final = (
+        content_lf.replace("\n", line_ending) if line_ending == "\r\n" else content_lf
+    )
     Path(path).write_bytes(final.encode(encoding))
 
 
@@ -685,18 +717,32 @@ class EditTool(BaseTool[EditInput, EditOutput]):
     def get_path(self, input: EditInput) -> str:
         return expand_path(input.file_path)
 
-    def validate_input(self, input: EditInput, context: ToolContext) -> ValidationResult:
+    def validate_input(
+        self, input: EditInput, context: ToolContext
+    ) -> ValidationResult:
         full_path = expand_path(input.file_path, context.cwd)
         if input.old_string == input.new_string:
-            return ValidationResult(result=False, message="old_string and new_string are identical", error_code=1)
+            return ValidationResult(
+                result=False,
+                message="old_string and new_string are identical",
+                error_code=1,
+            )
         if is_unc_path(full_path):
             return ValidationResult(result=True)
         if full_path.endswith(".ipynb"):
-            return ValidationResult(result=False, message="Use a notebook-specific edit tool for .ipynb files", error_code=5)
+            return ValidationResult(
+                result=False,
+                message="Use a notebook-specific edit tool for .ipynb files",
+                error_code=5,
+            )
         return ValidationResult(result=True)
 
-    def check_permissions(self, input: EditInput, context: ToolContext) -> PermissionDecision:
-        ctx = context.permission_context or ToolPermissionContext(mode="bypassPermissions")
+    def check_permissions(
+        self, input: EditInput, context: ToolContext
+    ) -> PermissionDecision:
+        ctx = context.permission_context or ToolPermissionContext(
+            mode="bypassPermissions"
+        )
         return check_write_permission(expand_path(input.file_path, context.cwd), ctx)
 
     def call(self, input: EditInput, context: ToolContext) -> EditOutput:
@@ -707,7 +753,9 @@ class EditTool(BaseTool[EditInput, EditOutput]):
         if p.exists():
             original, encoding, line_ending = read_text_with_metadata(full_path)
             if context.read_file_state:
-                assert_file_not_modified_since_read(full_path, original, context.read_file_state)
+                assert_file_not_modified_since_read(
+                    full_path, original, context.read_file_state
+                )
         else:
             if input.old_string != "":
                 raise FileNotFoundError(f"File does not exist: {input.file_path}")
@@ -715,20 +763,28 @@ class EditTool(BaseTool[EditInput, EditOutput]):
 
         if input.old_string == "":
             if original.strip() != "":
-                raise RuntimeError("Cannot create new file: file already exists and is not empty")
+                raise RuntimeError(
+                    "Cannot create new file: file already exists and is not empty"
+                )
             updated = input.new_string
             actual_old = ""
         else:
             actual_old = find_actual_string(original, input.old_string)
             if actual_old is None:
-                raise RuntimeError(f"String to replace not found in file:\n{input.old_string}")
+                raise RuntimeError(
+                    f"String to replace not found in file:\n{input.old_string}"
+                )
 
             matches = original.count(actual_old)
             if matches > 1 and not input.replace_all:
                 raise RuntimeError(
                     f"Found {matches} matches. Provide more context or set replace_all=true."
                 )
-            updated = original.replace(actual_old, input.new_string) if input.replace_all else original.replace(actual_old, input.new_string, 1)
+            updated = (
+                original.replace(actual_old, input.new_string)
+                if input.replace_all
+                else original.replace(actual_old, input.new_string, 1)
+            )
 
         write_text_preserving(full_path, updated, encoding, line_ending)
 
@@ -802,8 +858,12 @@ class WriteTool(BaseTool[WriteInput, WriteOutput]):
     def get_path(self, input: WriteInput) -> str:
         return expand_path(input.file_path)
 
-    def check_permissions(self, input: WriteInput, context: ToolContext) -> PermissionDecision:
-        ctx = context.permission_context or ToolPermissionContext(mode="bypassPermissions")
+    def check_permissions(
+        self, input: WriteInput, context: ToolContext
+    ) -> PermissionDecision:
+        ctx = context.permission_context or ToolPermissionContext(
+            mode="bypassPermissions"
+        )
         return check_write_permission(expand_path(input.file_path, context.cwd), ctx)
 
     def call(self, input: WriteInput, context: ToolContext) -> WriteOutput:
@@ -814,7 +874,9 @@ class WriteTool(BaseTool[WriteInput, WriteOutput]):
         if p.exists():
             old_content, encoding, _line_ending = read_text_with_metadata(full_path)
             if context.read_file_state:
-                assert_file_not_modified_since_read(full_path, old_content, context.read_file_state)
+                assert_file_not_modified_since_read(
+                    full_path, old_content, context.read_file_state
+                )
             kind = "update"
         else:
             old_content, encoding = None, "utf-8"
@@ -886,24 +948,43 @@ class GlobToolPy(BaseTool[GlobInput, GlobOutput]):
     def is_concurrency_safe(self, input: GlobInput) -> bool:
         return True
 
-    def validate_input(self, input: GlobInput, context: ToolContext) -> ValidationResult:
+    def validate_input(
+        self, input: GlobInput, context: ToolContext
+    ) -> ValidationResult:
         if input.path:
             full = Path(expand_path(input.path, context.cwd))
             if not full.exists():
-                return ValidationResult(result=False, message=f"Directory does not exist: {input.path}", error_code=1)
+                return ValidationResult(
+                    result=False,
+                    message=f"Directory does not exist: {input.path}",
+                    error_code=1,
+                )
             if not full.is_dir():
-                return ValidationResult(result=False, message=f"Path is not a directory: {input.path}", error_code=2)
+                return ValidationResult(
+                    result=False,
+                    message=f"Path is not a directory: {input.path}",
+                    error_code=2,
+                )
         return ValidationResult(result=True)
 
     def call(self, input: GlobInput, context: ToolContext) -> GlobOutput:
         start = time.time()
         base = Path(expand_path(input.path or context.cwd, context.cwd))
         matches = pyglob.glob(str(base / input.pattern), recursive=True)
-        matches = sorted(matches, key=lambda p: Path(p).stat().st_mtime if Path(p).exists() else 0, reverse=True)
+        matches = sorted(
+            matches,
+            key=lambda p: Path(p).stat().st_mtime if Path(p).exists() else 0,
+            reverse=True,
+        )
         limit = context.extra.get("glob_max_results", 100)
         truncated = len(matches) > limit
         matches = matches[:limit]
-        rel = [str(Path(m).resolve().relative_to(Path(context.cwd).resolve())) if str(Path(m).resolve()).startswith(str(Path(context.cwd).resolve())) else m for m in matches]
+        rel = [
+            str(Path(m).resolve().relative_to(Path(context.cwd).resolve()))
+            if str(Path(m).resolve()).startswith(str(Path(context.cwd).resolve()))
+            else m
+            for m in matches
+        ]
         return GlobOutput(
             duration_ms=int((time.time() - start) * 1000),
             num_files=len(rel),
@@ -912,7 +993,9 @@ class GlobToolPy(BaseTool[GlobInput, GlobOutput]):
         )
 
     def map_result(self, output: GlobOutput, tool_use_id: str) -> dict[str, Any]:
-        content = "No files found" if not output.filenames else "\n".join(output.filenames)
+        content = (
+            "No files found" if not output.filenames else "\n".join(output.filenames)
+        )
         if output.truncated:
             content += "\n(Results are truncated. Use a more specific pattern.)"
         return {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
@@ -990,17 +1073,23 @@ class GrepToolPy(BaseTool[GrepInput, GrepOutput]):
     def is_concurrency_safe(self, input: GrepInput) -> bool:
         return True
 
-    def validate_input(self, input: GrepInput, context: ToolContext) -> ValidationResult:
+    def validate_input(
+        self, input: GrepInput, context: ToolContext
+    ) -> ValidationResult:
         base = Path(expand_path(input.path or context.cwd, context.cwd))
         if not base.exists():
-            return ValidationResult(result=False, message=f"Path does not exist: {input.path}", error_code=1)
+            return ValidationResult(
+                result=False, message=f"Path does not exist: {input.path}", error_code=1
+            )
         return ValidationResult(result=True)
 
     def call(self, input: GrepInput, context: ToolContext) -> GrepOutput:
         flags = re.IGNORECASE if input.case_insensitive else 0
         rx = re.compile(input.pattern, flags)
         base = Path(expand_path(input.path or context.cwd, context.cwd))
-        files = list(iter_text_files(base, input.glob_pattern)) if base.is_dir() else [base]
+        files = (
+            list(iter_text_files(base, input.glob_pattern)) if base.is_dir() else [base]
+        )
 
         content_lines: list[str] = []
         matched_files: list[str] = []
@@ -1027,32 +1116,58 @@ class GrepToolPy(BaseTool[GrepInput, GrepOutput]):
         if input.output_mode == "content":
             lines = [rel_line(context.cwd, line) for line in content_lines]
             sliced, applied = apply_limit(lines, input.head_limit, input.offset)
-            return GrepOutput(mode="content", num_files=0, filenames=[], content="\n".join(sliced), applied_limit=applied)
+            return GrepOutput(
+                mode="content",
+                num_files=0,
+                filenames=[],
+                content="\n".join(sliced),
+                applied_limit=applied,
+            )
 
         if input.output_mode == "count":
             lines = [rel(f) for f in matched_files]
             sliced, applied = apply_limit(lines, input.head_limit, input.offset)
-            return GrepOutput(mode="count", num_files=len(sliced), filenames=[], content="\n".join(sliced), num_matches=total_matches, applied_limit=applied)
+            return GrepOutput(
+                mode="count",
+                num_files=len(sliced),
+                filenames=[],
+                content="\n".join(sliced),
+                num_matches=total_matches,
+                applied_limit=applied,
+            )
 
         files_rel = [rel(f) for f in matched_files]
         sliced, applied = apply_limit(files_rel, input.head_limit, input.offset)
-        return GrepOutput(mode="files_with_matches", num_files=len(sliced), filenames=sliced, applied_limit=applied)
+        return GrepOutput(
+            mode="files_with_matches",
+            num_files=len(sliced),
+            filenames=sliced,
+            applied_limit=applied,
+        )
 
     def map_result(self, output: GrepOutput, tool_use_id: str) -> dict[str, Any]:
         if output.mode == "content":
             content = output.content or "No matches found"
         elif output.mode == "count":
-            content = (output.content or "No matches found") + f"\n\nFound {output.num_matches or 0} total occurrences."
+            content = (
+                output.content or "No matches found"
+            ) + f"\n\nFound {output.num_matches or 0} total occurrences."
         else:
-            content = "No files found" if not output.filenames else f"Found {output.num_files} files\n" + "\n".join(output.filenames)
+            content = (
+                "No files found"
+                if not output.filenames
+                else f"Found {output.num_files} files\n" + "\n".join(output.filenames)
+            )
         return {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
 
 
-def apply_limit(items: list[str], limit: int | None, offset: int = 0) -> tuple[list[str], int | None]:
+def apply_limit(
+    items: list[str], limit: int | None, offset: int = 0
+) -> tuple[list[str], int | None]:
     if limit == 0:
         return items[offset:], None
     effective = 250 if limit is None else limit
-    sliced = items[offset: offset + effective]
+    sliced = items[offset : offset + effective]
     applied = effective if len(items) - offset > effective else None
     return sliced, applied
 
@@ -1113,12 +1228,25 @@ class ShellOutput(BaseModel):
     background_task_id: str | None = None
 
 
-READ_ONLY_COMMANDS = {"ls", "cat", "head", "tail", "grep", "rg", "find", "pwd", "git status", "git diff"}
+READ_ONLY_COMMANDS = {
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "grep",
+    "rg",
+    "find",
+    "pwd",
+    "git status",
+    "git diff",
+}
 
 
 def looks_read_only(command: str) -> bool:
     stripped = command.strip()
-    if any(op in stripped for op in [">", ">>", " rm ", "mv ", "cp ", "chmod ", "chown "]):
+    if any(
+        op in stripped for op in [">", ">>", " rm ", "mv ", "cp ", "chmod ", "chown "]
+    ):
         return False
     return any(stripped.startswith(cmd) for cmd in READ_ONLY_COMMANDS)
 
@@ -1129,7 +1257,9 @@ class ShellTool(BaseTool[ShellInput, ShellOutput]):
     max_result_size_chars = 30_000
 
     def description(self, input: ShellInput | None = None) -> str:
-        return input.description if input and input.description else "Run shell command."
+        return (
+            input.description if input and input.description else "Run shell command."
+        )
 
     def is_read_only(self, input: ShellInput) -> bool:
         return looks_read_only(input.command)
@@ -1137,7 +1267,9 @@ class ShellTool(BaseTool[ShellInput, ShellOutput]):
     def is_concurrency_safe(self, input: ShellInput) -> bool:
         return self.is_read_only(input)
 
-    def validate_input(self, input: ShellInput, context: ToolContext) -> ValidationResult:
+    def validate_input(
+        self, input: ShellInput, context: ToolContext
+    ) -> ValidationResult:
         if input.command.strip().startswith("sleep "):
             return ValidationResult(
                 result=False,
@@ -1146,14 +1278,18 @@ class ShellTool(BaseTool[ShellInput, ShellOutput]):
             )
         return ValidationResult(result=True)
 
-    def check_permissions(self, input: ShellInput, context: ToolContext) -> PermissionDecision:
+    def check_permissions(
+        self, input: ShellInput, context: ToolContext
+    ) -> PermissionDecision:
         # 可扩展为 Bash(git *) / deny rm -rf 等规则。
         if self.is_read_only(input):
             return PermissionDecision(behavior="allow")
         ctx = context.permission_context
         if ctx and ctx.mode == "bypassPermissions":
             return PermissionDecision(behavior="allow")
-        return PermissionDecision(behavior="ask", message=f"Allow command: {input.command}")
+        return PermissionDecision(
+            behavior="ask", message=f"Allow command: {input.command}"
+        )
 
     def call(self, input: ShellInput, context: ToolContext) -> ShellOutput:
         timeout_sec = (input.timeout or 120_000) / 1000
@@ -1168,7 +1304,9 @@ class ShellTool(BaseTool[ShellInput, ShellOutput]):
             )
             stdout = truncate_output(proc.stdout, self.max_result_size_chars)
             stderr = truncate_output(proc.stderr, self.max_result_size_chars)
-            return ShellOutput(stdout=stdout, stderr=stderr, return_code=proc.returncode)
+            return ShellOutput(
+                stdout=stdout, stderr=stderr, return_code=proc.returncode
+            )
         except subprocess.TimeoutExpired as exc:
             return ShellOutput(
                 stdout=exc.stdout or "",
@@ -1226,7 +1364,14 @@ Python 版：
 def get_base_tools(simple: bool = False) -> list[BaseTool[Any, Any]]:
     if simple:
         return [ShellTool(), ReadTool(), EditTool()]
-    return [ShellTool(), GlobToolPy(), GrepToolPy(), ReadTool(), EditTool(), WriteTool()]
+    return [
+        ShellTool(),
+        GlobToolPy(),
+        GrepToolPy(),
+        ReadTool(),
+        EditTool(),
+        WriteTool(),
+    ]
 
 
 def filter_tools_by_permissions(
@@ -1366,7 +1511,14 @@ def build_executor(cwd: str) -> tuple[ToolExecutor, ToolContext]:
         permission_context=permission,
         read_file_state=read_state,
     )
-    tools = [ReadTool(), EditTool(), WriteTool(), GlobToolPy(), GrepToolPy(), ShellTool()]
+    tools = [
+        ReadTool(),
+        EditTool(),
+        WriteTool(),
+        GlobToolPy(),
+        GrepToolPy(),
+        ShellTool(),
+    ]
     return ToolExecutor(tools), context
 
 
@@ -1376,16 +1528,18 @@ executor, ctx = build_executor("/path/to/project")
 print(executor.execute("Read", {"file_path": "src/app.py"}, "toolu_1", ctx))
 
 # 2. 再精确替换
-print(executor.execute(
-    "Edit",
-    {
-        "file_path": "src/app.py",
-        "old_string": "print('hello')",
-        "new_string": "print('hello world')",
-    },
-    "toolu_2",
-    ctx,
-))
+print(
+    executor.execute(
+        "Edit",
+        {
+            "file_path": "src/app.py",
+            "old_string": "print('hello')",
+            "new_string": "print('hello world')",
+        },
+        "toolu_2",
+        ctx,
+    )
+)
 ```
 
 ---

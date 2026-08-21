@@ -55,7 +55,9 @@ class ImagePreflightError(ImageCommandError):
 class HealthCheckError(ImageAdapterError):
     """The application health endpoint returned an unusable response."""
 
-    def __init__(self, message: str, *, error_code: str = "health_check_failed") -> None:
+    def __init__(
+        self, message: str, *, error_code: str = "health_check_failed"
+    ) -> None:
         super().__init__(message)
         self.error_code = error_code
 
@@ -205,7 +207,7 @@ async def _terminate_and_reap(
 
     try:
         process.kill()
-    except (ProcessLookupError, OSError):
+    except ProcessLookupError, OSError:
         pass
 
     communicate = getattr(process, "communicate", None)
@@ -214,13 +216,17 @@ async def _terminate_and_reap(
             result = communicate()
             if inspect.isawaitable(result):
                 communication_task = asyncio.create_task(result)
-                await asyncio.wait_for(asyncio.shield(communication_task), timeout=timeout)
+                await asyncio.wait_for(
+                    asyncio.shield(communication_task), timeout=timeout
+                )
         except BaseException:
             # A cancelled/blocked communicate still leaves ``wait`` as the
             # final process-reaping primitive.  Give both bounded chances.
             if communication_task is not None and not communication_task.done():
                 try:
-                    await asyncio.wait_for(asyncio.shield(communication_task), timeout=timeout)
+                    await asyncio.wait_for(
+                        asyncio.shield(communication_task), timeout=timeout
+                    )
                 except BaseException:
                     communication_task.cancel()
                     await asyncio.gather(communication_task, return_exceptions=True)
@@ -229,7 +235,9 @@ async def _terminate_and_reap(
         try:
             result = wait()
             if inspect.isawaitable(result):
-                await asyncio.wait_for(asyncio.shield(asyncio.create_task(result)), timeout=timeout)
+                await asyncio.wait_for(
+                    asyncio.shield(asyncio.create_task(result)), timeout=timeout
+                )
         except BaseException:
             # The process was killed and every available reap primitive was
             # attempted.  Preserve the original command error/cancellation.
@@ -288,7 +296,11 @@ class ImageAdapter:
             )
         except TimeoutError as exc:
             await _terminate_and_reap(process)
-            if "communication_task" in locals() and communication_task.done() and not communication_task.cancelled():
+            if (
+                "communication_task" in locals()
+                and communication_task.done()
+                and not communication_task.cancelled()
+            ):
                 raw_stdout, raw_stderr = communication_task.result()
             else:
                 raw_stdout, raw_stderr = b"", b""
@@ -378,7 +390,7 @@ class ImageAdapter:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             return int(exc.code), {}
-        except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        except URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError:
             return 0, {}
         if not isinstance(payload, dict):
             return status, {}
@@ -411,19 +423,29 @@ class ImageAdapter:
             request_timeout = max(0.05, min(remaining, 5.0))
             try:
                 status, payload = await asyncio.wait_for(
-                    asyncio.to_thread(self._read_health_sync, self.health_url, request_timeout),
+                    asyncio.to_thread(
+                        self._read_health_sync, self.health_url, request_timeout
+                    ),
                     timeout=request_timeout + 0.05,
                 )
             except TimeoutError:
                 status, payload = 0, {}
             if status == 200:
                 actual = payload.get("version")
-                build = payload.get("build") if isinstance(payload.get("build"), dict) else {}
+                build = (
+                    payload.get("build")
+                    if isinstance(payload.get("build"), dict)
+                    else {}
+                )
                 identity_ok = actual == expected_version
                 if expected_channel is not None:
-                    identity_ok = identity_ok and build.get("channel") == expected_channel
+                    identity_ok = (
+                        identity_ok and build.get("channel") == expected_channel
+                    )
                 if expected_revision is not None:
-                    identity_ok = identity_ok and build.get("revision") == expected_revision
+                    identity_ok = (
+                        identity_ok and build.get("revision") == expected_revision
+                    )
                 if identity_ok:
                     return
                 mismatch = {

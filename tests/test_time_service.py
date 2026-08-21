@@ -72,9 +72,7 @@ def test_rfc3339_is_strict_utc_and_rejects_naive():
 def test_time_service_freezes_resolved_zone_and_injects_clock(monkeypatch):
     clock = FakeClock()
     service = TimeService("Asia/Shanghai", clock=clock)
-    monkeypatch.setattr(
-        "backend.core.time_service.get_localzone_name", lambda: "UTC"
-    )
+    monkeypatch.setattr("backend.core.time_service.get_localzone_name", lambda: "UTC")
     assert service.configured_timezone == "Asia/Shanghai"
     assert service.resolved_timezone == "Asia/Shanghai"
     assert service.now_utc() == clock.instant

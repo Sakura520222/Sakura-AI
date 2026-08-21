@@ -739,9 +739,7 @@ class Settings(BaseSettings):
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
     # ========== Agent 模式配置 ==========
-    agent_team_enabled: bool = (
-        False  # 是否启用 Agent 模式（super_admin 手动使用）
-    )
+    agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
@@ -893,9 +891,7 @@ def get_sakura_memory_config() -> dict:
     平铺 Settings 键已随双轨合并移除，读取一律走本入口。
     """
     return (
-        get_strategy_config()
-        .get_context_enhancement_config()
-        .get("sakura_memory", {})
+        get_strategy_config().get_context_enhancement_config().get("sakura_memory", {})
     )
 
 

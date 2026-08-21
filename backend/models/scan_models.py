@@ -100,9 +100,7 @@ class RepoScan(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     started_at = Column(UTCDateTime, nullable=True)
     completed_at = Column(UTCDateTime, nullable=True)
 

@@ -63,7 +63,9 @@ def prepare_socket_path(socket_path: str) -> None:
         try:
             os.remove(socket_path)
         except OSError as e:
-            raise SocketPathError(f"cannot remove stale socket {socket_path!r}: {e}") from None
+            raise SocketPathError(
+                f"cannot remove stale socket {socket_path!r}: {e}"
+            ) from None
         return
     except OSError as e:
         probe.close()
@@ -94,7 +96,7 @@ def cleanup_owned_socket(socket_path: str) -> None:
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         probe.connect(socket_path)
-    except (ConnectionRefusedError, FileNotFoundError):
+    except ConnectionRefusedError, FileNotFoundError:
         probe.close()
         try:
             os.remove(socket_path)

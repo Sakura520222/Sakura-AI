@@ -410,8 +410,13 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     )
     assert "## system" in payload["submission_context"]["full_submission_preview"]
     assert "## user" in payload["submission_context"]["full_submission_preview"]
-    assert "## GitHub Issue 上下文" not in payload["submission_context"]["agent_task_context"]
-    assert "## GitHub Issue 上下文" in payload["submission_context"]["reference_context"]
+    assert (
+        "## GitHub Issue 上下文"
+        not in payload["submission_context"]["agent_task_context"]
+    )
+    assert (
+        "## GitHub Issue 上下文" in payload["submission_context"]["reference_context"]
+    )
 
 
 @pytest.mark.asyncio

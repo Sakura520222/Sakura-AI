@@ -325,7 +325,9 @@ class IssueService:
         """
         # PR 与 Issue 标签统一阈值：读标签推荐设置（label.recommendation 节）
         threshold = (
-            get_label_config().get_recommendation_settings().get("confidence_threshold", 0.7)
+            get_label_config()
+            .get_recommendation_settings()
+            .get("confidence_threshold", 0.7)
         )
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
 

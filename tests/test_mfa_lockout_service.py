@@ -62,4 +62,3 @@ async def test_mfa_fallback_notification_is_rejected_after_quiesce(
     await asyncio.sleep(0)
     assert not called
     assert not runtime_supervisor.tasks
-

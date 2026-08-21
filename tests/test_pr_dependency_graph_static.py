@@ -87,10 +87,7 @@ def test_extract_previous_graph_uses_deterministic_delimiter_parsing(service):
 
 def test_extract_previous_graph_rejects_large_unterminated_fence(service):
     body = (
-        service.START_MARKER
-        + "\n```mermaid\n"
-        + (" \n" * 50_000)
-        + service.END_MARKER
+        service.START_MARKER + "\n```mermaid\n" + (" \n" * 50_000) + service.END_MARKER
     )
 
     with patch(

@@ -412,26 +412,24 @@ class IssueWorker:
 
                     # 8. 自动评论
                     try:
-                        activity_result_id = analysis_result.get(
-                            "_activity_result_id"
-                        )
+                        activity_result_id = analysis_result.get("_activity_result_id")
                         if execution is not None and isinstance(
                             activity_result_id, int
                         ):
-                            body = issue_service.build_analysis_comment(
-                                analysis_record
-                            )
+                            body = issue_service.build_analysis_comment(analysis_record)
                             if not body:
                                 success = False
                             else:
-                                publication = await execution.publication_service.create_pending(
-                                    activity_result_id,
-                                    "issue_comment",
-                                    (
-                                        f"issue-comment-{execution.session.id}-"
-                                        f"{execution.invocation.id}-"
-                                        f"{execution.work_unit.id}"
-                                    ),
+                                publication = (
+                                    await execution.publication_service.create_pending(
+                                        activity_result_id,
+                                        "issue_comment",
+                                        (
+                                            f"issue-comment-{execution.session.id}-"
+                                            f"{execution.invocation.id}-"
+                                            f"{execution.work_unit.id}"
+                                        ),
+                                    )
                                 )
                                 resource_identity = {
                                     "source_system_instance": issue_info.get(
@@ -480,7 +478,6 @@ class IssueWorker:
                             logger.info(f"[{task_id}] 已发布分析评论")
                     except Exception as e:
                         logger.warning(f"[{task_id}] 发布评论失败: {e}")
-
 
                     # 10. 应用建议标签（PR 与 Issue 统一：读标签推荐设置）
                     if (

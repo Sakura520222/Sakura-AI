@@ -104,9 +104,7 @@ class TelegramUser(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<TelegramUser(telegram_id={self.telegram_id}, github_username={self.github_username}, role={self.role})>"
@@ -176,9 +174,7 @@ class RepoSubscription(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<RepoSubscription(repo_name={self.repo_name}, is_active={self.is_active})>"

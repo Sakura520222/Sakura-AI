@@ -39,12 +39,12 @@ def test_agent_team_templates_compile_and_page_uses_one_console_surface():
     assert "activeTab" not in page
     assert "bg-gradient" not in page
     assert "hero" not in page.lower()
-    assert "<select x-model=\"selectedTaskId\"" not in page
+    assert '<select x-model="selectedTaskId"' not in page
     assert "components/agent_team_live_view_fragment.html" in page
     assert "loadTaskDetail(taskId); watchLive(taskId);" in page
     assert "mobileDetail = true" in page
     assert "clearSelectedTask()" in page
-    assert "@click=\"refreshLiveView()\"" in _read(LIVE)
+    assert '@click="refreshLiveView()"' in _read(LIVE)
     assert page.count("agent-secondary-drawer-shell") == 1
     assert "top-16 z-40 h-[calc(100dvh-4rem)]" in page
     assert "secondaryPanel === 'candidates'" in page
@@ -72,7 +72,7 @@ def test_agent_console_relies_on_alpine_automatic_init_only():
 def test_agent_console_has_no_redundant_page_identity_header():
     page = _read(PAGE)
 
-    assert '<header class=' not in page
+    assert "<header class=" not in page
     assert "{{ _('agent_team.description') }}" not in page
     assert "agent-console-toolbar" in page
 
@@ -81,7 +81,7 @@ def test_live_is_primary_and_has_a_viewport_bounded_scroll_chain():
     page = _read(PAGE)
     live = _read(LIVE)
 
-    assert 'lg:h-[calc(100dvh-7rem)]' in page
+    assert "lg:h-[calc(100dvh-7rem)]" in page
     assert 'id="agent-task-live"' in page
     assert 'id="agent-task-detail-shell"' in page
     assert page.index('id="agent-task-live"') < page.index(
@@ -92,7 +92,10 @@ def test_live_is_primary_and_has_a_viewport_bounded_scroll_chain():
     assert 'id="agent-task-detail" class="max-h-' in page
     assert "overflow-y-auto" in page[page.index('id="agent-task-detail"') :]
     assert "agent-task-detail-shell')?.removeAttribute('open')" in page
-    assert 'class="agent-live-panel flex h-[70dvh] min-h-[32rem] flex-col lg:h-full lg:min-h-0"' in live
+    assert (
+        'class="agent-live-panel flex h-[70dvh] min-h-[32rem] flex-col lg:h-full lg:min-h-0"'
+        in live
+    )
     assert 'id="live-messages"' in live
     assert "min-h-0 flex-1 overflow-y-auto" in live
 
@@ -155,7 +158,9 @@ def test_live_view_has_execution_rail_safe_markdown_and_stream_recovery_controls
 
 
 def test_console_fragments_do_not_embed_inline_handlers_or_remote_fonts():
-    templates = "\n".join(_read(path) for path in (PAGE, LIST, DETAIL, LIVE, WORKSPACES, WORKTREES))
+    templates = "\n".join(
+        _read(path) for path in (PAGE, LIST, DETAIL, LIVE, WORKSPACES, WORKTREES)
+    )
     assert "onclick=" not in templates
     assert "onerror=" not in templates
     assert "fonts.googleapis.com" not in templates

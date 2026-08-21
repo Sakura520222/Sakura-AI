@@ -133,7 +133,7 @@ def _safe_json_loads(raw: str | None) -> Any:
         return None
     try:
         return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
 
 
@@ -227,9 +227,7 @@ def validate_role_bindings_payload(
             if not assignment.account or not assignment.model:
                 return {}, f"角色 {role} 的账号和模型不能为空"
 
-            follows_main = (
-                assignment.account == "main" or assignment.model == "follow"
-            )
+            follows_main = assignment.account == "main" or assignment.model == "follow"
             if follows_main:
                 if role == "main" or not (
                     assignment.account == "main" and assignment.model == "follow"

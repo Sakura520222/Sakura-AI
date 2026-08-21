@@ -6,6 +6,7 @@
 - 定期合并更新 SAKURA.md 和 memory.md / Periodically consolidate and update files
 - 读取上下文注入审查 prompt / Read context for review prompt injection
 """
+
 import asyncio
 import functools
 import hashlib

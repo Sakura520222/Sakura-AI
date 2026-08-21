@@ -102,7 +102,11 @@ class JobLogStore:
 
     def snapshot(self, job_id: str) -> dict[str, Any]:
         buffer = self._buffers.get(job_id)
-        return buffer.to_dict(job_id) if buffer else {"job_id": job_id, "logs": [], "truncated": False}
+        return (
+            buffer.to_dict(job_id)
+            if buffer
+            else {"job_id": job_id, "logs": [], "truncated": False}
+        )
 
     def clear(self, job_id: str) -> None:
         self._buffers.pop(job_id, None)
@@ -110,4 +114,3 @@ class JobLogStore:
 
 # Names kept intentionally simple for external tests/integrations.
 RingBuffer = JobLogBuffer
-

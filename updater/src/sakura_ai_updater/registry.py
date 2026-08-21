@@ -113,7 +113,9 @@ def parse_stable_target(value: Any) -> StableTarget:
     digest = value.get("digest")
     if not all(isinstance(item, str) for item in (version, tag, digest)):
         raise RegistryTargetError("target fields must be strings")
-    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+    if not re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version
+    ):
         raise RegistryTargetError("stable target version is invalid")
     if tag != f"v{version}":
         raise RegistryTargetError("stable tag does not match version")
@@ -131,9 +133,13 @@ class RegistryClient:
         self.repository = repository
         self.timeout = timeout
 
-    def _json_sync(self, url: str, headers: dict[str, str]) -> tuple[Any, dict[str, str]]:
+    def _json_sync(
+        self, url: str, headers: dict[str, str]
+    ) -> tuple[Any, dict[str, str]]:
         try:
-            with urlopen(Request(url, headers=headers), timeout=self.timeout) as response:
+            with urlopen(
+                Request(url, headers=headers), timeout=self.timeout
+            ) as response:
                 return json.loads(response.read().decode("utf-8")), {
                     str(k).lower(): str(v) for k, v in response.headers.items()
                 }
@@ -141,7 +147,13 @@ class RegistryClient:
             raise RegistryTargetError(
                 "registry request failed", status_code=int(exc.code)
             ) from exc
-        except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        except (
+            URLError,
+            OSError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             raise RegistryTargetError("registry request failed") from exc
 
     def _manifest_sync(self, tag: str, token: str) -> str:
@@ -161,7 +173,9 @@ class RegistryClient:
             raise RegistryTargetError("registry did not return a manifest digest")
         return digest
 
-    async def verify_target(self, target: DevelopmentTarget | StableTarget) -> DevelopmentTarget | StableTarget:
+    async def verify_target(
+        self, target: DevelopmentTarget | StableTarget
+    ) -> DevelopmentTarget | StableTarget:
         if target.repository != self.repository:
             raise RegistryTargetError("target repository mismatch")
         registry, path = self.repository.split("/", 1)

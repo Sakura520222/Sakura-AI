@@ -135,8 +135,7 @@ def test_agent_skills_templates_compile_and_use_compact_ledger():
         encoding="utf-8"
     )
     fragment = (
-        root
-        / "backend/webui/templates/components/agent_skills_list_fragment.html"
+        root / "backend/webui/templates/components/agent_skills_list_fragment.html"
     ).read_text(encoding="utf-8")
 
     assert '<dialog x-ref="installDialog"' in page
@@ -161,9 +160,7 @@ def test_agent_skills_template_translation_keys_have_catalog_parity():
     sources = [path.read_text(encoding="utf-8") for path in template_paths]
     for source in sources:
         get_templates().env.parse(source)
-    referenced = set(
-        re.findall(r"_\(\s*['\"]([^'\"]+)['\"]", "\n".join(sources))
-    )
+    referenced = set(re.findall(r"_\(\s*['\"]([^'\"]+)['\"]", "\n".join(sources)))
 
     for filename in ("zh-CN.yaml", "en.yaml"):
         locale_path = ROOT / "backend/webui/translations" / filename

@@ -182,7 +182,9 @@ class StarAidWorker:
         if repo_limit <= 0:
             return []
         service = get_time_service()
-        today_start = start_of_local_day(local_date(now_utc(), service.zone), service.zone)
+        today_start = start_of_local_day(
+            local_date(now_utc(), service.zone), service.zone
+        )
         counts_result = await session.execute(
             select(
                 StarAidActionLog.target_repository_id,

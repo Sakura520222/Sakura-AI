@@ -376,7 +376,8 @@ class PublicationService:
         self,
         db: AsyncSession | None = None,
         *,
-        session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
+        session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
+        | None = None,
         limits: PublicationLimits | None = None,
         recipient_user_ids: tuple[str, ...] | None = None,
         recipient_resolver: Callable[..., Any] | None = None,

@@ -1,4 +1,5 @@
 """WebUI 仪表盘路由"""
+
 import asyncio
 from collections import OrderedDict
 from datetime import UTC, timedelta
@@ -339,9 +340,7 @@ async def get_chart_data(
     now = time_service.now_utc()
     local_now = time_service.to_app_timezone(now)
     start_date = local_now.date() - timedelta(days=30)
-    bucket_start_utc = start_of_local_day(
-        start_date, time_service.zone
-    ).astimezone(UTC)
+    bucket_start_utc = start_of_local_day(start_date, time_service.zone).astimezone(UTC)
 
     # 构建用户过滤条件
     scope_filter = build_user_scope_filter(user, PRReview)

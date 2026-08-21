@@ -1,4 +1,5 @@
 """Setup Wizard test_ai_api 的 API Key 规范化回归测试（Issue #502）。"""
+
 from types import SimpleNamespace
 
 import pytest
@@ -51,9 +52,7 @@ async def test_setup_test_ai_api_auth_error_is_actionable_without_upstream_leak(
         "backend.core.ai_protocol.registry.resolve_endpoint",
         lambda decl, api_base="": SimpleNamespace(),
     )
-    result = await setup_service.test_ai_api(
-        "sk-setup-token", "https://example.com/v1"
-    )
+    result = await setup_service.test_ai_api("sk-setup-token", "https://example.com/v1")
     assert result["success"] is False
     assert "API 鉴权失败" in result["message"]
     assert "upstream secret diagnostic" not in result["message"]

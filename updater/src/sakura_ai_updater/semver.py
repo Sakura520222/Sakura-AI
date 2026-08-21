@@ -126,9 +126,7 @@ def parse_semver(version: str) -> SemVer | None:
     # Numeric pre-release identifiers may not contain leading zeroes.  The
     # main regex already guarantees their character set and non-empty value.
     if any(
-        identifier.isdigit()
-        and len(identifier) > 1
-        and identifier.startswith("0")
+        identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0")
         for identifier in prerelease
     ):
         return None

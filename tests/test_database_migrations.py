@@ -47,12 +47,10 @@ def test_add_column_sql_uses_active_dialect_identifier_quotes():
     postgres_sql = _build_add_column_sql(postgresql.dialect(), "order", column)
 
     assert mysql_sql == (
-        "ALTER TABLE `order` ADD COLUMN `select` VARCHAR(20) "
-        "NOT NULL DEFAULT 'ready'"
+        "ALTER TABLE `order` ADD COLUMN `select` VARCHAR(20) NOT NULL DEFAULT 'ready'"
     )
     assert postgres_sql == (
-        'ALTER TABLE "order" ADD COLUMN "select" VARCHAR(20) '
-        "NOT NULL DEFAULT 'ready'"
+        'ALTER TABLE "order" ADD COLUMN "select" VARCHAR(20) NOT NULL DEFAULT \'ready\''
     )
 
 
@@ -73,16 +71,20 @@ async def test_observability_trigger_unique_index_is_created_idempotently():
     try:
         with engine.begin() as connection:
             adapted = _SyncConnectionAdapter(connection)
-            assert await _ensure_observability_trigger_unique_index(
-                adapted, logging.getLogger(__name__)
-            ) is True
-            assert await _ensure_observability_trigger_unique_index(
-                adapted, logging.getLogger(__name__)
-            ) is False
+            assert (
+                await _ensure_observability_trigger_unique_index(
+                    adapted, logging.getLogger(__name__)
+                )
+                is True
+            )
+            assert (
+                await _ensure_observability_trigger_unique_index(
+                    adapted, logging.getLogger(__name__)
+                )
+                is False
+            )
 
-        indexes = inspect(engine).get_indexes(
-            PRReviewIncrementalQueue.__tablename__
-        )
+        indexes = inspect(engine).get_indexes(PRReviewIncrementalQueue.__tablename__)
         matching = [
             index
             for index in indexes
@@ -116,9 +118,7 @@ async def test_observability_trigger_duplicate_rows_fail_closed():
                     adapted, logging.getLogger(__name__)
                 )
 
-        indexes = inspect(engine).get_indexes(
-            PRReviewIncrementalQueue.__tablename__
-        )
+        indexes = inspect(engine).get_indexes(PRReviewIncrementalQueue.__tablename__)
         assert not any(
             index["name"] == _OBSERVABILITY_TRIGGER_UNIQUE_INDEX_NAME
             for index in indexes
@@ -138,13 +138,14 @@ async def test_existing_unique_trigger_index_is_left_untouched():
                 unique=True,
             ).create(connection)
             adapted = _SyncConnectionAdapter(connection)
-            assert await _ensure_observability_trigger_unique_index(
-                adapted, logging.getLogger(__name__)
-            ) is False
+            assert (
+                await _ensure_observability_trigger_unique_index(
+                    adapted, logging.getLogger(__name__)
+                )
+                is False
+            )
 
-        indexes = inspect(engine).get_indexes(
-            PRReviewIncrementalQueue.__tablename__
-        )
+        indexes = inspect(engine).get_indexes(PRReviewIncrementalQueue.__tablename__)
         assert any(
             index["name"] == "existing_unique_trigger_index" and index["unique"]
             for index in indexes

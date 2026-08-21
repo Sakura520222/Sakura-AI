@@ -3,6 +3,7 @@
 聚合 PR 审查、Issues 分析、仓库扫描三种任务的实时状态，
 复用 Agent Team 的 Session/Message/ToolCheckPoint 模式实现对话流。
 """
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, select
@@ -380,7 +381,9 @@ async def activity_stream_data(
                     "content": m.content,
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
-                    "created_at": format_rfc3339(m.created_at) if m.created_at else None,
+                    "created_at": format_rfc3339(m.created_at)
+                    if m.created_at
+                    else None,
                 }
                 for m in msg_rows
             ],
@@ -393,7 +396,9 @@ async def activity_stream_data(
                     "name": tc.name,
                     "status": tc.status,
                     "arguments_json": tc.arguments_json,
-                    "started_at": format_rfc3339(tc.started_at) if tc.started_at else None,
+                    "started_at": format_rfc3339(tc.started_at)
+                    if tc.started_at
+                    else None,
                     "completed_at": format_rfc3339(tc.completed_at)
                     if tc.completed_at
                     else None,
@@ -407,7 +412,9 @@ async def activity_stream_data(
                     "iteration_number": s.iteration_number,
                     "role_name": s.role_name,
                     "status": s.status,
-                    "started_at": format_rfc3339(s.started_at) if s.started_at else None,
+                    "started_at": format_rfc3339(s.started_at)
+                    if s.started_at
+                    else None,
                     "completed_at": format_rfc3339(s.completed_at)
                     if s.completed_at
                     else None,

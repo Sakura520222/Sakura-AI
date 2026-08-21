@@ -1,4 +1,5 @@
 """API v1 扫描管理端点"""
+
 import asyncio
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -157,7 +158,9 @@ async def get_scan(
         "report_issue_url": scan.report_issue_url,
         "created_at": format_rfc3339(scan.created_at) if scan.created_at else None,
         "started_at": format_rfc3339(scan.started_at) if scan.started_at else None,
-        "completed_at": format_rfc3339(scan.completed_at) if scan.completed_at else None,
+        "completed_at": format_rfc3339(scan.completed_at)
+        if scan.completed_at
+        else None,
         "findings": [
             {
                 "id": f.id,

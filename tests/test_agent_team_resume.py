@@ -106,7 +106,7 @@ def test_to_unified_round_trip_preserves_structure():
                 {
                     "id": "call_1",
                     "type": "function",
-                    "function": {"name": "read_file", "arguments": "{\"path\": \"a.py\"}"},
+                    "function": {"name": "read_file", "arguments": '{"path": "a.py"}'},
                 }
             ],
         },

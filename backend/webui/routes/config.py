@@ -75,6 +75,7 @@ _STRATEGY_SECTION_KEYS = {
 # 如 context_enhancement.sakura_memory、review_policy.repo_overrides）
 _STRATEGY_PATCH_SECTIONS = frozenset({"context_enhancement", "review_policy"})
 
+
 @router.get("/strategies")
 async def strategies_page(
     user: dict = Depends(require_super_admin),
@@ -181,13 +182,10 @@ async def save_strategies_section(
                         "max_sakura_chars": int(
                             form.get("sakura_max_sakura_chars", 3000)
                         ),
-                        "partial_commit": form.get("sakura_partial_commit")
-                        is not None,
+                        "partial_commit": form.get("sakura_partial_commit") is not None,
                     },
                     "knowledge_extraction": {
-                        "min_reflections": int(
-                            form.get("sakura_min_reflections", 15)
-                        ),
+                        "min_reflections": int(form.get("sakura_min_reflections", 15)),
                     },
                     "initialization": {
                         "auto_init": form.get("sakura_auto_init") is not None,
@@ -280,7 +278,7 @@ async def save_strategies_section(
             raw_linked = form.get("max_linked_issues_in_prompt", "5")
             try:
                 max_linked = int(raw_linked)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 raise ValueError("关联 Issue 数量上限必须是有效整数")
 
             data = {
@@ -337,6 +335,7 @@ async def save_strategies_section(
         lang=detect_language(),
         section=section,
     )
+
 
 @router.get("/labels")
 async def labels_page(
@@ -400,7 +399,10 @@ async def save_labels_definitions(
     except Exception as e:
         logger.error(f"标签定义保存失败: {e}")
         return toast_redirect(
-            "/config?section=labels", "toast.save_failed", "error", lang=detect_language()
+            "/config?section=labels",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
         )
 
     return toast_redirect(
@@ -427,9 +429,7 @@ async def save_recommendation_settings(
 
         confidence_threshold = float(form.get("confidence_threshold", 0.7))
         if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(
-                f"置信度阈值必须在 0.0-1.0 之间: {confidence_threshold}"
-            )
+            raise ValueError(f"置信度阈值必须在 0.0-1.0 之间: {confidence_threshold}")
 
         data = {
             "enabled": form.get("rec_enabled") is not None,
@@ -453,7 +453,10 @@ async def save_recommendation_settings(
     except Exception as e:
         logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
         return toast_redirect(
-            "/config?section=labels", "toast.save_failed", "error", lang=detect_language()
+            "/config?section=labels",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
         )
 
     return toast_redirect(
@@ -484,9 +487,7 @@ async def save_conflict_rules(
                 blocked_raw = str(form.get(f"conflict_blocked_{idx}", "")).strip()
                 if source and blocked_raw:
                     # 仅按逗号分隔，保留标签内部空格（如 "good first issue"）
-                    blocked = [
-                        b.strip() for b in blocked_raw.split(",") if b.strip()
-                    ]
+                    blocked = [b.strip() for b in blocked_raw.split(",") if b.strip()]
                     if blocked:
                         conflict_rules[source] = blocked
 
@@ -494,9 +495,7 @@ async def save_conflict_rules(
             db, "label.conflict_rules", conflict_rules
         )
         label_service.reload_labels()
-        logger.info(
-            f"标签冲突规则已更新 ({len(conflict_rules)} 条), by={user['sub']}"
-        )
+        logger.info(f"标签冲突规则已更新 ({len(conflict_rules)} 条), by={user['sub']}")
         await log_admin_action(
             db,
             user["user_id"],
@@ -518,7 +517,10 @@ async def save_conflict_rules(
     except Exception as e:
         logger.error(f"冲突规则保存失败: {e}", exc_info=True)
         return toast_redirect(
-            "/config?section=labels", "toast.save_failed", "error", lang=detect_language()
+            "/config?section=labels",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
         )
 
     return toast_redirect(
@@ -600,7 +602,9 @@ async def save_all_config(
 
         form = _payload_to_form_data(item.get("fields") or {})
         kwargs = (
-            {"section": form.get("section", "")} if action.endswith("/strategies/save") else {}
+            {"section": form.get("section", "")}
+            if action.endswith("/strategies/save")
+            else {}
         )
         try:
             response = await handler(
@@ -1034,6 +1038,7 @@ async def upload_user_backup(
     finally:
         await backup_file.close()
 
+
 async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
     """读取 AppConfig 并组装动态配置分组数据（平铺键卡片渲染上下文）。
 
@@ -1124,7 +1129,9 @@ async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
                 "label": (
                     translated_group
                     if (
-                        translated_group := _i18n.t(f"config.group.{group_id}", lang=lang)
+                        translated_group := _i18n.t(
+                            f"config.group.{group_id}", lang=lang
+                        )
                     )
                     != f"config.group.{group_id}"
                     else group_data["label"]
@@ -1248,9 +1255,7 @@ async def save_general_config(
                             lang=detect_language(),
                             field_key=key,
                         )
-                    if num_val < min_v or (
-                        max_v is not None and num_val > max_v
-                    ):
+                    if num_val < min_v or (max_v is not None and num_val > max_v):
                         if max_v is None:
                             return toast_redirect(
                                 "/config",

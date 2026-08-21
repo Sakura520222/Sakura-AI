@@ -65,7 +65,6 @@ coverage limitations in the summary without inventing findings.
 """,
         },
     },
-
     # ---- 文件过滤规则 ----
     "file_filters": {
         # 跳过的文件类型
@@ -124,7 +123,6 @@ coverage limitations in the summary without inventing findings.
             "Makefile",
         ],
     },
-
     # ---- 上下文增强配置 ----
     "context_enhancement": {
         # 是否启用项目结构展示
@@ -273,7 +271,6 @@ coverage limitations in the summary without inventing findings.
             },
         },
     },
-
     # ---- 审查批准策略配置 ----
     "review_policy": {
         # 是否启用自动批准功能（建议先设为 false 观察效果）
@@ -385,7 +382,6 @@ coverage limitations in the summary without inventing findings.
 """,
         },
     },
-
     # ---- Issue 分析配置 ----
     "issue_analysis": {
         # Issue 分类定义
@@ -440,7 +436,14 @@ coverage limitations in the summary without inventing findings.
             {
                 "name": "performance",
                 "description": "性能问题",
-                "keywords": ["slow", "performance", "speed", "latency", "memory", "leak"],
+                "keywords": [
+                    "slow",
+                    "performance",
+                    "speed",
+                    "latency",
+                    "memory",
+                    "leak",
+                ],
             },
             {
                 "name": "security",
@@ -586,7 +589,6 @@ title when the original is unclear.
 *This comment was generated automatically by [Sakura AI](https://github.com/Sakura520222/Sakura-AI).*
 """,
     },
-
     # ---- 仓库扫描配置 ----
     "scan": {
         # 扫描系统提示词 focus（英文，强化型契约由代码注入）
@@ -607,7 +609,6 @@ maintainability, and architecture defects.
 - Do not report the same defect twice; merge duplicate observations per file.
 """,
     },
-
     # ---- PR 总结配置 ----
     "pr_summary": {
         "system_prompt": """\
@@ -632,7 +633,6 @@ Commit 信息:
 {commits}
 """,
     },
-
     # ---- PR 依赖图配置（mode 等运行时开关在动态配置组，此处仅模板） ----
     "pr_dependency_graph": {
         "system_prompt": """\
@@ -700,14 +700,12 @@ LABEL_SECTION_DEFAULTS: dict = {
         "style": {"color": "c5def5", "description": "Code style adjustments"},
         "build": {"color": "ededed", "description": "Build system changes"},
     },
-
     # ---- AI 标签推荐行为控制 ----
     "recommendation": {
         "enabled": True,
         "confidence_threshold": 0.7,
         "auto_create": True,
     },
-
     # ---- 标签冲突规则：当 PR 已有 key 中的标签时，不会自动添加 value 列表中的标签。
     # 用于增量审查时避免基于增量 diff 内容推荐与 PR 整体意图矛盾的标签。 ----
     "conflict_rules": {

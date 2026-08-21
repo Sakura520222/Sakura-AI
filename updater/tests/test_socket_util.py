@@ -151,14 +151,20 @@ def test_bind_socket_listener_sets_owner_mode_before_listen(tmp_path, monkeypatc
     _patch_socket_factory(monkeypatch, listener)
     steps = []
     monkeypatch.setattr(
-        socket_util.os, "chown", lambda p, u, g: steps.append(("chown", p, u, g)) or None,
+        socket_util.os,
+        "chown",
+        lambda p, u, g: steps.append(("chown", p, u, g)) or None,
         raising=False,  # Windows os 模块无 chown 属性，注入即可
     )
     monkeypatch.setattr(
-        socket_util.os, "chmod", lambda p, m: steps.append(("chmod", p, m)) or None,
+        socket_util.os,
+        "chmod",
+        lambda p, m: steps.append(("chmod", p, m)) or None,
         raising=False,
     )
-    monkeypatch.setattr(socket_util, "prepare_socket_path", lambda p: steps.append(("prepare", p)))
+    monkeypatch.setattr(
+        socket_util, "prepare_socket_path", lambda p: steps.append(("prepare", p))
+    )
 
     result = socket_util.bind_socket_listener(path, uid=0, gid=9472, mode=0o660)
 
@@ -206,7 +212,9 @@ def test_bind_socket_listener_cleans_socket_when_bind_fails(tmp_path, monkeypatc
     listener = _BindBoom()
     _patch_socket_factory(monkeypatch, listener)
     cleaned = []
-    monkeypatch.setattr(socket_util, "cleanup_owned_socket", lambda p: cleaned.append(p) or None)
+    monkeypatch.setattr(
+        socket_util, "cleanup_owned_socket", lambda p: cleaned.append(p) or None
+    )
     with pytest.raises(OSError, match="address in use"):
         socket_util.bind_socket_listener(path)
     assert listener.closed is True
@@ -235,9 +243,7 @@ def test_bind_socket_listener_real_uds_sets_owner_mode(tmp_path):
     from sakura_ai_updater.socket_util import bind_socket_listener
 
     path = str(tmp_path / "updater.sock")
-    listener = bind_socket_listener(
-        path, uid=os.getuid(), gid=os.getgid(), mode=0o660
-    )
+    listener = bind_socket_listener(path, uid=os.getuid(), gid=os.getgid(), mode=0o660)
     try:
         st = os.stat(path)
         assert stat.S_ISSOCK(st.st_mode)

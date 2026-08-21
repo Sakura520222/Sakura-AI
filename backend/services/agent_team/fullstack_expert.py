@@ -88,7 +88,9 @@ def _guidance_items(guidance: Any) -> list[Any]:
     return [guidance]
 
 
-def _normalize_guidance_item(guidance: Any) -> tuple[str, tuple[int, ...], dict[str, Any]]:
+def _normalize_guidance_item(
+    guidance: Any,
+) -> tuple[str, tuple[int, ...], dict[str, Any]]:
     """Extract raw guidance content and keep audit data out of the body."""
     audit_fields = ("author", "source", "audit_id", "created_at")
     if isinstance(guidance, dict):
@@ -109,7 +111,7 @@ def _normalize_guidance_item(guidance: Any) -> tuple[str, tuple[int, ...], dict[
 
     try:
         guidance_ids = tuple(int(item) for item in raw_ids)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         guidance_ids = ()
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
     if guidance_ids:
@@ -373,9 +375,7 @@ class FullStackExpertAgent:
                             guidance_ids
                             and self.checkpoint
                             and self.session_id
-                            and hasattr(
-                                self.checkpoint, "append_guidance_message"
-                            )
+                            and hasattr(self.checkpoint, "append_guidance_message")
                         ):
                             await self.checkpoint.append_guidance_message(
                                 self.session_id,

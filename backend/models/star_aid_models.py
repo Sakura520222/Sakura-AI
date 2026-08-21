@@ -17,7 +17,6 @@
   重复 star/unstar；重试明细如有需要另存，不破坏最终状态幂等表。
 """
 
-
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -103,7 +102,7 @@ class StarAidMember(Base):
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
@@ -149,7 +148,7 @@ class StarAidCredential(Base):
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
@@ -204,7 +203,7 @@ class StarAidRepository(Base):
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )

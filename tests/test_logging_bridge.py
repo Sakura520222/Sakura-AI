@@ -180,7 +180,9 @@ def test_redact_standard_log_message_masks_url_passwords_and_bot_tokens():
     )
 
 
-def test_intercept_handler_preserves_record_created_and_converts_to_app_zone(monkeypatch):
+def test_intercept_handler_preserves_record_created_and_converts_to_app_zone(
+    monkeypatch,
+):
     calls = {}
 
     class FakeTimeService:
@@ -201,7 +203,9 @@ def test_intercept_handler_preserves_record_created_and_converts_to_app_zone(mon
             return None
 
     monkeypatch.setattr("backend.core.logging_bridge.logger", LoguruLogger())
-    monkeypatch.setattr("backend.core.logging_bridge.get_time_service", lambda: FakeTimeService())
+    monkeypatch.setattr(
+        "backend.core.logging_bridge.get_time_service", lambda: FakeTimeService()
+    )
 
     record = logging.LogRecord(
         name="example",
@@ -223,7 +227,9 @@ def test_intercept_handler_preserves_record_created_and_converts_to_app_zone(mon
     )
 
 
-def test_loguru_patcher_keeps_bootstrap_diagnostics_utc_when_zone_unavailable(monkeypatch):
+def test_loguru_patcher_keeps_bootstrap_diagnostics_utc_when_zone_unavailable(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "backend.core.logging_bridge.get_time_service",
         lambda: (_ for _ in ()).throw(ValueError("timezone unavailable")),
@@ -284,12 +290,16 @@ def test_log_format_renders_plain_bridge_datetime_with_instant_offset():
 
     summer = _render_line(
         bridge_patch(
-            datetime(2026, 8, 12, 12, 34, 56, 123456, tzinfo=ZoneInfo("America/New_York"))
+            datetime(
+                2026, 8, 12, 12, 34, 56, 123456, tzinfo=ZoneInfo("America/New_York")
+            )
         )
     )
     winter = _render_line(
         bridge_patch(
-            datetime(2026, 1, 15, 12, 34, 56, 123456, tzinfo=ZoneInfo("America/New_York"))
+            datetime(
+                2026, 1, 15, 12, 34, 56, 123456, tzinfo=ZoneInfo("America/New_York")
+            )
         )
     )
 
@@ -301,7 +311,9 @@ def test_console_format_renders_real_timestamp():
     line = _render_line(
         lambda log: log.patch(
             lambda record: record.update(
-                time=datetime(2026, 8, 12, 12, 34, 56, 123456, tzinfo=ZoneInfo("Asia/Shanghai"))
+                time=datetime(
+                    2026, 8, 12, 12, 34, 56, 123456, tzinfo=ZoneInfo("Asia/Shanghai")
+                )
             )
         ),
         log_format=CONSOLE_LOG_FORMAT,

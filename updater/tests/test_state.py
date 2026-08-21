@@ -115,7 +115,9 @@ def test_load_invalid_utf8_raises(tmp_path):
         load_state(path)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="chmod permission semantics are POSIX-only")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="chmod permission semantics are POSIX-only"
+)
 def test_load_permission_denied_raises(tmp_path):
     """permission denied → StateLoadError（fail-closed，绝不当空 store，spec §8.4）。
 

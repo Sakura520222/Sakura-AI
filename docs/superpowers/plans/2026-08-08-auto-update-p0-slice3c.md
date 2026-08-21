@@ -495,27 +495,38 @@ def test_pyinstaller_build_is_onefile_and_pinned():
 def test_build_targets_bullseye_python_312_and_two_compatibility_gates():
     script = (BUILD / "build.sh").read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db" in script
+    assert (
+        "python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db"
+        in script
+    )
     checker = (BUILD / "check_glibc.py").read_text(encoding="utf-8")
     assert "(2, 31)" in checker
     assert "outer" in checker.lower()
     assert "CArchive" in checker
-    assert "debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792" in workflow
+    assert (
+        "debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792"
+        in workflow
+    )
     assert "linux/amd64" in workflow and "linux/arm64/v8" in workflow
     assert "--version" in workflow and "backend status" in workflow
     assert "run-fresh-runtime-smoke.sh" in workflow
     helper = (BUILD / "run-fresh-runtime-smoke.sh").read_text(encoding="utf-8")
-    assert "export TMPDIR=\"$runtime_tmp\"" in helper
-    assert "install -d -m 0700 \"$state_dir\" \"$runtime_tmp\"" in helper
-    assert "install -m 0700 \"$mounted_binary\" \"$installed_binary\"" in helper
-    assert "backend install \"${common_args[@]}\"" in helper
-    assert "backend start \"${common_args[@]}\"" in helper
-    assert "backend status \"${common_args[@]}\"" in helper
-    assert "backend is-running \"${common_args[@]}\"" in helper
-    assert "backend stop \"${common_args[@]}\"" in helper
-    assert "if \"$installed_binary\" backend is-running \"${common_args[@]}\"; then" in helper
-    assert "curl --unix-socket \"$socket_path\" http://localhost/v1/health" in helper
-    assert "curl --unix-socket /run/sakura-ai/updater.sock http://localhost/v1/health" in workflow
+    assert 'export TMPDIR="$runtime_tmp"' in helper
+    assert 'install -d -m 0700 "$state_dir" "$runtime_tmp"' in helper
+    assert 'install -m 0700 "$mounted_binary" "$installed_binary"' in helper
+    assert 'backend install "${common_args[@]}"' in helper
+    assert 'backend start "${common_args[@]}"' in helper
+    assert 'backend status "${common_args[@]}"' in helper
+    assert 'backend is-running "${common_args[@]}"' in helper
+    assert 'backend stop "${common_args[@]}"' in helper
+    assert (
+        'if "$installed_binary" backend is-running "${common_args[@]}"; then' in helper
+    )
+    assert 'curl --unix-socket "$socket_path" http://localhost/v1/health' in helper
+    assert (
+        "curl --unix-socket /run/sakura-ai/updater.sock http://localhost/v1/health"
+        in workflow
+    )
 ```
 
 并断言产物名只允许 `sakura-ai-updater-linux-amd64|arm64`，不存在 `update-manifest.json`。额外要求 build contract 同时读取 `build.sh` 与 reusable workflow：前者必须执行 final onefile outer ELF/bootloader static gate，后者必须在 build container 成功退出后，把同一 final onefile 放入 pinned、fresh `debian:bullseye-slim` manifest-list，先复制 read-only mounted artifact 到 `/usr/local/libexec/sakura-ai-updater`，再由 helper 在 controlled TMPDIR 下依次验证 `--version`、`backend install`、`backend start`、`backend status`、`backend is-running`、UDS `/v1/health`、`backend stop` 与停止后的 `backend is-running` 返回 1；不能复用 build container 作为 runtime evidence。

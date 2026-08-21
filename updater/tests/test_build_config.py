@@ -82,13 +82,15 @@ def test_fresh_runtime_smoke_contract():
     assert 'install -d -m 0700 "$state_dir" "$runtime_tmp"' in helper
     assert 'export TMPDIR="$runtime_tmp"' in helper
     assert 'install -m 0700 "$mounted_binary" "$installed_binary"' in helper
-    assert 'socket_path=/run/sakura-ai/updater.sock' in helper
+    assert "socket_path=/run/sakura-ai/updater.sock" in helper
     assert 'backend install "${common_args[@]}"' in helper
     assert 'backend start "${common_args[@]}"' in helper
     assert 'backend status "${common_args[@]}"' in helper
     assert 'backend is-running "${common_args[@]}"' in helper
     assert 'backend stop "${common_args[@]}"' in helper
-    assert 'if "$installed_binary" backend is-running "${common_args[@]}"; then' in helper
+    assert (
+        'if "$installed_binary" backend is-running "${common_args[@]}"; then' in helper
+    )
     assert 'curl --unix-socket "$socket_path" http://localhost/v1/health' in helper
     assert 'curl --unix-socket "$socket_path" http://localhost/v1/check' in helper
     assert 'if [[ "$check_release" == "1" ]]' in helper

@@ -304,7 +304,9 @@ async def test_restore_skips_nonportable_recovery_codes_and_preserves_existing(
         created_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
     )
     session.recoveries.append(existing)
-    monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "d" * 64)
+    monkeypatch.setattr(
+        service, "_recovery_code_hash_key_fingerprint", lambda: "d" * 64
+    )
     document = _minimal_document(
         two_factor={
             "mfa_required": False,
@@ -345,7 +347,9 @@ async def test_restore_same_secret_replaces_recovery_codes_and_merges_passkey_si
     existing_passkey = _passkey(user_id=target.id)
     session.recoveries.append(existing_recovery)
     session.passkeys.append(existing_passkey)
-    monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "c" * 64)
+    monkeypatch.setattr(
+        service, "_recovery_code_hash_key_fingerprint", lambda: "c" * 64
+    )
     second_hash = credential_id_hash("credential-2")
     document = _minimal_document(
         two_factor={

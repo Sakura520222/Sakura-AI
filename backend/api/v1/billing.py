@@ -1,4 +1,5 @@
 """API v1 付费配额端点"""
+
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -181,7 +182,9 @@ async def list_orders(
                 "status": o.status,
                 "payment_provider": o.payment_provider,
                 "created_at": format_rfc3339(o.created_at) if o.created_at else None,
-                "fulfilled_at": format_rfc3339(o.fulfilled_at) if o.fulfilled_at else None,
+                "fulfilled_at": format_rfc3339(o.fulfilled_at)
+                if o.fulfilled_at
+                else None,
             }
             for o in orders
         ],
@@ -213,7 +216,9 @@ async def create_order(
             "currency": order.currency,
             "provider": order.payment_provider,
             "checkout_url": checkout_url,
-            "expires_at": format_rfc3339(order.expires_at) if order.expires_at else None,
+            "expires_at": format_rfc3339(order.expires_at)
+            if order.expires_at
+            else None,
         }
     except PaymentError as e:
         await db.rollback()
@@ -257,7 +262,9 @@ async def get_order(
         "provider_tx_id": order.provider_tx_id,
         "checkout_url": checkout_url,
         "paid_at": format_rfc3339(order.paid_at) if order.paid_at else None,
-        "fulfilled_at": format_rfc3339(order.fulfilled_at) if order.fulfilled_at else None,
+        "fulfilled_at": format_rfc3339(order.fulfilled_at)
+        if order.fulfilled_at
+        else None,
         "created_at": format_rfc3339(order.created_at) if order.created_at else None,
         "expires_at": format_rfc3339(order.expires_at) if order.expires_at else None,
     }

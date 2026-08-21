@@ -28,4 +28,3 @@ def test_automatic_job_log_timestamp_is_utc_rfc3339_z():
 
     assert entry["ts"].endswith("Z")
     assert "T" in entry["ts"]
-

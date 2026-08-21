@@ -202,7 +202,9 @@ def test_strategy_config_facade_uses_builtin_defaults_without_db():
 def test_label_config_facade_uses_builtin_defaults_without_db():
     config = LabelConfig()
     assert config.get_labels() == LABEL_SECTION_DEFAULTS["labels"]
-    assert config.get_recommendation_settings() == LABEL_SECTION_DEFAULTS["recommendation"]
+    assert (
+        config.get_recommendation_settings() == LABEL_SECTION_DEFAULTS["recommendation"]
+    )
     assert config.get_conflict_rules() == LABEL_SECTION_DEFAULTS["conflict_rules"]
 
 
@@ -263,9 +265,10 @@ def test_update_section_store_overrides_only_requested_leaves():
     merged = get_section_config("strategy.strategies")
     assert merged["standard"]["name"] == "改名"
     # 未覆盖的叶子保持默认（prompt 与 conditions）
-    assert merged["standard"]["prompt"] == STRATEGY_SECTION_DEFAULTS["strategies"][
-        "standard"
-    ]["prompt"]
+    assert (
+        merged["standard"]["prompt"]
+        == STRATEGY_SECTION_DEFAULTS["strategies"]["standard"]["prompt"]
+    )
     assert merged["standard"]["conditions"] == {"max_files": 50, "max_lines": 20000}
     # 其他节不受影响
     assert "quick" in merged
@@ -283,9 +286,10 @@ def test_clear_section_store_restores_builtin_defaults():
     config_sections.update_section_store("label.recommendation", {"enabled": False})
     assert get_section_config("label.recommendation")["enabled"] is False
     config_sections.clear_section_store("label.recommendation")
-    assert get_section_config("label.recommendation") == LABEL_SECTION_DEFAULTS[
-        "recommendation"
-    ]
+    assert (
+        get_section_config("label.recommendation")
+        == LABEL_SECTION_DEFAULTS["recommendation"]
+    )
 
 
 def test_get_section_defaults_returns_mutable_copy():
@@ -350,9 +354,10 @@ async def test_load_section_configs_skips_missing_and_invalid_keys():
     await config_sections.load_section_configs(_FakeSession(rows))
 
     assert config_sections._section_store == {}
-    assert get_section_config("strategy.strategies") == STRATEGY_SECTION_DEFAULTS[
-        "strategies"
-    ]
+    assert (
+        get_section_config("strategy.strategies")
+        == STRATEGY_SECTION_DEFAULTS["strategies"]
+    )
 
 
 @pytest.mark.asyncio
@@ -456,7 +461,9 @@ async def test_migrate_imports_only_diff_sections_and_prunes_default_leaves(tmp_
     assert session.rolled_back is False
     rows = {row.key_name: json.loads(row.key_value) for row in session.added}
     # 叶子级剪枝：DB 只存用户差异，不物化与默认相同的叶子
-    assert rows["strategy.strategies"] == {"standard": {"prompt": "custom standard prompt"}}
+    assert rows["strategy.strategies"] == {
+        "standard": {"prompt": "custom standard prompt"}
+    }
     assert rows["label.definitions"] == {"bug": {"color": "000000"}}
     # 写入的覆盖经 deep_merge 能还原出完整节值
     restored = deep_merge(

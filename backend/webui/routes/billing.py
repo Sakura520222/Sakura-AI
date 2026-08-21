@@ -1,4 +1,5 @@
 """WebUI 付费配额路由"""
+
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -1134,7 +1135,7 @@ async def admin_edit_code(
             update_data["expires_at"] = get_time_service().parse_datetime_local(
                 expires_at.strip(), fold=fold
             )
-        except (DateTimeLocalError, TypeError, ValueError):
+        except DateTimeLocalError, TypeError, ValueError:
             return toast_redirect(
                 "/billing/admin/codes",
                 "toast.invalid_param",

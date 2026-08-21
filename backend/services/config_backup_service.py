@@ -344,12 +344,18 @@ def _validate_global_record(record: BackupRecord) -> None:
 def _validate_system_record(record: BackupRecord) -> None:
     _validate_typed_config_value(record.key, record.value)
     if record.key == "app_timezone":
-        if record.value is None or not record.value or record.value != record.value.strip():
+        if (
+            record.value is None
+            or not record.value
+            or record.value != record.value.strip()
+        ):
             raise ConfigBackupError("系统配置 app_timezone 不得为空或包含首尾空格")
         try:
             resolve_timezone(record.value)
         except InvalidTimezoneError as exc:
-            raise ConfigBackupError("系统配置 app_timezone 必须是 system 或有效 IANA 时区") from exc
+            raise ConfigBackupError(
+                "系统配置 app_timezone 必须是 system 或有效 IANA 时区"
+            ) from exc
         return
     if record.value is None or not record.value.strip():
         return
@@ -783,7 +789,7 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
             if value is not None:
                 try:
                     parsed = json.loads(value)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     parsed = None
                 if isinstance(parsed, dict):
                     data = parsed
@@ -814,7 +820,11 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     for key, value in result.imported_values.items():
         # Restart-required settings (notably app_timezone) are persisted and
         # audited but never hot-applied to this frozen process.
-        if key in runtime_keys and key not in RESTART_REQUIRED_KEYS and value is not None:
+        if (
+            key in runtime_keys
+            and key not in RESTART_REQUIRED_KEYS
+            and value is not None
+        ):
             update_settings_field(key, value)
 
     if "max_concurrent_issues" in affected_keys:

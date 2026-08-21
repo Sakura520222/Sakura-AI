@@ -35,14 +35,18 @@ async_engine = None
 async_session = None
 
 
-def _set_connection_timezone(dbapi_connection, _connection_record, dialect_name: str | None = None):
+def _set_connection_timezone(
+    dbapi_connection, _connection_record, dialect_name: str | None = None
+):
     """Pin every server session to UTC before it is handed to SQLAlchemy.
 
     This callback intentionally performs no action for SQLite.  Errors are not
     swallowed: a connection with an unknown timezone must never enter the pool.
     """
 
-    name = dialect_name or getattr(getattr(dbapi_connection, "dialect", None), "name", "")
+    name = dialect_name or getattr(
+        getattr(dbapi_connection, "dialect", None), "name", ""
+    )
     if not name:
         # SQLAlchemy's ``connect`` event does not expose a dialect on the raw
         # DB-API connection; the closure installed by init_async_db supplies it.
@@ -216,9 +220,7 @@ class PRReview(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     completed_at = Column(UTCDateTime, nullable=True)
 
     # Check Run ids（主从式三 Check）：创建成功后持久化，进程重启/换 worker 时
@@ -363,7 +365,7 @@ class HeadShaPRMap(Base):
     repo_name = Column(String(255), nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
@@ -421,9 +423,7 @@ class AppConfig(Base):
     key_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<AppConfig(key={self.key_name})>"
@@ -440,9 +440,7 @@ class UserConfig(Base):
     config_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("user_id", "config_key", name="uq_user_config_key"),
@@ -475,9 +473,7 @@ class ReviewQueue(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -500,9 +496,7 @@ class DocumentIndex(Base):
     )
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<DocumentIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
@@ -525,9 +519,7 @@ class DocumentFile(Base):
         Integer, default=0, nullable=False
     )  # 0=False, 1=True for MySQL compatibility
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<DocumentFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
@@ -555,9 +547,7 @@ class CodeIndex(Base):
     )  # full, pr, incremental
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<CodeIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
@@ -583,9 +573,7 @@ class CodeFile(Base):
     # 状态管理
     is_deleted = Column(Integer, default=0, nullable=False)  # 0=False, 1=True
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return (
@@ -644,9 +632,7 @@ class IssueAnalysis(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     completed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -686,9 +672,7 @@ class IssueAnalysisQueue(Base):
     max_retries = Column(Integer, default=3, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -1020,9 +1004,7 @@ class WebUIConfig(Base):
     items_per_page = Column(Integer, default=20)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<WebUIConfig(user_id={self.user_id}, theme={self.theme})>"
@@ -1062,7 +1044,7 @@ class SakuraMemoryState(Base):
     created_at = Column(UTCDateTime, default=lambda: utc_now(), nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=lambda: utc_now(),
+        default=lambda: utc_now(),
         onupdate=lambda: utc_now(),
         nullable=False,
     )
@@ -1080,7 +1062,7 @@ class SchemaMigration(Base):
     version = Column(String(50), unique=True, nullable=False)
     applied_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
     )

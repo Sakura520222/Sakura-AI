@@ -1,4 +1,5 @@
 """API v1 仪表盘端点"""
+
 from collections import OrderedDict
 from datetime import UTC, timedelta
 
@@ -163,7 +164,9 @@ async def get_recent_reviews(
                 "decision": r.decision,
                 "strategy": r.strategy,
                 "created_at": format_rfc3339(r.created_at) if r.created_at else None,
-                "completed_at": format_rfc3339(r.completed_at) if r.completed_at else None,
+                "completed_at": format_rfc3339(r.completed_at)
+                if r.completed_at
+                else None,
             }
         )
 
@@ -189,9 +192,7 @@ async def get_chart_data(
     now = time_service.now_utc()
     local_now = time_service.to_app_timezone(now)
     start_date = local_now.date() - timedelta(days=30)
-    bucket_start_utc = start_of_local_day(
-        start_date, time_service.zone
-    ).astimezone(UTC)
+    bucket_start_utc = start_of_local_day(start_date, time_service.zone).astimezone(UTC)
     scope_filter = build_user_scope_filter(user, PRReview)
 
     labels = []

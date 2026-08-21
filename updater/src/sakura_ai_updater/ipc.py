@@ -62,7 +62,7 @@ def _as_data(value: Any) -> dict:
 
         if is_dataclass(value):
             return asdict(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         pass
     return {"value": value}
 
@@ -72,8 +72,14 @@ def _exception_details(exc: Exception) -> dict[str, Any]:
 
     details: dict[str, Any] = {}
     for name in (
-        "checks", "result", "job_id", "target_version", "target_channel",
-        "target_revision", "target_digest", "detail",
+        "checks",
+        "result",
+        "job_id",
+        "target_version",
+        "target_channel",
+        "target_revision",
+        "target_digest",
+        "detail",
     ):
         value = getattr(exc, name, None)
         if value is not None:
@@ -137,7 +143,7 @@ async def _request_json(request: Request) -> dict:
 
     try:
         body = await request.json()
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return {}
     return body if isinstance(body, dict) else {}
 
@@ -230,7 +236,9 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
         target_version = body.get("target_version")
         if target is not None and not isinstance(target, dict):
             return _error_response(422, "invalid_target")
-        if target is None and (not isinstance(target_version, str) or not target_version):
+        if target is None and (
+            not isinstance(target_version, str) or not target_version
+        ):
             return _error_response(422, "invalid_target_version")
         try:
             if target is not None:
@@ -260,7 +268,11 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
         target_version = body.get("target_version")
         if target is not None and not isinstance(target, dict):
             return _error_response(422, "invalid_target")
-        if target is None and target_version is not None and not isinstance(target_version, str):
+        if (
+            target is None
+            and target_version is not None
+            and not isinstance(target_version, str)
+        ):
             return _error_response(422, "invalid_target_version")
         try:
             if target is not None:

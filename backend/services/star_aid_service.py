@@ -416,7 +416,7 @@ def _parse_github_timestamp(raw) -> datetime | None:
         return None
     try:
         return parse_rfc3339(raw)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

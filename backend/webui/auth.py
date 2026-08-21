@@ -43,9 +43,7 @@ def _create_token(
     _settings = get_settings()
 
     to_encode = data.copy()
-    expire = now_utc() + (
-        expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    )
+    expire = now_utc() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire, "token_type": token_type})
     return jwt.encode(to_encode, _settings.webui_secret_key, algorithm=ALGORITHM)
 
