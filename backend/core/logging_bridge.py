@@ -100,7 +100,9 @@ class InterceptHandler(logging.Handler):
                 event_time = event_time.astimezone(get_time_service().zone)
             except Exception:
                 pass
-            target_logger = patcher(lambda log_record: log_record.update(time=event_time))
+            target_logger = patcher(
+                lambda log_record: log_record.update(time=event_time)
+            )
         target_logger.opt(exception=record.exc_info).log(
             level,
             "[{}] {}",

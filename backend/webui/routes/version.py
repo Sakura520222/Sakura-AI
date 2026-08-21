@@ -52,7 +52,9 @@ def _get_registry_client() -> ContainerRegistryClient:
     """Reuse the short-TTL client so last-known-good survives requests."""
 
     global _registry_client
-    if _registry_client is None or not isinstance(_registry_client, ContainerRegistryClient):
+    if _registry_client is None or not isinstance(
+        _registry_client, ContainerRegistryClient
+    ):
         _registry_client = ContainerRegistryClient(OFFICIAL_REGISTRY_REPOSITORY)
     return _registry_client
 
@@ -91,9 +93,7 @@ def build_version_info(
     )
 
     updater_data = (
-        updater_info.get("data", {})
-        if isinstance(updater_info, dict)
-        else {}
+        updater_info.get("data", {}) if isinstance(updater_info, dict) else {}
     )
     if not isinstance(updater_data, dict):
         updater_data = {}
@@ -211,7 +211,7 @@ async def get_version_images(user: dict = Depends(require_super_admin)):
 
     try:
         payload = await _get_registry_client().list_images()
-    except (ContainerRegistryError, ValueError):
+    except ContainerRegistryError, ValueError:
         return JSONResponse(
             {"error": "registry_unavailable"},
             status_code=503,
@@ -274,7 +274,10 @@ def _updater_error(exc: Exception) -> JSONResponse:
                 if (
                     isinstance(detail, str)
                     and len(detail) <= 96
-                    and all(character.isalnum() or character in "._-" for character in detail)
+                    and all(
+                        character.isalnum() or character in "._-"
+                        for character in detail
+                    )
                 ):
                     payload["detail"] = detail
                 status_code = (
@@ -291,7 +294,7 @@ def _updater_error(exc: Exception) -> JSONResponse:
 async def _read_action_body(request: Request) -> dict:
     try:
         data = await request.json()
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -303,21 +306,28 @@ def _confirm_channel_switch(body: dict) -> tuple[bool | None, JSONResponse | Non
         return False, None
     value = body["confirm_channel_switch"]
     if type(value) is not bool:
-        return None, JSONResponse({"error": "invalid_confirm_channel_switch"}, status_code=422)
+        return None, JSONResponse(
+            {"error": "invalid_confirm_channel_switch"}, status_code=422
+        )
     return value, None
 
 
-async def _resolve_catalog_target(body: dict) -> tuple[dict | None, JSONResponse | None]:
+async def _resolve_catalog_target(
+    body: dict,
+) -> tuple[dict | None, JSONResponse | None]:
     """Re-resolve a browser snapshot against the current authoritative head."""
 
     target = body.get("target")
     if target is None:
         return None, None
-    if not isinstance(target, dict) or target.get("channel") not in {"stable", "development"}:
+    if not isinstance(target, dict) or target.get("channel") not in {
+        "stable",
+        "development",
+    }:
         return None, JSONResponse({"error": "invalid_target"}, status_code=422)
     try:
         catalog = await _get_registry_client().list_images()
-    except (ContainerRegistryError, ValueError):
+    except ContainerRegistryError, ValueError:
         return None, JSONResponse({"error": "registry_unavailable"}, status_code=503)
     if catalog.get("stale"):
         return None, JSONResponse({"error": "stale_catalog"}, status_code=409)
@@ -325,7 +335,9 @@ async def _resolve_catalog_target(body: dict) -> tuple[dict | None, JSONResponse
     required = ("version", "tag", "digest")
     if target.get("channel") == "development":
         required += ("revision",)
-    if not isinstance(head, dict) or any(target.get(key) != head.get(key) for key in required):
+    if not isinstance(head, dict) or any(
+        target.get(key) != head.get(key) for key in required
+    ):
         return None, JSONResponse({"error": "target_not_selectable"}, status_code=409)
     return target, None
 
@@ -349,10 +361,8 @@ async def _resolve_current_channel_target(
     if mode != "image" or channel not in {"stable", "development"}:
         return None, None
     try:
-        catalog = await _get_registry_client().list_images(
-            force_refresh=force_refresh
-        )
-    except (ContainerRegistryError, ValueError):
+        catalog = await _get_registry_client().list_images(force_refresh=force_refresh)
+    except ContainerRegistryError, ValueError:
         return None, JSONResponse({"error": "registry_unavailable"}, status_code=503)
     if catalog.get("stale"):
         return None, JSONResponse({"error": "stale_catalog"}, status_code=409)
@@ -361,7 +371,9 @@ async def _resolve_current_channel_target(
     if channel == "development":
         required += ("revision",)
     if not isinstance(head, dict) or any(not head.get(key) for key in required):
-        return None, JSONResponse({"error": "channel_head_unavailable"}, status_code=409)
+        return None, JSONResponse(
+            {"error": "channel_head_unavailable"}, status_code=409
+        )
     target = {
         "channel": channel,
         "version": head["version"],
@@ -405,7 +417,9 @@ async def _check_current_channel(*, force_refresh: bool = False) -> dict:
         force_refresh=force_refresh
     )
     if target_error is not None:
-        raise UpdaterActionError(target_error.status_code, json.loads(target_error.body))
+        raise UpdaterActionError(
+            target_error.status_code, json.loads(target_error.body)
+        )
     client = UpdaterClient()
     if target is None:
         return await client.check()
@@ -502,9 +516,15 @@ async def updater_update(
                     "target_version": (
                         target_object.get("version") if target_object else target
                     ),
-                    "target_channel": target_object.get("channel") if target_object else None,
-                    "target_revision": target_object.get("revision") if target_object else None,
-                    "target_digest": target_object.get("digest") if target_object else None,
+                    "target_channel": target_object.get("channel")
+                    if target_object
+                    else None,
+                    "target_revision": target_object.get("revision")
+                    if target_object
+                    else None,
+                    "target_digest": target_object.get("digest")
+                    if target_object
+                    else None,
                     "confirm_channel_switch": confirm_channel_switch is True,
                     "job_id": job_id,
                     "deployment_mode": get_settings().sakura_deploy_mode or "unknown",

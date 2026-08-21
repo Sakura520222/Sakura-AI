@@ -1,6 +1,5 @@
 """管理员操作日志模型"""
 
-
 from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 

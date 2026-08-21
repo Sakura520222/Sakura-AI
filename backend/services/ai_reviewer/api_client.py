@@ -301,9 +301,7 @@ class AIApiClient:
             captured_at=now_utc(),
         )
 
-    async def resolve_role_primary_candidate(
-        self, role: str
-    ) -> Any:
+    async def resolve_role_primary_candidate(self, role: str) -> Any:
         """返回角色 primary 候选的 ResolvedModel，解析失败返回 None。"""
         try:
             chain = await self._resolve_role_chain(role)

@@ -1,4 +1,5 @@
 """API v1 PR 审查端点"""
+
 import csv
 import io
 
@@ -137,8 +138,12 @@ async def export_reviews_csv(
                 r.status,
                 r.decision or "",
                 r.overall_score or "",
-                get_time_service().format_display(r.created_at, seconds=False) if r.created_at else "",
-                get_time_service().format_display(r.completed_at, seconds=False) if r.completed_at else "",
+                get_time_service().format_display(r.created_at, seconds=False)
+                if r.created_at
+                else "",
+                get_time_service().format_display(r.completed_at, seconds=False)
+                if r.completed_at
+                else "",
             ]
         )
 
@@ -348,7 +353,9 @@ async def get_file_comments(
                     "comment_type": c.comment_type,
                     "severity": c.severity,
                     "content": c.content,
-                    "created_at": format_rfc3339(c.created_at) if c.created_at else None,
+                    "created_at": format_rfc3339(c.created_at)
+                    if c.created_at
+                    else None,
                 }
                 for c in comments
             ],

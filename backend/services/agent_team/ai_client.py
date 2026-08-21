@@ -22,7 +22,7 @@ async def resolve_agent_team_max_iterations(
         return 1
     try:
         return max(1, int(task_max_iterations))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
 
 

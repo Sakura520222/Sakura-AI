@@ -381,7 +381,9 @@ async def api_passkey_options(request: Request, body: dict):
         try:
             data = await begin_authentication(session, user_id, request_origin(request))
         except WebAuthnError as exc:
-            logger.warning("Passkey 开始认证失败 / begin authentication failed: {}", exc)
+            logger.warning(
+                "Passkey 开始认证失败 / begin authentication failed: {}", exc
+            )
             return error_response("Passkey 认证失败，请重试", status_code=400)
     return success_response(data=data)
 

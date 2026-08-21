@@ -40,7 +40,9 @@ def test_version_manager_template_static_keys_exist_in_both_catalogs():
     for catalog_path in CATALOGS:
         catalog = _version_manager_catalog(catalog_path)
         missing = sorted(keys - set(catalog))
-        assert not missing, f"{catalog_path.name}: missing version_manager keys {missing}"
+        assert not missing, (
+            f"{catalog_path.name}: missing version_manager keys {missing}"
+        )
 
 
 def test_version_manager_has_no_hardcoded_user_status_labels():

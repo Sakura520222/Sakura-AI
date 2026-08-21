@@ -280,12 +280,8 @@ def _patch_save_deps(monkeypatch: pytest.MonkeyPatch):
         "backend.core.config.update_settings_field", lambda _key, _value: None
     )
     # 信号量重置走延迟导入，patch 目标模块级函数
-    monkeypatch.setattr(
-        "backend.workers.issue_worker.reset_issue_semaphore", _noop
-    )
-    monkeypatch.setattr(
-        "backend.workers.review_worker.reset_review_semaphore", _noop
-    )
+    monkeypatch.setattr("backend.workers.issue_worker.reset_issue_semaphore", _noop)
+    monkeypatch.setattr("backend.workers.review_worker.reset_review_semaphore", _noop)
 
 
 async def _noop_async(*_args, **_kwargs) -> None:
@@ -541,7 +537,9 @@ async def test_save_all_success_returns_aggregated_toast(
         monkeypatch.setattr(config_routes, name, _ok_handler)
     monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
 
-    payload = {"requests": [{"action": "/config/general/save", "anchor": None, "fields": {}}]}
+    payload = {
+        "requests": [{"action": "/config/general/save", "anchor": None, "fields": {}}]
+    }
     response = await config_routes.save_all_config(
         _JsonRequest(payload),
         db=object(),

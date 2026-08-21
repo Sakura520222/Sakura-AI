@@ -29,16 +29,16 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     _, text = _load("docker-publish.yml")
     assert "stable|development" in text
     assert "unsupported channel" in text
-    assert "DEV_TAG=\"dev-${UTC_CREATED}-v${VERSION}-${REVISION}\"" in text
+    assert 'DEV_TAG="dev-${UTC_CREATED}-v${VERSION}-${REVISION}"' in text
     assert "SAKURA_BUILD_CHANNEL" in text
     assert "SAKURA_BUILD_REVISION" in text
     assert "platforms: linux/amd64,linux/arm64" in text
     # crane is required in the build job before channel tags are materialized;
     # the sync job has its own installation as well.
     assert text.count("uses: imjasonh/setup-crane@") >= 2
-    assert 'existing_error=$(mktemp)' in text
-    assert 'unable to verify immutable tag; refusing publication' in text
-    assert 'existing immutable tag returned an invalid digest' in text
+    assert "existing_error=$(mktemp)" in text
+    assert "unable to verify immutable tag; refusing publication" in text
+    assert "existing immutable tag returned an invalid digest" in text
     assert 'crane copy "$SOURCE" "$IMMUTABLE"' in text
     assert "push-by-digest=true" in text
     assert "name-canonical=true" in text
@@ -58,7 +58,10 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     )
     assert "BUILD_TAG=" not in text
     assert "build_tag=" not in text
-    assert "crane copy \"$SOURCE\" \"docker.io/${IMAGE_NAME}:${{ needs.build-and-publish.outputs.immutable_tag }}\"" in text
+    assert (
+        'crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:${{ needs.build-and-publish.outputs.immutable_tag }}"'
+        in text
+    )
     assert "ACTUAL_REVISION=$(git rev-parse HEAD)" in text
     assert 'REVISION" != "$ACTUAL_REVISION"' in text
     assert 'COMMIT_CREATED=$(git show -s --format=%cI "$ACTUAL_REVISION")' in text
@@ -74,7 +77,9 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert stable_guard < stable_tag
     # Stable release callers check out the immutable tag; identity is derived
     # inside the reusable workflow and must not be copied from main HEAD.
-    release = (ROOT / ".github" / "workflows" / "release-on-pr-merge.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github" / "workflows" / "release-on-pr-merge.yml").read_text(
+        encoding="utf-8"
+    )
     publish_start = release.index("publish-stable-image:")
     publish_end = release.index("publish-update-manifest:", publish_start)
     publish_call = release[publish_start:publish_end]
@@ -121,7 +126,10 @@ def test_main_sync_workflow_runs_for_every_main_push():
     publish = workflow["jobs"]["publish-synchronized-development"]
     assert publish["needs"] == "sync-main-to-develop"
     assert publish["uses"] == "./.github/workflows/docker-publish.yml"
-    assert publish["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert (
+        publish["with"]["source_ref"]
+        == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    )
     assert publish["with"]["channel"] == "development"
     assert "outputs.changed == 'true'" in publish["if"]
     assert "outputs.target == 'develop'" in publish["if"]

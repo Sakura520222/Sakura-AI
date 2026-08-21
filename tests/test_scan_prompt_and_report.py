@@ -159,9 +159,7 @@ def test_issue_body_defaults_to_chinese():
         suggestion_count=0,
         total_findings=0,
     )
-    body = ScanReportService.__new__(ScanReportService).generate_issue_body(
-        scan, []
-    )
+    body = ScanReportService.__new__(ScanReportService).generate_issue_body(scan, [])
 
     assert "| 扫描文件数 | 10 |" in body
     assert "首次扫描，无历史对比" in body

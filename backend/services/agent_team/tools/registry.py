@@ -53,9 +53,7 @@ AGENT_TOOL_INSTANCES: list[BaseTool] = [
 FULLSTACK_TOOL_INSTANCES = AGENT_TOOL_INSTANCES
 
 # 按名称索引的工具注册表。Reviewer-specific submit_review is intentionally absent.
-tool_registry: dict[str, BaseTool] = {
-    tool.name: tool for tool in AGENT_TOOL_INSTANCES
-}
+tool_registry: dict[str, BaseTool] = {tool.name: tool for tool in AGENT_TOOL_INSTANCES}
 
 
 def get_agent_tools() -> list[BaseTool]:

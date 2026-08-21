@@ -257,7 +257,9 @@ def test_system_backup_accepts_system_or_iana_app_timezone():
         assert parsed[SYSTEM_SECTION][0].value == value
 
 
-@pytest.mark.parametrize("exported_at", [None, "", "2026-08-12 12:00:00", "2026-08-12T12:00:00"])
+@pytest.mark.parametrize(
+    "exported_at", [None, "", "2026-08-12 12:00:00", "2026-08-12T12:00:00"]
+)
 def test_v2_backup_rejects_missing_or_naive_exported_at(exported_at):
     document = build_backup_document([], "global")
     if exported_at is None:
@@ -636,9 +638,7 @@ async def test_runtime_backup_route_passes_database_url_guard(monkeypatch):
         ]
     }
     restore = AsyncMock(
-        side_effect=ConfigBackupError(
-            "database_url restore database_url through Setup"
-        )
+        side_effect=ConfigBackupError("database_url restore database_url through Setup")
     )
     monkeypatch.setattr(config_routes, "parse_config_backup", lambda _content: sections)
     monkeypatch.setattr(config_routes, "restore_config_backup", restore)

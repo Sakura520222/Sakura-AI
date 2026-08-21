@@ -129,7 +129,9 @@ class _StubAdapter:
 
 
 @pytest.mark.asyncio
-async def test_effective_protocol_selects_chat_stream_and_discovery_adapters(monkeypatch):
+async def test_effective_protocol_selects_chat_stream_and_discovery_adapters(
+    monkeypatch,
+):
     """账号协议覆盖 provider 默认族时，所有发送/发现入口都应使用覆盖族。"""
     adapter = _StubAdapter(content="protocol-aware")
     seen_families: list[ProtocolFamily] = []
@@ -706,7 +708,9 @@ async def test_stream_total_timeout_stops_retry_and_fallback(monkeypatch):
     monkeypatch.setattr(
         registry_module,
         "get_adapter",
-        lambda family: primary if family == ProtocolFamily.OPENAI_COMPATIBLE else fallback,
+        lambda family: (
+            primary if family == ProtocolFamily.OPENAI_COMPATIBLE else fallback
+        ),
     )
     client = UnifiedAIClient(
         fallback_config=FallbackConfig(
@@ -966,10 +970,13 @@ def test_legacy_sticky_identity_is_credential_free():
         base_url="https://user:password@example.test/v1/?api_key=secret",
         extra_headers={"Authorization": "Bearer secret"},
     )
-    assert replace(candidate, endpoint=safe_endpoint).sticky_identity == replace(
-        candidate,
-        endpoint=unsafe_endpoint,
-    ).sticky_identity
+    assert (
+        replace(candidate, endpoint=safe_endpoint).sticky_identity
+        == replace(
+            candidate,
+            endpoint=unsafe_endpoint,
+        ).sticky_identity
+    )
 
 
 @pytest.mark.asyncio

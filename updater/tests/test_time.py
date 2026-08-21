@@ -7,7 +7,9 @@ from sakura_ai_updater.time import format_rfc3339, now_rfc3339
 
 
 def test_format_rfc3339_normalizes_non_utc_aware_datetime_to_z():
-    value = datetime(2026, 8, 12, 20, 34, 56, 123456, tzinfo=timezone(timedelta(hours=8)))
+    value = datetime(
+        2026, 8, 12, 20, 34, 56, 123456, tzinfo=timezone(timedelta(hours=8))
+    )
 
     assert format_rfc3339(value) == "2026-08-12T12:34:56.123456Z"
 

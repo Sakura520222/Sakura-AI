@@ -439,9 +439,7 @@ class SearchFilesToolHandler:
             )
             return (file_path, result, False)
 
-        raw_results = await asyncio.gather(
-            *[_fetch_and_match(fp) for fp in candidates]
-        )
+        raw_results = await asyncio.gather(*[_fetch_and_match(fp) for fp in candidates])
 
         files_searched = len(candidates)
         fetch_failures = sum(1 for _, _, failed in raw_results if failed)
@@ -524,9 +522,7 @@ class SearchFilesToolHandler:
         """
         # 获取完整文件树 / Get full file tree（同步调用放入线程池）
         try:
-            tree = await asyncio.to_thread(
-                repo.get_git_tree, sha=ref, recursive=True
-            )
+            tree = await asyncio.to_thread(repo.get_git_tree, sha=ref, recursive=True)
         except Exception as e:
             logger.error(f"获取仓库文件树失败: {e}", exc_info=True)
             return {

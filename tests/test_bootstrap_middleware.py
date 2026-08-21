@@ -142,9 +142,7 @@ def test_bootstrap_mode_setup_with_invalid_cookie_redirects_to_verify():
     generate_setup_token()
     try:
         with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
-            client = TestClient(
-                _build_app(), cookies={"setup_verified": "fake-token"}
-            )
+            client = TestClient(_build_app(), cookies={"setup_verified": "fake-token"})
             resp = client.get("/setup", follow_redirects=False)
             assert resp.status_code == 302
             assert resp.headers["location"] == "/setup/verify"

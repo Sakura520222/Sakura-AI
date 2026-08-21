@@ -44,8 +44,12 @@ async def test_development_health_requires_version_channel_and_revision(monkeypa
             )
         ),
     )
-    adapter = ImageAdapter("compose.yml", "deployment.env", health_timeout=0.01, health_poll_interval=0)
-    await adapter.health_check({"version": "3.0.2", "channel": "development", "revision": "a" * 40})
+    adapter = ImageAdapter(
+        "compose.yml", "deployment.env", health_timeout=0.01, health_poll_interval=0
+    )
+    await adapter.health_check(
+        {"version": "3.0.2", "channel": "development", "revision": "a" * 40}
+    )
 
     monkeypatch.setattr(
         ImageAdapter,
@@ -61,16 +65,25 @@ async def test_development_health_requires_version_channel_and_revision(monkeypa
         ),
     )
     with pytest.raises(HealthCheckVersionMismatch):
-        await adapter.health_check({"version": "3.0.2", "channel": "development", "revision": "a" * 40})
+        await adapter.health_check(
+            {"version": "3.0.2", "channel": "development", "revision": "a" * 40}
+        )
 
 
 @pytest.mark.asyncio
 async def test_structured_stable_health_requires_stable_channel(monkeypatch):
-    adapter = ImageAdapter("compose.yml", "deployment.env", health_timeout=0.01, health_poll_interval=0)
+    adapter = ImageAdapter(
+        "compose.yml", "deployment.env", health_timeout=0.01, health_poll_interval=0
+    )
     monkeypatch.setattr(
         ImageAdapter,
         "_read_health_sync",
-        staticmethod(lambda url, timeout: (200, {"version": "3.0.2", "build": {"channel": "development"}})),
+        staticmethod(
+            lambda url, timeout: (
+                200,
+                {"version": "3.0.2", "build": {"channel": "development"}},
+            )
+        ),
     )
     with pytest.raises(HealthCheckVersionMismatch):
         await adapter.health_check({"version": "3.0.2", "channel": "stable"})
@@ -78,7 +91,12 @@ async def test_structured_stable_health_requires_stable_channel(monkeypatch):
     monkeypatch.setattr(
         ImageAdapter,
         "_read_health_sync",
-        staticmethod(lambda url, timeout: (200, {"version": "3.0.2", "build": {"channel": "stable"}})),
+        staticmethod(
+            lambda url, timeout: (
+                200,
+                {"version": "3.0.2", "build": {"channel": "stable"}},
+            )
+        ),
     )
     await adapter.health_check({"version": "3.0.2", "channel": "stable"})
 
@@ -93,7 +111,10 @@ class _Deployment:
         return "image"
 
     async def current_state(self):
-        return {"current_channel": "development", "running_container_digest": "sha256:" + "b" * 64}
+        return {
+            "current_channel": "development",
+            "running_container_digest": "sha256:" + "b" * 64,
+        }
 
     async def disk_space_sufficient(self, threshold):
         return True, threshold * 2
@@ -122,7 +143,10 @@ class _StableRelease:
 
 class _StableChannelDeployment(_Deployment):
     async def current_state(self):
-        return {"current_channel": "stable", "running_container_digest": "sha256:" + "d" * 64}
+        return {
+            "current_channel": "stable",
+            "running_container_digest": "sha256:" + "d" * 64,
+        }
 
 
 class _UnknownChannelDeployment(_Deployment):
@@ -151,7 +175,10 @@ async def test_same_development_digest_is_not_updateable(monkeypatch, tmp_path):
         disk_space_threshold=1,
     ).preflight(_target())
     assert result["can_update"] is False
-    assert any(item["name"] == "target_newer" and not item["passed"] for item in result["checks"])
+    assert any(
+        item["name"] == "target_newer" and not item["passed"]
+        for item in result["checks"]
+    )
 
 
 @pytest.mark.asyncio
@@ -171,7 +198,8 @@ async def test_deployment_identity_error_is_a_failed_check_not_protocol_error(
     ).preflight(_target(), confirm_channel_switch=True)
 
     identity = next(
-        item for item in result["checks"]
+        item
+        for item in result["checks"]
         if item["name"] == "current_image_identity_valid"
     )
     assert result["can_update"] is False
@@ -183,7 +211,9 @@ async def test_deployment_identity_error_is_a_failed_check_not_protocol_error(
 
 
 @pytest.mark.asyncio
-async def test_development_unknown_current_channel_requires_confirmation(monkeypatch, tmp_path):
+async def test_development_unknown_current_channel_requires_confirmation(
+    monkeypatch, tmp_path
+):
     async def verify(self, target):
         return target
 
@@ -198,12 +228,16 @@ async def test_development_unknown_current_channel_requires_confirmation(monkeyp
     without_confirmation = await orchestrator.preflight(_target())
     assert without_confirmation["requires_channel_switch_confirmation"] is True
     assert without_confirmation["can_update"] is False
-    with_confirmation = await orchestrator.preflight(_target(), confirm_channel_switch=True)
+    with_confirmation = await orchestrator.preflight(
+        _target(), confirm_channel_switch=True
+    )
     assert with_confirmation["can_update"] is True
 
 
 @pytest.mark.asyncio
-async def test_submit_update_accepts_development_target_and_persists_job(monkeypatch, tmp_path):
+async def test_submit_update_accepts_development_target_and_persists_job(
+    monkeypatch, tmp_path
+):
     target = _target()
     orchestrator = JobOrchestrator(
         str(tmp_path / "state.json"),
@@ -220,7 +254,10 @@ async def test_submit_update_accepts_development_target_and_persists_job(monkeyp
             "can_update": True,
             "from_version": "3.0.1",
             "target_version": target["version"],
-            "target_image": "ghcr.io/sakura520222/sakura-ai:" + target["tag"] + "@" + target["digest"],
+            "target_image": "ghcr.io/sakura520222/sakura-ai:"
+            + target["tag"]
+            + "@"
+            + target["digest"],
             "target_channel": "development",
             "target_revision": target["revision"],
             "target_digest": target["digest"],
@@ -252,7 +289,9 @@ async def test_submit_update_accepts_development_target_and_persists_job(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_development_to_stable_same_semver_requires_confirmation(monkeypatch, tmp_path):
+async def test_development_to_stable_same_semver_requires_confirmation(
+    monkeypatch, tmp_path
+):
     async def verify(self, target):
         return target
 
@@ -269,12 +308,16 @@ async def test_development_to_stable_same_semver_requires_confirmation(monkeypat
     assert without_confirmation["target_channel"] == "stable"
     assert without_confirmation["requires_channel_switch_confirmation"] is True
     assert without_confirmation["can_update"] is False
-    with_confirmation = await orchestrator.preflight(target, confirm_channel_switch=True)
+    with_confirmation = await orchestrator.preflight(
+        target, confirm_channel_switch=True
+    )
     assert with_confirmation["can_update"] is True
 
 
 @pytest.mark.asyncio
-async def test_stable_to_stable_same_semver_is_still_strictly_newer(monkeypatch, tmp_path):
+async def test_stable_to_stable_same_semver_is_still_strictly_newer(
+    monkeypatch, tmp_path
+):
     async def verify(self, target):
         return target
 
@@ -288,11 +331,16 @@ async def test_stable_to_stable_same_semver_is_still_strictly_newer(monkeypatch,
     )
     result = await orchestrator.preflight(_stable_target(), confirm_channel_switch=True)
     assert result["can_update"] is False
-    assert any(item["name"] == "target_newer" and not item["passed"] for item in result["checks"])
+    assert any(
+        item["name"] == "target_newer" and not item["passed"]
+        for item in result["checks"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_structured_stable_target_enforces_manifest_minimum_upgrade(monkeypatch, tmp_path):
+async def test_structured_stable_target_enforces_manifest_minimum_upgrade(
+    monkeypatch, tmp_path
+):
     async def verify(self, target):
         return target
 
@@ -316,7 +364,9 @@ async def test_structured_stable_target_enforces_manifest_minimum_upgrade(monkey
         _Deployment(),
         disk_space_threshold=1,
     ).preflight(target, confirm_channel_switch=True)
-    minimum = next(item for item in result["checks"] if item["name"] == "min_upgrade_from")
+    minimum = next(
+        item for item in result["checks"] if item["name"] == "min_upgrade_from"
+    )
     assert minimum == {
         "name": "min_upgrade_from",
         "passed": False,

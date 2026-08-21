@@ -40,7 +40,7 @@ def test_dockerfile_ships_no_config_directory():
 def test_entrypoint_invokes_merge_before_application_command():
     script = ENTRYPOINT.read_text(encoding="utf-8")
     assert '"$python_bin" "$merge_script" --config-dir "$config_dir"' in script
-    assert "exec \"$@\"" in script
+    assert 'exec "$@"' in script
     assert "source " not in script
     assert "eval " not in script
 
@@ -75,9 +75,9 @@ grep -q 'mysql://preserve' "$work/config/connection.json"
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(
+    assert result.returncode == 0, result.stdout.decode(
         errors="replace"
-    )
+    ) + result.stderr.decode(errors="replace")
 
 
 def test_merge_packaged_defaults_is_noop_without_managed_files(tmp_path):

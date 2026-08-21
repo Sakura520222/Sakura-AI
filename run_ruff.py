@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
 一键 Ruff 代码检查和格式化脚本
-支持自动激活 venv，并将日志输出到 logs 目录
+支持自动激活 venv
 """
 
 import argparse
-import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 
@@ -19,8 +17,6 @@ class RuffRunner:
         """初始化运行器"""
         self.project_root = project_root or Path(__file__).parent.absolute()
         self.venv_python = self._find_venv_python()
-        self.logs_dir = self.project_root / "logs"
-        self.logs_dir.mkdir(exist_ok=True)
 
     def _find_venv_python(self) -> Path:
         """查找 venv 中的 Python 解释器"""
@@ -71,20 +67,6 @@ class RuffRunner:
         except Exception as e:
             return 1, "", str(e)
 
-    def _save_log(self, content: str, mode: str) -> Path:
-        """保存日志到文件"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 路径分隔符会带出 logs/ 下不存在的父目录链（FileNotFoundError），替换为下划线
-        safe_mode = mode.replace(os.sep, "_")
-        if os.altsep:
-            safe_mode = safe_mode.replace(os.altsep, "_")
-        log_file = self.logs_dir / f"ruff_{safe_mode}_{timestamp}.log"
-
-        with open(log_file, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        return log_file
-
     def check(self) -> bool:
         """检查代码问题（不修改文件）"""
         cmd = [
@@ -103,16 +85,6 @@ class RuffRunner:
             print(stdout)
         if stderr:
             print(f"错误信息:\n{stderr}", file=sys.stderr)
-
-        # 保存日志
-        log_content = f"""=== Ruff 检查报告 ===
-时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-模式: 检查（不修改）
-
-{stdout if stdout else "[OK] 没有发现问题"}
-"""
-        log_file = self._save_log(log_content, "check")
-        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -136,16 +108,6 @@ class RuffRunner:
         if stderr:
             print(f"错误信息:\n{stderr}", file=sys.stderr)
 
-        # 保存日志
-        log_content = f"""=== Ruff 修复报告 ===
-时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-模式: 自动修复
-
-{stdout if stdout else "[OK] 没有需要修复的问题"}
-"""
-        log_file = self._save_log(log_content, "fix")
-        print(f"\n日志已保存到: {log_file}")
-
         return returncode == 0
 
     def format(self) -> bool:
@@ -159,16 +121,6 @@ class RuffRunner:
             print(stdout)
         if stderr:
             print(f"错误信息:\n{stderr}", file=sys.stderr)
-
-        # 保存日志
-        log_content = f"""=== Ruff 格式化报告 ===
-时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-模式: 格式化
-
-{stdout if stdout else "[OK] 代码已经是格式化的"}
-"""
-        log_file = self._save_log(log_content, "format")
-        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -192,17 +144,6 @@ class RuffRunner:
             print(stdout)
         if stderr:
             print(f"错误信息:\n{stderr}", file=sys.stderr)
-
-        # 保存日志
-        log_content = f"""=== Ruff 检查报告 ===
-时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-模式: 检查指定路径
-路径: {" ".join(paths)}
-
-{stdout if stdout else "[OK] 没有发现问题"}
-"""
-        log_file = self._save_log(log_content, f"check_{'_'.join(paths)}")
-        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -237,7 +178,6 @@ def main():
     print(f"{'=' * 60}")
     print(f"项目根目录: {runner.project_root}")
     print(f"Python 路径: {runner.venv_python}")
-    print(f"日志目录: {runner.logs_dir}")
     print(f"{'=' * 60}\n")
 
     # 根据参数执行相应的操作

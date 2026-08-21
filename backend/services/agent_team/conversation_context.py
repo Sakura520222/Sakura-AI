@@ -97,7 +97,9 @@ class AgentTeamConversationContextService:
         else:
             # Legacy callers may ask for fullstack/reviewer memory while
             # restoring old data. This is read-only compatibility behavior.
-            contexts = await self._load_role_contexts(role_name, before_iteration, limit)
+            contexts = await self._load_role_contexts(
+                role_name, before_iteration, limit
+            )
         if not contexts:
             return ""
         parts = ["## Agent 历史执行上下文"]

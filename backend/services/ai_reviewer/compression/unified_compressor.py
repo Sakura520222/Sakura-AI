@@ -345,10 +345,10 @@ class UnifiedContextCompressor:
         window = candidate.model.context_window_tokens
         if isinstance(window, int) and not isinstance(window, bool) and window > 0:
             return window
-        fallback = self._model_ctx.get_compression_budget(
-            candidate.model.model_id, 1.0
+        fallback = self._model_ctx.get_compression_budget(candidate.model.model_id, 1.0)
+        return max(
+            int(fallback), self.summary_max_tokens + _SUMMARY_SAFETY_MARGIN_TOKENS
         )
-        return max(int(fallback), self.summary_max_tokens + _SUMMARY_SAFETY_MARGIN_TOKENS)
 
     def _bound_history_for_summary(
         self,
@@ -388,8 +388,10 @@ class UnifiedContextCompressor:
         if final_output_tokens is None:
             return messages
         window = self._context_window_tokens(candidate)
-        input_budget = window - max(1, int(final_output_tokens)) - min(
-            _SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20)
+        input_budget = (
+            window
+            - max(1, int(final_output_tokens))
+            - min(_SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20))
         )
         if input_budget <= 0:
             return None

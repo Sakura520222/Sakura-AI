@@ -131,9 +131,7 @@ async def test_task_creation_does_not_use_removed_ai_config_validation(monkeypat
         ),
     ],
 )
-async def test_workspace_deletion_hides_resolved_path(
-    monkeypatch, route, route_kwargs
-):
+async def test_workspace_deletion_hides_resolved_path(monkeypatch, route, route_kwargs):
     class BrokenWorkspaceService:
         _WT_DIR_RE = agent_team.AgentTeamWorkspaceService._WT_DIR_RE
 
@@ -143,9 +141,7 @@ async def test_workspace_deletion_hides_resolved_path(
         def delete_worktree(self, *args):
             raise ValueError(f"path escaped: C:/secrets/{_SECRET}")
 
-    monkeypatch.setattr(
-        agent_team, "AgentTeamWorkspaceService", BrokenWorkspaceService
-    )
+    monkeypatch.setattr(agent_team, "AgentTeamWorkspaceService", BrokenWorkspaceService)
     db = SimpleNamespace(scalar=AsyncMock(return_value=0))
 
     response = await route(

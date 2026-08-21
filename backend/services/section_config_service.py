@@ -413,7 +413,9 @@ def _leaf_diff(old: Any, new: Any, *, digest: bool, path: str = "") -> ChangeLog
     if old is _MISSING:
         return {path: {"old": "(无)", "new": _serialize_for_audit(new, digest=digest)}}
     if new is _MISSING:
-        return {path: {"old": _serialize_for_audit(old, digest=digest), "new": "(已移除)"}}
+        return {
+            path: {"old": _serialize_for_audit(old, digest=digest), "new": "(已移除)"}
+        }
     if old != new:
         return {
             path: {
@@ -509,7 +511,9 @@ class SectionConfigService:
             _validate_template_placeholders(section_key, new_effective)
 
             changes = _leaf_diff(
-                old_effective, new_effective, digest=section_key in _PROMPT_HEAVY_SECTIONS
+                old_effective,
+                new_effective,
+                digest=section_key in _PROMPT_HEAVY_SECTIONS,
             )
 
             if new_effective == spec["defaults"]:
@@ -525,7 +529,9 @@ class SectionConfigService:
                 }
 
             new_json = json.dumps(new_override, ensure_ascii=False, sort_keys=True)
-            old_json = json.dumps(old_override or {}, ensure_ascii=False, sort_keys=True)
+            old_json = json.dumps(
+                old_override or {}, ensure_ascii=False, sort_keys=True
+            )
             if new_json == old_json:
                 return {"section": section_key, "changed": False, "changes": {}}
 
@@ -582,7 +588,7 @@ class SectionConfigService:
             return None
         try:
             data = json.loads(str(cfg.key_value))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning(f"配置节 [{section_key}] DB 值 JSON 解析失败，按无覆盖处理")
             return None
         if not isinstance(data, dict):
@@ -601,7 +607,9 @@ class SectionConfigService:
             if cfg is None:
                 db.add(
                     AppConfig(
-                        key_name=section_key, key_value=value_json, description=section_key
+                        key_name=section_key,
+                        key_value=value_json,
+                        description=section_key,
                     )
                 )
             else:

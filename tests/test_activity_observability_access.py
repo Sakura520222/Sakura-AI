@@ -528,7 +528,9 @@ async def test_event_cursor_stops_before_omitted_visible_event(db):
 
 
 @pytest.mark.asyncio
-async def test_hidden_events_after_a_full_page_still_advance_before_next_visible_page(db):
+async def test_hidden_events_after_a_full_page_still_advance_before_next_visible_page(
+    db,
+):
     session = _session(db)
     session.session_event_sequence = 5
     _event(db, session.id, 1, "public", {"status": "one"})

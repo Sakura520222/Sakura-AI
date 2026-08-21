@@ -31,7 +31,7 @@ def _metadata_list(raw_value: str | None) -> list[str]:
         return []
     try:
         value = json.loads(raw_value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return []
     if not isinstance(value, list):
         return []

@@ -525,12 +525,13 @@ class UnifiedAIClient:
         # long tool loops never exceed the model context window.
         if self._compressor is not None:
             try:
-                compressed_once, unified_messages = (
-                    await self._compressor.maybe_compress(
-                        selected[0],
-                        unified_messages,
-                        tracker=None,
-                    )
+                (
+                    compressed_once,
+                    unified_messages,
+                ) = await self._compressor.maybe_compress(
+                    selected[0],
+                    unified_messages,
+                    tracker=None,
                 )
             except Exception as exc:
                 logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
@@ -662,7 +663,7 @@ class UnifiedAIClient:
                     success=True,
                 )
                 return response
-            except (asyncio.CancelledError, ReviewCancelledError):
+            except asyncio.CancelledError, ReviewCancelledError:
                 self._log_logical_call_summary(
                     logical_call_id=logical_call_id,
                     role=role,
@@ -721,7 +722,7 @@ class UnifiedAIClient:
                             call_state=call_state,
                             reasoning_snapshot=reasoning_snapshot,
                         )
-                    except (asyncio.CancelledError, ReviewCancelledError):
+                    except asyncio.CancelledError, ReviewCancelledError:
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -860,12 +861,10 @@ class UnifiedAIClient:
         initial_attempt_admitted = False
         for candidate_index, candidate in enumerate(selected):
             remaining = self._remaining_budget(stream_deadline)
-            if (
-                candidate_index > 0
-                and remaining is not None
-                and remaining <= 0
-            ):
-                last_error = self._stream_timeout_error(candidate, configured_total_timeout)
+            if candidate_index > 0 and remaining is not None and remaining <= 0:
+                last_error = self._stream_timeout_error(
+                    candidate, configured_total_timeout
+                )
                 budget_exhausted = True
                 break
             fallback_from_id = previous_attempt_id
@@ -921,9 +920,7 @@ class UnifiedAIClient:
                         and configured_total_timeout is not None
                         and configured_total_timeout > 0
                     ):
-                        stream_deadline = (
-                            time.monotonic() + configured_total_timeout
-                        )
+                        stream_deadline = time.monotonic() + configured_total_timeout
                         remaining = self._remaining_budget(stream_deadline)
                 if remaining is not None and remaining <= 0:
                     last_error = self._stream_timeout_error(
@@ -984,8 +981,7 @@ class UnifiedAIClient:
                             )
                             if (
                                 not stream_done
-                                and
-                                remaining_after_stream is not None
+                                and remaining_after_stream is not None
                                 and remaining_after_stream <= 0
                             ):
                                 raise TimeoutError
@@ -1010,7 +1006,7 @@ class UnifiedAIClient:
                         success=True,
                     )
                     return
-                except (asyncio.CancelledError, ReviewCancelledError):
+                except asyncio.CancelledError, ReviewCancelledError:
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
                         role=role,
@@ -1052,16 +1048,14 @@ class UnifiedAIClient:
                                 budget_exhausted = True
                                 break
                             await self._abortable_sleep(
-                                delay
-                                if remaining is None
-                                else min(delay, remaining),
+                                delay if remaining is None else min(delay, remaining),
                                 cancel_event,
                             )
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except (asyncio.CancelledError, ReviewCancelledError):
+                        except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -1096,16 +1090,14 @@ class UnifiedAIClient:
                                 budget_exhausted = True
                                 break
                             await self._abortable_sleep(
-                                delay
-                                if remaining is None
-                                else min(delay, remaining),
+                                delay if remaining is None else min(delay, remaining),
                                 cancel_event,
                             )
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except (asyncio.CancelledError, ReviewCancelledError):
+                        except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -1278,7 +1270,11 @@ class UnifiedAIClient:
     ) -> float | None:
         """Return the local iterator guard without treating non-positive input as a deadline."""
         if remaining is None:
-            return request_timeout if request_timeout is not None and request_timeout > 0 else None
+            return (
+                request_timeout
+                if request_timeout is not None and request_timeout > 0
+                else None
+            )
         if request_timeout is None or request_timeout <= 0:
             return remaining
         return min(request_timeout, remaining)

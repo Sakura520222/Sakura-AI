@@ -39,7 +39,9 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise ConfigMergeError(f"cannot parse YAML configuration {path}: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot parse YAML configuration {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise ConfigMergeError(f"YAML configuration root must be a mapping: {path}")
     return value
@@ -127,7 +129,9 @@ def _three_way_merge(old: Any, current: Any, new: Any, *, path: str) -> Any:
             if _same_value(old, current):
                 if new is _MISSING:
                     return _MISSING
-                raise ConfigMergeError(f"YAML type conflict at {path}: expected mapping")
+                raise ConfigMergeError(
+                    f"YAML type conflict at {path}: expected mapping"
+                )
             return copy.deepcopy(current)
         merged: dict[Any, Any] = {}
         keys: list[Any] = []
@@ -170,7 +174,9 @@ def _render_yaml(value: dict[str, Any], *, path: Path) -> str:
         )
         parsed = yaml.safe_load(rendered)
     except yaml.YAMLError as exc:
-        raise ConfigMergeError(f"cannot serialize YAML configuration {path}: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot serialize YAML configuration {path}: {exc}"
+        ) from exc
     if not isinstance(parsed, dict):
         raise ConfigMergeError(f"serialized YAML root must be a mapping: {path}")
     return rendered
@@ -259,7 +265,9 @@ def _write_batch(plans: list[_WritePlan]) -> None:
                 # Preserve the original failure; the next startup still
                 # fail-closes if a runtime file cannot be parsed.
                 pass
-        raise ConfigMergeError(f"cannot atomically update packaged configuration: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot atomically update packaged configuration: {exc}"
+        ) from exc
     finally:
         for temp_path in temp_paths:
             temp_path.unlink(missing_ok=True)
@@ -329,7 +337,9 @@ def main() -> int:
     try:
         changed = merge_packaged_defaults(args.config_dir, args.defaults_dir)
     except ConfigMergeError as exc:
-        print(f"Sakura AI config initialization failed closed: {exc}", file=os.sys.stderr)
+        print(
+            f"Sakura AI config initialization failed closed: {exc}", file=os.sys.stderr
+        )
         return 78
     for path in changed:
         print(f"Sakura AI packaged config merged: {path}")

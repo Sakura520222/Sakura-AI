@@ -136,9 +136,7 @@ class TaggedScanParser:
             raise ScanProtocolError("empty scan response")
 
         opening = [
-            index
-            for index, line in enumerate(lines)
-            if line.strip() == "<SAKURA_SCAN>"
+            index for index, line in enumerate(lines) if line.strip() == "<SAKURA_SCAN>"
         ]
         closing = [
             index
@@ -151,9 +149,7 @@ class TaggedScanParser:
             )
         return lines[opening[0] : closing[0] + 1]
 
-    def _parse_root(
-        self, lines: list[str]
-    ) -> tuple[dict[str, str], list[list[str]]]:
+    def _parse_root(self, lines: list[str]) -> tuple[dict[str, str], list[list[str]]]:
         fields: dict[str, str] = {}
         findings: list[list[str]] = []
         index = 0
@@ -227,9 +223,7 @@ class TaggedScanParser:
         blocks: list[list[str]] = []
         while index < len(lines) and lines[index].strip() != f"</{field}>":
             if lines[index].strip() != f"<{block_name}>":
-                raise ScanProtocolError(
-                    f"{field} may contain only {block_name} blocks"
-                )
+                raise ScanProtocolError(f"{field} may contain only {block_name} blocks")
             block, index = self._consume_block(lines, index, block_name)
             blocks.append(block)
         if index >= len(lines):

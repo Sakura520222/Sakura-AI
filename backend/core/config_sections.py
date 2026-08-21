@@ -339,9 +339,7 @@ async def migrate_yaml_files_to_db(
     )
     existing_keys = {row[0] for row in result.all()}
     if existing_keys:
-        logger.debug(
-            f"检测到已存在节配置键，跳过旧 YAML 迁移: {sorted(existing_keys)}"
-        )
+        logger.debug(f"检测到已存在节配置键，跳过旧 YAML 迁移: {sorted(existing_keys)}")
         return []
 
     # 2. 容错读取旧文件（文件 IO/YAML 解析放线程池，避免阻塞事件循环）

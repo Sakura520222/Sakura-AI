@@ -94,9 +94,7 @@ async def test_save_and_load_round_trip():
         "question": {"color": "00ff00", "description": "提问"},
     }
 
-    result = await section_config_service.save_section(
-        db, "label.definitions", data
-    )
+    result = await section_config_service.save_section(db, "label.definitions", data)
 
     assert result["changed"] is True
     loaded = await section_config_service.load_section(db, "label.definitions")

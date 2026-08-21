@@ -91,7 +91,7 @@ class UpdaterClient:
                 resp = await client.get("/v1/status")
                 resp.raise_for_status()
                 envelope = resp.json()  # malformed JSON → ValueError
-        except (httpx.HTTPError, OSError, ValueError, AttributeError):
+        except httpx.HTTPError, OSError, ValueError, AttributeError:
             # AttributeError：无 AF_UNIX 的平台（如部分 Windows Python 构建）连接时
             # 在 anyio 深处抛 socket.AF_UNIX 缺失，同样视为"连不上"→ None。
             return None
@@ -141,7 +141,11 @@ class UpdaterClient:
             ) from exc
 
         if response.status_code < 200 or response.status_code >= 300:
-            body = payload if isinstance(payload, dict) else {"error": "invalid_error_body"}
+            body = (
+                payload
+                if isinstance(payload, dict)
+                else {"error": "invalid_error_body"}
+            )
             raise UpdaterActionError(response.status_code, body)
         if not is_valid_v1_envelope(payload):
             raise UpdaterProtocolError("updater returned an invalid v1 envelope")
@@ -157,10 +161,12 @@ class UpdaterClient:
         target: dict | None = None,
         confirm_channel_switch: bool = False,
     ) -> dict:
-        body = {"target": target, "confirm_channel_switch": confirm_channel_switch} if target is not None else {"target_version": target_version}
-        return await self._request(
-            "POST", "/v1/preflight", body
+        body = (
+            {"target": target, "confirm_channel_switch": confirm_channel_switch}
+            if target is not None
+            else {"target_version": target_version}
         )
+        return await self._request("POST", "/v1/preflight", body)
 
     async def update(
         self,
@@ -172,7 +178,9 @@ class UpdaterClient:
         if target is not None:
             body = {"target": target, "confirm_channel_switch": confirm_channel_switch}
         else:
-            body = {"target_version": target_version} if target_version is not None else {}
+            body = (
+                {"target_version": target_version} if target_version is not None else {}
+            )
         return await self._request("POST", "/v1/update", body)
 
     async def get_job(self, job_id: str) -> dict:

@@ -275,6 +275,7 @@ async def test_lifespan_resolves_persisted_timezone_after_database_load(monkeypa
         "get_localzone_name",
         Mock(side_effect=RuntimeError("system timezone unavailable")),
     )
+
     # 3.5 段统一节配置加载：测试环境无真实 DB，stub 掉 session 与加载函数
     class _NullSession:
         async def __aenter__(self):
@@ -289,9 +290,7 @@ async def test_lifespan_resolves_persisted_timezone_after_database_load(monkeypa
     async def no_op_migrate_yaml_files(_db):
         return []
 
-    monkeypatch.setattr(
-        "backend.models.database.async_session", lambda: _NullSession()
-    )
+    monkeypatch.setattr("backend.models.database.async_session", lambda: _NullSession())
     monkeypatch.setattr(
         "backend.core.config_sections.load_section_configs",
         no_op_load_section_configs,
@@ -348,9 +347,7 @@ async def test_lifespan_loads_section_configs_after_dynamic_settings(monkeypatch
     async def record_migrate_yaml_files(db):
         migrated_with.append(db)
 
-    monkeypatch.setattr(
-        "backend.models.database.async_session", lambda: _NullSession()
-    )
+    monkeypatch.setattr("backend.models.database.async_session", lambda: _NullSession())
     monkeypatch.setattr(
         "backend.core.config_sections.load_section_configs",
         record_load_section_configs,
@@ -388,7 +385,9 @@ async def test_lifespan_resets_runtime_binding_when_cancelled_at_yield(monkeypat
 
     with pytest.raises(asyncio.CancelledError):
         async with main.lifespan(app):
-            assert get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+            assert (
+                get_runtime_supervisor() is app.state.database_reset_runtime_supervisor
+            )
             raise asyncio.CancelledError
 
     with pytest.raises(DatabaseResetRuntimeBindingError):
@@ -479,7 +478,11 @@ def test_get_startup_info_returns_valid_data_after_startup():
         patch.object(main, "_startup_finished_at", fake_finished),
         patch.object(main, "_startup_duration", fake_duration),
         patch.object(main, "_startup_finished_monotonic", now_mono - 120),
-        patch.object(main, "_startup_finished_instant_utc", datetime.fromtimestamp(fake_finished, tz=UTC)),
+        patch.object(
+            main,
+            "_startup_finished_instant_utc",
+            datetime.fromtimestamp(fake_finished, tz=UTC),
+        ),
     ):
         info = get_startup_info()
 
@@ -500,7 +503,11 @@ def test_get_system_info_dict_contains_formatted_fields():
         patch.object(main, "_startup_finished_at", fake_finished),
         patch.object(main, "_startup_duration", fake_duration),
         patch.object(main, "_startup_finished_monotonic", now_mono - 3600),
-        patch.object(main, "_startup_finished_instant_utc", datetime.fromtimestamp(fake_finished, tz=UTC)),
+        patch.object(
+            main,
+            "_startup_finished_instant_utc",
+            datetime.fromtimestamp(fake_finished, tz=UTC),
+        ),
     ):
         info = get_system_info_dict()
 

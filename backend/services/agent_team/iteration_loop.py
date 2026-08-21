@@ -365,7 +365,9 @@ class IterationLoopService:
                     for prompt in result.scalars().all()
                 ]
         except Exception as exc:
-            logger.warning("读取 Agent pending guidance 失败 (task_id={}): {}", self.task_id, exc)
+            logger.warning(
+                "读取 Agent pending guidance 失败 (task_id={}): {}", self.task_id, exc
+            )
             # Do not fail open: the Agent must not make the
             # next model call while queued human guidance cannot be read.
             raise RuntimeError("读取 Agent pending guidance 失败") from exc
@@ -388,9 +390,7 @@ class IterationLoopService:
         ]
         if already_admitted:
             await self._ack_pending_prompts(tuple(already_admitted))
-            prompts = [
-                item for item in prompts if item[0] not in set(already_admitted)
-            ]
+            prompts = [item for item in prompts if item[0] not in set(already_admitted)]
         if not prompts:
             return ""
         # Keep every queued item as its own user message.  A separator or an
@@ -403,7 +403,9 @@ class IterationLoopService:
             items=tuple(prompts),
         )
 
-    async def _ack_pending_prompts(self, prompt_ids: tuple[int, ...] | list[int]) -> None:
+    async def _ack_pending_prompts(
+        self, prompt_ids: tuple[int, ...] | list[int]
+    ) -> None:
         """Mark guidance consumed after its user message is checkpointed."""
         if not self.task_id or not prompt_ids:
             return
@@ -414,7 +416,9 @@ class IterationLoopService:
                 result = await session.execute(
                     select(AgentTeamUserPrompt).where(
                         AgentTeamUserPrompt.task_id == self.task_id,
-                        AgentTeamUserPrompt.id.in_(tuple(int(item) for item in prompt_ids)),
+                        AgentTeamUserPrompt.id.in_(
+                            tuple(int(item) for item in prompt_ids)
+                        ),
                         AgentTeamUserPrompt.status == "pending",
                     )
                 )
@@ -498,10 +502,7 @@ class PendingGuidance(str):
         value = super().__new__(cls, content)
         value.prompt_ids = tuple(prompt_ids)
         value.items = tuple(
-            items
-            or ((value.prompt_ids[0], content),)
-            if value.prompt_ids
-            else ()
+            items or ((value.prompt_ids[0], content),) if value.prompt_ids else ()
         )
         return value
 
@@ -518,7 +519,7 @@ def _guidance_ids_from_message(message: Any) -> tuple[int, ...]:
         for raw_id in raw_ids:
             try:
                 parsed.append(int(raw_id))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
         if parsed:
             return tuple(parsed)
@@ -528,7 +529,7 @@ def _guidance_ids_from_message(message: Any) -> tuple[int, ...]:
         return ()
     try:
         return (int(content[len(prefix) :].split("]", 1)[0]),)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return ()
 
 
@@ -544,7 +545,9 @@ def _normalize_legacy_messages(
             message["content"] = IMPLEMENTATION_SYSTEM_PROMPT
             break
     else:
-        normalized.insert(0, {"role": "system", "content": IMPLEMENTATION_SYSTEM_PROMPT})
+        normalized.insert(
+            0, {"role": "system", "content": IMPLEMENTATION_SYSTEM_PROMPT}
+        )
 
     if initial_user_message is not None:
         for index, message in enumerate(normalized):

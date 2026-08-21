@@ -117,17 +117,25 @@ def test_parse_empty_findings_collection():
             "<CATEGORY>security</CATEGORY>", "<CATEGORY>style</CATEGORY>"
         ),
         # score 越界
-        lambda s: s.replace("<OVERALL_SCORE>82</OVERALL_SCORE>", "<OVERALL_SCORE>0</OVERALL_SCORE>"),
+        lambda s: s.replace(
+            "<OVERALL_SCORE>82</OVERALL_SCORE>", "<OVERALL_SCORE>0</OVERALL_SCORE>"
+        ),
         # score 非数字
-        lambda s: s.replace("<OVERALL_SCORE>82</OVERALL_SCORE>", "<OVERALL_SCORE>high</OVERALL_SCORE>"),
+        lambda s: s.replace(
+            "<OVERALL_SCORE>82</OVERALL_SCORE>", "<OVERALL_SCORE>high</OVERALL_SCORE>"
+        ),
         # confidence 越界
-        lambda s: s.replace("<CONFIDENCE>92</CONFIDENCE>", "<CONFIDENCE>120</CONFIDENCE>"),
+        lambda s: s.replace(
+            "<CONFIDENCE>92</CONFIDENCE>", "<CONFIDENCE>120</CONFIDENCE>"
+        ),
         # 空 SUMMARY
         lambda s: s.replace("整体质量良好，存在一个高危注入风险。\n两行总结。", "   "),
         # 缺字段（删掉第一个 CONFIDENCE）
         lambda s: s.replace("<CONFIDENCE>92</CONFIDENCE>\n", "", 1),
         # 行号非正整数
-        lambda s: s.replace("<START_LINE>10</START_LINE>", "<START_LINE>0</START_LINE>"),
+        lambda s: s.replace(
+            "<START_LINE>10</START_LINE>", "<START_LINE>0</START_LINE>"
+        ),
     ],
 )
 def test_parse_rejects_protocol_violations(mutate):

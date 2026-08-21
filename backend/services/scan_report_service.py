@@ -59,9 +59,7 @@ _TEXT = {
         "suggestion": "建议",
         "repo_wide": "仓库级",
         "footer": f"*此报告由 [Sakura AI]({SAKURA_AI_REPO_URL}) 自动生成*",
-        "superseded": (
-            "此报告 Issue 已被最新一次扫描报告取代，自动关闭。" ""
-        ),
+        "superseded": ("此报告 Issue 已被最新一次扫描报告取代，自动关闭。"),
         "tg_title": "Sakura AI 仓库扫描完成",
         "tg_summary": "总结",
         "tg_files": "扫描文件",
@@ -192,9 +190,7 @@ class ScanReportService:
             previous_scan = prev_result.scalar_one_or_none()
             if previous_scan is not None:
                 prev_findings_result = await session.execute(
-                    select(ScanFinding).where(
-                        ScanFinding.scan_id == previous_scan.id
-                    )
+                    select(ScanFinding).where(ScanFinding.scan_id == previous_scan.id)
                 )
                 previous_findings = list(prev_findings_result.scalars().all())
 
@@ -275,9 +271,7 @@ class ScanReportService:
         lines.append(
             f"| {t['trigger']} | {getattr(scan, 'trigger_type', None) or '-'} |"
         )
-        lines.append(
-            f"| {t['files']} | {getattr(scan, 'code_file_count', 0) or 0} |"
-        )
+        lines.append(f"| {t['files']} | {getattr(scan, 'code_file_count', 0) or 0} |")
         if indexed_chunks:
             lines.append(f"| {t['chunks']} | {indexed_chunks} |")
         if scan_rounds:
@@ -325,10 +319,7 @@ class ScanReportService:
                 lines.append("| " + " | ".join(["-", *categories]) + " |")
                 lines.append("|" + "---|" * (len(categories) + 1))
                 for sev in ["critical", "major", "minor", "suggestion"]:
-                    row = [
-                        str(matrix.get((sev, cat), 0) or "-")
-                        for cat in categories
-                    ]
+                    row = [str(matrix.get((sev, cat), 0) or "-") for cat in categories]
                     lines.append(f"| {sev} | " + " | ".join(row) + " |")
                 lines.append("")
 
@@ -342,19 +333,17 @@ class ScanReportService:
                     file_counts.items(),
                     key=lambda item: (
                         -len(item[1]),
-                        min(
-                            _SEVERITY_ORDER.get(x.severity, 3) for x in item[1]
-                        ),
+                        min(_SEVERITY_ORDER.get(x.severity, 3) for x in item[1]),
                         item[0],
                     ),
                 )[:5]
                 lines.append(f"### {t['hotspots_heading']}\n")
-                lines.append(f"| {t['file']} | {t['hotspots_count']} | {t['hotspots_top_severity']} |")
+                lines.append(
+                    f"| {t['file']} | {t['hotspots_count']} | {t['hotspots_top_severity']} |"
+                )
                 lines.append("|---|---|---|")
                 for file_path, items in hotspots:
-                    top = min(
-                        _SEVERITY_ORDER.get(x.severity, 3) for x in items
-                    )
+                    top = min(_SEVERITY_ORDER.get(x.severity, 3) for x in items)
                     top_name = next(
                         name
                         for name, weight in _SEVERITY_ORDER.items()
@@ -373,11 +362,7 @@ class ScanReportService:
             )
             prev_health = previous_scan.overall_health_score
             cur_health = scan.overall_health_score or 0
-            delta = (
-                cur_health - prev_health
-                if prev_health is not None
-                else None
-            )
+            delta = cur_health - prev_health if prev_health is not None else None
             current_keys = {_finding_key(f) for f in findings}
             previous_keys = {_finding_key(p) for p in (previous_findings or [])}
             added = len(current_keys - previous_keys)
@@ -413,7 +398,7 @@ class ScanReportService:
                 emoji = SEVERITY_EMOJI.get(sev, "💡")
                 open_attr = " open" if _SEVERITY_ORDER.get(sev, 3) <= 1 else ""
                 lines.append(
-                    f'<details{open_attr}>\n'
+                    f"<details{open_attr}>\n"
                     f"<summary>{emoji} {sev.upper()} ({len(items)})</summary>\n"
                 )
                 for idx, f in enumerate(items, 1):
@@ -518,9 +503,7 @@ class ScanReportService:
         if not issue_number:
             return
         try:
-            previous_issue = await asyncio.to_thread(
-                repo.get_issue, int(issue_number)
-            )
+            previous_issue = await asyncio.to_thread(repo.get_issue, int(issue_number))
             if previous_issue is None or previous_issue.state != "open":
                 return
             await asyncio.to_thread(
@@ -531,9 +514,7 @@ class ScanReportService:
                 previous_issue.edit,
                 state="closed",
             )
-            logger.info(
-                f"已关闭旧扫描报告 Issue: {scan.repo_name}#{issue_number}"
-            )
+            logger.info(f"已关闭旧扫描报告 Issue: {scan.repo_name}#{issue_number}")
         except Exception as e:
             logger.warning(
                 f"关闭旧扫描报告 Issue 失败（不阻断新报告）: "
@@ -590,9 +571,7 @@ class ScanReportService:
 
             # 关闭上一次扫描的报告 Issue（避免重复堆积）
             if previous_scan is not None:
-                await self._close_previous_issue(
-                    repo, scan, previous_scan, language
-                )
+                await self._close_previous_issue(repo, scan, previous_scan, language)
 
             # 生成 Issue 内容
             health = scan.overall_health_score or 0
