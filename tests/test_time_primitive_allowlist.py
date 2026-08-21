@@ -75,13 +75,13 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1362",
+        "position": "backend/webui/routes/agent_team.py:1350",
         "category": "filesystem-metadata-boundary",
         "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1596",
+        "position": "backend/webui/routes/agent_team.py:1584",
         "category": "filesystem-metadata-boundary",
         "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
     },
