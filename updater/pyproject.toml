@@ -28,3 +28,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # starlette.testclient 提示 httpx 已弃用（建议改用 httpx2）；
+    # updater 测试仍基于 httpx，等迁移 httpx2 前在测试中忽略。
+    # starlette.testclient deprecates httpx (suggests httpx2);
+    # updater tests still target httpx; ignore until migration.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning",
+]
