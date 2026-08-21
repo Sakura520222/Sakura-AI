@@ -215,6 +215,15 @@ class ContextService:
         if self._lease_duration <= timedelta(0):
             raise ValueError("lease duration must be positive")
 
+    @property
+    def lease_heartbeat_interval(self) -> float:
+        """Return a bounded interval that renews the lease before expiry."""
+        # Renew at least three times per lease and cap the normal production
+        # interval so long-running model calls do not wait most of the TTL
+        # before the first heartbeat.  The lower bound is intentionally not
+        # rounded up: callers may inject very short TTLs in deterministic tests.
+        return min(300.0, self._lease_duration.total_seconds() / 3)
+
     @asynccontextmanager
     async def _session_scope(self) -> AsyncIterator[AsyncSession]:
         if self._db is not None:
