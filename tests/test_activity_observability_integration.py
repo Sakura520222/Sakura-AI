@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event, select
@@ -19,7 +20,10 @@ from backend.models.activity_observability_models import (
     ActivityThreadLease,
 )
 from backend.models.database import Base
-from backend.services.activity_observability.context_service import ContextService
+from backend.services.activity_observability.context_service import (
+    ContextService,
+    StaleThreadLeaseError,
+)
 from backend.services.activity_observability.contracts import RoleConfigSnapshot
 from backend.services.activity_observability.integration_service import (
     ActivityIntegrationService,
@@ -209,6 +213,65 @@ async def test_bundle_release_failure_is_retryable_after_work_unit_aggregation(
 
     await bundle.finish("completed")
     assert await db.get(ActivityThreadLease, started.thread.id) is None
+
+
+@pytest.mark.asyncio
+async def test_started_execution_renews_lease_until_finish(db, resource, snapshot):
+    """A long-running execution keeps its canonical context lease alive."""
+    context = ContextService(db=db, lease_duration=timedelta(milliseconds=90))
+    service = ActivityIntegrationService(db=db, lease_context=context)
+    admitted = await service.admit_synchronize(resource, delivery_id="heartbeat-1")
+
+    execution = await service.start_execution(
+        session_id=admitted.session_id,
+        trigger_ids=[admitted.trigger_id],
+        role_snapshot=snapshot,
+        role="reviewer",
+        task_type="pr",
+    )
+    initial_expiry = execution.lease.expires_at
+
+    try:
+        await asyncio.sleep(0.18)
+        stored_lease = await db.get(ActivityThreadLease, execution.thread.id)
+
+        assert stored_lease is not None
+        assert stored_lease.expires_at > initial_expiry
+        assert execution.lease.expires_at == stored_lease.expires_at
+        assert execution.observer.lease == execution.lease
+    finally:
+        await execution.finish("completed")
+
+
+@pytest.mark.asyncio
+async def test_bundle_converges_after_stale_release_once_work_unit_is_terminal(
+    db, resource, snapshot
+):
+    """A stale old token must not make terminal finish retry forever."""
+    service = ActivityIntegrationService(db=db)
+    admitted = await service.admit_synchronize(resource, delivery_id="stale-release-1")
+    started = await service.start_or_merge_review(
+        session_id=admitted.session_id,
+        role_snapshot=snapshot,
+    )
+    bundle = await service.build_execution_bundle(started)
+    release_calls = 0
+
+    async def stale_release(_token):
+        nonlocal release_calls
+        release_calls += 1
+        raise StaleThreadLeaseError("lease expired, released, or fenced")
+
+    bundle.context_service.release_lease = stale_release
+
+    await bundle.finish("completed")
+    await bundle.finish("completed")
+
+    stored_work_unit = await db.get(ActivityInvocationWorkUnit, started.work_unit.id)
+    stored_invocation = await db.get(ActivityInvocation, started.invocation.id)
+    assert stored_work_unit.status == "completed"
+    assert stored_invocation.status == "completed"
+    assert release_calls == 1
 
 
 @pytest.mark.asyncio
