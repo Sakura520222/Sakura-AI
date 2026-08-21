@@ -1,0 +1,54 @@
+name: 功能请求
+description: 提出新功能或对现有功能的改进建议。请用中文填写。
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出建议！提交前请先在 [Issue 列表](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) 中搜索，
+        确认该功能没有被请求过。
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 功能描述
+      description: 清晰地描述你希望新增或改进的功能。
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机与使用场景
+      description: >
+        这个功能解决了什么问题？例如「我在做 X 时，希望 Y 能……」。
+        如果与其他 Issue 相关，请附上链接。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案
+      description: 你考虑过的其他解决方式，或目前使用的临时绕过方法。
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 其他有助于理解该功能的上下文、示例或截图。
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 检查清单
+      options:
+        - label: 我已在 [Issue 列表](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) 中搜索过，确认该功能未被请求或之前的讨论未覆盖我的场景。
+          required: true
+        - label: (可选) 我愿意提交 PR 来帮助实现该功能。
+          required: false
+
+  - type: markdown
+    attributes:
+      value: 感谢你的贡献！

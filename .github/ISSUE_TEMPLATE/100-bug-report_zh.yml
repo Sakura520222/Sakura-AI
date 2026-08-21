@@ -1,0 +1,125 @@
+name: Bug 报告
+description: 报告 Sakura AI 运行中的问题（崩溃、审查失败、页面异常、更新出错等）。请用中文填写。
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你抽出时间报告问题！提交前请先在 [Issue 列表](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) 中搜索，
+        确认该问题没有被报告过。
+
+  - type: markdown
+    attributes:
+      value: |
+        **安全提醒**：粘贴日志或配置前，请先确认内容不包含以下敏感信息：
+        - AI 提供商的 API Key（OpenAI / Anthropic / DeepSeek 等）
+        - GitHub Token、GitHub App 私钥、Webhook Secret
+        - 数据库连接串、Redis 地址、管理员密码
+
+        请将敏感值替换为 `<YOUR_KEY_HERE>` 之类的占位符后再提交。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰地描述发生了什么，以及你期望的正确行为是什么。
+      placeholder: 例如：在 PR #123 上触发审查后，Agent 卡在分析阶段，最终超时失败。期望……
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 复现该问题的操作步骤。
+      placeholder: |
+        1. 进入 WebUI 的 ……
+        2. 点击 ……
+        3. 观察 ……
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本与更新频道
+      description: >
+        可在 WebUI「版本管理」页查看。请同时注明频道，例如 stable v1.2.3 或 development。
+        请勿填写 latest 之类的无意义值。
+      placeholder: 例如：stable v1.2.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式
+      options:
+        - Docker Compose（生产，docker-compose.prod.yml）
+        - Docker Compose（开发，docker-compose.yml）
+        - 源码直接运行（python -m backend.main / uvicorn）
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 受影响的功能区域
+      description: 可多选。
+      multiple: true
+      options:
+        - PR 审查
+        - Issue 分析
+        - Agent / 工具链
+        - WebUI 界面
+        - 自动更新
+        - Telegram 通知
+        - Setup 向导
+        - 认证与安全
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: 使用的 AI 提供商
+      description: 例如 OpenAI、Anthropic、DeepSeek、Gemini。与问题无关时可留空。
+      placeholder: 例如：DeepSeek
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: |
+        与问题相关的日志片段（优先使用 DEBUG 级别）。
+        请确保已按上方安全提醒完成脱敏；缺少有效日志的 Issue 可能会被关闭。
+      render: text
+      placeholder: |
+        在这里粘贴日志片段……
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 截图、复现视频、完整日志文件等。截图请直接在文本框中粘贴。
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 检查清单
+      options:
+        - label: 我已在 [Issue 列表](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) 中搜索过相关问题，仍无法解决或该问题从未被报告。
+          required: true
+        - label: 我已确认提交内容中不包含 API Key、Token、连接串等敏感信息。
+          required: true
+        - label: 我已尝试重启应用并更新到最新版本，问题仍然存在。
+          required: true
+
+  - type: markdown
+    attributes:
+      value: 感谢你的报告，我们会尽快跟进！

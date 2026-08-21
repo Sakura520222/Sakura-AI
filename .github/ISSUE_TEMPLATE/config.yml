@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 文档中心
+    url: https://github.com/Sakura520222/Sakura-AI/blob/main/docs/README.md
+    about: 部署、配置、架构与功能使用指南（中文），提交前建议先查阅是否已有解答。
+  - name: Documentation
+    url: https://github.com/Sakura520222/Sakura-AI/blob/main/README_EN.md
+    about: English README with an overview of deployment and features. Check it before opening an issue.
