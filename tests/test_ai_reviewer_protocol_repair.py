@@ -7,6 +7,7 @@ import pytest
 from backend.services.ai_reviewer.result_parser import ReviewResultParser
 from backend.services.ai_reviewer.reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
 
 VALID_REVIEW = """<SAKURA_REVIEW>
 <VERSION>1</VERSION>
@@ -34,7 +35,7 @@ class FakeApiClient:
 
     async def call_with_retry(self, **kwargs):
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.content)
+        message = SimpleNamespace(content=self.content, tool_calls=[])
         choice = SimpleNamespace(message=message)
         usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
         return SimpleNamespace(choices=[choice], usage=usage)
@@ -188,3 +189,39 @@ async def test_final_assistant_turn_emitted_once():
     # 修复轮次的 assistant 修复输出（VALID_REVIEW）推 1 次
     # final_text（"legacy free-form response"）不再由 _parse_or_repair_review 推送
     assert events == [VALID_REVIEW]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_uses_tool_free_final_call_after_deadline():
+    reviewer = _reviewer_with_response(VALID_REVIEW)
+    reviewer.enable_compression = False
+    reviewer.context_compressor = SimpleNamespace(
+        estimate_messages_tokens=lambda _messages: 1,
+    )
+    reviewer.tool_handler = SimpleNamespace()
+    reviewer.model_context_mgr = SimpleNamespace(
+        calculate_safe_context=lambda *_args: 100_000,
+    )
+
+    result = await reviewer._run_tool_loop(
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "data"},
+        ],
+        system_prompt="system",
+        strategy="standard",
+        enabled_tools=[{"type": "function", "function": {"name": "read_file"}}],
+        repo=None,
+        pr=None,
+        tracker=TokenTracker(),
+        context={},
+        deadline=AITaskDeadline.from_timeout(0),
+    )
+
+    assert result["ai_decision"] == "approve"
+    call = reviewer.api_client.calls[0]
+    assert call["tools"] == []
+    assert call["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT for message in call["messages"]
+    ) == 1

@@ -20,6 +20,7 @@ from backend.core.config import (
 from backend.core.time_service import now_utc
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_task_deadline import AITaskDeadline
 
 # 扫描并发控制信号量
 _scan_semaphore: asyncio.Semaphore | None = None
@@ -162,9 +163,15 @@ class ScanWorker:
 
     async def process_scan(self, scan_id: int):
         """执行扫描主流程"""
+        # Deadline starts before semaphore admission so queueing time is part of
+        # the same task budget.  It is soft: only the next AI call is forced to
+        # produce a tool-free final response.
+        task_deadline = AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         semaphore = await _get_scan_semaphore()
         async with semaphore:
-            await self._process_scan_inner(scan_id)
+            await self._process_scan_inner(scan_id, deadline=task_deadline)
 
     async def _start_threaded_execution(self, scan_id: int, repo_name: str):
         """接入活动观测（threaded）：失败降级为 None，不阻断扫描。"""
@@ -183,13 +190,22 @@ class ScanWorker:
             )
             return None
 
-    async def _process_scan_inner(self, scan_id: int):
+    async def _process_scan_inner(
+        self,
+        scan_id: int,
+        *,
+        deadline: AITaskDeadline | None = None,
+    ):
         """扫描内部逻辑"""
         from backend.models.database import async_session
 
         # 轮次与 token 均不设上限，由模型自然停止（与 Issue 分析一致）
         tracker = TokenTracker()
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         repo_path = None
+        execution = None
 
         try:
             # 1. 加载扫描记录
@@ -300,10 +316,37 @@ class ScanWorker:
                 file_list=file_list,
                 execution=execution,
                 output_language=output_language or "zh-CN",
+                deadline=task_deadline,
             )
             all_findings = scan_result.get("findings", [])
             ai_health_score = scan_result.get("overall_score")
             ai_summary = scan_result.get("summary", "")
+
+            # A protocol repair exhaustion is an explicit scan failure, not an
+            # empty healthy repository.  Do not persist findings, generate a
+            # report, close an old report Issue, or mark the scan completed.
+            if scan_result.get("parse_source") == "scan_protocol_error":
+                error_message = str(
+                    scan_result.get("summary") or "扫描输出未通过协议校验"
+                )[:2000]
+                await self._update_scan(
+                    scan_id,
+                    status=ScanStatus.FAILED.value,
+                    current_phase=None,
+                    error_message=error_message,
+                    scan_rounds=scan_rounds,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
+                )
+                if execution is not None:
+                    try:
+                        await execution.finish("failed", error_message=error_message)
+                    except Exception as finish_exc:
+                        logger.warning(
+                            "扫描协议失败 observability finish 失败: {}", finish_exc
+                        )
+                logger.error("扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message)
+                return
 
             # 10. 聚合结果（使用 AI 评估的健康评分）
             aggregated = self._aggregate_findings(
@@ -505,6 +548,7 @@ class ScanWorker:
         file_list: list[dict],
         execution: Any = None,
         output_language: str = "zh-CN",
+        deadline: AITaskDeadline | None = None,
     ) -> tuple[dict, int]:
         """使用 AIReviewer 工具链进行全仓扫描
 
@@ -530,6 +574,10 @@ class ScanWorker:
             ScanProtocolError,
             TaggedScanParser,
             safe_scan_protocol_failure,
+        )
+
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
         )
 
         # 1. 构建扫描上下文（与 AIReviewer 的 PR context 结构对齐）
@@ -673,6 +721,23 @@ class ScanWorker:
         invocation_context = execution.invocation_context if execution else None
         observer = execution.observer if execution else None
 
+        async def _append_assistant_tool_turn(response, tool_calls) -> None:
+            assistant_message = response.choices[0].message
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": getattr(assistant_message, "content", None),
+                "tool_calls": tool_calls,
+            }
+            if (
+                hasattr(assistant_message, "reasoning_content")
+                and assistant_message.reasoning_content
+            ):
+                assistant_msg_dict["reasoning_content"] = (
+                    assistant_message.reasoning_content
+                )
+            messages.append(assistant_msg_dict)
+            await _event_callback("message", assistant_msg_dict)
+
         # 不设轮次与 token 上限，依赖模型自然停止（无工具调用即交付最终结果）
         iteration = 0
         while True:
@@ -684,16 +749,25 @@ class ScanWorker:
             )
 
             try:
-                response = await reviewer.api_client.call_with_retry(
-                    model="",
-                    messages=messages,
-                    tools=enabled_tools,
-                    tool_choice="auto",
-                    temperature=settings.ai_temperature,
-                    role="main",
-                    context=invocation_context,
-                    observer=observer,
-                )
+                prompt_was_sent = task_deadline.timeout_prompt_sent
+                call_kwargs = {
+                    "model": "",
+                    "messages": messages,
+                    "tools": enabled_tools,
+                    "tool_choice": "auto",
+                    "temperature": settings.ai_temperature,
+                    "role": "main",
+                    "context": invocation_context,
+                    "observer": observer,
+                }
+                call_kwargs.update(task_deadline.prepare_call(messages))
+                if (
+                    not prompt_was_sent
+                    and task_deadline.timeout_prompt_sent
+                ):
+                    await _event_callback("message", messages[-1])
+
+                response = await reviewer.api_client.call_with_retry(**call_kwargs)
 
                 tracker.accumulate(response)
                 tracker.log_context_usage(
@@ -737,6 +811,7 @@ class ScanWorker:
                         invocation_context=invocation_context,
                         observer=observer,
                         event_callback=_event_callback,
+                        deadline=task_deadline,
                     )
                     logger.info(
                         f"全仓扫描完成（{iteration} 轮对话）: "
@@ -746,25 +821,40 @@ class ScanWorker:
                     )
                     return result, iteration
 
-                # 处理工具调用
-                assistant_message = response.choices[0].message
-                assistant_msg_dict = {
-                    "role": "assistant",
-                    "content": getattr(assistant_message, "content", None),
-                    "tool_calls": tool_calls,
-                }
-
-                # DeepSeek-R1 reasoning_content 兼容
-                if (
-                    hasattr(assistant_message, "reasoning_content")
-                    and assistant_message.reasoning_content
-                ):
-                    assistant_msg_dict["reasoning_content"] = (
-                        assistant_message.reasoning_content
+                # If the provider returned tool calls after the soft deadline,
+                # never execute them.  Parse/repair the text as the final answer
+                # under the same shared protocol helper instead.
+                if task_deadline.tools_disabled:
+                    await _append_assistant_tool_turn(response, tool_calls)
+                    review_text = response.choices[0].message.content or ""
+                    result = await run_protocol_repair_loop(
+                        parse_fn=TaggedScanParser().parse,
+                        error_type=ScanProtocolError,
+                        base_messages=messages,
+                        final_text=review_text,
+                        repair_instruction=SCAN_REPAIR_INSTRUCTION,
+                        api_client=reviewer.api_client,
+                        tracker=tracker,
+                        max_attempts=max_attempts,
+                        fallback_result_fn=safe_scan_protocol_failure,
+                        log_label="扫描",
+                        sse_channel="scan:protocol_repair",
+                        invocation_context=invocation_context,
+                        observer=observer,
+                        event_callback=_event_callback,
+                        deadline=task_deadline,
                     )
+                    return result, iteration
 
-                messages.append(assistant_msg_dict)
-                await _event_callback("message", assistant_msg_dict)
+                # A call that started before expiry may return tool calls after
+                # the deadline.  Preserve that turn and ask for a final-only
+                # response on the next iteration; no tool is executed here.
+                if task_deadline.is_expired():
+                    await _append_assistant_tool_turn(response, tool_calls)
+                    continue
+
+                # 处理工具调用
+                await _append_assistant_tool_turn(response, tool_calls)
 
                 for tool_call in tool_calls:
                     tool_name = tool_call.function.name

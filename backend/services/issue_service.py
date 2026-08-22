@@ -323,16 +323,19 @@ class IssueService:
         Returns:
             应用结果字典
         """
-        # PR 与 Issue 标签统一阈值：读标签推荐设置（label.recommendation 节）
-        threshold = (
-            get_label_config()
-            .get_recommendation_settings()
-            .get("confidence_threshold", 0.7)
-        )
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
 
         if not suggested_labels:
             return result
+
+        # PR 与 Issue 标签统一读取推荐设置（label.recommendation 节）。
+        recommendation = get_label_config().get_recommendation_settings()
+        if not recommendation.get("enabled", True):
+            logger.info(f"Issue #{issue_number} 标签推荐已禁用，跳过应用")
+            return result
+
+        threshold = recommendation.get("confidence_threshold", 0.7)
+        auto_create = recommendation.get("auto_create", True)
 
         # 使用 LabelService 获取仓库现有标签（带缓存）
         from backend.services.label_service import label_service
@@ -351,6 +354,14 @@ class IssueService:
             matched_name = existing_labels_lower.get(label_name.lower())
 
             if not matched_name:
+                if not auto_create:
+                    result["failed"].append(label_name)
+                    logger.info(
+                        f"Issue #{issue_number} 自动创建标签已禁用，跳过不存在的标签: "
+                        f"{label_name}"
+                    )
+                    continue
+
                 # 标签不存在：使用 LabelService 默认标签信息自动创建
                 default_info = label_service.DEFAULT_LABELS.get(
                     label_name, {"color": "0366d6", "description": ""}

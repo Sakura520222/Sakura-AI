@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import backend.services.issue_analyzer as issue_analyzer_module
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_protocol import IssueProtocolError
 
@@ -278,6 +280,179 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
     assert "Specific violation" in repair_messages[3]["content"]
     assert tracker.prompt_tokens == 3
     assert tracker.completion_tokens == 5
+
+
+@pytest.mark.asyncio
+async def test_issue_protocol_repair_receives_shared_deadline_and_cancel_event(monkeypatch):
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    analyzer.api_client = SimpleNamespace()
+    analyzer._parse_analysis_result = lambda _text: (_ for _ in ()).throw(
+        IssueProtocolError("invalid")
+    )
+    captured = {}
+
+    async def fake_repair_loop(**kwargs):
+        captured.update(kwargs)
+        return {"parse_source": "test"}
+
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "run_protocol_repair_loop",
+        fake_repair_loop,
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_dynamic_config",
+        lambda _key: None,
+    )
+
+    deadline = AITaskDeadline.from_timeout(30)
+    cancel_event = SimpleNamespace(is_set=lambda: False)
+    await analyzer._parse_or_repair_analysis(
+        "invalid",
+        [{"role": "system", "content": "system"}],
+        TokenTracker(),
+        cancel_event=cancel_event,
+        deadline=deadline,
+    )
+
+    assert captured["deadline"] is deadline
+    assert captured["cancel_event"] is cancel_event
+
+
+@pytest.mark.asyncio
+async def test_issue_tool_loop_uses_tool_free_call_after_deadline_and_skips_tool(
+    monkeypatch,
+):
+    class _Settings:
+        review_timeout_seconds = 120
+        ai_temperature = 0.2
+        issue_price_per_1k_prompt = 1
+        issue_price_per_1k_completion = 1
+
+    class _FakeClient:
+        def __init__(self, response):
+            self.calls = []
+            self.response = response
+
+        async def resolve_role_model_context(self, _role):
+            return "model-x", 100_000
+
+        async def call_with_retry(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.response
+
+    tool_call = SimpleNamespace(
+        id="call-1",
+        function=SimpleNamespace(name="read_file", arguments="{}"),
+    )
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5),
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="final content",
+                    tool_calls=[tool_call],
+                )
+            )
+        ],
+    )
+    client = _FakeClient(response)
+    executed_tools = []
+    captured = {}
+
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    analyzer.api_client = client
+    analyzer.tool_manager = SimpleNamespace(
+        get_enabled_tools=lambda _repo: _async_result([{"type": "function"}])
+    )
+
+    async def handle_tool_call(*args):
+        executed_tools.append(args)
+        return {"ok": True}
+
+    analyzer.tool_handler = SimpleNamespace(handle_tool_call=handle_tool_call)
+    analyzer._refresh_ai_client = lambda: None
+    analyzer._refresh_runtime_config = lambda: None
+    analyzer._build_system_prompt = lambda *_args, **_kwargs: "system"
+    analyzer._build_user_message = lambda *_args, **_kwargs: "user"
+
+    async def fake_parse(_text, _messages, _tracker, **kwargs):
+        captured.update(kwargs)
+        return {"category": "bug"}
+
+    analyzer._parse_or_repair_analysis = fake_parse
+
+    async def get_repo_labels(*_args):
+        return {"bug": {}}
+
+    async def get_sakura_context(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(issue_analyzer_module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_user_dynamic_config",
+        lambda *_args: _async_result("en"),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_dynamic_config",
+        lambda _key: _async_result(False),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_model_context_manager",
+        lambda: SimpleNamespace(
+            calculate_safe_context=lambda *_args: 80_000,
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.services.label_service.label_service.get_repo_labels",
+        get_repo_labels,
+    )
+    monkeypatch.setattr(
+        "backend.core.github_app.GitHubAppClient",
+        lambda: SimpleNamespace(
+            get_repo_collaborators=lambda *_args: [],
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.services.sakura_memory_service.get_sakura_memory_service",
+        lambda: SimpleNamespace(get_sakura_context=get_sakura_context),
+    )
+
+    deadline = AITaskDeadline.from_timeout(0)
+    result = await analyzer.analyze_issue(
+        {
+            "issue_number": 1,
+            "title": "title",
+            "body": "body",
+            "author": "author",
+            "state": "open",
+        },
+        "owner",
+        "repo",
+        deadline=deadline,
+    )
+
+    assert result["category"] == "bug"
+    assert len(client.calls) == 1
+    assert client.calls[0]["tools"] == []
+    assert client.calls[0]["tool_choice"] == "none"
+    assert (
+        sum(
+            message.get("content") == TIMEOUT_PROMPT
+            for message in client.calls[0]["messages"]
+        )
+        == 1
+    )
+    assert executed_tools == []
+    assert captured["deadline"] is deadline
+
+
+async def _async_result(value):
+    return value
 
 
 @pytest.mark.asyncio

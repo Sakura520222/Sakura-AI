@@ -23,7 +23,6 @@ from backend.core.config import (
     get_all_dynamic_config_keys,
     get_settings,
     invalidate_dynamic_config_cache,
-    reload_label_config,
     reload_strategy_config,
     update_settings_field,
 )
@@ -780,7 +779,7 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     """将恢复后的 DB 覆盖同步到当前进程的 Settings 与配置缓存。"""
     affected_keys = set(result.imported_values) | set(result.deleted_keys)
 
-    # 统一节配置键不走动态配置缓存，单独同步 _section_store 并刷新 facade
+    # 统一节配置键不走动态配置缓存，单独同步 _section_store 并刷新 facade。
     section_keys = affected_keys & set(SECTION_REGISTRY)
     if section_keys:
         for key in section_keys:
@@ -797,8 +796,18 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
                 clear_section_store(key)
             else:
                 update_section_store(key, data)
-        reload_strategy_config()
-        reload_label_config()
+
+        strategy_section_keys = section_keys & STRATEGY_CONFIG_KEYS
+        label_section_keys = section_keys & LABEL_CONFIG_KEYS
+        if strategy_section_keys:
+            reload_strategy_config()
+        if label_section_keys:
+            # LabelService owns both the repository-label cache and the
+            # conflict-rule snapshot.  Reload through its existing singleton
+            # lifecycle so a backup import cannot leave either stale.
+            from backend.services.label_service import label_service
+
+            label_service.reload_labels()
 
     runtime_keys = affected_keys & (
         set(GLOBAL_CONFIG_KEYS) | set(AI_STRATEGY_CONFIG_KEYS) | set(SYSTEM_CONFIG_KEYS)

@@ -363,6 +363,38 @@ async def test_patch_mode_preserves_unrelated_leaves():
 
 
 @pytest.mark.asyncio
+async def test_save_prunes_only_default_leaves_and_preserves_valid_overrides():
+    """裁剪默认叶子时保留非默认、未知及 patch 未覆盖的有效值。"""
+    db = _FakeSession()
+    await section_config_service.save_section(
+        db,
+        "label.recommendation",
+        {
+            "enabled": False,
+            "confidence_threshold": 0.9,
+            "future_option": {"value": "keep"},
+        },
+    )
+
+    await section_config_service.save_section(
+        db,
+        "label.recommendation",
+        {"enabled": True},
+        mode="patch",
+    )
+
+    stored = json.loads(db.rows[0].key_value)
+    assert stored == {
+        "confidence_threshold": 0.9,
+        "future_option": {"value": "keep"},
+    }
+    loaded = await section_config_service.load_section(db, "label.recommendation")
+    assert loaded["enabled"] is True
+    assert loaded["confidence_threshold"] == 0.9
+    assert loaded["future_option"] == {"value": "keep"}
+
+
+@pytest.mark.asyncio
 async def test_save_equivalent_to_defaults_removes_override():
     db = _FakeSession()
     await section_config_service.save_section(

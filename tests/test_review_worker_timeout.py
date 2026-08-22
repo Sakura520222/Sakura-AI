@@ -87,6 +87,15 @@ class _NoOpActivityIntegration:
         return _NoOpExecutionBundle()
 
 
+def test_is_task_active_is_read_only_registration_probe():
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker._cancel_events = {"owner/repo#1": asyncio.Event()}
+
+    assert worker.is_task_active("owner/repo#1") is True
+    assert worker.is_task_active("owner/repo#2") is False
+    assert list(worker._cancel_events) == ["owner/repo#1"]
+
+
 @pytest.fixture
 def stub_review_worker_dependencies(monkeypatch):
     monkeypatch.setattr(review_worker, "GitHubAppClient", lambda: object())
@@ -202,27 +211,33 @@ async def test_create_review_record_persists_global_id_and_repository_number(
 
 
 @pytest.mark.asyncio
-async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
-    """wait_for 超时后，已启动的 execution 必须且只能取消收尾一次。"""
+async def test_soft_timeout_does_not_cancel_started_execution(monkeypatch):
+    """配置 deadline 到达后，已启动的任务继续软收尾而不是被取消。"""
     settings = get_settings()
     old_timeout = settings.review_timeout_seconds
     execution = _RecordingExecutionBundle()
     integration = _RecordingActivityIntegration(execution)
 
-    class BlockingAnalyzer:
+    class DelayedAnalyzer:
         async def analyze_pr(self, _pr_info):
-            await asyncio.Event().wait()
+            await asyncio.sleep(0.02)
+            return SimpleNamespace(should_skip=True, skip_reason="no changes")
 
     worker = ReviewWorker.__new__(ReviewWorker)
     worker.activity_integration = integration
-    worker.analyzer = BlockingAnalyzer()
+    worker.analyzer = DelayedAnalyzer()
     worker.ai_reviewer = SimpleNamespace(api_client=None)
     worker._cancel_events = {}
-    worker._save_error_record = AsyncMock()
+    worker._save_skip_record = AsyncMock()
     monkeypatch.setattr(
         review_worker,
         "_get_review_semaphore",
         lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker,
+        "get_user_dynamic_config",
+        AsyncMock(return_value=None),
     )
     settings.review_timeout_seconds = 0.01
 
@@ -234,12 +249,12 @@ async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
         "action": "opened",
     }
     try:
-        with pytest.raises(RuntimeError, match="审查任务超时"):
-            await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
+        result = await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
     finally:
         settings.review_timeout_seconds = old_timeout
 
-    assert execution.finish_calls == [("cancelled", None)]
+    assert result
+    assert execution.finish_calls == [("completed", None)]
 
 
 @pytest.mark.asyncio
@@ -621,9 +636,11 @@ class _TimeoutWorker:
     def __init__(self):
         self.cancelled_key = None
         self.saved_errors = []
+        self.deadline = None
 
-    async def process_review_task(self, pr_info):
-        await asyncio.sleep(10)
+    async def process_review_task(self, pr_info, *, deadline):
+        self.deadline = deadline
+        await asyncio.sleep(0.02)
         return "done"
 
     def cancel_task(self, task_key):
@@ -640,7 +657,7 @@ class _ReportingWorker:
         self.saved_errors = []
         self.reporting_started = False
 
-    async def process_review_task(self, _pr_info):
+    async def process_review_task(self, _pr_info, *, deadline):
         self.reporting_started = True
         await asyncio.sleep(0.05)
         return "reported"
@@ -811,13 +828,13 @@ async def test_review_task_timeout_uses_dynamic_setting():
         task_key = ReviewWorker._make_task_key(pr_info)
         worker = _TimeoutWorker()
 
-        with pytest.raises(RuntimeError, match="审查任务超时"):
-            await _run_review_task_with_timeout(worker, pr_info, task_key)
+        result = await _run_review_task_with_timeout(worker, pr_info, task_key)
 
-        assert worker.cancelled_key == task_key
-        assert worker.saved_errors
-        assert worker.saved_errors[0][1] == "审查任务超时（0.01秒）"
-        assert worker.saved_errors[0][2] == "timeout"
+        assert result == "done"
+        assert worker.cancelled_key is None
+        assert worker.saved_errors == []
+        assert worker.deadline is not None
+        assert worker.deadline.is_expired()
     finally:
         settings.review_timeout_seconds = old_value
 

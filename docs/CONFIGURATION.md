@@ -41,8 +41,8 @@
 | `issue_max_directory_depth` | 原为死配置（无消费点），直接删除 |
 | `agent_team_max_lines_changed` | 原为死配置（无消费点），直接删除 |
 | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds` | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止（无工具调用即交付）与手动取消 |
-| `context_enhancement.max_tool_iterations`（节叶） | PR 审查工具循环不设轮次上限，时长由 `review_timeout_seconds` 超时兜底 |
-| `issue_max_tool_iterations` | Issue 分析工具循环不设轮次与时长上限（删除了直查 DB 的旁路读取），依赖模型自然停止（无工具调用即交付）；PR 审查路径的任务级超时不适用于 Issue 分析 |
+| `context_enhancement.max_tool_iterations`（节叶） | PR 审查工具循环不设轮次上限，时长由 `review_timeout_seconds` 软超时兜底 |
+| `issue_max_tool_iterations` | Issue 分析工具循环不设轮次与时长上限（删除了直查 DB 的旁路读取），依赖模型自然停止（无工具调用即交付）；同一 `review_timeout_seconds` 软超时也适用于 Issue 分析与仓库扫描 |
 | `agent_team_max_files_changed` | 修改文件数硬检查删除（顺带删除 pr_service 中硬编码 >20 文件检查），Agent 不再因改动规模被拒 |
 | `fetch_url_max_calls_per_session` | 会话抓取计数删除，不再限制抓取次数 |
 | `issue_max_analysis_versions` | 分析版本永不归档，行自然增长 |
@@ -174,7 +174,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | WebUI「AI 配置」 | `enable_context_compression` | 自动压缩开关 |
 | WebUI「AI 配置」 | `context_compression_threshold` | 压缩触发阈值 |
 | WebUI 配置管理 | `enable_ai_tools` | AI 工具开关 |
-| —（无上限） | `context_enhancement.max_tool_iterations`（已移除） | PR 审查工具循环不设轮次上限，依赖模型自然停止，整体时长由 `review_timeout_seconds` 超时兜底 |
+| —（无上限） | `context_enhancement.max_tool_iterations`（已移除） | PR 审查工具循环不设轮次上限，依赖模型自然停止，整体时长由 `review_timeout_seconds` 软超时兜底 |
 | WebUI 配置管理 | `web_search_provider` | `duckduckgo`（免费，使用 `duckduckgo-search`）/ `tavily`（高级） |
 | WebUI 审查策略 | `context_enhancement.search_in_files` | 跨文件搜索：GitHub Search API 优先策略、上下文行数、最大结果数 |
 | WebUI 审查策略 | `context_enhancement.git_tools` | Git 信息工具：默认分支、提交返回数量 |
@@ -335,4 +335,4 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 ---
 
-*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-22 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
