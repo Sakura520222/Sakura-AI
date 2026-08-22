@@ -25,7 +25,10 @@ from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
 from backend.services.ai_task_deadline import AITaskDeadline
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
@@ -574,6 +577,11 @@ class AIReviewer:
             # 下一轮会追加一次 timeout prompt 并以 tools=[] 收尾。
             if task_deadline.tools_disabled:
                 await _append_assistant_tool_turn(tool_calls)
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
                 review_text = response.choices[0].message.content or ""
                 result = await self._parse_or_repair_review(
                     review_text,
@@ -596,33 +604,25 @@ class AIReviewer:
 
             if task_deadline.is_expired():
                 await _append_assistant_tool_turn(tool_calls)
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
                 continue
 
             # 处理工具调用
             await _append_assistant_tool_turn(tool_calls)
 
             # 执行每个工具调用
-            for tool_call in tool_calls:
+            for tool_index, tool_call in enumerate(tool_calls):
                 if task_deadline.is_expired():
-                    skipped_tool_msg = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(
-                            {
-                                "error": (
-                                    "Task deadline reached; this tool call was "
-                                    "not executed."
-                                )
-                            }
-                        ),
-                    }
-                    messages.append(skipped_tool_msg)
-                    if event_callback:
-                        try:
-                            await event_callback("message", skipped_tool_msg)
-                        except Exception as exc:
-                            logger.warning("event_callback failed: {}", exc)
-                    continue
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls[tool_index:],
+                        event_callback=event_callback,
+                    )
+                    break
                 try:
                     # 通知前端：工具开始运行
                     if event_callback:

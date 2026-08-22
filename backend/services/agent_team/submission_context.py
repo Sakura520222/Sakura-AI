@@ -425,6 +425,7 @@ async def load_agent_task_reference_context(
     }:
         return await _load_scan_finding_reference_context(
             db,
+            source_type=source_type,
             source_id=source_id,
             repo_full_name=repo_full_name,
             issue_number=issue_number,
@@ -539,13 +540,16 @@ async def _load_pr_review_reference_context(
 async def _load_scan_finding_reference_context(
     db: AsyncSession,
     *,
+    source_type: str | None,
     source_id: int | None,
     repo_full_name: str | None,
     issue_number: int | None,
 ) -> str:
     """Render a scan finding/report as untrusted reference text."""
-    finding = await db.get(ScanFinding, source_id) if source_id else None
-    if finding is not None:
+    if source_type == AgentTeamSourceType.SCAN_FINDING.value:
+        finding = await db.get(ScanFinding, source_id) if source_id else None
+        if finding is None:
+            return ""
         parts = [
             "## Repository scan finding reference",
             f"Repository: {repo_full_name or ''}",
@@ -562,6 +566,9 @@ async def _load_scan_finding_reference_context(
         if finding.code_snippet:
             parts.extend(["", "### Code snippet", finding.code_snippet])
         return "\n".join(parts).strip()
+
+    if source_type != AgentTeamSourceType.SCAN_REPORT_ISSUE.value:
+        return ""
 
     scan = await db.get(RepoScan, source_id) if source_id else None
     if scan is None:

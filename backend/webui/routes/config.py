@@ -221,9 +221,9 @@ async def save_strategies_section(
             }
 
         elif section == "depgraph":
-            depgraph_mode = form.get("pr_dependency_graph_mode", "ai")
+            depgraph_mode = form.get("pr_dependency_graph_mode", "static")
             if depgraph_mode not in {"ai", "static"}:
-                depgraph_mode = "ai"
+                depgraph_mode = "static"
             # mode 与模板统一存入节配置（单键单写，消除 YAML+DB 双写）
             data = {
                 "mode": depgraph_mode,

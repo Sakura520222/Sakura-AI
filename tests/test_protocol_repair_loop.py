@@ -1,10 +1,16 @@
 """协议信封修复循环 helper 的单元测试。"""
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 import backend.services.protocol_repair as pr_module
 from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 
 class _FakeAIClient:
@@ -44,6 +50,57 @@ def _make_parse(results):
         return item
 
     return _parse
+
+
+@pytest.mark.asyncio
+async def test_skipped_tool_results_close_every_tool_call_by_id():
+    """软超时跳过多个工具时，历史中的每个 tool call 都有闭合结果。"""
+    tool_calls = [
+        {
+            "id": "call-dict",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        },
+        SimpleNamespace(id="call-sdk"),
+    ]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": tool_calls,
+        }
+    ]
+    events = []
+
+    async def _capture(event_type, payload):
+        events.append((event_type, payload))
+
+    await append_skipped_tool_results(
+        messages,
+        tool_calls,
+        event_callback=_capture,
+    )
+
+    assistant_ids = {
+        tool_call["id"] if isinstance(tool_call, dict) else tool_call.id
+        for tool_call in messages[0]["tool_calls"]
+    }
+    tool_messages = messages[1:]
+    result_ids = {message["tool_call_id"] for message in tool_messages}
+
+    assert assistant_ids == {"call-dict", "call-sdk"}
+    assert result_ids == assistant_ids
+    assert all(message["role"] == "tool" for message in tool_messages)
+    assert all(
+        json.loads(message["content"])["error"]
+        == "Task deadline reached; this tool call was not executed."
+        for message in tool_messages
+    )
+    assert [event[0] for event in events] == ["message", "message"]
+    assert [event[1]["tool_call_id"] for event in events] == [
+        "call-dict",
+        "call-sdk",
+    ]
 
 
 @pytest.mark.asyncio
