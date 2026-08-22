@@ -751,7 +751,7 @@ config:
   ai_api_base_desc: "内置远程厂商仅允许官方 HTTPS 地址；custom/custom-anthropic 支持 HTTPS 公网服务，以及 HTTP/HTTPS 本机或私有网络兼容服务。仅向完全信任的自定义地址保存和使用 API Key。"
   ai_api_key: "API Key"
   ai_api_key_keep: "编辑已有账号时留空或保留脱敏值表示不修改原 Key。"
-  ai_default_model_desc: "可手动输入模型 ID，或点击下方标签快速选择；点击「获取模型」后会列出账号实际可用的模型。"
+  ai_default_model_desc: "从下拉列表选择模型；点击「获取模型」后会列出账号实际可用的模型。"
   ai_region_desc: "可选备注，用于区分同厂商的不同区域（如火山方舟 cn-beijing、Qwen intl/us、Kimi 国内/国际）；不影响请求地址，仅用于标注。"
   ai_region: "区域"
   ai_notes: "备注"
