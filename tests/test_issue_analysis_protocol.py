@@ -379,6 +379,7 @@ async def test_issue_tool_loop_uses_tool_free_call_after_deadline_and_skips_tool
 
     async def fake_parse(_text, _messages, _tracker, **kwargs):
         captured.update(kwargs)
+        captured["messages"] = list(_messages)
         return {"category": "bug"}
 
     analyzer._parse_or_repair_analysis = fake_parse
@@ -448,6 +449,204 @@ async def test_issue_tool_loop_uses_tool_free_call_after_deadline_and_skips_tool
         == 1
     )
     assert executed_tools == []
+    assert captured["deadline"] is deadline
+    assistant_turns = [
+        message
+        for message in captured["messages"]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    tool_messages = [
+        message
+        for message in captured["messages"]
+        if message.get("role") == "tool"
+    ]
+    assistant_ids = {
+        tool_call.id for tool_call in assistant_turns[0]["tool_calls"]
+    }
+    result_ids = {message["tool_call_id"] for message in tool_messages}
+    assert assistant_ids == {"call-1"}
+    assert result_ids == assistant_ids
+
+
+@pytest.mark.asyncio
+async def test_issue_tool_calls_returned_after_deadline_are_closed_before_timeout_call(
+    monkeypatch,
+):
+    """跨 deadline 返回的 Issue 工具调用必须先闭合再进入最终回答。"""
+
+    class _Settings:
+        review_timeout_seconds = 120
+        ai_temperature = 0.2
+        issue_price_per_1k_prompt = 1
+        issue_price_per_1k_completion = 1
+
+    class _CrossDeadline:
+        timeout_prompt_sent = False
+        tools_disabled = False
+
+        def __init__(self):
+            self._expired = False
+
+        def is_expired(self):
+            return self._expired
+
+        def prepare_call(self, messages):
+            if self.tools_disabled or self._expired:
+                self.tools_disabled = True
+                if not self.timeout_prompt_sent:
+                    messages.append({"role": "user", "content": TIMEOUT_PROMPT})
+                    self.timeout_prompt_sent = True
+                return {"tools": [], "tool_choice": "none"}
+            return {}
+
+    tool_calls = [
+        SimpleNamespace(
+            id="call-issue-1",
+            function=SimpleNamespace(name="read_file", arguments="{}"),
+        ),
+        SimpleNamespace(
+            id="call-issue-2",
+            function=SimpleNamespace(name="search", arguments="{}"),
+        ),
+    ]
+    deadline = _CrossDeadline()
+
+    def _response(content, response_tool_calls):
+        return SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5),
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=content,
+                        tool_calls=response_tool_calls,
+                    )
+                )
+            ],
+        )
+
+    class _SequenceClient:
+        def __init__(self):
+            self.responses = [
+                _response("partial", tool_calls),
+                _response("final", []),
+            ]
+            self.calls = []
+
+        async def resolve_role_model_context(self, _role):
+            return "model-x", 100_000
+
+        async def call_with_retry(self, **kwargs):
+            self.calls.append(
+                {**kwargs, "messages": list(kwargs["messages"])}
+            )
+            response = self.responses.pop(0)
+            if len(self.calls) == 1:
+                # The provider request crossed the deadline while in flight.
+                deadline._expired = True
+            return response
+
+    client = _SequenceClient()
+    captured = {}
+    executed_tools = []
+
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    analyzer.api_client = client
+    analyzer.tool_manager = SimpleNamespace(
+        get_enabled_tools=lambda _repo: _async_result([{"type": "function"}])
+    )
+
+    async def _must_not_execute(*args):
+        executed_tools.append(args)
+        raise AssertionError("tools must not run after the soft deadline")
+
+    analyzer.tool_handler = SimpleNamespace(handle_tool_call=_must_not_execute)
+    analyzer._refresh_ai_client = lambda: None
+    analyzer._refresh_runtime_config = lambda: None
+    analyzer._build_system_prompt = lambda *_args, **_kwargs: "system"
+    analyzer._build_user_message = lambda *_args, **_kwargs: "user"
+
+    async def fake_parse(_text, messages, _tracker, **kwargs):
+        captured.update(kwargs)
+        captured["messages"] = list(messages)
+        return {"category": "bug"}
+
+    analyzer._parse_or_repair_analysis = fake_parse
+
+    async def get_repo_labels(*_args):
+        return {"bug": {}}
+
+    async def get_sakura_context(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(issue_analyzer_module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_user_dynamic_config",
+        lambda *_args: _async_result("en"),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_dynamic_config",
+        lambda _key: _async_result(False),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_model_context_manager",
+        lambda: SimpleNamespace(
+            calculate_safe_context=lambda *_args: 80_000,
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.services.label_service.label_service.get_repo_labels",
+        get_repo_labels,
+    )
+    monkeypatch.setattr(
+        "backend.core.github_app.GitHubAppClient",
+        lambda: SimpleNamespace(
+            get_repo_collaborators=lambda *_args: [],
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.services.sakura_memory_service.get_sakura_memory_service",
+        lambda: SimpleNamespace(get_sakura_context=get_sakura_context),
+    )
+
+    result = await analyzer.analyze_issue(
+        {
+            "issue_number": 1,
+            "title": "title",
+            "body": "body",
+            "author": "author",
+            "state": "open",
+        },
+        "owner",
+        "repo",
+        deadline=deadline,
+    )
+
+    assert result["category"] == "bug"
+    assert executed_tools == []
+    assert len(client.calls) == 2
+    final_call = client.calls[1]
+    assert final_call["tools"] == []
+    assert final_call["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT
+        for message in final_call["messages"]
+    ) == 1
+
+    assistant_turns = [
+        message
+        for message in final_call["messages"]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    tool_messages = [
+        message for message in final_call["messages"] if message.get("role") == "tool"
+    ]
+    assistant_ids = {tool_call.id for tool_call in assistant_turns[0]["tool_calls"]}
+    result_ids = {message["tool_call_id"] for message in tool_messages}
+    assert assistant_ids == {"call-issue-1", "call-issue-2"}
+    assert result_ids == assistant_ids
     assert captured["deadline"] is deadline
 
 

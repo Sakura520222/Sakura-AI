@@ -561,7 +561,10 @@ class ScanWorker:
             iteration 为实际执行的轮次数。
         """
         from backend.services.ai_reviewer.reviewer import AIReviewer
-        from backend.services.protocol_repair import run_protocol_repair_loop
+        from backend.services.protocol_repair import (
+            append_skipped_tool_results,
+            run_protocol_repair_loop,
+        )
         from backend.services.scan_prompt_builder import (
             build_sakura_knowledge_section,
             build_scan_context,
@@ -738,6 +741,13 @@ class ScanWorker:
             messages.append(assistant_msg_dict)
             await _event_callback("message", assistant_msg_dict)
 
+        try:
+            max_attempts = int(
+                await get_dynamic_config("protocol_repair_max_attempts") or 3
+            )
+        except ValueError, TypeError:
+            max_attempts = 3
+
         # 不设轮次与 token 上限，依赖模型自然停止（无工具调用即交付最终结果）
         iteration = 0
         while True:
@@ -783,14 +793,6 @@ class ScanWorker:
                     review_text = response.choices[0].message.content
                     logger.info(f"全仓扫描对话完成（{iteration} 轮），进入协议解析...")
 
-                    try:
-                        max_attempts = int(
-                            await get_dynamic_config("protocol_repair_max_attempts")
-                            or 3
-                        )
-                    except ValueError, TypeError:
-                        max_attempts = 3
-
                     await _event_callback(
                         "message",
                         {"role": "assistant", "content": review_text},
@@ -826,6 +828,11 @@ class ScanWorker:
                 # under the same shared protocol helper instead.
                 if task_deadline.tools_disabled:
                     await _append_assistant_tool_turn(response, tool_calls)
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls,
+                        event_callback=_event_callback,
+                    )
                     review_text = response.choices[0].message.content or ""
                     result = await run_protocol_repair_loop(
                         parse_fn=TaggedScanParser().parse,
@@ -851,12 +858,24 @@ class ScanWorker:
                 # response on the next iteration; no tool is executed here.
                 if task_deadline.is_expired():
                     await _append_assistant_tool_turn(response, tool_calls)
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls,
+                        event_callback=_event_callback,
+                    )
                     continue
 
                 # 处理工具调用
                 await _append_assistant_tool_turn(response, tool_calls)
 
-                for tool_call in tool_calls:
+                for tool_index, tool_call in enumerate(tool_calls):
+                    if task_deadline.is_expired():
+                        await append_skipped_tool_results(
+                            messages,
+                            tool_calls[tool_index:],
+                            event_callback=_event_callback,
+                        )
+                        break
                     tool_name = tool_call.function.name
                     try:
                         result = await reviewer.tool_handler.handle_tool_call(

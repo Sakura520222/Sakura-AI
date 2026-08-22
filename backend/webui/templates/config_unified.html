@@ -594,8 +594,8 @@
                             <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.depgraph_mode_desc') }}</p>
                             <select name="pr_dependency_graph_mode"
                                     class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <option value="ai" {% if dg.get('mode', 'ai') == 'ai' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_ai') }}</option>
-                                <option value="static" {% if dg.get('mode', 'ai') == 'static' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_static') }}</option>
+                                <option value="ai" {% if dg.get('mode', 'static') == 'ai' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_ai') }}</option>
+                                <option value="static" {% if dg.get('mode', 'static') == 'static' %}selected{% endif %}>{{ _('config.label.pr_dependency_graph_mode_static') }}</option>
                             </select>
                         </div>
                         <div>

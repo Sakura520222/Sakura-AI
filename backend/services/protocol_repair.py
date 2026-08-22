@@ -5,6 +5,7 @@ review/issue 两侧 caller 把各自差异（解析器、错误类型、修复�
 作为参数传入，调用同一份实现。
 """
 
+import json
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
@@ -21,6 +22,44 @@ ProtocolRepairBeforeCall = Callable[
     [list[dict[str, Any]], dict[str, Any]],
     Awaitable[dict[str, Any] | None] | dict[str, Any] | None,
 ]
+
+TIMEOUT_TOOL_ERROR = (
+    "Task deadline reached; this tool call was not executed."
+)
+
+
+def _tool_call_id(tool_call: Any) -> Any:
+    """Return a tool-call id from either an SDK object or a normalized dict."""
+    if isinstance(tool_call, dict):
+        return tool_call.get("id", "")
+    return getattr(tool_call, "id", "")
+
+
+async def append_skipped_tool_results(
+    messages: list[dict[str, Any]],
+    tool_calls: list[Any],
+    *,
+    event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+) -> None:
+    """Close tool-call turns without executing tools after a soft deadline.
+
+    Providers require one ``role=tool`` message for every tool call in the
+    preceding assistant turn.  This helper preserves that protocol envelope
+    for both SDK tool-call objects and normalized dictionaries, while keeping
+    the existing ``message`` event shape used by the WebUI.
+    """
+    for tool_call in tool_calls:
+        tool_message = {
+            "role": "tool",
+            "tool_call_id": _tool_call_id(tool_call),
+            "content": json.dumps(
+                {"error": TIMEOUT_TOOL_ERROR},
+                ensure_ascii=False,
+            ),
+        }
+        messages.append(tool_message)
+        if event_callback is not None:
+            await _emit_event(event_callback, "message", tool_message)
 
 
 async def run_protocol_repair_loop(

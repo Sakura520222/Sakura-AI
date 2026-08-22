@@ -35,7 +35,10 @@ from backend.services.issue_protocol import (
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 ISSUE_ANALYSIS_REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_ISSUE_ANALYSIS protocol.
 Reformat the same Issue analysis conclusions only. Do not add, remove, or reconsider recommendations.
@@ -724,36 +727,32 @@ class IssueAnalyzer:
             # 即使 provider 在 deadline 前开始、在 deadline 后返回了 tool call，
             # 也不能执行该工具；将 assistant 内容交给原有协议解析/修复。
             if task_deadline.tools_disabled:
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
                 return await _complete_analysis(assistant_message.content or "")
 
             # 本次调用可能在 deadline 前启动、但返回时已经到期。保留累计
             # assistant turn，下一轮由 prepare_call 追加一次 timeout prompt 并收尾。
             if task_deadline.is_expired():
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
                 continue
 
             # 执行工具调用
-            for tool_call in tool_calls:
+            for tool_index, tool_call in enumerate(tool_calls):
                 if task_deadline.is_expired():
-                    skipped_tool_msg = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(
-                            {
-                                "error": (
-                                    "Task deadline reached; this tool call was "
-                                    "not executed."
-                                )
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    messages.append(skipped_tool_msg)
-                    if event_callback:
-                        try:
-                            await event_callback("message", skipped_tool_msg)
-                        except Exception as exc:
-                            logger.warning("event_callback failed: {}", exc)
-                    continue
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls[tool_index:],
+                        event_callback=event_callback,
+                    )
+                    break
                 try:
                     if event_callback:
                         try:
