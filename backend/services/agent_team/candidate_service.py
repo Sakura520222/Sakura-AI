@@ -73,9 +73,9 @@ class AgentTeamCandidateService:
     # 注意：此缓存为所有实例共享，invalidate_cache() 会清空所有实例的缓存
     _cache: dict[str, tuple[list[AgentCandidate], float]] = {}
 
-    def _get_cache_ttl(self) -> int:
+    async def _get_cache_ttl(self) -> int:
         """读取缓存 TTL 配置"""
-        ttl = get_dynamic_config("agent_team_candidate_cache_ttl")
+        ttl = await get_dynamic_config("agent_team_candidate_cache_ttl")
         try:
             return int(ttl) if ttl is not None else 300
         except ValueError, TypeError:
@@ -96,7 +96,7 @@ class AgentTeamCandidateService:
     ) -> list[AgentCandidate]:
         """收集候选任务，当前仅供 super_admin 手动触发。"""
         # 检查缓存
-        ttl = self._get_cache_ttl()
+        ttl = await self._get_cache_ttl()
         if ttl > 0:
             key = self._cache_key(limit, ai_filter_requirement)
             cached = self._cache.get(key)
