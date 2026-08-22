@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -267,6 +268,16 @@ def test_depgraph_mode_removed_from_dynamic_group():
     depgraph_keys = set(DYNAMIC_CONFIG_GROUPS["pr_dependency_graph"]["keys"])
     assert "pr_dependency_graph_mode" not in depgraph_keys
     assert "enable_pr_dependency_graph" in depgraph_keys
+
+
+def test_depgraph_template_falls_back_to_static_mode():
+    """模板上下文缺少 mode 时应与运行时默认值一致地选择 static。"""
+    template = (
+        Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_unified.html"
+    ).read_text(encoding="utf-8")
+
+    assert template.count("dg.get('mode', 'static')") == 2
+    assert "dg.get('mode', 'ai')" not in template
 
 
 # ---------- general/save 通用循环 ----------

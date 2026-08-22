@@ -464,7 +464,8 @@ class SectionConfigService:
         if isinstance(mode, str) and mode.strip().lower() in _DEPGRAPH_MODES:
             return mode.strip().lower()
         legacy = await get_dynamic_config("pr_dependency_graph_mode")
-        return str(legacy or "static").strip().lower()
+        legacy_mode = str(legacy or "static").strip().lower()
+        return legacy_mode if legacy_mode in _DEPGRAPH_MODES else "static"
 
     # ---------- 写入 ----------
 
