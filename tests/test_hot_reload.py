@@ -145,6 +145,81 @@ def test_apply_code_changes_reloads_and_patches_routes(hot_env):
     assert client.get("/pong").json() == {"value": "added"}
 
 
+def test_patch_routes_tolerates_legacy_included_router_cache_attributes(
+    hot_env, monkeypatch
+):
+    """旧 FastAPI/测试替身缺少私有缓存字段时仍完成路由替换。"""
+
+    class LegacyIncludedRouter:
+        __slots__ = ("original_router", "routes")
+
+        def __init__(self, original_router):
+            self.original_router = original_router
+            self.routes = []
+
+    class AttributeErrorIncludedRouter:
+        __slots__ = ("original_router", "routes")
+
+        def __init__(self, original_router):
+            self.original_router = original_router
+            self.routes = []
+
+        @property
+        def _effective_candidates_version(self):
+            raise AttributeError("legacy cache field")
+
+        @_effective_candidates_version.setter
+        def _effective_candidates_version(self, value):
+            raise AttributeError("legacy cache field")
+
+        @property
+        def _effective_low_priority_routes_version(self):
+            raise AttributeError("legacy cache field")
+
+        @_effective_low_priority_routes_version.setter
+        def _effective_low_priority_routes_version(self, value):
+            raise AttributeError("legacy cache field")
+
+    import fastapi.routing
+
+    monkeypatch.setattr(
+        fastapi.routing,
+        "_IncludedRouter",
+        (LegacyIncludedRouter, AttributeErrorIncludedRouter),
+    )
+
+    old_router = SimpleNamespace(routes=[])
+    old_router_with_error_fields = SimpleNamespace(routes=[])
+    new_router = SimpleNamespace(routes=[])
+    new_router_with_error_fields = SimpleNamespace(routes=[])
+    legacy_route = LegacyIncludedRouter(old_router)
+    error_field_route = AttributeErrorIncludedRouter(old_router_with_error_fields)
+    app = SimpleNamespace(
+        router=SimpleNamespace(routes=[legacy_route, error_field_route]),
+        openapi_schema={"cached": True},
+    )
+    hot_env.mount_app(app)
+
+    patched = hot_reload._patch_routes(
+        {
+            id(old_router): new_router,
+            id(old_router_with_error_fields): new_router_with_error_fields,
+        },
+        {
+            id(new_router): "backend._legacy_router",
+            id(new_router_with_error_fields): "backend._attribute_error_router",
+        },
+    )
+
+    assert patched == [
+        "backend._attribute_error_router",
+        "backend._legacy_router",
+    ]
+    assert legacy_route.original_router is new_router
+    assert error_field_route.original_router is new_router_with_error_fields
+    assert app.openapi_schema is None
+
+
 def test_patch_preserves_aggregated_router_dependencies(hot_env):
     leaf_path = hot_env.write_module(
         "backend/_hot_leaf.py",

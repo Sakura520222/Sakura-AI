@@ -237,6 +237,24 @@ def _module_routers(module: types.ModuleType) -> dict[str, APIRouter]:
     }
 
 
+def _invalidate_included_router_cache(route: object) -> None:
+    """尽力失效 IncludedRouter 的私有展开缓存。
+
+    FastAPI 不同版本以及测试替身可能没有这些私有字段，或其属性 setter
+    主动抛出 ``AttributeError``。缓存失效只是路由替换后的优化步骤，不能
+    让已经完成的引用替换因为兼容性差异失败。
+    """
+
+    for attr in (
+        "_effective_candidates_version",
+        "_effective_low_priority_routes_version",
+    ):
+        try:
+            setattr(route, attr, None)
+        except AttributeError:
+            continue
+
+
 def _patch_routes(
     router_map: dict[int, APIRouter],
     module_of_router: dict[int, str],
@@ -276,8 +294,7 @@ def _patch_routes(
             if new_router is not None:
                 route.original_router = new_router
                 # 版本号可能恰好相同，显式失效该节点展开缓存。
-                route._effective_candidates_version = None
-                route._effective_low_priority_routes_version = None
+                _invalidate_included_router_cache(route)
                 patched.add(module_of_router[id(new_router)])
             _swap(route.original_router)
 

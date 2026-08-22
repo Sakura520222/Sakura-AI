@@ -895,7 +895,7 @@ config:
     registration_quota: "自注册配额配置"
   label:
     max_concurrent_reviews: "最大并发审查数"
-    review_timeout_seconds: "审查任务超时（秒）"
+    review_timeout_seconds: "PR/Issue/仓库扫描软超时（秒）"
     enable_auto_review: "启用 Webhook 自动审查"
     enable_check_runs: "启用 Check Runs 进度可视化"
     enable_analysis_check: "启用副 Analysis Check"
@@ -1010,7 +1010,7 @@ config:
     register_quota_multiplier: "自注册配额倍率"
   desc:
     max_concurrent_reviews: "同时进行的最大 PR 审查任务数，超出排队等待"
-    review_timeout_seconds: "审查任务整体超时时间（秒），超时后自动终止"
+    review_timeout_seconds: "PR 审查、Issue 分析与仓库扫描共用的软超时时间（秒）；超时后在下一次 AI 调用时提示"
     enable_auto_review: "启用后，Webhook 触发的 PR 变更将自动进入审查"
     enable_check_runs: "启用 GitHub Check Runs 审查进度可视化"
     enable_analysis_check: "启用副 Analysis Check（AI 运行时指标），仅工具模式下出现"
