@@ -280,6 +280,20 @@ def test_depgraph_template_falls_back_to_static_mode():
     assert "dg.get('mode', 'ai')" not in template
 
 
+def test_issue_config_hint_excludes_removed_auto_comment_toggle():
+    zh = (
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "zh-CN.yaml"
+    ).read_text(encoding="utf-8")
+    en = (
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "en.yaml"
+    ).read_text(encoding="utf-8")
+
+    zh_hint = next(line for line in zh.splitlines() if "issue_config_hint:" in line)
+    en_hint = next(line for line in en.splitlines() if "issue_config_hint:" in line)
+    assert "自动评论" not in zh_hint
+    assert "auto comment" not in en_hint.lower()
+
+
 # ---------- general/save 通用循环 ----------
 
 
