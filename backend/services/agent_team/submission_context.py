@@ -585,7 +585,10 @@ async def _load_scan_finding_reference_context(
 
 
 def build_agent_task_summary(
-    task_summary: str, issue_context_markdown: str = ""
+    task_summary: str,
+    issue_context_markdown: str = "",
+    *,
+    legacy_reference_embedded: bool = False,
 ) -> str:
     """Return only the task-originator goal.
 
@@ -594,16 +597,21 @@ def build_agent_task_summary(
     builder parameter.  It is intentionally ignored so third-party Issue/PR
     text, AI analysis, and comments can never be promoted into
     ``<task_originator_goal>`` by accident.
+
+    ``legacy_reference_embedded`` is an explicit migration-only escape hatch
+    for records known by their caller to use the old format where the Issue
+    reference was appended directly to ``summary``.  Do not infer the legacy
+    format from the summary text itself: current GitHub Issue content is
+    allowed to contain the same Markdown heading.
     """
     del issue_context_markdown
     summary = (task_summary or "").strip()
-    # Historical manual-Issue tasks stored the reference projection directly
-    # after the editable summary.  Strip that legacy suffix on read so resume
-    # migration cannot promote comments/AI analysis into the new goal section.
-    legacy_reference_marker = "## GitHub Issue 上下文"
-    marker_index = summary.find(legacy_reference_marker)
-    if marker_index >= 0:
-        summary = summary[:marker_index].rstrip()
+    if legacy_reference_embedded:
+        # Only an explicitly identified legacy record may use this cleanup.
+        legacy_reference_marker = "## GitHub Issue 上下文"
+        marker_index = summary.find(legacy_reference_marker)
+        if marker_index >= 0:
+            summary = summary[:marker_index].rstrip()
     return summary
 
 
