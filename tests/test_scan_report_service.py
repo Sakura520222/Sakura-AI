@@ -64,7 +64,6 @@ async def _create_issue(context, *, embedding_service_cls=None):
                 previous_scan=context.previous_scan,
                 previous_findings=[],
             )
-
         with patch(
             "backend.services.issue_embedding_service.IssueEmbeddingService",
             return_value=embedding_service_cls,
@@ -75,6 +74,35 @@ async def _create_issue(context, *, embedding_service_cls=None):
                 previous_scan=context.previous_scan,
                 previous_findings=[],
             )
+
+
+def test_generate_telegram_message_escapes_untrusted_summary(monkeypatch):
+    monkeypatch.setattr(scan_report_service, "get_webui_url", lambda _path: "")
+    scan = SimpleNamespace(
+        id=101,
+        repo_name="owner/repository",
+        summary="identifier_with_underscore *literal* [text",
+        overall_health_score=80,
+        commit_sha=None,
+        code_file_count=1,
+        started_at=None,
+        completed_at=None,
+        total_findings=0,
+        critical_count=0,
+        major_count=0,
+        minor_count=0,
+        suggestion_count=0,
+        report_issue_url=None,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+
+    message = scan_report_service.ScanReportService().generate_telegram_message(scan)
+
+    assert "identifier\\_with\\_underscore" in message
+    assert "\\*literal\\*" in message
+    assert "\\[text" in message
+    assert "identifier_with_underscore *literal* [text" not in message
 
 
 @pytest.mark.asyncio

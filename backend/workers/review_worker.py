@@ -53,6 +53,17 @@ settings = get_settings()
 _review_semaphore: asyncio.Semaphore | None = None
 
 
+def _reflection_is_admissible(
+    sm_config: dict[str, Any], task_deadline: AITaskDeadline
+) -> bool:
+    """Return whether the optional PR reflection may start within the budget."""
+    return bool(
+        sm_config.get("enabled", True)
+        and sm_config.get("reflection", {}).get("enabled", True)
+        and not task_deadline.is_expired()
+    )
+
+
 async def _get_review_semaphore() -> asyncio.Semaphore:
     """获取审查并发信号量（懒初始化，支持动态更新）"""
     global _review_semaphore
@@ -1708,9 +1719,7 @@ class ReviewWorker:
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
                     sm_config = get_sakura_memory_config()
-                    if sm_config.get("enabled", True) and sm_config.get(
-                        "reflection", {}
-                    ).get("enabled", True):
+                    if _reflection_is_admissible(sm_config, task_deadline):
                         from backend.services.sakura_memory_service import (
                             get_sakura_memory_service,
                         )
@@ -1726,11 +1735,23 @@ class ReviewWorker:
                         # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
                         # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
                         async def _reflect_with_history() -> None:
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 审查已超时，跳过 .sakura/ 反思历史摘要",
+                                    task_id,
+                                )
+                                return
                             history_summary = (
                                 await self._fetch_reflection_history_summary(
                                     analysis, pr_info, task_id
                                 )
                             )
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 审查已超时，跳过 .sakura/ 反思调用",
+                                    task_id,
+                                )
+                                return
                             await sakura_memory_service.reflect(
                                 repo=pr.base.repo,
                                 repo_full_name=pr_info["repo_full_name"],

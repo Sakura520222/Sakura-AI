@@ -2013,7 +2013,7 @@ strategy:
   issue_comment_template_en: "Comment Template (English)"
   issue_template_variables: "Available template variables:"
   save_issue_analysis: "Save Issue Analysis Config"
-  issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Feature toggles (enable analysis, auto comment, etc.) are available in Global Config → Issue Analysis."
+  issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Issue feature toggles (enable analysis, auto assignment, title rewriting, etc.) are available in Global Config → Issue Analysis."
 
 # ========== Activity Monitor ==========
 activity:

@@ -269,9 +269,14 @@ def test_build_issue_submission_context_markdown_includes_analysis_and_comments(
     assert "Please fix" in reference_context
     assert "Third-party issue body" not in task_originator_goal
     assert "Third-party issue body" in reference_context
+    legacy_summary = "Editable summary\n\n## GitHub Issue 上下文\nAI summary"
+    # Current Issue text is allowed to contain the historical heading.
+    assert build_agent_task_summary(legacy_summary) == legacy_summary
+    # Cleanup is opt-in for a caller that has identified a legacy record.
     assert (
         build_agent_task_summary(
-            "Editable summary\n\n## GitHub Issue 上下文\nAI summary"
+            legacy_summary,
+            legacy_reference_embedded=True,
         )
         == "Editable summary"
     )

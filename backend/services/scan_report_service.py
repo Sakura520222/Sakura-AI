@@ -2,6 +2,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from telegram.helpers import escape_markdown
 
 from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.config import get_settings
@@ -134,6 +135,16 @@ def _format_duration(scan) -> str:
     if delta < 3600:
         return f"{int(delta // 60)}m{int(delta % 60)}s"
     return f"{int(delta // 3600)}h{int((delta % 3600) // 60)}m"
+
+
+def _escape_telegram_markdown(value: str, max_length: int) -> str:
+    """Escape untrusted Markdown and avoid ending on a dangling escape."""
+    escaped = escape_markdown(value, version=1)
+    truncated = escaped[:max_length]
+    trailing_slashes = len(truncated) - len(truncated.rstrip("\\"))
+    if trailing_slashes % 2:
+        truncated = truncated[:-1]
+    return truncated
 
 
 def _finding_key(f) -> tuple[str, str]:
@@ -453,7 +464,8 @@ class ScanReportService:
         lines.append("")
 
         if summary:
-            lines.append(f"{t['tg_summary']}: {summary[:300]}")
+            safe_summary = _escape_telegram_markdown(summary, 300)
+            lines.append(f"{t['tg_summary']}: {safe_summary}")
             lines.append("")
 
         lines.append(f"{health_emoji} {t['tg_health']}: *{health}/100*")

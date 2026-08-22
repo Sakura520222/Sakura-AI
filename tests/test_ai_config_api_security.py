@@ -9,8 +9,9 @@ from backend.api.v1.config import (
     _mask_sensitive,
     save_ai_bindings,
     update_general_config,
+    update_labels,
 )
-from backend.api.v1.schemas import ConfigGeneralUpdateRequest
+from backend.api.v1.schemas import ConfigGeneralUpdateRequest, ConfigLabelsUpdateRequest
 from backend.core.ai_protocol import account_store
 from backend.core.ai_protocol.account_store import ProviderAccount
 
@@ -118,3 +119,59 @@ async def test_generic_config_rejects_ai_account_and_binding_writes(reserved_key
 
     assert response.status_code == 400
     assert "专用配置接口" in _response_json(response)["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "section_key", ["strategy.issue_analysis", "label.definitions"]
+)
+async def test_generic_config_rejects_section_writes(section_key):
+    response = await update_general_config(
+        ConfigGeneralUpdateRequest(configs={section_key: "{}"}),
+        db=object(),
+        user={"sub": "admin"},
+    )
+
+    assert response.status_code == 400
+    assert "配置节" in _response_json(response)["error"]
+
+
+@pytest.mark.asyncio
+async def test_labels_update_converts_legacy_list_to_section_mapping(monkeypatch):
+    saved = {}
+
+    class SectionConfigRecorder:
+        async def save_section(self, _db, section_key, data):
+            saved["section"] = section_key
+            saved["data"] = data
+            return {"changed": True}
+
+    class LabelServiceRecorder:
+        def reload_labels(self):
+            saved["reloaded"] = True
+
+    monkeypatch.setattr(
+        "backend.api.v1.config.section_config_service", SectionConfigRecorder()
+    )
+    monkeypatch.setattr("backend.api.v1.config.label_service", LabelServiceRecorder())
+
+    response = await update_labels(
+        ConfigLabelsUpdateRequest(
+            labels=[
+                {
+                    "name": "bug",
+                    "color": "d73a4a",
+                    "description": "Something is broken",
+                }
+            ]
+        ),
+        db=object(),
+        user={"sub": "admin"},
+    )
+
+    assert response.status_code == 200
+    assert saved == {
+        "section": "label.definitions",
+        "data": {"bug": {"color": "d73a4a", "description": "Something is broken"}},
+        "reloaded": True,
+    }

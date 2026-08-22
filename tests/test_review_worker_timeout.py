@@ -25,6 +25,7 @@ from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewDecision,
     ReviewWorker,
+    _reflection_is_admissible,
     _run_review_task_with_timeout,
     submit_review_task,
 )
@@ -94,6 +95,18 @@ def test_is_task_active_is_read_only_registration_probe():
     assert worker.is_task_active("owner/repo#1") is True
     assert worker.is_task_active("owner/repo#2") is False
     assert list(worker._cancel_events) == ["owner/repo#1"]
+
+
+@pytest.mark.parametrize(("expired", "expected"), [(False, True), (True, False)])
+def test_review_reflection_admission_respects_shared_deadline(expired, expected):
+    deadline = SimpleNamespace(is_expired=lambda: expired)
+
+    assert (
+        _reflection_is_admissible(
+            {"enabled": True, "reflection": {"enabled": True}}, deadline
+        )
+        is expected
+    )
 
 
 @pytest.fixture
