@@ -1475,9 +1475,7 @@ class PaymentService:
         values = self._plan_quota_values(plan)
         if existing:
             existing.status = SubscriptionStatus.ACTIVE.value
-            existing.expires_at = now_utc() + timedelta(
-                days=plan.duration_days or 30
-            )
+            existing.expires_at = now_utc() + timedelta(days=plan.duration_days or 30)
             existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
             existing.applied_pr_daily_add = values["pr_daily_add"]
             existing.applied_pr_weekly_add = values["pr_weekly_add"]

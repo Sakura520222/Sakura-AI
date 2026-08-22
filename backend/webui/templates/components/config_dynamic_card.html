@@ -1,0 +1,73 @@
+{# 全局配置页的平铺动态组卡片：渲染单个 DYNAMIC 组的全部字段。
+   调用方式（with 传参）：group=组上下文、card_id=锚点 id #}
+<section id="{{ card_id }}" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5 scroll-mt-20">
+    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ group.label }}</h3>
+    <div class="space-y-5 mt-4">
+        {% for item in group.fields %}
+        <div class="flex items-start justify-between gap-4">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ item.label }}</h4>
+                    {% if item.sensitive %}
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">{{ _('common.sensitive') }}</span>
+                    {% endif %}
+                </div>
+                {% if item.description %}
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ item.description }}</p>
+                {% endif %}
+                {% if item.default %}
+                <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ _('common.default_value') }}: {{ item.default }}</p>
+                {% endif %}
+            </div>
+            <div class="flex-shrink-0">
+                {% if item.input_type == 'boolean' %}
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" name="{{ item.key }}" value="true" class="sr-only peer"
+                           {% if item.value in ('true', 'True') %}checked{% endif %}>
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                </label>
+
+                {% elif item.input_type == 'select' %}
+                <select name="{{ item.key }}"
+                        class="w-48 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    {% for opt in item.select_options %}
+                    <option value="{{ opt.value }}" {% if item.value == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+                    {% endfor %}
+                </select>
+
+                {% elif item.input_type == 'password' %}
+                <div class="flex items-center gap-2">
+                    <input type="password"
+                           name="{{ item.key }}"
+                           value="{{ item.value }}"
+                           placeholder="{{ _('common.enter_new_value') }}"
+                           x-ref="{{ item.key }}_input"
+                           x-on:input="$refs.{{ item.key }}_changed.value = 'true'"
+                           class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    <input type="hidden" name="{{ item.key }}_changed" value="false" x-ref="{{ item.key }}_changed">
+                </div>
+
+                {% elif item.input_type == 'number' %}
+                <input type="number"
+                       name="{{ item.key }}"
+                       value="{{ item.value }}"
+                       {% if item.min_val is not none %}min="{{ item.min_val }}"{% endif %}
+                       {% if item.max_val is not none %}max="{{ item.max_val }}"{% endif %}
+                       step="{% if '.' in item.value|string %}0.01{% else %}1{% endif %}"
+                       class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+
+                {% else %}
+                <input type="text"
+                       name="{{ item.key }}"
+                       value="{{ item.value }}"
+                       placeholder="{{ item.placeholder if item.placeholder else '' }}"
+                       class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                {% endif %}
+            </div>
+        </div>
+        {% if not loop.last %}
+        <div class="border-t border-gray-100 dark:border-gray-700"></div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</section>

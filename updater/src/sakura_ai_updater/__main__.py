@@ -71,8 +71,8 @@ def serve(
     只读挂载 connect。
 
     资源生命周期：lock_fd 与 listener 的清理覆盖全部步骤（含 load/reconcile/save/
-    create_app/Config 异常路径）。Python 3.12 的 ``create_unix_server`` 无
-    cleanup_socket（3.13 才加），故 updater 经 socket_util 自管 socket 文件。
+    create_app/Config 异常路径）。``uvicorn.Server.serve()`` 绕过 wrapper 的
+    socket 清理，故 updater 经 socket_util 自管 socket 文件。
     """
     # locks 惰性导入：locks.py 顶层 import fcntl，仅 POSIX；Windows 开发机不跑 serve
     from sakura_ai_updater.locks import (

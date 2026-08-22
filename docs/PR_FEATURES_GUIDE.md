@@ -75,7 +75,7 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 | `enable_pr_summary` | `false` | 是否启用 PR 变更总结 |
 | `enable_auto_review` | `true` | 是否让 PR webhook 自动触发审查任务 |
 | `enable_pr_dependency_graph` | `false` | 是否启用 PR 依赖图 |
-| `pr_dependency_graph_mode` | `ai` | 依赖图生成模式，可选 `ai` 或 `static` |
+| `pr_dependency_graph_mode` | `static` | 依赖图生成模式，可选 `ai` 或 `static` |
 | `pr_dependency_graph_max_nodes` | `25` | 依赖图最大节点数，避免图过大影响阅读 |
 | `pr_dependency_graph_max_files` | `50` | 参与依赖分析的最大文件数 |
 | `model_context_window` | 自动/手动 | 模型上下文窗口，用于判断 compact diff 与上下文压缩阈值 |
@@ -152,4 +152,4 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-22 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

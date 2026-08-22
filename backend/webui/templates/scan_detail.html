@@ -59,6 +59,18 @@
                 <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.scan_time') }}</span>
                 <p class="mt-0.5">{{ scan.created_at|format_datetime_short if scan.created_at else '-' }}</p>
             </div>
+            {% if scan.scan_rounds %}
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.rounds') }}</span>
+                <p class="mt-0.5">{{ scan.scan_rounds }}</p>
+            </div>
+            {% endif %}
+            {% if scan.indexed_chunks %}
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.indexed_chunks') }}</span>
+                <p class="mt-0.5">{{ scan.indexed_chunks }}</p>
+            </div>
+            {% endif %}
         </div>
 
         <!-- 扫描耗时 & 完成时间 -->
@@ -114,6 +126,14 @@
                 </div>
                 <span class="text-lg font-bold">{{ scan.overall_health_score }}/100</span>
             </div>
+        </div>
+        {% endif %}
+
+        <!-- AI 扫描总结 -->
+        {% if scan.summary %}
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ _('scan_report.summary') }}</span>
+            <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ scan.summary }}</div>
         </div>
         {% endif %}
 

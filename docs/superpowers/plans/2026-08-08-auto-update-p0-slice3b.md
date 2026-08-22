@@ -109,8 +109,14 @@ DEFAULT_STARTUP_TIMEOUT = 5.0
 
 
 class UpdaterNotInstalledError(RuntimeError): ...
+
+
 class UpdaterStartError(RuntimeError): ...
+
+
 class GIDConflictError(RuntimeError): ...
+
+
 class PrivilegeError(RuntimeError): ...
 
 
@@ -502,7 +508,11 @@ Expected: 语法和所有场景通过；grep 确认无 `@reboot`、无 productio
 
 ```python
 assert "9472" in {str(value) for value in web["group_add"]}
-mount = next(item for item in web["volumes"] if isinstance(item, dict) and item.get("target") == "/run/sakura-ai")
+mount = next(
+    item
+    for item in web["volumes"]
+    if isinstance(item, dict) and item.get("target") == "/run/sakura-ai"
+)
 assert mount == {
     "type": "bind",
     "source": "/run/sakura-ai",

@@ -20,10 +20,7 @@ from backend.core.config import (
     get_all_dynamic_config_keys,
     get_dynamic_config,
 )
-from backend.webui.routes.agent_team import (
-    AGENT_TEAM_CONFIG_GROUPS,
-    AGENT_TEAM_CONFIG_KEYS,
-)
+from backend.webui.routes.agent_team import router as agent_team_router
 
 LEGACY_SUPPLIER_KEYS = {
     "ai_provider",
@@ -66,37 +63,27 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
         assert LEGACY_SUPPLIER_KEYS.isdisjoint(registry)
 
     assert {"ai_temperature", "ai_max_tokens"}.issubset(Settings.model_fields)
-    assert {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
+    # Agent 专属任务时限和轮数上限不再属于 Settings 或动态配置 surface。
+    removed_agent_limits = {
         "agent_team_timeout_seconds",
-    }.issubset(Settings.model_fields)
-    assert {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
-        "agent_team_timeout_seconds",
-    }.issubset(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
-
-
-def test_agent_team_webui_surface_excludes_legacy_and_retired_ai_keys():
-    assert LEGACY_SUPPLIER_KEYS.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
-    grouped_keys = {key for group in AGENT_TEAM_CONFIG_GROUPS for key in group["keys"]}
-    assert grouped_keys == set(AGENT_TEAM_CONFIG_KEYS)
-    assert LEGACY_SUPPLIER_KEYS.isdisjoint(grouped_keys)
-
-    # 温度/max_tokens/超时/压缩等模型相关配置已迁至新版 /config/ai 角色绑定，
-    # /agent-team 配置页不再暴露「专用 AI 模型」选项卡（原 ai group）。
-    retired_ai_keys = {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
-        "agent_team_enable_context_compression",
-        "agent_team_context_compression_threshold",
-        "agent_team_context_summary_max_tokens",
-        "agent_team_timeout_seconds",
+        "agent_team_max_iterations_per_task",
     }
-    assert retired_ai_keys.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
-    assert retired_ai_keys.isdisjoint(grouped_keys)
-    assert "ai" not in {group["key"] for group in AGENT_TEAM_CONFIG_GROUPS}
+    assert removed_agent_limits.isdisjoint(Settings.model_fields)
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_LABELS)
+    assert removed_agent_limits.isdisjoint(DYNAMIC_CONFIG_RANGES)
+
+
+def test_agent_team_webui_surface_excludes_legacy_supplier_keys():
+    agent_team_keys = set(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
+    assert LEGACY_SUPPLIER_KEYS.isdisjoint(agent_team_keys)
+
+    from fastapi.routing import APIRoute
+
+    assert all(
+        not (isinstance(route, APIRoute) and route.path == "/agent-team/config/save")
+        for route in agent_team_router.routes
+    )
 
 
 def test_ai_strategy_registry_keeps_request_policy_fields():
@@ -115,10 +102,7 @@ def test_ai_retry_zero_is_valid_in_api_and_webui():
     template = (
         Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_ai.html"
     ).read_text(encoding="utf-8")
-    assert (
-        'min="0" max="20" x-model.number="strategy.ai_api_max_retries"'
-        in template
-    )
+    assert 'min="0" max="20" x-model.number="strategy.ai_api_max_retries"' in template
 
 
 @pytest.mark.asyncio

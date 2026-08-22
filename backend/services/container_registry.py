@@ -77,7 +77,9 @@ def _group_images(tags_to_digest: dict[str, str]) -> list[dict[str, Any]]:
             parsed = parse_registry_tag(tag)
             if parsed is None:
                 continue
-            (dev_by_digest if parsed["channel"] == "development" else stable_by_digest)[digest].append(parsed)
+            (dev_by_digest if parsed["channel"] == "development" else stable_by_digest)[
+                digest
+            ].append(parsed)
     stable_head_digest = ""
     if latest_digest and len(stable_by_digest.get(latest_digest, [])) == 1:
         stable_head_digest = latest_digest
@@ -103,7 +105,9 @@ def _group_images(tags_to_digest: dict[str, str]) -> list[dict[str, Any]]:
                     "canonical_tag": canonical,
                     "is_channel_head": digest == stable_head_digest,
                     "selectable": digest == stable_head_digest,
-                    "legacy_reason": None if digest == stable_head_digest else "not_channel_head",
+                    "legacy_reason": None
+                    if digest == stable_head_digest
+                    else "not_channel_head",
                 }
             )
         elif development:
@@ -120,7 +124,9 @@ def _group_images(tags_to_digest: dict[str, str]) -> list[dict[str, Any]]:
                     "canonical_tag": item["tag"],
                     "is_channel_head": digest == dev_head_digest,
                     "selectable": digest == dev_head_digest,
-                    "legacy_reason": None if digest == dev_head_digest else "not_channel_head",
+                    "legacy_reason": None
+                    if digest == dev_head_digest
+                    else "not_channel_head",
                 }
             )
         else:
@@ -138,6 +144,7 @@ def _group_images(tags_to_digest: dict[str, str]) -> list[dict[str, Any]]:
                     "legacy_reason": "invalid_tag",
                 }
             )
+
     def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
         version = _semver_key(item["version"]) if item.get("version") else (0, 0, 0)
         return (
@@ -146,7 +153,14 @@ def _group_images(tags_to_digest: dict[str, str]) -> list[dict[str, Any]]:
             -version[0],
             -version[1],
             -version[2],
-            -int((item.get("created_at") or "19700101000000").replace("-", "").replace(":", "").replace("T", "").replace("Z", "").replace("+00", "")[:14])
+            -int(
+                (item.get("created_at") or "19700101000000")
+                .replace("-", "")
+                .replace(":", "")
+                .replace("T", "")
+                .replace("Z", "")
+                .replace("+00", "")[:14]
+            )
             if item.get("channel") == "development" and item.get("created_at")
             else 0,
         )
@@ -164,7 +178,9 @@ class ContainerRegistryError(RuntimeError):
 
 
 class ContainerRegistryClient:
-    def __init__(self, repository: str | None = None, *, ttl: float = 30.0, timeout: float = 10.0):
+    def __init__(
+        self, repository: str | None = None, *, ttl: float = 30.0, timeout: float = 10.0
+    ):
         # The registry is a trust-boundary constant.  Do not allow deployment
         # configuration or request data to redirect catalog reads elsewhere.
         if repository is not None and repository != REPOSITORY:
@@ -175,22 +191,36 @@ class ContainerRegistryClient:
         self._cache: dict[str, Any] | None = None
         self._cache_at = 0.0
 
-    def _request_json(self, url: str, headers: dict[str, str] | None = None) -> tuple[Any, dict[str, str]]:
-        request = Request(url, headers={"Accept": "application/json", **(headers or {})})
+    def _request_json(
+        self, url: str, headers: dict[str, str] | None = None
+    ) -> tuple[Any, dict[str, str]]:
+        request = Request(
+            url, headers={"Accept": "application/json", **(headers or {})}
+        )
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-                return payload, {str(k).lower(): str(v) for k, v in response.headers.items()}
+                return payload, {
+                    str(k).lower(): str(v) for k, v in response.headers.items()
+                }
         except HTTPError as exc:
             raise ContainerRegistryError(
                 "registry request failed", status_code=int(exc.code)
             ) from exc
-        except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        except (
+            URLError,
+            OSError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             raise ContainerRegistryError("registry request failed") from exc
 
     async def _token(self) -> str:
         registry, path = self.repository.split("/", 1)
-        payload, _ = await asyncio.to_thread(self._request_json, f"https://{registry}/token?scope=repository:{path}:pull")
+        payload, _ = await asyncio.to_thread(
+            self._request_json, f"https://{registry}/token?scope=repository:{path}:pull"
+        )
         token = payload.get("token") if isinstance(payload, dict) else None
         if not isinstance(token, str) or not token:
             raise ContainerRegistryError("registry token response invalid")
@@ -201,8 +231,12 @@ class ContainerRegistryClient:
         url = f"https://{registry}/v2/{path}/tags/list?n=100"
         result: list[str] = []
         for _ in range(100):
-            payload, headers = await asyncio.to_thread(self._request_json, url, {"Authorization": f"Bearer {token}"})
-            if not isinstance(payload, dict) or not isinstance(payload.get("tags"), list):
+            payload, headers = await asyncio.to_thread(
+                self._request_json, url, {"Authorization": f"Bearer {token}"}
+            )
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("tags"), list
+            ):
                 raise ContainerRegistryError("registry tags response invalid")
             result.extend(tag for tag in payload["tags"] if isinstance(tag, str))
             link = headers.get("link")
@@ -226,7 +260,10 @@ class ContainerRegistryClient:
             _payload, headers = await asyncio.to_thread(
                 self._request_json,
                 url,
-                {"Authorization": f"Bearer {token}", "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"},
+                {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+                },
             )
         except ContainerRegistryError as exc:
             # A tag disappearing between tags/list and manifest lookup is a
@@ -251,7 +288,9 @@ class ContainerRegistryClient:
         try:
             token = await self._token()
             tags = await self._tags(token)
-            pairs = await asyncio.gather(*(self._manifest_digest(token, tag) for tag in tags))
+            pairs = await asyncio.gather(
+                *(self._manifest_digest(token, tag) for tag in tags)
+            )
             tag_digests = {tag: digest for tag, digest in zip(tags, pairs) if digest}
             payload = {
                 "repository": self.repository,
@@ -260,11 +299,20 @@ class ContainerRegistryClient:
                 "images": _group_images(tag_digests),
             }
             payload["heads"] = {
-                channel: next(({
-                    "digest": item["digest"], "canonical_tag": item["canonical_tag"],
-                    "tag": item["canonical_tag"],
-                    "version": item["version"], "revision": item.get("revision"),
-                } for item in payload["images"] if item["channel"] == channel and item["is_channel_head"]), None)
+                channel: next(
+                    (
+                        {
+                            "digest": item["digest"],
+                            "canonical_tag": item["canonical_tag"],
+                            "tag": item["canonical_tag"],
+                            "version": item["version"],
+                            "revision": item.get("revision"),
+                        }
+                        for item in payload["images"]
+                        if item["channel"] == channel and item["is_channel_head"]
+                    ),
+                    None,
+                )
                 for channel in ("stable", "development")
             }
             self._cache = payload

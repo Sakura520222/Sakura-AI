@@ -1,9 +1,8 @@
-"""工具注册表 - 统一管理全栈专家和审查角色的工具集
+"""工具注册表 - Agent 的唯一实现工具集。
 
-遵循 Claude Code 风格：
-- 工具集中注册
-- 按角色过滤
-- 统一导出 schema 用于 function calling
+历史版本把工具拆成 ``fullstack`` 和 ``reviewer`` 两套集合。Agent Team
+现在只有一个实现 Agent；这里保留少量旧函数名作为导入兼容，但它们都指向
+同一套实现工具，绝不会重新注册 ``submit_review`` 或创建 reviewer 工具集。
 """
 
 from __future__ import annotations
@@ -23,21 +22,15 @@ from backend.services.agent_team.tools.project_detect_tool import DetectProjectT
 from backend.services.agent_team.tools.read_tool import ReadTool
 from backend.services.agent_team.tools.replace_lines_tool import ReplaceLinesTool
 from backend.services.agent_team.tools.revert_file_tool import RevertFileTool
-from backend.services.agent_team.tools.sakura_docs_tool import (
-    ListSakuraDirectoryTool,
-    ReadSakuraDocsTool,
-)
-from backend.services.agent_team.tools.sakura_memory_tool import SakuraMemoryTool
 from backend.services.agent_team.tools.shell_tool import ShellTool
-from backend.services.agent_team.tools.submit_review_tool import SubmitReviewTool
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.tools.web_search_tool import WebSearchTool
 from backend.services.agent_team.tools.write_tool import WriteTool
 
 # ── 工具实例 ──────────────────────────────────────────
 
-# 全栈专家可用工具
-FULLSTACK_TOOL_INSTANCES: list[BaseTool] = [
+# Agent 实现角色唯一可用工具。
+AGENT_TOOL_INSTANCES: list[BaseTool] = [
     ReadTool(),
     ListDirectoryTool(),
     GlobTool(),
@@ -56,39 +49,26 @@ FULLSTACK_TOOL_INSTANCES: list[BaseTool] = [
     FetchUrlTool(),
 ]
 
-# 审查角色可用工具（只读 + 审查提交）
-REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
-    ReadTool(),
-    ListDirectoryTool(),
-    GlobTool(),
-    GrepTool(),
-    UseSkillTool(),
-    ShellTool(),
-    GitDiffTool(),
-    DetectProjectTool(),
-    SubmitReviewTool(),
-    SakuraMemoryTool(),
-    ReadSakuraDocsTool(),
-    ListSakuraDirectoryTool(),
-    WebSearchTool(),
-    FetchUrlTool(),
-]
+# Legacy name retained for callers that still import the old implementation list.
+FULLSTACK_TOOL_INSTANCES = AGENT_TOOL_INSTANCES
 
-# 按名称索引的工具注册表
-tool_registry: dict[str, BaseTool] = {
-    tool.name: tool for tool in FULLSTACK_TOOL_INSTANCES
-}
-tool_registry.update({tool.name: tool for tool in REVIEWER_TOOL_INSTANCES})
+# 按名称索引的工具注册表。Reviewer-specific submit_review is intentionally absent.
+tool_registry: dict[str, BaseTool] = {tool.name: tool for tool in AGENT_TOOL_INSTANCES}
+
+
+def get_agent_tools() -> list[BaseTool]:
+    """获取 Agent 实现角色可用工具列表。"""
+    return list(AGENT_TOOL_INSTANCES)
 
 
 def get_fullstack_tools() -> list[BaseTool]:
-    """获取全栈专家可用工具列表。"""
-    return list(FULLSTACK_TOOL_INSTANCES)
+    """兼容旧调用方，返回 Agent 实现工具列表。"""
+    return get_agent_tools()
 
 
 def get_reviewer_tools() -> list[BaseTool]:
-    """获取审查角色可用工具列表。"""
-    return list(REVIEWER_TOOL_INSTANCES)
+    """兼容旧导入；Agent Team 不再有 reviewer 专属工具集。"""
+    return get_agent_tools()
 
 
 def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -135,22 +115,26 @@ def _glm_compatible_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_tool_definitions(
-    role: str = "fullstack",
+    role: str = "agent",
     provider: str | None = None,
 ) -> list[dict[str, Any]]:
-    """获取指定角色的工具 schema 列表（用于 function calling）。
+    """获取 Agent 实现工具 schema 列表（用于 function calling）。
 
     Args:
-        role: "fullstack" 或 "reviewer"
+        role: legacy role label, ignored for compatibility
         provider: AI 厂商 ID，用于应用厂商兼容转换
     """
-    tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
+    del role
+    tools = AGENT_TOOL_INSTANCES
     if (provider or "").lower() in ("glm", "zai"):
         return [_glm_compatible_schema(t.get_schema()) for t in tools]
     return [_sanitize_schema(t.get_schema()) for t in tools]
 
 
-def create_executor(role: str = "fullstack") -> ToolExecutor:
-    """创建指定角色的工具执行器。"""
-    tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
-    return ToolExecutor(list(tools))
+def create_executor(role: str = "agent") -> ToolExecutor:
+    """创建 Agent 实现工具执行器。
+
+    ``role`` 仅为旧调用方保留，不再改变工具白名单。
+    """
+    del role
+    return ToolExecutor(list(AGENT_TOOL_INSTANCES))

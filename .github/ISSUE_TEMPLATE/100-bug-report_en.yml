@@ -1,0 +1,128 @@
+name: Bug Report
+description: Report a problem with Sakura AI (crashes, failed reviews, UI issues, update errors, etc.). Please submit in English.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Before submitting, please search the
+        [issue list](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue)
+        to make sure it has not been reported before.
+
+  - type: markdown
+    attributes:
+      value: |
+        **Security warning**: before pasting logs or configuration, make sure the content does not
+        contain sensitive information such as:
+        - API keys of AI providers (OpenAI / Anthropic / DeepSeek, etc.)
+        - GitHub tokens, GitHub App private keys, webhook secrets
+        - Database connection strings, Redis addresses, admin passwords
+
+        Replace sensitive values with placeholders like `<YOUR_KEY_HERE>` before submitting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear description of what happened and what you expected instead.
+      placeholder: "Example: after triggering a review on PR #123, the agent got stuck in the analysis phase and eventually timed out. Expected..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The steps needed to reproduce the problem.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version and update channel
+      description: >
+        Visible on the WebUI "Version Management" page. Please include the channel,
+        for example stable v1.2.3 or development. Do not use meaningless values like latest.
+      placeholder: "Example: stable v1.2.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose (production, docker-compose.prod.yml)
+        - Docker Compose (development, docker-compose.yml)
+        - Running from source (python -m backend.main / uvicorn)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected areas
+      description: Multiple selection is allowed.
+      multiple: true
+      options:
+        - PR review
+        - Issue analysis
+        - Agent / tools
+        - WebUI
+        - Auto update
+        - Telegram notifications
+        - Setup wizard
+        - Auth & security
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: AI provider in use
+      description: For example OpenAI, Anthropic, DeepSeek, Gemini. Leave empty if not relevant.
+      placeholder: "Example: DeepSeek"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Log snippets related to the problem (prefer DEBUG level).
+        Make sure they are redacted as described in the security warning above;
+        issues without usable logs may be closed.
+      render: text
+      placeholder: |
+        Paste log snippets here...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, screen recordings, full log files, etc. Paste screenshots directly in the text box.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched the [issue list](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) and could not resolve this or it has never been reported.
+          required: true
+        - label: I confirm the content I am submitting contains no API keys, tokens, connection strings, or other sensitive information.
+          required: true
+        - label: I have tried restarting the app and updating to the latest version, and the problem persists.
+          required: true
+
+  - type: markdown
+    attributes:
+      value: Thanks for reporting, we will follow up as soon as possible!

@@ -239,7 +239,7 @@ class ImageAdapter:
         self,
         compose_file: str,
         deployment_env: str,
-        web_container: str = "sakura-ai",   # compose container_name 固定（§3.6）
+        web_container: str = "sakura-ai",  # compose container_name 固定（§3.6）
         health_url: str = "http://localhost:8000/health",
         health_timeout: float = 90.0,
         health_poll_interval: float = 2.0,
@@ -329,8 +329,12 @@ idle ── POST /v1/update ──► checking ──► update_available ──
 
 ```python
 class DeploymentStateProvider:
-    def __init__(self, deployment_env: str, web_container: str = "sakura-ai",
-                 health_url: str = "http://localhost:8000/health") -> None: ...
+    def __init__(
+        self,
+        deployment_env: str,
+        web_container: str = "sakura-ai",
+        health_url: str = "http://localhost:8000/health",
+    ) -> None: ...
 
     def read_image_ref(self) -> str | None:
         """从 deployment.env 读 SAKURA_AI_IMAGE（authoritative 当前镜像 ref）。"""
@@ -385,11 +389,11 @@ class JobOrchestrator:
         release_client: ReleaseClient,
         deployment: DeploymentStateProvider,
     ) -> None:
-        self._lock = asyncio.Lock()      # 进程内 destructive 互斥
+        self._lock = asyncio.Lock()  # 进程内 destructive 互斥
         self._tasks: dict[str, asyncio.Task] = {}
 
     async def submit_update(self, target_version: str | None) -> str: ...
-    async def check(self) -> dict: ...        # 同步只读
+    async def check(self) -> dict: ...  # 同步只读
     async def preflight(self, target_version: str) -> dict: ...
     def get_job(self, job_id: str) -> JobState | None: ...
     def get_job_logs(self, job_id: str) -> list[dict]: ...
@@ -405,22 +409,22 @@ async def _run_update_job(self, job: JobState) -> None:
         # §9.5: preflight 成功后、downloading 前，若当前 ref 是 :latest 则 materialize 为 vX.Y.Z@sha256:<digest>
         job.state = "success"
         job.updated_at = _utcnow()
-        save_state(...)                       # 持久化终态
-        self._clear_active_job_id()           # success：清 gate（current_job terminal）
+        save_state(...)  # 持久化终态
+        self._clear_active_job_id()  # success：清 gate（current_job terminal）
     except asyncio.CancelledError:
         # **不清 active_job_id，不设终态**
         # current_job 保持非 terminal + active_job_id 仍指向它
         # → 下次 daemon 启动 reconcile 第 5 条 invariant → failed + interrupted
         # （若清了 gate，则 active_job_id=null + current_job 非 terminal → 第 2 条 StateCorruptionError）
-        save_state(...)                       # 持久化当前非 terminal 状态
+        save_state(...)  # 持久化当前非 terminal 状态
         raise
     except Exception as e:
         job.state = "failed"
         job.error_code = classify_error(e)
-        job.error = summarize(e)              # 不截断单条，结构化 stderr_lines
+        job.error = summarize(e)  # 不截断单条，结构化 stderr_lines
         job.updated_at = _utcnow()
-        save_state(...)                       # 持久化终态
-        self._clear_active_job_id()           # failed：清 gate（current_job terminal）
+        save_state(...)  # 持久化终态
+        self._clear_active_job_id()  # failed：清 gate（current_job terminal）
 ```
 
 `_clear_active_job_id` 只在 current_job 已 terminal 时执行（success/failed 路径）；CancelledError 路径**不调用**。这保证 reconcile 永远走 interrupted recovery（第 5 条），不会误触 StateCorruptionError（第 2 条）。
@@ -644,9 +648,13 @@ generate-release
 **新增异常**（`backend/services/updater_client.py`）：
 
 ```python
-class UpdaterUnavailableError(RuntimeError): ...   # UDS 不可达 → 503
-class UpdaterProtocolError(RuntimeError): ...      # envelope 非法 / protocol 不兼容 → 502
-class UpdaterActionError(RuntimeError):            # updater 4xx/5xx
+class UpdaterUnavailableError(RuntimeError): ...  # UDS 不可达 → 503
+
+
+class UpdaterProtocolError(RuntimeError): ...  # envelope 非法 / protocol 不兼容 → 502
+
+
+class UpdaterActionError(RuntimeError):  # updater 4xx/5xx
     def __init__(self, status_code: int, body: dict): ...
 ```
 

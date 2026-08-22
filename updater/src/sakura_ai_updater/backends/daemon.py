@@ -125,7 +125,7 @@ def _pid_alive(pid: int) -> bool:
     """pid 是否存活（signal 0 探测）。无权限等 OSError → False（fail-closed）。"""
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, OSError):
+    except ProcessLookupError, OSError:
         return False
     return True
 
@@ -203,7 +203,9 @@ class DaemonBackend:
         # These paths are passed explicitly to the child daemon.  ``None`` keeps
         # backwards compatibility for callers that only exercise lifecycle
         # management; production bootstrap supplies absolute configured paths.
-        self.compose_file = os.path.abspath(compose_file) if compose_file is not None else None
+        self.compose_file = (
+            os.path.abspath(compose_file) if compose_file is not None else None
+        )
         self.deployment_env = (
             os.path.abspath(deployment_env) if deployment_env is not None else None
         )
@@ -237,7 +239,9 @@ class DaemonBackend:
                 f"got starttime={starttime!r}, identity={identity!r}"
             )
         os.makedirs(self.state_dir, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.state_dir, prefix=".daemon-meta.", suffix=".tmp")
+        fd, tmp = tempfile.mkstemp(
+            dir=self.state_dir, prefix=".daemon-meta.", suffix=".tmp"
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({"pid": pid, "starttime": starttime, "identity": identity}, f)
@@ -259,14 +263,19 @@ class DaemonBackend:
         try:
             with open(self._pid_meta_path, encoding="utf-8") as f:
                 data = json.load(f)
-        except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
+        except FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError:
             return None
         if not isinstance(data, dict):
             return None
         pid = data.get("pid")
         starttime = data.get("starttime")
         identity = data.get("identity")
-        if not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(starttime, str) or not isinstance(identity, str):
+        if (
+            not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or not isinstance(starttime, str)
+            or not isinstance(identity, str)
+        ):
             return None
         if not starttime or not identity:
             return None
@@ -307,11 +316,16 @@ class DaemonBackend:
         """
         args = [
             "--serve",
-            "--socket-path", self.socket_path,
-            "--state-dir", self.state_dir,
-            "--lock-path", os.path.join(self.state_dir, "updater.lock"),
-            "--socket-uid", str(self._socket_uid),
-            "--socket-gid", str(self._socket_gid),
+            "--socket-path",
+            self.socket_path,
+            "--state-dir",
+            self.state_dir,
+            "--lock-path",
+            os.path.join(self.state_dir, "updater.lock"),
+            "--socket-uid",
+            str(self._socket_uid),
+            "--socket-gid",
+            str(self._socket_gid),
         ]
         if self.compose_file is not None:
             args.extend(["--compose-file", self.compose_file])
@@ -328,7 +342,9 @@ class DaemonBackend:
         """
         geteuid = getattr(os, "geteuid", lambda: 0)
         if geteuid() != 0:
-            raise PrivilegeError(f"{action} requires root privileges; run as root or sudo")
+            raise PrivilegeError(
+                f"{action} requires root privileges; run as root or sudo"
+            )
 
     @staticmethod
     def _trusted_file(path: str, label: str, *, exact_mode: int | None = None) -> str:
@@ -433,11 +449,12 @@ class DaemonBackend:
             try:
                 name = gid_proc.stdout.split(":", 1)[0]
             except (IndexError, ValueError) as e:
-                raise RuntimeError(f"malformed getent output for GID {self.gid}: {e!r}") from e
+                raise RuntimeError(
+                    f"malformed getent output for GID {self.gid}: {e!r}"
+                ) from e
             if name != self.group:
                 raise GIDConflictError(
-                    f"group ID {self.gid} is owned by {name!r}, "
-                    f"expected {self.group!r}"
+                    f"group ID {self.gid} is owned by {name!r}, expected {self.group!r}"
                 )
         elif gid_proc.returncode not in (1, 2):
             raise RuntimeError(
@@ -456,11 +473,12 @@ class DaemonBackend:
                 fields = name_proc.stdout.split(":")
                 gid = int(fields[2])
             except (IndexError, ValueError) as e:
-                raise RuntimeError(f"malformed getent output for group {self.group!r}: {e!r}") from e
+                raise RuntimeError(
+                    f"malformed getent output for group {self.group!r}: {e!r}"
+                ) from e
             if gid != self.gid:
                 raise GIDConflictError(
-                    f"group {self.group!r} exists with GID {gid}, "
-                    f"expected {self.gid}"
+                    f"group {self.group!r} exists with GID {gid}, expected {self.gid}"
                 )
             return  # 双向一致 → 幂等成功
         if name_proc.returncode not in (1, 2):
@@ -496,12 +514,11 @@ class DaemonBackend:
         非 200 → False（调用方重试直至 startup_timeout）。probe timeout 默认取
         ``min(2.0, startup_timeout)``——单次探测不应超过总 readiness 超时。
         """
-        effective_timeout = timeout if timeout is not None else min(2.0, self.startup_timeout)
+        effective_timeout = (
+            timeout if timeout is not None else min(2.0, self.startup_timeout)
+        )
         request = (
-            "GET /v1/health HTTP/1.1\r\n"
-            "Host: updater\r\n"
-            "Connection: close\r\n"
-            "\r\n"
+            "GET /v1/health HTTP/1.1\r\nHost: updater\r\nConnection: close\r\n\r\n"
         )
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -521,7 +538,9 @@ class DaemonBackend:
 
     # ----------------------------------------------------------------- start
 
-    def _wait_ready(self, child: subprocess.Popen, identity: str, log_path: str) -> None:
+    def _wait_ready(
+        self, child: subprocess.Popen, identity: str, log_path: str
+    ) -> None:
         """readiness gate：child 存活 + 非空且稳定 starttime + 身份匹配 + health 200。
 
         任一条件在 startup_timeout 内无法满足 → UpdaterStartError（含 log path）。

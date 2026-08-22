@@ -24,12 +24,15 @@ from backend.core.time_service import filename_timestamp
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
 from .compression import ContextCompressor
-from .constants import MAX_TOOL_ITERATIONS
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
@@ -235,6 +238,8 @@ class AIReviewer:
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         invocation_context: Any = None,
         observer: Any = None,
+        cancel_event: asyncio.Event | None = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """Parse a final review; delegate to the shared repair loop on failure."""
         # 注意：不在此推送 final assistant turn——_run_tool_loop 两个退出分支
@@ -271,6 +276,8 @@ class AIReviewer:
             event_callback=event_callback,
             on_repaired=self._check_finding_consistency,
             on_parse_failure=_dump_failure,
+            cancel_event=cancel_event,
+            deadline=deadline,
         )
 
     @staticmethod
@@ -299,6 +306,7 @@ class AIReviewer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
@@ -309,6 +317,9 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         try:
             self._refresh_ai_clients()
             self._refresh_runtime_config()
@@ -338,6 +349,7 @@ class AIReviewer:
             ]
 
             # 调用AI API
+            call_kwargs = task_deadline.prepare_call(messages)
             response = await self.api_client.call_with_retry(
                 model="",
                 messages=messages,
@@ -346,6 +358,7 @@ class AIReviewer:
                 cancel_event=cancel_event,
                 context=invocation_context,
                 observer=observer,
+                **call_kwargs,
             )
             tracker.accumulate(response)
 
@@ -358,6 +371,8 @@ class AIReviewer:
                 tracker,
                 invocation_context=invocation_context,
                 observer=observer,
+                cancel_event=cancel_event,
+                deadline=task_deadline,
             )
             result["token_usage"] = tracker.to_dict()
             if publication_coordinator is not None and invocation_context is not None:
@@ -391,6 +406,7 @@ class AIReviewer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -409,13 +425,13 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         settings = get_settings()
         active_tool_handler = tool_handler or self.tool_handler
-        max_iterations = (
-            get_strategy_config()
-            .get_context_enhancement_config()
-            .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
-        )
+        # 工具循环不再设置轮次上限：依赖模型自然停止（无工具调用即交付），
+        # 整体时长由共享 soft deadline 控制；到期只切换下一次调用为最终回答。
         # 优先用新版 unified config 解析的上下文窗口（来自角色绑定模型的内置元数据，
         # 如 deepseek-v4-flash 内置 1M tokens），避免 model_context 在未提供模型名时
         # 回退 128K 兜底（曾导致日志误报 102K 上限、过早触发压缩）。
@@ -436,7 +452,31 @@ class AIReviewer:
         _normalize_tool_calls_inplace(messages)
         iteration = 0
 
-        while iteration < max_iterations:
+        async def _append_assistant_tool_turn(tool_calls: list[Any]) -> None:
+            """Persist an assistant tool-call turn without executing its tools."""
+            assistant_message = response.choices[0].message
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": assistant_message.content,
+                "tool_calls": [_coerce_tool_call_to_dict(tc) for tc in tool_calls],
+            }
+            strategy_config = get_strategy_config()
+            if (
+                hasattr(assistant_message, "reasoning_content")
+                and assistant_message.reasoning_content
+                and strategy_config.is_model_supports_reasoning_content("")
+            ):
+                assistant_msg_dict["reasoning_content"] = (
+                    assistant_message.reasoning_content
+                )
+            messages.append(assistant_msg_dict)
+            if event_callback:
+                try:
+                    await event_callback("message", assistant_msg_dict)
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
+
+        while True:
             iteration += 1
 
             # 取消信号：PR 关闭等外部信号已触发时，立即中止工具循环
@@ -449,18 +489,31 @@ class AIReviewer:
                 event_callback,
             )
 
-            # 调用AI API
-            response = await self.api_client.call_with_retry(
-                model="",
-                messages=messages,
-                tools=enabled_tools,
-                tool_choice="auto",
-                temperature=settings.ai_temperature,
-                role="main",
-                cancel_event=cancel_event,
-                context=invocation_context,
-                observer=observer,
-            )
+            # 调用AI API。软 deadline 只在下一次调用前切换成最终回答模式，
+            # 不取消已经在 provider 中执行的请求。
+            prompt_was_sent = task_deadline.timeout_prompt_sent
+            call_kwargs = {
+                "model": "",
+                "messages": messages,
+                "tools": enabled_tools,
+                "tool_choice": "auto",
+                "temperature": settings.ai_temperature,
+                "role": "main",
+                "cancel_event": cancel_event,
+                "context": invocation_context,
+                "observer": observer,
+            }
+            call_kwargs.update(task_deadline.prepare_call(messages))
+            if (
+                not prompt_was_sent
+                and task_deadline.timeout_prompt_sent
+                and event_callback
+            ):
+                try:
+                    await event_callback("message", messages[-1])
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
+            response = await self.api_client.call_with_retry(**call_kwargs)
             tracker.accumulate(response)
             reported_context_tokens = tracker.log_context_usage(
                 response,
@@ -508,6 +561,8 @@ class AIReviewer:
                     event_callback,
                     invocation_context=invocation_context,
                     observer=observer,
+                    cancel_event=cancel_event,
+                    deadline=task_deadline,
                 )
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -517,38 +572,57 @@ class AIReviewer:
                 )
                 return result
 
+            # 即使 provider 在 deadline 前开始、在 deadline 后返回了 tool call，
+            # 也不能执行该工具。把这轮 assistant 请求保留到累计上下文，
+            # 下一轮会追加一次 timeout prompt 并以 tools=[] 收尾。
+            if task_deadline.tools_disabled:
+                await _append_assistant_tool_turn(tool_calls)
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                review_text = response.choices[0].message.content or ""
+                result = await self._parse_or_repair_review(
+                    review_text,
+                    messages,
+                    strategy,
+                    tracker,
+                    event_callback,
+                    invocation_context=invocation_context,
+                    observer=observer,
+                    cancel_event=cancel_event,
+                    deadline=task_deadline,
+                )
+                result["token_usage"] = tracker.to_dict()
+                logger.info(
+                    "AI审查在软超时后完成最终回答（使用了{}轮对话），策略: {}",
+                    iteration,
+                    strategy,
+                )
+                return result
+
+            if task_deadline.is_expired():
+                await _append_assistant_tool_turn(tool_calls)
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                continue
+
             # 处理工具调用
-            assistant_message = response.choices[0].message
-            assistant_msg_dict = {
-                "role": "assistant",
-                "content": assistant_message.content,
-                "tool_calls": [_coerce_tool_call_to_dict(tc) for tc in tool_calls],
-            }
-
-            # DeepSeek-R1 特有：必须包含 reasoning_content
-            strategy_config = get_strategy_config()
-            if (
-                hasattr(assistant_message, "reasoning_content")
-                and assistant_message.reasoning_content
-                and strategy_config.is_model_supports_reasoning_content(
-                    "",
-                )
-            ):
-                assistant_msg_dict["reasoning_content"] = (
-                    assistant_message.reasoning_content
-                )
-
-            messages.append(assistant_msg_dict)
-
-            # 通知前端：assistant 消息（包含 tool_calls → 自动创建 ToolCall 行）
-            if event_callback:
-                try:
-                    await event_callback("message", assistant_msg_dict)
-                except Exception as exc:
-                    logger.warning("event_callback failed: {}", exc)
+            await _append_assistant_tool_turn(tool_calls)
 
             # 执行每个工具调用
-            for tool_call in tool_calls:
+            for tool_index, tool_call in enumerate(tool_calls):
+                if task_deadline.is_expired():
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls[tool_index:],
+                        event_callback=event_callback,
+                    )
+                    break
                 try:
                     # 通知前端：工具开始运行
                     if event_callback:
@@ -608,7 +682,6 @@ class AIReviewer:
                         "progress",
                         {
                             "iteration": iteration,
-                            "max_iterations": max_iterations,
                             "token_usage": tracker.to_dict(),
                             "current_tokens": reported_context_tokens,
                             "safe_context": reported_context_window,
@@ -675,71 +748,6 @@ class AIReviewer:
                         post_compress_tokens,
                     )
 
-        # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
-        logger.warning(
-            "达到最大工具调用次数 ({})，引导 AI 交付最终审查结果",
-            max_iterations,
-        )
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Finalize the review now using the system output contract and the "
-                    "evidence already gathered. Do not call more tools."
-                ),
-            }
-        )
-        await self._append_pending_user_message_if_any(
-            messages,
-            pending_user_message_callback,
-            event_callback,
-        )
-        last_response = await self.api_client.call_with_retry(
-            model="",
-            messages=messages,
-            temperature=settings.ai_temperature,
-            role="main",
-            cancel_event=cancel_event,
-            context=invocation_context,
-            observer=observer,
-        )
-        tracker.accumulate(last_response)
-        tracker.log_context_usage(
-            last_response,
-            context_window_tokens,
-            max_iterations + 1,
-        )
-        review_text = last_response.choices[0].message.content or ""
-        if event_callback:
-            try:
-                await event_callback(
-                    "message",
-                    {
-                        "role": "assistant",
-                        "content": review_text,
-                    },
-                )
-            except Exception as exc:
-                logger.warning("event_callback failed: {}", exc)
-        result = await self._parse_or_repair_review(
-            review_text,
-            messages,
-            strategy,
-            tracker,
-            event_callback=event_callback,
-            invocation_context=invocation_context,
-            observer=observer,
-        )
-        result["token_usage"] = tracker.to_dict()
-        if publication_coordinator is not None and invocation_context is not None:
-            result = await coordinate_publication(
-                publication_coordinator,
-                kind="review",
-                result=result,
-                context=invocation_context,
-            )
-        return result
-
     async def _append_pending_user_message_if_any(
         self,
         messages: list[dict[str, Any]],
@@ -798,6 +806,7 @@ class AIReviewer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -814,10 +823,11 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         self._refresh_ai_clients()
         self._refresh_runtime_config()
-        if self.tool_handler.fetch_url_tool:
-            await self.tool_handler.fetch_url_tool.reset_session()
         try:
             file_count = len(context.get("files", []))
             logger.info(
@@ -911,6 +921,7 @@ class AIReviewer:
                     publication_coordinator=publication_coordinator,
                     invocation_context=invocation_context,
                     observer=observer,
+                    deadline=task_deadline,
                 )
 
             except PromptTooLongError as e:
@@ -959,6 +970,9 @@ class AIReviewer:
                         pending_user_message_callback=pending_user_message_callback,
                         cancel_event=cancel_event,
                         publication_coordinator=publication_coordinator,
+                        invocation_context=invocation_context,
+                        observer=observer,
+                        deadline=task_deadline,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",
@@ -1034,6 +1048,7 @@ class AIReviewer:
         observer: Any = None,
         propagate_errors: bool = False,
         event_callback: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -1046,6 +1061,7 @@ class AIReviewer:
             observer: 可观测模型发送器
             propagate_errors: 是否向上抛出 provider 失败
             event_callback: 标签推荐请求/响应可观测事件回调
+            deadline: 主审查任务的共享软 deadline；到期后跳过该辅助输出契约
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
@@ -1061,4 +1077,5 @@ class AIReviewer:
             observer=observer,
             propagate_errors=propagate_errors,
             event_callback=event_callback,
+            deadline=deadline,
         )

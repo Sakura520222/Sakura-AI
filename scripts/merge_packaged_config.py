@@ -1,10 +1,14 @@
 """Three-way merge packaged YAML defaults into persistent container config.
 
-Only the two YAML files edited by the WebUI are handled here.  Sensitive and
-other mutable files (most importantly ``connection.json``) are deliberately
-outside this merge contract.  A hidden baseline in the persistent config
-volume records the previous packaged defaults so image upgrades can distinguish
-an unchanged default from an administrator override.
+The managed file list is currently empty: ``strategies.yaml`` and
+``labels.yaml`` were migrated into the ``app_config`` table (unified config
+store, 2026-08-16), whose leaf-level deep merge replaces this script's job for
+those files.  The merge machinery is kept so a future packaged YAML can opt in
+by adding its filename to ``CONFIG_FILENAMES``.  Sensitive and other mutable
+files (most importantly ``connection.json``) are deliberately outside this
+merge contract.  A hidden baseline in the persistent config volume records the
+previous packaged defaults so image upgrades can distinguish an unchanged
+default from an administrator override.
 """
 
 from __future__ import annotations
@@ -20,7 +24,9 @@ from typing import Any
 
 import yaml
 
-CONFIG_FILENAMES = ("strategies.yaml", "labels.yaml")
+# strategies.yaml/labels.yaml 已由统一配置存储接管（DB 深度合并语义），
+# 此处清单为空；如需新的打包默认 YAML，在此追加文件名即可复用合并机制。
+CONFIG_FILENAMES: tuple[str, ...] = ()
 BASELINE_DIRNAME = ".sakura-ai-packaged-baseline"
 _MISSING = object()
 
@@ -33,7 +39,9 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise ConfigMergeError(f"cannot parse YAML configuration {path}: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot parse YAML configuration {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise ConfigMergeError(f"YAML configuration root must be a mapping: {path}")
     return value
@@ -121,7 +129,9 @@ def _three_way_merge(old: Any, current: Any, new: Any, *, path: str) -> Any:
             if _same_value(old, current):
                 if new is _MISSING:
                     return _MISSING
-                raise ConfigMergeError(f"YAML type conflict at {path}: expected mapping")
+                raise ConfigMergeError(
+                    f"YAML type conflict at {path}: expected mapping"
+                )
             return copy.deepcopy(current)
         merged: dict[Any, Any] = {}
         keys: list[Any] = []
@@ -164,7 +174,9 @@ def _render_yaml(value: dict[str, Any], *, path: Path) -> str:
         )
         parsed = yaml.safe_load(rendered)
     except yaml.YAMLError as exc:
-        raise ConfigMergeError(f"cannot serialize YAML configuration {path}: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot serialize YAML configuration {path}: {exc}"
+        ) from exc
     if not isinstance(parsed, dict):
         raise ConfigMergeError(f"serialized YAML root must be a mapping: {path}")
     return rendered
@@ -253,7 +265,9 @@ def _write_batch(plans: list[_WritePlan]) -> None:
                 # Preserve the original failure; the next startup still
                 # fail-closes if a runtime file cannot be parsed.
                 pass
-        raise ConfigMergeError(f"cannot atomically update packaged configuration: {exc}") from exc
+        raise ConfigMergeError(
+            f"cannot atomically update packaged configuration: {exc}"
+        ) from exc
     finally:
         for temp_path in temp_paths:
             temp_path.unlink(missing_ok=True)
@@ -323,7 +337,9 @@ def main() -> int:
     try:
         changed = merge_packaged_defaults(args.config_dir, args.defaults_dir)
     except ConfigMergeError as exc:
-        print(f"Sakura AI config initialization failed closed: {exc}", file=os.sys.stderr)
+        print(
+            f"Sakura AI config initialization failed closed: {exc}", file=os.sys.stderr
+        )
         return 78
     for path in changed:
         print(f"Sakura AI packaged config merged: {path}")

@@ -268,7 +268,9 @@ def test_load_non_dict_json_raises(tmp_path):
         load_state(path)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="chmod permission semantics are POSIX-only")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="chmod permission semantics are POSIX-only"
+)
 def test_load_permission_denied_raises(tmp_path):
     """permission denied → StateLoadError（fail-closed，绝不当空 store，spec §8.4）。
 
@@ -790,8 +792,6 @@ ERROR_CODE_INTERRUPTED = "interrupted"
 (b) 在文件末尾追加:
 
 ```python
-
-
 def reconcile_interrupted_job(
     store: UpdateStateStore,
 ) -> tuple[UpdateStateStore, bool]:
@@ -1281,7 +1281,11 @@ import sys
 
 from sakura_ai_updater import __version__
 from sakura_ai_updater.ipc import create_app
-from sakura_ai_updater.locks import LockBusyError, acquire_process_lock, release_process_lock
+from sakura_ai_updater.locks import (
+    LockBusyError,
+    acquire_process_lock,
+    release_process_lock,
+)
 from sakura_ai_updater.socket_util import cleanup_owned_socket, prepare_socket_path
 from sakura_ai_updater.state import load_state, reconcile_interrupted_job, save_state
 
@@ -1462,9 +1466,7 @@ def test_is_valid_v1_envelope_shapes():
     assert is_valid_v1_envelope({"protocol_version": 1, "data": {}}) is False
     # updater_version 非 str
     assert (
-        is_valid_v1_envelope(
-            {"protocol_version": 1, "updater_version": 1, "data": {}}
-        )
+        is_valid_v1_envelope({"protocol_version": 1, "updater_version": 1, "data": {}})
         is False
     )
     # data 非 dict
@@ -1484,7 +1486,9 @@ async def test_get_status_returns_none_when_unreachable():
     """连不存在的 socket → None（跨平台；/version/info 据此标 disconnected）。"""
     from backend.services.updater_client import UpdaterClient
 
-    client = UpdaterClient(socket_path="/tmp/sakura-updater-not-exist.sock", timeout=1.0)
+    client = UpdaterClient(
+        socket_path="/tmp/sakura-updater-not-exist.sock", timeout=1.0
+    )
     result = await client.get_status()
     assert result is None
 
@@ -1706,7 +1710,7 @@ class UpdaterClient:
                 resp = await client.get("/v1/status")
                 resp.raise_for_status()
                 envelope = resp.json()  # malformed JSON → ValueError
-        except (httpx.HTTPError, OSError, ValueError):
+        except httpx.HTTPError, OSError, ValueError:
             return None
         if not is_valid_v1_envelope(envelope):
             return None

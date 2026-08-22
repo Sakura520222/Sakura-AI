@@ -3,12 +3,54 @@
 import pytest
 
 from backend.services.agent_team.context_compressor import (
-    AgentTeamContextCompressor,
-    _has_missing_tool_results,
-    _split_message_blocks,
+    _from_unified_messages,
+    compress_agent_team_messages,
 )
 from backend.services.agent_team.fullstack_expert import _get_missing_tool_calls
+from backend.services.agent_team.iteration_loop import _normalize_legacy_messages
+from backend.services.agent_team.prompt_config import (
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    build_implementation_user_message,
+)
+from backend.services.ai_reviewer.unified_client import messages_from_legacy
 from backend.workers.agent_team_worker import _parse_rate_limit_reset_at
+
+
+def test_legacy_fullstack_resume_replaces_only_system_and_initial_user():
+    initial_user = build_implementation_user_message(
+        task_title="Current task",
+        task_summary="Current objective",
+        source_type="issue",
+        source_issue_number=7,
+    )
+    guidance = {
+        "role": "user",
+        "content": "keep this guidance exactly",
+        "metadata": {"guidance_ids": [42]},
+    }
+    assistant = {"role": "assistant", "content": "historical response"}
+    tool = {"role": "tool", "content": "historical tool result"}
+
+    normalized = _normalize_legacy_messages(
+        [
+            {"role": "system", "content": "old fullstack policy"},
+            {"role": "user", "content": "old dynamic initial prompt"},
+            assistant,
+            guidance,
+            tool,
+        ],
+        initial_user_message=initial_user,
+    )
+
+    assert normalized[0] == {
+        "role": "system",
+        "content": IMPLEMENTATION_SYSTEM_PROMPT,
+    }
+    assert normalized[1] == {"role": "user", "content": initial_user}
+    assert normalized[2] is not assistant
+    assert normalized[2] == assistant
+    assert normalized[3] == guidance
+    assert normalized[4] == tool
 
 
 def test_missing_tool_calls_skip_existing_tool_results():
@@ -53,8 +95,10 @@ def test_parse_rate_limit_reset_at_from_quota_error():
     assert reset_at.second == 26
 
 
-def test_context_compressor_keeps_tool_call_result_blocks_together():
+def test_to_unified_round_trip_preserves_structure():
+    """dict -> UnifiedMessage -> dict 往返保留关键字段。"""
     messages = [
+        {"role": "system", "content": "sys"},
         {"role": "user", "content": "task"},
         {
             "role": "assistant",
@@ -62,7 +106,7 @@ def test_context_compressor_keeps_tool_call_result_blocks_together():
                 {
                     "id": "call_1",
                     "type": "function",
-                    "function": {"name": "read_file", "arguments": "{}"},
+                    "function": {"name": "read_file", "arguments": '{"path": "a.py"}'},
                 }
             ],
         },
@@ -70,15 +114,30 @@ def test_context_compressor_keeps_tool_call_result_blocks_together():
         {"role": "assistant", "content": "done"},
     ]
 
-    blocks = _split_message_blocks(messages)
+    unified = messages_from_legacy(messages)
+    assert len(unified) == 5
+    assert unified[0].role == "system"
+    assert unified[2].tool_calls is not None
+    assert unified[2].tool_calls[0].name == "read_file"
+    assert unified[2].tool_calls[0].arguments == '{"path": "a.py"}'
+    assert unified[3].tool_call_id == "call_1"
 
-    assert len(blocks) == 3
-    assert blocks[1][0]["role"] == "assistant"
-    assert blocks[1][1]["role"] == "tool"
-    assert blocks[1][1]["tool_call_id"] == "call_1"
+    back = _from_unified_messages(unified)
+    assert len(back) == 5
+    assert back[0]["role"] == "system"
+    assert back[2]["tool_calls"][0]["function"]["name"] == "read_file"
+    assert back[3]["tool_call_id"] == "call_1"
 
 
-def test_context_compressor_detects_missing_tool_results():
+@pytest.mark.asyncio
+async def test_compress_agent_team_messages_skips_when_no_candidate():
+    messages = [{"role": "user", "content": "hello"}]
+    result = await compress_agent_team_messages(messages, candidate=None)
+    assert result is messages
+
+
+@pytest.mark.asyncio
+async def test_compress_agent_team_messages_skips_missing_tool_results():
     messages = [
         {
             "role": "assistant",
@@ -91,59 +150,5 @@ def test_context_compressor_detects_missing_tool_results():
             ],
         }
     ]
-
-    assert _has_missing_tool_results(messages) is True
-
-
-@pytest.mark.asyncio
-async def test_context_compressor_does_not_compress_missing_tool_results(monkeypatch):
-    compressor = AgentTeamContextCompressor("tiny-model")
-
-    async def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("compressor should not summarize missing tool results")
-
-    monkeypatch.setattr(compressor, "compress_messages", fail_if_called)
-    messages = [
-        {"role": "system", "content": "sys"},
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "read_file", "arguments": "{}"},
-                }
-            ],
-        },
-    ]
-
-    assert await compressor.build_model_messages(messages) == messages
-
-
-def test_context_compressor_resolve_safe_context_prefers_context_window_tokens(
-    monkeypatch,
-):
-    """新版 unified config 解析的 context_window_tokens 优先于 model_context 兜底。"""
-    compressor = AgentTeamContextCompressor("any-model", context_window_tokens=800_000)
-
-    def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("应使用 context_window_tokens，不应回退 model_context")
-
-    monkeypatch.setattr(
-        compressor.model_context_mgr, "calculate_safe_context", fail_if_called
-    )
-    # 800K tokens * 0.8 = 640_000 tokens
-    assert compressor._resolve_safe_context(0.8) == 640_000
-
-
-def test_context_compressor_resolve_safe_context_falls_back_without_override(
-    monkeypatch,
-):
-    """未注入 context_window_tokens 时回退 model_context。"""
-    compressor = AgentTeamContextCompressor("any-model")
-    monkeypatch.setattr(
-        compressor.model_context_mgr,
-        "calculate_safe_context",
-        lambda *_a, **_k: 99_999,
-    )
-    assert compressor._resolve_safe_context(0.8) == 99_999
+    result = await compress_agent_team_messages(messages, candidate=object())
+    assert result is messages

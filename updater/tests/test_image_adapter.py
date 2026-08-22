@@ -14,7 +14,9 @@ from sakura_ai_updater.adapters.image import (
 
 
 class _Process:
-    def __init__(self, returncode: int = 0, stdout: bytes = b"ok\n", stderr: bytes = b"") -> None:
+    def __init__(
+        self, returncode: int = 0, stdout: bytes = b"ok\n", stderr: bytes = b""
+    ) -> None:
         self.returncode = returncode
         self._stdout = stdout
         self._stderr = stderr
@@ -49,7 +51,9 @@ async def test_pull_failure_does_not_touch_deployment_env(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_activate_writes_env_and_uses_explicit_compose_env_file(tmp_path, monkeypatch):
+async def test_activate_writes_env_and_uses_explicit_compose_env_file(
+    tmp_path, monkeypatch
+):
     env = tmp_path / "deployment.env"
     env.write_text(
         "SAKURA_AI_IMAGE=old:image\nCOMPOSE_PROJECT_NAME=sakura-ai\nOTHER=keep\n",
@@ -64,7 +68,9 @@ async def test_activate_writes_env_and_uses_explicit_compose_env_file(tmp_path, 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     adapter = ImageAdapter("/srv/docker-compose.prod.yml", str(env))
     await adapter.activate("ghcr.io/example/app:v3.1.0")
-    assert "SAKURA_AI_IMAGE=ghcr.io/example/app:v3.1.0" in env.read_text(encoding="utf-8")
+    assert "SAKURA_AI_IMAGE=ghcr.io/example/app:v3.1.0" in env.read_text(
+        encoding="utf-8"
+    )
     assert calls == [
         (
             "docker",
@@ -110,7 +116,9 @@ async def test_activate_persists_development_tag_and_digest(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_activate_rejects_invalid_persisted_compose_project(tmp_path, monkeypatch):
+async def test_activate_rejects_invalid_persisted_compose_project(
+    tmp_path, monkeypatch
+):
     env = tmp_path / "deployment.env"
     env.write_text(
         "SAKURA_AI_IMAGE=old:image\nCOMPOSE_PROJECT_NAME=../../unsafe\n",

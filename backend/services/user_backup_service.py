@@ -4,7 +4,6 @@
 两步验证和 Passkey，不包含仓库订阅、配额使用日志、支付或审计数据。
 """
 
-
 from __future__ import annotations
 
 import hashlib

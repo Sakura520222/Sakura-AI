@@ -126,3 +126,93 @@ def test_provider_catalog_serializes_model_capabilities():
     assert claude["capabilities"]["vision"] is True
     assert gemini["capabilities"]["top_k"] is True
     assert gemini["context_window_tokens"] == 1_048_576
+
+
+@pytest.mark.asyncio
+async def test_account_save_strips_surrounding_whitespace_from_api_key(monkeypatch):
+    """带空白字符的 API Key 应在落库前规范化（Issue #502）。"""
+    from backend.api.v1 import config as config_module
+    from backend.core.ai_protocol import account_store
+
+    saved: dict[str, str] = {}
+
+    async def fake_get_account(account_id):
+        return None
+
+    async def fake_save_account(account):
+        saved["api_key"] = account.api_key
+        return account
+
+    monkeypatch.setattr(account_store, "get_account", fake_get_account)
+    monkeypatch.setattr(account_store, "save_account", fake_save_account)
+    monkeypatch.setattr(
+        config_module, "validate_provider_base_url", lambda *a, **k: (True, "")
+    )
+
+    response = await config_module.save_ai_account(
+        AccountSaveRequest(
+            name="Public Relay",
+            provider_id="custom",
+            api_base="https://example.com/v1",
+            api_key="  sk-relay-token\n",
+        ),
+        {"sub": "tester"},
+    )
+    assert response.status_code == 200
+    assert saved["api_key"] == "sk-relay-token"
+
+
+@pytest.mark.asyncio
+async def test_account_save_keeps_existing_key_when_masked(monkeypatch):
+    """api_key 为脱敏占位时应保留库中原值（Issue #502 回归保护）。"""
+    from backend.api.v1 import config as config_module
+    from backend.core.ai_protocol import account_store
+
+    saved: dict[str, str] = {}
+
+    async def fake_get_account(account_id):
+        return ProviderAccount(
+            id=account_id,
+            name="Old Relay",
+            provider_id="custom",
+            api_base="https://example.com/v1",
+            api_key="sk-old-token",
+        )
+
+    async def fake_save_account(account):
+        saved["api_key"] = account.api_key
+        return account
+
+    monkeypatch.setattr(account_store, "get_account", fake_get_account)
+    monkeypatch.setattr(account_store, "save_account", fake_save_account)
+    monkeypatch.setattr(
+        config_module, "validate_provider_base_url", lambda *a, **k: (True, "")
+    )
+
+    response = await config_module.save_ai_account(
+        AccountSaveRequest(
+            id="acc_relay",
+            name="Public Relay",
+            provider_id="custom",
+            api_base="https://example.com/v1",
+            api_key="****",
+        ),
+        {"sub": "tester"},
+    )
+    assert response.status_code == 200
+    assert saved["api_key"] == "sk-old-token"
+
+
+def test_build_candidate_from_account_strips_stored_api_key_whitespace():
+    """存量账号中带首尾空白的 key 应在构造 candidate 时规范化（Issue #502）。"""
+    account = ProviderAccount(
+        id="acc_legacy",
+        name="Legacy Whitespace",
+        provider_id="openai",
+        protocol=ProtocolFamily.OPENAI_COMPATIBLE.value,
+        api_key="  sk-legacy-token\n",
+        default_model="gpt-5.6-sol",
+    )
+    candidate = _build_candidate_from_account(account, "gpt-5.6-sol")
+    assert candidate is not None
+    assert candidate.credential == "sk-legacy-token"

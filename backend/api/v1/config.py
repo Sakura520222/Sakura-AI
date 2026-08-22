@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -23,22 +22,45 @@ from backend.core.config import (
     AI_STRATEGY_CONFIG_KEYS,
     get_label_config,
     get_settings,
-    reload_label_config,
-    reload_strategy_config,
     update_settings_field,
 )
+from backend.core.config_sections import SECTION_REGISTRY
 from backend.core.setup_service import setup_service
 from backend.models.database import AppConfig
+from backend.services.label_service import label_service
+from backend.services.section_config_service import section_config_service
 from backend.webui.deps import get_db
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
 _config_lock = asyncio.Lock()
 
-# 配置文件绝对路径（不依赖工作目录）
-_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
-_STRATEGIES_PATH = _CONFIG_DIR / "strategies.yaml"
-_LABELS_PATH = _CONFIG_DIR / "labels.yaml"
+# 策略 section 名 → 统一配置节键（与 SECTION_REGISTRY 对齐）
+_STRATEGY_SECTION_KEY_MAP = {
+    spec["section"]: key
+    for key, spec in SECTION_REGISTRY.items()
+    if spec["target"] == "strategy"
+}
+
+
+def _normalize_label_definitions(
+    labels: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Convert the legacy list payload to the keyed section representation."""
+    normalized: dict[str, dict[str, Any]] = {}
+    for index, label in enumerate(labels, start=1):
+        if not isinstance(label, dict):
+            raise ValueError(f"第 {index} 个标签定义必须是对象")
+        name = label.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"第 {index} 个标签定义缺少有效的 name")
+        name = name.strip()
+        if name in normalized:
+            raise ValueError(f"标签名称重复: {name}")
+        normalized[name] = {
+            key: value for key, value in label.items() if key != "name"
+        }
+    return normalized
 
 
 class AIModelsRequest(BaseModel):
@@ -53,7 +75,7 @@ def _mask_sensitive(value: str, key: str) -> str:
     if key.startswith("ai_account."):
         try:
             account = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return "****"
         if not isinstance(account, dict):
             return "****"
@@ -192,8 +214,9 @@ async def save_ai_account(
     account_id = (body.id or "").strip()
     existing = await account_store.get_account(account_id) if account_id else None
 
-    # API key 处理：空或脱敏 → 保留原值 / keep existing when blank or masked
-    api_key = body.api_key
+    # API key 处理：空或脱敏 → 保留原值；新 key 去除首尾空白
+    # / keep existing when blank or masked; strip surrounding whitespace from new keys
+    api_key = body.api_key.strip()
     if (not api_key or "****" in api_key) and existing is not None:
         api_key = existing.api_key
 
@@ -384,7 +407,7 @@ async def put_ai_strategy_settings(
             lo, hi = _AI_STRATEGY_RANGES[key]
             try:
                 numeric = float(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return error_response(f"{key} 取值无效")
             if not (lo <= numeric <= hi):
                 return error_response(f"{key} 取值需在 {lo}~{hi} 之间")
@@ -563,6 +586,12 @@ async def update_general_config(
     configs = body.configs
     if not configs:
         return error_response("配置内容不能为空")
+    section_keys = sorted(set(configs).intersection(SECTION_REGISTRY))
+    if section_keys:
+        return error_response(
+            "策略与标签配置节必须通过专用配置接口更新",
+            detail=", ".join(section_keys),
+        )
     reserved_keys = {
         key
         for key in configs
@@ -616,35 +645,30 @@ async def get_strategies(user: dict = Depends(require_api_super_admin)):
 async def update_strategy_section(
     section: str,
     body: ConfigStrategyUpdateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """更新策略配置的某个 section"""
+    """更新策略配置的某个 section（统一节配置存储，PATCH 合并语义）"""
     data = body.data
     if not data:
         return error_response("配置内容不能为空")
 
+    section_key = _STRATEGY_SECTION_KEY_MAP.get(section)
+    if section_key is None:
+        return error_response(f"未知的策略 section: {section}")
+
     try:
-        import yaml
-
-        async with _config_lock:
-            config_content = await asyncio.to_thread(
-                _STRATEGIES_PATH.read_text, encoding="utf-8"
-            )
-            config = yaml.safe_load(config_content) or {}
-
-            if section not in config:
-                return error_response(f"未知的策略 section: {section}")
-
-            config[section].update(data)
-
-            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(_STRATEGIES_PATH.write_text, dump, encoding="utf-8")
-
-            # 重载（在锁内保证原子性）
-            reload_strategy_config()
-
-        logger.info(f"API 更新策略配置: section={section}, by={user['sub']}")
+        result = await section_config_service.save_section(
+            db, section_key, data, mode="patch"
+        )
+        logger.info(
+            f"API 更新策略配置: section={section}, changed={result['changed']}, "
+            f"by={user['sub']}"
+        )
         return success_response(message=f"策略配置 {section} 已更新")
+    except ValueError as e:
+        logger.warning(f"API 更新策略配置校验失败: section={section}, error={e}")
+        return error_response(f"配置校验失败: {e}")
     except Exception as e:
         logger.error(f"更新策略配置失败: {e}")
         return error_response("更新策略配置失败")
@@ -657,8 +681,8 @@ async def get_labels(user: dict = Depends(require_api_super_admin)):
         config = get_label_config()
         return success_response(
             data={
-                "labels": config.get("labels", []),
-                "recommendation": config.get("recommendation", {}),
+                "labels": config.get_labels(),
+                "recommendation": config.get_recommendation_settings(),
             }
         )
     except Exception as e:
@@ -669,31 +693,25 @@ async def get_labels(user: dict = Depends(require_api_super_admin)):
 @router.put("/labels")
 async def update_labels(
     body: ConfigLabelsUpdateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """更新标签定义（全量覆盖）"""
+    """更新标签定义（全量覆盖，统一节配置存储）"""
     labels = body.labels
     if not labels:
         return error_response("标签列表不能为空")
 
     try:
-        import yaml
-
-        async with _config_lock:
-            config_content = await asyncio.to_thread(
-                _LABELS_PATH.read_text, encoding="utf-8"
-            )
-            config = yaml.safe_load(config_content) or {}
-
-            config["labels"] = labels
-
-            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(_LABELS_PATH.write_text, dump, encoding="utf-8")
-
-        reload_label_config()
-
+        label_definitions = _normalize_label_definitions(labels)
+        await section_config_service.save_section(
+            db, "label.definitions", label_definitions
+        )
+        label_service.reload_labels()
         logger.info(f"API 更新标签定义, by={user['sub']}")
         return success_response(message="标签定义已更新")
+    except ValueError as e:
+        logger.warning(f"API 更新标签定义校验失败: {e}")
+        return error_response(f"标签校验失败: {e}")
     except Exception as e:
         logger.error(f"更新标签配置失败: {e}")
         return error_response("更新标签配置失败")
@@ -702,31 +720,23 @@ async def update_labels(
 @router.patch("/labels/recommendation")
 async def update_label_recommendation(
     body: ConfigLabelRecommendationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """更新标签推荐设置"""
+    """更新标签推荐设置（统一节配置存储）"""
     recommendation = body.recommendation
     if not recommendation:
         return error_response("推荐设置不能为空")
 
     try:
-        import yaml
-
-        async with _config_lock:
-            config_content = await asyncio.to_thread(
-                _LABELS_PATH.read_text, encoding="utf-8"
-            )
-            config = yaml.safe_load(config_content) or {}
-
-            config["recommendation"] = recommendation
-
-            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(_LABELS_PATH.write_text, dump, encoding="utf-8")
-
-        reload_label_config()
-
+        await section_config_service.save_section(
+            db, "label.recommendation", recommendation
+        )
         logger.info(f"API 更新标签推荐设置, by={user['sub']}")
         return success_response(message="标签推荐设置已更新")
+    except ValueError as e:
+        logger.warning(f"API 更新标签推荐设置校验失败: {e}")
+        return error_response(f"推荐设置校验失败: {e}")
     except Exception as e:
         logger.error(f"更新推荐设置失败: {e}")
         return error_response("更新推荐设置失败")

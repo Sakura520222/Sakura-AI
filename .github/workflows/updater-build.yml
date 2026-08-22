@@ -59,7 +59,7 @@ jobs:
       - name: Build onefile with outer GLIBC gate
         env:
           BUILD_IMAGE: >-
-            python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db
+            python:3.14-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52
           OUTPUT_DIR: ${{ github.workspace }}/dist/updater-${{ matrix.arch }}
         shell: bash
         run: |
@@ -80,7 +80,7 @@ jobs:
       - name: Run fresh runtime lifecycle smoke
         env:
           RUNTIME_IMAGE: >-
-            debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792
+            debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
           BINARY_PATH: ${{ github.workspace }}/dist/updater-${{ matrix.arch }}/${{ matrix.asset }}
           SMOKE_HELPER: ${{ github.workspace }}/updater/build/run-fresh-runtime-smoke.sh
         shell: bash
@@ -99,7 +99,7 @@ jobs:
             bash /usr/local/bin/run-fresh-runtime-smoke.sh /mnt/sakura-ai-updater
 
       - name: Upload updater artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sakura-ai-updater-${{ matrix.arch }}-${{ github.run_id }}
           path: dist/updater-${{ matrix.arch }}/${{ matrix.asset }}
@@ -115,13 +115,13 @@ jobs:
       contents: write
     steps:
       - name: Download amd64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: sakura-ai-updater-amd64-${{ github.run_id }}
           path: release-assets/amd64
 
       - name: Download arm64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: sakura-ai-updater-arm64-${{ github.run_id }}
           path: release-assets/arm64

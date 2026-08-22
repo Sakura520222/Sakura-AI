@@ -6,6 +6,7 @@
 - 定期合并更新 SAKURA.md 和 memory.md / Periodically consolidate and update files
 - 读取上下文注入审查 prompt / Read context for review prompt injection
 """
+
 import asyncio
 import functools
 import hashlib
@@ -14,7 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_sakura_memory_config
 from backend.core.time_service import (
     format_rfc3339,
     get_time_service,
@@ -269,62 +270,13 @@ class SakuraMemoryService:
         self._default_model = ""
 
     def _get_config(self) -> dict:
-        """获取 sakura_memory 配置，优先使用 DB/WebUI 配置 / Get config, DB/WebUI overrides yaml"""
-        ce_config = get_strategy_config().get_context_enhancement_config()
-        yaml_config = ce_config.get("sakura_memory", {})
-        settings = get_settings()
+        """获取 sakura_memory 配置 / Get sakura_memory config
 
-        return {
-            "enabled": settings.sakura_memory_enabled,
-            "reflection": {
-                "enabled": settings.sakura_reflection_enabled,
-                "model": "",
-                "prompt_template": yaml_config.get("reflection", {}).get(
-                    "prompt_template"
-                ),
-                "max_comments": yaml_config.get("reflection", {}).get(
-                    "max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS
-                ),
-                "max_changed_files": yaml_config.get("reflection", {}).get(
-                    "max_changed_files", _DEFAULT_REFLECTION_MAX_CHANGED_FILES
-                ),
-                "max_new_commits": yaml_config.get("reflection", {}).get(
-                    "max_new_commits", _DEFAULT_REFLECTION_MAX_NEW_COMMITS
-                ),
-            },
-            "issue_reflection": {
-                "enabled": settings.sakura_issue_reflection_enabled,
-                "model": "",
-                "prompt_template": yaml_config.get("issue_reflection", {}).get(
-                    "prompt_template"
-                ),
-            },
-            "consolidation": {
-                "interval": settings.sakura_consolidation_interval,
-                "model": "",
-                "max_memory_chars": settings.sakura_max_memory_chars,
-                "max_sakura_chars": settings.sakura_max_sakura_chars,
-                "cleanup_old_reflections": yaml_config.get("consolidation", {}).get(
-                    "cleanup_old_reflections", False
-                ),
-                "partial_commit": yaml_config.get("consolidation", {}).get(
-                    "partial_commit", False
-                ),
-            },
-            "knowledge_extraction": {
-                "enabled": settings.sakura_knowledge_extraction_enabled,
-                "min_reflections": settings.sakura_extraction_min_reflections,
-                "max_iterations": settings.sakura_extraction_max_iterations,
-            },
-            "initialization": {
-                "auto_init": settings.sakura_auto_init,
-                "init_commit_message": yaml_config.get("initialization", {}).get(
-                    "init_commit_message",
-                    "chore: initialize .sakura/ directory for Sakura AI",
-                ),
-            },
-            "directory_convention": yaml_config.get("directory_convention", {}),
-        }
+        单一事实源：``strategy.context_enhancement.sakura_memory`` 嵌套节
+        （内置默认 ← DB 节覆盖，经 config_sections 深度合并），
+        平铺 Settings 键已随双轨合并移除；模型一律由业务角色解析。
+        """
+        return get_sakura_memory_config()
 
     def _get_model(self, config_section: dict) -> str:
         """模型由绑定的业务角色解析；忽略历史模型覆盖配置。"""
@@ -986,12 +938,6 @@ class SakuraMemoryService:
             max_memory = consolidation_config.get("max_memory_chars", 2000)
             model = self._get_model(consolidation_config)
 
-            settings = get_settings()
-            max_iterations = (
-                settings.sakura_consolidation_max_iterations
-                or consolidation_config.get("max_iterations", 20)
-            )
-
             from backend.services.sakura_consolidation_agent import (
                 SakuraConsolidationAgent,
             )
@@ -1010,7 +956,6 @@ class SakuraMemoryService:
                 max_chars=max_sakura,
                 languages=lang_str,
                 model=model,
-                max_iterations=max_iterations,
             )
             for k, v in sakura_changes.items():
                 files[self._normalize_sakura_path(k)] = v
@@ -1026,7 +971,6 @@ class SakuraMemoryService:
                 max_chars=max_memory,
                 languages=lang_str,
                 model=model,
-                max_iterations=max_iterations,
             )
             for k, v in memory_changes.items():
                 files[self._normalize_sakura_path(k)] = v
@@ -1113,27 +1057,23 @@ class SakuraMemoryService:
         """周期性知识提取检查 / Periodic knowledge extraction check
 
         参照合并（consolidation）的 `_check_and_run()` 模式，
-        基于 `last_extraction_count` 与 `sakura_extraction_min_reflections` 间隔
-        判断是否需要触发下一次知识提取。
+        基于 `last_extraction_count` 与嵌套节
+        `knowledge_extraction.min_reflections` 间隔判断是否需要触发下一次知识提取。
         """
         try:
             config = self._get_config()
 
-            # 检查配置是否启用（settings 优先） / Check enabled (settings first)
-            from backend.core.config import get_settings
-
-            settings = get_settings()
-            if not settings.sakura_knowledge_extraction_enabled:
+            # 检查配置是否启用 / Check enabled
+            knowledge_config = config.get("knowledge_extraction", {})
+            if not knowledge_config.get("enabled", True):
                 logger.info(
-                    "[extract] 跳过知识提取: {} - 功能已禁用 (sakura_knowledge_extraction_enabled=False)",
+                    "[extract] 跳过知识提取: {} - 功能已禁用 (knowledge_extraction.enabled=False)",
                     repo_full_name,
                 )
                 return
 
             # 周期性触发：基于间隔判断 / Periodic trigger: interval-based check
-            interval = settings.sakura_extraction_min_reflections or config.get(
-                "knowledge_extraction", {}
-            ).get("min_reflections", 10)
+            interval = knowledge_config.get("min_reflections", 15)
             since_last = reflection_count - (state.last_extraction_count or 0)
             if since_last < interval:
                 logger.debug(

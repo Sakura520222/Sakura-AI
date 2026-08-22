@@ -248,7 +248,7 @@ async def trigger_scan(
                 scan_id = await worker.create_scan_record(
                     repo_name=repo_name,
                     trigger_type="manual",
-                    triggered_by=user.get("username", "webui"),
+                    triggered_by=f"webui:{user.get('user_id', '')}",
                 )
                 create_registered_background_task(
                     worker.process_scan(scan_id), "scan_manual_webui"

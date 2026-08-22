@@ -754,9 +754,15 @@ class ActivityCanonicalContextRevision(Base):
         ),
         nullable=True,
     )
+    # 回溯指针：use_alter 打破 canonical↔operation 表排序环 /
+    # Backpointer: use_alter breaks the canonical↔operation sort cycle.
     created_context_operation_id = Column(
         Integer,
-        ForeignKey(f"{OBSERVABILITY_PREFIX}context_operations.id", ondelete="SET NULL"),
+        ForeignKey(
+            f"{OBSERVABILITY_PREFIX}context_operations.id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
         nullable=True,
     )
     status = Column(String(50), nullable=False, default="ready")
@@ -780,14 +786,24 @@ class ActivityContextSnapshot(Base):
     __tablename__ = f"{OBSERVABILITY_PREFIX}context_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # 回溯指针：use_alter 打破 attempts/operation↔snapshot 表排序环 /
+    # Backpointers: use_alter breaks the attempts/operation↔snapshot sort cycles.
     attempt_id = Column(
         Integer,
-        ForeignKey(f"{OBSERVABILITY_PREFIX}model_attempts.id", ondelete="SET NULL"),
+        ForeignKey(
+            f"{OBSERVABILITY_PREFIX}model_attempts.id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
         nullable=True,
     )
     context_operation_id = Column(
         Integer,
-        ForeignKey(f"{OBSERVABILITY_PREFIX}context_operations.id", ondelete="SET NULL"),
+        ForeignKey(
+            f"{OBSERVABILITY_PREFIX}context_operations.id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
         nullable=True,
     )
     context_revision_id = Column(

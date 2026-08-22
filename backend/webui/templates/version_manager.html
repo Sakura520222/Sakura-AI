@@ -143,8 +143,42 @@
     <div id="readiness-target" class="font-mono text-sm text-gray-600 dark:text-gray-300"></div>
     <ul id="readiness-checks" class="mt-3 space-y-1 text-xs text-gray-500"></ul>
   </section>
+</div>
 
-  <section id="registry-catalog" class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6" aria-labelledby="registry-catalog-title">
+{# Release 列表（左列）与 GHCR 镜像目录（右列）并排：两列卡片严格等高（75vh），
+   列表区用 flex-1 填满卡片并独立滚动，不把整页高度撑出去；窄屏退化为上下堆叠。 #}
+<div class="max-w-6xl mx-auto px-4 pb-6">
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+  <section id="release-history" class="min-w-0 flex h-[75vh] flex-col bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6" aria-labelledby="release-history-title">
+    <h2 id="release-history-title" class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.release_history") }}</h2>
+    <div class="mt-4 min-h-0 flex-1 overflow-y-auto pr-1 space-y-3">
+      {% if not releases %}
+      <div class="text-sm text-gray-500">{{ _("version_manager.no_releases") }}</div>
+      {% endif %}
+      {% for rel in releases %}
+      <article class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+        <header class="flex items-center justify-between mb-2">
+          <h3 class="font-mono font-semibold text-gray-800 dark:text-gray-100">v{{ rel.version }}</h3>
+          {% if rel.version == version_info.latest_version and version_info.update_available %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">{{ _("version_manager.latest") }}</span>
+          {% elif rel.version == version_info.current_version %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _("version_manager.current") }}</span>
+          {% endif %}
+        </header>
+        <div class="text-xs text-gray-400 mb-3">{{ rel.published_at|format_datetime_short if rel.published_at else "—" }}</div>
+        {# data-markdown：前端 marked + DOMPurify 自动渲染（base.html 管线）。
+           Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
+        <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>
+        {% if rel.html_url %}
+         <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
+           class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">{{ _("version_manager.view_release") }}</a>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="registry-catalog" class="min-w-0 flex h-[75vh] flex-col bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6" aria-labelledby="registry-catalog-title">
     <div class="flex items-center justify-between gap-3">
       <h2 id="registry-catalog-title" class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.registry_catalog") }}</h2>
       <span id="registry-catalog-status" class="text-xs text-gray-500" role="status" aria-live="polite"></span>
@@ -154,38 +188,11 @@
       <button id="registry-tab-development" type="button" role="tab" aria-selected="false" aria-controls="registry-panel-development" class="rounded-xl border px-3 py-2 text-sm">{{ _("version_manager.channel_development") }}</button>
       <button id="registry-tab-other" type="button" role="tab" aria-selected="false" aria-controls="registry-panel-other" class="rounded-xl border px-3 py-2 text-sm">{{ _("version_manager.channel_other") }}</button>
     </div>
-    <div id="registry-panel-stable" role="tabpanel" aria-labelledby="registry-tab-stable" class="mt-4"></div>
-    <div id="registry-panel-development" role="tabpanel" aria-labelledby="registry-tab-development" class="mt-4 hidden"></div>
-    <div id="registry-panel-other" role="tabpanel" aria-labelledby="registry-tab-other" class="mt-4 hidden"></div>
+    <div id="registry-panel-stable" role="tabpanel" aria-labelledby="registry-tab-stable" class="mt-4 flex min-h-0 flex-1 flex-col"></div>
+    <div id="registry-panel-development" role="tabpanel" aria-labelledby="registry-tab-development" class="mt-4 hidden flex min-h-0 flex-1 flex-col"></div>
+    <div id="registry-panel-other" role="tabpanel" aria-labelledby="registry-tab-other" class="mt-4 hidden flex min-h-0 flex-1 flex-col"></div>
   </section>
-
-  {# Release 列表 / Release list（已按 SemVer 降序） #}
-  <section class="space-y-4">
-    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">{{ _("version_manager.release_history") }}</h2>
-    {% if not releases %}
-    <div class="text-sm text-gray-500">{{ _("version_manager.no_releases") }}</div>
-    {% endif %}
-    {% for rel in releases %}
-    <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-sakura-200/50 dark:border-sakura-800/30 p-6">
-      <header class="flex items-center justify-between mb-2">
-        <h3 class="font-mono font-semibold text-gray-800 dark:text-gray-100">v{{ rel.version }}</h3>
-        {% if rel.version == version_info.latest_version and version_info.update_available %}
-        <span class="text-xs px-2 py-0.5 rounded-full bg-sakura-100 text-sakura-700 dark:bg-sakura-900/40 dark:text-sakura-300">{{ _("version_manager.latest") }}</span>
-        {% elif rel.version == version_info.current_version %}
-        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _("version_manager.current") }}</span>
-        {% endif %}
-      </header>
-      <div class="text-xs text-gray-400 mb-3">{{ rel.published_at|format_datetime_short if rel.published_at else "—" }}</div>
-      {# data-markdown：前端 marked + DOMPurify 自动渲染（base.html 管线）。
-         Jinja2 默认 escape 保证 rel.body 作为 textContent 安全注入。 #}
-      <div data-markdown class="prose dark:prose-invert max-w-none text-sm">{{ rel.body }}</div>
-      {% if rel.html_url %}
-       <a href="{{ rel.html_url }}" target="_blank" rel="noopener"
-         class="inline-block mt-3 text-xs text-sakura-600 dark:text-sakura-400 hover:underline">{{ _("version_manager.view_release") }}</a>
-      {% endif %}
-    </article>
-    {% endfor %}
-  </section>
+  </div>
 </div>
 
 <script>
@@ -254,10 +261,13 @@ function renderRegistryPanel(channel) {
     panel.appendChild(empty);
     return;
   }
+  // 与左列 Release 列表同款：行条目放进填满面板的独立滚动容器。
+  const viewport = document.createElement('div');
+  viewport.className = 'min-h-0 flex-1 overflow-y-auto pr-1 space-y-3';
   images.forEach((image) => {
     const isCurrent = isCurrentRegistryImage(image);
     const row = document.createElement('article');
-    row.className = 'mb-3 rounded-xl border border-gray-200 p-3 dark:border-gray-700';
+    row.className = 'rounded-xl border border-gray-200 p-3 dark:border-gray-700';
     const title = document.createElement('div');
     title.className = 'flex items-center justify-between gap-2';
     const tag = document.createElement('span');
@@ -298,8 +308,9 @@ function renderRegistryPanel(channel) {
       digest: registryText(image.digest), aliases: Array.isArray(image.tags) ? image.tags.join(', ') : '—'
     });
     row.appendChild(details);
-    panel.appendChild(row);
+    viewport.appendChild(row);
   });
+  panel.appendChild(viewport);
 }
 
 function selectRegistryTab(channel) {

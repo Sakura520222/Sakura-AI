@@ -12,6 +12,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
+    get_sakura_memory_config,
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
@@ -30,6 +31,7 @@ from backend.models.database import (
 )
 from backend.services.ai_reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_task_deadline import AITaskDeadline
 from backend.services.check_run_service import (
     CheckRunService,
     ReviewProgressSnapshot,
@@ -49,6 +51,17 @@ settings = get_settings()
 
 # 审查并发控制信号量
 _review_semaphore: asyncio.Semaphore | None = None
+
+
+def _reflection_is_admissible(
+    sm_config: dict[str, Any], task_deadline: AITaskDeadline
+) -> bool:
+    """Return whether the optional PR reflection may start within the budget."""
+    return bool(
+        sm_config.get("enabled", True)
+        and sm_config.get("reflection", {}).get("enabled", True)
+        and not task_deadline.is_expired()
+    )
 
 
 async def _get_review_semaphore() -> asyncio.Semaphore:
@@ -319,6 +332,16 @@ class ReviewWorker:
         """Return whether a task has entered the post-analysis reporting stage."""
         return getattr(self, "_task_stages", {}).get(task_key) == "reporting"
 
+    def is_task_active(self, task_key: str) -> bool:
+        """Return whether this process has a registered task for ``task_key``.
+
+        The registration is read-only and includes tasks waiting for the review
+        semaphore.  Incremental queue stale detection can use it to distinguish
+        a live, slow worker from a persisted zombie review; after a process
+        restart there is no registration and the queue keeps its age fallback.
+        """
+        return task_key in getattr(self, "_cancel_events", {})
+
     def cancel_task(self, task_key: str) -> bool:
         """Signal cancellation for a PR's review task(s). Called from webhook.
 
@@ -460,12 +483,22 @@ class ReviewWorker:
         except Exception as exc:
             logger.debug("持久化 error_reference 失败: {}", exc)
 
-    async def process_review_task(self, pr_info: dict[str, Any]) -> str:
+    async def process_review_task(
+        self,
+        pr_info: dict[str, Any],
+        *,
+        deadline: AITaskDeadline | None = None,
+    ) -> str:
         """处理审查任务"""
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         task_id = str(uuid.uuid4())[
             :8
         ]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
         task_key = self._make_task_key(pr_info)
+        if task_key not in getattr(self, "_cancel_events", {}):
+            self._register_task(task_key)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
         execution = None
@@ -692,7 +725,7 @@ class ReviewWorker:
                 )
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
-                if settings.auto_index_pr_changes and settings.enable_code_index:
+                if settings.enable_code_index:
                     try:
                         from backend.services.pr_code_indexer import get_pr_code_indexer
 
@@ -835,7 +868,7 @@ class ReviewWorker:
 
                 # 4.5 PR 变更总结（如果启用）
                 pr_summary_text = None
-                if settings.enable_pr_summary:
+                if settings.enable_pr_summary and not task_deadline.is_expired():
                     try:
                         from backend.services.ai_reviewer.pr_summary import (
                             PRSummaryService,
@@ -863,7 +896,10 @@ class ReviewWorker:
                         logger.warning("[{}] PR 变更总结生成失败: {}", task_id, str(e))
 
                 # 4.6 PR 依赖图生成（如果启用）
-                if settings.enable_pr_dependency_graph:
+                if (
+                    settings.enable_pr_dependency_graph
+                    and not task_deadline.is_expired()
+                ):
                     try:
                         from backend.services.ai_reviewer.pr_dependency_graph import (
                             PRDependencyGraphService,
@@ -1304,7 +1340,7 @@ class ReviewWorker:
                 # 检查是否启用标签推荐功能
                 enable_label_recommendation = _get_label_rec_setting("enabled", True)
                 label_execution = None
-                if enable_label_recommendation:
+                if enable_label_recommendation and not task_deadline.is_expired():
                     try:
                         summary_snapshot = (
                             await resolver("summary") if resolver is not None else None
@@ -1354,6 +1390,7 @@ class ReviewWorker:
                             invocation_context=execution.invocation_context,
                             observer=execution.observer,
                             publication_coordinator=execution.publication_coordinator,
+                            deadline=task_deadline,
                         )
                     )
                 else:
@@ -1366,6 +1403,7 @@ class ReviewWorker:
                             invocation_context=execution.invocation_context,
                             observer=execution.observer,
                             publication_coordinator=execution.publication_coordinator,
+                            deadline=task_deadline,
                         )
                     )
 
@@ -1376,6 +1414,13 @@ class ReviewWorker:
                     async def run_label_recommendation():
                         label_status = "completed"
                         try:
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 软 deadline 已到达，跳过标签推荐辅助调用",
+                                    task_id,
+                                )
+                                return None
+
                             # 获取仓库可用标签
                             available_labels = await label_service.get_repo_labels(
                                 pr_info["repo_owner"], pr_info["repo_name"]
@@ -1401,6 +1446,12 @@ class ReviewWorker:
                             )
 
                             # AI推荐标签（传入已有标签）
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 软 deadline 已到达，跳过标签推荐 AI 调用",
+                                    task_id,
+                                )
+                                return None
                             recommendations = await self.ai_reviewer.recommend_labels(
                                 context,
                                 available_labels,
@@ -1418,6 +1469,7 @@ class ReviewWorker:
                                 ),
                                 event_callback=label_callback,
                                 propagate_errors=True,
+                                deadline=task_deadline,
                             )
 
                             if recommendations:
@@ -1666,10 +1718,8 @@ class ReviewWorker:
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
-                    if (
-                        settings.sakura_memory_enabled
-                        and settings.sakura_reflection_enabled
-                    ):
+                    sm_config = get_sakura_memory_config()
+                    if _reflection_is_admissible(sm_config, task_deadline):
                         from backend.services.sakura_memory_service import (
                             get_sakura_memory_service,
                         )
@@ -1685,11 +1735,23 @@ class ReviewWorker:
                         # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
                         # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
                         async def _reflect_with_history() -> None:
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 审查已超时，跳过 .sakura/ 反思历史摘要",
+                                    task_id,
+                                )
+                                return
                             history_summary = (
                                 await self._fetch_reflection_history_summary(
                                     analysis, pr_info, task_id
                                 )
                             )
+                            if task_deadline.is_expired():
+                                logger.info(
+                                    "[{}] 审查已超时，跳过 .sakura/ 反思调用",
+                                    task_id,
+                                )
+                                return
                             await sakura_memory_service.reflect(
                                 repo=pr.base.repo,
                                 repo_full_name=pr_info["repo_full_name"],
@@ -1832,8 +1894,8 @@ class ReviewWorker:
                 await _finish_execution("failed", error_message=str(e))
                 raise
             except asyncio.CancelledError:
-                # 超时（_run_review_task_with_timeout 的 wait_for）或外部取消：
-                # except Exception 不接 CancelledError，需单独收尾 review 状态，防止僵尸。
+                # 外部取消：except Exception 不接 CancelledError，需单独收尾
+                # review 状态，防止僵尸。配置 deadline 不会走这里的硬取消路径。
                 execution_target_status = "cancelled"
                 if review_id:
                     try:
@@ -2582,9 +2644,17 @@ async def _run_review_task_with_timeout(
     pr_info: dict[str, Any],
     task_key: str,
 ) -> str:
-    """按配置限制 AI 审查阶段，允许已开始的 reporting 完成收尾。"""
-    timeout_seconds = get_settings().review_timeout_seconds
-    review_task = asyncio.create_task(worker.process_review_task(pr_info))
+    """Run a review with a soft task deadline and no timeout cancellation.
+
+    The deadline is created before the worker coroutine is scheduled, so time
+    spent waiting for the review semaphore is part of the same budget.  The
+    worker changes only the next AI request to final-only mode after expiry;
+    explicit task cancellation still follows the existing cancellation path.
+    """
+    deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
+    review_task = asyncio.create_task(
+        worker.process_review_task(pr_info, deadline=deadline)
+    )
     try:
         register_background_task(review_task, "review_process")
     except DatabaseResetRuntimeAdmissionClosed:
@@ -2595,41 +2665,7 @@ async def _run_review_task_with_timeout(
             pass
         raise
     try:
-        result = await asyncio.wait_for(
-            asyncio.shield(review_task),
-            timeout=timeout_seconds,
-        )
-    except TimeoutError as exc:
-        is_reporting = getattr(worker, "is_task_reporting", lambda _key: False)
-        if is_reporting(task_key):
-            logger.warning(
-                "审查 AI 阶段已在 {} 秒预算内完成，继续等待 reporting 收尾: {}",
-                timeout_seconds,
-                task_key,
-            )
-            result = await review_task
-        else:
-            worker.cancel_task(task_key)
-            review_task.cancel()
-            try:
-                await review_task
-            except asyncio.CancelledError:
-                pass
-            task_id = "timeout"
-            message = f"审查任务超时（{timeout_seconds}秒）"
-            logger.error(
-                "{}: {}",
-                message,
-                task_key,
-            )
-            try:
-                await worker._save_error_record(pr_info, message, task_id)
-            except Exception as save_error:
-                logger.error(
-                    "保存超时错误记录失败: {}",
-                    str(save_error),
-                )
-            raise RuntimeError(f"{message}: {task_key}") from exc
+        result = await review_task
     except asyncio.CancelledError:
         review_task.cancel()
         try:

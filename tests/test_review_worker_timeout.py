@@ -25,6 +25,7 @@ from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewDecision,
     ReviewWorker,
+    _reflection_is_admissible,
     _run_review_task_with_timeout,
     submit_review_task,
 )
@@ -85,6 +86,27 @@ class _NoOpActivityIntegration:
 
     async def start_scan_execution(self, *args, **kwargs):
         return _NoOpExecutionBundle()
+
+
+def test_is_task_active_is_read_only_registration_probe():
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker._cancel_events = {"owner/repo#1": asyncio.Event()}
+
+    assert worker.is_task_active("owner/repo#1") is True
+    assert worker.is_task_active("owner/repo#2") is False
+    assert list(worker._cancel_events) == ["owner/repo#1"]
+
+
+@pytest.mark.parametrize(("expired", "expected"), [(False, True), (True, False)])
+def test_review_reflection_admission_respects_shared_deadline(expired, expected):
+    deadline = SimpleNamespace(is_expired=lambda: expired)
+
+    assert (
+        _reflection_is_admissible(
+            {"enabled": True, "reflection": {"enabled": True}}, deadline
+        )
+        is expected
+    )
 
 
 @pytest.fixture
@@ -202,27 +224,33 @@ async def test_create_review_record_persists_global_id_and_repository_number(
 
 
 @pytest.mark.asyncio
-async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
-    """wait_for 超时后，已启动的 execution 必须且只能取消收尾一次。"""
+async def test_soft_timeout_does_not_cancel_started_execution(monkeypatch):
+    """配置 deadline 到达后，已启动的任务继续软收尾而不是被取消。"""
     settings = get_settings()
     old_timeout = settings.review_timeout_seconds
     execution = _RecordingExecutionBundle()
     integration = _RecordingActivityIntegration(execution)
 
-    class BlockingAnalyzer:
+    class DelayedAnalyzer:
         async def analyze_pr(self, _pr_info):
-            await asyncio.Event().wait()
+            await asyncio.sleep(0.02)
+            return SimpleNamespace(should_skip=True, skip_reason="no changes")
 
     worker = ReviewWorker.__new__(ReviewWorker)
     worker.activity_integration = integration
-    worker.analyzer = BlockingAnalyzer()
+    worker.analyzer = DelayedAnalyzer()
     worker.ai_reviewer = SimpleNamespace(api_client=None)
     worker._cancel_events = {}
-    worker._save_error_record = AsyncMock()
+    worker._save_skip_record = AsyncMock()
     monkeypatch.setattr(
         review_worker,
         "_get_review_semaphore",
         lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker,
+        "get_user_dynamic_config",
+        AsyncMock(return_value=None),
     )
     settings.review_timeout_seconds = 0.01
 
@@ -234,12 +262,12 @@ async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
         "action": "opened",
     }
     try:
-        with pytest.raises(RuntimeError, match="审查任务超时"):
-            await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
+        result = await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
     finally:
         settings.review_timeout_seconds = old_timeout
 
-    assert execution.finish_calls == [("cancelled", None)]
+    assert result
+    assert execution.finish_calls == [("completed", None)]
 
 
 @pytest.mark.asyncio
@@ -303,13 +331,15 @@ async def test_early_cancel_finishes_execution_once(monkeypatch, cancel_check_co
         review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
     )
     monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_args: False)
-    monkeypatch.setattr(review_worker.settings, "auto_index_pr_changes", False)
     monkeypatch.setattr(review_worker.settings, "enable_code_index", False)
     monkeypatch.setattr(review_worker.settings, "enable_rag", False)
     monkeypatch.setattr(review_worker.settings, "enable_pr_summary", False)
     monkeypatch.setattr(review_worker.settings, "enable_pr_dependency_graph", False)
-    monkeypatch.setattr(review_worker.settings, "sakura_memory_enabled", False)
-    monkeypatch.setattr(review_worker.settings, "sakura_reflection_enabled", False)
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     monkeypatch.setattr(review_worker.settings, "enable_pr_issue_linking", False)
     monkeypatch.setattr(review_worker.settings, "enable_semantic_issue_linking", False)
     checks = 0
@@ -619,9 +649,11 @@ class _TimeoutWorker:
     def __init__(self):
         self.cancelled_key = None
         self.saved_errors = []
+        self.deadline = None
 
-    async def process_review_task(self, pr_info):
-        await asyncio.sleep(10)
+    async def process_review_task(self, pr_info, *, deadline):
+        self.deadline = deadline
+        await asyncio.sleep(0.02)
         return "done"
 
     def cancel_task(self, task_key):
@@ -638,7 +670,7 @@ class _ReportingWorker:
         self.saved_errors = []
         self.reporting_started = False
 
-    async def process_review_task(self, _pr_info):
+    async def process_review_task(self, _pr_info, *, deadline):
         self.reporting_started = True
         await asyncio.sleep(0.05)
         return "reported"
@@ -809,13 +841,13 @@ async def test_review_task_timeout_uses_dynamic_setting():
         task_key = ReviewWorker._make_task_key(pr_info)
         worker = _TimeoutWorker()
 
-        with pytest.raises(RuntimeError, match="审查任务超时"):
-            await _run_review_task_with_timeout(worker, pr_info, task_key)
+        result = await _run_review_task_with_timeout(worker, pr_info, task_key)
 
-        assert worker.cancelled_key == task_key
-        assert worker.saved_errors
-        assert worker.saved_errors[0][1] == "审查任务超时（0.01秒）"
-        assert worker.saved_errors[0][2] == "timeout"
+        assert result == "done"
+        assert worker.cancelled_key is None
+        assert worker.saved_errors == []
+        assert worker.deadline is not None
+        assert worker.deadline.is_expired()
     finally:
         settings.review_timeout_seconds = old_value
 
@@ -965,14 +997,11 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
 ):
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(
             settings,
             "enable_pr_issue_linking",
@@ -984,14 +1013,16 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
             False,
         ),
     }
-    settings.auto_index_pr_changes = False
     settings.enable_code_index = False
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 
@@ -1163,27 +1194,26 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
     """
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(settings, "enable_pr_issue_linking", False),
         "enable_semantic_issue_linking": getattr(
             settings, "enable_semantic_issue_linking", False
         ),
     }
-    settings.auto_index_pr_changes = False
     settings.enable_code_index = False
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 
@@ -1375,28 +1405,27 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
     """
     settings = get_settings()
     old_values = {
-        "auto_index_pr_changes": settings.auto_index_pr_changes,
         "enable_code_index": settings.enable_code_index,
         "enable_rag": settings.enable_rag,
         "enable_pr_summary": settings.enable_pr_summary,
         "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
         "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
-        "sakura_memory_enabled": settings.sakura_memory_enabled,
-        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
         "enable_pr_issue_linking": getattr(settings, "enable_pr_issue_linking", False),
         "enable_semantic_issue_linking": getattr(
             settings, "enable_semantic_issue_linking", False
         ),
     }
     # 关键：开启代码索引分支
-    settings.auto_index_pr_changes = True
     settings.enable_code_index = True
     settings.enable_rag = False
     settings.enable_pr_summary = False
     settings.enable_pr_dependency_graph = False
     settings.enable_ai_tools = True
-    settings.sakura_memory_enabled = False
-    settings.sakura_reflection_enabled = False
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
     settings.enable_pr_issue_linking = False
     settings.enable_semantic_issue_linking = False
 

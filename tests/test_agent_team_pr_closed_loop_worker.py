@@ -9,20 +9,8 @@ import pytest
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationOutcome
-from backend.services.agent_team.professional_reviewer import ReviewResult
 from backend.workers import agent_team_worker as worker_module
-
-
-class _FakeConfig:
-    def validate(self):
-        pass
-
-    def safe_snapshot(self):
-        return {"provider": "fake"}
-
-
-async def _fake_load_config():
-    return _FakeConfig()
+from backend.workers.agent_team_worker import AgentTeamWorker
 
 
 async def _fake_skills_context():
@@ -37,10 +25,6 @@ async def _fake_expire_pending_prompts(self, task_id):
     return None
 
 
-async def _fake_max_iterations(self, value):
-    return value
-
-
 async def _fake_max_files_config(self, key):
     return "30"
 
@@ -52,6 +36,37 @@ def _fake_settings():
         agent_team_pr_closed_loop_enabled=True,
         review_price_per_1k_prompt=0.001,
         review_price_per_1k_completion=0.002,
+    )
+
+
+@pytest.mark.asyncio
+async def test_guidance_admission_failure_keeps_pending_prompts_for_retry(
+    monkeypatch,
+):
+    worker = AgentTeamWorker()
+    task = SimpleNamespace(
+        status=AgentTeamTaskStatus.FAILED.value,
+        error_message="Agent 执行失败: guidance_admission_failed",
+    )
+    expired: list[int] = []
+
+    async def load_task(task_id):
+        return task
+
+    async def expire_pending(task_id):
+        expired.append(task_id)
+
+    monkeypatch.setattr(worker, "_load_task", load_task)
+    monkeypatch.setattr(worker, "_expire_pending_prompts", expire_pending)
+
+    await worker._expire_pending_prompts_if_terminal(7)
+
+    assert expired == []
+    assert (
+        worker_module._format_failure_reason(
+            "Agent 执行失败: guidance_admission_failed", []
+        )
+        == "Agent 执行失败: guidance_admission_failed"
     )
 
 
@@ -69,16 +84,9 @@ def _passing_outcome(
             modified_files=files,
             tool_calls_count=1,
         ),
-        review_result=ReviewResult(
-            verdict="pass",
-            score=9,
-            summary="looks good",
-            findings=[],
-            passed=True,
-            tool_calls_count=1,
-        ),
+        review_result=None,
         modified_files=files,
-        total_tool_calls=2,
+        total_tool_calls=1,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
     )
@@ -207,7 +215,6 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
         submitted_reviews.append(pr_info)
         raise AssertionError("direct Sakura review submission should not be called")
 
-    monkeypatch.setattr(worker_module, "load_agent_team_ai_config", _fake_load_config)
     monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
     monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
     monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
@@ -225,9 +232,6 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
         worker_module.AgentTeamWorker,
         "_expire_pending_prompts",
         _fake_expire_pending_prompts,
-    )
-    monkeypatch.setattr(
-        worker_module.AgentTeamWorker, "_resolve_max_iterations", _fake_max_iterations
     )
     monkeypatch.setattr(
         worker_module.AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config
@@ -366,7 +370,6 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
         submitted_reviews.append(pr_info)
         raise AssertionError("direct Sakura review submission should not be called")
 
-    monkeypatch.setattr(worker_module, "load_agent_team_ai_config", _fake_load_config)
     monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
     monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
     monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
@@ -405,7 +408,7 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
         ("owner", "repo", str(tmp_path), "feature/agent-101", "develop", "base-sha")
     ]
     assert run_kwargs and run_kwargs[0]["initial_feedback"] == "Sakura review feedback"
-    assert run_kwargs[0]["max_iterations"] == 2
+    assert "max_iterations" not in run_kwargs[0]
     assert saved_iterations
     assert pushed and pushed[0]["branch_name"] == "feature/agent-101"
     assert pushed[0]["repo_owner"] == "owner"

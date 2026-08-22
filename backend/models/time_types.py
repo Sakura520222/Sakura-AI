@@ -23,7 +23,11 @@ class UTCDateTime(TypeDecorator[datetime]):
     def process_bind_param(self, value: datetime | None, dialect):
         if value is None:
             return None
-        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() is None
+        ):
             raise ValueError("UTCDateTime 只接受 aware datetime")
         normalized = value.astimezone(UTC)
         # SQLite and MySQL/MariaDB have no native timezone-aware timestamp

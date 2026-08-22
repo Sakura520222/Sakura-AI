@@ -5,7 +5,9 @@ from sakura_ai_updater import __main__ as main_mod
 
 def test_serve_parser_forwards_explicit_host_paths(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(main_mod, "serve", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        main_mod, "serve", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
     state_dir = str(tmp_path / "state")
     main_mod.main(
         [
@@ -42,7 +44,9 @@ def test_serve_injects_orchestrator_when_host_paths_are_present(monkeypatch, tmp
     monkeypatch.setattr(main_mod, "prepare_socket_path", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_owned_socket", lambda path: None)
     monkeypatch.setattr(main_mod, "load_state", lambda path: object())
-    monkeypatch.setattr(main_mod, "reconcile_interrupted_job", lambda store: (store, False))
+    monkeypatch.setattr(
+        main_mod, "reconcile_interrupted_job", lambda store: (store, False)
+    )
 
     class _Listener:
         def close(self):

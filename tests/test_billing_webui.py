@@ -81,8 +81,7 @@ def test_sidebar_hides_refund_reviews_for_non_super_admin():
 
 def test_admin_code_edit_payload_preserves_expiration_fold():
     source = (
-        Path(__file__).parents[1]
-        / "backend/webui/templates/billing/admin_codes.html"
+        Path(__file__).parents[1] / "backend/webui/templates/billing/admin_codes.html"
     ).read_text(encoding="utf-8")
 
     assert '"expires_at_fold": code.expires_at|datetime_local_fold' in source

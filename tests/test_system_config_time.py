@@ -94,7 +94,9 @@ async def test_restart_required_timezone_is_not_hot_applied():
     service = SystemConfigService()
     with (
         patch("backend.services.system_config_service.update_settings_field") as update,
-        patch("backend.services.system_config_service.invalidate_dynamic_config_cache") as invalidate,
+        patch(
+            "backend.services.system_config_service.invalidate_dynamic_config_cache"
+        ) as invalidate,
     ):
         await service.apply_live_settings(
             {"app_timezone": {"raw_new": "America/New_York", "new": "America/New_York"}}
@@ -168,11 +170,11 @@ async def test_non_timezone_cast_failure_keeps_dynamic_loader_tolerant(monkeypat
             raise ValueError("invalid port")
         return original_cast(value, expected_type)
 
-    monkeypatch.setattr(config_module, "_cast_config_type", cast_with_non_timezone_failure)
-
-    await config_module.load_dynamic_configs_to_settings(
-        required_keys={"app_timezone"}
+    monkeypatch.setattr(
+        config_module, "_cast_config_type", cast_with_non_timezone_failure
     )
+
+    await config_module.load_dynamic_configs_to_settings(required_keys={"app_timezone"})
 
     assert settings.app_timezone == "UTC"
     assert settings.app_port == 8000

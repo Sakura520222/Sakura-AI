@@ -266,8 +266,17 @@ def test_serve_parser_has_socket_gid_and_uid(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "serve", lambda *a, **kw: calls.append((a, kw)))
     state_dir = str(tmp_path)
     main_mod.main(
-        ["--serve", "--socket-path", "x.sock", "--state-dir", state_dir,
-         "--socket-gid", "9999", "--socket-uid", "1000"]
+        [
+            "--serve",
+            "--socket-path",
+            "x.sock",
+            "--state-dir",
+            state_dir,
+            "--socket-gid",
+            "9999",
+            "--socket-uid",
+            "1000",
+        ]
     )
     assert calls[0][1]["socket_gid"] == 9999
     assert calls[0][1]["socket_uid"] == 1000

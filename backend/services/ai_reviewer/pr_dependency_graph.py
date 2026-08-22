@@ -12,10 +12,11 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
+from backend.core.config import get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
+from backend.services.section_config_service import section_config_service
 
 # 各语言的 import 语句正则模式；预编译到模块级别，避免每次扫描重复编译。
 _IMPORT_PATTERNS: dict[str, list[re.Pattern[str]]] = {
@@ -254,12 +255,16 @@ class PRDependencyGraphService:
 
     @staticmethod
     async def _get_graph_mode() -> str:
-        """读取依赖图生成模式（ai/static）。"""
-        mode = await get_dynamic_config("pr_dependency_graph_mode")
-        mode = str(mode or "ai").strip().lower()
+        """读取依赖图生成模式（ai/static）。
+
+        统一走节配置体系：strategy.pr_dependency_graph 节的 mode 字段优先，
+        回退旧动态配置键 pr_dependency_graph_mode（兼容历史部署）。
+        """
+        mode = await section_config_service.resolve_depgraph_mode()
+        mode = str(mode or "static").strip().lower()
         if mode not in {"ai", "static"}:
-            logger.warning(f"未知 PR 依赖图模式: {mode}，回退到 ai")
-            return "ai"
+            logger.warning(f"未知 PR 依赖图模式: {mode}，回退到 static")
+            return "static"
         return mode
 
     @staticmethod

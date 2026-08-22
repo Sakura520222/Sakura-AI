@@ -68,6 +68,7 @@ def _js_i18n_dict(lang: str) -> dict:
                 result.setdefault(key, value)
     return result
 
+
 _AI_CONFIG_MIGRATION = {
     "success": False,
     "message": "Setup 已移除旧的 LLM supplier 配置流程，请使用 AI 账号与角色绑定配置。",

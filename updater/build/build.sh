@@ -2,22 +2,22 @@
 set -euo pipefail
 
 # This script is executed inside the pinned native build image:
-# python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db
-BUILD_IMAGE='python:3.12-slim-bullseye@sha256:411fa4dcfdce7e7a3057c45662beba9dcd4fa36b2e50a2bfcd6c9333e59bf0db'
+# python:3.14-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52
+BUILD_IMAGE='python:3.14-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../.." && pwd)
 output_dir=${1:-"$repo_root/dist/updater"}
 
 python_version=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-if [[ "$python_version" != "3.12" ]]; then
-    printf 'build requires Python 3.12, found %s\n' "$python_version" >&2
+if [[ "$python_version" != "3.14" ]]; then
+    printf 'build requires Python 3.14, found %s\n' "$python_version" >&2
     exit 1
 fi
 
 glibc_version=$(ldd --version 2>&1 | sed -n '1p' | grep -oE '[0-9]+\.[0-9]+' | tail -n 1)
-if [[ "$glibc_version" != "2.31" ]]; then
-    printf 'build requires glibc 2.31, found %s\n' "${glibc_version:-unknown}" >&2
+if [[ "$glibc_version" != "2.36" ]]; then
+    printf 'build requires glibc 2.36, found %s\n' "${glibc_version:-unknown}" >&2
     exit 1
 fi
 

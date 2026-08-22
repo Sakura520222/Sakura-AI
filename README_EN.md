@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.1.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -75,10 +75,12 @@
 ### Repository Scanning
 
 - **AI Full Repository Scan** — Periodic AI-powered scan detecting code quality issues and security vulnerabilities
-- **Auto-create Issues** — Detailed problem descriptions and fix suggestions
-- **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.
+- **Strict Scan Output Contract** — `<SAKURA_SCAN>` protocol envelope with multi-round format repair and safe degradation
+- **Live Scan Conversation Monitoring** — AI dialogue and tool calls during scans are recorded into activity observability in real time, visible on the WebUI activity page
+- **Auto-create Issues** — AI summary, trend comparison, severity/category matrix, hotspot files, and folded details; superseded report issues are closed automatically
+- **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.; the scan prompt focus is editable in the unified config page `strategy.scan` section
 - **Scan Management UI** — View scan list, details, and statistics in WebUI
-- **Scan Notifications** — Telegram Bot notifications on completion
+- **Scan Notifications** — Telegram Bot notifications on completion (with AI summary)
 
 ### Issue Analysis
 
@@ -169,7 +171,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager. macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
+`sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager; running `sudo ./start.sh` without arguments opens an interactive management menu that can also update the current channel image or switch between the stable/development channels outside the WebUI (the stable channel reuses the Host Updater update pipeline when the daemon is running; the development channel or an unavailable daemon falls back to a direct Compose pull of the channel alias image). macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
 
 > **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
 >
@@ -218,6 +220,8 @@ cd Sakura-AI
 pip install -r requirements.txt
 python -m backend.main
 ```
+
+> In local development, changes under `backend/` are hot-reloaded at module level inside the app subprocess (no process restart); changes to process-level modules such as `backend/main.py` or database models log a hint to restart manually. In-app restart requests (Setup completion, admin restart button) still respawn the whole process via the supervision loop.
 
 > Deployment details (image tags, pinned versions, GitHub App creation, database setup, full Setup Wizard flow, Host Updater daemon, upgrade and password rotation) are in the [Deployment Guide](docs/DEPLOYMENT.md) (Chinese).
 
@@ -277,7 +281,7 @@ First launch enters Bootstrap mode — a one-time verification token is printed 
 
 > Run logs are written to `logs/app_*.log` (one file per startup, 500 MB rotation, 10-day retention; passwords and tokens are auto-redacted). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
-> The Updater is an independent Python 3.12+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development.
+> The Updater is an independent Python 3.14+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development. Its release binaries are built on Bookworm (glibc 2.36) and require the host to run glibc ≥ 2.36 (Debian 12+ / Ubuntu 24.04+).
 
 ---
 

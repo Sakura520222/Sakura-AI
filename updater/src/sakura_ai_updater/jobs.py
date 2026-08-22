@@ -76,7 +76,9 @@ class TargetNotFoundError(UpdateOrchestrationError):
 class PreflightFailedError(UpdateOrchestrationError):
     """A valid manifest failed one or more readiness gates."""
 
-    def __init__(self, checks: list[dict[str, Any]], result: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, checks: list[dict[str, Any]], result: dict[str, Any] | None = None
+    ) -> None:
         self.checks = checks
         self.result = result or {"can_update": False, "checks": checks}
         super().__init__("update preflight failed")
@@ -108,7 +110,7 @@ def _version_tuple(version: str | None) -> tuple[int, int, int] | None:
             return parsed
         if hasattr(parsed, "major"):
             return int(parsed.major), int(parsed.minor), int(parsed.patch)
-    except (ImportError, ValueError, TypeError):
+    except ImportError, ValueError, TypeError:
         pass
     parts = version.split(".")
     if len(parts) != 3 or any(not part.isdigit() for part in parts):
@@ -119,7 +121,11 @@ def _version_tuple(version: str | None) -> tuple[int, int, int] | None:
 def _is_newer(target: str | None, current: str | None) -> bool:
     target_tuple = _version_tuple(target)
     current_tuple = _version_tuple(current)
-    return target_tuple is not None and current_tuple is not None and target_tuple > current_tuple
+    return (
+        target_tuple is not None
+        and current_tuple is not None
+        and target_tuple > current_tuple
+    )
 
 
 def _development(value: Any) -> DevelopmentTarget | None:
@@ -232,7 +238,9 @@ class JobOrchestrator:
         if method is None:
             method = getattr(self.release_client, "get_manifest", None)
         if method is None:
-            raise ManifestInvalidError("release client does not provide a manifest method")
+            raise ManifestInvalidError(
+                "release client does not provide a manifest method"
+            )
         try:
             manifest = await method(target_version)
         except ManifestNotFoundError:
@@ -302,7 +310,9 @@ class JobOrchestrator:
             return bool(result), None
         import shutil
 
-        directory = os.path.dirname(getattr(self.deployment, "deployment_env", ".")) or "."
+        directory = (
+            os.path.dirname(getattr(self.deployment, "deployment_env", ".")) or "."
+        )
         usage = await asyncio.to_thread(shutil.disk_usage, directory)
         return usage.free >= self.disk_space_threshold, usage.free
 
@@ -349,7 +359,11 @@ class JobOrchestrator:
             if target_version.get("channel") != "stable":
                 raise RegistryTargetError("unsupported target channel")
             target_version = target_version.get("version")
-        if development is None and stable is None and not isinstance(target_version, str):
+        if (
+            development is None
+            and stable is None
+            and not isinstance(target_version, str)
+        ):
             raise TargetNotFoundError("target")
         if development is not None:
             current_version = await self.deployment.resolve_current_version()
@@ -361,8 +375,16 @@ class JobOrchestrator:
             ]
             current_state, identity_check = await self._current_state()
             checks.append(identity_check)
-            current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
-            current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
+            current_channel = (
+                current_state.get("current_channel")
+                if isinstance(current_state, dict)
+                else None
+            )
+            current_digest = (
+                current_state.get("running_container_digest")
+                if isinstance(current_state, dict)
+                else None
+            )
             same_channel = current_channel == "development"
             digest_changed = current_digest != development.digest
             # A missing/legacy health identity is not evidence that the host is
@@ -371,10 +393,19 @@ class JobOrchestrator:
             # identified development deployment.
             requires_confirmation = current_channel != "development"
             if same_channel or current_digest is not None:
-                checks.append(self._check("target_newer", digest_changed, "development digest differs"))
+                checks.append(
+                    self._check(
+                        "target_newer", digest_changed, "development digest differs"
+                    )
+                )
             else:
                 checks.append(self._check("target_newer", True, "channel switch"))
-            checks.append(self._check("channel_switch_confirmed", not requires_confirmation or confirm_channel_switch))
+            checks.append(
+                self._check(
+                    "channel_switch_confirmed",
+                    not requires_confirmation or confirm_channel_switch,
+                )
+            )
             registry_ok = True
             try:
                 await RegistryClient().verify_target(development)
@@ -390,7 +421,11 @@ class JobOrchestrator:
             else:
                 checks.append(self._check("image_manifest_exists", True))
             disk_ok, free = await self._disk_check()
-            checks.append(self._check("disk_space_sufficient", disk_ok, f"free={free}" if free else None))
+            checks.append(
+                self._check(
+                    "disk_space_sufficient", disk_ok, f"free={free}" if free else None
+                )
+            )
             result = {
                 "can_update": all(item["passed"] for item in checks),
                 "from_version": current_version,
@@ -405,8 +440,10 @@ class JobOrchestrator:
                 "checks": checks,
             }
             self._remember_readiness(
-                can_update=result["can_update"], checks=checks,
-                target_version=development.version, target_image=development.image,
+                can_update=result["can_update"],
+                checks=checks,
+                target_version=development.version,
+                target_image=development.image,
                 channel="development",
                 target_extra={
                     "revision": development.revision,
@@ -421,14 +458,27 @@ class JobOrchestrator:
             manifest_version = _value(manifest, "version")
             manifest_image = _value(manifest, "image")
             expected_tag_image = f"{stable.repository}:{stable.tag}"
-            if manifest_version != stable.version or manifest_image != expected_tag_image:
-                raise ManifestInvalidError("stable target does not match release manifest")
+            if (
+                manifest_version != stable.version
+                or manifest_image != expected_tag_image
+            ):
+                raise ManifestInvalidError(
+                    "stable target does not match release manifest"
+                )
             current_version = await self.deployment.resolve_current_version()
             min_version = _value(manifest, "min_upgrade_from", "0.0.0")
             mode = self.deployment.read_deploy_mode()
             current_state, identity_check = await self._current_state()
-            current_channel = current_state.get("current_channel") if isinstance(current_state, dict) else None
-            current_digest = current_state.get("running_container_digest") if isinstance(current_state, dict) else None
+            current_channel = (
+                current_state.get("current_channel")
+                if isinstance(current_state, dict)
+                else None
+            )
+            current_digest = (
+                current_state.get("running_container_digest")
+                if isinstance(current_state, dict)
+                else None
+            )
             requires_confirmation = current_channel != "stable"
             digest_changed = current_digest != stable.digest
             target_newer = (
@@ -452,7 +502,11 @@ class JobOrchestrator:
                     and _version_tuple(current_version) >= _version_tuple(min_version),
                     f"{current_version} >= {min_version}",
                 ),
-                self._check("target_newer", target_newer, f"{stable.version} > {current_version}"),
+                self._check(
+                    "target_newer",
+                    target_newer,
+                    f"{stable.version} > {current_version}",
+                ),
                 self._check("already_current", digest_changed, "target digest differs"),
                 self._check(
                     "channel_switch_confirmed",
@@ -474,7 +528,11 @@ class JobOrchestrator:
             else:
                 checks.append(self._check("image_manifest_exists", True))
             disk_ok, free = await self._disk_check()
-            checks.append(self._check("disk_space_sufficient", disk_ok, f"free={free}" if free else None))
+            checks.append(
+                self._check(
+                    "disk_space_sufficient", disk_ok, f"free={free}" if free else None
+                )
+            )
             assets_ok = await self._asset_check(manifest, stable.version)
             checks.append(self._check("updater_asset_present", assets_ok))
             result = {
@@ -490,8 +548,10 @@ class JobOrchestrator:
                 "checks": checks,
             }
             self._remember_readiness(
-                can_update=result["can_update"], checks=checks,
-                target_version=stable.version, target_image=stable.image,
+                can_update=result["can_update"],
+                checks=checks,
+                target_version=stable.version,
+                target_image=stable.image,
                 channel="stable",
                 target_extra={"tag": stable.tag, "digest": stable.digest},
             )
@@ -545,7 +605,11 @@ class JobOrchestrator:
             image_exists = False
         checks.append(self._check("image_manifest_exists", image_exists))
         disk_ok, free = await self._disk_check()
-        detail = f"free={free} threshold={self.disk_space_threshold}" if free is not None else None
+        detail = (
+            f"free={free} threshold={self.disk_space_threshold}"
+            if free is not None
+            else None
+        )
         checks.append(self._check("disk_space_sufficient", disk_ok, detail))
         assets_ok = await self._asset_check(manifest, target_version)
         checks.append(self._check("updater_asset_present", assets_ok))
@@ -568,7 +632,11 @@ class JobOrchestrator:
     def _active_job(self) -> JobState | None:
         store = self._load()
         job = store.current_job
-        if store.active_job_id is not None and job is not None and not job.is_terminal():
+        if (
+            store.active_job_id is not None
+            and job is not None
+            and not job.is_terminal()
+        ):
             return job
         return None
 
@@ -622,7 +690,12 @@ class JobOrchestrator:
             if target_version.get("channel") != "stable":
                 raise RegistryTargetError("unsupported target channel")
             target_version = target_version.get("version")
-        if development is None and stable is None and target_version is not None and not isinstance(target_version, str):
+        if (
+            development is None
+            and stable is None
+            and target_version is not None
+            and not isinstance(target_version, str)
+        ):
             raise TargetNotFoundError("target")
         preflight = await self.preflight(
             target_version,
@@ -644,8 +717,10 @@ class JobOrchestrator:
                 deployment="image",
                 from_version=preflight.get("from_version"),
                 target_version=(
-                    development.version if development is not None
-                    else stable.version if stable is not None
+                    development.version
+                    if development is not None
+                    else stable.version
+                    if stable is not None
                     else target_version
                 ),
                 target_image=preflight.get("target_image"),
@@ -663,7 +738,9 @@ class JobOrchestrator:
             store.active_job_id = job_id
             self._persist(store)
             self._log(job, "update job accepted", step="checking")
-            task = asyncio.create_task(self._run_update_job(job), name=f"updater:{job_id}")
+            task = asyncio.create_task(
+                self._run_update_job(job), name=f"updater:{job_id}"
+            )
             self._tasks[job_id] = task
             task.add_done_callback(lambda _: self._tasks.pop(job_id, None))
             return job_id
@@ -743,8 +820,17 @@ class JobOrchestrator:
         try:
             self._transition(job, "checking", "checking")
             if job.target_channel == "development":
-                if not all((job.target_version, job.target_revision, job.target_digest, job.target_tag)):
-                    raise RegistryTargetError("persisted development target is incomplete")
+                if not all(
+                    (
+                        job.target_version,
+                        job.target_revision,
+                        job.target_digest,
+                        job.target_tag,
+                    )
+                ):
+                    raise RegistryTargetError(
+                        "persisted development target is incomplete"
+                    )
                 target = DevelopmentTarget(
                     channel="development",
                     version=job.target_version or "",
@@ -754,7 +840,9 @@ class JobOrchestrator:
                 )
                 await RegistryClient().verify_target(target)
                 job.target_image = target.image
-            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+            elif (
+                job.target_channel == "stable" and job.target_digest and job.target_tag
+            ):
                 target = StableTarget(
                     channel="stable",
                     version=job.target_version or "",
@@ -779,7 +867,9 @@ class JobOrchestrator:
                     },
                     confirm_channel_switch=True,
                 )
-            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+            elif (
+                job.target_channel == "stable" and job.target_digest and job.target_tag
+            ):
                 result = await self.preflight(
                     {
                         "channel": "stable",
@@ -818,7 +908,9 @@ class JobOrchestrator:
                         "revision": job.target_revision,
                     }
                 )
-            elif job.target_channel == "stable" and job.target_digest and job.target_tag:
+            elif (
+                job.target_channel == "stable" and job.target_digest and job.target_tag
+            ):
                 await self.adapter.health_check(
                     {"version": job.target_version, "channel": "stable"}
                 )

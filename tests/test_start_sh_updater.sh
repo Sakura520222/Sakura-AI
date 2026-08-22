@@ -343,10 +343,11 @@ mkdir -p "$CURL_TEST_DIR"
         && grep -Fxq -- '--connect-timeout' "$CURL_ARG_LOG" \
         && grep -Fxq -- '--max-time' "$CURL_ARG_LOG" \
         && grep -Fxq -- '--write-out' "$CURL_ARG_LOG" \
-        && grep -Fxq -- '%{http_code}' "$CURL_ARG_LOG"
+        && grep -Fxq -- '%{http_code}' "$CURL_ARG_LOG" \
+        && [ "${UPDATER_LAST_HTTP_STATUS:-}" = 200 ]
 )
 [ "$?" -eq 0 ] && report 0 "C1: updater_curl uses bounded HTTPS contract" || report 1 "C1"
-for curl_status in 302 404; do
+for curl_status in 302 403 404 500; do
     (
         CURL_STATUS="$curl_status"
         CURL_ARG_LOG="$CURL_TEST_DIR/args-$curl_status.log"
@@ -366,10 +367,22 @@ for curl_status in 302 404; do
             return 0
         }
         updater_curl "https://github.com/Sakura520222/Sakura-AI/releases/download/v3.0.0/test-$curl_status" "$CURL_TEST_DIR/body-$curl_status" "$CURL_TEST_DIR/headers-$curl_status" >/dev/null
-        [ "$?" -ne 0 ]
+        rc=$?
+        [ "$rc" -ne 0 ] && [ "${UPDATER_LAST_HTTP_STATUS:-}" = "$curl_status" ]
     )
     [ "$?" -eq 0 ] && report 0 "C2-$curl_status: final HTTP status rejected" || report 1 "C2-$curl_status"
 done
+
+(
+    curl() {
+        return 28
+    }
+    updater_curl 'https://github.com/Sakura520222/Sakura-AI/releases/download/v3.0.0/network' \
+        "$CURL_TEST_DIR/body-network" "$CURL_TEST_DIR/headers-network" >/dev/null
+    rc=$?
+    [ "$rc" -ne 0 ] && [ "${UPDATER_LAST_HTTP_STATUS:-}" = 000 ]
+)
+[ "$?" -eq 0 ] && report 0 "C2-network: curl failure is retained as HTTP 000" || report 1 "C2-network"
 
 payload_file="$CURL_TEST_DIR/length-payload"
 printf '12345' > "$payload_file"
@@ -1019,6 +1032,215 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_
         || { cat "$case_dir/install.out" >&2 2>/dev/null || true; report 1 "A9-postcommit-final-safety"; }
 }
 run_postcommit_final_safety_failure_case
+
+# --- U 系列: development 版本无 Release 时回退最近 stable 的 updater ---
+run_stable_fallback_case() {
+    local case_name="$1" target_status="$2" expect_success="$3"
+    local case_dir="$TMPDIR/stable-fallback-$case_name"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        local state_dir="$case_dir/state"
+        local binary="$state_dir/sakura-ai-updater"
+        local calls_log="$case_dir/calls.log"
+        local out="$case_dir/install.out"
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nold-fallback-bytes\n' > "$binary"
+        chmod 0700 "$binary"
+        old_hash=$(sha256sum "$binary" | cut -d' ' -f1)
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+        export UPDATER_BACKEND_VERSION_FILE="$case_dir/backend_init.py"
+        printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:0000000000000000000000000000000000000000000000000000000000000000\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        printf '__version__ = "3.0.0"\n' > "$UPDATER_BACKEND_VERSION_FILE"
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_binary_owner_uid() { printf '%s\n' 0; }
+        updater_binary_mode() { printf '%s\n' 700; }
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' 700; }
+        updater_sync_state_dir() { :; }
+        updater_sync_temp() { :; }
+        updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
+        updater_uname_s() { printf '%s\n' Linux; }
+        updater_uname_m() { printf '%s\n' x86_64; }
+        updater_health_payload() { printf '%s\n' '{"status":"healthy","version":"3.1.3"}'; }
+        # Git Bash 的 test -x 权限模拟不可靠（Linux CI 正常）；与 A8/A9 同模式，
+        # 覆盖为存在性检查，权限语义由 updater_chmod 0600/0700 流程保证。
+        updater_path_is_symlink() { return 1; }
+        updater_binary_is_safe() {
+            local candidate="$1"
+            [[ -f "$candidate" && ! -L "$candidate" ]]
+        }
+        new_bytes="new-fallback-bytes"
+        digest=$(printf '%s\n' "$new_bytes" | sha256sum | cut -d' ' -f1)
+        : > "$calls_log"
+        updater_curl() {
+            printf 'URL:%s\n' "$1" >> "$calls_log"
+            case "$1" in
+                *"/v3.1.3/sakura-ai-updater-linux-amd64")
+                    UPDATER_LAST_HTTP_STATUS="$target_status"
+                    return 1
+                    ;;
+                *"/releases/latest")
+                    if [[ "$case_name" == "api-failure" ]]; then
+                        UPDATER_LAST_HTTP_STATUS=000
+                        return 1
+                    fi
+                    printf '%s\n' '{"tag_name": "v3.1.2"}' > "$2"
+                    : > "$3"
+                    UPDATER_LAST_HTTP_STATUS=200
+                    return 0
+                    ;;
+                *"/v3.1.2/SHA256SUMS")
+                    printf '%s  sakura-ai-updater-linux-amd64\n' "$digest" > "$2"
+                    : > "$3"
+                    UPDATER_LAST_HTTP_STATUS=200
+                    return 0
+                    ;;
+                *"/v3.1.2/sakura-ai-updater-linux-amd64")
+                    printf '%s\n' "$new_bytes" > "$2"
+                    : > "$3"
+                    UPDATER_LAST_HTTP_STATUS=200
+                    return 0
+                    ;;
+                *)
+                    UPDATER_LAST_HTTP_STATUS=000
+                    return 1
+                    ;;
+            esac
+        }
+        updater_backend() { printf 'BACKEND:%s\n' "$1" >> "$calls_log"; return 0; }
+
+        install_updater_binary >"$out" 2>&1
+        rc=$?
+        new_hash=$(sha256sum "$binary" | cut -d' ' -f1)
+        if [[ "$expect_success" == "yes" ]]; then
+            [[ "$rc" -eq 0 ]] && [ "$old_hash" != "$new_hash" ] \
+                && grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
+                && grep -q '/v3.1.2/SHA256SUMS$' "$calls_log" \
+                && ! grep -q '/v3.1.3/SHA256SUMS' "$calls_log"
+        else
+            [[ "$rc" -ne 0 ]] && [ "$old_hash" = "$new_hash" ] \
+                && ! grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
+                && case "$case_name" in
+                    api-failure) grep -q '/releases/latest$' "$calls_log" ;;
+                    *) ! grep -q '/releases/latest$' "$calls_log" ;;
+                esac
+        fi
+    )
+    case_rc=$?
+    if [[ "$expect_success" == "yes" ]]; then
+        [ "$case_rc" -eq 0 ] \
+            && report 0 "U1-$case_name: 目标版本 404 回退最近 stable 下载" \
+            || { cat "$case_dir/install.out" >&2 2>/dev/null || true; report 1 "U1-$case_name"; }
+    else
+        [ "$case_rc" -eq 0 ] \
+            && report 0 "U2-$case_name: 回退失败保持旧 binary" \
+            || { cat "$case_dir/install.out" >&2 2>/dev/null || true; report 1 "U2-$case_name"; }
+    fi
+}
+run_stable_fallback_case fallback-success 404 yes
+run_stable_fallback_case target-network 000 no
+run_stable_fallback_case target-forbidden 403 no
+run_stable_fallback_case target-server-error 500 no
+run_stable_fallback_case api-failure 404 no
+
+# --- U3: cmd_updater_install 安装完成后自动拉起 daemon（daemon 未运行时）---
+run_install_start_case() {
+    local case_dir="$TMPDIR/install-start"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nold-install-start\n' > "$binary"
+        chmod 0700 "$binary"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export SAKURA_UPDATER_DEV=0
+        export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+        printf 'SAKURA_DEPLOY_MODE=source\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_binary_owner_uid() { printf '%s\n' 0; }
+        updater_binary_mode() { printf '%s\n' 700; }
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' 700; }
+        updater_sync_state_dir() { :; }
+        updater_sync_temp() { :; }
+        updater_path_is_symlink() { return 1; }
+        updater_binary_is_safe() {
+            local candidate="$1"
+            [[ -f "$candidate" && ! -L "$candidate" ]]
+        }
+        : > "$calls_log"
+        install_updater_binary() { echo ACQUIRE >> "$calls_log"; return 0; }
+        updater_backend() {
+            echo "BACKEND:$1" >> "$calls_log"
+            [ "$1" = "is-running" ] && return 1
+            return 0
+        }
+        cmd_updater_install >/dev/null 2>&1
+        rc=$?
+        install_line=$(grep -n '^BACKEND:install$' "$calls_log" | cut -d: -f1)
+        start_line=$(grep -n '^BACKEND:start$' "$calls_log" | cut -d: -f1)
+        [ "$rc" -eq 0 ] && grep -q '^ACQUIRE$' "$calls_log" \
+            && [ -n "$install_line" ] && [ -n "$start_line" ] && [ "$install_line" -lt "$start_line" ]
+    )
+}
+run_install_start_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U3: install 完成后自动启动 daemon" \
+    || report 1 "U3: install 完成后自动启动 daemon"
+
+# --- U3b: daemon 已在运行时 install 不重复拉起（保持 restart-required 语义）---
+run_install_running_case() {
+    local case_dir="$TMPDIR/install-running"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nold-install-running\n' > "$binary"
+        chmod 0700 "$binary"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export SAKURA_UPDATER_DEV=0
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_binary_owner_uid() { printf '%s\n' 0; }
+        updater_binary_mode() { printf '%s\n' 700; }
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' 700; }
+        updater_sync_state_dir() { :; }
+        updater_sync_temp() { :; }
+        updater_path_is_symlink() { return 1; }
+        updater_binary_is_safe() {
+            local candidate="$1"
+            [[ -f "$candidate" && ! -L "$candidate" ]]
+        }
+        : > "$calls_log"
+        install_updater_binary() { echo ACQUIRE >> "$calls_log"; return 0; }
+        updater_backend() {
+            echo "BACKEND:$1" >> "$calls_log"
+            [ "$1" = "is-running" ] && return 0
+            return 0
+        }
+        cmd_updater_install >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -eq 0 ] && grep -q '^BACKEND:install$' "$calls_log" \
+            && ! grep -q '^BACKEND:start$' "$calls_log"
+    )
+}
+run_install_running_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U3b: daemon 已运行时 install 不重复启动" \
+    || report 1 "U3b: daemon 已运行时 install 不重复启动"
 
 rm -rf "$TMPDIR"
 echo ""

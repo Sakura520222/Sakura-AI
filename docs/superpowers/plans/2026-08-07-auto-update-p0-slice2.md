@@ -86,13 +86,33 @@ def test_is_newer_version_invalid_falls_false():
 
 def test_parse_filters_draft_and_prerelease_and_strips_v():
     payload = [
-        {"tag_name": "v3.1.0", "name": "3.1.0", "body": "n",
-         "published_at": "2026-08-07T10:00:00Z", "prerelease": False,
-         "draft": False, "html_url": "u1"},
-        {"tag_name": "v3.2.0-beta", "name": "b", "body": "",
-         "published_at": "", "prerelease": True, "draft": False, "html_url": "u2"},
-        {"tag_name": "v3.0.0", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": True, "html_url": "u3"},
+        {
+            "tag_name": "v3.1.0",
+            "name": "3.1.0",
+            "body": "n",
+            "published_at": "2026-08-07T10:00:00Z",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "u1",
+        },
+        {
+            "tag_name": "v3.2.0-beta",
+            "name": "b",
+            "body": "",
+            "published_at": "",
+            "prerelease": True,
+            "draft": False,
+            "html_url": "u2",
+        },
+        {
+            "tag_name": "v3.0.0",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": True,
+            "html_url": "u3",
+        },
     ]
     releases = parse_releases_payload(payload)
     assert [r.version for r in releases] == ["3.1.0"]
@@ -101,12 +121,33 @@ def test_parse_filters_draft_and_prerelease_and_strips_v():
 def test_parse_sorts_by_semver_descending_not_api_order():
     # GitHub API 不保证 SemVer 排序；parser 必须自己降序排序
     payload = [
-        {"tag_name": "v3.0.1", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "a"},
-        {"tag_name": "v3.2.0", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "b"},
-        {"tag_name": "v3.1.0", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "c"},
+        {
+            "tag_name": "v3.0.1",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "a",
+        },
+        {
+            "tag_name": "v3.2.0",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "b",
+        },
+        {
+            "tag_name": "v3.1.0",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "c",
+        },
     ]
     releases = parse_releases_payload(payload)
     assert [r.version for r in releases] == ["3.2.0", "3.1.0", "3.0.1"]
@@ -114,12 +155,33 @@ def test_parse_sorts_by_semver_descending_not_api_order():
 
 def test_parse_filters_non_semver_tags():
     payload = [
-        {"tag_name": "v3.1.0", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "x"},
-        {"tag_name": "nightly", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "y"},
-        {"tag_name": "latest", "name": "", "body": "",
-         "published_at": "", "prerelease": False, "draft": False, "html_url": "z"},
+        {
+            "tag_name": "v3.1.0",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "x",
+        },
+        {
+            "tag_name": "nightly",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "y",
+        },
+        {
+            "tag_name": "latest",
+            "name": "",
+            "body": "",
+            "published_at": "",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "z",
+        },
     ]
     releases = parse_releases_payload(payload)
     assert [r.version for r in releases] == ["3.1.0"]
@@ -127,9 +189,15 @@ def test_parse_filters_non_semver_tags():
 
 def test_release_info_fields():
     payload = [
-        {"tag_name": "v3.1.0", "name": "Sakura 3.1.0", "body": "## Changed",
-         "published_at": "2026-08-07T10:00:00Z", "prerelease": False,
-         "draft": False, "html_url": "https://github.com/x/releases/tag/v3.1.0"},
+        {
+            "tag_name": "v3.1.0",
+            "name": "Sakura 3.1.0",
+            "body": "## Changed",
+            "published_at": "2026-08-07T10:00:00Z",
+            "prerelease": False,
+            "draft": False,
+            "html_url": "https://github.com/x/releases/tag/v3.1.0",
+        },
     ]
     r = parse_releases_payload(payload)[0]
     assert r.version == "3.1.0"
@@ -234,9 +302,7 @@ def parse_releases_payload(
                 html_url=raw.get("html_url", "") or "",
             )
         )
-    result.sort(
-        key=lambda r: _parse_semver(r.version) or (0, 0, 0), reverse=True
-    )
+    result.sort(key=lambda r: _parse_semver(r.version) or (0, 0, 0), reverse=True)
     return result
 
 
@@ -300,8 +366,15 @@ class FakeRedis:
 
 
 def _tag(t: str) -> dict:
-    return {"tag_name": "v" + t, "name": "", "body": "", "published_at": "",
-            "prerelease": False, "draft": False, "html_url": ""}
+    return {
+        "tag_name": "v" + t,
+        "name": "",
+        "body": "",
+        "published_at": "",
+        "prerelease": False,
+        "draft": False,
+        "html_url": "",
+    }
 
 
 @pytest.mark.asyncio
@@ -642,9 +715,7 @@ class UpdateChecker:
             except Exception as e:  # 兜底防 scheduler 死
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    f"UpdateChecker 循环异常: {e}"
-                )
+                logging.getLogger(__name__).warning(f"UpdateChecker 循环异常: {e}")
             await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
 
     async def check_once(self) -> dict:
@@ -817,9 +888,7 @@ router = APIRouter(tags=["Version"])
 _VALID_MODES = {"image", "source"}
 
 
-def build_version_info(
-    deploy_mode: str, update_info: dict | None = None
-) -> dict:
+def build_version_info(deploy_mode: str, update_info: dict | None = None) -> dict:
     """构造版本与部署信息（纯函数）。
 
     Args:

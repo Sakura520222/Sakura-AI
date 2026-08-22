@@ -192,10 +192,10 @@ def _effective_reasoning_snapshot(
     )
 
 
-def _messages_from_legacy(
+def messages_from_legacy(
     messages: list[dict[str, Any]],
 ) -> list[UnifiedMessage]:
-    """旧版 dict 消息 → UnifiedMessage（向后兼容门面调用）/ Legacy dict → Unified."""
+    """旧版 dict 消息 → UnifiedMessage（公共转换，供 agent_team 等复用）/ Legacy dict → Unified."""
     result: list[UnifiedMessage] = []
     for msg in messages:
         role = msg.get("role", "user")
@@ -488,7 +488,7 @@ class UnifiedAIClient:
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
-            else _messages_from_legacy(messages)  # type: ignore[arg-type]
+            else messages_from_legacy(messages)  # type: ignore[arg-type]
         )
         unified_tools = (
             tools
@@ -525,12 +525,13 @@ class UnifiedAIClient:
         # long tool loops never exceed the model context window.
         if self._compressor is not None:
             try:
-                compressed_once, unified_messages = (
-                    await self._compressor.maybe_compress(
-                        selected[0],
-                        unified_messages,
-                        tracker=None,
-                    )
+                (
+                    compressed_once,
+                    unified_messages,
+                ) = await self._compressor.maybe_compress(
+                    selected[0],
+                    unified_messages,
+                    tracker=None,
                 )
             except Exception as exc:
                 logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
@@ -662,7 +663,7 @@ class UnifiedAIClient:
                     success=True,
                 )
                 return response
-            except (asyncio.CancelledError, ReviewCancelledError):
+            except asyncio.CancelledError, ReviewCancelledError:
                 self._log_logical_call_summary(
                     logical_call_id=logical_call_id,
                     role=role,
@@ -693,17 +694,13 @@ class UnifiedAIClient:
                     exc,
                 )
 
-                # 终端错误：直接报出 / terminal errors surface immediately
-                if exc.is_terminal:
-                    self._log_logical_call_summary(
-                        logical_call_id=logical_call_id,
-                        role=role,
-                        started=logical_call_started,
-                        winner=None,
-                        success=False,
-                    )
-                    raise
+                # 认证、权限和模型不存在：当前候选不重试，直接故障转移。
+                if exc.is_fallback_only:
+                    continue
 
+                # 所有其余归一化错误都继续进入重试/故障转移路径；上下文超限
+                # 额外尝试压缩恢复 / all other normalized errors retry/fail over;
+                # context overflow also gets a compression recovery attempt.
                 # 上下文超限：尝试压缩恢复 / context overflow: compress & retry
                 if exc.category == AIErrorCategory.CONTEXT_OVERFLOW:
                     try:
@@ -721,7 +718,7 @@ class UnifiedAIClient:
                             call_state=call_state,
                             reasoning_snapshot=reasoning_snapshot,
                         )
-                    except (asyncio.CancelledError, ReviewCancelledError):
+                    except asyncio.CancelledError, ReviewCancelledError:
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -821,7 +818,7 @@ class UnifiedAIClient:
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
-            else _messages_from_legacy(messages)  # type: ignore[arg-type]
+            else messages_from_legacy(messages)  # type: ignore[arg-type]
         )
         requested_candidate = candidates[0]
         max_candidates = (
@@ -860,12 +857,10 @@ class UnifiedAIClient:
         initial_attempt_admitted = False
         for candidate_index, candidate in enumerate(selected):
             remaining = self._remaining_budget(stream_deadline)
-            if (
-                candidate_index > 0
-                and remaining is not None
-                and remaining <= 0
-            ):
-                last_error = self._stream_timeout_error(candidate, configured_total_timeout)
+            if candidate_index > 0 and remaining is not None and remaining <= 0:
+                last_error = self._stream_timeout_error(
+                    candidate, configured_total_timeout
+                )
                 budget_exhausted = True
                 break
             fallback_from_id = previous_attempt_id
@@ -921,9 +916,7 @@ class UnifiedAIClient:
                         and configured_total_timeout is not None
                         and configured_total_timeout > 0
                     ):
-                        stream_deadline = (
-                            time.monotonic() + configured_total_timeout
-                        )
+                        stream_deadline = time.monotonic() + configured_total_timeout
                         remaining = self._remaining_budget(stream_deadline)
                 if remaining is not None and remaining <= 0:
                     last_error = self._stream_timeout_error(
@@ -984,8 +977,7 @@ class UnifiedAIClient:
                             )
                             if (
                                 not stream_done
-                                and
-                                remaining_after_stream is not None
+                                and remaining_after_stream is not None
                                 and remaining_after_stream <= 0
                             ):
                                 raise TimeoutError
@@ -1010,7 +1002,7 @@ class UnifiedAIClient:
                         success=True,
                     )
                     return
-                except (asyncio.CancelledError, ReviewCancelledError):
+                except asyncio.CancelledError, ReviewCancelledError:
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
                         role=role,
@@ -1052,16 +1044,14 @@ class UnifiedAIClient:
                                 budget_exhausted = True
                                 break
                             await self._abortable_sleep(
-                                delay
-                                if remaining is None
-                                else min(delay, remaining),
+                                delay if remaining is None else min(delay, remaining),
                                 cancel_event,
                             )
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except (asyncio.CancelledError, ReviewCancelledError):
+                        except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -1079,7 +1069,7 @@ class UnifiedAIClient:
                         previous_attempt_id = sender.last_attempt_id
                     # Once any stream event is visible to the caller, replaying a
                     # retry/fallback would duplicate output. Surface the error.
-                    if emitted or exc.is_terminal or not exc.is_retryable:
+                    if emitted:
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -1088,6 +1078,9 @@ class UnifiedAIClient:
                             success=False,
                         )
                         raise
+                    if exc.is_fallback_only:
+                        # 当前候选的认证/权限/模型错误不重试，直接尝试下一候选。
+                        break
                     if retry_index < self.fallback_config.max_retries:
                         try:
                             delay = self._calculate_delay(retry_index)
@@ -1096,16 +1089,14 @@ class UnifiedAIClient:
                                 budget_exhausted = True
                                 break
                             await self._abortable_sleep(
-                                delay
-                                if remaining is None
-                                else min(delay, remaining),
+                                delay if remaining is None else min(delay, remaining),
                                 cancel_event,
                             )
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
                                 break
-                        except (asyncio.CancelledError, ReviewCancelledError):
+                        except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -1225,7 +1216,16 @@ class UnifiedAIClient:
                 return response
             except AIError as exc:
                 last_exc = exc
-                if exc.is_terminal or not exc.is_retryable:
+                # A context overflow is deterministic for this exact request;
+                # retrying the unchanged oversized payload only wastes time
+                # and can succeed spuriously when the provider's response is
+                # nondeterministic.  Let ``call_with_retry`` route it through
+                # the bounded compression-recovery path instead.
+                if exc.category == AIErrorCategory.CONTEXT_OVERFLOW:
+                    raise
+                # 认证、权限和模型不存在不是当前候选的瞬时故障，直接交给
+                # 上层切换下一个候选 / fail over immediately for this candidate.
+                if exc.is_fallback_only:
                     raise
                 if attempt < cfg.max_retries:
                     delay = self._calculate_delay(attempt)
@@ -1278,7 +1278,11 @@ class UnifiedAIClient:
     ) -> float | None:
         """Return the local iterator guard without treating non-positive input as a deadline."""
         if remaining is None:
-            return request_timeout if request_timeout is not None and request_timeout > 0 else None
+            return (
+                request_timeout
+                if request_timeout is not None and request_timeout > 0
+                else None
+            )
         if request_timeout is None or request_timeout <= 0:
             return remaining
         return min(request_timeout, remaining)

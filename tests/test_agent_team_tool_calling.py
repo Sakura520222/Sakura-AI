@@ -1,4 +1,4 @@
-"""Agent 工具调用模式测试 - edit_file、tool_executor、fullstack、reviewer"""
+"""Agent implementation tool calling tests."""
 
 import json
 
@@ -8,7 +8,6 @@ from backend.services.agent_team.file_tools import AgentTeamFileTools
 from backend.services.agent_team.tool_definitions import (
     AGENT_EDIT_FILE_TOOL,
     FULLSTACK_EXPERT_TOOLS,
-    REVIEWER_TOOLS,
 )
 from backend.services.agent_team.tool_executor import AgentToolExecutor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
@@ -106,11 +105,11 @@ def test_fullstack_tools_include_edit_file():
     assert "finish_task" in names
 
 
-def test_reviewer_tools_do_not_include_write():
-    names = [t["function"]["name"] for t in REVIEWER_TOOLS]
-    assert "write_file" not in names
-    assert "edit_file" not in names
-    assert "submit_review" in names
+def test_agent_tools_include_write_and_edit():
+    names = [t["function"]["name"] for t in FULLSTACK_EXPERT_TOOLS]
+    assert "write_file" in names
+    assert "edit_file" in names
+    assert "submit_review" not in names
 
 
 def test_edit_file_tool_schema_is_valid():
@@ -128,10 +127,10 @@ def test_fullstack_tools_include_replace_and_insert():
     assert "insert_lines" in names
 
 
-def test_reviewer_tools_do_not_include_replace_lines():
-    names = [t["function"]["name"] for t in REVIEWER_TOOLS]
-    assert "replace_lines" not in names
-    assert "insert_lines" not in names
+def test_agent_tools_include_replace_and_insert():
+    names = [t["function"]["name"] for t in FULLSTACK_EXPERT_TOOLS]
+    assert "replace_lines" in names
+    assert "insert_lines" in names
 
 
 # ── file_tools.replace_lines ──────────────────────────────
@@ -365,7 +364,7 @@ async def test_tool_executor_finish_task(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tool_executor_submit_review(tmp_path):
+async def test_tool_executor_rejects_legacy_submit_review(tmp_path):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
@@ -379,9 +378,7 @@ async def test_tool_executor_submit_review(tmp_path):
         },
     )
     result = await executor.execute_tool_call(tc)
-    assert result["_review"] is True
-    assert result["verdict"] == "pass"
-    assert result["score"] == 8
+    assert "未知工具" in result["error"]
 
 
 @pytest.mark.asyncio

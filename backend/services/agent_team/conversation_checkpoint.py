@@ -17,6 +17,7 @@ from backend.models.agent_team_models import (
     AgentTeamSession,
     AgentTeamTask,
     AgentTeamToolCall,
+    AgentTeamUserPrompt,
 )
 from backend.models.database import utc_now
 
@@ -93,6 +94,40 @@ class ConversationCheckpointService:
                 message=message,
                 finish_reason=finish_reason,
             )
+            await session.commit()
+            return msg.id
+
+    async def append_guidance_message(
+        self,
+        session_id: int,
+        message: dict[str, Any],
+        prompt_ids: tuple[int, ...] | list[int],
+    ) -> int:
+        """Persist a guidance user message and consume its queue atomically.
+
+        The queue rows are deliberately updated in the same transaction as
+        the checkpoint message. A retry can therefore inspect the stable
+        ``guidance_ids`` on the message and never acknowledge text that was
+        not actually admitted to the model context.
+        """
+        ids = tuple(int(item) for item in prompt_ids)
+        async with db_module.async_session() as session:
+            msg = await self.append_message_in_session(
+                session,
+                session_id=session_id,
+                message=message,
+            )
+            if ids:
+                result = await session.execute(
+                    select(AgentTeamUserPrompt).where(
+                        AgentTeamUserPrompt.task_id == self.task_id,
+                        AgentTeamUserPrompt.id.in_(ids),
+                        AgentTeamUserPrompt.status == "pending",
+                    )
+                )
+                for prompt in result.scalars().all():
+                    prompt.status = "consumed"
+                    prompt.consumed_at = utc_now()
             await session.commit()
             return msg.id
 

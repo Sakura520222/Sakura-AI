@@ -251,6 +251,25 @@ async def test_enqueue_skips_stale_zombie_review(queue_store, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_enqueue_keeps_age_old_review_when_worker_task_is_active(
+    queue_store,
+    monkeypatch,
+):
+    """活动 worker 注册优先于年龄阈值，避免慢任务被误判为 zombie。"""
+    _add_review(queue_store, "reviewing", created_offset=-2)
+    service = PRReviewIncrementalQueueService(
+        task_active_checker=lambda task_key: task_key == "owner/repo#7"
+    )
+    monkeypatch.setattr(service, "_is_stale_review", lambda _review: True)
+
+    result = await service.enqueue_from_webhook(_pr_info(head_sha="active-head"))
+
+    assert result is not None
+    assert result.active_review_id == 1
+    assert len(queue_store["queue"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancel_pending_for_pr_marks_all_pending_cancelled(queue_store):
     """PR 关闭时，该 PR 所有 pending 增量应标记 cancelled，且不影响其他 PR。"""
     _add_queue(queue_store, base_sha="base1", head_sha="head2")

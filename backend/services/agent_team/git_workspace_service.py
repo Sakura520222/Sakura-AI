@@ -194,19 +194,19 @@ class AgentTeamGitWorkspaceService:
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
             await executor.run(
                 "python -m venv .venv",
-                timeout_seconds=settings.agent_team_timeout_seconds,
+                timeout_seconds=600,
             )
 
         pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
         if has_pyproject:
             await executor.run(
                 f"{pip_cmd} install -e . --quiet",
-                timeout_seconds=settings.agent_team_timeout_seconds,
+                timeout_seconds=600,
             )
         elif has_requirements:
             await executor.run(
                 f"{pip_cmd} install -r requirements.txt --quiet",
-                timeout_seconds=settings.agent_team_timeout_seconds,
+                timeout_seconds=600,
             )
 
     def make_branch_name(
