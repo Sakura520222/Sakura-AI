@@ -1216,6 +1216,13 @@ class UnifiedAIClient:
                 return response
             except AIError as exc:
                 last_exc = exc
+                # A context overflow is deterministic for this exact request;
+                # retrying the unchanged oversized payload only wastes time
+                # and can succeed spuriously when the provider's response is
+                # nondeterministic.  Let ``call_with_retry`` route it through
+                # the bounded compression-recovery path instead.
+                if exc.category == AIErrorCategory.CONTEXT_OVERFLOW:
+                    raise
                 # 认证、权限和模型不存在不是当前候选的瞬时故障，直接交给
                 # 上层切换下一个候选 / fail over immediately for this candidate.
                 if exc.is_fallback_only:
