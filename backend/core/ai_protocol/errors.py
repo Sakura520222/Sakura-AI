@@ -11,27 +11,24 @@ from typing import Any
 
 from backend.core.ai_protocol.models import AIErrorCategory
 
-# 终端错误：不重试、不回退 / Terminal errors: do not retry, do not fall back
-TERMINAL_CATEGORIES: frozenset[AIErrorCategory] = frozenset(
+# 不再按错误类别禁止故障转移 / No error category is terminal by default.
+# 保留空集合以兼容调用方对 ``is_terminal`` 的读取。
+TERMINAL_CATEGORIES: frozenset[AIErrorCategory] = frozenset()
+
+# 认证/权限/模型不存在时，当前候选没有重试价值，直接进入下一候选。
+# Authentication, permission, and missing-model failures fail over immediately.
+FALLBACK_ONLY_CATEGORIES: frozenset[AIErrorCategory] = frozenset(
     {
         AIErrorCategory.AUTH_INVALID,
         AIErrorCategory.PERMISSION_DENIED,
         AIErrorCategory.MODEL_NOT_FOUND,
-        AIErrorCategory.BAD_REQUEST,
-        AIErrorCategory.REFUSAL,
     }
 )
 
-# 可恢复错误：可重试 / Recoverable errors: retryable
-RETRYABLE_CATEGORIES: frozenset[AIErrorCategory] = frozenset(
-    {
-        AIErrorCategory.RATE_LIMITED,
-        AIErrorCategory.SERVER_ERROR,
-        AIErrorCategory.OVERLOADED,
-        AIErrorCategory.NETWORK,
-        AIErrorCategory.EMPTY_RESPONSE,
-        AIErrorCategory.UNKNOWN,
-    }
+# 其余归一化 AI 错误允许重试，并在当前候选耗尽后故障转移。
+# Other normalized AI errors are retried, then failed over after exhaustion.
+RETRYABLE_CATEGORIES: frozenset[AIErrorCategory] = frozenset(AIErrorCategory) - (
+    FALLBACK_ONLY_CATEGORIES
 )
 
 # 上下文超长关键词（跨协议累积）/ Context overflow keywords (cross-protocol)
@@ -82,7 +79,13 @@ class AIError(Exception):
 
     @property
     def is_terminal(self) -> bool:
+        """兼容旧调用方；错误不会因类别而阻断故障转移。"""
         return self.category in TERMINAL_CATEGORIES
+
+    @property
+    def is_fallback_only(self) -> bool:
+        """当前候选不重试，但应继续尝试故障转移候选。"""
+        return self.category in FALLBACK_ONLY_CATEGORIES
 
     @property
     def is_retryable(self) -> bool:
