@@ -115,6 +115,10 @@ def test_config_ai_model_selects_match_account_provider_controls():
     assert source.count('x-model="form.default_model"') == 1
     assert source.count('x-model="bindings[role].primary.model"') == 1
     assert source.count('x-model="fb.model"') == 1
+    assert source.count('option value="" hidden') == 3
+    assert source.count('@change="form.default_model = $event.target.value;') == 1
+    assert source.count('@change="bindings[role].primary.model = $event.target.value;') == 1
+    assert source.count('@change="fb.model = $event.target.value;') == 1
     assert "toggleModelPicker" not in source
     assert "modelPickerOpen" not in source
     assert '<option value="" selected>' not in source
