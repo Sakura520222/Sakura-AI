@@ -5,6 +5,7 @@
 保存 handler），既有 POST 端点保留，旧 GET 页面统一 302 到 /config。
 """
 
+import math
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -18,7 +19,7 @@ from starlette.datastructures import FormData
 from backend.core.config import BASIC_CONFIG_KEYS
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import filename_timestamp
-from backend.models.database import AppConfig
+from backend.models.database import AppConfig, _settings_default_to_str
 from backend.services.config_backup_service import (
     BACKUP_MAX_BYTES,
     ConfigBackupError,
@@ -555,6 +556,98 @@ def _payload_to_form_data(fields: dict) -> FormData:
     return FormData(pairs)
 
 
+class _DynamicConfigValidationError(ValueError):
+    """动态配置预校验失败时携带既有 toast 上下文。"""
+
+    def __init__(self, toast_key: str, **context: object) -> None:
+        super().__init__(toast_key)
+        self.toast_key = toast_key
+        self.context = context
+
+
+def _validate_dynamic_config_value(
+    key: str,
+    raw: object,
+    *,
+    expected_type: type,
+    ranges: dict[str, tuple[float, float | None]],
+    select_options: dict[str, list[dict]],
+) -> str:
+    """按 Settings 的真实字段类型校验并标准化一个动态配置值。
+
+    该 helper 只做纯校验，不访问数据库、缓存或运行时单例；调用方可以先
+    对整张表单收集所有结果，再进入任何持久化/热加载路径。
+    """
+    value = "" if raw is None else str(raw).strip()
+
+    if key in select_options:
+        valid_values = [option["value"] for option in select_options[key]]
+        if value not in valid_values:
+            raise _DynamicConfigValidationError(
+                "toast.value_invalid", field_key=key
+            )
+        return value
+
+    numeric_value: int | float | None = None
+    if expected_type is bool:
+        bool_values = {
+            "true": "true",
+            "false": "false",
+            "1": "true",
+            "0": "false",
+            "yes": "true",
+            "no": "false",
+        }
+        normalized_bool = bool_values.get(value.lower())
+        if normalized_bool is None:
+            raise _DynamicConfigValidationError(
+                "toast.value_invalid", field_key=key
+            )
+        return normalized_bool
+    if expected_type is int:
+        try:
+            numeric_value = int(value)
+        except (ValueError, TypeError):
+            raise _DynamicConfigValidationError(
+                "toast.numeric_required", field_key=key
+            ) from None
+    elif expected_type is float:
+        try:
+            numeric_value = float(value)
+        except (ValueError, TypeError):
+            raise _DynamicConfigValidationError(
+                "toast.numeric_required", field_key=key
+            ) from None
+        if not math.isfinite(numeric_value):
+            raise _DynamicConfigValidationError(
+                "toast.numeric_required", field_key=key
+            )
+
+    if key in ranges:
+        min_value, max_value = ranges[key]
+        if numeric_value is None:
+            raise _DynamicConfigValidationError(
+                "toast.numeric_required", field_key=key
+            )
+        if numeric_value < min_value or (
+            max_value is not None and numeric_value > max_value
+        ):
+            if max_value is None:
+                raise _DynamicConfigValidationError(
+                    "toast.value_min_required",
+                    field_key=key,
+                    min_v=min_value,
+                )
+            raise _DynamicConfigValidationError(
+                "toast.value_range",
+                field_key=key,
+                min_v=min_value,
+                max_v=max_value,
+            )
+
+    return value
+
+
 @router.post("/save-all")
 async def save_all_config(
     request: Request,
@@ -1066,8 +1159,8 @@ async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
     for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
         items = []
         for key in group_data["keys"]:
-            value = config_map.get(key, str(getattr(settings, key, "")))
-            default_val = str(getattr(settings, key, ""))
+            default_val = _settings_default_to_str(getattr(settings, key, ""))
+            value = config_map.get(key, default_val)
             input_type = get_dynamic_config_input_type(key)
             is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
 
@@ -1206,7 +1299,6 @@ async def save_general_config(
     """
     try:
         form = await request.form()
-        changed = {}
 
         # ========== 动态配置保存（覆盖全部 DYNAMIC 组键） ==========
         from backend.core.config import (
@@ -1214,11 +1306,15 @@ async def save_general_config(
             DYNAMIC_CONFIG_RANGES,
             DYNAMIC_CONFIG_SELECT_OPTIONS,
             DYNAMIC_CONFIG_SENSITIVE_KEYS,
+            _get_field_type,
         )
         from backend.core.config import (
             mask_sensitive_value as _mask,
         )
 
+        # 先完成整张表单的纯校验与标准化。任何字段失败都在数据库查询、
+        # ORM 对象修改、缓存失效和 Settings/信号量热加载之前返回。
+        validated_values: list[tuple[str, str, bool]] = []
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
                 is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
@@ -1233,89 +1329,60 @@ async def save_general_config(
                 if raw is None:
                     # boolean 字段未勾选时表单不提交
                     # 从 Settings 获取类型判断
-                    from backend.core.config import _get_field_type
-
                     if _get_field_type(key) is bool:
                         raw = "false"
                     else:
                         continue
 
-                val = str(raw).strip()
+                try:
+                    val = _validate_dynamic_config_value(
+                        key,
+                        raw,
+                        expected_type=_get_field_type(key),
+                        ranges=DYNAMIC_CONFIG_RANGES,
+                        select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
+                    )
+                except _DynamicConfigValidationError as exc:
+                    return toast_redirect(
+                        "/config",
+                        exc.toast_key,
+                        "error",
+                        lang=detect_language(),
+                        **exc.context,
+                    )
 
-                # 验证（上界 None 表示仅约束下界，不设硬编码上限）
-                if key in DYNAMIC_CONFIG_RANGES:
-                    min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
-                    try:
-                        num_val = float(val)
-                    except ValueError:
-                        return toast_redirect(
-                            "/config",
-                            "toast.numeric_required",
-                            "error",
-                            lang=detect_language(),
-                            field_key=key,
-                        )
-                    if num_val < min_v or (max_v is not None and num_val > max_v):
-                        if max_v is None:
-                            return toast_redirect(
-                                "/config",
-                                "toast.value_min_required",
-                                "error",
-                                lang=detect_language(),
-                                field_key=key,
-                                min_v=min_v,
-                            )
-                        return toast_redirect(
-                            "/config",
-                            "toast.value_range",
-                            "error",
-                            lang=detect_language(),
-                            field_key=key,
-                            min_v=min_v,
-                            max_v=max_v,
-                        )
+                validated_values.append((key, val, is_sensitive))
 
-                if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
-                    valid_values = [
-                        opt["value"] for opt in DYNAMIC_CONFIG_SELECT_OPTIONS[key]
-                    ]
-                    if val not in valid_values:
-                        return toast_redirect(
-                            "/config",
-                            "toast.value_invalid",
-                            "error",
-                            lang=detect_language(),
-                            field_key=key,
-                        )
-
-                # 保存
-                result = await db.execute(
-                    select(AppConfig).where(AppConfig.key_name == key)
-                )
-                cfg = result.scalar_one_or_none()
-                if cfg is None:
-                    # 首次创建
-                    cfg = AppConfig(key_name=key, key_value=val, description=key)
-                    db.add(cfg)
+        changed = {}
+        for key, val, is_sensitive in validated_values:
+            # 保存
+            result = await db.execute(
+                select(AppConfig).where(AppConfig.key_name == key)
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg is None:
+                # 首次创建
+                cfg = AppConfig(key_name=key, key_value=val, description=key)
+                db.add(cfg)
+                changed[key] = {
+                    "old": "(无)",
+                    "new": _mask(val) if is_sensitive else val,
+                    "raw_new": val,
+                }
+            elif cfg.key_value != val:
+                if is_sensitive:
                     changed[key] = {
-                        "old": "(无)",
-                        "new": _mask(val) if is_sensitive else val,
+                        "old": _mask(cfg.key_value),
+                        "new": _mask(val),
                         "raw_new": val,
                     }
-                elif cfg.key_value != val:
-                    if is_sensitive:
-                        changed[key] = {
-                            "old": _mask(cfg.key_value),
-                            "new": _mask(val),
-                            "raw_new": val,
-                        }
-                    else:
-                        changed[key] = {
-                            "old": cfg.key_value,
-                            "new": val,
-                            "raw_new": val,
-                        }
-                    cfg.key_value = val
+                else:
+                    changed[key] = {
+                        "old": cfg.key_value,
+                        "new": val,
+                        "raw_new": val,
+                    }
+                cfg.key_value = val
 
         if not changed:
             return toast_redirect(

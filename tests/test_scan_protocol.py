@@ -55,6 +55,20 @@ SQL 注入风险
 </SAKURA_SCAN>"""
 
 
+def _with_first_finding_location(
+    *, file_path: str, start_line: str, end_line: str
+) -> str:
+    return VALID_ENVELOPE.replace(
+        """<FILE>app/db.py</FILE>
+<START_LINE>10</START_LINE>
+<END_LINE>12</END_LINE>""",
+        f"""<FILE>{file_path}</FILE>
+<START_LINE>{start_line}</START_LINE>
+<END_LINE>{end_line}</END_LINE>""",
+        1,
+    )
+
+
 def test_parse_valid_envelope():
     result = TaggedScanParser().parse(VALID_ENVELOPE)
 
@@ -132,10 +146,6 @@ def test_parse_empty_findings_collection():
         lambda s: s.replace("整体质量良好，存在一个高危注入风险。\n两行总结。", "   "),
         # 缺字段（删掉第一个 CONFIDENCE）
         lambda s: s.replace("<CONFIDENCE>92</CONFIDENCE>\n", "", 1),
-        # 行号非正整数
-        lambda s: s.replace(
-            "<START_LINE>10</START_LINE>", "<START_LINE>0</START_LINE>"
-        ),
     ],
 )
 def test_parse_rejects_protocol_violations(mutate):
@@ -146,6 +156,51 @@ def test_parse_rejects_protocol_violations(mutate):
 def test_parse_rejects_duplicate_envelopes():
     with pytest.raises(ScanProtocolError):
         TaggedScanParser().parse(VALID_ENVELOPE + "\n" + VALID_ENVELOPE)
+
+
+def test_parse_accepts_file_finding_on_a_single_line():
+    result = TaggedScanParser().parse(
+        _with_first_finding_location(
+            file_path="app/db.py", start_line="12", end_line="12"
+        )
+    )
+
+    finding = result["findings"][0]
+    assert finding["file_path"] == "app/db.py"
+    assert finding["line_start"] == 12
+    assert finding["line_end"] == 12
+
+
+@pytest.mark.parametrize(
+    ("file_path", "start_line", "end_line"),
+    [
+        # 文件级 finding 缺少行号
+        ("app/db.py", "NONE", "NONE"),
+        # 仓库级 finding 只给出部分行号
+        ("NONE", "10", "NONE"),
+        ("NONE", "NONE", "12"),
+        # 文件级 finding 只给出部分行号
+        ("app/db.py", "10", "NONE"),
+        ("app/db.py", "NONE", "12"),
+        # FILE 为空或只有空白
+        ("", "10", "12"),
+        (" ", "10", "12"),
+        # 行号必须是正整数
+        ("app/db.py", "0", "12"),
+        ("app/db.py", "-1", "12"),
+        ("app/db.py", "not-an-integer", "12"),
+        ("app/db.py", "1.5", "12"),
+        # 行号范围必须按升序排列
+        ("app/db.py", "13", "12"),
+    ],
+)
+def test_parse_rejects_invalid_finding_locations(file_path, start_line, end_line):
+    with pytest.raises(ScanProtocolError):
+        TaggedScanParser().parse(
+            _with_first_finding_location(
+                file_path=file_path, start_line=start_line, end_line=end_line
+            )
+        )
 
 
 def test_parse_rejects_empty_text():

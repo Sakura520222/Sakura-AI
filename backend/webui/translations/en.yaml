@@ -895,7 +895,7 @@ config:
     registration_quota: "Self-registration Quota Config"
   label:
     max_concurrent_reviews: "Max concurrent reviews"
-    review_timeout_seconds: "Review task timeout (seconds)"
+    review_timeout_seconds: "PR/Issue/repository scan soft timeout (seconds)"
     enable_auto_review: "Enable webhook auto review"
     enable_check_runs: "Enable Check Runs progress"
     enable_analysis_check: "Enable secondary Analysis Check"
@@ -1010,7 +1010,7 @@ config:
     register_quota_multiplier: "Self-register Quota Multiplier"
   desc:
     max_concurrent_reviews: "Maximum concurrent PR review tasks; excess tasks queue"
-    review_timeout_seconds: "Overall review task timeout in seconds; auto-terminated when exceeded"
+    review_timeout_seconds: "Shared soft timeout in seconds for PR reviews, Issue analysis, and repository scans; the next AI call is prompted after it elapses"
     enable_auto_review: "When enabled, webhook-triggered PR changes are reviewed automatically"
     enable_check_runs: "Sync review progress to the GitHub Checks panel"
     enable_analysis_check: "Enable the secondary Analysis Check (AI runtime metrics); tool mode only"

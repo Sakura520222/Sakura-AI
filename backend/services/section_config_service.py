@@ -34,7 +34,9 @@ from backend.core.config import (
     reload_strategy_config,
 )
 from backend.core.config_sections import (
+    _PRUNED,
     SECTION_REGISTRY,
+    _prune_default_equal_leaves,
     clear_section_store,
     deep_merge,
     get_section_config,
@@ -510,13 +512,19 @@ class SectionConfigService:
             validator(new_effective)
             _validate_template_placeholders(section_key, new_effective)
 
+            # 只从覆盖树中裁掉与当前内置默认相等的叶子；非默认叶子、
+            # 未知键以及 patch 模式合并保留下来的旧覆盖必须继续持久化。
+            pruned_override = _prune_default_equal_leaves(
+                spec["defaults"], new_effective
+            )
+
             changes = _leaf_diff(
                 old_effective,
                 new_effective,
                 digest=section_key in _PROMPT_HEAVY_SECTIONS,
             )
 
-            if new_effective == spec["defaults"]:
+            if pruned_override is _PRUNED:
                 # 与内置默认无差异：移除 DB 覆盖回退默认，避免物化默认值
                 existed = await self._delete_row(db, section_key)
                 if existed:
@@ -528,6 +536,7 @@ class SectionConfigService:
                     "changes": changes,
                 }
 
+            new_override = pruned_override
             new_json = json.dumps(new_override, ensure_ascii=False, sort_keys=True)
             old_json = json.dumps(
                 old_override or {}, ensure_ascii=False, sort_keys=True

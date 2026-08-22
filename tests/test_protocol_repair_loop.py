@@ -3,6 +3,7 @@
 import pytest
 
 import backend.services.protocol_repair as pr_module
+from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
 from backend.services.protocol_repair import run_protocol_repair_loop
 
 
@@ -105,6 +106,42 @@ async def test_first_round_repair_succeeds():
     user_msgs = [m for m in api_client.calls[0]["messages"] if m["role"] == "user"]
     assert any("missing DESCRIPTION" in m["content"] for m in user_msgs)
     assert len(api_client.calls[0]["messages"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_expired_deadline_forces_tool_free_structured_repair_once():
+    """超时后的协议修复仍调用原 helper，但只允许最终结构化回答。"""
+
+    class _ProtocolErr(ValueError):
+        pass
+
+    parse_fn = _make_parse([_ProtocolErr("missing field"), {"ok": True}])
+    api_client = _FakeAIClient(responses=["fixed"])
+    messages = [{"role": "system", "content": "sys"}]
+
+    result = await run_protocol_repair_loop(
+        parse_fn=parse_fn,
+        error_type=_ProtocolErr,
+        base_messages=messages,
+        final_text="broken",
+        repair_instruction="REPAIR_BASE",
+        api_client=api_client,
+        tracker=_Tracker(),
+        max_attempts=3,
+        fallback_result_fn=lambda e: {"fallback": str(e)},
+        log_label="扫描",
+        sse_channel="scan:protocol_repair",
+        deadline=AITaskDeadline.from_timeout(0),
+    )
+
+    assert result == {"ok": True}
+    assert len(api_client.calls) == 1
+    call = api_client.calls[0]
+    assert call["kwargs"]["tools"] == []
+    assert call["kwargs"]["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT for message in call["messages"]
+    ) == 1
 
 
 @pytest.mark.asyncio

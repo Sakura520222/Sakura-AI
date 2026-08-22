@@ -544,7 +544,7 @@ updater_mv() { mv -f -- "$1" "$2"; }
 # Curl is constrained to the fixed HTTPS release endpoint and bounded time.
 # curl 仅允许固定 HTTPS 发布地址，并设置有界超时与重试。
 updater_curl() {
-    local url="$1" output="$2" headers="${3:-}" http_status
+    local url="$1" output="$2" headers="${3:-}" http_status curl_rc=0
     local -a args=(
         curl --fail --location
         --proto '=https' --proto-redir '=https'
@@ -556,11 +556,16 @@ updater_curl() {
     if [[ -n "$headers" ]]; then
         args+=(--dump-header "$headers")
     fi
-    if ! http_status=$("${args[@]}" "$url"); then
-        return 1
-    fi
+    # --fail makes curl return non-zero for HTTP 4xx/5xx, but --write-out still
+    # provides the response status. Capture both independently so callers can
+    # distinguish an explicit 404 from transport failure (curl reports 000).
+    http_status=$("${args[@]}" "$url") || curl_rc=$?
     http_status=${http_status//$'\r'/}
-    [[ "$http_status" =~ ^2[0-9][0-9]$ ]]
+    if [[ ! "$http_status" =~ ^[0-9]{3}$ ]]; then
+        http_status=000
+    fi
+    UPDATER_LAST_HTTP_STATUS="$http_status"
+    [[ "$curl_rc" -eq 0 && "$http_status" =~ ^2[0-9][0-9]$ ]]
 }
 
 # Read the already-running image version without requiring a source checkout.
@@ -961,7 +966,7 @@ install_updater_binary() {
     local binary="$UPDATER_BINARY" lock_path lock_fd=""
     local version stable_version asset binary_url sums_url
     local binary_tmp="" sums_tmp="" binary_headers_tmp="" sums_headers_tmp=""
-    local expected_hash actual_hash
+    local expected_hash actual_hash binary_http_status
 
     # Root gate precedes every filesystem or network operation.
     # root gate 必须早于任何文件系统或网络操作。
@@ -1034,15 +1039,21 @@ install_updater_binary() {
 
     binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
     sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
-    if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+    UPDATER_LAST_HTTP_STATUS=000
+    if updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+        :
+    else
+        binary_http_status="${UPDATER_LAST_HTTP_STATUS:-000}"
         # 目标版本无 Release 资产（development 镜像版本超前 stable 发布）；
         # 回退到最近 stable Release 的 updater binary（updater 随 stable 发布）。
-        if stable_version=$(resolve_latest_stable_updater_version) \
+        if [[ "$binary_http_status" == "404" ]] \
+            && stable_version=$(resolve_latest_stable_updater_version) \
             && [[ "$stable_version" != "$version" ]]; then
             warn "v${version} 无对应 Release 资产（development 构建超前 stable），回退使用最近 stable v${stable_version} 的 updater" >&2
             version="$stable_version"
             binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
             sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
+            UPDATER_LAST_HTTP_STATUS=000
             if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
                 fail "updater binary download failed (incl. stable fallback); old binary unchanged" >&2
                 updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
