@@ -131,7 +131,7 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-function sanitizeAgentFragment(html) { if (!window.DOMPurify) return ''; return DOMPurify.sanitize(String(html || ''), {USE_PROFILES: {html: true}}); }
+function sanitizeAgentFragment(html) { if (!window.DOMPurify) return ''; return DOMPurify.sanitize(String(html || ''), {USE_PROFILES: {html: true}, ADD_ATTR: ['target']}); }
 function agentLoadingHtml() { return '<div class="agent-panel flex min-h-40 items-center justify-center rounded-lg p-6 text-xs text-gray-400">{{ _('common.loading') }}</div>'; }
 function agentErrorHtml() { return '<div class="agent-panel flex min-h-40 items-center justify-center rounded-lg p-6 text-xs text-red-600 dark:text-red-400">{{ _('agent_team.request_failed') }}</div>'; }
 function replaceAgentFragment(target, html) { if (!target) return; target.innerHTML = sanitizeAgentFragment(html); if (typeof renderMarkdownElements === 'function') renderMarkdownElements(target); }
