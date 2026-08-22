@@ -694,17 +694,13 @@ class UnifiedAIClient:
                     exc,
                 )
 
-                # 终端错误：直接报出 / terminal errors surface immediately
-                if exc.is_terminal:
-                    self._log_logical_call_summary(
-                        logical_call_id=logical_call_id,
-                        role=role,
-                        started=logical_call_started,
-                        winner=None,
-                        success=False,
-                    )
-                    raise
+                # 认证、权限和模型不存在：当前候选不重试，直接故障转移。
+                if exc.is_fallback_only:
+                    continue
 
+                # 所有其余归一化错误都继续进入重试/故障转移路径；上下文超限
+                # 额外尝试压缩恢复 / all other normalized errors retry/fail over;
+                # context overflow also gets a compression recovery attempt.
                 # 上下文超限：尝试压缩恢复 / context overflow: compress & retry
                 if exc.category == AIErrorCategory.CONTEXT_OVERFLOW:
                     try:
@@ -1073,7 +1069,7 @@ class UnifiedAIClient:
                         previous_attempt_id = sender.last_attempt_id
                     # Once any stream event is visible to the caller, replaying a
                     # retry/fallback would duplicate output. Surface the error.
-                    if emitted or exc.is_terminal or not exc.is_retryable:
+                    if emitted:
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -1082,6 +1078,9 @@ class UnifiedAIClient:
                             success=False,
                         )
                         raise
+                    if exc.is_fallback_only:
+                        # 当前候选的认证/权限/模型错误不重试，直接尝试下一候选。
+                        break
                     if retry_index < self.fallback_config.max_retries:
                         try:
                             delay = self._calculate_delay(retry_index)
@@ -1217,7 +1216,9 @@ class UnifiedAIClient:
                 return response
             except AIError as exc:
                 last_exc = exc
-                if exc.is_terminal or not exc.is_retryable:
+                # 认证、权限和模型不存在不是当前候选的瞬时故障，直接交给
+                # 上层切换下一个候选 / fail over immediately for this candidate.
+                if exc.is_fallback_only:
                     raise
                 if attempt < cfg.max_retries:
                     delay = self._calculate_delay(attempt)
