@@ -1,5 +1,6 @@
 """仓库扫描软超时与协议失败终态测试。"""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -304,6 +305,42 @@ async def test_protocol_failure_marks_scan_failed_before_side_effects(
     execution.finish.assert_awaited_once_with(
         "failed", error_message="scan protocol could not be repaired"
     )
+
+
+@pytest.mark.asyncio
+async def test_scan_cancellation_finishes_execution_and_propagates(monkeypatch):
+    """外部取消必须停止 observability lease 并保留 CancelledError。"""
+    scan = SimpleNamespace(
+        status=ScanStatus.PENDING.value,
+        repo_name="owner/repo",
+        triggered_by="webui:1",
+    )
+
+    import backend.models.database as database_module
+
+    monkeypatch.setattr(
+        database_module,
+        "async_session",
+        lambda: _AsyncSession(scan),
+    )
+
+    worker = ScanWorker.__new__(ScanWorker)
+    execution = _Execution()
+    monkeypatch.setattr(
+        worker, "_start_threaded_execution", AsyncMock(return_value=execution)
+    )
+    monkeypatch.setattr(worker, "_update_scan", AsyncMock())
+    monkeypatch.setattr(
+        worker, "_clone_repo", AsyncMock(side_effect=asyncio.CancelledError)
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker._process_scan_inner(
+            8,
+            deadline=AITaskDeadline.from_timeout(60),
+        )
+
+    execution.finish.assert_awaited_once_with("cancelled", error_message=None)
 
 
 @pytest.mark.asyncio
