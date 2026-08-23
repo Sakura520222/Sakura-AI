@@ -244,6 +244,35 @@ async def test_started_execution_renews_lease_until_finish(db, resource, snapsho
 
 
 @pytest.mark.asyncio
+async def test_cancelled_execution_stops_lease_heartbeat_and_releases_lease(
+    db, resource, snapshot
+):
+    """取消终态必须停止 detached heartbeat 并释放当前 lease。"""
+    context = ContextService(db=db, lease_duration=timedelta(milliseconds=90))
+    service = ActivityIntegrationService(db=db, lease_context=context)
+    admitted = await service.admit_synchronize(
+        resource, delivery_id="heartbeat-cancelled-1"
+    )
+
+    execution = await service.start_execution(
+        session_id=admitted.session_id,
+        trigger_ids=[admitted.trigger_id],
+        role_snapshot=snapshot,
+        role="reviewer",
+        task_type="pr",
+    )
+    heartbeat_task = execution._lease_heartbeat_task
+    assert heartbeat_task is not None
+
+    await execution.finish("cancelled")
+
+    assert heartbeat_task.done()
+    stored_work_unit = await db.get(ActivityInvocationWorkUnit, execution.work_unit.id)
+    assert stored_work_unit.status == "cancelled"
+    assert await db.get(ActivityThreadLease, execution.thread.id) is None
+
+
+@pytest.mark.asyncio
 async def test_bundle_converges_after_stale_release_once_work_unit_is_terminal(
     db, resource, snapshot
 ):

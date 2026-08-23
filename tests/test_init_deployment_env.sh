@@ -21,8 +21,11 @@ assert_not_contains() { local file="$1" needle="$2" name="$3"; grep -q "$needle"
 docker() {
     case "$1" in
         volume)
-            [[ "$2" == "inspect" ]] || return 1
-            [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]
+            [[ "$2" == "ls" ]] || return 1
+            [[ "${FAKE_DOCKER_ERROR:-0}" != "1" ]] || return 1
+            if [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]; then
+                printf '%s\n' 'sakura-ai_mysql_data'
+            fi
             ;;
         *) return 1 ;;
     esac
@@ -79,6 +82,13 @@ FAKE_MYSQL_VOLUME=1 prod=false DEPLOY_DIR="$W3b2" DEPLOYMENT_ENV_FILE="$W3b2/dep
 [ "$?" -ne 0 ] && ! grep -q '^SAKURA_DB_PASSWORD=' "$W3b2/deployment.env" \
     && report 0 "S3b-2: 卷存在时拒绝猜测密码" || report 1 "S3b-2"
 
+# 场景 3b-3：Docker daemon/权限异常时拒绝把错误当作卷不存在
+W3b3=$(mktemp -d)
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=custom:preserved\n' > "$W3b3/deployment.env"
+FAKE_DOCKER_ERROR=1 prod=false DEPLOY_DIR="$W3b3" DEPLOYMENT_ENV_FILE="$W3b3/deployment.env" init_deployment_env >/dev/null 2>&1
+[ "$?" -ne 0 ] && ! grep -q '^SAKURA_DB_PASSWORD=' "$W3b3/deployment.env" \
+    && report 0 "S3b-3: Docker 探测异常时拒绝生成密码" || report 1 "S3b-3"
+
 # 场景 3c：缺项目名的 image 状态自动补全固定项目名（保留既有密码）
 W3c=$(mktemp -d)
 printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=custom:preserved\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$W3c/deployment.env"
@@ -112,8 +122,11 @@ docker() {
         pull) return 0 ;;
         compose) return 0 ;;
         volume)
-            [[ "$2" == "inspect" ]] || return 1
-            [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]
+            [[ "$2" == "ls" ]] || return 1
+            [[ "${FAKE_DOCKER_ERROR:-0}" != "1" ]] || return 1
+            if [[ "${FAKE_MYSQL_VOLUME:-0}" == "1" ]]; then
+                printf '%s\n' 'sakura-ai_mysql_data'
+            fi
             ;;
         image)
             [[ "$2" == "inspect" ]] || return 1

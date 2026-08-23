@@ -206,6 +206,28 @@ class ScanWorker:
         )
         repo_path = None
         execution = None
+        execution_status: str | None = None
+        execution_target_status: str | None = None
+
+        async def _finish_execution(
+            status: str, *, error_message: str | None = None
+        ) -> None:
+            """Best-effort terminal convergence for the observability bundle."""
+            nonlocal execution_status, execution_target_status
+            if execution is None or execution_status == status:
+                return
+            execution_target_status = status
+            try:
+                await execution.finish(status, error_message=error_message)
+            except Exception as finish_exc:
+                logger.warning(
+                    "扫描 {} observability finish 失败（status={}）: {}",
+                    scan_id,
+                    status,
+                    finish_exc,
+                )
+                return
+            execution_status = status
 
         try:
             # 1. 加载扫描记录
@@ -247,7 +269,7 @@ class ScanWorker:
                     error_message="克隆仓库失败",
                 )
                 if execution is not None:
-                    await execution.finish(
+                    await _finish_execution(
                         "failed",
                         error_message="克隆仓库失败",
                     )
@@ -283,7 +305,7 @@ class ScanWorker:
                     error_message=message,
                 )
                 if execution is not None:
-                    await execution.finish("failed", error_message=message)
+                    await _finish_execution("failed", error_message=message)
                 return
 
             await self._update_scan(
@@ -339,12 +361,7 @@ class ScanWorker:
                     completion_tokens=tracker.completion_tokens,
                 )
                 if execution is not None:
-                    try:
-                        await execution.finish("failed", error_message=error_message)
-                    except Exception as finish_exc:
-                        logger.warning(
-                            "扫描协议失败 observability finish 失败: {}", finish_exc
-                        )
+                    await _finish_execution("failed", error_message=error_message)
                 logger.error("扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message)
                 return
 
@@ -425,21 +442,31 @@ class ScanWorker:
                 aggregated["health_score"],
             )
             if execution is not None:
-                await execution.finish("completed")
+                await _finish_execution("completed")
 
+        except asyncio.CancelledError:
+            logger.warning("扫描 {} 被取消，执行 observability 取消收尾", scan_id)
+            await _finish_execution("cancelled")
+            raise
         except Exception as e:
             logger.error(f"扫描 {scan_id} 执行失败: {e}", exc_info=True)
             if execution is not None:
-                try:
-                    await execution.finish("failed", error_message=str(e))
-                except Exception as finish_exc:
-                    logger.warning("扫描 observability finish 失败: {}", finish_exc)
+                await _finish_execution("failed", error_message=str(e))
             await self._update_scan(
                 scan_id,
                 status=ScanStatus.FAILED.value,
                 error_message=str(e)[:2000],
             )
         finally:
+            if execution is not None and execution_status is None:
+                await _finish_execution(
+                    execution_target_status or "failed",
+                    error_message=(
+                        "Scan terminated without a terminal status"
+                        if execution_target_status is None
+                        else None
+                    ),
+                )
             # 清理临时目录
             if repo_path and os.path.exists(repo_path):
                 try:

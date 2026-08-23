@@ -3,6 +3,7 @@
 import asyncio
 import json
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 
 from loguru import logger
@@ -116,6 +117,50 @@ class IssueWorker:
         logger.info(f"[{task_id}] 开始处理 Issue 分析: {repo_full_name}#{issue_number}")
 
         execution = None
+        execution_status: str | None = None
+        execution_target_status: str | None = None
+
+        async def _finish_execution(
+            status: str, *, error_message: str | None = None
+        ) -> None:
+            """Best-effort terminal convergence for the observability bundle."""
+            nonlocal execution_status, execution_target_status
+            if execution is None or execution_status == status:
+                return
+            execution_target_status = status
+            try:
+                await execution.finish(status, error_message=error_message)
+            except Exception as finish_exc:
+                logger.warning(
+                    "[{}] issue observability finish failed (status={}): {}",
+                    task_id,
+                    status,
+                    finish_exc,
+                )
+                return
+            execution_status = status
+
+        @asynccontextmanager
+        async def _execution_scope():
+            """Keep cancellation cleanup around semaphore and DB admission."""
+            try:
+                semaphore = await _get_issue_semaphore()
+                async with semaphore:
+                    yield
+            except asyncio.CancelledError:
+                await _finish_execution("cancelled")
+                raise
+            finally:
+                if execution is not None and execution_status is None:
+                    await _finish_execution(
+                        execution_target_status or "failed",
+                        error_message=(
+                            "Issue analysis terminated without a terminal status"
+                            if execution_target_status is None
+                            else None
+                        ),
+                    )
+
         try:
             admission = await self.activity_integration.admit_issue(
                 issue_info,
@@ -159,9 +204,9 @@ class IssueWorker:
                 observability_exc,
             )
 
-        # 获取并发信号量，限制同时运行的 Issue 分析任务数
-        semaphore = await _get_issue_semaphore()
-        async with semaphore:
+        # 获取并发信号量，限制同时运行的 Issue 分析任务数。
+        # The scope also owns cancellation cleanup for a started execution.
+        async with _execution_scope():
             async with async_session() as db:
                 try:
                     # 1. 计算下一个分析版本号
@@ -312,7 +357,7 @@ class IssueWorker:
                     if not analysis_record:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
                         if execution is not None:
-                            await execution.finish(
+                            await _finish_execution(
                                 "failed",
                                 error_message="未找到待更新的 Issue 分析记录",
                             )
@@ -694,19 +739,12 @@ class IssueWorker:
                         analysis_result.get("estimated_cost", 0),
                     )
                     if execution is not None:
-                        await execution.finish("completed")
+                        await _finish_execution("completed")
 
                 except Exception as e:
                     logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
                     if execution is not None:
-                        try:
-                            await execution.finish("failed", error_message=str(e))
-                        except Exception as finish_exc:
-                            logger.warning(
-                                "[{}] issue observability finish failed: {}",
-                                task_id,
-                                finish_exc,
-                            )
+                        await _finish_execution("failed", error_message=str(e))
 
                     # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
                     try:
