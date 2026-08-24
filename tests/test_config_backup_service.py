@@ -364,6 +364,22 @@ def test_section_backup_rejects_invalid_payload(value: str, message: str):
         parse_config_backup(serialize_config_backup(document))
 
 
+def test_section_backup_rejects_missing_template_placeholders():
+    document = build_backup_document(
+        [
+            BackupRecord(
+                "strategy.pr_summary",
+                json.dumps({"user_template": "总结 {title} 的变更"}),
+                "strategy.pr_summary",
+            )
+        ],
+        "all",
+    )
+
+    with pytest.raises(ConfigBackupError, match="丢失必需占位符"):
+        parse_config_backup(serialize_config_backup(document))
+
+
 @pytest.mark.asyncio
 async def test_restore_replaces_strategy_section_exactly():
     strategies_row = AppConfig(

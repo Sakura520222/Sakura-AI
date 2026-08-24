@@ -356,6 +356,11 @@ async def test_lifespan_loads_section_configs_after_dynamic_settings(monkeypatch
         "backend.core.config_sections.migrate_yaml_files_to_db",
         record_migrate_yaml_files,
     )
+    label_reload = Mock()
+    monkeypatch.setattr(
+        "backend.services.label_service.label_service.reload_labels",
+        label_reload,
+    )
 
     app = FastAPI()
     async with main.lifespan(app):
@@ -363,6 +368,7 @@ async def test_lifespan_loads_section_configs_after_dynamic_settings(monkeypatch
         assert len(migrated_with) == 1
         assert len(loaded_with) == 1
         assert migrated_with[0] is loaded_with[0]
+    label_reload.assert_called_once_with()
 
 
 @pytest.mark.anyio

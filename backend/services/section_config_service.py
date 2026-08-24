@@ -376,6 +376,20 @@ SECTION_VALIDATORS: OrderedDict[str, Any] = OrderedDict(
 )
 
 
+def validate_section_config(section_key: str, effective: dict) -> None:
+    """校验合并后的有效配置节（结构与模板占位符）。
+
+    配置保存和备份恢复必须共用这条校验路径，避免某一种入口放过
+    正常 WebUI/API 保存时会拒绝的无效模板。
+    """
+    if section_key not in SECTION_REGISTRY:
+        raise KeyError(f"未注册的配置节: {section_key}")
+    if not isinstance(effective, dict):
+        raise ValueError(f"配置节 [{section_key}] 数据必须是 JSON 对象")
+    SECTION_VALIDATORS[section_key](effective)
+    _validate_template_placeholders(section_key, effective)
+
+
 # ============================================================================
 # 变更日志 / change log
 # ============================================================================
@@ -509,9 +523,7 @@ class SectionConfigService:
                 new_override = deepcopy(data)
             new_effective = deep_merge(spec["defaults"], new_override)
 
-            validator = SECTION_VALIDATORS[section_key]
-            validator(new_effective)
-            _validate_template_placeholders(section_key, new_effective)
+            validate_section_config(section_key, new_effective)
 
             # 只从覆盖树中裁掉与当前内置默认相等的叶子；非默认叶子、
             # 未知键以及 patch 模式合并保留下来的旧覆盖必须继续持久化。

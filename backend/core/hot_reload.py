@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 #   应用内重启请求会失效；
 # - backend.core.logging_bridge：模块级 configure_logging 重复配置 handler；
 # - backend.core.time_service：时间服务单例遍布全进程。
+# - backend.core.config*：Settings、动态配置缓存和配置节覆盖是进程级状态，
+#   热重载后不会重新执行启动阶段的数据库加载。
 RELOAD_BLOCKED_PREFIXES: frozenset[str] = frozenset(
     {
         "backend.main",
@@ -52,6 +54,9 @@ RELOAD_BLOCKED_PREFIXES: frozenset[str] = frozenset(
         "backend.core.server_runtime",
         "backend.core.logging_bridge",
         "backend.core.time_service",
+        "backend.core.config",
+        "backend.core.config_sections",
+        "backend.core.config_section_defaults",
     }
 )
 
