@@ -531,12 +531,6 @@ class SectionConfigService:
                 spec["defaults"], new_effective
             )
 
-            # 只从覆盖树中裁掉与当前内置默认相等的叶子；非默认叶子、
-            # 未知键以及 patch 模式合并保留下来的旧覆盖必须继续持久化。
-            pruned_override = _prune_default_equal_leaves(
-                spec["defaults"], new_effective
-            )
-
             changes = _leaf_diff(
                 old_effective,
                 new_effective,
