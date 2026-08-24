@@ -43,7 +43,7 @@ python-slugify>=8.0.0  # Collection 名称 slugify
 
 # 支付网关
 stripe>=15.5.1
-paddle-python-sdk>=1.0.0
+paddle-python-sdk>=1.15.0
 
 # WebUI
 jinja2>=3.1.6
