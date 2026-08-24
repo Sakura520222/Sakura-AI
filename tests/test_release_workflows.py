@@ -217,6 +217,31 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert release["concurrency"]["cancel-in-progress"] is False
 
 
+def test_source_archive_uses_unified_config_section_contract():
+    release, text = _load(RELEASE_PATH)
+    build = release["jobs"]["build-and-upload-assets"]
+    structure = next(
+        step for step in build["steps"] if step.get("name") == "验证项目结构"
+    )
+    package = next(
+        step for step in build["steps"] if step.get("name") == "创建发布资源包"
+    )
+
+    structure_text = structure["run"]
+    package_text = package["run"]
+
+    # strategies.yaml/labels.yaml were migrated into the app_config sections;
+    # the release workflow must validate the new source of built-in defaults.
+    assert "config/strategies.yaml" not in text
+    assert "config/labels.yaml" not in text
+    assert 'backend/core/config_section_defaults.py' in structure_text
+
+    # connection.json is deployment-time state and is intentionally ignored.
+    # The source archive still carries the runtime directory for Setup/Compose.
+    assert 'cp -r config "$RELEASE_DIR/"' not in package_text
+    assert 'mkdir -p "$RELEASE_DIR/config"' in package_text
+
+
 def test_docker_hub_stable_sync_tags_the_copied_docker_hub_image():
     workflow, _ = _load(DOCKER_PUBLISH_PATH)
     sync = workflow["jobs"]["sync-dockerhub"]
