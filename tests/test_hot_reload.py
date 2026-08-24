@@ -293,6 +293,26 @@ def test_blocked_modules_report_restart_required(hot_env):
     assert result.reloaded == []
 
 
+@pytest.mark.parametrize(
+    ("rel", "module_name"),
+    [
+        ("backend/core/config.py", "backend.core.config"),
+        ("backend/core/config_sections.py", "backend.core.config_sections"),
+        (
+            "backend/core/config_section_defaults.py",
+            "backend.core.config_section_defaults",
+        ),
+    ],
+)
+def test_runtime_config_modules_report_restart_required(hot_env, rel, module_name):
+    path = hot_env.write_module(rel, "")
+
+    result = hot_reload.apply_code_changes([path], root=hot_env.root)
+
+    assert result.blocked_restart == [module_name]
+    assert result.reloaded == []
+
+
 def test_syntax_error_is_recorded_not_raised(hot_env):
     path = hot_env.write_module("backend/_hot_broken.py", "VALUE = 1\n")
     module = hot_env.load_module("backend._hot_broken", path)
