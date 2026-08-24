@@ -43,7 +43,9 @@ def test_seed_rows_cover_every_dynamic_group_key():
         f"动态组键缺少种子行: {sorted(dynamic_keys - set(seed_map))}"
     )
     for key in dynamic_keys:
-        expected = str(getattr(settings, key, ""))
+        expected = database_module._settings_default_to_str(
+            getattr(settings, key, "")
+        )
         assert seed_map[key] == expected, (
             f"键 {key} 种子值 {seed_map[key]!r} 与 Settings 默认 {expected!r} 分叉"
         )
@@ -63,9 +65,8 @@ def test_full_seed_list_has_no_duplicate_keys():
     [
         # review_timeout_seconds 曾在同步路径手抄为 "300"
         ("review_timeout_seconds", "600"),
-        # web_search_enabled 曾在同步路径手抄为 "false"（R3 起随动态组以
-        # str() 序列化 bool，格式为 "True"，_cast_config_type 大小写兼容）
-        ("web_search_enabled", "True"),
+        # web_search_enabled 的动态默认值统一序列化为小写布尔文本。
+        ("web_search_enabled", "true"),
         # 以下三键的 DB 硬编码行曾偏离 Settings 默认（3/500/15/15）
         ("web_search_max_results", "5"),
         ("web_search_max_content_length", "2000"),
@@ -82,3 +83,11 @@ def test_app_version_row_uses_module_constant():
     assert len(version_rows) == 1
     # app_version 单一来源化（backend.__version__ 派生）列入后续路线，暂为字面量
     assert version_rows[0].key_value == database_module.APP_VERSION_DEFAULT
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, "true"), (False, "false"), (7, "7"), (0.25, "0.25")],
+)
+def test_settings_default_serialization_is_stable(value, expected):
+    assert database_module._settings_default_to_str(value) == expected

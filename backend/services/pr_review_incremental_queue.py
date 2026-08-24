@@ -1,6 +1,7 @@
 """Persistent queue for PR review incremental synchronize events."""
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,19 @@ class PreparedIncrementalMessage:
 class PRReviewIncrementalQueueService:
     """Manage synchronize events that arrive while a PR review is active."""
 
+    def __init__(
+        self,
+        task_active_checker: Callable[[str], bool] | None = None,
+    ) -> None:
+        """Create a queue service with an optional process-local activity probe.
+
+        The webhook path normally uses the live ``ReviewWorker`` registry via a
+        lazy lookup.  Tests and embedders may inject a read-only checker.  A
+        missing registry is deliberately treated as unknown/inactive so a
+        restarted process still gets the persisted age-based zombie fallback.
+        """
+        self._task_active_checker = task_active_checker
+
     @staticmethod
     def _repo_full_name(pr_info: dict[str, Any]) -> str:
         repo_full_name = pr_info.get("repo_full_name")
@@ -39,6 +53,30 @@ class PRReviewIncrementalQueueService:
     def _head_sha(pr_info: dict[str, Any]) -> str | None:
         head_sha = pr_info.get("head_sha") or pr_info.get("after")
         return str(head_sha) if head_sha else None
+
+    @classmethod
+    def _task_key(cls, pr_info: dict[str, Any]) -> str:
+        return f"{cls._repo_full_name(pr_info)}#{pr_info.get('pr_number')}"
+
+    def _is_task_active(self, task_key: str) -> bool:
+        """Read the process-local worker registry without creating a worker."""
+        if self._task_active_checker is not None:
+            try:
+                return bool(self._task_active_checker(task_key))
+            except Exception as exc:
+                logger.debug("PR 增量活动任务检查失败，回退年龄判断: {}", exc)
+                return False
+
+        try:
+            # Avoid importing/constructing ReviewWorker at module import time;
+            # review_worker imports this service during task execution.
+            from backend.workers import review_worker
+
+            worker = getattr(review_worker, "_worker_instance", None)
+            return bool(worker and worker.is_task_active(task_key))
+        except Exception as exc:
+            logger.debug("PR 增量活动任务注册不可用，回退年龄判断: {}", exc)
+            return False
 
     @staticmethod
     def _is_stale_review(review: PRReview) -> bool:
@@ -90,7 +128,9 @@ class PRReviewIncrementalQueueService:
         # 僵尸 review 检测：超时仍 PENDING/REVIEWING 视为 worker 已死，
         # 不挂载新增量，否则增量会永远 pending（死锁）。
         # 返回 None 让 webhook 改走 submit_review_task，新审查会消费 pending 增量。
-        if self._is_stale_review(active_review):
+        task_key = self._task_key(pr_info)
+        is_stale = self._is_stale_review(active_review)
+        if is_stale and not self._is_task_active(task_key):
             logger.warning(
                 "PR 增量检测到僵尸 review (id={}, status={}, created_at={})，"
                 "视为无 active review: {}#{}",
@@ -101,6 +141,11 @@ class PRReviewIncrementalQueueService:
                 pr_info.get("pr_number"),
             )
             return None
+        if is_stale:
+            logger.info(
+                "PR 增量发现 review 已超过年龄阈值，但进程内任务仍活动，继续挂载: {}",
+                task_key,
+            )
 
         head_sha = self._head_sha(pr_info)
         if not head_sha:

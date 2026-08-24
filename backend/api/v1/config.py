@@ -43,6 +43,26 @@ _STRATEGY_SECTION_KEY_MAP = {
 }
 
 
+def _normalize_label_definitions(
+    labels: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Convert the legacy list payload to the keyed section representation."""
+    normalized: dict[str, dict[str, Any]] = {}
+    for index, label in enumerate(labels, start=1):
+        if not isinstance(label, dict):
+            raise ValueError(f"第 {index} 个标签定义必须是对象")
+        name = label.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"第 {index} 个标签定义缺少有效的 name")
+        name = name.strip()
+        if name in normalized:
+            raise ValueError(f"标签名称重复: {name}")
+        normalized[name] = {
+            key: value for key, value in label.items() if key != "name"
+        }
+    return normalized
+
+
 class AIModelsRequest(BaseModel):
     """AI 模型列表请求。使用已保存账号 ID，不接受旧扁平凭据。"""
 
@@ -566,6 +586,12 @@ async def update_general_config(
     configs = body.configs
     if not configs:
         return error_response("配置内容不能为空")
+    section_keys = sorted(set(configs).intersection(SECTION_REGISTRY))
+    if section_keys:
+        return error_response(
+            "策略与标签配置节必须通过专用配置接口更新",
+            detail=", ".join(section_keys),
+        )
     reserved_keys = {
         key
         for key in configs
@@ -676,7 +702,10 @@ async def update_labels(
         return error_response("标签列表不能为空")
 
     try:
-        await section_config_service.save_section(db, "label.definitions", labels)
+        label_definitions = _normalize_label_definitions(labels)
+        await section_config_service.save_section(
+            db, "label.definitions", label_definitions
+        )
         label_service.reload_labels()
         logger.info(f"API 更新标签定义, by={user['sub']}")
         return success_response(message="标签定义已更新")

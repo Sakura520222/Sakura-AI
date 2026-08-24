@@ -751,7 +751,7 @@ config:
   ai_api_base_desc: "Built-in remote providers accept only official HTTPS URLs. custom/custom-anthropic can use public HTTPS services or HTTP/HTTPS localhost and private-network compatible services. Save and use API keys only with custom endpoints you fully trust."
   ai_api_key: "API Key"
   ai_api_key_keep: "When editing an existing account, leave blank or keep the masked value to preserve the current key."
-  ai_default_model_desc: "Type a model ID, or click a tag below to select it. Click \"Fetch Models\" to list models actually available to this account."
+  ai_default_model_desc: "Type a model ID, or use the dropdown button beside the input to select one. Click \"Fetch Models\" to list models actually available to this account."
   ai_region_desc: "Optional note to distinguish regions of the same vendor (e.g. Volcano cn-beijing, Qwen intl/us, Kimi CN/intl). Does not affect the request URL."
   ai_region: "Region"
   ai_notes: "Notes"
@@ -895,7 +895,7 @@ config:
     registration_quota: "Self-registration Quota Config"
   label:
     max_concurrent_reviews: "Max concurrent reviews"
-    review_timeout_seconds: "Review task timeout (seconds)"
+    review_timeout_seconds: "PR/Issue/repository scan soft timeout (seconds)"
     enable_auto_review: "Enable webhook auto review"
     enable_check_runs: "Enable Check Runs progress"
     enable_analysis_check: "Enable secondary Analysis Check"
@@ -1010,7 +1010,7 @@ config:
     register_quota_multiplier: "Self-register Quota Multiplier"
   desc:
     max_concurrent_reviews: "Maximum concurrent PR review tasks; excess tasks queue"
-    review_timeout_seconds: "Overall review task timeout in seconds; auto-terminated when exceeded"
+    review_timeout_seconds: "Shared soft timeout in seconds for PR reviews, Issue analysis, and repository scans; the next AI call is prompted after it elapses"
     enable_auto_review: "When enabled, webhook-triggered PR changes are reviewed automatically"
     enable_check_runs: "Sync review progress to the GitHub Checks panel"
     enable_analysis_check: "Enable the secondary Analysis Check (AI runtime metrics); tool mode only"
@@ -2013,7 +2013,7 @@ strategy:
   issue_comment_template_en: "Comment Template (English)"
   issue_template_variables: "Available template variables:"
   save_issue_analysis: "Save Issue Analysis Config"
-  issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Feature toggles (enable analysis, auto comment, etc.) are available in Global Config → Issue Analysis."
+  issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Issue feature toggles (enable analysis, auto assignment, title rewriting, etc.) are available in Global Config → Issue Analysis."
 
 # ========== Activity Monitor ==========
 activity:

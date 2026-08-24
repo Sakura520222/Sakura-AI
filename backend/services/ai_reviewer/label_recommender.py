@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 from backend.services.ai_reviewer.constants import LABEL_RECOMMENDATION_TEMPERATURE
+from backend.services.ai_task_deadline import AITaskDeadline
 
 
 class LabelRecommender:
@@ -45,6 +46,7 @@ class LabelRecommender:
         observer: Any = None,
         propagate_errors: bool = False,
         event_callback: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -58,11 +60,18 @@ class LabelRecommender:
             propagate_errors: 是否向上抛出 provider 失败
             event_callback: 可选异步回调 ``(event_type, data)``，用于把标签
                 推荐请求/响应写入辅助可观测通道，使实时监控卡片可区分业务来源
+            deadline: 主审查任务的共享软 deadline；到期后跳过标签辅助调用
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
         """
         try:
+            # 标签推荐使用 summary 角色和独立 JSON 输出契约，不能套用主审查
+            # envelope 的 timeout prompt；到期后直接跳过该辅助调用即可。
+            if deadline is not None and deadline.is_expired():
+                logger.info("审查任务软 deadline 已到达，跳过标签推荐辅助调用")
+                return []
+
             logger.info("开始AI标签推荐分析")
 
             # 判断是否为增量审查

@@ -29,12 +29,16 @@ from backend.services.ai_reviewer.tools import (
     ToolHandler,
     ToolManager,
 )
+from backend.services.ai_task_deadline import AITaskDeadline
 from backend.services.issue_protocol import (
     IssueProtocolError,
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 ISSUE_ANALYSIS_REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_ISSUE_ANALYSIS protocol.
 Reformat the same Issue analysis conclusions only. Do not add, remove, or reconsider recommendations.
@@ -330,6 +334,8 @@ class IssueAnalyzer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        cancel_event: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
         # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
@@ -363,6 +369,8 @@ class IssueAnalyzer:
             invocation_context=invocation_context,
             observer=observer,
             event_callback=event_callback,
+            cancel_event=cancel_event,
+            deadline=deadline,
         )
 
     @staticmethod
@@ -417,6 +425,8 @@ class IssueAnalyzer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        cancel_event: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """分析 Issue
 
@@ -430,6 +440,10 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
+
         self._refresh_ai_client()
         self._refresh_runtime_config()
 
@@ -554,20 +568,74 @@ class IssueAnalyzer:
             else model_ctx_mgr.calculate_safe_context(context_model, 0.8)
         )
 
+        async def _complete_analysis(response_text: str) -> dict[str, Any]:
+            result = await self._parse_or_repair_analysis(
+                response_text,
+                messages,
+                tracker,
+                event_callback=event_callback,
+                publication_coordinator=publication_coordinator,
+                invocation_context=invocation_context,
+                observer=observer,
+                cancel_event=cancel_event,
+                deadline=task_deadline,
+            )
+
+            result["prompt_tokens"] = tracker.prompt_tokens
+            result["completion_tokens"] = tracker.completion_tokens
+            result["tool_rounds"] = iteration
+            result["estimated_cost"] = tracker.calculate_cost(
+                settings.issue_price_per_1k_prompt,
+                settings.issue_price_per_1k_completion,
+            )
+            if (
+                publication_coordinator is not None
+                and invocation_context is not None
+            ):
+                result = await coordinate_publication(
+                    publication_coordinator,
+                    kind="issue_analysis",
+                    result=result,
+                    context=invocation_context,
+                )
+
+            logger.info(
+                "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
+                issue_info.get("issue_number"),
+                iteration,
+                tracker.prompt_tokens,
+                tracker.completion_tokens,
+            )
+            return result
+
         while True:
             iteration += 1
 
             try:
-                response = await self.api_client.call_with_retry(
-                    model="",
-                    messages=messages,
-                    tools=enabled_tools,
-                    tool_choice="auto",
-                    temperature=settings.ai_temperature,
-                    role="main",
-                    context=invocation_context,
-                    observer=observer,
-                )
+                prompt_was_sent = task_deadline.timeout_prompt_sent
+                call_kwargs = {
+                    "model": "",
+                    "messages": messages,
+                    "tools": enabled_tools,
+                    "tool_choice": "auto",
+                    "temperature": settings.ai_temperature,
+                    "role": "main",
+                    "cancel_event": cancel_event,
+                    "context": invocation_context,
+                    "observer": observer,
+                }
+                call_kwargs.update(task_deadline.prepare_call(messages))
+                if (
+                    not prompt_was_sent
+                    and task_deadline.timeout_prompt_sent
+                    and event_callback is not None
+                ):
+                    try:
+                        await event_callback("message", messages[-1])
+                    except Exception as exc:
+                        logger.warning("event_callback failed: {}", exc)
+
+                response = await self.api_client.call_with_retry(**call_kwargs)
             except Exception as e:
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
                 return {
@@ -624,43 +692,7 @@ class IssueAnalyzer:
             if not tool_calls:
                 # AI 完成分析，解析结果
                 review_text = response.choices[0].message.content or ""
-                result = await self._parse_or_repair_analysis(
-                    review_text,
-                    messages,
-                    tracker,
-                    event_callback=event_callback,
-                    publication_coordinator=publication_coordinator,
-                    invocation_context=invocation_context,
-                    observer=observer,
-                )
-
-                # 计算成本
-                result["prompt_tokens"] = tracker.prompt_tokens
-                result["completion_tokens"] = tracker.completion_tokens
-                result["tool_rounds"] = iteration
-                result["estimated_cost"] = tracker.calculate_cost(
-                    settings.issue_price_per_1k_prompt,
-                    settings.issue_price_per_1k_completion,
-                )
-                if (
-                    publication_coordinator is not None
-                    and invocation_context is not None
-                ):
-                    result = await coordinate_publication(
-                        publication_coordinator,
-                        kind="issue_analysis",
-                        result=result,
-                        context=invocation_context,
-                    )
-
-                logger.info(
-                    "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
-                    issue_info.get("issue_number"),
-                    iteration,
-                    tracker.prompt_tokens,
-                    tracker.completion_tokens,
-                )
-                return result
+                return await _complete_analysis(review_text)
 
             # 处理工具调用
             assistant_message = response.choices[0].message
@@ -692,8 +724,35 @@ class IssueAnalyzer:
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
+            # 即使 provider 在 deadline 前开始、在 deadline 后返回了 tool call，
+            # 也不能执行该工具；将 assistant 内容交给原有协议解析/修复。
+            if task_deadline.tools_disabled:
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                return await _complete_analysis(assistant_message.content or "")
+
+            # 本次调用可能在 deadline 前启动、但返回时已经到期。保留累计
+            # assistant turn，下一轮由 prepare_call 追加一次 timeout prompt 并收尾。
+            if task_deadline.is_expired():
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                continue
+
             # 执行工具调用
-            for tool_call in tool_calls:
+            for tool_index, tool_call in enumerate(tool_calls):
+                if task_deadline.is_expired():
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls[tool_index:],
+                        event_callback=event_callback,
+                    )
+                    break
                 try:
                     if event_callback:
                         try:

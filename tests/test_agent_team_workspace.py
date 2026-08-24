@@ -1,5 +1,6 @@
 """Agent 专家团队工作区与 Shell 执行安全测试"""
 
+import stat
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from backend.services.agent_team.tools.shell_tool import (
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
+    _rmtree_onexc,
 )
 from backend.workers.agent_team_worker import _merge_modified_files
 
@@ -214,6 +216,100 @@ def test_delete_worktree_removes_readonly_files(tmp_path):
 
     assert deleted_path == worktree
     assert not worktree.exists()
+
+
+def test_rmtree_onexc_rejects_path_outside_trusted_root(tmp_path, monkeypatch):
+    trusted_root = tmp_path / "workspace"
+    trusted_root.mkdir()
+    malicious_path = tmp_path / "outside" / "secret.txt"
+    chmod_calls = []
+    retry_calls = []
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.workspace_service.os.chmod",
+        lambda path, mode: chmod_calls.append((path, mode)),
+    )
+
+    with pytest.raises(WorkspaceSecurityError):
+        _rmtree_onexc(
+            retry_calls.append,
+            str(malicious_path),
+            PermissionError("access denied"),
+            trusted_root=trusted_root,
+        )
+
+    assert chmod_calls == []
+    assert retry_calls == []
+
+
+def test_rmtree_onexc_chmods_and_retries_permission_error_inside_root(
+    tmp_path, monkeypatch
+):
+    trusted_root = tmp_path / "workspace"
+    trusted_root.mkdir()
+    readonly_path = trusted_root / "readonly.txt"
+    chmod_calls = []
+    retry_calls = []
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.workspace_service.os.chmod",
+        lambda path, mode: chmod_calls.append((path, mode)),
+    )
+
+    _rmtree_onexc(
+        retry_calls.append,
+        str(readonly_path),
+        PermissionError("access denied"),
+        trusted_root=trusted_root,
+    )
+
+    resolved_path = readonly_path.resolve()
+    assert chmod_calls == [(resolved_path, stat.S_IWRITE)]
+    assert retry_calls == [resolved_path]
+
+
+def test_rmtree_onexc_propagates_non_permission_error(tmp_path, monkeypatch):
+    trusted_root = tmp_path / "workspace"
+    trusted_root.mkdir()
+    chmod_calls = []
+    failure = OSError("disk failure")
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.workspace_service.os.chmod",
+        lambda path, mode: chmod_calls.append((path, mode)),
+    )
+
+    with pytest.raises(OSError) as raised:
+        _rmtree_onexc(
+            pytest.fail,
+            str(trusted_root / "file.txt"),
+            failure,
+            trusted_root=trusted_root,
+        )
+
+    assert raised.value is failure
+    assert chmod_calls == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("delete_workspace", ("../outside", "repo")),
+        ("delete_workspace", ("owner", "../repo")),
+        ("delete_worktree", ("owner", "repo", "../outside")),
+        ("delete_worktree", ("owner", "repo", "..")),
+    ],
+)
+def test_delete_operations_reject_path_escape(tmp_path, method_name, args):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = service.ensure_workspace("owner", "repo")
+    marker = workspace / "must-stay.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(WorkspaceSecurityError):
+        getattr(service, method_name)(*args)
+
+    assert marker.exists()
 
 
 @pytest.mark.asyncio

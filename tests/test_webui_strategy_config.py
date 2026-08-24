@@ -99,9 +99,12 @@ async def test_save_strategies_accepts_unbounded_large_conditions(
     )
 
     assert response["args"][1] == "toast.strategy_saved"
-    # large 策略的无上限条件值原样落库，不设数值上限
+    # large 策略的无上限条件值通过校验；与内置默认相同的叶子按统一
+    # section 存储契约裁剪，但读取有效配置时仍保留完整条件值。
     saved = json.loads(db.rows[0].key_value)
-    assert saved["large"]["conditions"] == {
+    assert "conditions" not in saved["large"]
+    effective = config_sections.get_section_config("strategy.strategies")
+    assert effective["large"]["conditions"] == {
         "max_files": 999999,
         "max_lines": 99999999,
     }

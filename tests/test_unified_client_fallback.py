@@ -3,7 +3,7 @@
 使用 respx/httpx MockTransport 模拟适配器响应，验证：
 - 可恢复错误重试耗尽 → 跨协议回退
 - 上下文超限 → 压缩恢复（需注入压缩器桩）
-- 终端错误 → 直接报出，不回退
+- 所有归一化 AI 错误 → 重试耗尽后进入故障转移
 """
 
 import asyncio
@@ -471,12 +471,75 @@ async def test_non_json_response_exhausts_then_falls_back(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_terminal_error_surfaces_without_fallback(monkeypatch):
-    primary_stub = _StubAdapter(fail_categories=[AIErrorCategory.AUTH_INVALID])
+async def test_bad_request_retries_then_falls_back(monkeypatch):
+    """请求参数错误也应重试，耗尽后切换到备用候选。"""
+    primary_stub = _StubAdapter(
+        fail_categories=[AIErrorCategory.BAD_REQUEST, AIErrorCategory.BAD_REQUEST]
+    )
+    fallback_stub = _StubAdapter(content="fallback")
 
     from backend.core.ai_protocol import registry as reg
 
-    monkeypatch.setattr(reg, "get_adapter", lambda _: primary_stub)
+    monkeypatch.setattr(
+        reg,
+        "get_adapter",
+        lambda family: (
+            primary_stub
+            if family == ProtocolFamily.OPENAI_COMPATIBLE
+            else fallback_stub
+        ),
+    )
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=10,
+            initial_retry_delay=0,
+        )
+    )
+    primary = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary")
+    fallback = _candidate(ProtocolFamily.ANTHROPIC_NATIVE, "fallback")
+
+    response = await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+
+    assert response.content == "fallback"
+    assert primary_stub.calls == 2
+    assert fallback_stub.calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "category",
+    [
+        AIErrorCategory.AUTH_INVALID,
+        AIErrorCategory.PERMISSION_DENIED,
+        AIErrorCategory.MODEL_NOT_FOUND,
+    ],
+)
+async def test_identity_or_model_error_fails_over_without_retry(monkeypatch, category):
+    """认证、权限和模型不存在错误直接切换候选，不重试当前候选。"""
+    primary_stub = _StubAdapter(fail_categories=[category])
+    fallback_stub = _StubAdapter(content="fallback")
+
+    from backend.core.ai_protocol import registry as reg
+
+    monkeypatch.setattr(
+        reg,
+        "get_adapter",
+        lambda family: (
+            primary_stub
+            if family == ProtocolFamily.OPENAI_COMPATIBLE
+            else fallback_stub
+        ),
+    )
 
     client = UnifiedAIClient(
         fallback_config=FallbackConfig(
@@ -488,17 +551,46 @@ async def test_terminal_error_surfaces_without_fallback(monkeypatch):
         )
     )
     primary = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary")
-    fallback = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "fallback")
+    fallback = _candidate(ProtocolFamily.ANTHROPIC_NATIVE, "fallback")
 
-    with pytest.raises(AIError) as exc_info:
-        await client.call_with_retry(
-            [primary, fallback],
-            [UnifiedMessage(role="user", content="hi")],
-            model="primary",
-            role="main",
-        )
-    assert exc_info.value.category == AIErrorCategory.AUTH_INVALID
+    response = await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+
+    assert response.content == "fallback"
+    assert primary_stub.calls == 1
+    assert fallback_stub.calls == 1
     await client.aclose()
+
+
+def test_fallback_only_categories_are_not_retryable():
+    """认证、权限和模型不存在只允许故障转移，不允许重试当前候选。"""
+    for category in (
+        AIErrorCategory.AUTH_INVALID,
+        AIErrorCategory.PERMISSION_DENIED,
+        AIErrorCategory.MODEL_NOT_FOUND,
+    ):
+        error = AIError(category, "stub failure")
+        assert not error.is_terminal
+        assert error.is_fallback_only
+        assert not error.is_retryable
+
+
+def test_other_ai_error_categories_are_retryable_and_non_terminal():
+    """除直接故障转移类别外，其余 AI 错误都允许重试。"""
+    fallback_only = {
+        AIErrorCategory.AUTH_INVALID,
+        AIErrorCategory.PERMISSION_DENIED,
+        AIErrorCategory.MODEL_NOT_FOUND,
+    }
+    for category in set(AIErrorCategory) - fallback_only:
+        error = AIError(category, "stub failure")
+        assert not error.is_terminal
+        assert not error.is_fallback_only
+        assert error.is_retryable
 
 
 @pytest.mark.asyncio

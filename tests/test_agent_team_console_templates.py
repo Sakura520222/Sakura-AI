@@ -113,12 +113,22 @@ def test_task_list_is_compact_selectable_and_keyboard_actionable():
     assert 'data-task-action="select"' in template
     assert 'data-task-action="cancel"' in template
     assert 'data-task-action="retry"' in template
+    assert 'target="_blank"' in template
+    assert 'rel="noopener noreferrer"' in template
     assert 'data-page="{{ page }}"' in template
     assert "agent-mono" in template
     assert 'role="list"' in template
     assert "task.iteration_count or 0 }}/{{" not in template
     assert "max_iterations" not in template
     assert "onclick=" not in template
+
+
+def test_dynamic_agent_fragments_preserve_external_link_targets_after_sanitizing():
+    page = _read(PAGE)
+
+    assert "DOMPurify.sanitize(String(html || '')," in page
+    assert "USE_PROFILES: {html: true}" in page
+    assert "ADD_ATTR: ['target']" in page
 
 
 def test_detail_keeps_long_context_collapsed_and_uses_single_agent_language():

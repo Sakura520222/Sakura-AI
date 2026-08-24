@@ -1,9 +1,16 @@
 """协议信封修复循环 helper 的单元测试。"""
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 import backend.services.protocol_repair as pr_module
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 
 class _FakeAIClient:
@@ -43,6 +50,57 @@ def _make_parse(results):
         return item
 
     return _parse
+
+
+@pytest.mark.asyncio
+async def test_skipped_tool_results_close_every_tool_call_by_id():
+    """软超时跳过多个工具时，历史中的每个 tool call 都有闭合结果。"""
+    tool_calls = [
+        {
+            "id": "call-dict",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        },
+        SimpleNamespace(id="call-sdk"),
+    ]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": tool_calls,
+        }
+    ]
+    events = []
+
+    async def _capture(event_type, payload):
+        events.append((event_type, payload))
+
+    await append_skipped_tool_results(
+        messages,
+        tool_calls,
+        event_callback=_capture,
+    )
+
+    assistant_ids = {
+        tool_call["id"] if isinstance(tool_call, dict) else tool_call.id
+        for tool_call in messages[0]["tool_calls"]
+    }
+    tool_messages = messages[1:]
+    result_ids = {message["tool_call_id"] for message in tool_messages}
+
+    assert assistant_ids == {"call-dict", "call-sdk"}
+    assert result_ids == assistant_ids
+    assert all(message["role"] == "tool" for message in tool_messages)
+    assert all(
+        json.loads(message["content"])["error"]
+        == "Task deadline reached; this tool call was not executed."
+        for message in tool_messages
+    )
+    assert [event[0] for event in events] == ["message", "message"]
+    assert [event[1]["tool_call_id"] for event in events] == [
+        "call-dict",
+        "call-sdk",
+    ]
 
 
 @pytest.mark.asyncio
@@ -105,6 +163,42 @@ async def test_first_round_repair_succeeds():
     user_msgs = [m for m in api_client.calls[0]["messages"] if m["role"] == "user"]
     assert any("missing DESCRIPTION" in m["content"] for m in user_msgs)
     assert len(api_client.calls[0]["messages"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_expired_deadline_forces_tool_free_structured_repair_once():
+    """超时后的协议修复仍调用原 helper，但只允许最终结构化回答。"""
+
+    class _ProtocolErr(ValueError):
+        pass
+
+    parse_fn = _make_parse([_ProtocolErr("missing field"), {"ok": True}])
+    api_client = _FakeAIClient(responses=["fixed"])
+    messages = [{"role": "system", "content": "sys"}]
+
+    result = await run_protocol_repair_loop(
+        parse_fn=parse_fn,
+        error_type=_ProtocolErr,
+        base_messages=messages,
+        final_text="broken",
+        repair_instruction="REPAIR_BASE",
+        api_client=api_client,
+        tracker=_Tracker(),
+        max_attempts=3,
+        fallback_result_fn=lambda e: {"fallback": str(e)},
+        log_label="扫描",
+        sse_channel="scan:protocol_repair",
+        deadline=AITaskDeadline.from_timeout(0),
+    )
+
+    assert result == {"ok": True}
+    assert len(api_client.calls) == 1
+    call = api_client.calls[0]
+    assert call["kwargs"]["tools"] == []
+    assert call["kwargs"]["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT for message in call["messages"]
+    ) == 1
 
 
 @pytest.mark.asyncio
