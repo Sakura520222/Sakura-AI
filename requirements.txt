@@ -42,7 +42,7 @@ watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
 # 支付网关
-stripe>=9.0.0
+stripe>=15.5.1
 paddle-python-sdk>=1.0.0
 
 # WebUI
