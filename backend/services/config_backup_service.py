@@ -41,7 +41,10 @@ from backend.core.time_service import (
     resolve_timezone,
 )
 from backend.models.database import AppConfig
-from backend.services.section_config_service import SECTION_VALIDATORS
+from backend.services.section_config_service import (
+    SECTION_VALIDATORS,
+    validate_section_config,
+)
 from backend.services.system_config_service import (
     RESTART_REQUIRED_KEYS,
     SYSTEM_CONFIG_KEYS,
@@ -547,7 +550,10 @@ def _validate_section_config_record(record: BackupRecord) -> None:
     if validator is None:
         raise ConfigBackupError(f"不允许导入配置节 {record.key}")
     try:
-        validator(deep_merge(get_section_defaults(record.key), data))
+        validate_section_config(
+            record.key,
+            deep_merge(get_section_defaults(record.key), data),
+        )
     except ValueError as exc:
         raise ConfigBackupError(f"配置节 {record.key} 结构无效: {exc}") from exc
 
