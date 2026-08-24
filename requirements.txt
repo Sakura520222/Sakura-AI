@@ -47,7 +47,7 @@ paddle-python-sdk>=1.0.0
 
 # WebUI
 jinja2>=3.1.6
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 itsdangerous>=2.2.0
 pyotp>=2.10.0
 qrcode[pil]>=8.2
