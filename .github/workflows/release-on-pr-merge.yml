@@ -535,9 +535,9 @@ jobs:
             exit 1
           fi
 
-          # 验证配置文件
-          if [ ! -f "config/strategies.yaml" ]; then
-            echo "❌ 错误: config/strategies.yaml 文件不存在"
+          # 验证统一配置默认值源码
+          if [ ! -f "backend/core/config_section_defaults.py" ]; then
+            echo "❌ 错误: backend/core/config_section_defaults.py 文件不存在"
             exit 1
           fi
 
@@ -658,9 +658,11 @@ jobs:
           find "$RELEASE_DIR/backend" -type f -name '*.pyc' -delete
           echo "- backend/ (核心应用代码)" >> packaging_manifest.txt
 
-          # config 整目录（含 strategies.yaml + labels.yaml，运行时必需）
-          cp -r config "$RELEASE_DIR/"
-          echo "- config/ (strategies.yaml + labels.yaml)" >> packaging_manifest.txt
+          # 运行时配置目录（connection.json 由 Setup Wizard 在部署时写入）
+          # 策略与标签默认值已迁移至 backend/core/config_section_defaults.py，
+          # 用户覆盖存储在 app_config 配置节中，不随 source archive 打包。
+          mkdir -p "$RELEASE_DIR/config"
+          echo "- config/ (Setup Wizard 运行时 connection.json 目录)" >> packaging_manifest.txt
 
           # docker 整目录（Dockerfile / docker-compose.yml / mysql-init / .dockerignore）
           cp -r docker "$RELEASE_DIR/"
