@@ -73,6 +73,10 @@ _LEGACY_CONFIG_KEYS = frozenset(
     }
 )
 
+# GitHub App JWT 的有效期上限是 10 分钟。留出 1 分钟裕量，避免本机时钟
+# 略快于 GitHub 时把 exp 判定为“too far in the future”。
+_GITHUB_APP_JWT_LIFETIME_SECONDS = 9 * 60
+
 # 环境变量字段与 Settings 字段的分组（前端步骤用）
 ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
@@ -177,6 +181,8 @@ class SetupService:
 
     async def test_github_app(self, app_id: str, private_key: str) -> dict[str, Any]:
         """测试 GitHub App 凭证"""
+        app_id = (app_id or "").strip()
+        private_key = (private_key or "").replace("\\n", "\n").strip()
         if not app_id or not private_key:
             return {"success": False, "message": "App ID 和 Private Key 不能为空"}
 
@@ -186,7 +192,7 @@ class SetupService:
             now = int(now_utc().timestamp())
             payload = {
                 "iat": now - 60,
-                "exp": now + (10 * 60),
+                "exp": now + _GITHUB_APP_JWT_LIFETIME_SECONDS,
                 "iss": app_id,
             }
             token = jwt.encode(payload, private_key, algorithm="RS256")
@@ -212,9 +218,27 @@ class SetupService:
                         "bot_username": bot_username,
                     }
                 elif resp.status_code == 401:
+                    github_message = None
+                    try:
+                        response_body = resp.json()
+                    except (AttributeError, TypeError, ValueError):
+                        response_body = None
+                    if isinstance(response_body, dict):
+                        raw_message = response_body.get("message")
+                        if isinstance(raw_message, str):
+                            github_message = raw_message.strip()
+
+                    if github_message:
+                        return {
+                            "success": False,
+                            "message": f"GitHub App 验证失败: {github_message}",
+                        }
                     return {
                         "success": False,
-                        "message": "凭证无效，请检查 App ID 和 Private Key",
+                        "message": (
+                            "GitHub App 验证失败 (HTTP 401)，请检查 App ID、"
+                            "Private Key 和服务器时间"
+                        ),
                     }
                 else:
                     return {

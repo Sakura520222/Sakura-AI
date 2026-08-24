@@ -7,6 +7,7 @@ import pytest
 from backend.services.ai_reviewer.result_parser import ReviewResultParser
 from backend.services.ai_reviewer.reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_task_deadline import TIMEOUT_PROMPT, AITaskDeadline
 
 VALID_REVIEW = """<SAKURA_REVIEW>
 <VERSION>1</VERSION>
@@ -34,7 +35,7 @@ class FakeApiClient:
 
     async def call_with_retry(self, **kwargs):
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.content)
+        message = SimpleNamespace(content=self.content, tool_calls=[])
         choice = SimpleNamespace(message=message)
         usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
         return SimpleNamespace(choices=[choice], usage=usage)
@@ -188,3 +189,171 @@ async def test_final_assistant_turn_emitted_once():
     # 修复轮次的 assistant 修复输出（VALID_REVIEW）推 1 次
     # final_text（"legacy free-form response"）不再由 _parse_or_repair_review 推送
     assert events == [VALID_REVIEW]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_uses_tool_free_final_call_after_deadline():
+    reviewer = _reviewer_with_response(VALID_REVIEW)
+    reviewer.enable_compression = False
+    reviewer.context_compressor = SimpleNamespace(
+        estimate_messages_tokens=lambda _messages: 1,
+    )
+    reviewer.tool_handler = SimpleNamespace()
+    reviewer.model_context_mgr = SimpleNamespace(
+        calculate_safe_context=lambda *_args: 100_000,
+    )
+
+    result = await reviewer._run_tool_loop(
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "data"},
+        ],
+        system_prompt="system",
+        strategy="standard",
+        enabled_tools=[{"type": "function", "function": {"name": "read_file"}}],
+        repo=None,
+        pr=None,
+        tracker=TokenTracker(),
+        context={},
+        deadline=AITaskDeadline.from_timeout(0),
+    )
+
+    assert result["ai_decision"] == "approve"
+    call = reviewer.api_client.calls[0]
+    assert call["tools"] == []
+    assert call["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT for message in call["messages"]
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_returned_after_deadline_are_closed_before_timeout_call():
+    """跨 deadline 返回的 PR 工具调用必须先闭合再发送最终请求。"""
+
+    class _CrossDeadline:
+        timeout_prompt_sent = False
+        tools_disabled = False
+
+        def __init__(self):
+            self._expired = False
+
+        def is_expired(self):
+            return self._expired
+
+        def prepare_call(self, messages):
+            if self.tools_disabled or self._expired:
+                self.tools_disabled = True
+                if not self.timeout_prompt_sent:
+                    messages.append({"role": "user", "content": TIMEOUT_PROMPT})
+                    self.timeout_prompt_sent = True
+                return {"tools": [], "tool_choice": "none"}
+            return {}
+
+    tool_calls = [
+        SimpleNamespace(
+            id="call-pr-1",
+            type="function",
+            function=SimpleNamespace(name="read_file", arguments="{}"),
+        ),
+        SimpleNamespace(
+            id="call-pr-2",
+            type="function",
+            function=SimpleNamespace(name="search", arguments="{}"),
+        ),
+    ]
+    deadline = _CrossDeadline()
+
+    def _response(content, response_tool_calls):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=content,
+                        tool_calls=response_tool_calls,
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
+        )
+
+    class _SequenceClient:
+        def __init__(self):
+            self.responses = [
+                _response("partial", tool_calls),
+                _response(VALID_REVIEW, []),
+            ]
+            self.calls = []
+
+        async def resolve_role_model_context(self, role):
+            assert role == "main"
+            return "test-model", 100_000
+
+        async def call_with_retry(self, **kwargs):
+            self.calls.append(
+                {**kwargs, "messages": list(kwargs["messages"])}
+            )
+            response = self.responses.pop(0)
+            if len(self.calls) == 1:
+                # The provider call started before the deadline but returned
+                # after it, so the caller must close this assistant turn.
+                deadline._expired = True
+            return response
+
+    reviewer = _reviewer_with_response(VALID_REVIEW)
+    reviewer.api_client = _SequenceClient()
+    reviewer.enable_compression = False
+    reviewer.context_compressor = SimpleNamespace(
+        estimate_messages_tokens=lambda _messages: 1,
+    )
+    reviewer.model_context_mgr = SimpleNamespace(
+        calculate_safe_context=lambda *_args: 100_000,
+    )
+    executed_tools = []
+
+    async def _must_not_execute(*args):
+        executed_tools.append(args)
+        raise AssertionError("tools must not run after the soft deadline")
+
+    reviewer.tool_handler = SimpleNamespace(handle_tool_call=_must_not_execute)
+
+    result = await reviewer._run_tool_loop(
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "data"},
+        ],
+        system_prompt="system",
+        strategy="standard",
+        enabled_tools=[{"type": "function", "function": {"name": "read_file"}}],
+        repo=None,
+        pr=None,
+        tracker=TokenTracker(),
+        context={},
+        deadline=deadline,
+    )
+
+    assert result["ai_decision"] == "approve"
+    assert executed_tools == []
+    assert len(reviewer.api_client.calls) == 2
+    final_call = reviewer.api_client.calls[1]
+    assert final_call["tools"] == []
+    assert final_call["tool_choice"] == "none"
+    assert sum(
+        message.get("content") == TIMEOUT_PROMPT
+        for message in final_call["messages"]
+    ) == 1
+
+    assistant_turns = [
+        message
+        for message in final_call["messages"]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    tool_messages = [
+        message for message in final_call["messages"] if message.get("role") == "tool"
+    ]
+    assistant_ids = {
+        tool_call["id"] for tool_call in assistant_turns[0]["tool_calls"]
+    }
+    result_ids = {message["tool_call_id"] for message in tool_messages}
+    assert assistant_ids == {"call-pr-1", "call-pr-2"}
+    assert result_ids == assistant_ids

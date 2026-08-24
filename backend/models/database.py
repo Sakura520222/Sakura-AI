@@ -798,7 +798,7 @@ def _append_dynamic_config_defaults(default_configs: list) -> None:
         settings = get_settings()
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
-                default_val = str(getattr(settings, key, ""))
+                default_val = _settings_default_to_str(getattr(settings, key, ""))
                 default_configs.append(
                     AppConfig(
                         key_name=key,

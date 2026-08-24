@@ -179,9 +179,21 @@ class TaggedScanParser:
         if category not in VALID_CATEGORIES:
             raise ScanProtocolError(f"invalid category: {category}")
 
-        file_path = self._parse_optional_text(fields["FILE"])
+        file_value = fields["FILE"].strip()
         start_line = self._parse_optional_positive_int(fields["START_LINE"])
         end_line = self._parse_optional_positive_int(fields["END_LINE"])
+        if file_value == "NONE":
+            if start_line is not None or end_line is not None:
+                raise ScanProtocolError("overall findings must use NONE line values")
+            file_path = None
+        else:
+            if not file_value or file_value.upper() == "NONE":
+                raise ScanProtocolError("FILE must be a path or exact NONE")
+            if start_line is None or end_line is None:
+                raise ScanProtocolError("file findings require both line values")
+            if start_line > end_line:
+                raise ScanProtocolError("START_LINE must not exceed END_LINE")
+            file_path = file_value
         title = fields["TITLE"].strip()
         description = fields["DESCRIPTION"].strip()
         if not title:

@@ -261,10 +261,10 @@ class PRDependencyGraphService:
         回退旧动态配置键 pr_dependency_graph_mode（兼容历史部署）。
         """
         mode = await section_config_service.resolve_depgraph_mode()
-        mode = str(mode or "ai").strip().lower()
+        mode = str(mode or "static").strip().lower()
         if mode not in {"ai", "static"}:
-            logger.warning(f"未知 PR 依赖图模式: {mode}，回退到 ai")
-            return "ai"
+            logger.warning(f"未知 PR 依赖图模式: {mode}，回退到 static")
+            return "static"
         return mode
 
     @staticmethod

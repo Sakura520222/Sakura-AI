@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.routing import APIRoute
@@ -364,6 +364,22 @@ def test_section_backup_rejects_invalid_payload(value: str, message: str):
         parse_config_backup(serialize_config_backup(document))
 
 
+def test_section_backup_rejects_missing_template_placeholders():
+    document = build_backup_document(
+        [
+            BackupRecord(
+                "strategy.pr_summary",
+                json.dumps({"user_template": "总结 {title} 的变更"}),
+                "strategy.pr_summary",
+            )
+        ],
+        "all",
+    )
+
+    with pytest.raises(ConfigBackupError, match="丢失必需占位符"):
+        parse_config_backup(serialize_config_backup(document))
+
+
 @pytest.mark.asyncio
 async def test_restore_replaces_strategy_section_exactly():
     strategies_row = AppConfig(
@@ -439,6 +455,92 @@ def test_refresh_imported_runtime_config_syncs_section_store():
             config_sections.get_section_config("label.definitions")
             == LABEL_SECTION_DEFAULTS["labels"]
         )
+    finally:
+        config_sections.clear_section_store()
+
+
+def test_refresh_imported_runtime_config_reloads_label_service_cache_and_rules(
+    monkeypatch,
+):
+    import backend.services.label_service as label_service_module
+    from backend.core.config import reload_label_config
+    from backend.services.label_service import LabelService
+
+    config_sections.clear_section_store()
+    label_service = object.__new__(LabelService)
+    label_service._label_cache = {
+        "owner/repo": {
+            "labels": {},
+            "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    }
+    label_service._conflict_rules = {"stale": ["old"]}
+    monkeypatch.setattr(label_service_module, "label_service", label_service)
+
+    try:
+        result = ConfigImportResult(
+            sections=(LABEL_SECTION,),
+            created=0,
+            updated=2,
+            deleted=0,
+            unchanged=0,
+            imported_values={
+                "label.recommendation": json.dumps(
+                    {"enabled": False, "auto_create": False}
+                ),
+                "label.conflict_rules": json.dumps({"existing": ["new"]}),
+            },
+            deleted_keys=frozenset(),
+            requires_restart=False,
+        )
+
+        refresh_imported_runtime_config(result)
+
+        assert label_service._label_cache == {}
+        expected_rules = dict(LABEL_SECTION_DEFAULTS["conflict_rules"])
+        expected_rules["existing"] = ["new"]
+        assert label_service._conflict_rules == expected_rules
+        assert (
+            config_sections.get_section_config("label.recommendation")["enabled"]
+            is False
+        )
+    finally:
+        config_sections.clear_section_store()
+        reload_label_config()
+
+
+def test_refresh_imported_runtime_config_does_not_reload_label_service_for_strategy(
+    monkeypatch,
+):
+    import backend.services.config_backup_service as backup_service
+    import backend.services.label_service as label_service_module
+
+    label_service = Mock()
+    strategy_reload = Mock()
+    monkeypatch.setattr(label_service_module, "label_service", label_service)
+    monkeypatch.setattr(backup_service, "reload_strategy_config", strategy_reload)
+    config_sections.clear_section_store()
+
+    try:
+        result = ConfigImportResult(
+            sections=(STRATEGY_SECTION,),
+            created=0,
+            updated=1,
+            deleted=0,
+            unchanged=0,
+            imported_values={
+                "strategy.strategies": json.dumps(
+                    {"standard": {"prompt": "strategy-only"}}
+                )
+            },
+            deleted_keys=frozenset(),
+            requires_restart=False,
+        )
+
+        refresh_imported_runtime_config(result)
+
+        strategy_reload.assert_called_once_with()
+        label_service.reload_labels.assert_not_called()
     finally:
         config_sections.clear_section_store()
 

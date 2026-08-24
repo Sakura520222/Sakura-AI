@@ -282,6 +282,7 @@ async def lifespan(app: FastAPI):
                         migrate_yaml_files_to_db,
                     )
                     from backend.models.database import async_session
+                    from backend.services.label_service import label_service
 
                     async with async_session() as session:
                         # 一次性迁移旧 YAML 差异节（DB 无节键时才执行，幂等）
@@ -290,6 +291,9 @@ async def lifespan(app: FastAPI):
                     # 清除可能已构建的 lru_cache facade 单例，后续读取走新 store
                     reload_strategy_config()
                     reload_label_config()
+                    # LabelService 自身还缓存了一份冲突规则快照，必须在
+                    # section store 加载后同步刷新，否则重启后仍使用内置规则。
+                    label_service.reload_labels()
                     logger.info("✅ 统一配置节存储已加载（strategy/label）")
                 except Exception:
                     logger.exception("❌ 加载统一配置节存储失败，停止启动")
