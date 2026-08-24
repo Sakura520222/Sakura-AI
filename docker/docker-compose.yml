@@ -20,7 +20,7 @@ services:
         target: /run/sakura-ai
         read_only: true
       - ../logs:/app/logs
-      - ../config:/app/config  # 存放 connection.json 和策略/标签配置
+      - ../config:/app/config  # 存放 Setup Wizard 写入的 connection.json
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - ../requirements.txt:/app/requirements.txt  # 挂载依赖文件，支持热更新
       - ../workplace:/app/workplace  # Agent 专家团队独立工作区
