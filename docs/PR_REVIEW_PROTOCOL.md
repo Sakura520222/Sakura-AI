@@ -98,10 +98,17 @@ rejection.
 The entire repair process is observable end-to-end via transcript / SSE /
 observer attempts on the `review:protocol_repair` channel. The shared repair
 loop (`backend/services/protocol_repair.py` → `run_protocol_repair_loop`) is
-also reused by the Issue analysis protocol (`<SAKURA_ISSUE_ANALYSIS>`), so both
-review and analysis share the same configurable attempt budget and degradation
-semantics.
+also reused by the Issue analysis protocol (`<SAKURA_ISSUE_ANALYSIS>`) and the
+repository scan protocol. Review, analysis, and scan therefore share the same
+configurable repair-attempt budget and safe degradation semantics.
+
+The WebUI setting `review_timeout_seconds` is the single task deadline for PR
+review, Issue analysis, and repository scanning. It is a soft deadline: an
+in-flight provider call is allowed to return, and the next AI call receives one
+user message requiring a final response from the information already collected,
+with tools disabled. It does not restore a tool-round limit or hard-cancel the
+task.
 
 ---
 
-*Last updated: 2026-8-10 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*Last updated: 2026-8-22 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

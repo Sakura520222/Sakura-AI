@@ -81,7 +81,7 @@ async def _await_bounded(awaitable: Any, timeout: float) -> Any:
                 return
             try:
                 done.exception()
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 return
 
         pending.add_done_callback(_consume)
@@ -194,9 +194,7 @@ class DatabaseResetRuntimeSupervisor:
                     f"({self.request_timeout:.2f}s); sources={sources}"
                 )
             try:
-                await asyncio.wait_for(
-                    self._request_changed.wait(), timeout=remaining
-                )
+                await asyncio.wait_for(self._request_changed.wait(), timeout=remaining)
             except TimeoutError as exc:
                 sources = ",".join(source for _task, source in active)
                 raise DatabaseResetRuntimeQuiesceError(
@@ -439,7 +437,7 @@ def create_registered_background_task(awaitable: Any, source: str) -> asyncio.Ta
 
     try:
         ensure_background_admission(source)
-    except (DatabaseResetRuntimeAdmissionClosed, DatabaseResetRuntimeBindingError):
+    except DatabaseResetRuntimeAdmissionClosed, DatabaseResetRuntimeBindingError:
         close = getattr(awaitable, "close", None)
         if callable(close):
             close()
@@ -461,7 +459,7 @@ def create_registered_background_task(awaitable: Any, source: str) -> asyncio.Ta
                 return
             try:
                 done.exception()
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 return
 
         task.add_done_callback(_consume)
@@ -515,9 +513,7 @@ async def _quiesce_sse() -> None:
     try:
         begin_quiesce = getattr(sse_manager, "begin_quiesce", None)
         closed_sse = (
-            begin_quiesce()
-            if callable(begin_quiesce)
-            else sse_manager.close_all()
+            begin_quiesce() if callable(begin_quiesce) else sse_manager.close_all()
         )
         if not closed_sse:
             return
@@ -590,7 +586,7 @@ async def _quiesce_outbox(app: Any) -> None:
                 task.cancel()
                 try:
                     await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-                except (TimeoutError, asyncio.CancelledError):
+                except TimeoutError, asyncio.CancelledError:
                     pass
                 raise DatabaseResetRuntimeQuiesceError(
                     "activity Outbox dispatcher did not stop before timeout "

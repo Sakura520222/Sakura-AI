@@ -12,6 +12,8 @@ from backend.core.setup_service import SetupService
 from backend.services.config_backup_service import (
     AI_SECTION,
     GLOBAL_SECTION,
+    LABEL_SECTION,
+    STRATEGY_SECTION,
     SYSTEM_SECTION,
     BackupRecord,
     ConfigImportResult,
@@ -73,7 +75,14 @@ async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
     assert response.status_code == 200
     payload = _response_json(response)
     assert payload["success"] is True
-    assert payload["sections"] == [GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION]
+    # v3 备份的 all 范围包含 strategy/label 两节
+    assert payload["sections"] == [
+        GLOBAL_SECTION,
+        AI_SECTION,
+        SYSTEM_SECTION,
+        STRATEGY_SECTION,
+        LABEL_SECTION,
+    ]
     # 备份中的连接地址会返回给前端，由前端按部署者选择决定是否覆盖当前部署预填值。
     assert payload["setup_values"]["database_url"].startswith("mysql+asyncmy://")
     assert payload["setup_values"]["redis_url"] == "redis://redis:6379/0"
@@ -86,7 +95,9 @@ async def test_setup_backup_inspection_prefills_only_wizard_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(monkeypatch):
+async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(
+    monkeypatch,
+):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
     # 当前部署已通过环境变量预填 database_url 时，无需再提示手动提供。
     monkeypatch.setattr(
@@ -105,7 +116,9 @@ async def test_setup_backup_inspection_skips_prompt_when_database_prefilled(monk
 
 
 @pytest.mark.asyncio
-async def test_setup_backup_inspection_without_connection_requires_manual_database(monkeypatch):
+async def test_setup_backup_inspection_without_connection_requires_manual_database(
+    monkeypatch,
+):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
     monkeypatch.setattr(
         setup_route,
@@ -194,6 +207,8 @@ async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
         GLOBAL_SECTION,
         AI_SECTION,
         SYSTEM_SECTION,
+        STRATEGY_SECTION,
+        LABEL_SECTION,
     }
 
 

@@ -198,8 +198,7 @@ async def test_maybe_compress_budget_uses_candidate_context_window(monkeypatch):
     # 压缩后为摘要 + 保留最后一轮用户输入
     assert len(messages) >= 2
     assert any(
-        m.content and m.content.startswith("## 已压缩的历史上下文")
-        for m in messages
+        m.content and m.content.startswith("## 已压缩的历史上下文") for m in messages
     )
 
 
@@ -278,7 +277,9 @@ async def test_call_with_retry_compresses_when_over_budget(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_overflow_recovery_bounds_summary_request_to_candidate_window(monkeypatch):
+async def test_overflow_recovery_bounds_summary_request_to_candidate_window(
+    monkeypatch,
+):
     """provider overflow recovery must not retry the full oversized history."""
     adapter = _OverflowBudgetAdapter(context_window_tokens=10_000)
     _install_stub(monkeypatch, adapter)
@@ -340,7 +341,9 @@ async def test_overflow_recovery_reuses_reasoning_snapshot(monkeypatch):
     assert response.content == "recovered"
     assert len(observer.snapshots) == 2
     assert observer.snapshots[0] is observer.snapshots[1]
-    assert observer.snapshots[1].protocol_family == ProtocolFamily.ANTHROPIC_NATIVE.value
+    assert (
+        observer.snapshots[1].protocol_family == ProtocolFamily.ANTHROPIC_NATIVE.value
+    )
     assert observer.snapshots[1].effective_thinking_mode == "unsupported"
     assert observer.snapshots[1].effective_effort == "unsupported"
     await client.aclose()
@@ -479,11 +482,14 @@ def test_split_message_blocks_keeps_non_adjacent_tool_results_in_order():
     assert flattened == messages
     assert len(blocks) == 2
     assert [message.role for message in blocks[0]] == ["assistant", "user", "tool"]
-    assert sum(
-        message.tool_call_id == "call-1"
-        for message in flattened
-        if message.role == "tool"
-    ) == 1
+    assert (
+        sum(
+            message.tool_call_id == "call-1"
+            for message in flattened
+            if message.role == "tool"
+        )
+        == 1
+    )
 
 
 def test_fit_message_blocks_keeps_non_adjacent_tool_pair_within_budget():
@@ -504,11 +510,14 @@ def test_fit_message_blocks_keeps_non_adjacent_tool_pair_within_budget():
     fitted = compressor._fit_message_blocks(messages, pair_budget)
 
     assert [message.role for message in fitted] == ["assistant", "user", "tool"]
-    assert sum(
-        message.tool_call_id == "call-1"
-        for message in fitted
-        if message.role == "tool"
-    ) == 1
+    assert (
+        sum(
+            message.tool_call_id == "call-1"
+            for message in fitted
+            if message.role == "tool"
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -751,9 +760,7 @@ def _reviewer_under_test(monkeypatch, *, enable_compression, observer=None):
     reviewer.compression_threshold = 0.85
     reviewer.context_compressor = _FakeCompressor()
 
-    strategy_config = SimpleNamespace(
-        get_context_enhancement_config=lambda: {"max_tool_iterations": 1}
-    )
+    strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
     monkeypatch.setattr(
         "backend.services.ai_reviewer.reviewer.get_strategy_config",
         lambda: strategy_config,

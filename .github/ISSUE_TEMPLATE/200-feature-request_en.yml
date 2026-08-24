@@ -1,0 +1,55 @@
+name: Feature Request
+description: Propose a new feature or an improvement to an existing one. Please submit in English.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Before submitting, please search the
+        [issue list](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue)
+        to make sure the feature has not been requested before.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Describe the feature
+      description: A clear description of the feature you would like added or improved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation and use case
+      description: >
+        What problem does this feature solve? For example, "While doing X, I wish Y could...".
+        If it is related to another issue, please link it here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other solutions you have considered, or temporary workarounds you currently use.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other context, examples, or screenshots that help explain the feature.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched the [issue list](https://github.com/Sakura520222/Sakura-AI/issues?q=is%3Aissue) and confirmed this feature has not been requested, or previous discussions do not cover my use case.
+          required: true
+        - label: (Optional) I am willing to submit a PR to help implement this feature.
+          required: false
+
+  - type: markdown
+    attributes:
+      value: Thanks for contributing!

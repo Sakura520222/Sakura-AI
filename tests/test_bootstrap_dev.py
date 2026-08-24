@@ -28,16 +28,12 @@ def test_connection_config_path_can_be_overridden(monkeypatch, tmp_path):
     assert read_connection_config()["setup_completed"] is True
 
 
-def test_connection_config_write_failure_preserves_previous_file(
-    monkeypatch, tmp_path
-):
+def test_connection_config_write_failure_preserves_previous_file(monkeypatch, tmp_path):
     config_path = tmp_path / "connection.json"
     monkeypatch.setenv("SAKURA_CONNECTION_CONFIG_PATH", str(config_path))
     clear_bootstrap_cache()
     config_path.write_text(
-        json.dumps(
-            {"database_url": "mysql+asyncmy://old/db", "setup_completed": True}
-        ),
+        json.dumps({"database_url": "mysql+asyncmy://old/db", "setup_completed": True}),
         encoding="utf-8",
     )
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,15 @@ from backend.core.config import (
     get_all_dynamic_config_keys,
     get_settings,
     invalidate_dynamic_config_cache,
+    reload_strategy_config,
     update_settings_field,
+)
+from backend.core.config_sections import (
+    SECTION_REGISTRY,
+    clear_section_store,
+    deep_merge,
+    get_section_defaults,
+    update_section_store,
 )
 from backend.core.time_service import (
     InvalidTimezoneError,
@@ -32,6 +41,10 @@ from backend.core.time_service import (
     resolve_timezone,
 )
 from backend.models.database import AppConfig
+from backend.services.section_config_service import (
+    SECTION_VALIDATORS,
+    validate_section_config,
+)
 from backend.services.system_config_service import (
     RESTART_REQUIRED_KEYS,
     SYSTEM_CONFIG_KEYS,
@@ -39,9 +52,9 @@ from backend.services.system_config_service import (
 )
 
 BACKUP_FORMAT = "sakura-ai-config-backup"
-BACKUP_VERSION = 2
+BACKUP_VERSION = 3
 LEGACY_BACKUP_VERSION = 1
-SUPPORTED_BACKUP_VERSIONS = frozenset({LEGACY_BACKUP_VERSION, BACKUP_VERSION})
+SUPPORTED_BACKUP_VERSIONS = frozenset({LEGACY_BACKUP_VERSION, 2, BACKUP_VERSION})
 BACKUP_MAX_BYTES = 5 * 1024 * 1024
 BACKUP_MAX_ENTRIES = 5000
 
@@ -56,6 +69,17 @@ GLOBAL_CONFIG_KEYS = frozenset(BASIC_CONFIG_KEYS) | frozenset(
 )
 AI_CONFIG_KEYS = frozenset(AI_STRATEGY_CONFIG_KEYS) | {"ai_role_bindings"}
 AI_CONFIG_PREFIXES = ("ai_account.", "ai_model_override.")
+# strategy/label 节键集合从统一节注册表派生（勿手工维护键清单）；
+# 两节均为非敏感的节级 JSON 覆盖，无敏感值。
+STRATEGY_SECTION = "strategy"
+LABEL_SECTION = "label"
+STRATEGY_CONFIG_KEYS = frozenset(
+    key for key, spec in SECTION_REGISTRY.items() if spec["target"] == "strategy"
+)
+LABEL_CONFIG_KEYS = frozenset(
+    key for key, spec in SECTION_REGISTRY.items() if spec["target"] == "label"
+)
+SECTION_BACKUP_SECTIONS = (STRATEGY_SECTION, LABEL_SECTION)
 
 _GLOBAL_SENSITIVE_KEYS = frozenset(DYNAMIC_CONFIG_SENSITIVE_KEYS) | {
     "web_search_api_key"
@@ -120,6 +144,10 @@ def config_section_for_key(key: str) -> str | None:
         return AI_SECTION
     if key in SYSTEM_CONFIG_KEYS:
         return SYSTEM_SECTION
+    if key in STRATEGY_CONFIG_KEYS:
+        return STRATEGY_SECTION
+    if key in LABEL_CONFIG_KEYS:
+        return LABEL_SECTION
     return None
 
 
@@ -128,13 +156,26 @@ def _sections_for_scope(
     *,
     version: int = BACKUP_VERSION,
 ) -> tuple[str, ...]:
+    """按备份范围与备份版本返回节集合。
+
+    版本演进：v1 无 system 节；v2 增加 system；v3（当前）增加 strategy/label
+    两节（仅在 all 范围内整体导出，不提供单独节范围）。
+    """
     if scope == ALL_SCOPE:
         if version == LEGACY_BACKUP_VERSION:
             return (GLOBAL_SECTION, AI_SECTION)
-        return (GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION)
+        if version == 2:
+            return (GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION)
+        return (
+            GLOBAL_SECTION,
+            AI_SECTION,
+            SYSTEM_SECTION,
+            STRATEGY_SECTION,
+            LABEL_SECTION,
+        )
     if scope in (GLOBAL_SECTION, AI_SECTION):
         return (scope,)
-    if scope == SYSTEM_SECTION and version == BACKUP_VERSION:
+    if scope == SYSTEM_SECTION and version >= 2:
         return (scope,)
     raise ConfigBackupError("不支持的备份范围")
 
@@ -217,6 +258,10 @@ async def export_config_backup(
         )
     if SYSTEM_SECTION in selected_sections:
         conditions.append(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
+    if STRATEGY_SECTION in selected_sections:
+        conditions.append(AppConfig.key_name.in_(STRATEGY_CONFIG_KEYS))
+    if LABEL_SECTION in selected_sections:
+        conditions.append(AppConfig.key_name.in_(LABEL_CONFIG_KEYS))
 
     result = await db.execute(
         select(AppConfig).where(or_(*conditions)).order_by(AppConfig.key_name)
@@ -259,7 +304,7 @@ def _validate_typed_config_value(key: str, value: str | None) -> None:
 def _validate_ranged_value(
     key: str,
     value: str | None,
-    ranges: dict[str, tuple[float, float]],
+    ranges: dict[str, tuple[float, float | None]],
 ) -> None:
     if value is None or key not in ranges:
         return
@@ -268,7 +313,7 @@ def _validate_ranged_value(
         numeric = float(value)
     except (TypeError, ValueError) as exc:
         raise ConfigBackupError(f"配置项 {key} 必须是数字") from exc
-    if not lo <= numeric <= hi:
+    if numeric < lo or (hi is not None and numeric > hi):
         raise ConfigBackupError(f"配置项 {key} 必须在 {lo} 到 {hi} 之间")
 
 
@@ -301,12 +346,18 @@ def _validate_global_record(record: BackupRecord) -> None:
 def _validate_system_record(record: BackupRecord) -> None:
     _validate_typed_config_value(record.key, record.value)
     if record.key == "app_timezone":
-        if record.value is None or not record.value or record.value != record.value.strip():
+        if (
+            record.value is None
+            or not record.value
+            or record.value != record.value.strip()
+        ):
             raise ConfigBackupError("系统配置 app_timezone 不得为空或包含首尾空格")
         try:
             resolve_timezone(record.value)
         except InvalidTimezoneError as exc:
-            raise ConfigBackupError("系统配置 app_timezone 必须是 system 或有效 IANA 时区") from exc
+            raise ConfigBackupError(
+                "系统配置 app_timezone 必须是 system 或有效 IANA 时区"
+            ) from exc
         return
     if record.value is None or not record.value.strip():
         return
@@ -480,6 +531,33 @@ def _validate_ai_record(record: BackupRecord) -> None:
     raise ConfigBackupError(f"不允许导入 AI 配置项 {record.key}")
 
 
+def _validate_section_config_record(record: BackupRecord) -> None:
+    """校验 strategy/label 节键记录。
+
+    值为 null 表示清除该节覆盖（回退内置默认），直接放行；否则必须是
+    合法 JSON 对象，且与内置默认合并后的有效值能通过节注册校验器，
+    防止损坏或手改的备份把非法结构写入节键。
+    """
+    if record.value is None:
+        return
+    try:
+        data = json.loads(record.value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ConfigBackupError(f"配置节 {record.key} 不是有效 JSON") from exc
+    if not isinstance(data, dict):
+        raise ConfigBackupError(f"配置节 {record.key} 必须是 JSON 对象")
+    validator = SECTION_VALIDATORS.get(record.key)
+    if validator is None:
+        raise ConfigBackupError(f"不允许导入配置节 {record.key}")
+    try:
+        validate_section_config(
+            record.key,
+            deep_merge(get_section_defaults(record.key), data),
+        )
+    except ValueError as exc:
+        raise ConfigBackupError(f"配置节 {record.key} 结构无效: {exc}") from exc
+
+
 def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
     """解析并严格校验上传的备份文件。"""
     if not content:
@@ -498,7 +576,7 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
     version = payload.get("version")
     if version not in SUPPORTED_BACKUP_VERSIONS:
         raise ConfigBackupError("不支持此备份版本")
-    if version == BACKUP_VERSION:
+    if version >= 2:
         exported_at = payload.get("exported_at")
         if not isinstance(exported_at, str):
             raise ConfigBackupError("v2 备份缺少有效 exported_at")
@@ -547,6 +625,11 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
                 raise ConfigBackupError(f"配置项 {key} 的描述无效")
             if key in seen_keys:
                 raise ConfigBackupError(f"配置项 {key} 重复")
+            # 宽容恢复：未知键（历史版本备份中已移除的配置）跳过并告警，
+            # 不阻断整个备份导入；键已知但节归属不符仍视为数据损坏，报错。
+            if config_section_for_key(key) is None:
+                logger.warning("备份包含未知配置键（已移除的历史配置），跳过: {}", key)
+                continue
             if config_section_for_key(key) != section:
                 raise ConfigBackupError(f"配置项 {key} 不属于 {section} 分类")
 
@@ -559,6 +642,8 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
                 _validate_global_record(record)
             elif section == AI_SECTION:
                 _validate_ai_record(record)
+            elif section in SECTION_BACKUP_SECTIONS:
+                _validate_section_config_record(record)
             else:
                 _validate_system_record(record)
             section_records.append(record)
@@ -587,13 +672,25 @@ async def restore_config_backup(
     new URL would leave the next restart pointed at the wrong database.
     """
     if not sections or not set(sections).issubset(
-        {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION}
+        {
+            GLOBAL_SECTION,
+            AI_SECTION,
+            SYSTEM_SECTION,
+            STRATEGY_SECTION,
+            LABEL_SECTION,
+        }
     ):
         raise ConfigBackupError("没有可导入的配置分类")
 
     selected_sections = tuple(
         section
-        for section in (GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION)
+        for section in (
+            GLOBAL_SECTION,
+            AI_SECTION,
+            SYSTEM_SECTION,
+            STRATEGY_SECTION,
+            LABEL_SECTION,
+        )
         if section in sections
     )
     conditions = []
@@ -611,6 +708,10 @@ async def restore_config_backup(
         )
     if SYSTEM_SECTION in sections:
         conditions.append(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
+    if STRATEGY_SECTION in sections:
+        conditions.append(AppConfig.key_name.in_(STRATEGY_CONFIG_KEYS))
+    if LABEL_SECTION in sections:
+        conditions.append(AppConfig.key_name.in_(LABEL_CONFIG_KEYS))
 
     try:
         result = await db.execute(select(AppConfig).where(or_(*conditions)))
@@ -683,6 +784,37 @@ async def restore_config_backup(
 def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     """将恢复后的 DB 覆盖同步到当前进程的 Settings 与配置缓存。"""
     affected_keys = set(result.imported_values) | set(result.deleted_keys)
+
+    # 统一节配置键不走动态配置缓存，单独同步 _section_store 并刷新 facade。
+    section_keys = affected_keys & set(SECTION_REGISTRY)
+    if section_keys:
+        for key in section_keys:
+            value = result.imported_values.get(key)
+            data = None
+            if value is not None:
+                try:
+                    parsed = json.loads(value)
+                except TypeError, ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    data = parsed
+            if data is None:
+                clear_section_store(key)
+            else:
+                update_section_store(key, data)
+
+        strategy_section_keys = section_keys & STRATEGY_CONFIG_KEYS
+        label_section_keys = section_keys & LABEL_CONFIG_KEYS
+        if strategy_section_keys:
+            reload_strategy_config()
+        if label_section_keys:
+            # LabelService owns both the repository-label cache and the
+            # conflict-rule snapshot.  Reload through its existing singleton
+            # lifecycle so a backup import cannot leave either stale.
+            from backend.services.label_service import label_service
+
+            label_service.reload_labels()
+
     runtime_keys = affected_keys & (
         set(GLOBAL_CONFIG_KEYS) | set(AI_STRATEGY_CONFIG_KEYS) | set(SYSTEM_CONFIG_KEYS)
     )
@@ -703,7 +835,11 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     for key, value in result.imported_values.items():
         # Restart-required settings (notably app_timezone) are persisted and
         # audited but never hot-applied to this frozen process.
-        if key in runtime_keys and key not in RESTART_REQUIRED_KEYS and value is not None:
+        if (
+            key in runtime_keys
+            and key not in RESTART_REQUIRED_KEYS
+            and value is not None
+        ):
             update_settings_field(key, value)
 
     if "max_concurrent_issues" in affected_keys:

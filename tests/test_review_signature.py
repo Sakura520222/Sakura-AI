@@ -73,7 +73,10 @@ def engine():
 
 
 def _review_result():
-    return {"overall_score": 9, "issues": {"critical": [], "major": [], "minor": [], "suggestions": []}}
+    return {
+        "overall_score": 9,
+        "issues": {"critical": [], "major": [], "minor": [], "suggestions": []},
+    }
 
 
 def test_format_review_body_ends_with_zh_signature(engine):
@@ -151,7 +154,9 @@ def test_inline_comments_signature_follows_english(monkeypatch):
         42,
         "COMMENT",
         "body",
-        inline_comments=[{"file_path": "src/a.py", "line_number": 10, "body": "Finding."}],
+        inline_comments=[
+            {"file_path": "src/a.py", "line_number": 10, "body": "Finding."}
+        ],
         enable_idempotency_check=False,
         output_language="en",
     )
@@ -171,7 +176,9 @@ def test_inline_comments_signature_not_duplicated_on_retry(monkeypatch):
         42,
         "COMMENT",
         "body",
-        inline_comments=[{"file_path": "src/a.py", "line_number": 10, "body": already_signed}],
+        inline_comments=[
+            {"file_path": "src/a.py", "line_number": 10, "body": already_signed}
+        ],
         enable_idempotency_check=False,
         output_language="zh-CN",
     )
@@ -213,7 +220,14 @@ async def test_create_batch_inline_comments_signs_each_body():
 
     await service.create_batch_inline_comments(
         pr,
-        [{"file_path": "src/a.py", "line_number": 5, "body": "描述", "severity": "critical"}],
+        [
+            {
+                "file_path": "src/a.py",
+                "line_number": 5,
+                "body": "描述",
+                "severity": "critical",
+            }
+        ],
         output_language="zh-CN",
     )
 
@@ -230,7 +244,14 @@ async def test_create_batch_inline_comments_english_signature():
 
     await service.create_batch_inline_comments(
         pr,
-        [{"file_path": "src/a.py", "line_number": 5, "body": "Finding", "severity": "major"}],
+        [
+            {
+                "file_path": "src/a.py",
+                "line_number": 5,
+                "body": "Finding",
+                "severity": "major",
+            }
+        ],
         output_language="en",
     )
 

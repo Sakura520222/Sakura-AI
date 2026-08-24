@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -34,7 +33,7 @@ from backend.core.bootstrap import (
     read_connection_config,
 )
 from backend.core.build_info import get_build_info
-from backend.core.config import Settings, get_settings
+from backend.core.config import Settings, get_sakura_memory_config, get_settings
 from backend.core.time_service import (
     SystemClock,
     format_rfc3339,
@@ -80,9 +79,7 @@ def get_startup_info() -> dict:
     )
     return {
         "startup_time": (
-            format_rfc3339(finished_instant)
-            if started and finished_instant
-            else None
+            format_rfc3339(finished_instant) if started and finished_instant else None
         ),
         "startup_duration_seconds": round(_startup_duration, 2),
         "uptime_seconds": round(uptime_seconds),
@@ -200,7 +197,9 @@ async def lifespan(app: FastAPI):
         existing_supervisor = getattr(
             getattr(app, "state", None), "database_reset_runtime_supervisor", None
         )
-        if existing_supervisor is None or getattr(existing_supervisor, "quiesced", False):
+        if existing_supervisor is None or getattr(
+            existing_supervisor, "quiesced", False
+        ):
             existing_supervisor = DatabaseResetRuntimeSupervisor()
             app.state.database_reset_runtime_supervisor = existing_supervisor
         runtime_context_token = bind_runtime_supervisor(existing_supervisor)
@@ -240,7 +239,9 @@ async def lifespan(app: FastAPI):
                     "❌ 无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
                 )
                 # 无法连接数据库，进入 bootstrap 模式引导用户配置
-                logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
+                logger.warning(
+                    "🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup"
+                )
             else:
                 # 2. 初始化数据库
                 try:
@@ -256,7 +257,9 @@ async def lifespan(app: FastAPI):
                 try:
                     from backend.core.config import load_dynamic_configs_to_settings
 
-                    await load_dynamic_configs_to_settings(required_keys={"app_timezone"})
+                    await load_dynamic_configs_to_settings(
+                        required_keys={"app_timezone"}
+                    )
                     # app_timezone is restart-required: this new process reads
                     # it once during bootstrap and freezes the resulting zone.
                     initialize_time_service(settings.app_timezone)
@@ -266,6 +269,34 @@ async def lifespan(app: FastAPI):
                     # contract.  Continuing with the bootstrap zone would make
                     # only some components use the requested setting.
                     logger.exception("❌ 加载应用时区配置失败，停止启动")
+                    raise
+
+                # 3.5 加载统一配置节覆盖（strategy.*/label.*）并刷新 facade 单例
+                try:
+                    from backend.core.config import (
+                        reload_label_config,
+                        reload_strategy_config,
+                    )
+                    from backend.core.config_sections import (
+                        load_section_configs,
+                        migrate_yaml_files_to_db,
+                    )
+                    from backend.models.database import async_session
+                    from backend.services.label_service import label_service
+
+                    async with async_session() as session:
+                        # 一次性迁移旧 YAML 差异节（DB 无节键时才执行，幂等）
+                        await migrate_yaml_files_to_db(session)
+                        await load_section_configs(session)
+                    # 清除可能已构建的 lru_cache facade 单例，后续读取走新 store
+                    reload_strategy_config()
+                    reload_label_config()
+                    # LabelService 自身还缓存了一份冲突规则快照，必须在
+                    # section store 加载后同步刷新，否则重启后仍使用内置规则。
+                    label_service.reload_labels()
+                    logger.info("✅ 统一配置节存储已加载（strategy/label）")
+                except Exception:
+                    logger.exception("❌ 加载统一配置节存储失败，停止启动")
                     raise
 
                 # 打印关键配置（在动态配置加载后，确保显示实际值）
@@ -287,14 +318,18 @@ async def lifespan(app: FastAPI):
 
                 # 知识提取配置自检 / Knowledge extraction config self-check
                 try:
-                    ke_enabled = settings.sakura_knowledge_extraction_enabled
-                    ke_interval = settings.sakura_extraction_min_reflections
+                    ke_config = get_sakura_memory_config().get(
+                        "knowledge_extraction", {}
+                    )
+                    ke_enabled = ke_config.get("enabled", True)
+                    ke_interval = ke_config.get("min_reflections", 15)
                     logger.info(
                         f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
                     )
                     if ke_enabled and not ke_interval:
                         logger.warning(
-                            "⚠️ 知识提取已启用但 extraction_interval 为 0 或空，将使用默认值 10"
+                            "⚠️ 知识提取已启用但 min_reflections 为 0 或空，"
+                            "请检查 strategy.context_enhancement.sakura_memory 配置"
                         )
                 except Exception as e:
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
@@ -457,7 +492,8 @@ async def lifespan(app: FastAPI):
         _startup_finished_at = _startup_finished_instant_utc.timestamp()
         _startup_duration = max(
             0.0,
-            _startup_finished_monotonic - (_startup_started_monotonic or _startup_finished_monotonic),
+            _startup_finished_monotonic
+            - (_startup_started_monotonic or _startup_finished_monotonic),
         )
         logger.info(
             "✅ Sakura AI 启动完成，耗时 {}",
@@ -546,9 +582,7 @@ async def bind_database_reset_runtime(request: Request, call_next):
         reset_runtime_supervisor,
     )
 
-    supervisor = getattr(
-        request.app.state, "database_reset_runtime_supervisor", None
-    )
+    supervisor = getattr(request.app.state, "database_reset_runtime_supervisor", None)
     if supervisor is None:
         supervisor = DatabaseResetRuntimeSupervisor()
         request.app.state.database_reset_runtime_supervisor = supervisor
@@ -565,6 +599,7 @@ async def bind_database_reset_runtime(request: Request, call_next):
         return await call_next(request)
     finally:
         reset_runtime_supervisor(token)
+
 
 # 配置CORS
 app.add_middleware(
@@ -712,7 +747,7 @@ def _parse_launch_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--no-reload",
         action="store_true",
-        help="关闭代码热重载（监督循环仍会处理应用的重启请求）",
+        help="关闭代码热重载（子进程内模块级 reload）",
     )
     return parser.parse_args(argv)
 
@@ -723,6 +758,12 @@ def _run_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from backend.core import server_runtime
+
+    if not args.no_reload:
+        from backend.core.hot_reload import start_reload_watcher
+
+        start_reload_watcher(Path(__file__).resolve().parent.parent)
+        logger.info("代码热重载已开启（模块级 reload，进程不重启）")
 
     config = uvicorn.Config(
         "backend.main:app",
@@ -753,89 +794,42 @@ def _spawn_child(args: argparse.Namespace) -> subprocess.Popen:
         command += ["--port", str(args.port)]
     if args.log_level is not None:
         command += ["--log-level", args.log_level]
+    if args.no_reload:
+        command += ["--no-reload"]
     return subprocess.Popen(command)
-
-
-def _start_reload_watcher(
-    root: Path,
-    changed: threading.Event,
-    stop: threading.Event,
-) -> threading.Thread:
-    """后台线程监视 *.py 变化；PythonFilter 默认忽略 .venv、node_modules 等。"""
-
-    from watchfiles import PythonFilter, watch
-
-    def _watch() -> None:
-        for changes in watch(
-            root,
-            watch_filter=PythonFilter(),
-            stop_event=stop,
-            ignore_permission_denied=True,
-        ):
-            paths = sorted({str(path) for _kind, path in changes})
-            if paths:
-                logger.info("检测到代码文件变化: {}", ", ".join(paths))
-                changed.set()
-
-    thread = threading.Thread(
-        target=_watch, daemon=True, name="sakura-reload-watcher"
-    )
-    thread.start()
-    return thread
 
 
 def _run_supervisor(
     args: argparse.Namespace,
     *,
     spawn: Callable[[argparse.Namespace], subprocess.Popen] = _spawn_child,
-    start_watcher: Callable[..., threading.Thread] = _start_reload_watcher,
     poll_interval: float = 0.2,
 ) -> int:
-    """监督循环：拉起应用子进程，按约定退出码重启，代码变化热重载。
+    """监督循环：拉起应用子进程，按约定退出码重启。
 
-    uvicorn 自带的 --reload reloader 只响应文件变化、不感知应用的重启
-    请求，worker 退出后既不会被拉起也不会退出，因此监督循环自己完成
-    热重载与重启这两件事。
+    代码热重载在应用子进程内完成（模块级 reload，见
+    backend/core/hot_reload.py）；监督循环只负责应用主动请求的重启
+    （Setup 完成、管理员重启按钮 → RESTART_EXIT_CODE）。uvicorn 自带的
+    --reload reloader 只响应文件变化、不感知应用的重启请求，worker
+    退出后既不会被拉起也不会退出，因此保留这层监督。
     """
 
     from backend.core import server_runtime
 
-    reload_enabled = not args.no_reload
-    root = Path(__file__).resolve().parent.parent
     while True:
-        changed = threading.Event()
-        stop = threading.Event()
-        watcher = (
-            start_watcher(root, changed, stop) if reload_enabled else None
-        )
         proc = spawn(args)
-        logger.info(
-            "应用子进程已启动 (pid={})，代码热重载: {}",
-            proc.pid,
-            "开启" if reload_enabled else "关闭",
-        )
+        logger.info("应用子进程已启动 (pid={})", proc.pid)
         exit_code: int | None = None
         try:
             while True:
                 exit_code = proc.poll()
                 if exit_code is not None:
                     break
-                if changed.is_set():
-                    logger.info("检测到代码变化，正在重启应用...")
-                    break
                 time.sleep(poll_interval)
         except KeyboardInterrupt:
             logger.info("收到中断信号，正在停止应用子进程...")
-            stop.set()
             _terminate_child(proc)
             return 130
-        stop.set()
-        if watcher is not None:
-            watcher.join(timeout=2)
-        if exit_code is None:
-            # 代码变化触发：请求子进程停机并重新拉起。
-            _terminate_child(proc)
-            continue
         if exit_code == server_runtime.RESTART_EXIT_CODE:
             logger.info("应用请求重启，正在重新拉起...")
             continue

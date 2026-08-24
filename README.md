@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.1.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -75,10 +75,12 @@
 ### 仓库扫描
 
 - **AI 全仓库扫描** — 定期全面扫描，发现代码质量与安全问题
-- **自动创建 Issue** — 详细问题描述 + 修复建议
-- **灵活扫描配置** — 间隔、冷却、Token 预算、并发等
+- **严格扫描输出契约** — `<SAKURA_SCAN>` 协议信封 + 多轮格式修复 + 安全降级
+- **实时扫描对话监控** — 扫描期间的 AI 对话与工具调用实时记录到活动观测，WebUI 活动页可查看
+- **自动创建 Issue** — AI 总结 + 趋势对比 + 严重性/类别矩阵 + 热点文件 + 折叠明细；自动关闭被取代的旧报告 Issue
+- **灵活扫描配置** — 间隔、冷却、Token 预算、并发等；扫描提示词 focus 在统一配置页 `strategy.scan` 节编辑
 - **扫描管理界面** — WebUI 查看列表、详情、统计
-- **扫描通知** — Telegram Bot 推送完成通知
+- **扫描通知** — Telegram Bot 推送完成通知（含 AI 总结）
 
 ### Issue 分析
 
@@ -169,7 +171,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
+`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装；也可以直接运行 `sudo ./start.sh` 进入交互式管理菜单，在 WebUI 之外完成更新当前频道镜像、切换 stable/development 频道等操作（stable 频道优先复用 Host Updater 的更新流水线，development 频道或 daemon 未运行时回退为 Compose 直接拉取频道别名镜像）。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
 
 > **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
 >
@@ -218,6 +220,8 @@ cd Sakura-AI
 pip install -r requirements.txt
 python -m backend.main
 ```
+
+> 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。
 
 > 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
 
@@ -277,7 +281,7 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 
 > 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
-> Updater 是独立的 Python 3.12+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。
+> Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
 ---
 

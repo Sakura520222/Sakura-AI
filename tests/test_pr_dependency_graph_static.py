@@ -7,7 +7,6 @@ import pytest
 from backend.core.config import (
     DYNAMIC_CONFIG_GROUPS,
     DYNAMIC_CONFIG_LABELS,
-    DYNAMIC_CONFIG_SELECT_OPTIONS,
 )
 from backend.services.ai_reviewer.pr_dependency_graph import PRDependencyGraphService
 from backend.services.ai_reviewer.pr_summary import PRSummaryService
@@ -88,10 +87,7 @@ def test_extract_previous_graph_uses_deterministic_delimiter_parsing(service):
 
 def test_extract_previous_graph_rejects_large_unterminated_fence(service):
     body = (
-        service.START_MARKER
-        + "\n```mermaid\n"
-        + (" \n" * 50_000)
-        + service.END_MARKER
+        service.START_MARKER + "\n```mermaid\n" + (" \n" * 50_000) + service.END_MARKER
     )
 
     with patch(
@@ -616,13 +612,11 @@ def test_resolve_import_to_changed_file_uses_prefix_match():
     )
 
 
-def test_dependency_graph_mode_dynamic_config_registered():
+def test_dependency_graph_mode_resolved_from_section_store():
+    """mode 由策略节表单（strategy.pr_dependency_graph 节）单键单写，
+    R3 起不再在平铺动态组暴露（旧键仅兼容读取）。"""
     assert (
         "pr_dependency_graph_mode"
-        in DYNAMIC_CONFIG_GROUPS["pr_dependency_graph"]["keys"]
+        not in DYNAMIC_CONFIG_GROUPS["pr_dependency_graph"]["keys"]
     )
     assert DYNAMIC_CONFIG_LABELS["pr_dependency_graph_mode"] == "PR 依赖图模式"
-    assert DYNAMIC_CONFIG_SELECT_OPTIONS["pr_dependency_graph_mode"] == [
-        {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
-        {"value": "static", "label": "静态分析（正则提取 import）"},
-    ]

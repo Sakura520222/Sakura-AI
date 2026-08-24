@@ -50,9 +50,7 @@ async def test_tool_loop_appends_pending_user_message_before_model_request(
     )
     reviewer.enable_compression = False
 
-    strategy_config = SimpleNamespace(
-        get_context_enhancement_config=lambda: {"max_tool_iterations": 1}
-    )
+    strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
     monkeypatch.setattr(
         "backend.services.ai_reviewer.reviewer.get_strategy_config",
         lambda: strategy_config,
@@ -118,9 +116,7 @@ async def test_run_tool_loop_normalizes_restored_string_tool_calls(monkeypatch):
         estimate_messages_tokens=lambda msgs: 10
     )
 
-    strategy_config = SimpleNamespace(
-        get_context_enhancement_config=lambda: {"max_tool_iterations": 1}
-    )
+    strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
     monkeypatch.setattr(
         "backend.services.ai_reviewer.reviewer.get_strategy_config",
         lambda: strategy_config,

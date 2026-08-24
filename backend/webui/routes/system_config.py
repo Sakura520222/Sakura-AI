@@ -4,6 +4,7 @@
 Telegram Bot、WebUI 安全等。这些配置通常在 Setup Wizard 首次部署时设置，
 此页面允许超级管理员在运行时修改。
 """
+
 import asyncio
 
 from fastapi import APIRouter, Depends, Request

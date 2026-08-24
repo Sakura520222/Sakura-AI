@@ -4,7 +4,7 @@
 Slice 3c 再 PyInstaller 打包为单二进制（spec §16.1）。
 """
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 
 # IPC 协议版本（spec §7.2 body envelope）。Slice 3a 实现 v1。
 PROTOCOL_VERSION = 1

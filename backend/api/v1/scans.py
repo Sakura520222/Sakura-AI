@@ -1,4 +1,5 @@
 """API v1 扫描管理端点"""
+
 import asyncio
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -157,7 +158,9 @@ async def get_scan(
         "report_issue_url": scan.report_issue_url,
         "created_at": format_rfc3339(scan.created_at) if scan.created_at else None,
         "started_at": format_rfc3339(scan.started_at) if scan.started_at else None,
-        "completed_at": format_rfc3339(scan.completed_at) if scan.completed_at else None,
+        "completed_at": format_rfc3339(scan.completed_at)
+        if scan.completed_at
+        else None,
         "findings": [
             {
                 "id": f.id,
@@ -210,7 +213,7 @@ async def trigger_scan(
                 scan_id = await worker.create_scan_record(
                     repo_name=repo_name,
                     trigger_type="manual_api",
-                    triggered_by=f"api:{user['sub']}",
+                    triggered_by=f"api:{user.get('user_id') or user['sub']}",
                 )
                 task = create_registered_background_task(
                     worker.process_scan(scan_id), "scan_manual_api"

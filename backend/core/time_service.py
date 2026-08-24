@@ -81,7 +81,11 @@ def resolve_timezone(configured_timezone: str = "system") -> ZoneInfo:
 
 
 def _require_aware(value: datetime) -> datetime:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
         raise ValueError("时间点必须是带有效 offset 的 aware datetime")
     return value
 
@@ -122,7 +126,9 @@ def to_app_timezone(value: datetime, zone: ZoneInfo | str) -> datetime:
     return _require_aware(value).astimezone(target)
 
 
-def format_display(value: datetime, zone: ZoneInfo | str, *, seconds: bool = True) -> str:
+def format_display(
+    value: datetime, zone: ZoneInfo | str, *, seconds: bool = True
+) -> str:
     """输出带 numeric offset 的用户可见时间，避免 DST 重复小时歧义。"""
 
     local = to_app_timezone(value, zone)
@@ -209,7 +215,9 @@ def parse_datetime_local(
     candidates: list[datetime] = []
     for candidate_fold in (0, 1):
         candidate = naive.replace(tzinfo=zone_info, fold=candidate_fold)
-        round_trip = candidate.astimezone(UTC).astimezone(zone_info).replace(tzinfo=None)
+        round_trip = (
+            candidate.astimezone(UTC).astimezone(zone_info).replace(tzinfo=None)
+        )
         if round_trip == naive:
             candidates.append(candidate)
     unique_offsets = {candidate.utcoffset() for candidate in candidates}
@@ -237,7 +245,9 @@ def datetime_local_fold(value: datetime, zone: ZoneInfo | str) -> int:
     return to_app_timezone(value, zone).fold
 
 
-def filename_timestamp(value: datetime | None = None, zone: ZoneInfo | str | None = None) -> str:
+def filename_timestamp(
+    value: datetime | None = None, zone: ZoneInfo | str | None = None
+) -> str:
     """Safe local-calendar timestamp for human-facing download filenames."""
 
     service = get_time_service() if value is None or zone is None else None

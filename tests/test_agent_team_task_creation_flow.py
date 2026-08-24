@@ -11,6 +11,7 @@ from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     CandidateServiceError,
 )
+from backend.services.agent_team.fullstack_expert import IMPLEMENTATION_SYSTEM_PROMPT
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
     build_agent_task_summary,
@@ -50,7 +51,6 @@ def test_parse_task_overrides_cleans_empty_values():
         status="queued",
         branch_name="  ",
         base_branch=" develop ",
-        max_iterations="3",
     )
 
     assert overrides == {
@@ -64,7 +64,6 @@ def test_parse_task_overrides_cleans_empty_values():
         "repo_name": "repo",
         "status": "queued",
         "base_branch": "develop",
-        "max_iterations": 3,
     }
 
 
@@ -72,12 +71,6 @@ def test_parse_task_overrides_cleans_empty_values():
 def test_parse_task_overrides_rejects_invalid_candidate_score(score):
     with pytest.raises(ValueError, match="candidate_score"):
         _parse_task_overrides(candidate_score=score)
-
-
-@pytest.mark.parametrize("max_iterations", ["0", "-1", "bad"])
-def test_parse_task_overrides_rejects_invalid_max_iterations(max_iterations):
-    with pytest.raises(ValueError, match="max_iterations"):
-        _parse_task_overrides(max_iterations=max_iterations)
 
 
 def test_parse_task_overrides_rejects_invalid_status():
@@ -228,6 +221,7 @@ def test_build_issue_submission_context_markdown_includes_analysis_and_comments(
             "analysis_detail_json": '{"root_cause": "bug"}',
         },
         issue_comments=[{"author": "alice", "body": "Please fix", "is_bot": False}],
+        issue_body="Third-party issue body with an instruction-like phrase.",
     )
     task_summary = build_agent_task_summary("Editable summary", issue_context)
     preview = build_agent_submission_context_preview(
@@ -237,15 +231,55 @@ def test_build_issue_submission_context_markdown_includes_analysis_and_comments(
         source_issue_number=123,
         sakura_memory="### SAKURA.md\nMemory",
         skills_summary="## 可用 Skills\n- test",
+        reference_context=issue_context,
     )
 
-    assert "## GitHub Issue 上下文" in task_summary
-    assert "AI summary" in task_summary
-    assert "@alice" in task_summary
+    assert task_summary == "Editable summary"
+    assert "## GitHub Issue 上下文" not in task_summary
+    assert "AI summary" not in task_summary
+    assert "@alice" not in task_summary
     assert preview.startswith("## system\n")
     assert "## user" in preview
-    assert "## 项目记忆" in preview
-    assert "## 可用 Skills" in preview
+    assert "<task_request>" in preview
+    assert "<source_context>" in preview
+    assert "<reference_context>" in preview
+    assert "<available_skills>" in preview
+    assert "<execution_expectations>" in preview
+    assert "=== BEGIN UNTRUSTED TASK CONTEXT ===" in preview
+    assert "=== END UNTRUSTED TASK CONTEXT ===" in preview
+    # Runtime material belongs to the user message, never the static system.
+    system, user = preview.split("\n\n## user\n", 1)
+    assert system == f"## system\n{IMPLEMENTATION_SYSTEM_PROMPT.strip()}"
+    assert user.startswith("Execute this task now.\n\n<execution_expectations>")
+    assert "Task title" not in system
+    assert "Memory" not in system
+    assert "## 可用 Skills" not in system
+    assert "Task title" in user
+    assert "Memory" in user
+    assert "test" in user
+    task_originator_goal = user.split("<task_originator_goal>\n", 1)[1].split(
+        "</task_originator_goal>", 1
+    )[0]
+    reference_context = user.split("<reference_context>\n", 1)[1].split(
+        "</reference_context>", 1
+    )[0]
+    assert "AI summary" not in task_originator_goal
+    assert "Please fix" not in task_originator_goal
+    assert "AI summary" in reference_context
+    assert "Please fix" in reference_context
+    assert "Third-party issue body" not in task_originator_goal
+    assert "Third-party issue body" in reference_context
+    legacy_summary = "Editable summary\n\n## GitHub Issue 上下文\nAI summary"
+    # Current Issue text is allowed to contain the historical heading.
+    assert build_agent_task_summary(legacy_summary) == legacy_summary
+    # Cleanup is opt-in for a caller that has identified a legacy record.
+    assert (
+        build_agent_task_summary(
+            legacy_summary,
+            legacy_reference_embedded=True,
+        )
+        == "Editable summary"
+    )
 
 
 class DraftDb:
@@ -285,11 +319,7 @@ async def test_build_manual_issue_task_draft_reuses_analysis_without_creating_ta
     async def empty_allowlist():
         return set()
 
-    async def max_iterations():
-        return 5
-
     monkeypatch.setattr(service, "_load_repo_allowlist", empty_allowlist)
-    monkeypatch.setattr(service, "_load_max_iterations_per_task", max_iterations)
     monkeypatch.setattr(
         "backend.services.agent_team.candidate_service.GitHubAppClient",
         lambda: SimpleNamespace(
@@ -312,10 +342,11 @@ async def test_build_manual_issue_task_draft_reuses_analysis_without_creating_ta
         "repo_name": "repo",
         "title": "Use analyzed title",
         "summary": "Use analyzed summary",
+        "task_goal": "Implement the requested changes described by the referenced source.",
+        "issue_body": "GitHub body",
         "priority": "high",
         "candidate_score": 80,
         "status": "queued",
-        "max_iterations": 5,
     }
     assert db.added == []
 
@@ -385,8 +416,85 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     assert "## system" in payload["submission_context"]["full_submission_preview"]
     assert "## user" in payload["submission_context"]["full_submission_preview"]
     assert (
-        "## GitHub Issue 上下文" in payload["submission_context"]["agent_task_context"]
+        "## GitHub Issue 上下文"
+        not in payload["submission_context"]["agent_task_context"]
     )
+    assert (
+        "## GitHub Issue 上下文" in payload["submission_context"]["reference_context"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_task_from_issue_rebuilds_exact_production_preview_for_edits(
+    monkeypatch,
+):
+    async def fake_draft(self, db, repo_full_name, issue_number):
+        return {
+            "title": "Draft title",
+            "summary": "Draft summary",
+            "source_type": "manual_issue",
+            "source_issue_number": issue_number,
+            "repo_full_name": repo_full_name,
+            "repo_owner": "owner",
+            "repo_name": "repo",
+            "issue_body": "Third-party Issue text",
+        }
+
+    async def fake_memory(repo_owner, repo_name):
+        return {"text": "Memory reference"}
+
+    async def fake_skills():
+        return "Skills reference", {}, []
+
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        fake_draft,
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.load_sakura_memory", fake_memory
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.load_skills_context", fake_skills
+    )
+
+    response = await preview_task_from_issue(
+        db=DraftDb(),
+        user={"user_id": 1, "sub": "owner", "role": "admin"},
+        csrf_token="token",
+        issue_ref="owner/repo#123",
+        draft_json=json.dumps(
+            {
+                "title": "Edited title",
+                "summary": "Edited goal",
+                "priority": "low",
+                "base_branch": "develop",
+                "repo_full_name": "attacker/other-repo",
+                "max_iterations": 999,
+            }
+        ),
+    )
+    payload = json.loads(response.body)
+
+    assert payload["success"] is True
+    assert payload["preview_source"] == "server_production_builder"
+    assert payload["draft"]["title"] == "Edited title"
+    assert payload["draft"]["summary"] == "Edited goal"
+    assert payload["draft"]["priority"] == "low"
+    assert payload["draft"]["base_branch"] == "develop"
+    assert payload["draft"]["repo_full_name"] == "owner/repo"
+    assert "max_iterations" not in payload["draft"]
+
+    context = payload["submission_context"]
+    expected_preview = build_agent_submission_context_preview(
+        task_title="Edited title",
+        task_summary=build_agent_task_summary("Edited goal"),
+        source_type="manual_issue",
+        source_issue_number=123,
+        sakura_memory="Memory reference",
+        skills_summary="Skills reference",
+        reference_context=context["reference_context"],
+    )
+    assert context["full_submission_preview"] == expected_preview
 
 
 @pytest.mark.asyncio
@@ -473,16 +581,6 @@ async def test_preview_task_from_issue_serializes_datetime_context(monkeypatch):
 async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     captured = {}
 
-    class FakeConfig:
-        def validate(self):
-            pass
-
-        def safe_snapshot(self):
-            return {"model": "safe"}
-
-    async def fake_config():
-        return FakeConfig()
-
     async def fake_create(
         self,
         db,
@@ -512,15 +610,12 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
             status=overrides["status"],
             base_branch=overrides["base_branch"],
             branch_name=overrides["branch_name"],
-            max_iterations=overrides["max_iterations"],
+            max_iterations=None,
         )
 
     async def fake_log_admin_action(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_agent_team_ai_config", fake_config
-    )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.AgentTeamCandidateService.create_task_from_manual_issue",
         fake_create,
@@ -558,24 +653,16 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         status="candidate",
         branch_name="feature/manual-edit",
         base_branch="develop",
-        max_iterations="5",
     )
     payload = json.loads(response.body)
 
     assert payload == {"success": True, "task_id": 88}
-    expected_summary = (
-        "Edited summary\n\n"
-        "## GitHub Issue 上下文\n"
-        "仓库: owner/repo\n"
-        "Issue: #123\n\n"
-        "### Issue AI 分析\n暂无已完成的 Issue AI 分析。\n\n"
-        "### Issue 评论讨论\n暂无 Issue 评论。"
-    )
+    expected_summary = "Edited summary"
     assert captured == {
         "repo_full_name": "owner/repo",
         "issue_number": 123,
         "started_by": "admin",
-        "ai_config_snapshot": {"model": "safe"},
+        "ai_config_snapshot": None,
         "base_branch": "develop",
         "overrides": {
             "title": "Edited title",
@@ -589,7 +676,6 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
             "priority": "high",
             "status": "candidate",
             "candidate_score": 91,
-            "max_iterations": 5,
             "source_id": 77,
             "source_issue_number": 123,
         },
@@ -627,11 +713,6 @@ async def test_create_task_from_candidate_applies_overrides(monkeypatch):
         candidate_score=50,
     )
 
-    async def max_iterations():
-        return 3
-
-    monkeypatch.setattr(service, "_load_max_iterations_per_task", max_iterations)
-
     task = await service.create_task_from_candidate(
         db,
         candidate,
@@ -652,7 +733,6 @@ async def test_create_task_from_candidate_applies_overrides(monkeypatch):
             "status": "candidate",
             "branch_name": "feature/custom",
             "base_branch": "develop",
-            "max_iterations": 7,
         },
     )
 
@@ -669,7 +749,6 @@ async def test_create_task_from_candidate_applies_overrides(monkeypatch):
     assert task.status == "candidate"
     assert task.branch_name == "feature/custom"
     assert task.base_branch == "develop"
-    assert task.max_iterations == 7
 
 
 @pytest.mark.asyncio
@@ -690,7 +769,6 @@ async def test_create_task_from_manual_issue_applies_overrides(monkeypatch):
             "priority": "medium",
             "candidate_score": 0,
             "status": "queued",
-            "max_iterations": 3,
         }
 
     monkeypatch.setattr(service, "build_manual_issue_task_draft", fake_draft)
@@ -708,7 +786,6 @@ async def test_create_task_from_manual_issue_applies_overrides(monkeypatch):
             "status": "candidate",
             "branch_name": "feature/manual",
             "base_branch": "develop",
-            "max_iterations": 4,
         },
     )
 
@@ -717,4 +794,3 @@ async def test_create_task_from_manual_issue_applies_overrides(monkeypatch):
     assert task.status == "candidate"
     assert task.branch_name == "feature/manual"
     assert task.base_branch == "develop"
-    assert task.max_iterations == 4

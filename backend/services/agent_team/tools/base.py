@@ -31,7 +31,7 @@ class ToolResult:
 
     @property
     def is_terminal(self) -> bool:
-        """是否为终止工具（finish_task / submit_review）。"""
+        """Whether this result ends the Agent run."""
         return bool(self.output.get("_terminal"))
 
 

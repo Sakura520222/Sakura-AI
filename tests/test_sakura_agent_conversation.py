@@ -44,7 +44,6 @@ async def test_consolidation_agent_starts_conversation_with_user_task_message():
         max_chars=5000,
         languages="Python: 1",
         model="test-model",
-        max_iterations=1,
     )
 
     assert changes == {}
@@ -101,7 +100,6 @@ async def test_agent_conversation_executes_unified_response_tool_calls():
         total_reflections=1,
         max_chars=5000,
         languages="Python: 1",
-        max_iterations=2,
     )
 
     assert changes == {"memory.md": "updated"}
@@ -161,12 +159,11 @@ async def test_agent_conversation_records_tool_name_for_gemini_replay():
         total_reflections=1,
         max_chars=5000,
         languages="Python: 1",
-        max_iterations=2,
     )
 
-    from backend.services.ai_reviewer.unified_client import _messages_from_legacy
+    from backend.services.ai_reviewer.unified_client import messages_from_legacy
 
-    replay_messages = _messages_from_legacy(captured["messages"][1])
+    replay_messages = messages_from_legacy(captured["messages"][1])
     request = UnifiedRequest(
         model="gemini-test",
         messages=replay_messages,
@@ -199,7 +196,6 @@ async def test_agent_conversation_propagates_cancellation_from_llm_call():
         await agent._run_agent_conversation(
             system_prompt="system instructions",
             model="test-model",
-            max_iterations=1,
         )
 
 
@@ -239,7 +235,6 @@ async def test_agent_conversation_does_not_report_max_iterations_after_llm_error
     await agent._run_agent_conversation(
         system_prompt="system instructions",
         model="test-model",
-        max_iterations=50,
         initial_user_message="start",
     )
 

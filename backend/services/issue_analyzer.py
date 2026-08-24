@@ -15,7 +15,6 @@ from backend.core.config import (
 )
 from backend.core.model_context import get_model_context_manager
 from backend.core.time_service import now_utc
-from backend.models.database import AppConfig, async_session
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
@@ -30,12 +29,16 @@ from backend.services.ai_reviewer.tools import (
     ToolHandler,
     ToolManager,
 )
+from backend.services.ai_task_deadline import AITaskDeadline
 from backend.services.issue_protocol import (
     IssueProtocolError,
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
-from backend.services.protocol_repair import run_protocol_repair_loop
+from backend.services.protocol_repair import (
+    append_skipped_tool_results,
+    run_protocol_repair_loop,
+)
 
 ISSUE_ANALYSIS_REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_ISSUE_ANALYSIS protocol.
 Reformat the same Issue analysis conclusions only. Do not add, remove, or reconsider recommendations.
@@ -273,7 +276,7 @@ class IssueAnalyzer:
     async def _fetch_issue_comments(
         self, github_app, repo_owner: str, repo_name: str, issue_number: int
     ) -> list[dict[str, Any]] | None:
-        """获取 Issue 评论，受 issue_max_comments_in_context 配置控制数量"""
+        """获取 Issue 评论（不限制条数，全部纳入上下文）"""
         if issue_number <= 0:
             return None
 
@@ -296,13 +299,6 @@ class IssueAnalyzer:
         if not comments:
             return None
 
-        try:
-            max_count = int(
-                await get_dynamic_config("issue_max_comments_in_context") or 0
-            )
-        except ValueError, TypeError:
-            max_count = 0
-
         raw_comments = []
         for c in comments:
             author = getattr(c.user, "login", "unknown") if c.user else "unknown"
@@ -315,9 +311,6 @@ class IssueAnalyzer:
             )
 
         # 按时间正序排列（旧 → 新），便于 AI 理解对话发展
-        if max_count > 0:
-            raw_comments = raw_comments[-max_count:]
-
         return raw_comments
 
     def _parse_analysis_result(self, response_text: str) -> dict[str, Any]:
@@ -341,6 +334,8 @@ class IssueAnalyzer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        cancel_event: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
         # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
@@ -374,6 +369,8 @@ class IssueAnalyzer:
             invocation_context=invocation_context,
             observer=observer,
             event_callback=event_callback,
+            cancel_event=cancel_event,
+            deadline=deadline,
         )
 
     @staticmethod
@@ -428,6 +425,8 @@ class IssueAnalyzer:
         publication_coordinator: Any = None,
         invocation_context: Any = None,
         observer: Any = None,
+        cancel_event: Any = None,
+        deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """分析 Issue
 
@@ -441,10 +440,12 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
+
         self._refresh_ai_client()
         self._refresh_runtime_config()
-        if self.tool_handler.fetch_url_tool:
-            await self.tool_handler.fetch_url_tool.reset_session()
 
         settings = get_settings()
         output_language = await get_user_dynamic_config(
@@ -551,29 +552,8 @@ class IssueAnalyzer:
         # 获取启用的工具
         enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)
 
-        # 多轮对话循环（带工具调用）
-        max_iterations = settings.issue_max_tool_iterations
-        try:
-            if async_session is not None:
-                async with async_session() as session:
-                    from sqlalchemy import select
-
-                    result = await session.execute(
-                        select(AppConfig).where(
-                            AppConfig.key_name == "issue_max_tool_iterations"
-                        )
-                    )
-                    cfg = result.scalar_one_or_none()
-                    if cfg:
-                        try:
-                            max_iterations = int(cfg.key_value)
-                        except ValueError, TypeError:
-                            logger.warning(
-                                "Invalid issue_max_tool_iterations config: {}",
-                                cfg.key_value,
-                            )
-        except Exception as exc:
-            logger.warning("读取 issue_max_tool_iterations 配置失败: {}", exc)
+        # 多轮对话循环（带工具调用）：不设轮次与时长上限，依赖模型自然停止
+        # （无工具调用即交付最终结果）。
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
@@ -588,20 +568,74 @@ class IssueAnalyzer:
             else model_ctx_mgr.calculate_safe_context(context_model, 0.8)
         )
 
-        while iteration < max_iterations:
+        async def _complete_analysis(response_text: str) -> dict[str, Any]:
+            result = await self._parse_or_repair_analysis(
+                response_text,
+                messages,
+                tracker,
+                event_callback=event_callback,
+                publication_coordinator=publication_coordinator,
+                invocation_context=invocation_context,
+                observer=observer,
+                cancel_event=cancel_event,
+                deadline=task_deadline,
+            )
+
+            result["prompt_tokens"] = tracker.prompt_tokens
+            result["completion_tokens"] = tracker.completion_tokens
+            result["tool_rounds"] = iteration
+            result["estimated_cost"] = tracker.calculate_cost(
+                settings.issue_price_per_1k_prompt,
+                settings.issue_price_per_1k_completion,
+            )
+            if (
+                publication_coordinator is not None
+                and invocation_context is not None
+            ):
+                result = await coordinate_publication(
+                    publication_coordinator,
+                    kind="issue_analysis",
+                    result=result,
+                    context=invocation_context,
+                )
+
+            logger.info(
+                "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
+                issue_info.get("issue_number"),
+                iteration,
+                tracker.prompt_tokens,
+                tracker.completion_tokens,
+            )
+            return result
+
+        while True:
             iteration += 1
 
             try:
-                response = await self.api_client.call_with_retry(
-                    model="",
-                    messages=messages,
-                    tools=enabled_tools,
-                    tool_choice="auto",
-                    temperature=settings.ai_temperature,
-                    role="main",
-                    context=invocation_context,
-                    observer=observer,
-                )
+                prompt_was_sent = task_deadline.timeout_prompt_sent
+                call_kwargs = {
+                    "model": "",
+                    "messages": messages,
+                    "tools": enabled_tools,
+                    "tool_choice": "auto",
+                    "temperature": settings.ai_temperature,
+                    "role": "main",
+                    "cancel_event": cancel_event,
+                    "context": invocation_context,
+                    "observer": observer,
+                }
+                call_kwargs.update(task_deadline.prepare_call(messages))
+                if (
+                    not prompt_was_sent
+                    and task_deadline.timeout_prompt_sent
+                    and event_callback is not None
+                ):
+                    try:
+                        await event_callback("message", messages[-1])
+                    except Exception as exc:
+                        logger.warning("event_callback failed: {}", exc)
+
+                response = await self.api_client.call_with_retry(**call_kwargs)
             except Exception as e:
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
                 return {
@@ -658,43 +692,7 @@ class IssueAnalyzer:
             if not tool_calls:
                 # AI 完成分析，解析结果
                 review_text = response.choices[0].message.content or ""
-                result = await self._parse_or_repair_analysis(
-                    review_text,
-                    messages,
-                    tracker,
-                    event_callback=event_callback,
-                    publication_coordinator=publication_coordinator,
-                    invocation_context=invocation_context,
-                    observer=observer,
-                )
-
-                # 计算成本
-                result["prompt_tokens"] = tracker.prompt_tokens
-                result["completion_tokens"] = tracker.completion_tokens
-                result["tool_rounds"] = iteration
-                result["estimated_cost"] = tracker.calculate_cost(
-                    settings.issue_price_per_1k_prompt,
-                    settings.issue_price_per_1k_completion,
-                )
-                if (
-                    publication_coordinator is not None
-                    and invocation_context is not None
-                ):
-                    result = await coordinate_publication(
-                        publication_coordinator,
-                        kind="issue_analysis",
-                        result=result,
-                        context=invocation_context,
-                    )
-
-                logger.info(
-                    "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
-                    issue_info.get("issue_number"),
-                    iteration,
-                    tracker.prompt_tokens,
-                    tracker.completion_tokens,
-                )
-                return result
+                return await _complete_analysis(review_text)
 
             # 处理工具调用
             assistant_message = response.choices[0].message
@@ -726,8 +724,35 @@ class IssueAnalyzer:
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
+            # 即使 provider 在 deadline 前开始、在 deadline 后返回了 tool call，
+            # 也不能执行该工具；将 assistant 内容交给原有协议解析/修复。
+            if task_deadline.tools_disabled:
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                return await _complete_analysis(assistant_message.content or "")
+
+            # 本次调用可能在 deadline 前启动、但返回时已经到期。保留累计
+            # assistant turn，下一轮由 prepare_call 追加一次 timeout prompt 并收尾。
+            if task_deadline.is_expired():
+                await append_skipped_tool_results(
+                    messages,
+                    tool_calls,
+                    event_callback=event_callback,
+                )
+                continue
+
             # 执行工具调用
-            for tool_call in tool_calls:
+            for tool_index, tool_call in enumerate(tool_calls):
+                if task_deadline.is_expired():
+                    await append_skipped_tool_results(
+                        messages,
+                        tool_calls[tool_index:],
+                        event_callback=event_callback,
+                    )
+                    break
                 try:
                     if event_callback:
                         try:
@@ -779,64 +804,3 @@ class IssueAnalyzer:
                             await event_callback("message", error_tool_msg)
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
-
-        # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
-        logger.warning(
-            f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
-        )
-        messages.append(
-            {
-                "role": "user",
-                "content": "已达到最大工具调用次数，请基于已有信息立即返回最终分析结果，必须使用系统要求的 <SAKURA_ISSUE_ANALYSIS> 信封协议。",
-            }
-        )
-        try:
-            final_response = await self.api_client.call_with_retry(
-                model="",
-                messages=messages,
-                temperature=0.3,
-                role="main",
-                context=invocation_context,
-                observer=observer,
-            )
-            tracker.accumulate(final_response)
-            tracker.log_context_usage(
-                final_response,
-                role_context_window,
-                max_iterations + 1,
-            )
-            last_content = final_response.choices[0].message.content or ""
-        except Exception as e:
-            logger.error("最终 API 调用失败: {}", e)
-            last_content = ""
-
-        if last_content:
-            result = await self._parse_or_repair_analysis(
-                last_content,
-                messages,
-                tracker,
-                event_callback=event_callback,
-                publication_coordinator=publication_coordinator,
-                invocation_context=invocation_context,
-                observer=observer,
-            )
-        else:
-            result = safe_issue_protocol_failure(
-                IssueProtocolError("empty final analysis response")
-            )
-
-        result["prompt_tokens"] = tracker.prompt_tokens
-        result["completion_tokens"] = tracker.completion_tokens
-        result["tool_rounds"] = max_iterations
-        result["estimated_cost"] = tracker.calculate_cost(
-            settings.issue_price_per_1k_prompt,
-            settings.issue_price_per_1k_completion,
-        )
-        if publication_coordinator is not None and invocation_context is not None:
-            result = await coordinate_publication(
-                publication_coordinator,
-                kind="issue_analysis",
-                result=result,
-                context=invocation_context,
-            )
-        return result

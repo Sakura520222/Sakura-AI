@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.routing import APIRoute
 
+from backend.core import config_sections
+from backend.core.config_section_defaults import (
+    LABEL_SECTION_DEFAULTS,
+    STRATEGY_SECTION_DEFAULTS,
+)
 from backend.models.database import AppConfig
 from backend.services.config_backup_service import (
     AI_SECTION,
     BACKUP_FORMAT,
     BACKUP_VERSION,
     GLOBAL_SECTION,
+    LABEL_SECTION,
     LEGACY_BACKUP_VERSION,
+    STRATEGY_SECTION,
     SYSTEM_SECTION,
     BackupRecord,
     ConfigBackupError,
+    ConfigImportResult,
     build_backup_document,
     parse_config_backup,
+    refresh_imported_runtime_config,
     restore_config_backup,
     serialize_config_backup,
 )
@@ -124,6 +133,48 @@ def test_backup_rejects_key_outside_declared_section():
         parse_config_backup(json.dumps(document).encode())
 
 
+@pytest.mark.parametrize("version", [2, BACKUP_VERSION])
+def test_backup_skips_unknown_legacy_keys_instead_of_rejecting(version):
+    """含已移除配置键（如旧版平铺键）的备份可导入，未知键跳过不报错。
+
+    历史 v2 备份在线上存在且携带后来删除的平铺键，恢复必须宽容跳过。
+    """
+    document = {
+        "format": BACKUP_FORMAT,
+        "version": version,
+        "exported_at": "2026-08-12T12:00:00.000000Z",
+        "scope": "global",
+        "sections": {
+            "global": {
+                "count": 3,
+                "configs": [
+                    {
+                        "key": "max_concurrent_reviews",
+                        "value": "4",
+                        "description": None,
+                    },
+                    {
+                        "key": "issue_max_tool_iterations",
+                        "value": "200",
+                        "description": None,
+                    },
+                    {
+                        "key": "auto_index_pr_changes",
+                        "value": "true",
+                        "description": None,
+                    },
+                ],
+            }
+        },
+    }
+
+    parsed = parse_config_backup(json.dumps(document).encode())
+
+    assert {record.key for record in parsed[GLOBAL_SECTION]} == {
+        "max_concurrent_reviews"
+    }
+
+
 def test_backup_rejects_unsafe_builtin_ai_endpoint():
     document = build_backup_document(
         [_ai_account_record(api_base="https://127.0.0.1:8000/v1")],
@@ -206,7 +257,9 @@ def test_system_backup_accepts_system_or_iana_app_timezone():
         assert parsed[SYSTEM_SECTION][0].value == value
 
 
-@pytest.mark.parametrize("exported_at", [None, "", "2026-08-12 12:00:00", "2026-08-12T12:00:00"])
+@pytest.mark.parametrize(
+    "exported_at", [None, "", "2026-08-12 12:00:00", "2026-08-12T12:00:00"]
+)
 def test_v2_backup_rejects_missing_or_naive_exported_at(exported_at):
     document = build_backup_document([], "global")
     if exported_at is None:
@@ -232,6 +285,264 @@ def test_v1_combined_backup_remains_importable_without_system_section():
     parsed = parse_config_backup(json.dumps(document).encode())
 
     assert set(parsed) == {GLOBAL_SECTION, AI_SECTION}
+
+
+def test_v2_backup_without_section_configs_still_imports():
+    # v2 备份（无 strategy/label 节）在 v3 导入端保持可恢复
+    document = {
+        "format": BACKUP_FORMAT,
+        "version": 2,
+        "exported_at": "2026-08-12T12:00:00.000000Z",
+        "scope": "all",
+        "sections": {
+            "global": {"count": 0, "configs": []},
+            "ai": {"count": 0, "configs": []},
+            "system": {"count": 0, "configs": []},
+        },
+    }
+
+    parsed = parse_config_backup(json.dumps(document).encode())
+
+    assert set(parsed) == {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION}
+
+
+def test_v3_all_backup_includes_strategy_and_label_sections():
+    records = [
+        BackupRecord("max_concurrent_reviews", "4", None),
+        BackupRecord(
+            "strategy.strategies",
+            json.dumps({"standard": {"prompt": "custom standard prompt"}}),
+            "strategy.strategies",
+        ),
+        BackupRecord(
+            "label.definitions",
+            json.dumps({"bug": {"color": "000000", "description": "缺陷"}}),
+            "label.definitions",
+        ),
+    ]
+
+    document = build_backup_document(records, "all")
+    parsed = parse_config_backup(serialize_config_backup(document))
+
+    assert document["version"] == BACKUP_VERSION
+    assert set(document["sections"]) == {
+        GLOBAL_SECTION,
+        AI_SECTION,
+        SYSTEM_SECTION,
+        STRATEGY_SECTION,
+        LABEL_SECTION,
+    }
+    assert document["contains_sensitive_values"] is False
+    assert {record.key for record in parsed[STRATEGY_SECTION]} == {
+        "strategy.strategies"
+    }
+    assert {record.key for record in parsed[LABEL_SECTION]} == {"label.definitions"}
+    assert {record.key for record in parsed[GLOBAL_SECTION]} == {
+        "max_concurrent_reviews"
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("not-json{", "不是有效 JSON"),
+        (json.dumps(["not", "a", "dict"]), "必须是 JSON 对象"),
+        # 合法 JSON 但结构校验失败：标签颜色非 6 位十六进制
+        (
+            json.dumps({"bug": {"color": "xyz", "description": "d"}}),
+            "结构无效",
+        ),
+    ],
+)
+def test_section_backup_rejects_invalid_payload(value: str, message: str):
+    document = build_backup_document(
+        [BackupRecord("label.definitions", value, "label.definitions")],
+        "all",
+    )
+
+    with pytest.raises(ConfigBackupError, match=message):
+        parse_config_backup(serialize_config_backup(document))
+
+
+def test_section_backup_rejects_missing_template_placeholders():
+    document = build_backup_document(
+        [
+            BackupRecord(
+                "strategy.pr_summary",
+                json.dumps({"user_template": "总结 {title} 的变更"}),
+                "strategy.pr_summary",
+            )
+        ],
+        "all",
+    )
+
+    with pytest.raises(ConfigBackupError, match="丢失必需占位符"):
+        parse_config_backup(serialize_config_backup(document))
+
+
+@pytest.mark.asyncio
+async def test_restore_replaces_strategy_section_exactly():
+    strategies_row = AppConfig(
+        key_name="strategy.strategies",
+        key_value=json.dumps({"standard": {"prompt": "old"}}),
+        description="strategy.strategies",
+    )
+    extra_row = AppConfig(
+        key_name="strategy.file_filters",
+        key_value=json.dumps({"skip_paths": [".git/"]}),
+        description="strategy.file_filters",
+    )
+    session = _FakeSession([strategies_row, extra_row])
+    sections = {
+        STRATEGY_SECTION: [
+            BackupRecord(
+                "strategy.strategies",
+                json.dumps({"standard": {"prompt": "custom standard prompt"}}),
+                "strategy.strategies",
+            )
+        ]
+    }
+
+    result = await restore_config_backup(session, sections)
+
+    assert result.sections == (STRATEGY_SECTION,)
+    # 节内备份缺失的键（file_filters）被删除 → 该节回退内置默认
+    assert (result.created, result.updated, result.deleted, result.unchanged) == (
+        0,
+        1,
+        1,
+        0,
+    )
+    assert session.deleted == [extra_row]
+    assert strategies_row.key_value == json.dumps(
+        {"standard": {"prompt": "custom standard prompt"}}
+    )
+    assert result.deleted_keys == frozenset({"strategy.file_filters"})
+    assert session.committed is True
+    assert session.rolled_back is False
+
+
+def test_refresh_imported_runtime_config_syncs_section_store():
+    config_sections.clear_section_store()
+    try:
+        config_sections.update_section_store(
+            "label.definitions",
+            {"bug": {"color": "000000", "description": "覆盖将被删除"}},
+        )
+        result = ConfigImportResult(
+            sections=(STRATEGY_SECTION, LABEL_SECTION),
+            created=1,
+            updated=0,
+            deleted=1,
+            unchanged=0,
+            imported_values={
+                "strategy.strategies": json.dumps(
+                    {"standard": {"prompt": "custom standard prompt"}}
+                ),
+            },
+            deleted_keys=frozenset({"label.definitions"}),
+            requires_restart=False,
+        )
+
+        refresh_imported_runtime_config(result)
+
+        # 导入的覆盖进入 store（与默认深度合并读取）
+        merged = config_sections.get_section_config("strategy.strategies")
+        assert merged["standard"]["prompt"] == "custom standard prompt"
+        assert merged["quick"] == STRATEGY_SECTION_DEFAULTS["strategies"]["quick"]
+        # 被删除的节键回退内置默认
+        assert (
+            config_sections.get_section_config("label.definitions")
+            == LABEL_SECTION_DEFAULTS["labels"]
+        )
+    finally:
+        config_sections.clear_section_store()
+
+
+def test_refresh_imported_runtime_config_reloads_label_service_cache_and_rules(
+    monkeypatch,
+):
+    import backend.services.label_service as label_service_module
+    from backend.core.config import reload_label_config
+    from backend.services.label_service import LabelService
+
+    config_sections.clear_section_store()
+    label_service = object.__new__(LabelService)
+    label_service._label_cache = {
+        "owner/repo": {
+            "labels": {},
+            "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    }
+    label_service._conflict_rules = {"stale": ["old"]}
+    monkeypatch.setattr(label_service_module, "label_service", label_service)
+
+    try:
+        result = ConfigImportResult(
+            sections=(LABEL_SECTION,),
+            created=0,
+            updated=2,
+            deleted=0,
+            unchanged=0,
+            imported_values={
+                "label.recommendation": json.dumps(
+                    {"enabled": False, "auto_create": False}
+                ),
+                "label.conflict_rules": json.dumps({"existing": ["new"]}),
+            },
+            deleted_keys=frozenset(),
+            requires_restart=False,
+        )
+
+        refresh_imported_runtime_config(result)
+
+        assert label_service._label_cache == {}
+        expected_rules = dict(LABEL_SECTION_DEFAULTS["conflict_rules"])
+        expected_rules["existing"] = ["new"]
+        assert label_service._conflict_rules == expected_rules
+        assert (
+            config_sections.get_section_config("label.recommendation")["enabled"]
+            is False
+        )
+    finally:
+        config_sections.clear_section_store()
+        reload_label_config()
+
+
+def test_refresh_imported_runtime_config_does_not_reload_label_service_for_strategy(
+    monkeypatch,
+):
+    import backend.services.config_backup_service as backup_service
+    import backend.services.label_service as label_service_module
+
+    label_service = Mock()
+    strategy_reload = Mock()
+    monkeypatch.setattr(label_service_module, "label_service", label_service)
+    monkeypatch.setattr(backup_service, "reload_strategy_config", strategy_reload)
+    config_sections.clear_section_store()
+
+    try:
+        result = ConfigImportResult(
+            sections=(STRATEGY_SECTION,),
+            created=0,
+            updated=1,
+            deleted=0,
+            unchanged=0,
+            imported_values={
+                "strategy.strategies": json.dumps(
+                    {"standard": {"prompt": "strategy-only"}}
+                )
+            },
+            deleted_keys=frozenset(),
+            requires_restart=False,
+        )
+
+        refresh_imported_runtime_config(result)
+
+        strategy_reload.assert_called_once_with()
+        label_service.reload_labels.assert_not_called()
+    finally:
+        config_sections.clear_section_store()
 
 
 def test_system_backup_key_registry_matches_the_system_config_page():
@@ -429,9 +740,7 @@ async def test_runtime_backup_route_passes_database_url_guard(monkeypatch):
         ]
     }
     restore = AsyncMock(
-        side_effect=ConfigBackupError(
-            "database_url restore database_url through Setup"
-        )
+        side_effect=ConfigBackupError("database_url restore database_url through Setup")
     )
     monkeypatch.setattr(config_routes, "parse_config_backup", lambda _content: sections)
     monkeypatch.setattr(config_routes, "restore_config_backup", restore)

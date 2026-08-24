@@ -4,7 +4,6 @@ Slice 2：只检测、不更新。Release 数据仅用于 discovery/UI（见 spe
 destructive operation 的 authoritative gate 在 Slice 4 updater PREFLIGHT。
 """
 
-
 from __future__ import annotations
 
 import asyncio
@@ -92,9 +91,7 @@ def parse_releases_payload(
                 html_url=raw.get("html_url", "") or "",
             )
         )
-    result.sort(
-        key=lambda r: _parse_semver(r.version) or (0, 0, 0), reverse=True
-    )
+    result.sort(key=lambda r: _parse_semver(r.version) or (0, 0, 0), reverse=True)
     return result
 
 
@@ -263,9 +260,7 @@ class UpdateChecker:
             except Exception as e:  # 兜底防 scheduler 死
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    f"UpdateChecker 循环异常: {e}"
-                )
+                logging.getLogger(__name__).warning(f"UpdateChecker 循环异常: {e}")
             await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
 
     async def check_once(self) -> dict:

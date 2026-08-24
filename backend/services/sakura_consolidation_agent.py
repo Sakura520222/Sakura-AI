@@ -161,7 +161,6 @@ class SakuraConsolidationAgent(SakuraAgentBase):
         max_chars: int,
         languages: str,
         model: str | None = None,
-        max_iterations: int = 20,
     ) -> dict[str, str]:
         """运行一次 Agent 会话，合并单个目标文件"""
         self._repo = repo
@@ -195,11 +194,10 @@ class SakuraConsolidationAgent(SakuraAgentBase):
         )
 
         logger.info(
-            "[consolidate-agent] 开始合并 {} / {} (model={}, max_iterations={})",
+            "[consolidate-agent] 开始合并 {} / {} (model={})",
             repo_full_name,
             target_file,
             effective_model,
-            max_iterations,
         )
 
         initial_user_message = (
@@ -209,7 +207,6 @@ class SakuraConsolidationAgent(SakuraAgentBase):
         await self._run_agent_conversation(
             system_prompt,
             effective_model,
-            max_iterations,
             initial_user_message=initial_user_message,
         )
 

@@ -35,14 +35,18 @@ async_engine = None
 async_session = None
 
 
-def _set_connection_timezone(dbapi_connection, _connection_record, dialect_name: str | None = None):
+def _set_connection_timezone(
+    dbapi_connection, _connection_record, dialect_name: str | None = None
+):
     """Pin every server session to UTC before it is handed to SQLAlchemy.
 
     This callback intentionally performs no action for SQLite.  Errors are not
     swallowed: a connection with an unknown timezone must never enter the pool.
     """
 
-    name = dialect_name or getattr(getattr(dbapi_connection, "dialect", None), "name", "")
+    name = dialect_name or getattr(
+        getattr(dbapi_connection, "dialect", None), "name", ""
+    )
     if not name:
         # SQLAlchemy's ``connect`` event does not expose a dialect on the raw
         # DB-API connection; the closure installed by init_async_db supplies it.
@@ -216,9 +220,7 @@ class PRReview(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     completed_at = Column(UTCDateTime, nullable=True)
 
     # Check Run ids（主从式三 Check）：创建成功后持久化，进程重启/换 worker 时
@@ -363,7 +365,7 @@ class HeadShaPRMap(Base):
     repo_name = Column(String(255), nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
@@ -421,9 +423,7 @@ class AppConfig(Base):
     key_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<AppConfig(key={self.key_name})>"
@@ -440,9 +440,7 @@ class UserConfig(Base):
     config_value = Column(Text, nullable=True)
     description = Column(String(255), nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("user_id", "config_key", name="uq_user_config_key"),
@@ -475,9 +473,7 @@ class ReviewQueue(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -500,9 +496,7 @@ class DocumentIndex(Base):
     )
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<DocumentIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
@@ -525,9 +519,7 @@ class DocumentFile(Base):
         Integer, default=0, nullable=False
     )  # 0=False, 1=True for MySQL compatibility
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<DocumentFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
@@ -555,9 +547,7 @@ class CodeIndex(Base):
     )  # full, pr, incremental
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<CodeIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
@@ -583,9 +573,7 @@ class CodeFile(Base):
     # 状态管理
     is_deleted = Column(Integer, default=0, nullable=False)  # 0=False, 1=True
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return (
@@ -644,9 +632,7 @@ class IssueAnalysis(Base):
 
     # 时间戳
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     completed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -686,9 +672,7 @@ class IssueAnalysisQueue(Base):
     max_retries = Column(Integer, default=3, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     processed_at = Column(UTCDateTime, nullable=True)
 
     def __repr__(self):
@@ -760,6 +744,46 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.star_aid_models  # noqa: F401
 
 
+# app_config 默认行的单一来源说明：
+# - 键值一律从 Settings 单例派生（_build_default_configs），同步/异步建库
+#   路径共用同一份定义，禁止再手抄数值。
+# - 仅收录不在 DYNAMIC_CONFIG_GROUPS 中的基础键；动态组已注册的键（如
+#   issue_auto_assign）由
+#   _append_dynamic_config_defaults 从 Settings 统一补插，保持每键单源。
+# - app_version 暂为模块级字面量：单一来源化（backend/__version__ 派生）
+#   列入后续路线（docs/plans/2026-08-16-unified-config-store.md §6）。
+APP_VERSION_DEFAULT = "3.1.3"
+
+
+def _settings_default_to_str(value: object) -> str:
+    """将 Settings 默认值序列化为 AppConfig 存储字符串。
+
+    Serialize a Settings default into AppConfig string form (bool 用小写
+    true/false，与既有 DB 行及 _cast_config_type 的解析格式保持一致)。
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _build_default_configs() -> list:
+    """构建 app_config 种子默认行（同步/异步建库路径共用的单一来源）。
+
+    Values are derived from the Settings singleton so DB seed rows can never
+    drift from code defaults. This replaces the two hand-copied tables that
+    previously disagreed on ``review_timeout_seconds`` (600/300),
+    ``web_search_enabled`` (true/false) and ``web_search_*`` limits — Settings
+    现值（异步路径语义）为准。
+    """
+    return [
+        AppConfig(
+            key_name="app_version",
+            key_value=APP_VERSION_DEFAULT,
+            description="应用版本号",
+        )
+    ]
+
+
 def _append_dynamic_config_defaults(default_configs: list) -> None:
     """向 default_configs 列表追加动态配置默认值"""
     try:
@@ -774,7 +798,7 @@ def _append_dynamic_config_defaults(default_configs: list) -> None:
         settings = get_settings()
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
-                default_val = str(getattr(settings, key, ""))
+                default_val = _settings_default_to_str(getattr(settings, key, ""))
                 default_configs.append(
                     AppConfig(
                         key_name=key,
@@ -797,82 +821,8 @@ async def insert_default_configs_async():
     if async_session is None:
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
-    default_configs = [
-        AppConfig(key_name="app_version", key_value="3.1.2", description="应用版本号"),
-        AppConfig(
-            key_name="max_concurrent_reviews",
-            key_value="5",
-            description="最大并发审查数量",
-        ),
-        AppConfig(
-            key_name="review_timeout_seconds",
-            key_value="600",
-            description="审查任务整体超时时间（秒）",
-        ),
-        AppConfig(
-            key_name="enable_auto_review",
-            key_value="true",
-            description="是否启用 Webhook 自动审查",
-        ),
-        AppConfig(
-            key_name="enable_check_runs",
-            key_value="true",
-            description="是否启用 GitHub Check Runs 审查进度可视化",
-        ),
-        AppConfig(
-            key_name="enable_analysis_check",
-            key_value="true",
-            description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
-        ),
-        AppConfig(
-            key_name="enable_findings_check",
-            key_value="true",
-            description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
-        ),
-        AppConfig(
-            key_name="analysis_min_interval_sec",
-            key_value="3",
-            description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
-        ),
-        AppConfig(
-            key_name="web_search_enabled",
-            key_value="true",
-            description="启用 Web 搜索工具",
-        ),
-        AppConfig(
-            key_name="web_search_provider",
-            key_value="duckduckgo",
-            description="Web 搜索提供商",
-        ),
-        AppConfig(
-            key_name="web_search_api_key", key_value="", description="Web 搜索 API Key"
-        ),
-        AppConfig(
-            key_name="web_search_max_results",
-            key_value="3",
-            description="Web 搜索最大返回结果数",
-        ),
-        AppConfig(
-            key_name="web_search_max_content_length",
-            key_value="500",
-            description="Web 搜索结果截断长度",
-        ),
-        AppConfig(
-            key_name="web_search_timeout",
-            key_value="15",
-            description="Web 搜索超时时间（秒）",
-        ),
-        AppConfig(
-            key_name="issue_auto_create_labels",
-            key_value="true",
-            description="自动为 Issue 应用 AI 推荐的标签",
-        ),
-        AppConfig(
-            key_name="issue_max_tool_iterations",
-            key_value="15",
-            description="Issues 分析中 AI 工具调用最大迭代次数",
-        ),
-    ]
+    # 默认行统一从 Settings 派生（单一来源），动态组键随后统一补插
+    default_configs = _build_default_configs()
 
     # 从 config 模块追加动态配置默认值
     _append_dynamic_config_defaults(default_configs)
@@ -934,6 +884,10 @@ def init_database(database_url: str):
         logger.info("数据库表初始化完成")
 
         # 插入默认配置
+        # Note: strategy.*/label.* 节键的一次性 YAML 迁移不在本同步路径执行，
+        # 统一由 lifespan 的 migrate_yaml_files_to_db
+        # （backend/core/config_sections.py）在首次正常启动时完成，避免双份
+        # 迁移实现漂移；Setup 完成后的重启必然走 lifespan 路径。
         from sqlalchemy.orm import Session
 
         session = Session(engine)
@@ -942,86 +896,9 @@ def init_database(database_url: str):
             # 检查是否已有配置
             existing_configs = session.query(AppConfig).count()
 
-            default_configs = [
-                AppConfig(
-                    key_name="app_version", key_value="3.1.2", description="应用版本号"
-                ),
-                AppConfig(
-                    key_name="max_concurrent_reviews",
-                    key_value="5",
-                    description="最大并发审查数量",
-                ),
-                AppConfig(
-                    key_name="review_timeout_seconds",
-                    key_value="300",
-                    description="审查任务整体超时时间（秒）",
-                ),
-                AppConfig(
-                    key_name="enable_auto_review",
-                    key_value="true",
-                    description="是否启用 Webhook 自动审查",
-                ),
-                AppConfig(
-                    key_name="enable_check_runs",
-                    key_value="true",
-                    description="是否启用 GitHub Check Runs 审查进度可视化",
-                ),
-                AppConfig(
-                    key_name="enable_analysis_check",
-                    key_value="true",
-                    description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
-                ),
-                AppConfig(
-                    key_name="enable_findings_check",
-                    key_value="true",
-                    description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
-                ),
-                AppConfig(
-                    key_name="analysis_min_interval_sec",
-                    key_value="3",
-                    description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
-                ),
-                AppConfig(
-                    key_name="web_search_enabled",
-                    key_value="false",
-                    description="启用 Web 搜索工具",
-                ),
-                AppConfig(
-                    key_name="web_search_provider",
-                    key_value="duckduckgo",
-                    description="Web 搜索提供商",
-                ),
-                AppConfig(
-                    key_name="web_search_api_key",
-                    key_value="",
-                    description="Web 搜索 API Key",
-                ),
-                AppConfig(
-                    key_name="web_search_max_results",
-                    key_value="3",
-                    description="Web 搜索最大返回结果数",
-                ),
-                AppConfig(
-                    key_name="web_search_max_content_length",
-                    key_value="500",
-                    description="Web 搜索结果截断长度",
-                ),
-                AppConfig(
-                    key_name="web_search_timeout",
-                    key_value="15",
-                    description="Web 搜索超时时间（秒）",
-                ),
-                AppConfig(
-                    key_name="issue_auto_create_labels",
-                    key_value="true",
-                    description="自动为 Issue 应用 AI 推荐的标签",
-                ),
-                AppConfig(
-                    key_name="issue_max_tool_iterations",
-                    key_value="15",
-                    description="Issues 分析中 AI 工具调用最大迭代次数",
-                ),
-            ]
+            # 默认行与异步路径共用同一来源（_build_default_configs 从
+            # Settings 派生），同步路径不再手抄，消除 600/300、true/false 分叉
+            default_configs = _build_default_configs()
 
             # 从 config 模块追加动态配置默认值
             _append_dynamic_config_defaults(default_configs)
@@ -1127,9 +1004,7 @@ class WebUIConfig(Base):
     items_per_page = Column(Integer, default=20)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
-    updated_at = Column(
-        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def __repr__(self):
         return f"<WebUIConfig(user_id={self.user_id}, theme={self.theme})>"
@@ -1169,7 +1044,7 @@ class SakuraMemoryState(Base):
     created_at = Column(UTCDateTime, default=lambda: utc_now(), nullable=False)
     updated_at = Column(
         UTCDateTime,
-            default=lambda: utc_now(),
+        default=lambda: utc_now(),
         onupdate=lambda: utc_now(),
         nullable=False,
     )
@@ -1187,7 +1062,7 @@ class SchemaMigration(Base):
     version = Column(String(50), unique=True, nullable=False)
     applied_at = Column(
         UTCDateTime,
-            default=utc_now,
+        default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
     )

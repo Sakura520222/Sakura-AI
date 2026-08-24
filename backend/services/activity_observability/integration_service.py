@@ -7,6 +7,7 @@ not consulted and are not written here.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -16,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +35,7 @@ from backend.models.database import utc_now
 from backend.services.activity_observability.attempt_service import AttemptService
 from backend.services.activity_observability.context_service import (
     ContextService,
+    StaleThreadLeaseError,
     ThreadLeaseToken,
 )
 from backend.services.activity_observability.contracts import (
@@ -141,6 +144,9 @@ class ObservedExecutionBundle:
         default=False, init=False, repr=False, compare=False
     )
     _lease_released: bool = field(default=False, init=False, repr=False, compare=False)
+    _lease_heartbeat_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @property
     def invocation_id(self) -> int:
@@ -149,6 +155,66 @@ class ObservedExecutionBundle:
     @property
     def work_unit_id(self) -> int:
         return int(self.work_unit.id)
+
+    def start_lease_heartbeat(self) -> None:
+        """Start renewing the thread lease for an owned execution."""
+        if (
+            self.merged
+            or self.lease is None
+            or getattr(self, "_lease_heartbeat_task", None) is not None
+        ):
+            return
+        object.__setattr__(
+            self,
+            "_lease_heartbeat_task",
+            asyncio.create_task(
+                self._lease_heartbeat_loop(
+                    self.context_service.lease_heartbeat_interval
+                )
+            ),
+        )
+
+    async def _stop_lease_heartbeat(self) -> None:
+        task = getattr(self, "_lease_heartbeat_task", None)
+        if task is None:
+            return
+        object.__setattr__(self, "_lease_heartbeat_task", None)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _lease_heartbeat_loop(self, interval: float) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            if self.lease is None or getattr(self, "_lease_released", False):
+                return
+            token = self.lease
+            try:
+                renewed = await self.context_service.heartbeat(token)
+            except asyncio.CancelledError:
+                raise
+            except StaleThreadLeaseError as exc:
+                logger.warning(
+                    "observability lease heartbeat lost (thread_id={}, work_unit_id={}): {}",
+                    token.thread_id,
+                    token.owner_work_unit_id,
+                    exc,
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "observability lease heartbeat failed (thread_id={}, work_unit_id={}): {}",
+                    token.thread_id,
+                    token.owner_work_unit_id,
+                    exc,
+                )
+                continue
+
+            object.__setattr__(self, "lease", renewed)
+            if self.observer is not None:
+                self.observer.lease = renewed
 
     async def finish(self, status: str, *, error_message: str | None = None) -> None:
         """Persist terminal state and always attempt to release the thread lease.
@@ -159,6 +225,9 @@ class ObservedExecutionBundle:
         re-raised, while two failures are reported together so callers can retry
         without losing the partial-success information.
         """
+        stop_heartbeat = getattr(self, "_stop_lease_heartbeat", None)
+        if stop_heartbeat is not None:
+            await stop_heartbeat()
         errors: list[BaseException] = []
         if not getattr(self, "_finish_work_unit_succeeded", False):
             try:
@@ -175,6 +244,15 @@ class ObservedExecutionBundle:
             try:
                 await self.context_service.release_lease(self.lease)
                 object.__setattr__(self, "_lease_released", True)
+            except StaleThreadLeaseError as exc:
+                if getattr(self, "_finish_work_unit_succeeded", False):
+                    # The terminal work unit is durable.  The old token may
+                    # no longer be released safely because it expired or was
+                    # fenced by a newer owner; never touch that newer lease
+                    # and do not make the worker retry this terminal path.
+                    object.__setattr__(self, "_lease_released", True)
+                else:
+                    errors.append(exc)
             except BaseException as exc:
                 errors.append(exc)
 
@@ -713,11 +791,13 @@ class ActivityIntegrationService:
             task_id=task_id,
             lease_ttl=lease_ttl,
         )
-        return await self.build_execution_bundle(
+        bundle = await self.build_execution_bundle(
             started,
             publication_coordinator=publication_coordinator,
             role_snapshot=role_snapshot,
         )
+        bundle.start_lease_heartbeat()
+        return bundle
 
     async def start_auxiliary_execution(
         self,
@@ -796,10 +876,12 @@ class ActivityIntegrationService:
                 merged=False,
             )
 
-        return await self.build_execution_bundle(
+        bundle = await self.build_execution_bundle(
             started,
             role_snapshot=snapshot,
         )
+        bundle.start_lease_heartbeat()
+        return bundle
 
     async def start_scan_execution(
         self,
@@ -833,6 +915,88 @@ class ActivityIntegrationService:
             publication_coordinator=publication_coordinator,
             role_snapshot=role_snapshot,
         )
+
+    async def start_scan_threaded_execution(
+        self,
+        resource: Mapping[str, Any],
+        *,
+        role_snapshot: RoleConfigSnapshot | None = None,
+        role: str = "scan",
+        task_id: int | None = None,
+        lease_ttl: Any = None,
+        publication_coordinator: Any = None,
+    ) -> ObservedExecutionBundle:
+        """Start a threaded scan execution whose AI dialogue is observable.
+
+        与 ``start_scan_execution`` 的区别：为扫描会话建立专属 Thread +
+        Work Unit 租约 + 初始上下文修订，使扫描期间的 assistant/tool 消息
+        可以经 ``tool_service.append_conversation_message`` 写入对话流，
+        WebUI 活动页即可实时看到扫描过程。
+        """
+        admitted = await self.admit_scan(
+            resource,
+            delivery_id=str(
+                resource.get("delivery_id") or resource.get("task_id") or task_id
+            ),
+            head_sha=resource.get("head_sha"),
+        )
+        async with self._session_scope() as db:
+            session = await db.get(
+                ActivityObservabilitySession, admitted.session_id, with_for_update=True
+            )
+            if session is None:
+                raise AdmissionError("scan session disappeared")
+            selected = await self._select_pending_triggers(
+                db, session.id, [admitted.trigger_id]
+            )
+            obs = ActivityObservabilityService(db=db)
+            invocation = await obs.create_invocation(
+                session.id, [t.id for t in selected]
+            )
+            invocation.task_type = "scan"
+            invocation.task_id = task_id
+            thread = await self._ensure_thread(db, session.id, role)
+            snapshot = role_snapshot or await self._resolve_snapshot(role)
+            work_unit = await obs.create_work_unit(
+                invocation.id,
+                role,
+                "primary_required",
+                True,
+                snapshot,
+                thread_id=thread.id,
+            )
+            context = self._lease_context or ContextService(db=db)
+            lease = await context.acquire_lease(thread.id, work_unit.id, ttl=lease_ttl)
+            if thread.current_revision_id is None:
+                await context.create_revision(
+                    thread.id,
+                    lease,
+                    expected_parent_revision_id=None,
+                    message_manifest=[],
+                    reason="initial",
+                    created_invocation_id=invocation.id,
+                    created_work_unit_id=work_unit.id,
+                )
+                thread = await db.get(ActivityThread, thread.id) or thread
+            await db.flush()
+            await self._commit_if_owned(db)
+            started = ReviewStartResult(
+                session=session,
+                invocation=invocation,
+                triggers=(),
+                thread=thread,
+                work_unit=work_unit,
+                lease=lease,
+                merged=False,
+            )
+
+        bundle = await self.build_execution_bundle(
+            started,
+            publication_coordinator=publication_coordinator,
+            role_snapshot=snapshot,
+        )
+        bundle.start_lease_heartbeat()
+        return bundle
 
     async def _resolve_snapshot(self, role: str) -> RoleConfigSnapshot:
         if self._role_snapshot_resolver is not None:

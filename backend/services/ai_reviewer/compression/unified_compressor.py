@@ -25,6 +25,7 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
 )
 from backend.core.ai_protocol.registry import get_adapter
+from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
@@ -88,6 +89,28 @@ class UnifiedContextCompressor:
         self.summary_max_tokens = max(1, int(summary_max_tokens))
         self.enabled = enabled
         self._model_ctx = get_model_context_manager()
+
+    @classmethod
+    def from_settings(cls) -> UnifiedContextCompressor:
+        """按 Settings 构建 / Build from Settings.
+
+        enabled 与 threshold 每次现取（默认值以 Settings 代码默认为单一来源），
+        支持运行时配置刷新。
+        """
+        settings = get_settings()
+        return cls(
+            threshold=float(settings.context_compression_threshold),
+            enabled=settings.enable_context_compression,
+        )
+
+    async def aclose(self) -> None:
+        """释放 HTTP 客户端 / Release the HTTP client.
+
+        仅适用于惰性创建客户端的场景；注入共享客户端的调用方不应调用。
+        """
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     @property
     def http_client(self) -> Any:
@@ -322,10 +345,10 @@ class UnifiedContextCompressor:
         window = candidate.model.context_window_tokens
         if isinstance(window, int) and not isinstance(window, bool) and window > 0:
             return window
-        fallback = self._model_ctx.get_compression_budget(
-            candidate.model.model_id, 1.0
+        fallback = self._model_ctx.get_compression_budget(candidate.model.model_id, 1.0)
+        return max(
+            int(fallback), self.summary_max_tokens + _SUMMARY_SAFETY_MARGIN_TOKENS
         )
-        return max(int(fallback), self.summary_max_tokens + _SUMMARY_SAFETY_MARGIN_TOKENS)
 
     def _bound_history_for_summary(
         self,
@@ -365,8 +388,10 @@ class UnifiedContextCompressor:
         if final_output_tokens is None:
             return messages
         window = self._context_window_tokens(candidate)
-        input_budget = window - max(1, int(final_output_tokens)) - min(
-            _SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20)
+        input_budget = (
+            window
+            - max(1, int(final_output_tokens))
+            - min(_SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20))
         )
         if input_budget <= 0:
             return None

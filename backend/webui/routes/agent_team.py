@@ -1,4 +1,5 @@
 """WebUI Agent 专家团队路由"""
+
 import asyncio
 import json
 import re
@@ -12,18 +13,7 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.config import (
-    DYNAMIC_CONFIG_RANGES,
-    DYNAMIC_CONFIG_SELECT_OPTIONS,
-    DYNAMIC_CONFIG_SENSITIVE_KEYS,
-    get_all_dynamic_config_keys,
-    get_dynamic_config,
-    get_dynamic_config_input_type,
-    get_settings,
-    invalidate_dynamic_config_cache,
-    mask_sensitive_value,
-    update_settings_field,
-)
+from backend.core.config import get_dynamic_config
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.agent_team_models import (
     AgentTeamConversationContext,
@@ -36,18 +26,15 @@ from backend.models.agent_team_models import (
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import AppConfig, IssueAnalysis
+from backend.models.database import IssueAnalysis
 from backend.models.database import utc_now as _utc_now
-from backend.services.agent_team.ai_client import (
-    load_agent_team_ai_config,
-    resolve_agent_team_max_iterations,
-)
 from backend.services.agent_team.candidate_service import (
+    DEFAULT_AGENT_TASK_GOAL,
     AgentTeamCandidateService,
     CandidateServiceError,
     candidates_to_dicts,
 )
-from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
+from backend.services.agent_team.prompt_config import build_implementation_user_message
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
     build_agent_task_summary,
@@ -73,36 +60,10 @@ from backend.webui.deps import (
     require_auth,
     require_csrf,
     require_super_admin,
-    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
 
 router = APIRouter(prefix="/agent-team", tags=["WebUI Agent Team"])
-
-AGENT_TEAM_CONFIG_KEYS = [
-    "agent_team_enabled",
-    "agent_team_workspace_root",
-    "agent_team_repo_allowlist",
-    "agent_team_max_concurrent",
-    "agent_team_min_priority",
-    "agent_team_feasibility_keywords",
-    "agent_team_max_iterations_per_task",
-    "agent_team_max_tool_rounds",
-    "agent_team_reviewer_max_tool_rounds",
-    "agent_team_max_runtime_minutes",
-    "agent_team_draft_pr",
-    "agent_team_pr_closed_loop_enabled",
-    "agent_team_pr_review_pass_score",
-    "agent_team_pr_review_blocking_severities",
-    "agent_team_max_files_changed",
-    "agent_team_max_lines_changed",
-    "agent_team_run_tests",
-    "agent_team_auto_install_deps",
-    "agent_team_test_command_blocklist",
-    "agent_team_skills_enabled",
-    "agent_team_skills_root",
-]
 
 AGENT_TEAM_ACTIVE_STATUSES = [
     AgentTeamTaskStatus.QUEUED.value,
@@ -229,7 +190,6 @@ def _parse_task_overrides(
     status: str | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
-    max_iterations: str | None = None,
 ) -> dict:
     overrides = {}
     for key, value in {
@@ -264,12 +224,6 @@ def _parse_task_overrides(
         if score < 0 or score > 100:
             raise ValueError("candidate_score 必须在 0-100 之间")
         overrides["candidate_score"] = score
-
-    iterations = _parse_optional_int(max_iterations, "max_iterations")
-    if iterations is not None:
-        if iterations < 1:
-            raise ValueError("max_iterations 必须大于 0")
-        overrides["max_iterations"] = iterations
 
     for key, value in {
         "source_id": source_id,
@@ -399,9 +353,24 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
         issue_number=draft.get("source_issue_number"),
         issue_analysis_context=issue_analysis_context,
         issue_comments=issue_comments,
+        issue_body=draft.get("issue_body") or "",
     )
-    agent_task_context = build_agent_task_summary(
-        draft.get("summary") or "", issue_context_markdown
+    # ``summary`` in a source draft is often Issue text or an AI-generated
+    # analysis.  Only an explicit task goal may enter ``task_originator_goal``;
+    # all source material stays in the reference section.
+    draft_goal = draft.get("task_goal")
+    if draft_goal is None:
+        # Compatibility for callers constructing an old draft shape: the
+        # editable summary is treated as the administrator's goal.
+        draft_goal = draft.get("summary") or ""
+    agent_task_context = build_agent_task_summary(draft_goal)
+    reference_context = "\n\n".join(
+        item
+        for item in (
+            issue_context_markdown,
+            str(draft.get("reference_context") or "").strip(),
+        )
+        if item
     )
     sakura_memory = ""
     skills_summary = ""
@@ -415,19 +384,21 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
         skills_summary = skills_summary or ""
     except Exception as exc:
         logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
-    fullstack_user_message = build_fullstack_user_message(
+    fullstack_user_message = build_implementation_user_message(
         task_title=draft.get("title") or "",
         task_summary=agent_task_context,
         source_type=draft.get("source_type") or "",
         source_issue_number=draft.get("source_issue_number"),
         sakura_memory=sakura_memory,
         skills_summary=skills_summary,
+        reference_context=reference_context,
     )
     return {
         "issue_analysis": issue_analysis_context,
         "issue_comments": issue_comments,
         "issue_context_markdown": issue_context_markdown,
         "agent_task_context": agent_task_context,
+        "reference_context": reference_context,
         "fullstack_user_message": fullstack_user_message,
         "full_submission_preview": build_agent_submission_context_preview(
             task_title=draft.get("title") or "",
@@ -436,58 +407,13 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
             source_issue_number=draft.get("source_issue_number"),
             sakura_memory=sakura_memory,
             skills_summary=skills_summary,
+            reference_context=reference_context,
         ),
         "runtime_context": {
             "sakura_memory": sakura_memory,
             "skills_summary": skills_summary,
         },
     }
-
-
-AGENT_TEAM_CONFIG_GROUPS = [
-    {
-        "key": "basic",
-        "title_key": "agent_team.config_group_basic",
-        "description_key": "agent_team.config_group_basic_desc",
-        "keys": [
-            "agent_team_enabled",
-            "agent_team_workspace_root",
-            "agent_team_repo_allowlist",
-        ],
-    },
-    {
-        "key": "guardrails",
-        "title_key": "agent_team.config_group_guardrails",
-        "description_key": "agent_team.config_group_guardrails_desc",
-        "keys": [
-            "agent_team_max_concurrent",
-            "agent_team_min_priority",
-            "agent_team_feasibility_keywords",
-            "agent_team_max_iterations_per_task",
-            "agent_team_max_tool_rounds",
-            "agent_team_reviewer_max_tool_rounds",
-            "agent_team_max_runtime_minutes",
-            "agent_team_draft_pr",
-            "agent_team_pr_closed_loop_enabled",
-            "agent_team_pr_review_pass_score",
-            "agent_team_pr_review_blocking_severities",
-            "agent_team_max_files_changed",
-            "agent_team_max_lines_changed",
-            "agent_team_run_tests",
-            "agent_team_auto_install_deps",
-            "agent_team_test_command_blocklist",
-        ],
-    },
-    {
-        "key": "skills",
-        "title_key": "agent_team.config_group_skills",
-        "description_key": "agent_team.config_group_skills_desc",
-        "keys": [
-            "agent_team_skills_enabled",
-            "agent_team_skills_root",
-        ],
-    },
-]
 
 
 @router.get("/")
@@ -498,11 +424,8 @@ async def agent_team_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """Agent 专家团队独立页面。"""
-    lang = detect_language(user_prefs)
     is_admin = _is_admin(user)
     stats = await _load_stats(db, user=user)
-    config_items = await _load_config_items(db, lang=lang) if is_admin else []
-    config_groups = _group_config_items(config_items, lang=lang) if is_admin else []
     agent_quota = None
     if not is_admin:
         # 延迟导入避免循环引用
@@ -525,8 +448,6 @@ async def agent_team_page(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="agent_team",
-        config_items=config_items,
-        config_groups=config_groups,
         stats=stats,
         workspace_summary=_load_workspace_summary(),
         status_options=[status.value for status in AgentTeamTaskStatus],
@@ -679,115 +600,6 @@ async def task_detail_fragment(
     )
 
 
-@router.post("/config/save")
-async def save_agent_team_config(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
-    csrf_token: str = Depends(require_csrf),
-):
-    """保存 Agent 专家团队专用配置。"""
-    form = await request.form()
-    changed: dict[str, dict] = {}
-    settings = get_settings()
-
-    for key in AGENT_TEAM_CONFIG_KEYS:
-        is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-        if is_sensitive and form.get(f"{key}_changed") != "true":
-            continue
-
-        raw = form.get(key)
-        if raw is None:
-            field_type = type(getattr(settings, key, ""))
-            if field_type is bool:
-                raw = "false"
-            else:
-                continue
-        val = str(raw).strip()
-
-        if key in DYNAMIC_CONFIG_RANGES:
-            min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
-            try:
-                num_val = float(val)
-            except ValueError:
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.numeric_required",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                )
-            if not (min_v <= num_val <= max_v):
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.value_range",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                    min_v=min_v,
-                    max_v=max_v,
-                )
-
-        if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
-            valid_values = [opt["value"] for opt in DYNAMIC_CONFIG_SELECT_OPTIONS[key]]
-            if val not in valid_values:
-                return toast_redirect(
-                    "/agent-team/",
-                    "toast.value_invalid",
-                    "error",
-                    lang=detect_language(),
-                    field_key=key,
-                )
-
-        result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
-        cfg = result.scalar_one_or_none()
-        if cfg is None:
-            cfg = AppConfig(key_name=key, key_value=val, description=key)
-            db.add(cfg)
-            changed[key] = {
-                "old": "(无)",
-                "new": mask_sensitive_value(val) if is_sensitive else val,
-                "raw_new": val,
-            }
-        elif cfg.key_value != val:
-            changed[key] = {
-                "old": mask_sensitive_value(cfg.key_value)
-                if is_sensitive
-                else cfg.key_value,
-                "new": mask_sensitive_value(val) if is_sensitive else val,
-                "raw_new": val,
-            }
-            cfg.key_value = val
-
-    if not changed:
-        return toast_redirect(
-            "/agent-team/", "toast.config_saved_live", lang=detect_language()
-        )
-
-    await db.commit()
-    invalidate_dynamic_config_cache(AGENT_TEAM_CONFIG_KEYS)
-    all_dynamic_keys = get_all_dynamic_config_keys()
-    for key, change in changed.items():
-        if key in all_dynamic_keys:
-            update_settings_field(key, change.get("raw_new", change["new"]))
-
-    log_changed = {
-        key: {"old": value["old"], "new": value["new"]}
-        for key, value in changed.items()
-    }
-    await log_admin_action(
-        db,
-        user["user_id"],
-        "agent_team_config_save",
-        "agent_team",
-        None,
-        log_changed,
-    )
-    return toast_redirect(
-        "/agent-team/", "toast.config_saved_live", lang=detect_language()
-    )
-
-
 @router.get("/api/repos/{owner}/{name}/branches")
 async def list_repo_branches(
     owner: str,
@@ -892,23 +704,8 @@ async def create_task_from_candidate(
     status: str = Form(""),
     branch_name: str = Form(""),
     base_branch: str = Form(""),
-    max_iterations: str = Form(""),
 ):
     """从候选来源创建 Agent 任务。"""
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse(
-            {"success": False, "message": str(e)},
-            status_code=200,
-        )
-    except Exception:
-        logger.exception("创建 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
     service = AgentTeamCandidateService()
     candidates = await service.collect_candidates(
         db, limit=100, ai_filter_requirement=ai_filter_requirement
@@ -941,7 +738,6 @@ async def create_task_from_candidate(
             status=status,
             branch_name=branch_name,
             base_branch=base_branch,
-            max_iterations=max_iterations,
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
@@ -950,7 +746,6 @@ async def create_task_from_candidate(
         db,
         candidate,
         started_by=user["sub"],
-        ai_config_snapshot=config.safe_snapshot(),
         base_branch=base_branch.strip() or None,
         overrides=overrides,
     )
@@ -968,7 +763,6 @@ async def create_task_from_candidate(
             "status": task.status,
             "base_branch": task.base_branch,
             "branch_name": task.branch_name,
-            "max_iterations": task.max_iterations,
         },
     )
 
@@ -1019,8 +813,15 @@ async def preview_task_from_issue(
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
+    draft_json: str = Form(""),
 ):
-    """从指定 Issue 构建可编辑任务草稿。"""
+    """从指定 Issue 构建可编辑任务草稿和生产提交预览。
+
+    The client may send only the small set of editable fields from the draft.
+    Repository/source identity and all reference material are always rebuilt
+    from the server-side Issue draft, so the browser cannot approximate or
+    replace the production submission context.
+    """
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
     except ValueError as e:
@@ -1040,7 +841,37 @@ async def preview_task_from_issue(
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
-        submission_context = await _build_manual_issue_submission_context(db, draft)
+        if isinstance(draft_json, str) and draft_json.strip():
+            try:
+                edited_draft = json.loads(draft_json)
+            except TypeError, ValueError:
+                return JSONResponse(
+                    {"success": False, "message": "Invalid preview draft"},
+                    status_code=200,
+                )
+            if not isinstance(edited_draft, dict):
+                return JSONResponse(
+                    {"success": False, "message": "Invalid preview draft"},
+                    status_code=200,
+                )
+            for field in (
+                "title",
+                "summary",
+                "priority",
+                "base_branch",
+                "branch_name",
+                "status",
+                "candidate_score",
+            ):
+                if field in edited_draft:
+                    draft[field] = edited_draft[field]
+        context_draft = dict(draft)
+        context_draft["task_goal"] = (
+            str(draft.get("summary") or "").strip() or DEFAULT_AGENT_TASK_GOAL
+        )
+        submission_context = await _build_manual_issue_submission_context(
+            db, context_draft
+        )
     except CandidateServiceError:
         return JSONResponse(
             {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
@@ -1053,7 +884,12 @@ async def preview_task_from_issue(
         )
     return JSONResponse(
         jsonable_encoder(
-            {"success": True, "draft": draft, "submission_context": submission_context}
+            {
+                "success": True,
+                "draft": draft,
+                "submission_context": submission_context,
+                "preview_source": "server_production_builder",
+            }
         )
     )
 
@@ -1078,7 +914,6 @@ async def create_task_from_issue(
     status: str = Form(""),
     branch_name: str = Form(""),
     base_branch: str = Form(""),
-    max_iterations: str = Form(""),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
     try:
@@ -1102,21 +937,6 @@ async def create_task_from_issue(
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse(
-            {"success": False, "message": str(e)},
-            status_code=200,
-        )
-    except Exception:
-        logger.exception("从 Issue 创建 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
-    try:
         overrides = _parse_task_overrides(
             title=title,
             summary=summary,
@@ -1131,7 +951,6 @@ async def create_task_from_issue(
             status=status,
             branch_name=branch_name,
             base_branch=base_branch,
-            max_iterations=max_iterations,
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
@@ -1146,6 +965,8 @@ async def create_task_from_issue(
         "repo_name": overrides.get("repo_name"),
         "title": overrides.get("title") or title or "",
         "summary": overrides.get("summary") or summary or "",
+        "task_goal": overrides.get("summary") or summary or DEFAULT_AGENT_TASK_GOAL,
+        "issue_body": "",
     }
     if not draft_for_context["repo_owner"] or not draft_for_context["repo_name"]:
         full_name = draft_for_context["repo_full_name"] or repo_full_name
@@ -1168,7 +989,6 @@ async def create_task_from_issue(
             repo_full_name=repo_full_name,
             issue_number=issue_number,
             started_by=user["sub"],
-            ai_config_snapshot=config.safe_snapshot(),
             base_branch=base_branch.strip() or None,
             overrides=overrides,
         )
@@ -1197,7 +1017,6 @@ async def create_task_from_issue(
             "status": task.status,
             "base_branch": task.base_branch,
             "branch_name": task.branch_name,
-            "max_iterations": task.max_iterations,
         },
     )
 
@@ -1242,26 +1061,12 @@ async def retry_task(
     if not ok:
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception:
-        logger.exception("重试 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = None
-    task.max_iterations = await resolve_agent_team_max_iterations()
     task.started_at = None
     task.completed_at = None
     task.error_message = None
-    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
     await db.commit()
 
     # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
@@ -1320,25 +1125,12 @@ async def resume_task(
             status_code=200,
         )
 
-    try:
-        config = await load_agent_team_ai_config()
-        config.validate()
-    except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
-    except Exception:
-        logger.exception("续跑 Agent 任务时加载 AI 配置失败")
-        return JSONResponse(
-            {"success": False, "message": "AI 配置加载失败，请稍后重试"},
-            status_code=200,
-        )
-
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = "resuming"
     task.resume_count = (task.resume_count or 0) + 1
     task.completed_at = None
     task.error_message = None
-    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
     await db.commit()
 
     background_tasks.add_task(_resume_agent_task_background, task_id)
@@ -1720,98 +1512,6 @@ async def _resume_agent_task_background(task_id: int) -> None:
         )
 
 
-async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
-    from backend.webui.i18n import i18n as _i18n
-
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key_name.in_(AGENT_TEAM_CONFIG_KEYS))
-    )
-    config_map = {cfg.key_name: cfg.key_value for cfg in result.scalars().all()}
-    settings = get_settings()
-    items = []
-    for key in AGENT_TEAM_CONFIG_KEYS:
-        value = config_map.get(key, str(getattr(settings, key, "")))
-        default_val = str(getattr(settings, key, ""))
-        is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-
-        # 翻译标签 / Translate label
-        label_key = f"config.label.{key}"
-        translated_label = _i18n.t(label_key, lang=lang)
-        label = translated_label if translated_label != label_key else key
-
-        # 翻译描述 / Translate description
-        desc_key = f"config.desc.{key}"
-        translated_desc = _i18n.t(desc_key, lang=lang)
-        description = translated_desc if translated_desc != desc_key else ""
-
-        # 翻译 select options / Translate select options
-        raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
-        translated_options = []
-        for opt in raw_options:
-            opt_key = f"config.option.{key}_{opt['value']}"
-            opt_label = _i18n.t(opt_key, lang=lang)
-            translated_options.append(
-                {
-                    "value": opt["value"],
-                    "label": opt_label if opt_key != opt_label else opt["label"],
-                }
-            )
-
-        items.append(
-            {
-                "key": key,
-                "label": label,
-                "description": description,
-                "input_type": get_dynamic_config_input_type(key),
-                "value": mask_sensitive_value(value)
-                if is_sensitive and value
-                else value,
-                "default": mask_sensitive_value(default_val)
-                if is_sensitive and default_val
-                else default_val,
-                "sensitive": is_sensitive,
-                "select_options": translated_options,
-                "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
-                "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
-            }
-        )
-    return items
-
-
-def _group_config_items(config_items: list[dict], lang: str = "zh-CN") -> list[dict]:
-    """按界面分组组织 Agent Team 配置项。"""
-    from backend.webui.i18n import i18n as _i18n
-
-    item_map = {item["key"]: item for item in config_items}
-    groups = []
-    used_keys = set()
-    for group in AGENT_TEAM_CONFIG_GROUPS:
-        group_items = [item_map[key] for key in group["keys"] if key in item_map]
-        used_keys.update(item["key"] for item in group_items)
-        groups.append(
-            {
-                "key": group["key"],
-                "title": _i18n.t(group["title_key"], lang=lang),
-                "description": _i18n.t(group["description_key"], lang=lang),
-                "items": group_items,
-            }
-        )
-
-    remaining = [item for item in config_items if item["key"] not in used_keys]
-    if remaining:
-        groups.append(
-            {
-                "key": "advanced",
-                "title": _i18n.t("agent_team.config_group_advanced", lang=lang),
-                "description": _i18n.t(
-                    "agent_team.config_group_advanced_desc", lang=lang
-                ),
-                "items": remaining,
-            }
-        )
-    return groups
-
-
 async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
     owner_filter = _build_task_owner_filter(user) if user else None
     base = [owner_filter] if owner_filter else []
@@ -1954,8 +1654,9 @@ async def list_active_tasks(
                     "pr_number": t.pr_number,
                     "pr_url": t.pr_url,
                     "iteration_count": t.iteration_count,
-                    "max_iterations": t.max_iterations,
-                    "updated_at": format_rfc3339(t.updated_at) if t.updated_at else None,
+                    "updated_at": format_rfc3339(t.updated_at)
+                    if t.updated_at
+                    else None,
                     "completed_at": format_rfc3339(t.completed_at)
                     if t.completed_at
                     else None,
@@ -2066,7 +1767,9 @@ async def task_stream_data(
                     "content": m.content,
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
-                    "created_at": format_rfc3339(m.created_at) if m.created_at else None,
+                    "created_at": format_rfc3339(m.created_at)
+                    if m.created_at
+                    else None,
                 }
                 for m in msg_rows
             ],
@@ -2079,7 +1782,9 @@ async def task_stream_data(
                     "name": tc.name,
                     "status": tc.status,
                     "arguments_json": tc.arguments_json,
-                    "started_at": format_rfc3339(tc.started_at) if tc.started_at else None,
+                    "started_at": format_rfc3339(tc.started_at)
+                    if tc.started_at
+                    else None,
                     "completed_at": format_rfc3339(tc.completed_at)
                     if tc.completed_at
                     else None,
@@ -2093,7 +1798,9 @@ async def task_stream_data(
                     "iteration_number": s.iteration_number,
                     "role_name": s.role_name,
                     "status": s.status,
-                    "started_at": format_rfc3339(s.started_at) if s.started_at else None,
+                    "started_at": format_rfc3339(s.started_at)
+                    if s.started_at
+                    else None,
                     "completed_at": format_rfc3339(s.completed_at)
                     if s.completed_at
                     else None,
@@ -2106,8 +1813,12 @@ async def task_stream_data(
                     "content": p.content,
                     "status": p.status,
                     "submitted_by": p.submitted_by,
-                    "created_at": format_rfc3339(p.created_at) if p.created_at else None,
-                    "consumed_at": format_rfc3339(p.consumed_at) if p.consumed_at else None,
+                    "created_at": format_rfc3339(p.created_at)
+                    if p.created_at
+                    else None,
+                    "consumed_at": format_rfc3339(p.consumed_at)
+                    if p.consumed_at
+                    else None,
                 }
                 for p in prompt_rows
             ],
@@ -2282,8 +1993,12 @@ async def list_user_prompts(
                     "content": p.content,
                     "status": p.status,
                     "submitted_by": p.submitted_by,
-                    "created_at": format_rfc3339(p.created_at) if p.created_at else None,
-                    "consumed_at": format_rfc3339(p.consumed_at) if p.consumed_at else None,
+                    "created_at": format_rfc3339(p.created_at)
+                    if p.created_at
+                    else None,
+                    "consumed_at": format_rfc3339(p.consumed_at)
+                    if p.consumed_at
+                    else None,
                 }
                 for p in rows
             ],

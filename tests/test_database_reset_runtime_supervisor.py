@@ -120,7 +120,9 @@ async def test_completed_worker_error_is_consumed_without_locking_future_reset(
 
 
 @pytest.mark.asyncio
-async def test_unresponsive_worker_timeout_returns_fail_closed_promptly(fresh_supervisor):
+async def test_unresponsive_worker_timeout_returns_fail_closed_promptly(
+    fresh_supervisor,
+):
     stop = asyncio.Event()
 
     async def unresponsive():
@@ -378,9 +380,7 @@ async def test_real_asgi_requests_keep_two_app_supervisors_isolated():
         @app.get("/probe")
         async def probe(_request: Request):
             state["seen"] = get_runtime_supervisor()
-            state["task"] = create_registered_background_task(
-                worker(), f"asgi_{label}"
-            )
+            state["task"] = create_registered_background_task(worker(), f"asgi_{label}")
             return {"label": label}
 
         return app, state

@@ -2,7 +2,9 @@ from pathlib import Path
 
 
 def test_version_manager_contains_reconnectable_job_flow():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     for marker in (
         "/version/readiness",
         "/version/preflight",
@@ -18,7 +20,9 @@ def test_version_manager_contains_reconnectable_job_flow():
 
 
 def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     # The preflight result must put update_ready inside the envelope data that
     # showReadiness() actually reads; an outer sibling is silently ignored.
     assert "checks: result.checks, update_ready: result.can_update === true" in template
@@ -39,13 +43,17 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
     assert "function vmUpdaterError(error)" in template
     assert "release_unavailable:" in template
     assert "async function preflightRegistryTarget(target)" in template
-    assert "readiness = await preflightRegistryTarget(selectedRegistryTarget);" in template
+    assert (
+        "readiness = await preflightRegistryTarget(selectedRegistryTarget);" in template
+    )
     assert template.count("preflightRegistryTarget(selectedRegistryTarget)") == 2
     assert "if (selectedRegistryTarget && readiness.can_update !== true)" in template
 
 
 def test_version_manager_has_accessible_monotonic_progress_modal_and_refresh_gate():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     for marker in (
         'role="dialog"',
         'aria-modal="true"',
@@ -89,21 +97,28 @@ def test_version_manager_has_accessible_monotonic_progress_modal_and_refresh_gat
 
 
 def test_version_manager_failure_path_is_closeable_without_refresh():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     assert 'id="update-progress-close"' in template
     assert "function closeProgressModal()" in template
     assert "if (!progressTerminal) return;" in template
     assert "markProgressError(" in template
     assert "sessionStorage.removeItem(JOB_STORAGE_KEY)" in template
     assert "const canClose = kind === 'error' && progressTerminal" in template
-    assert "readiness.update_ready === false || readiness.update_available === false" in template
+    assert (
+        "readiness.update_ready === false || readiness.update_available === false"
+        in template
+    )
     assert "updateProgressModal.addEventListener('keydown'" in template
     assert "scheduleRefresh();" in template
     assert template.index("markProgressError(") < template.index("scheduleRefresh();")
 
 
 def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     assert "function isTransientPollError(error)" in template
     assert "[500, 502, 503, 504].includes(error.status)" in template
     assert "POLL_RECOVERY_TIMEOUT_MS" in template
@@ -118,11 +133,15 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
 
     timeout = template.index("transientFor >= POLL_RECOVERY_TIMEOUT_MS")
     legacy = template.index("!hasExactDigestTarget(progressTarget)", timeout)
-    preserve = template.index("markProgressError(message, {preserveJob: true});", legacy)
+    preserve = template.index(
+        "markProgressError(message, {preserveJob: true});", legacy
+    )
     bounded_failure = template.index("markProgressError(message);", preserve)
     assert timeout < legacy < preserve < bounded_failure
 
-    permanent_error = template.index("const message = vmFormat(VM_I18N.progressPollFailed")
+    permanent_error = template.index(
+        "const message = vmFormat(VM_I18N.progressPollFailed"
+    )
     terminal = template.index("markProgressError(message);", permanent_error)
     stale = template.index("error.status === 404", terminal)
     readiness = template.index("await loadReadiness();", stale)
@@ -131,7 +150,9 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
 
 
 def test_registry_catalog_disables_the_exact_running_build():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     assert "const CURRENT_BUILD_DIGEST" in template
     assert "const CURRENT_BUILD_VERSION" in template
     assert "function isCurrentRegistryImage(image)" in template
@@ -143,7 +164,9 @@ def test_registry_catalog_disables_the_exact_running_build():
 
 
 def test_persisted_job_recovery_keeps_exact_target_digest_across_reload():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     assert "const JOB_TARGET_STORAGE_KEY" in template
     assert "function normalizedProgressTarget(value)" in template
     assert "function persistJob(jobId, target)" in template
@@ -157,7 +180,9 @@ def test_persisted_job_recovery_keeps_exact_target_digest_across_reload():
 
 
 def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():
-    template = Path("backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
+    template = Path("backend/webui/templates/version_manager.html").read_text(
+        encoding="utf-8"
+    )
     start = template.index("function markProgressError(")
     end = template.index("function isTransientPollError(", start)
     function = template[start:end]
@@ -171,5 +196,8 @@ def test_modal_errors_require_callers_to_choose_whether_retry_is_allowed():
     assert "markProgressError(message);" in template
     # A failed accepted job or a failed submission may be retried; the click
     # handler runs readiness again before any subsequent update submission.
-    assert "markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});" in template
+    assert (
+        "markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});"
+        in template
+    )
     assert "markProgressError(message, {allowRetry: true});" in template

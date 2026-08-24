@@ -254,14 +254,10 @@ class AIApiClient:
                 ),
             )
             compressor = self._compressor
-            if compressor is None and getattr(
-                settings, "enable_context_compression", True
-            ):
-                compressor = UnifiedContextCompressor(
-                    threshold=float(
-                        getattr(settings, "context_compression_threshold", 0.85)
-                    )
-                )
+            if compressor is None:
+                built = UnifiedContextCompressor.from_settings()
+                # disabled 时保持 None，避免溢出恢复路径误走强制压缩。
+                compressor = built if built.enabled else None
             self._unified_client = UnifiedAIClient(
                 fallback_config=config,
                 observer=self._observer,
@@ -305,16 +301,20 @@ class AIApiClient:
             captured_at=now_utc(),
         )
 
+    async def resolve_role_primary_candidate(self, role: str) -> Any:
+        """返回角色 primary 候选的 ResolvedModel，解析失败返回 None。"""
+        try:
+            chain = await self._resolve_role_chain(role)
+        except Exception as exc:
+            logger.warning("解析角色候选失败: role={} err={}", role, exc)
+            return None
+        return getattr(chain, "primary", None) if chain is not None else None
+
     async def resolve_role_model_context(
         self, role: str
     ) -> tuple[str | None, int | None]:
         """返回角色 primary 候选的模型 ID 与上下文窗口。"""
-        try:
-            chain = await self._resolve_role_chain(role)
-        except Exception as exc:
-            logger.warning("解析角色上下文配置失败: role={} err={}", role, exc)
-            return None, None
-        primary = getattr(chain, "primary", None) if chain is not None else None
+        primary = await self.resolve_role_primary_candidate(role)
         if primary is None:
             return None, None
         return primary.model.model_id, primary.model.context_window_tokens

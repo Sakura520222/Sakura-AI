@@ -95,7 +95,7 @@ class PRSummaryService:
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息
 
-        从 strategies.yaml 的 pr_summary 配置段加载模板。
+        从统一配置节存储（strategy.pr_summary 节）加载模板。
         """
         config = get_strategy_config()
         summary_cfg = config.config.get("pr_summary", {})

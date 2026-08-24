@@ -696,7 +696,7 @@ class ResolvedModel:
             return self.protocol
         try:
             return ProtocolFamily(self.protocol)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return self.provider.family
 
     @property

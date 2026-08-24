@@ -34,7 +34,9 @@ class _Orchestrator:
 
 
 def test_actions_use_success_envelope_and_error_bodies(tmp_path):
-    client = TestClient(create_app(str(tmp_path / "state.json"), orchestrator=_Orchestrator()))
+    client = TestClient(
+        create_app(str(tmp_path / "state.json"), orchestrator=_Orchestrator())
+    )
 
     response = client.post("/v1/check")
     assert response.status_code == 200
@@ -73,7 +75,9 @@ def test_actions_without_orchestrator_are_not_success(tmp_path):
 @pytest.mark.parametrize("endpoint", ["/v1/preflight", "/v1/update"])
 @pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}])
 def test_channel_switch_confirmation_requires_json_boolean(tmp_path, endpoint, value):
-    client = TestClient(create_app(str(tmp_path / "state.json"), orchestrator=_Orchestrator()))
+    client = TestClient(
+        create_app(str(tmp_path / "state.json"), orchestrator=_Orchestrator())
+    )
     response = client.post(
         endpoint,
         json={"target_version": "3.1.0", "confirm_channel_switch": value},

@@ -3,18 +3,24 @@
 import asyncio
 import json
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import and_, func, select
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import (
+    get_dynamic_config,
+    get_sakura_memory_config,
+    get_settings,
+)
 from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
     IssueAnalysis,
     IssueAnalysisStatus,
     async_session,
 )
+from backend.services.ai_task_deadline import AITaskDeadline
 from backend.services.database_reset_runtime_service import (
     DatabaseResetRuntimeAdmissionClosed,
     ensure_background_admission,
@@ -82,7 +88,12 @@ class IssueWorker:
         """
         return
 
-    async def process_issue_analysis(self, issue_info: dict[str, Any]) -> str:
+    async def process_issue_analysis(
+        self,
+        issue_info: dict[str, Any],
+        *,
+        deadline: AITaskDeadline | None = None,
+    ) -> str:
         """处理 Issue 分析任务
 
         Args:
@@ -91,8 +102,12 @@ class IssueWorker:
         Returns:
             任务ID
         """
+        # Start the task budget before any semaphore wait; callers that already
+        # created it (the background submission path) retain the same deadline.
+        task_deadline = deadline or AITaskDeadline.from_timeout(
+            get_settings().review_timeout_seconds
+        )
         task_id = issue_info.get("task_id", str(uuid.uuid4()))
-        settings = get_settings()
 
         repo_owner = issue_info.get("repo_owner", "")
         repo_name = issue_info.get("repo_name", "")
@@ -102,6 +117,50 @@ class IssueWorker:
         logger.info(f"[{task_id}] 开始处理 Issue 分析: {repo_full_name}#{issue_number}")
 
         execution = None
+        execution_status: str | None = None
+        execution_target_status: str | None = None
+
+        async def _finish_execution(
+            status: str, *, error_message: str | None = None
+        ) -> None:
+            """Best-effort terminal convergence for the observability bundle."""
+            nonlocal execution_status, execution_target_status
+            if execution is None or execution_status == status:
+                return
+            execution_target_status = status
+            try:
+                await execution.finish(status, error_message=error_message)
+            except Exception as finish_exc:
+                logger.warning(
+                    "[{}] issue observability finish failed (status={}): {}",
+                    task_id,
+                    status,
+                    finish_exc,
+                )
+                return
+            execution_status = status
+
+        @asynccontextmanager
+        async def _execution_scope():
+            """Keep cancellation cleanup around semaphore and DB admission."""
+            try:
+                semaphore = await _get_issue_semaphore()
+                async with semaphore:
+                    yield
+            except asyncio.CancelledError:
+                await _finish_execution("cancelled")
+                raise
+            finally:
+                if execution is not None and execution_status is None:
+                    await _finish_execution(
+                        execution_target_status or "failed",
+                        error_message=(
+                            "Issue analysis terminated without a terminal status"
+                            if execution_target_status is None
+                            else None
+                        ),
+                    )
+
         try:
             admission = await self.activity_integration.admit_issue(
                 issue_info,
@@ -145,9 +204,9 @@ class IssueWorker:
                 observability_exc,
             )
 
-        # 获取并发信号量，限制同时运行的 Issue 分析任务数
-        semaphore = await _get_issue_semaphore()
-        async with semaphore:
+        # 获取并发信号量，限制同时运行的 Issue 分析任务数。
+        # The scope also owns cancellation cleanup for a started execution.
+        async with _execution_scope():
             async with async_session() as db:
                 try:
                     # 1. 计算下一个分析版本号
@@ -160,19 +219,6 @@ class IssueWorker:
                         )
                     )
                     next_version = (max_version or 0) + 1
-
-                    # 归档超出上限的旧版本
-                    try:
-                        max_versions = int(
-                            await get_dynamic_config("issue_max_analysis_versions")
-                            or 10
-                        )
-                    except ValueError, TypeError:
-                        max_versions = 10
-                    if next_version > max_versions:
-                        await self._archive_old_versions(
-                            db, repo_name, issue_number, next_version - max_versions
-                        )
 
                     # 创建分析记录（PENDING）
                     record = IssueAnalysis(
@@ -297,6 +343,7 @@ class IssueWorker:
                             else None
                         ),
                         observer=execution.observer if execution is not None else None,
+                        deadline=task_deadline,
                     )
 
                     # WorkUnit 终态由 execution.finish("completed") 统一收敛（见下方
@@ -310,7 +357,7 @@ class IssueWorker:
                     if not analysis_record:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
                         if execution is not None:
-                            await execution.finish(
+                            await _finish_execution(
                                 "failed",
                                 error_message="未找到待更新的 Issue 分析记录",
                             )
@@ -341,7 +388,7 @@ class IssueWorker:
                         )
 
                         summary = analysis_result.get("summary", "")
-                        if summary:
+                        if summary and not task_deadline.is_expired():
                             emb_service = IssueEmbeddingService()
                             analysis_metadata = {
                                 "category": analysis_result.get("category", ""),
@@ -358,11 +405,19 @@ class IssueWorker:
                                 analysis_metadata=analysis_metadata,
                             )
                             logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
+                        elif summary:
+                            logger.info(
+                                f"[{task_id}] 软 deadline 已到达，"
+                                "跳过 Issue 向量辅助调用"
+                            )
                     except Exception as e:
                         logger.warning(f"[{task_id}] 使用 AI 摘要更新向量失败: {e}")
 
                     # 6. 重复检测（优先使用 AI 摘要）
-                    if await get_dynamic_config("issue_detect_duplicates"):
+                    if (
+                        not task_deadline.is_expired()
+                        and await get_dynamic_config("issue_detect_duplicates")
+                    ):
                         try:
                             summary = analysis_result.get("summary", "")
                             duplicates = await issue_service.detect_duplicates(
@@ -420,21 +475,17 @@ class IssueWorker:
                     )
 
                     # 8. 自动评论
-                    if await get_dynamic_config("issue_auto_comment"):
-                        try:
-                            activity_result_id = analysis_result.get(
-                                "_activity_result_id"
-                            )
-                            if execution is not None and isinstance(
-                                activity_result_id, int
-                            ):
-                                body = issue_service.build_analysis_comment(
-                                    analysis_record
-                                )
-                                if not body:
-                                    success = False
-                                else:
-                                    publication = await execution.publication_service.create_pending(
+                    try:
+                        activity_result_id = analysis_result.get("_activity_result_id")
+                        if execution is not None and isinstance(
+                            activity_result_id, int
+                        ):
+                            body = issue_service.build_analysis_comment(analysis_record)
+                            if not body:
+                                success = False
+                            else:
+                                publication = (
+                                    await execution.publication_service.create_pending(
                                         activity_result_id,
                                         "issue_comment",
                                         (
@@ -443,83 +494,83 @@ class IssueWorker:
                                             f"{execution.work_unit.id}"
                                         ),
                                     )
-                                    resource_identity = {
-                                        "source_system_instance": issue_info.get(
-                                            "source_system_instance", "github.com"
-                                        ),
-                                        "repository_external_id": issue_info.get(
-                                            "repository_external_id", repo_full_name
-                                        ),
-                                        "resource_type": "issue",
-                                        "resource_number": str(issue_number),
-                                    }
-
-                                    async def _sender(
-                                        _kind: str,
-                                        body_with_marker: str,
-                                        _resource_identity: dict[str, Any],
-                                    ) -> Any:
-                                        return await asyncio.to_thread(
-                                            issue_service.github_app.create_issue_comment,
-                                            repo_owner,
-                                            repo_name,
-                                            issue_number,
-                                            body_with_marker,
-                                            raise_on_error=True,
-                                        )
-
-                                    terminal = await execution.publication_service.send(
-                                        publication.id,
-                                        body=body,
-                                        sender=_sender,
-                                        resource_identity=resource_identity,
-                                    )
-                                    success = terminal.status == "succeeded"
-                                    if success:
-                                        analysis_record.comment_posted = 1
-                                        await db.commit()
-                            else:
-                                success = await issue_service.post_analysis_comment(
-                                    repo_owner,
-                                    repo_name,
-                                    issue_number,
-                                    analysis_record,
-                                    db,
                                 )
-                            if success:
-                                logger.info(f"[{task_id}] 已发布分析评论")
-                        except Exception as e:
-                            logger.warning(f"[{task_id}] 发布评论失败: {e}")
+                                resource_identity = {
+                                    "source_system_instance": issue_info.get(
+                                        "source_system_instance", "github.com"
+                                    ),
+                                    "repository_external_id": issue_info.get(
+                                        "repository_external_id", repo_full_name
+                                    ),
+                                    "resource_type": "issue",
+                                    "resource_number": str(issue_number),
+                                }
 
-                    # 10. 应用建议标签
-                    if await get_dynamic_config("issue_auto_create_labels"):
-                        try:
-                            labels_data = json.loads(
-                                analysis_record.suggested_labels or "[]"
+                                async def _sender(
+                                    _kind: str,
+                                    body_with_marker: str,
+                                    _resource_identity: dict[str, Any],
+                                ) -> Any:
+                                    return await asyncio.to_thread(
+                                        issue_service.github_app.create_issue_comment,
+                                        repo_owner,
+                                        repo_name,
+                                        issue_number,
+                                        body_with_marker,
+                                        raise_on_error=True,
+                                    )
+
+                                terminal = await execution.publication_service.send(
+                                    publication.id,
+                                    body=body,
+                                    sender=_sender,
+                                    resource_identity=resource_identity,
+                                )
+                                success = terminal.status == "succeeded"
+                                if success:
+                                    analysis_record.comment_posted = 1
+                                    await db.commit()
+                        else:
+                            success = await issue_service.post_analysis_comment(
+                                repo_owner,
+                                repo_name,
+                                issue_number,
+                                analysis_record,
+                                db,
                             )
-                            if labels_data:
-                                result = await issue_service.apply_suggested_labels(
-                                    repo_owner,
-                                    repo_name,
-                                    issue_number,
-                                    labels_data,
-                                    db,
+                        if success:
+                            logger.info(f"[{task_id}] 已发布分析评论")
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] 发布评论失败: {e}")
+
+                    # 10. 应用建议标签；enabled、阈值与 auto_create 由 IssueService 统一处理。
+                    try:
+                        labels_data = json.loads(
+                            analysis_record.suggested_labels or "[]"
+                        )
+                        if labels_data:
+                            result = await issue_service.apply_suggested_labels(
+                                repo_owner,
+                                repo_name,
+                                issue_number,
+                                labels_data,
+                                db,
+                            )
+                            if result.get("applied"):
+                                logger.info(
+                                    f"[{task_id}] 已应用标签: "
+                                    f"{[label['name'] for label in result['applied']]}"
                                 )
-                                if result.get("applied"):
-                                    logger.info(
-                                        f"[{task_id}] 已应用标签: "
-                                        f"{[label['name'] for label in result['applied']]}"
-                                    )
-                                if result.get("created"):
-                                    logger.info(
-                                        f"[{task_id}] 已创建标签: {result['created']}"
-                                    )
-                                if result.get("failed"):
-                                    logger.warning(
-                                        f"[{task_id}] 标签应用失败: {result['failed']}"
-                                    )
-                        except Exception as e:
-                            logger.warning(f"[{task_id}] 应用标签失败: {e}")
+                            if result.get("created"):
+                                logger.info(
+                                    f"[{task_id}] 已创建标签: {result['created']}"
+                                )
+                            if result.get("failed"):
+                                logger.warning(
+                                    f"[{task_id}] 标签应用失败: {result['failed']}"
+                                )
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] 应用标签失败: {e}")
 
                     # 10.5 应用建议指派人
                     if await get_dynamic_config("issue_auto_assign"):
@@ -636,9 +687,13 @@ class IssueWorker:
 
                     # 13. 异步触发 .sakura/ Issue 反思 / Trigger .sakura/ issue reflection async
                     try:
+                        sm_config = get_sakura_memory_config()
                         if (
-                            settings.sakura_memory_enabled
-                            and settings.sakura_issue_reflection_enabled
+                            not task_deadline.is_expired()
+                            and sm_config.get("enabled", True)
+                            and sm_config.get(
+                                "issue_reflection", {}
+                            ).get("enabled", True)
                         ):
                             from backend.services.sakura_memory_service import (
                                 get_sakura_memory_service,
@@ -684,19 +739,12 @@ class IssueWorker:
                         analysis_result.get("estimated_cost", 0),
                     )
                     if execution is not None:
-                        await execution.finish("completed")
+                        await _finish_execution("completed")
 
                 except Exception as e:
                     logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
                     if execution is not None:
-                        try:
-                            await execution.finish("failed", error_message=str(e))
-                        except Exception as finish_exc:
-                            logger.warning(
-                                "[{}] issue observability finish failed: {}",
-                                task_id,
-                                finish_exc,
-                            )
+                        await _finish_execution("failed", error_message=str(e))
 
                     # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
                     try:
@@ -749,35 +797,6 @@ class IssueWorker:
 
         return task_id
 
-    async def _archive_old_versions(
-        self, db, repo_name: str, issue_number: int, archive_count: int
-    ):
-        """归档超出上限的旧版本分析记录（标记为 archived 状态）"""
-        try:
-            old_records = await db.execute(
-                select(IssueAnalysis)
-                .where(
-                    and_(
-                        IssueAnalysis.repo_name == repo_name,
-                        IssueAnalysis.issue_number == issue_number,
-                    )
-                )
-                .order_by(IssueAnalysis.analysis_version.asc())
-                .limit(archive_count)
-            )
-            for record in old_records.scalars().all():
-                if record.status not in (
-                    IssueAnalysisStatus.PENDING.value,
-                    IssueAnalysisStatus.ANALYZING.value,
-                ):
-                    record.status = "archived"
-            await db.commit()
-            logger.info(
-                f"已归档 {archive_count} 条旧版本分析: {repo_name}#{issue_number}"
-            )
-        except Exception as e:
-            logger.warning(f"归档旧版本分析失败: {e}")
-
 
 _worker_instance: IssueWorker | None = None
 
@@ -796,7 +815,10 @@ async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     task_id = str(uuid.uuid4())
     issue_info["task_id"] = task_id
     worker = get_issue_worker()
-    task = asyncio.create_task(worker.process_issue_analysis(issue_info))
+    deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
+    task = asyncio.create_task(
+        worker.process_issue_analysis(issue_info, deadline=deadline)
+    )
     try:
         register_background_task(task, "issue")
     except DatabaseResetRuntimeAdmissionClosed:

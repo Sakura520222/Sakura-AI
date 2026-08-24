@@ -10,7 +10,12 @@ from loguru import logger
 from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
+from backend.core.config import (
+    get_dynamic_config,
+    get_label_config,
+    get_settings,
+    get_strategy_config,
+)
 from backend.core.github_app import GitHubAppClient
 from backend.core.time_service import now_utc
 from backend.models.database import (
@@ -318,11 +323,19 @@ class IssueService:
         Returns:
             应用结果字典
         """
-        threshold = await get_dynamic_config("issue_confidence_threshold")
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
 
         if not suggested_labels:
             return result
+
+        # PR 与 Issue 标签统一读取推荐设置（label.recommendation 节）。
+        recommendation = get_label_config().get_recommendation_settings()
+        if not recommendation.get("enabled", True):
+            logger.info(f"Issue #{issue_number} 标签推荐已禁用，跳过应用")
+            return result
+
+        threshold = recommendation.get("confidence_threshold", 0.7)
+        auto_create = recommendation.get("auto_create", True)
 
         # 使用 LabelService 获取仓库现有标签（带缓存）
         from backend.services.label_service import label_service
@@ -341,6 +354,14 @@ class IssueService:
             matched_name = existing_labels_lower.get(label_name.lower())
 
             if not matched_name:
+                if not auto_create:
+                    result["failed"].append(label_name)
+                    logger.info(
+                        f"Issue #{issue_number} 自动创建标签已禁用，跳过不存在的标签: "
+                        f"{label_name}"
+                    )
+                    continue
+
                 # 标签不存在：使用 LabelService 默认标签信息自动创建
                 default_info = label_service.DEFAULT_LABELS.get(
                     label_name, {"color": "0366d6", "description": ""}

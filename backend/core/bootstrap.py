@@ -71,13 +71,13 @@ def _fsync_directory(directory: Path) -> None:
     try:
         directory_fd = os.open(directory, os.O_RDONLY | directory_flag)
         os.fsync(directory_fd)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         logger.debug("无法同步 connection.json 所在目录（当前平台可忽略）")
     finally:
         if directory_fd is not None:
             try:
                 os.close(directory_fd)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 logger.debug("无法关闭 connection.json 所在目录句柄")
 
 
@@ -396,9 +396,9 @@ class BootstrapMiddleware:
                 return
             # 其他 /setup 路径需要验证 setup_verified Cookie
             if not _has_valid_setup_cookie(scope):
-                await RedirectResponse(
-                    url="/setup/verify", status_code=302
-                )(scope, receive, send)
+                await RedirectResponse(url="/setup/verify", status_code=302)(
+                    scope, receive, send
+                )
                 return
             await self.app(scope, receive, send)
             return

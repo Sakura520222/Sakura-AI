@@ -51,12 +51,8 @@ def test_verify_page_redirects_if_already_verified():
     token = get_setup_token()
     try:
         with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
-            client = TestClient(_build_app())
-            resp = client.get(
-                "/setup/verify",
-                follow_redirects=False,
-                cookies={_COOKIE_NAME: token},
-            )
+            client = TestClient(_build_app(), cookies={_COOKIE_NAME: token})
+            resp = client.get("/setup/verify", follow_redirects=False)
             assert resp.status_code == 302
             assert resp.headers["location"] == "/setup"
     finally:

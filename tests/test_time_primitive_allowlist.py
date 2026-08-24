@@ -40,7 +40,7 @@ TIME_PRIMITIVE_ALLOWLIST = (
     },
     {
         "file": "updater/src/sakura_ai_updater/time.py",
-        "position": "updater/src/sakura_ai_updater/time.py:13",
+        "position": "updater/src/sakura_ai_updater/time.py:15",
         "primitive": "datetime.now(UTC)",
         "category": "updater-protocol-time",
         "reason": "Updater emits independent UTC RFC3339 Z protocol timestamps.",
@@ -69,25 +69,25 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:75",
+        "position": "backend/main.py:74",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1559",
+        "position": "backend/webui/routes/agent_team.py:1351",
         "category": "filesystem-metadata-boundary",
         "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1885",
+        "position": "backend/webui/routes/agent_team.py:1585",
         "category": "filesystem-metadata-boundary",
         "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/services/activity_observability/conversation_service.py",
-        "position": "backend/services/activity_observability/conversation_service.py:55",
+        "position": "backend/services/activity_observability/conversation_service.py:54",
         "category": "epoch-sentinel",
         "reason": "The observability projection uses Unix epoch as an explicit no-value sentinel.",
     },
@@ -107,12 +107,22 @@ def _primitive_calls() -> set[tuple[str, int, str]]:
             relative = path.relative_to(PROJECT_ROOT).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                if not isinstance(node, ast.Call) or not isinstance(
+                    node.func, ast.Attribute
+                ):
                     continue
                 receiver = node.func.value
-                if isinstance(receiver, ast.Name) and receiver.id == "datetime" and node.func.attr == "now":
+                if (
+                    isinstance(receiver, ast.Name)
+                    and receiver.id == "datetime"
+                    and node.func.attr == "now"
+                ):
                     calls.add((relative, node.lineno, "datetime.now"))
-                elif isinstance(receiver, ast.Name) and receiver.id == "time" and node.func.attr == "time":
+                elif (
+                    isinstance(receiver, ast.Name)
+                    and receiver.id == "time"
+                    and node.func.attr == "time"
+                ):
                     calls.add((relative, node.lineno, "time.time"))
     return calls
 
@@ -127,7 +137,9 @@ def _fromtimestamp_calls() -> set[tuple[str, int, str]]:
         relative = path.relative_to(PROJECT_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
                 continue
             if (
                 isinstance(node.func.value, ast.Name)
@@ -161,7 +173,11 @@ def _production_source() -> dict[str, str]:
 def test_all_wall_clock_primitives_are_documented_allowlist_entries():
     actual = _primitive_calls()
     expected = {
-        (entry["file"], int(entry["position"].rsplit(":", 1)[1]), entry["primitive"].split("(", 1)[0])
+        (
+            entry["file"],
+            int(entry["position"].rsplit(":", 1)[1]),
+            entry["primitive"].split("(", 1)[0],
+        )
         for entry in TIME_PRIMITIVE_ALLOWLIST
     }
     assert actual == expected
@@ -186,7 +202,9 @@ def test_all_fromtimestamp_calls_are_aware_and_allowlisted():
         for entry in FROMTIMESTAMP_ALLOWLIST
     }
     assert actual == expected
-    assert all(entry["category"] and entry["reason"] for entry in FROMTIMESTAMP_ALLOWLIST)
+    assert all(
+        entry["category"] and entry["reason"] for entry in FROMTIMESTAMP_ALLOWLIST
+    )
 
 
 def test_naive_date_primitives_and_model_datetime_defaults_are_absent():
@@ -216,7 +234,9 @@ def test_application_time_boundary_antipatterns_are_absent_or_explicitly_configu
     assert all(".isoformat(" not in text for text in route_sources.values())
 
     template_sources = {
-        path: text for path, text in sources.items() if path.startswith("backend/webui/templates/")
+        path: text
+        for path, text in sources.items()
+        if path.startswith("backend/webui/templates/")
     }
     assert all("strftime(" not in text for text in template_sources.values())
     assert all(

@@ -96,7 +96,9 @@ class ReleaseClient:
     ) -> None:
         self.owner = owner
         self.repo = repo
-        self.api_url = api_url or f"https://api.github.com/repos/{owner}/{repo}/releases"
+        self.api_url = (
+            api_url or f"https://api.github.com/repos/{owner}/{repo}/releases"
+        )
         self.token = token
         self.timeout = timeout
         self.manifest_name = manifest_name
@@ -121,7 +123,14 @@ class ReleaseClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        except (
+            HTTPError,
+            URLError,
+            OSError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             raise ReleaseUnavailableError(
                 f"GitHub request failed for {url!r}: {exc}",
                 detail=_request_failure_detail(exc),
@@ -139,7 +148,9 @@ class ReleaseClient:
                 query = urlencode({"per_page": 100, "page": page})
                 payload = await self._fetch_json(f"{self.api_url}?{query}")
                 if not isinstance(payload, list):
-                    raise ReleaseUnavailableError("GitHub releases response is not an array")
+                    raise ReleaseUnavailableError(
+                        "GitHub releases response is not an array"
+                    )
                 page_items = [item for item in payload if isinstance(item, dict)]
                 releases.extend(page_items)
                 if len(page_items) < 100:
@@ -188,7 +199,9 @@ class ReleaseClient:
         expected_tag = version if version.startswith("v") else f"v{version}"
         releases = await self.list_releases()
         for release in releases:
-            if release.get("tag_name") == expected_tag and self._stable_release(release):
+            if release.get("tag_name") == expected_tag and self._stable_release(
+                release
+            ):
                 self._last_release = dict(release)
                 return dict(release)
         raise ReleaseNotFoundError(f"stable release {expected_tag!r} was not found")
@@ -212,8 +225,14 @@ class ReleaseClient:
         """
 
         try:
-            release_call = self.latest_release() if version is None else self.get_release(version)
-            release = await release_call if inspect.isawaitable(release_call) else release_call
+            release_call = (
+                self.latest_release() if version is None else self.get_release(version)
+            )
+            release = (
+                await release_call
+                if inspect.isawaitable(release_call)
+                else release_call
+            )
         except ReleaseClientError:
             if self._last_manifest is not None:
                 return self._last_manifest
@@ -229,7 +248,9 @@ class ReleaseClient:
             raise ManifestNotFoundError(f"release has no {self.manifest_name!r} asset")
         url = asset.get("browser_download_url") or asset.get("url")
         if not isinstance(url, str) or not url:
-            raise ManifestNotFoundError(f"manifest asset has no download URL: {asset!r}")
+            raise ManifestNotFoundError(
+                f"manifest asset has no download URL: {asset!r}"
+            )
         try:
             payload = await self._fetch_json(url)
         except ReleaseClientError:
@@ -261,32 +282,54 @@ class ReleaseClient:
         return await self.fetch_manifest(None)
 
     async def get_release_assets(self, version: str | None = None) -> list[str]:
-        release_call = self.latest_release() if version is None else self.get_release(version)
-        release = await release_call if inspect.isawaitable(release_call) else release_call
+        release_call = (
+            self.latest_release() if version is None else self.get_release(version)
+        )
+        release = (
+            await release_call if inspect.isawaitable(release_call) else release_call
+        )
         if release is None:
             return []
         assets = release.get("assets")
         if not isinstance(assets, list):
             return []
-        return [str(asset["name"]) for asset in assets if isinstance(asset, Mapping) and asset.get("name")]
+        return [
+            str(asset["name"])
+            for asset in assets
+            if isinstance(asset, Mapping) and asset.get("name")
+        ]
 
-    async def has_required_assets(self, manifest: Any, version: str | None = None) -> bool:
+    async def has_required_assets(
+        self, manifest: Any, version: str | None = None
+    ) -> bool:
         """Check architecture updater asset and SHA256SUMS presence."""
 
-        release_call = self.latest_release() if version is None else self.get_release(version)
-        release = await release_call if inspect.isawaitable(release_call) else release_call
+        release_call = (
+            self.latest_release() if version is None else self.get_release(version)
+        )
+        release = (
+            await release_call if inspect.isawaitable(release_call) else release_call
+        )
         if release is None:
             return False
         names = set(await self.get_release_assets(version))
-        updater = manifest.get("updater", {}) if isinstance(manifest, Mapping) else getattr(manifest, "updater", {})
+        updater = (
+            manifest.get("updater", {})
+            if isinstance(manifest, Mapping)
+            else getattr(manifest, "updater", {})
+        )
         if isinstance(updater, Mapping):
             asset_name = updater.get(
-                "asset_linux_arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "asset_linux_amd64"
+                "asset_linux_arm64"
+                if platform.machine().lower() in {"aarch64", "arm64"}
+                else "asset_linux_amd64"
             )
         else:
             asset_name = getattr(
                 updater,
-                "asset_linux_arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "asset_linux_amd64",
+                "asset_linux_arm64"
+                if platform.machine().lower() in {"aarch64", "arm64"}
+                else "asset_linux_amd64",
                 None,
             )
         if not isinstance(asset_name, str) or asset_name not in names:

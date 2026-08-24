@@ -1,4 +1,8 @@
-"""Agent 专家团队 - 专业审查角色（工具调用模式）
+"""Legacy professional-review Agent implementation.
+
+The runtime no longer instantiates this class. Sakura PR Review is the
+external review boundary; this module remains import-compatible for historical
+result/checkpoint readers only.
 
 通过 function calling 让 AI 自主调用工具审查代码：
 - read_file: 读取修改后的文件
@@ -22,7 +26,7 @@ from typing import Any
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
-from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
+from backend.services.agent_team.context_compressor import compress_agent_team_messages
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -34,7 +38,6 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
-from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
     has_missing_tool_results,
@@ -222,26 +225,19 @@ class ProfessionalReviewAgent:
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
-        model, context_window_tokens = await client.resolve_role_model_context(
-            config.agent_role
+        candidate = await client.resolve_role_primary_candidate(config.agent_role)
+        context_window_tokens = (
+            candidate.model.context_window_tokens if candidate else None
         )
-        model = model or ""
         ctx = self._build_context(
             skills_context,
             github_repo=github_repo,
             sakura_ref=sakura_ref,
         )
         tool_schemas = get_tool_definitions("reviewer")
-        max_tool_rounds = await resolve_clamped_int_config(
-            "agent_team_reviewer_max_tool_rounds",
-        )
-
-        # 重置 fetch_url 会话调用计数
-        from backend.services.agent_team.tools.fetch_url_tool import (
-            reset_fetch_url_session,
-        )
-
-        await reset_fetch_url_session()
+        # 工具循环不设轮次与时长上限：依赖模型自然停止（submit_review / 纯文本
+        # 完成）与手动取消（cancel_check / cancel_event）。agent_team_timeout_seconds
+        # 仅约束单次 AI 请求的 HTTP 超时，不约束整体轮数与时长。
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
@@ -265,8 +261,10 @@ class ProfessionalReviewAgent:
 
         tool_calls_count = 0
         token_tracker = TokenTracker()
+        round_num = 0
 
-        for round_num in range(1, max_tool_rounds + 1):
+        while True:
+            round_num += 1
             if cancel_check and cancel_check():
                 return ReviewResult(
                     passed=False,
@@ -313,10 +311,9 @@ class ProfessionalReviewAgent:
                 except Exception:
                     pass
 
-            model_messages = await AgentTeamContextCompressor(
-                target_model=model,
-                context_window_tokens=context_window_tokens,
-            ).build_model_messages(self.messages, token_tracker)
+            model_messages = await compress_agent_team_messages(
+                self.messages, candidate=candidate, token_tracker=token_tracker
+            )
             await _publish_review_ai_request(
                 round_num,
                 task_id=self.checkpoint.task_id if self.checkpoint else None,
@@ -325,7 +322,6 @@ class ProfessionalReviewAgent:
             response = await client.call_with_retry(
                 messages=model_messages,
                 model="",
-                timeout=config.timeout_seconds,
                 tools=tool_schemas,
                 tool_choice="auto",
                 role="agent_team",
@@ -408,15 +404,6 @@ class ProfessionalReviewAgent:
                     prompt_tokens=token_tracker.prompt_tokens,
                     completion_tokens=token_tracker.completion_tokens,
                 )
-
-        return ReviewResult(
-            verdict="reject",
-            score=0,
-            summary=f"达到最大审查轮次 ({max_tool_rounds})",
-            tool_calls_count=tool_calls_count,
-            prompt_tokens=token_tracker.prompt_tokens,
-            completion_tokens=token_tracker.completion_tokens,
-        )
 
     async def _execute_tool_calls(
         self,

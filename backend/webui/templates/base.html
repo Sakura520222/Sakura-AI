@@ -361,8 +361,8 @@
         /* TODO: 临时兼容层 - 将旧 bg-white.dark:bg-gray-800 卡片自动应用玻璃态。
            长期方案：逐步迁移各模板直接使用 .glass 类，迁移完成后删除此规则。
            覆盖范围: issues, pr_list, pr_detail, pr_files, settings, scan_detail,
-           scans, action_logs, queue, users, user_detail, repos, config_general,
-           config_labels, config_strategies, setup_wizard, billing 等 17+ 页面模板。 */
+           scans, action_logs, queue, users, user_detail, repos, config_unified,
+           setup_wizard, billing 等 17+ 页面模板。 */
         main .bg-white.dark\:bg-gray-800 {
             background: rgba(255, 255, 255, 0.78);
             backdrop-filter: blur(12px);
@@ -408,11 +408,48 @@
             outline: 2px solid rgba(236, 72, 153, 0.5);
             outline-offset: 2px;
         }
+        /* 主题切换过渡：禁用 View Transition 默认交叉淡入，
+           改由 JS 以点击点为圆心做圆形扩散揭示（见 body 上的 toggleTheme） */
+        ::view-transition-old(root),
+        ::view-transition-new(root) {
+            animation: none;
+            mix-blend-mode: normal;
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="sakura-gradient-bg text-gray-900 dark:text-gray-100 min-h-screen font-sans"
-      x-data="{ theme: localStorage.getItem('theme') || 'light' }"
+      x-data="{
+          theme: localStorage.getItem('theme') || 'light',
+          toggleTheme() {
+              const apply = () => {
+                  this.theme = this.theme === 'light' ? 'dark' : 'light';
+                  // Alpine 的响应式更新是异步批处理，等 DOM 更新完成后再截取新主题快照
+                  return this.$nextTick();
+              };
+              // 浏览器不支持 View Transitions 或用户偏好减少动效时，退回直接切换
+              if (!document.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                  apply();
+                  return;
+              }
+              // 始终从主题按钮中心扩散；找不到按钮时回退到右上角。
+              // 圆心用百分比、半径用 vmax：均为视口相对单位，浏览器缩放
+              // （zoom!=1）下 px 绝对坐标会被二次映射导致圆心偏移，相对单位不受影响
+              const rect = document.querySelector('[data-theme-toggle]')?.getBoundingClientRect();
+              const x = rect ? (rect.left + rect.width / 2) / window.innerWidth * 100 : 95;
+              const y = rect ? (rect.top + rect.height / 2) / window.innerHeight * 100 : 5;
+              const transition = document.startViewTransition(apply);
+              transition.ready.then(() => {
+                  document.documentElement.animate(
+                      { clipPath: [
+                          `circle(0px at ${x}% ${y}%)`,
+                          `circle(150vmax at ${x}% ${y}%)`,
+                      ] },
+                      { duration: 450, easing: 'ease-in-out', pseudoElement: '::view-transition-new(root)' },
+                  );
+              }).catch(() => {});
+          }
+      }"
       x-init="$watch('theme', val => {
           document.documentElement.classList.toggle('dark', val === 'dark');
           document.getElementById('hljs-light').disabled = val === 'dark';

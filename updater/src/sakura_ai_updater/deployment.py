@@ -18,7 +18,9 @@ class DeploymentError(RuntimeError):
     """The current deployment cannot be read or materialized safely."""
 
 
-_SEMVER_RE = re.compile(r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)$")
+_SEMVER_RE = re.compile(
+    r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)$"
+)
 _LATEST_RE = re.compile(r"^(?P<prefix>.+):latest$")
 _IMAGE_DIGEST_RE = re.compile(r"^.+@(?P<digest>sha256:[0-9a-fA-F]{64})$")
 _REGISTRY_DIGEST_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
@@ -62,7 +64,9 @@ def _registry_image_ref(image_ref: str) -> tuple[str, str]:
     if "@" in image_ref:
         image_ref, digest = image_ref.rsplit("@", 1)
         if not _REGISTRY_DIGEST_RE.fullmatch(digest):
-            raise DeploymentError(f"invalid registry digest in image reference: {image_ref!r}")
+            raise DeploymentError(
+                f"invalid registry digest in image reference: {image_ref!r}"
+            )
         # A digest-only ref has no tag and cannot prove the RepoTags identity
         # required for safe capture.  Keep the updater's repository/tag model
         # explicit and fail closed rather than guessing a tag.
@@ -72,7 +76,9 @@ def _registry_image_ref(image_ref: str) -> tuple[str, str]:
             )
     repository_and_tag = image_ref.rsplit(":", 1)
     if len(repository_and_tag) != 2 or not all(repository_and_tag):
-        raise DeploymentError(f"image reference is missing an explicit registry tag: {image_ref!r}")
+        raise DeploymentError(
+            f"image reference is missing an explicit registry tag: {image_ref!r}"
+        )
     repository, tag = repository_and_tag
     normalized_repository = _registry_repository(repository)
     return normalized_repository, f"{normalized_repository}:{tag.lower()}"
@@ -83,9 +89,13 @@ def _registry_repository(repository: str) -> str:
 
     first_component = repository.split("/", 1)[0]
     if "/" not in repository or not (
-        "." in first_component or ":" in first_component or first_component == "localhost"
+        "." in first_component
+        or ":" in first_component
+        or first_component == "localhost"
     ):
-        raise DeploymentError(f"local or unqualified image cannot be materialized: {repository!r}")
+        raise DeploymentError(
+            f"local or unqualified image cannot be materialized: {repository!r}"
+        )
     return repository.lower()
 
 
@@ -119,7 +129,9 @@ class DeploymentStateProvider:
     def read_deploy_mode(self) -> str | None:
         """Read deployment mode from deployment.env, then process environment."""
 
-        return self._env().get("SAKURA_DEPLOY_MODE") or os.environ.get("SAKURA_DEPLOY_MODE")
+        return self._env().get("SAKURA_DEPLOY_MODE") or os.environ.get(
+            "SAKURA_DEPLOY_MODE"
+        )
 
     @staticmethod
     def _read_health_sync(url: str, timeout: float) -> tuple[int, dict[str, Any]]:
@@ -130,12 +142,14 @@ class DeploymentStateProvider:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             return int(exc.code), {}
-        except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        except URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError:
             return 0, {}
         return status, payload if isinstance(payload, dict) else {}
 
     async def _health_payload(self, timeout: float = 5.0) -> dict[str, Any] | None:
-        status, payload = await asyncio.to_thread(self._read_health_sync, self.health_url, timeout)
+        status, payload = await asyncio.to_thread(
+            self._read_health_sync, self.health_url, timeout
+        )
         if status != 200:
             return None
         return payload
@@ -185,14 +199,20 @@ class DeploymentStateProvider:
             )
         except asyncio.CancelledError:
             if process is not None:
-                await _terminate_and_reap(process, communication_task=communication_task)
+                await _terminate_and_reap(
+                    process, communication_task=communication_task
+                )
             raise
         except TimeoutError as exc:
             if process is not None:
-                await _terminate_and_reap(process, communication_task=communication_task)
+                await _terminate_and_reap(
+                    process, communication_task=communication_task
+                )
             raise DeploymentError(f"docker command timed out for {argv!r}") from exc
         except OSError as exc:
-            raise DeploymentError(f"cannot run Docker inspection {argv!r}: {exc}") from exc
+            raise DeploymentError(
+                f"cannot run Docker inspection {argv!r}: {exc}"
+            ) from exc
         if process.returncode != 0:
             detail = stderr.decode(errors="replace").strip()
             raise DeploymentError(
@@ -206,7 +226,9 @@ class DeploymentStateProvider:
         )
         image_id = stdout.strip()
         if not image_id:
-            raise DeploymentError(f"docker inspect returned no image ID for {self.web_container!r}")
+            raise DeploymentError(
+                f"docker inspect returned no image ID for {self.web_container!r}"
+            )
         return image_id
 
     async def _inspect_image_metadata(self, image_id: str) -> dict[str, Any]:
@@ -221,7 +243,9 @@ class DeploymentStateProvider:
             raise DeploymentError("docker image inspect returned invalid JSON") from exc
         if isinstance(metadata, list):
             if len(metadata) != 1:
-                raise DeploymentError("docker image inspect returned ambiguous metadata")
+                raise DeploymentError(
+                    "docker image inspect returned ambiguous metadata"
+                )
             metadata = metadata[0]
         if not isinstance(metadata, dict):
             raise DeploymentError("docker image inspect returned no image metadata")
@@ -307,10 +331,14 @@ class DeploymentStateProvider:
         if not image_ref:
             raise DeploymentError("SAKURA_AI_IMAGE is missing from deployment.env")
         expected_repository, expected_tag = _registry_image_ref(image_ref)
-        expected_digest = image_ref.rsplit("@", 1)[1].lower() if "@" in image_ref else None
+        expected_digest = (
+            image_ref.rsplit("@", 1)[1].lower() if "@" in image_ref else None
+        )
         image_id = await self._run_inspect()
         if not _REGISTRY_DIGEST_RE.fullmatch(image_id):
-            raise DeploymentError(f"running container returned an invalid local image ID: {image_id!r}")
+            raise DeploymentError(
+                f"running container returned an invalid local image ID: {image_id!r}"
+            )
         metadata = await self._inspect_image_metadata(image_id)
         running_digest = self._select_registry_digest(
             metadata,
@@ -338,7 +366,9 @@ class DeploymentStateProvider:
             if _IMAGE_DIGEST_RE.fullmatch(image_ref):
                 _registry_image_ref(image_ref)
                 return image_ref
-            raise DeploymentError(f"invalid digest-pinned image reference: {image_ref!r}")
+            raise DeploymentError(
+                f"invalid digest-pinned image reference: {image_ref!r}"
+            )
         latest = _LATEST_RE.fullmatch(image_ref)
         if latest is None:
             return image_ref

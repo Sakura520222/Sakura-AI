@@ -2,15 +2,42 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import stat
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from backend.core.config import get_settings
 
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _WORKTREE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _rmtree_onexc(
+    func,
+    path: str,
+    exc: BaseException,
+    *,
+    trusted_root: str | Path,
+) -> None:
+    """rmtree 失败回调：Windows 上只读文件（如 git 松散对象）拒绝删除时去除只读后重试。"""
+    try:
+        resolved_root = Path(trusted_root).resolve()
+        resolved_path = Path(path).resolve()
+        resolved_path.relative_to(resolved_root)
+    except (OSError, RuntimeError, TypeError, ValueError) as boundary_error:
+        raise WorkspaceSecurityError(
+            f"rmtree 回调路径不在待删除根目录内或无法解析: {path}"
+        ) from boundary_error
+
+    if isinstance(exc, PermissionError):
+        os.chmod(resolved_path, stat.S_IWRITE)
+        func(resolved_path)
+    else:
+        raise exc
 
 
 class WorkspaceSecurityError(ValueError):
@@ -230,7 +257,10 @@ class AgentTeamWorkspaceService:
         workspace = self.get_repo_root_path(repo_owner, repo_name)
         self.ensure_within_base(workspace)
         if workspace.exists():
-            shutil.rmtree(workspace)
+            shutil.rmtree(
+                workspace,
+                onexc=partial(_rmtree_onexc, trusted_root=workspace),
+            )
         return workspace
 
     # ── Worktree 管理 ──────────────────────────────────────
@@ -285,7 +315,10 @@ class AgentTeamWorkspaceService:
                 f"worktree 不在仓库工作区内: {target}"
             ) from exc
         if target.exists():
-            shutil.rmtree(target)
+            shutil.rmtree(
+                target,
+                onexc=partial(_rmtree_onexc, trusted_root=target),
+            )
         return target
 
     def _build_worktree_info(self, worktree_dir: Path) -> WorktreeInfo | None:
@@ -333,7 +366,11 @@ class AgentTeamWorkspaceService:
     @staticmethod
     def _validate_worktree_dir_name(dir_name: str) -> None:
         """校验 worktree 目录名格式。"""
-        if not dir_name or not _SAFE_SEGMENT_RE.match(dir_name):
+        if (
+            not dir_name
+            or dir_name in {".", ".."}
+            or not _SAFE_SEGMENT_RE.match(dir_name)
+        ):
             raise WorkspaceSecurityError(f"无效的 worktree 目录名: {dir_name}")
 
     def ensure_within_base(self, path: str | Path) -> Path:

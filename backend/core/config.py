@@ -6,11 +6,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, get_origin
 
-import yaml
 from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
@@ -108,7 +108,10 @@ class Settings(BaseSettings):
     )
     review_timeout_seconds: int = Field(
         600,
-        description="审查任务整体超时时间（秒）",
+        description=(
+            "PR 审查、Issue 分析与仓库扫描共用的软超时时间（秒）；"
+            "超时后在下一次 AI 调用时提示"
+        ),
     )
     enable_auto_review: bool = Field(
         True,
@@ -163,8 +166,6 @@ class Settings(BaseSettings):
     )
 
     # 审查策略配置
-    max_file_count: int = 1000
-    max_line_count: int = 50000
     batch_size: int = 20
 
     # AI工具配置
@@ -375,16 +376,6 @@ class Settings(BaseSettings):
     star_aid_summary_language: str = Field(
         "",
         description="AI 摘要语言，为空时跟随 WebUI/系统语言",
-    )
-    star_aid_summary_readme_budget: int = Field(
-        6000,
-        ge=0,
-        description="生成 AI 摘要时传给模型的 README 字符预算（0=不限），控制模型上下文成本",
-    )
-    star_aid_summary_max_tokens: int = Field(
-        16000,
-        ge=1,
-        description="生成 AI 摘要时允许模型输出的最大 token 数；思考模型需要更大值避免 content 为空",
     )
     # 以下为部署级凭据，通过环境变量或核心配置提供，不进入普通动态配置组
     star_aid_token_encryption_key: str = Field(
@@ -602,9 +593,7 @@ class Settings(BaseSettings):
     # ========== Issue 分析配置 ==========
     enable_issue_analysis: bool = True
     enable_pr_issue_linking: bool = True
-    issue_auto_comment: bool = True
-    issue_confidence_threshold: float = 0.7
-    issue_auto_create_labels: bool = True
+
     issue_auto_assign: bool = True
     issue_auto_rewrite_title: bool = True
     issue_assignee_confidence_threshold: float = 0.8
@@ -612,20 +601,15 @@ class Settings(BaseSettings):
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = True
-    issue_max_tool_iterations: int = 200
     protocol_repair_max_attempts: int = 3
     issue_max_files_per_analysis: int = 500
-    issue_max_directory_depth: int = 20
     max_concurrent_issues: int = 5
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
     # Module A: 向量存储元数据增强
     issue_vector_store_rich_metadata: bool = True
-    # Module D: 分析版本历史
-    issue_max_analysis_versions: int = 10
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
-    issue_max_comments_in_context: int = 0
 
     # ========== PR 审查价格配置 ==========
     review_price_per_1k_prompt: float = 0.0
@@ -646,7 +630,6 @@ class Settings(BaseSettings):
     fetch_url_max_download_size: int = (
         1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
     )
-    fetch_url_max_calls_per_session: int = 50  # 单次会话最大调用次数
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = True  # 强制仅允许 HTTPS 协议
@@ -697,8 +680,7 @@ class Settings(BaseSettings):
     tron_api_key: str = Field("", description="TronGrid API Key（可选，提高频率限制）")
 
     # ========== 代码索引配置 ==========
-    enable_code_index: bool = True  # 是否启用代码索引功能
-    auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
+    enable_code_index: bool = True  # 是否启用代码索引功能（含 PR 变更自动索引）
 
     # 代码分块配置
     code_chunk_size: int = 500  # 代码块大小（字符数）
@@ -707,11 +689,8 @@ class Settings(BaseSettings):
     # 行内评论配置
     enable_inline_comments: bool = True  # 是否启用行内评论
 
-    # ========== 增量审查历史上下文配置 ==========
-    enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
+    # ========== 增量审查历史上下文配置（固定启用，不设轮数/输出上限） ==========
     enable_pr_summary: bool = True  # 是否启用 PR 变更自动总结
-    incremental_history_max_reviews: int = 5  # 最多查询的历史审查轮数
-    incremental_history_summary_max_tokens: int = 4096  # 摘要生成最大 token
 
     # ========== PR 依赖图配置 ==========
     enable_pr_dependency_graph: bool = True  # 是否启用 PR 依赖图生成
@@ -758,86 +737,48 @@ class Settings(BaseSettings):
     enable_repo_scan: bool = False  # 是否启用仓库扫描
     scan_interval_minutes: int = 360  # 扫描间隔（分钟，默认6小时）
     scan_cooldown_hours: int = 24  # 同一仓库扫描冷却时间（小时）
-    scan_max_tokens_per_repo: int = 0  # 单仓库扫描 Token 预算（0=无限制）
     scan_max_concurrent: int = 1  # 最大并发扫描数
-    scan_auto_create_issue: bool = True  # 是否自动创建 GitHub Issue
     scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
-    # 扫描请求策略配置
-    scan_max_iterations: int = 200  # 扫描最大工具调用轮次
-    scan_context_safety_threshold: float = 0.8  # 扫描上下文安全阈值
-    scan_compression_threshold: float = 0.85  # 扫描压缩触发阈值
-    scan_temperature: float = 0.2  # 扫描 AI 温度参数
 
-    # ========== Sakura 记忆系统配置 ==========
-    sakura_memory_enabled: bool = True  # 是否启用 .sakura/ 记忆系统
-    sakura_reflection_enabled: bool = True  # 是否启用审查后反思
-    sakura_consolidation_interval: int = 5  # 触发合并的反思轮数
-    sakura_max_memory_chars: int = 2000  # memory.md 最大字符数
-    sakura_max_sakura_chars: int = 3000  # SAKURA.md 最大字符数
-    sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
-    sakura_consolidation_partial_commit: bool = (
-        True  # 合并时一个文件失败是否仍提交另一个
-    )
-    sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
-    sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
-    sakura_extraction_min_reflections: int = 10  # 知识提取间隔（每N次反思触发一次）
-    sakura_extraction_max_iterations: int = 200  # 每个分类提取时工具调用最大轮数
-    sakura_consolidation_max_iterations: int = (
-        200  # 合并 Agent 每个文件的最大工具调用轮数
-    )
-    sakura_auto_create_subdirs: bool = True  # 初始化时自动创建子目录(rules/docs/plans)
-
-    # ========== Agent 专家团队模式配置 ==========
-    agent_team_enabled: bool = (
-        False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
-    )
+    # ========== Agent 模式配置 ==========
+    agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
-    agent_team_temperature: float = 0.2
-    agent_team_max_tokens: int = 8192
-    agent_team_enable_context_compression: bool = True
-    agent_team_context_compression_threshold: float = 0.85
-    agent_team_context_compression_keep_rounds: int = 4
-    agent_team_context_summary_max_tokens: int = 2048
-    agent_team_timeout_seconds: int = 600
+    # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
-    agent_team_max_iterations_per_task: int = 3
-    agent_team_max_tool_rounds: int = 30
-    agent_team_max_runtime_minutes: int = 60
     agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_pr_closed_loop_enabled: bool = True
     agent_team_pr_review_pass_score: int = 8
     agent_team_pr_review_blocking_severities: str = "critical,major"
-    agent_team_max_files_changed: int = 8
-    agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
     agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = True
     agent_team_skills_root: str = "./Skills"
-    agent_team_reviewer_max_tool_rounds: int = 20
     # Module G: 候选池缓存
     agent_team_candidate_cache_ttl: int = 300
 
 
 class StrategyConfig:
-    """审查策略配置"""
+    """审查策略配置
+
+    配置来源已从 config/strategies.yaml 迁移至统一配置节存储
+    （内置默认 + app_config 节键覆盖，见 backend/core/config_sections.py）。
+    缺失回退统一为内置默认，不再因文件缺失 raise。
+    """
 
     def __init__(self, config_path: str = "config/strategies.yaml"):
+        # config_path 已废弃：仅为兼容旧构造签名保留，值被忽略。
         self.config_path = Path(config_path)
         self._load_config()
 
     def _load_config(self):
-        """加载配置文件"""
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"策略配置文件不存在: {self.config_path}")
-
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        """从配置节注册表组装（内置默认 ← DB 覆盖深度合并）"""
+        self.config = get_sections_for_target("strategy")
 
     def get_strategy(self, strategy_name: str) -> dict:
         """获取指定策略"""
@@ -904,6 +845,10 @@ class StrategyConfig:
         """获取 Issue 分析配置"""
         return self.config.get("issue_analysis", {})
 
+    def get_scan_config(self) -> dict:
+        """获取仓库扫描配置"""
+        return self.config.get("scan", {})
+
     def get_context_enhancement_config(self) -> dict:
         """获取上下文增强配置"""
         return self.config.get("context_enhancement", {})
@@ -941,6 +886,18 @@ def get_strategy_config() -> StrategyConfig:
     return StrategyConfig()
 
 
+def get_sakura_memory_config() -> dict:
+    """获取 .sakura/ 记忆系统嵌套节配置 / Get the .sakura/ memory nested section
+
+    单一事实源：``strategy.context_enhancement.sakura_memory`` 嵌套节
+    （内置默认 ← DB 节覆盖，经 config_sections 深度合并；缺失回退内置默认节）。
+    平铺 Settings 键已随双轨合并移除，读取一律走本入口。
+    """
+    return (
+        get_strategy_config().get_context_enhancement_config().get("sakura_memory", {})
+    )
+
+
 def path_matches_skip(target_path: str, skip_paths: list) -> bool:
     """判断路径是否命中 skip_paths 列表。
 
@@ -968,19 +925,21 @@ def reload_strategy_config() -> StrategyConfig:
 
 
 class LabelConfig:
-    """标签配置"""
+    """标签配置
+
+    配置来源已从 config/labels.yaml 迁移至统一配置节存储
+    （内置默认 + app_config 节键覆盖，见 backend/core/config_sections.py）。
+    缺失回退统一为内置默认（与 StrategyConfig 行为对齐）。
+    """
 
     def __init__(self, config_path: str = "config/labels.yaml"):
+        # config_path 已废弃：仅为兼容旧构造签名保留，值被忽略。
         self.config_path = Path(config_path)
         self._load_config()
 
     def _load_config(self):
-        """加载标签配置文件"""
-        if not self.config_path.exists():
-            self.config = {"labels": {}, "recommendation": {}}
-            return
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f) or {}
+        """从配置节注册表组装（内置默认 ← DB 覆盖深度合并）"""
+        self.config = get_sections_for_target("label")
 
     def get_labels(self) -> dict:
         """获取所有标签定义"""
@@ -1016,8 +975,59 @@ def reload_label_config() -> LabelConfig:
 # 可通过 WebUI 动态管理的配置键及其分组信息
 DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
     [
-        # AI 模型、辅助模型、AI API 调用策略已迁移到「AI 配置」页（/config/ai），
-        # 不再在全局配置页暴露，避免与多账号持久化配置产生双写与歧义。
+        (
+            "review_basic",
+            {
+                "label": "审查任务基础配置",
+                "icon": "activity",
+                "descriptions": {
+                    "max_concurrent_reviews": "同时进行的最大 PR 审查任务数，超出排队等待",
+                    "review_timeout_seconds": (
+                        "PR 审查、Issue 分析与仓库扫描共用的软超时时间（秒）；"
+                        "超时后在下一次 AI 调用时提示"
+                    ),
+                    "enable_auto_review": "启用后，Webhook 触发的 PR 变更将自动进入审查",
+                    "enable_check_runs": "启用 GitHub Check Runs 审查进度可视化",
+                    "enable_analysis_check": "启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+                    "enable_findings_check": "启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                    "analysis_min_interval_sec": "Analysis Check 快照写入 GitHub 的最小间隔（秒）",
+                    "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
+                },
+                "keys": [
+                    "max_concurrent_reviews",
+                    "review_timeout_seconds",
+                    "enable_auto_review",
+                    "enable_check_runs",
+                    "enable_analysis_check",
+                    "enable_findings_check",
+                    "analysis_min_interval_sec",
+                    "protocol_repair_max_attempts",
+                ],
+            },
+        ),
+        (
+            "web_search",
+            {
+                "label": "Web 搜索配置",
+                "icon": "search",
+                "descriptions": {
+                    "web_search_enabled": "启用后 AI 可搜索网页获取最新信息",
+                    "web_search_provider": "搜索结果提供引擎",
+                    "web_search_api_key": "Tavily 等提供商的 API Key（DuckDuckGo 无需填写）",
+                    "web_search_max_results": "单次搜索返回的最大结果数",
+                    "web_search_max_content_length": "单条结果注入上下文的最大字符数",
+                    "web_search_timeout": "单次搜索请求超时（秒）",
+                },
+                "keys": [
+                    "web_search_enabled",
+                    "web_search_provider",
+                    "web_search_api_key",
+                    "web_search_max_results",
+                    "web_search_max_content_length",
+                    "web_search_timeout",
+                ],
+            },
+        ),
         (
             "rag",
             {
@@ -1064,7 +1074,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "icon": "file-code",
                 "keys": [
                     "enable_code_index",
-                    "auto_index_pr_changes",
                     "code_chunk_size",
                     "code_chunk_overlap",
                 ],
@@ -1076,21 +1085,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "label": "审查策略配置",
                 "icon": "shield",
                 "keys": [
-                    "max_file_count",
-                    "max_line_count",
                     "enable_inline_comments",
-                ],
-            },
-        ),
-        (
-            "incremental_review",
-            {
-                "label": "增量审查配置",
-                "icon": "history",
-                "keys": [
-                    "enable_incremental_history_context",
-                    "incremental_history_max_reviews",
-                    "incremental_history_summary_max_tokens",
                 ],
             },
         ),
@@ -1109,9 +1104,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "PR 依赖图配置",
                 "icon": "git-branch",
+                # mode 由策略节表单（strategy.pr_dependency_graph 节）单键单写，
+                # 旧平铺键 pr_dependency_graph_mode 仅保持兼容读取，不再重复暴露
                 "keys": [
                     "enable_pr_dependency_graph",
-                    "pr_dependency_graph_mode",
                     "pr_dependency_graph_max_nodes",
                     "pr_dependency_graph_max_files",
                 ],
@@ -1136,9 +1132,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "icon": "check-circle",
                 "descriptions": {
                     "enable_issue_analysis": "启用后，系统将自动分析新创建的 Issue",
-                    "issue_auto_comment": "分析完成后自动在 Issue 下发布分析报告评论",
-                    "issue_confidence_threshold": "标签置信度阈值（0-1），AI 建议标签的置信度达到此值才会自动应用",
-                    "issue_auto_create_labels": "自动创建仓库中不存在的推荐标签",
                     "issue_auto_assign": "根据 AI 建议自动指派 Issue 负责人",
                     "issue_auto_rewrite_title": "AI 生成规范化标题并自动修改 Issue 标题（默认关闭）",
                     "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
@@ -1146,21 +1139,13 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_detect_duplicates": "启用后自动检测重复 Issue",
                     "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
                     "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
-                    "issue_max_tool_iterations": "AI 工具调用最大迭代次数，控制分析深度",
-                    "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
-                    "issue_max_directory_depth": "目录浏览的最大深度",
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
-                    "issue_max_comments_in_context": "分析时包含的最大评论条数（0=不限制，仅控制条目数不截断内容）",
-                    "issue_max_analysis_versions": "单个 Issue 最大分析版本数，超出归档最旧版本",
                 },
                 "keys": [
                     "enable_issue_analysis",
-                    "issue_auto_comment",
-                    "issue_confidence_threshold",
-                    "issue_auto_create_labels",
                     "issue_auto_assign",
                     "issue_auto_rewrite_title",
                     "issue_assignee_confidence_threshold",
@@ -1168,15 +1153,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_detect_duplicates",
                     "issue_suggest_assignees",
                     "issue_suggest_milestones",
-                    "issue_max_tool_iterations",
-                    "protocol_repair_max_attempts",
                     "issue_max_files_per_analysis",
-                    "issue_max_directory_depth",
                     "max_concurrent_issues",
                     "issue_vector_store_rich_metadata",
                     "issue_include_comments",
-                    "issue_max_comments_in_context",
-                    "issue_max_analysis_versions",
                 ],
             },
         ),
@@ -1189,85 +1169,33 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_repo_scan": "启用后，系统将定期扫描已安装仓库的代码，检测潜在问题",
                     "scan_interval_minutes": "定时扫描的间隔时间（分钟），默认 360 分钟（6小时）",
                     "scan_cooldown_hours": "同一仓库两次扫描之间的最小间隔（小时）",
-                    "scan_max_tokens_per_repo": "单个仓库每次扫描的 Token 消耗上限（0 表示无限制）",
-                    "scan_auto_create_issue": "扫描完成后是否自动在仓库中创建 Issue 报告",
                     "scan_send_telegram": "扫描完成后是否发送 Telegram 通知",
                     "scan_min_severity_for_issue": "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）",
-                    "scan_max_iterations": "扫描过程中 AI 工具调用的最大轮次数",
-                    "scan_context_safety_threshold": "扫描对话上下文安全阈值（0-1），超过后触发压缩",
-                    "scan_compression_threshold": "扫描对话压缩触发阈值（0-1），上下文占比达到该值时压缩历史",
-                    "scan_temperature": "扫描 AI 温度参数，越低越确定性，越高越创造性",
                 },
                 "keys": [
                     "enable_repo_scan",
                     "scan_interval_minutes",
                     "scan_cooldown_hours",
-                    "scan_max_tokens_per_repo",
-                    "scan_auto_create_issue",
                     "scan_send_telegram",
                     "scan_min_severity_for_issue",
-                    "scan_max_iterations",
-                    "scan_context_safety_threshold",
-                    "scan_compression_threshold",
-                    "scan_temperature",
-                ],
-            },
-        ),
-        (
-            "sakura_memory",
-            {
-                "label": "Sakura 记忆系统",
-                "icon": "brain",
-                "descriptions": {
-                    "sakura_memory_enabled": "启用 .sakura/ 记忆系统，在 PR 审查中自动积累项目知识",
-                    "sakura_reflection_enabled": "启用审查后反思，AI 会分析自身审查质量并总结经验",
-                    "sakura_issue_reflection_enabled": "启用 Issue 分析后反思，AI 会分析自身分类、标签推荐等质量并总结经验",
-                    "sakura_consolidation_interval": "积累多少轮反思后触发知识合并（建议 3-10）",
-                    "sakura_max_memory_chars": "memory.md 文件的最大字符数限制",
-                    "sakura_max_sakura_chars": "SAKURA.md 文件的最大字符数限制",
-                    "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
-                    "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
-                    "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
-                    "sakura_extraction_min_reflections": "知识提取间隔，每积累指定轮数反思后自动触发一次提取（默认 10）",
-                    "sakura_extraction_max_iterations": "每个分类提取时工具调用最大轮数（默认 15）",
-                    "sakura_consolidation_max_iterations": "合并 Agent 每个文件的最大工具调用轮数（默认 20）",
-                    "sakura_auto_create_subdirs": "初始化 .sakura/ 时自动创建 rules/docs/plans 子目录及占位文件",
-                },
-                "keys": [
-                    "sakura_memory_enabled",
-                    "sakura_reflection_enabled",
-                    "sakura_issue_reflection_enabled",
-                    "sakura_consolidation_interval",
-                    "sakura_max_memory_chars",
-                    "sakura_max_sakura_chars",
-                    "sakura_auto_init",
-                    "sakura_auto_create_subdirs",
-                    "sakura_consolidation_partial_commit",
-                    "sakura_knowledge_extraction_enabled",
-                    "sakura_extraction_min_reflections",
-                    "sakura_extraction_max_iterations",
-                    "sakura_consolidation_max_iterations",
                 ],
             },
         ),
         (
             "agent_team",
             {
-                "label": "Agent 专家团队",
+                "label": "Agent",
                 "icon": "bot",
                 "descriptions": {
-                    "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
+                    "agent_team_enabled": "启用后，超级管理员可手动创建和执行 Agent 任务；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
-                    "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
-                    "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
-                    "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
-                    "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
-                    "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
+                    "agent_team_run_tests": "提交前自动运行验证命令检查代码",
+                    "agent_team_test_command_blocklist": "Shell 命令黑名单（逗号分隔），在默认黑名单基础上额外拦截的命令。默认黑名单已包含 curl、wget、ssh、sudo 等高危命令。",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
                     "agent_team_candidate_cache_ttl": "候选池内存缓存有效期（秒），0 表示每次实时查询",
@@ -1276,27 +1204,16 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled",
                     "agent_team_workspace_root",
                     "agent_team_repo_allowlist",
-                    "agent_team_temperature",
-                    "agent_team_max_tokens",
-                    "agent_team_enable_context_compression",
-                    "agent_team_context_compression_threshold",
-                    "agent_team_context_summary_max_tokens",
-                    "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
-                    "agent_team_max_iterations_per_task",
-                    "agent_team_max_tool_rounds",
-                    "agent_team_reviewer_max_tool_rounds",
-                    "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_pr_closed_loop_enabled",
                     "agent_team_pr_review_pass_score",
                     "agent_team_pr_review_blocking_severities",
-                    "agent_team_max_files_changed",
-                    "agent_team_max_lines_changed",
                     "agent_team_run_tests",
                     "agent_team_auto_install_deps",
+                    "agent_team_test_command_blocklist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
                     "agent_team_candidate_cache_ttl",
@@ -1313,7 +1230,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_timeout": "抓取超时时间（秒）",
                     "fetch_url_max_content_length": "提取的纯文本最大长度（字符），超出部分截断",
                     "fetch_url_max_download_size": "原始 HTML 最大下载大小（字节），防止内存耗尽",
-                    "fetch_url_max_calls_per_session": "单次审查/分析会话中允许的最大抓取次数",
                     "fetch_url_domain_policy": "域名过滤策略：off（仅 IP 拦截）/ blacklist（黑名单）/ whitelist（白名单）",
                     "fetch_url_domain_list": "域名列表（逗号分隔），根据策略用作黑名单或白名单，支持 * 通配符",
                     "fetch_url_force_https": "强制仅允许 HTTPS 协议，拒绝 HTTP 明文传输",
@@ -1325,7 +1241,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_timeout",
                     "fetch_url_max_content_length",
                     "fetch_url_max_download_size",
-                    "fetch_url_max_calls_per_session",
                     "fetch_url_domain_policy",
                     "fetch_url_domain_list",
                     "fetch_url_force_https",
@@ -1450,8 +1365,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "star_aid_repo_daily_limit": "每个仓库每日新增自动 star 上限（0 表示不接受新 star）",
                     "star_aid_summary_enabled": "是否为展示仓库生成 AI 摘要",
                     "star_aid_summary_language": "AI 摘要语言，留空则跟随界面语言",
-                    "star_aid_summary_readme_budget": "生成摘要时传给 AI 的 README 字符预算（0=不限）；过大可能超出模型上下文导致摘要失败",
-                    "star_aid_summary_max_tokens": "生成摘要时允许模型输出的最大 token 数；思考模型需要更大值避免 content 为空",
                 },
                 "keys": [
                     "star_aid_enabled",
@@ -1464,8 +1377,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "star_aid_repo_daily_limit",
                     "star_aid_summary_enabled",
                     "star_aid_summary_language",
-                    "star_aid_summary_readme_budget",
-                    "star_aid_summary_max_tokens",
                 ],
             },
         ),
@@ -1477,6 +1388,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
     {
         "embedding_api_key",
         "rerank_api_key",
+        "web_search_api_key",
         "github_webhook_secret",
         "webui_secret_key",
         "github_oauth_client_secret",
@@ -1515,9 +1427,9 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "zh-CN", "label": "简体中文"},
         {"value": "en", "label": "English"},
     ],
-    "pr_dependency_graph_mode": [
-        {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
-        {"value": "static", "label": "静态分析（正则提取 import）"},
+    "web_search_provider": [
+        {"value": "duckduckgo", "label": "DuckDuckGo（免费）"},
+        {"value": "tavily", "label": "Tavily"},
     ],
     "agent_team_min_priority": [
         {"value": "critical", "label": "Critical"},
@@ -1533,7 +1445,13 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
 }
 
 # 数值范围限制
-DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
+# 上界为 None 表示仅约束下界（正整数等），不设硬编码上限
+DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
+    # 审查任务基础配置
+    "max_concurrent_reviews": (1, None),
+    "review_timeout_seconds": (1, None),
+    "analysis_min_interval_sec": (1, None),
+    "protocol_repair_max_attempts": (1, 10),
     # Web 搜索基础配置
     "web_search_max_results": (1, 100),
     "web_search_max_content_length": (100, 50000),
@@ -1542,35 +1460,13 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "rerank_score_threshold": (0.0, 1.0),
     "code_chunk_size": (100, 5000),
     "code_chunk_overlap": (0, 1000),
-    "model_context_window": (0, 2000),
-    "context_compression_threshold": (0.1, 1.0),
-    "max_file_count": (1, 100000),
-    "max_line_count": (100, 100000000),
-    "incremental_history_max_reviews": (1, 20),
-    "incremental_history_summary_max_tokens": (500, 128000),
     "pr_dependency_graph_max_nodes": (5, 100),
     "pr_dependency_graph_max_files": (5, 500),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
     "semantic_issue_max_links": (1, 200),
-    "issue_max_comments_in_context": (0, 5000),
-    "issue_max_analysis_versions": (1, 100),
     "agent_team_candidate_cache_ttl": (0, 3600),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
-    "scan_max_tokens_per_repo": (0, 5000000),
-    "scan_max_iterations": (1, 5000),
-    "scan_context_safety_threshold": (0.1, 1.0),
-    "scan_compression_threshold": (0.1, 1.0),
-    "scan_temperature": (0.0, 2.0),
-    # Sakura 记忆系统
-    "sakura_consolidation_interval": (1, 50),
-    "sakura_max_memory_chars": (500, 10000),
-    "sakura_max_sakura_chars": (1000, 20000),
-    "agent_team_max_tokens": (1024, 32768),
-    "agent_team_context_compression_threshold": (0.1, 1.0),
-    "agent_team_context_summary_max_tokens": (500, 8192),
-    "agent_team_max_tool_rounds": (1, 1000),
-    "agent_team_reviewer_max_tool_rounds": (5, 500),
     "agent_team_pr_review_pass_score": (1, 10),
     "max_concurrent_issues": (1, 500),
     # 初始用户配额
@@ -1595,12 +1491,26 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "star_aid_batch_size": (1, 100),
     "star_aid_user_daily_limit": (0, 1000),
     "star_aid_repo_daily_limit": (0, 10000),
-    "star_aid_summary_readme_budget": (0, 50000),
-    "star_aid_summary_max_tokens": (1, 64000),
 }
 
 # 字段中文标签
 DYNAMIC_CONFIG_LABELS: dict[str, str] = {
+    # 审查任务基础配置
+    "max_concurrent_reviews": "最大并发审查数",
+    "review_timeout_seconds": "PR/Issue/仓库扫描软超时（秒）",
+    "enable_auto_review": "启用 Webhook 自动审查",
+    "enable_check_runs": "启用 Check Runs 进度可视化",
+    "enable_analysis_check": "启用副 Analysis Check",
+    "enable_findings_check": "启用副 Findings Check",
+    "analysis_min_interval_sec": "Analysis 快照最小间隔（秒）",
+    "protocol_repair_max_attempts": "协议信封修复最大次数",
+    # Web 搜索配置
+    "web_search_enabled": "启用 Web 搜索",
+    "web_search_provider": "搜索提供商",
+    "web_search_api_key": "搜索 API Key",
+    "web_search_max_results": "最大结果数",
+    "web_search_max_content_length": "内容长度上限",
+    "web_search_timeout": "搜索超时（秒）",
     "enable_rag": "启用 RAG",
     "chroma_persist_dir": "ChromaDB 存储路径",
     "embedding_model": "嵌入模型",
@@ -1614,19 +1524,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "rerank_api_key": "重排序 API Key",
     "rerank_score_threshold": "重排序分数阈值",
     "enable_code_index": "启用代码索引",
-    "auto_index_pr_changes": "自动索引 PR 变更",
     "code_chunk_size": "代码块大小",
     "code_chunk_overlap": "代码块重叠",
-    "model_context_window": "上下文窗口大小",
-    "enable_context_compression": "启用上下文压缩",
-    "context_compression_threshold": "压缩触发阈值",
-    "max_file_count": "最大文件数",
-    "max_line_count": "最大行数",
-    "enable_incremental_history_context": "启用增量审查历史上下文",
     "enable_inline_comments": "启用行内评论",
     "enable_pr_summary": "启用 PR 变更总结",
-    "incremental_history_max_reviews": "历史审查轮数上限",
-    "incremental_history_summary_max_tokens": "摘要生成最大 Token",
     "enable_pr_dependency_graph": "启用 PR 依赖图",
     "pr_dependency_graph_mode": "PR 依赖图模式",
     "pr_dependency_graph_max_nodes": "依赖图最大节点数",
@@ -1677,28 +1578,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_repo_scan": "启用仓库扫描",
     "scan_interval_minutes": "扫描间隔（分钟）",
     "scan_cooldown_hours": "扫描冷却时间（小时）",
-    "scan_max_tokens_per_repo": "单仓库 Token 预算（0=无限制）",
-    "scan_auto_create_issue": "自动创建 Issue 报告",
     "scan_send_telegram": "发送 Telegram 通知",
     "scan_min_severity_for_issue": "创建 Issue 最低严重性",
-    "scan_max_iterations": "扫描最大轮次",
-    "scan_context_safety_threshold": "扫描上下文安全阈值",
-    "scan_compression_threshold": "扫描压缩阈值",
-    "scan_temperature": "扫描 AI 温度",
     # Sakura 记忆系统
-    "sakura_memory_enabled": "启用记忆系统",
-    "sakura_reflection_enabled": "启用审查反思",
-    "sakura_issue_reflection_enabled": "启用 Issue 反思",
-    "sakura_consolidation_interval": "合并触发反思轮数",
-    "sakura_max_memory_chars": "memory.md 最大字符数",
-    "sakura_max_sakura_chars": "SAKURA.md 最大字符数",
-    "sakura_auto_init": "自动初始化 .sakura/",
-    "sakura_consolidation_partial_commit": "部分提交",
-    "sakura_knowledge_extraction_enabled": "启用知识提取",
-    "sakura_extraction_min_reflections": "提取间隔反思数",
-    "sakura_extraction_max_iterations": "提取最大迭代轮数",
-    "sakura_consolidation_max_iterations": "合并最大迭代轮数",
-    "sakura_auto_create_subdirs": "自动创建子目录",
     # 国际化配置
     "default_language": "默认界面语言",
     "output_language": "AI 输出语言",
@@ -1707,7 +1589,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_timeout": "抓取超时（秒）",
     "fetch_url_max_content_length": "最大内容长度",
     "fetch_url_max_download_size": "最大下载大小（字节）",
-    "fetch_url_max_calls_per_session": "单次会话最大抓取次数",
     "fetch_url_domain_policy": "域名过滤策略",
     "fetch_url_domain_list": "域名列表",
     "fetch_url_force_https": "强制 HTTPS",
@@ -1715,9 +1596,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_max_redirects": "最大重定向次数",
     # Issue 分析配置
     "enable_issue_analysis": "启用 Issue 分析",
-    "issue_auto_comment": "自动发布分析评论",
-    "issue_confidence_threshold": "标签置信度阈值",
-    "issue_auto_create_labels": "自动创建标签",
     "issue_auto_assign": "自动指派负责人",
     "issue_auto_rewrite_title": "自动改写 Issue 标题",
     "issue_assignee_confidence_threshold": "指派人置信度阈值",
@@ -1725,38 +1603,23 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_detect_duplicates": "检测重复 Issue",
     "issue_suggest_assignees": "推荐指派人",
     "issue_suggest_milestones": "推荐里程碑",
-    "issue_max_tool_iterations": "工具最大迭代次数",
     "issue_max_files_per_analysis": "单次分析最大文件数",
-    "issue_max_directory_depth": "目录最大深度",
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_include_comments": "分析时包含评论对话",
-    "issue_max_comments_in_context": "最大评论条数（0=不限制）",
-    "issue_max_analysis_versions": "最大分析版本数",
-    # Agent 专家团队
-    "agent_team_enabled": "启用 Agent 专家团队",
+    # Agent
+    "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_temperature": "温度参数",
-    "agent_team_max_tokens": "最大 Tokens",
-    "agent_team_enable_context_compression": "启用上下文压缩",
-    "agent_team_context_compression_threshold": "上下文压缩阈值",
-    "agent_team_context_summary_max_tokens": "上下文摘要最大 Tokens",
-    "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
-    "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
-    "agent_team_max_tool_rounds": "工具调用最大轮次",
-    "agent_team_reviewer_max_tool_rounds": "审查工具调用最大轮次",
-    "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_pr_closed_loop_enabled": "启用 Agent PR 闭环",
     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",
     "agent_team_pr_review_blocking_severities": "Agent PR 阻塞严重级别",
-    "agent_team_max_files_changed": "最大修改文件数",
-    "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
+    "agent_team_test_command_blocklist": "Shell 命令黑名单",
     "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
@@ -1789,8 +1652,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "star_aid_repo_daily_limit": "仓库每日 Star 上限",
     "star_aid_summary_enabled": "启用 AI 摘要",
     "star_aid_summary_language": "摘要语言",
-    "star_aid_summary_readme_budget": "README 字符预算",
-    "star_aid_summary_max_tokens": "摘要最大 Tokens",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
@@ -2107,9 +1968,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "web_search_max_results",
         "web_search_max_content_length",
         "web_search_timeout",
-        "issue_auto_create_labels",
         "issue_auto_assign",
-        "issue_max_tool_iterations",
         "protocol_repair_max_attempts",
     }
 )

@@ -1,4 +1,5 @@
 """实时活动事件服务 — 持久化事件 + SSE 推送，驱动前端对话流 UI。"""
+
 import json
 from typing import Any
 

@@ -47,7 +47,7 @@ jobs:
       immutable_tag: ${{ steps.tags.outputs.immutable_tag }}
     steps:
       - name: 检出代码（固定到 source_ref）
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -66,7 +66,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 安装 crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.7
 
       # 计算标签和可信构建身份。所有 channel/输入均 fail closed；开发构建
       # 同一 digest 同时写 edge 与可追溯 immutable tag，不能重复构建。
@@ -254,7 +254,7 @@ jobs:
 
       - name: 安装 crane
         if: steps.credentials.outputs.available == 'true'
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.7
 
       - name: 登录 Docker Hub
         if: steps.credentials.outputs.available == 'true'

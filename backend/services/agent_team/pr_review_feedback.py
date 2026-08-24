@@ -167,20 +167,10 @@ class AgentTeamPRReviewFeedbackService:
                     action="completed",
                 )
 
-            iteration_count = int(getattr(task, "iteration_count", 0) or 0)
-            max_iterations = int(getattr(task, "max_iterations", 0) or 0)
-            at_iteration_limit = (
-                max_iterations > 0 and iteration_count >= max_iterations
-            )
-            if outcome == AgentPRReviewOutcome.WAITING_HUMAN or at_iteration_limit:
+            if outcome == AgentPRReviewOutcome.WAITING_HUMAN:
                 task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
                 task.current_phase = AgentTeamTaskStatus.WAITING_HUMAN.value
-                if at_iteration_limit:
-                    task.error_message = (
-                        "达到 Agent 最大迭代轮数，请人工处理 Sakura PR Review 反馈。"
-                    )
-                else:
-                    task.error_message = "Sakura PR Review 结果需要人工确认。"
+                task.error_message = "Sakura PR Review 结果需要人工确认。"
                 await session.commit()
                 return AgentPRReviewFeedbackResult(
                     True,
@@ -231,25 +221,32 @@ class AgentTeamPRReviewFeedbackService:
         # 策略 2: 源 PR 被再次审查时回环到同一 Agent 任务
         # 当 Agent 修复 PR 合并回源 PR 后，源 PR 的新审查 review.branch 是源 PR 分支，
         # 无法直接匹配 Agent 任务的 branch_name（修复分支）。
-        # 此时通过 pr_review 来源 + 同 repo + 非终态查找原 Agent 任务。
-        # 安全性说明：build_pr_review_task_draft 的 duplicate guard 确保同 repo 最多只有
-        # 一个非终态 PR_REVIEW 任务，因此 repo + source_type + 非终态 足以唯一标识。
-        # PRReview.pr_id 是 GitHub node ID，无法直接与 source_issue_number（PR number）关联。
+        # 此时通过 pr_review 来源 + 同 repo + 同源 PR number + 非终态查找原 Agent 任务。
+        # 安全性说明：AgentTeamTask.source_issue_number 与 PRReview.pr_number 同为
+        # 仓库本地 PR number，二者相等即同一 PR；duplicate guard（candidate_service
+        # #build_pr_review_task_draft）按 repo + pr_number 阻止同 PR 重复任务，但
+        # 不同 PR 可并存非终态任务，因此这里必须限定 pr_number，防止错绑其他
+        # PR 的 Agent 任务。
+        conditions = [
+            AgentTeamTask.repo_owner == review.repo_owner,
+            AgentTeamTask.repo_name == review.repo_name,
+            AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+            AgentTeamTask.status.notin_(
+                [
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.ABANDONED.value,
+                    AgentTeamTaskStatus.COMPLETED.value,
+                ]
+            ),
+        ]
+        # 历史数据 pr_number 可能为空（列 nullable），无法精确关联时保持原
+        # repo 级回退，宁可少处理也不错绑。
+        if review.pr_number is not None:
+            conditions.append(AgentTeamTask.source_issue_number == review.pr_number)
         statement = (
             select(AgentTeamTask)
-            .where(
-                AgentTeamTask.repo_owner == review.repo_owner,
-                AgentTeamTask.repo_name == review.repo_name,
-                AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
-                AgentTeamTask.status.notin_(
-                    [
-                        AgentTeamTaskStatus.FAILED.value,
-                        AgentTeamTaskStatus.CANCELLED.value,
-                        AgentTeamTaskStatus.ABANDONED.value,
-                        AgentTeamTaskStatus.COMPLETED.value,
-                    ]
-                ),
-            )
+            .where(*conditions)
             .order_by(AgentTeamTask.updated_at.desc())
             .limit(1)
         )

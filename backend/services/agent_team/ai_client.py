@@ -3,26 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import get_dynamic_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 
 async def resolve_agent_team_max_iterations(
     task_max_iterations: int | None = None,
 ) -> int:
-    """读取 Agent 单任务最大迭代轮数（公共辅助函数）。"""
-    fallback = get_settings().agent_team_max_iterations_per_task
-    raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
-    effective_fallback = (
-        task_max_iterations if task_max_iterations is not None else fallback
-    )
+    """Compatibility shim for callers that still pass a legacy run value.
+
+    The value is no longer read from Settings or dynamic configuration, and
+    the Agent does not use it as a lifecycle limit. Keeping
+    this import-compatible helper lets older route/worker deployments start
+    while they migrate away from the retired task field.
+    """
+    if task_max_iterations is None:
+        return 1
     try:
-        value = int(raw_value if raw_value is not None else effective_fallback)
+        return max(1, int(task_max_iterations))
     except TypeError, ValueError:
-        value = fallback
-    return max(1, value)
+        return 1
 
 
 async def resolve_agent_team_bool_config(key: str, fallback: bool) -> bool:
@@ -37,60 +38,64 @@ async def resolve_agent_team_bool_config(key: str, fallback: bool) -> bool:
 
 @dataclass(frozen=True)
 class AgentTeamAIConfig:
-    """Agent Team 的角色绑定与调用策略快照。
+    """Agent 的角色绑定信息。
 
-    Endpoint、凭据、模型及其推理参数（temperature/max_tokens/上下文窗口）均由
-    统一协议层按角色绑定的 reasoning_params 实时解析，不在此快照中保存。
-    这里仅保留角色名与 HTTP 超时策略。
+    单次 AI 传输的连接、读取、重试和取消保护由统一协议客户端负责。Agent
+    不再携带一个会终止整项任务的 timeout 或 max-iterations 快照。
     """
 
     agent_role: str
     summary_role: str
-    timeout_seconds: int
 
-    def safe_snapshot(self) -> dict[str, Any]:
-        """返回可持久化的配置快照。"""
+    def __post_init__(self) -> None:
+        # ``agent`` is the persisted session/UI identity, not an AI registry
+        # role. Normalize legacy callers at construction time as well as when
+        # unpickling an old compatibility snapshot.
+        if self.agent_role == "agent":
+            object.__setattr__(self, "agent_role", "agent_team")
+
+    def safe_snapshot(self) -> dict[str, str]:
+        """Return the non-sensitive role binding for compatibility readers.
+
+        This is intentionally not persisted by the worker and contains no
+        endpoint, credential, timeout, model, or task-loop budget.
+        """
         return {
             "agent_role": self.agent_role,
             "summary_role": self.summary_role,
-            "timeout_seconds": self.timeout_seconds,
         }
 
-    def as_safe_dict(self) -> dict[str, Any]:
-        """返回安全字典。"""
+    as_safe_dict = safe_snapshot
+
+    def __getstate__(self) -> dict[str, str]:
         return self.safe_snapshot()
 
-    def __getstate__(self) -> dict[str, Any]:
-        """pickle 等隐式序列化时仅暴露安全快照。"""
-        return self.safe_snapshot()
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """从安全快照恢复对象。"""
-        object.__setattr__(self, "agent_role", state.get("agent_role", "agent_team"))
+    def __setstate__(self, state: dict[str, str]) -> None:
+        agent_role = state.get("agent_role", "agent_team")
+        # Older snapshots used the persisted session identity here.  Normalize
+        # that legacy value at the AI boundary; session role migration remains
+        # a separate compatibility concern.
+        if agent_role == "agent":
+            agent_role = "agent_team"
+        object.__setattr__(
+            self,
+            "agent_role",
+            agent_role,
+        )
         object.__setattr__(self, "summary_role", state.get("summary_role", "summary"))
-        object.__setattr__(self, "timeout_seconds", state.get("timeout_seconds", 0))
-
-
-def _value_or(value: Any, default: Any) -> Any:
-    """仅在值为 None 时使用默认值，保留显式 0/False。"""
-    return default if value is None else value
-
-
-async def _config_value(key: str, default: Any = "") -> Any:
-    return _value_or(await get_dynamic_config(key), default)
 
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
-    """只加载 Agent Team 的角色名称与 HTTP 超时策略。
+    """加载唯一 Agent 的角色绑定。
 
-    temperature/max_tokens 不再在此读取：由 unified client 按角色绑定的
-    reasoning_params 实时解析（call_with_retry 传入 None 即回退到 candidate）。
+    temperature/max_tokens 以及单次请求的超时和重试策略由 unified client
+    按角色绑定实时解析；这里不读取 Agent 专属动态配置。
     """
-    timeout_seconds = await _config_value("agent_team_timeout_seconds", 600)
     return AgentTeamAIConfig(
+        # ``agent`` is the persisted session/UI identity.  The unified AI
+        # role registry uses the historical role ID ``agent_team``.
         agent_role="agent_team",
         summary_role="summary",
-        timeout_seconds=int(timeout_seconds),
     )
 
 

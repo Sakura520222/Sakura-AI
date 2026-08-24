@@ -12,10 +12,15 @@ from sakura_ai_updater.release_client import (
 
 
 def test_request_failure_detail_is_safe_and_typed():
-    assert _request_failure_detail(URLError("certificate verify failed")) == "url_error_str"
+    assert (
+        _request_failure_detail(URLError("certificate verify failed"))
+        == "url_error_str"
+    )
     missing = FileNotFoundError(2, "missing", "/secret/path/libexample.so")
     assert _request_failure_detail(URLError(missing)) == "file_not_found_libexample.so"
-    assert _request_failure_detail(json.JSONDecodeError("bad", "x", 0)) == "invalid_json"
+    assert (
+        _request_failure_detail(json.JSONDecodeError("bad", "x", 0)) == "invalid_json"
+    )
 
 
 @pytest.mark.asyncio
@@ -97,7 +102,9 @@ async def test_release_client_latest_uses_max_strict_stable_semver_not_timestamp
 
 
 @pytest.mark.asyncio
-async def test_release_client_uses_previous_result_when_github_is_unavailable(monkeypatch):
+async def test_release_client_uses_previous_result_when_github_is_unavailable(
+    monkeypatch,
+):
     client = ReleaseClient(api_url="https://example.invalid/releases")
     previous = [{"tag_name": "v3.0.0", "draft": False, "prerelease": False}]
     client._last_releases = previous
@@ -132,4 +139,3 @@ async def test_required_assets_include_updater_binary_and_sha256sums(monkeypatch
     # CI on arm64 should ask for its own asset; this test only verifies the
     # method shape and SHA256SUMS gate on whichever host executes it.
     assert isinstance(await client.has_required_assets(manifest, "3.1.0"), bool)
-
