@@ -638,6 +638,7 @@ class UnifiedAIClient:
                 response.meta.context_window_tokens = (
                     candidate.model.context_window_tokens
                 )
+                response.meta.served_capabilities = candidate.model.capabilities
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
                 self._last_successful[role] = candidate.sticky_identity
                 logger.info(
@@ -733,6 +734,9 @@ class UnifiedAIClient:
                         recovered.meta.served_by = served_by
                         recovered.meta.context_window_tokens = (
                             candidate.model.context_window_tokens
+                        )
+                        recovered.meta.served_capabilities = (
+                            candidate.model.capabilities
                         )
                         # 压缩重试成功仍属于该候选，记录 sticky
                         self._last_successful[role] = candidate.sticky_identity

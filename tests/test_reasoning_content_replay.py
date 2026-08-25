@@ -75,9 +75,15 @@ def test_model_does_not_support_reasoning_content(model_name):
 class _ToolLoopFakeClient:
     """两轮响应：第一轮带 tool_calls + reasoning_content，第二轮交付审查。"""
 
-    def __init__(self, served_by: str | None, role_model: str = "test-model"):
+    def __init__(
+        self,
+        served_by: str | None,
+        role_model: str = "test-model",
+        served_capabilities: SimpleNamespace | None = None,
+    ):
         self._served_by = served_by
         self._role_model = role_model
+        self._served_capabilities = served_capabilities
         self.calls = []
 
     async def resolve_role_model_context(self, role):
@@ -99,7 +105,10 @@ class _ToolLoopFakeClient:
             )
             choice = SimpleNamespace(message=message)
             usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
-            meta = SimpleNamespace(served_by=self._served_by or "")
+            meta_kwargs = {"served_by": self._served_by or ""}
+            if self._served_capabilities is not None:
+                meta_kwargs["served_capabilities"] = self._served_capabilities
+            meta = SimpleNamespace(**meta_kwargs)
             return SimpleNamespace(choices=[choice], usage=usage, meta=meta)
         message = SimpleNamespace(content=VALID_REVIEW, tool_calls=[])
         choice = SimpleNamespace(message=message)
@@ -206,3 +215,55 @@ async def test_tool_loop_drops_reasoning_content_for_unsupported_model(monkeypat
         m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")
     ]
     assert "reasoning_content" not in assistant_turns[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_prefers_served_capabilities_over_model_name(monkeypatch):
+    """winner 有效能力（含 ai_model_override 覆盖）优先于模型名判定。
+
+    管理员为 deepseek-v4-flash 关闭 reasoning_content 后，即使模型名判定
+    为支持，也不得回传该字段。
+    """
+    _patch_strategy_config(monkeypatch)
+    fake_client = _ToolLoopFakeClient(
+        served_by="deepseek/deepseek-v4-flash",
+        served_capabilities=SimpleNamespace(reasoning_content=False),
+    )
+    reviewer = _build_reviewer(fake_client)
+
+    messages = await _run_single_tool_round(reviewer)
+
+    assistant_turns = [
+        m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
+    assert "reasoning_content" not in assistant_turns[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_uses_served_capabilities_for_custom_model(monkeypatch):
+    """winner 能力声明 reasoning_content=True 时，目录外自定义模型也回传。"""
+    _patch_strategy_config(monkeypatch)
+    fake_client = _ToolLoopFakeClient(
+        served_by="custom/my-private-model",
+        served_capabilities=SimpleNamespace(reasoning_content=True),
+    )
+    reviewer = _build_reviewer(fake_client)
+
+    messages = await _run_single_tool_round(reviewer)
+
+    assistant_turns = [
+        m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
+    assert assistant_turns[0]["reasoning_content"] == "thinking about the diff"
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_syncs_served_model_to_context_compressor(monkeypatch):
+    """实际 winner 模型名须同步给压缩器，避免压缩回退清理误剥保留字段。"""
+    _patch_strategy_config(monkeypatch)
+    fake_client = _ToolLoopFakeClient(served_by="deepseek/deepseek-v4-flash")
+    reviewer = _build_reviewer(fake_client)
+
+    await _run_single_tool_round(reviewer)
+
+    assert reviewer.context_compressor.model == "deepseek-v4-flash"
