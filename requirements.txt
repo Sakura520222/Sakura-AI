@@ -14,7 +14,7 @@ httpx>=0.28.1
 
 # 数据库
 sqlalchemy>=2.0.52,<2.1
-asyncmy>=0.2.11
+asyncmy>=0.2.14
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.18.5
 
