@@ -474,13 +474,24 @@ class AIReviewer:
                 "content": assistant_message.content,
                 "tool_calls": [_coerce_tool_call_to_dict(tc) for tc in tool_calls],
             }
-            strategy_config = get_strategy_config()
+            # 判定优先用实际 winner 的有效能力（已含 ai_model_override
+            # 覆盖，管理员关闭某模型的 reasoning_content 时此处为 False）；
+            # 响应未携带能力信息时回退模型名判定（Issue #529）
+            served_caps = getattr(
+                getattr(response, "meta", None), "served_capabilities", None
+            )
+            if served_caps is not None:
+                supports_reasoning = served_caps.reasoning_content
+            else:
+                supports_reasoning = (
+                    get_strategy_config().is_model_supports_reasoning_content(
+                        context_model or ""
+                    )
+                )
             if (
                 hasattr(assistant_message, "reasoning_content")
                 and assistant_message.reasoning_content
-                and strategy_config.is_model_supports_reasoning_content(
-                    context_model or ""
-                )
+                and supports_reasoning
             ):
                 assistant_msg_dict["reasoning_content"] = (
                     assistant_message.reasoning_content
@@ -535,6 +546,10 @@ class AIReviewer:
             # 相关判断必须基于实际 winner（Issue #529：此前判定传空字符串
             # 导致思考轨迹在工具循环中恒被丢弃）
             context_model = _resolve_served_model(response, context_model)
+            # 压缩（含失败回退的 _clean_message_for_model）也须按实际 winner
+            # 判定 reasoning_content 去留，否则主循环保留的字段会在压缩
+            # 回退时又被剥掉
+            self.context_compressor.model = context_model or ""
             reported_context_tokens = tracker.log_context_usage(
                 response,
                 context_window_tokens,
@@ -954,9 +969,10 @@ class AIReviewer:
                 if self.enable_compression:
                     settings = get_settings()
                     (
-                        _ctx_model_id,
+                        served_model_id,
                         ctx_tokens,
                     ) = await self.api_client.resolve_role_model_context("main")
+                    self.context_compressor.model = served_model_id or ""
                     if ctx_tokens and ctx_tokens > 0:
                         safe_context = int(
                             ctx_tokens * settings.context_safety_threshold
