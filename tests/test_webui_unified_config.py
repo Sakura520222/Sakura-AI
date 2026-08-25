@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -269,6 +270,30 @@ def test_depgraph_mode_removed_from_dynamic_group():
     assert "enable_pr_dependency_graph" in depgraph_keys
 
 
+def test_depgraph_template_falls_back_to_static_mode():
+    """模板上下文缺少 mode 时应与运行时默认值一致地选择 static。"""
+    template = (
+        Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_unified.html"
+    ).read_text(encoding="utf-8")
+
+    assert template.count("dg.get('mode', 'static')") == 2
+    assert "dg.get('mode', 'ai')" not in template
+
+
+def test_issue_config_hint_excludes_removed_auto_comment_toggle():
+    zh = (
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "zh-CN.yaml"
+    ).read_text(encoding="utf-8")
+    en = (
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "en.yaml"
+    ).read_text(encoding="utf-8")
+
+    zh_hint = next(line for line in zh.splitlines() if "issue_config_hint:" in line)
+    en_hint = next(line for line in en.splitlines() if "issue_config_hint:" in line)
+    assert "自动评论" not in zh_hint
+    assert "auto comment" not in en_hint.lower()
+
+
 # ---------- general/save 通用循环 ----------
 
 
@@ -426,6 +451,123 @@ async def test_general_save_rejects_unknown_web_search_provider(
         csrf_token="t",
     )
     assert calls and calls[0]["args"][1] == "toast.value_invalid"
+
+
+@pytest.mark.asyncio
+async def test_general_save_prevalidates_all_fields_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """后面的非法整数不能留下前面字段的 DB、缓存或热加载副作用。"""
+    _patch_save_deps(monkeypatch)
+    side_effects: list[tuple] = []
+    monkeypatch.setattr(
+        "backend.core.config.invalidate_dynamic_config_cache",
+        lambda keys: side_effects.append(("invalidate", tuple(keys))),
+    )
+    monkeypatch.setattr(
+        "backend.core.config.update_settings_field",
+        lambda key, value: side_effects.append(("settings", key, value)),
+    )
+
+    class _NoDbAccess(_FakeSession):
+        async def execute(self, _stmt):
+            raise AssertionError("非法输入预校验阶段不应访问数据库")
+
+    db = _NoDbAccess()
+    response = await config_routes.save_general_config(
+        _FormRequest(
+            {
+                "max_concurrent_reviews": "7",
+                "review_timeout_seconds": "1.5",
+            }
+        ),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert response.status_code == 302
+    assert db.added == []
+    assert db.committed is False
+    assert side_effects == []
+
+
+@pytest.mark.asyncio
+async def test_general_save_rejects_fractional_integer_without_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """整数配置拒绝 1.5，而不是先转成浮点再截断。"""
+    _patch_save_deps(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_toast_redirect(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return object()
+
+    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
+    db = _FakeSession()
+    await config_routes.save_general_config(
+        _FormRequest({"max_concurrent_reviews": "1.5"}),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert calls and calls[0]["args"][1] == "toast.numeric_required"
+    assert db.added == []
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity"])
+async def test_general_save_rejects_non_finite_float_without_side_effects(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+):
+    """浮点配置只接受有限值，NaN/Infinity 不能绕过范围比较。"""
+    _patch_save_deps(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_toast_redirect(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return object()
+
+    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
+    db = _FakeSession()
+    await config_routes.save_general_config(
+        _FormRequest({"rerank_score_threshold": raw}),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert calls and calls[0]["args"][1] == "toast.numeric_required"
+    assert db.added == []
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_general_save_serializes_finite_float_and_bool_values(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """有限浮点正常保存，复选框布尔值统一使用小写文本。"""
+    _patch_save_deps(monkeypatch)
+    db = _FakeSession()
+    response = await config_routes.save_general_config(
+        _FormRequest(
+            {
+                "rerank_score_threshold": "0.25",
+                "enable_auto_review": "TRUE",
+            }
+        ),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert response.status_code == 302
+    saved = {row.key_name: row.key_value for row in db.added}
+    assert saved["rerank_score_threshold"] == "0.25"
+    assert saved["enable_auto_review"] == "true"
 
 
 # ---------- 统一保存 save-all ----------

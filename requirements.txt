@@ -1,6 +1,6 @@
 # Web框架
 fastapi>=0.141.1,<1.0.0
-starlette>=0.40.0,<1.0.0
+starlette>=1.6.0,<2.0.0
 uvicorn[standard]>=0.52.1
 python-multipart>=0.0.32
 
@@ -14,7 +14,7 @@ httpx>=0.28.1
 
 # 数据库
 sqlalchemy>=2.0.52,<2.1
-asyncmy>=0.2.11
+asyncmy>=0.2.14
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.18.5
 
@@ -42,12 +42,12 @@ watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
 # 支付网关
-stripe>=9.0.0
+stripe>=15.5.1
 paddle-python-sdk>=1.15.0
 
 # WebUI
 jinja2>=3.1.6
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 itsdangerous>=2.2.0
 pyotp>=2.10.0
 qrcode[pil]>=8.2

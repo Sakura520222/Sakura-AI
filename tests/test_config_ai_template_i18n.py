@@ -107,3 +107,20 @@ def test_config_ai_has_no_raw_chinese_js_state_or_unsafe_html_message_path():
     assert "p.textContent = message" in script
     assert "confirm(aiText('accountDeleteConfirm'))" in script
     assert "innerHTML" not in script
+
+
+def test_config_ai_model_selects_match_account_provider_controls():
+    source = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert source.count('x-model="form.default_model"') == 1
+    assert source.count('x-model="bindings[role].primary.model"') == 1
+    assert source.count('x-model="fb.model"') == 1
+    assert source.count('option value="" hidden') == 3
+    assert source.count('@change="form.default_model = $event.target.value;') == 1
+    assert source.count('@change="bindings[role].primary.model = $event.target.value;') == 1
+    assert source.count('@change="fb.model = $event.target.value;') == 1
+    assert "toggleModelPicker" not in source
+    assert "modelPickerOpen" not in source
+    assert '<option value="" selected>' not in source
+    assert "accountModels(bindings[role].primary.account, bindings[role].primary.model)" in source
+    assert "accountModels(fb.account, fb.model)" in source

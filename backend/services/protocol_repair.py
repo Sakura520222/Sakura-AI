@@ -5,16 +5,61 @@ review/issue 两侧 caller 把各自差异（解析器、错误类型、修复�
 作为参数传入，调用同一份实现。
 """
 
+import json
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from loguru import logger
 
+from backend.services.ai_task_deadline import AITaskDeadline
 from backend.webui.sse import publish_event
 
 VIOLATION_SUFFIX = "\n\nSpecific violation in your previous response:\n{error}"
 
 _SIDE_BY_LABEL = {"审查": "review", "Issue 分析": "issue", "扫描": "scan"}
+
+ProtocolRepairBeforeCall = Callable[
+    [list[dict[str, Any]], dict[str, Any]],
+    Awaitable[dict[str, Any] | None] | dict[str, Any] | None,
+]
+
+TIMEOUT_TOOL_ERROR = (
+    "Task deadline reached; this tool call was not executed."
+)
+
+
+def _tool_call_id(tool_call: Any) -> Any:
+    """Return a tool-call id from either an SDK object or a normalized dict."""
+    if isinstance(tool_call, dict):
+        return tool_call.get("id", "")
+    return getattr(tool_call, "id", "")
+
+
+async def append_skipped_tool_results(
+    messages: list[dict[str, Any]],
+    tool_calls: list[Any],
+    *,
+    event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+) -> None:
+    """Close tool-call turns without executing tools after a soft deadline.
+
+    Providers require one ``role=tool`` message for every tool call in the
+    preceding assistant turn.  This helper preserves that protocol envelope
+    for both SDK tool-call objects and normalized dictionaries, while keeping
+    the existing ``message`` event shape used by the WebUI.
+    """
+    for tool_call in tool_calls:
+        tool_message = {
+            "role": "tool",
+            "tool_call_id": _tool_call_id(tool_call),
+            "content": json.dumps(
+                {"error": TIMEOUT_TOOL_ERROR},
+                ensure_ascii=False,
+            ),
+        }
+        messages.append(tool_message)
+        if event_callback is not None:
+            await _emit_event(event_callback, "message", tool_message)
 
 
 async def run_protocol_repair_loop(
@@ -36,6 +81,10 @@ async def run_protocol_repair_loop(
     on_repaired: Callable[[str, str, dict[str, Any]], Awaitable[None]] | None = None,
     on_parse_failure: Callable[[BaseException], Awaitable[None]] | None = None,
     attempt_kind: str = "protocol_repair",
+    cancel_event: Any = None,
+    deadline: AITaskDeadline | None = None,
+    before_call: ProtocolRepairBeforeCall | None = None,
+    pre_call: ProtocolRepairBeforeCall | None = None,
 ) -> dict[str, Any]:
     """Run up to ``max_attempts`` cumulative format-only repair rounds.
 
@@ -62,6 +111,10 @@ async def run_protocol_repair_loop(
     current_text = final_text
     repair_messages = list(base_messages)  # tool-loop 历史（不含 final turn）
 
+    if before_call is not None and pre_call is not None:
+        raise ValueError("before_call and pre_call are mutually exclusive")
+    pre_call_control = before_call or pre_call
+
     for attempt in range(1, max_attempts + 1):
         instruction = repair_instruction + VIOLATION_SUFFIX.format(error=last_error)
         repair_messages = [
@@ -84,16 +137,39 @@ async def run_protocol_repair_loop(
             outcome="attempting",
         )
 
+        call_kwargs: dict[str, Any] = {
+            "model": "",
+            "messages": repair_messages,
+            "temperature": 0,
+            "role": "main",
+            "cancel_event": cancel_event,
+            "context": invocation_context,
+            "observer": observer,
+            "attempt_kind": attempt_kind,
+        }
+        if pre_call_control is not None:
+            controlled_kwargs = pre_call_control(repair_messages, call_kwargs)
+            if hasattr(controlled_kwargs, "__await__"):
+                controlled_kwargs = await controlled_kwargs
+            if controlled_kwargs:
+                call_kwargs.update(controlled_kwargs)
+
+        if deadline is not None:
+            prompt_was_sent = deadline.timeout_prompt_sent
+            call_kwargs.update(deadline.prepare_call(repair_messages))
+            if (
+                not prompt_was_sent
+                and deadline.timeout_prompt_sent
+                and event_callback is not None
+            ):
+                await _emit_event(
+                    event_callback,
+                    "message",
+                    {"role": "user", "content": repair_messages[-1]["content"]},
+                )
+
         try:
-            response = await api_client.call_with_retry(
-                model="",
-                messages=repair_messages,
-                temperature=0,
-                role="main",
-                context=invocation_context,
-                observer=observer,
-                attempt_kind=attempt_kind,
-            )
+            response = await api_client.call_with_retry(**call_kwargs)
         except Exception as call_error:
             logger.error(
                 "{label} 协议修复调用失败（第 {n} 轮），降级: {err}",

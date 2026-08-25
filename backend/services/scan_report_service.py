@@ -2,6 +2,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from telegram.helpers import escape_markdown
 
 from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.config import get_settings
@@ -134,6 +135,16 @@ def _format_duration(scan) -> str:
     if delta < 3600:
         return f"{int(delta // 60)}m{int(delta % 60)}s"
     return f"{int(delta // 3600)}h{int((delta % 3600) // 60)}m"
+
+
+def _escape_telegram_markdown(value: str, max_length: int) -> str:
+    """Escape untrusted Markdown and avoid ending on a dangling escape."""
+    escaped = escape_markdown(value, version=1)
+    truncated = escaped[:max_length]
+    trailing_slashes = len(truncated) - len(truncated.rstrip("\\"))
+    if trailing_slashes % 2:
+        truncated = truncated[:-1]
+    return truncated
 
 
 def _finding_key(f) -> tuple[str, str]:
@@ -453,7 +464,8 @@ class ScanReportService:
         lines.append("")
 
         if summary:
-            lines.append(f"{t['tg_summary']}: {summary[:300]}")
+            safe_summary = _escape_telegram_markdown(summary, 300)
+            lines.append(f"{t['tg_summary']}: {safe_summary}")
             lines.append("")
 
         lines.append(f"{health_emoji} {t['tg_health']}: *{health}/100*")
@@ -569,10 +581,6 @@ class ScanReportService:
             except Exception:
                 pass  # 检查失败不阻断流程
 
-            # 关闭上一次扫描的报告 Issue（避免重复堆积）
-            if previous_scan is not None:
-                await self._close_previous_issue(repo, scan, previous_scan, language)
-
             # 生成 Issue 内容
             health = scan.overall_health_score or 0
             title = f"🛡️ Sakura AI 扫描报告 — {scan.repo_name} ({health}/100)"
@@ -619,6 +627,11 @@ class ScanReportService:
 
             if issue:
                 logger.info(f"✅ 已创建扫描报告 Issue: {scan.repo_name}#{issue.number}")
+
+                # 只有新 Issue 创建成功后，才关闭上一次扫描的报告 Issue。
+                # 关闭失败由 helper 记录并吞掉，不能阻断新报告交付。
+                if previous_scan is not None:
+                    await self._close_previous_issue(repo, scan, previous_scan, language)
 
                 # 索引到 Issue 向量库（bot 创建的 Issue 不触发 webhook，需主动索引）
                 try:

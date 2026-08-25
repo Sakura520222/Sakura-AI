@@ -226,11 +226,32 @@ generate_deployment_db_password() {
     printf '%s' "$generated"
 }
 
-# MySQL 数据卷是否已存在（compose 项目名固定 sakura-ai 前缀 + mysql_data 卷）。
-# 用于判断能否安全地自动生成新数据库密码：卷已存在意味着 MySQL 数据已按旧
-# 密码初始化，猜测/轮换密码会与既有数据脱节。
+# MySQL 数据卷状态（compose 项目名固定 sakura-ai 前缀 + mysql_data 卷）。
+# 输出 exists / missing / error 三种状态；Docker daemon、权限或 CLI 异常绝不能
+# 被当作卷不存在，否则残缺 deployment.env 会错误轮换既有 MySQL 密码。
+deployment_mysql_volume_state() {
+    local volume_name="${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data"
+    local volume_names=""
+    local name=""
+
+    if ! volume_names="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
+        printf 'error\n'
+        return 0
+    fi
+
+    while IFS= read -r name; do
+        if [[ "$name" == "$volume_name" ]]; then
+            printf 'exists\n'
+            return 0
+        fi
+    done <<< "$volume_names"
+
+    printf 'missing\n'
+}
+
+# 兼容旧调用方的布尔探测；部署状态修复逻辑必须使用上面的三态结果。
 deployment_mysql_volume_exists() {
-    docker volume inspect "${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data" >/dev/null 2>&1
+    [[ "$(deployment_mysql_volume_state)" == "exists" ]]
 }
 
 # 原子补全 deployment.env 的多个键值（KEY=VALUE 参数），保留其余行与 0600
@@ -316,13 +337,29 @@ init_deployment_env() {
                     if [[ "${SAKURA_DB_PASSWORD:-}" =~ ^[0-9a-f]{64}$ ]]; then
                         persisted_password="$SAKURA_DB_PASSWORD"
                         need_write=1
-                    elif ! deployment_mysql_volume_exists; then
-                        persisted_password="$(generate_deployment_db_password)" || return 1
-                        need_write=1
                     else
-                        fail "deployment.env 缺少数据库密码，且 MySQL 数据卷 ${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data 已存在；无法自动生成" >&2
-                        fail "恢复：从备份还原 deployment.env，或设置环境变量 SAKURA_DB_PASSWORD=<原密码> 后重新运行" >&2
-                        return 1
+                        local mysql_volume_state
+                        mysql_volume_state="$(deployment_mysql_volume_state)"
+                        case "$mysql_volume_state" in
+                            missing)
+                                persisted_password="$(generate_deployment_db_password)" || return 1
+                                need_write=1
+                                ;;
+                            exists)
+                                fail "deployment.env 缺少数据库密码，且 MySQL 数据卷 ${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data 已存在；无法自动生成" >&2
+                                fail "恢复：从备份还原 deployment.env，或设置环境变量 SAKURA_DB_PASSWORD=<原密码> 后重新运行" >&2
+                                return 1
+                                ;;
+                            error)
+                                fail "无法确认 MySQL 数据卷 ${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data 状态；Docker 不可用或权限不足，拒绝生成新密码" >&2
+                                fail "恢复：确认 Docker daemon 和权限后重试，或设置环境变量 SAKURA_DB_PASSWORD=<原密码> 后重新运行" >&2
+                                return 1
+                                ;;
+                            *)
+                                fail "无法识别 MySQL 数据卷探测结果: $mysql_volume_state" >&2
+                                return 1
+                                ;;
+                        esac
                     fi
                 fi
                 if [[ -z "$persisted_project" ]]; then
@@ -544,7 +581,7 @@ updater_mv() { mv -f -- "$1" "$2"; }
 # Curl is constrained to the fixed HTTPS release endpoint and bounded time.
 # curl 仅允许固定 HTTPS 发布地址，并设置有界超时与重试。
 updater_curl() {
-    local url="$1" output="$2" headers="${3:-}" http_status
+    local url="$1" output="$2" headers="${3:-}" http_status curl_rc=0
     local -a args=(
         curl --fail --location
         --proto '=https' --proto-redir '=https'
@@ -556,11 +593,16 @@ updater_curl() {
     if [[ -n "$headers" ]]; then
         args+=(--dump-header "$headers")
     fi
-    if ! http_status=$("${args[@]}" "$url"); then
-        return 1
-    fi
+    # --fail makes curl return non-zero for HTTP 4xx/5xx, but --write-out still
+    # provides the response status. Capture both independently so callers can
+    # distinguish an explicit 404 from transport failure (curl reports 000).
+    http_status=$("${args[@]}" "$url") || curl_rc=$?
     http_status=${http_status//$'\r'/}
-    [[ "$http_status" =~ ^2[0-9][0-9]$ ]]
+    if [[ ! "$http_status" =~ ^[0-9]{3}$ ]]; then
+        http_status=000
+    fi
+    UPDATER_LAST_HTTP_STATUS="$http_status"
+    [[ "$curl_rc" -eq 0 && "$http_status" =~ ^2[0-9][0-9]$ ]]
 }
 
 # Read the already-running image version without requiring a source checkout.
@@ -961,7 +1003,7 @@ install_updater_binary() {
     local binary="$UPDATER_BINARY" lock_path lock_fd=""
     local version stable_version asset binary_url sums_url
     local binary_tmp="" sums_tmp="" binary_headers_tmp="" sums_headers_tmp=""
-    local expected_hash actual_hash
+    local expected_hash actual_hash binary_http_status
 
     # Root gate precedes every filesystem or network operation.
     # root gate 必须早于任何文件系统或网络操作。
@@ -1034,15 +1076,21 @@ install_updater_binary() {
 
     binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
     sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
-    if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+    UPDATER_LAST_HTTP_STATUS=000
+    if updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
+        :
+    else
+        binary_http_status="${UPDATER_LAST_HTTP_STATUS:-000}"
         # 目标版本无 Release 资产（development 镜像版本超前 stable 发布）；
         # 回退到最近 stable Release 的 updater binary（updater 随 stable 发布）。
-        if stable_version=$(resolve_latest_stable_updater_version) \
+        if [[ "$binary_http_status" == "404" ]] \
+            && stable_version=$(resolve_latest_stable_updater_version) \
             && [[ "$stable_version" != "$version" ]]; then
             warn "v${version} 无对应 Release 资产（development 构建超前 stable），回退使用最近 stable v${stable_version} 的 updater" >&2
             version="$stable_version"
             binary_url="$UPDATER_RELEASE_BASE_URL/v${version}/${asset}"
             sums_url="$UPDATER_RELEASE_BASE_URL/v${version}/SHA256SUMS"
+            UPDATER_LAST_HTTP_STATUS=000
             if ! updater_curl "$binary_url" "$binary_tmp" "$binary_headers_tmp"; then
                 fail "updater binary download failed (incl. stable fallback); old binary unchanged" >&2
                 updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
