@@ -131,6 +131,20 @@ def _coerce_tool_call_to_dict(tc: Any) -> dict[str, Any]:
     }
 
 
+def _resolve_served_model(response: Any, current_model: str | None) -> str | None:
+    """从响应 meta 提取实际服务模型名 / Extract the winning model id.
+
+    fallback 可能切换到与角色首选不同的模型；``reasoning_content`` 等
+    模型相关判断必须基于实际 winner（与 issue_analyzer._resolve_served_model
+    保持一致）。``meta.served_by`` 形如 ``"provider/model"``，取末段作为
+    模型名；缺失或格式异常时保持原值。
+    """
+    served_by = getattr(getattr(response, "meta", None), "served_by", "")
+    if served_by and "/" in served_by:
+        return served_by.rsplit("/", 1)[-1]
+    return current_model
+
+
 def _normalize_tool_calls_inplace(messages: list[dict[str, Any]]) -> None:
     """把 messages 中所有 tool_calls 原地规范化为标准 OpenAI dict。"""
     for message in messages:
@@ -436,7 +450,7 @@ class AIReviewer:
         # 如 deepseek-v4-flash 内置 1M tokens），避免 model_context 在未提供模型名时
         # 回退 128K 兜底（曾导致日志误报 102K 上限、过早触发压缩）。
         (
-            _ctx_model_id,
+            context_model,
             context_window_tokens,
         ) = await self.api_client.resolve_role_model_context("main")
         if context_window_tokens and context_window_tokens > 0:
@@ -464,7 +478,9 @@ class AIReviewer:
             if (
                 hasattr(assistant_message, "reasoning_content")
                 and assistant_message.reasoning_content
-                and strategy_config.is_model_supports_reasoning_content("")
+                and strategy_config.is_model_supports_reasoning_content(
+                    context_model or ""
+                )
             ):
                 assistant_msg_dict["reasoning_content"] = (
                     assistant_message.reasoning_content
@@ -515,6 +531,10 @@ class AIReviewer:
                     logger.warning("event_callback failed: {}", exc)
             response = await self.api_client.call_with_retry(**call_kwargs)
             tracker.accumulate(response)
+            # fallback 可能切换到不同能力的模型，reasoning_content 等模型
+            # 相关判断必须基于实际 winner（Issue #529：此前判定传空字符串
+            # 导致思考轨迹在工具循环中恒被丢弃）
+            context_model = _resolve_served_model(response, context_model)
             reported_context_tokens = tracker.log_context_usage(
                 response,
                 context_window_tokens,
@@ -687,7 +707,7 @@ class AIReviewer:
                             "safe_context": reported_context_window,
                             "estimated_message_tokens": estimated_message_tokens,
                             "context_source": "provider",
-                            "model": "",
+                            "model": context_model or "",
                         },
                     )
                 except Exception as exc:

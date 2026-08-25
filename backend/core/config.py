@@ -856,22 +856,58 @@ class StrategyConfig:
     def is_model_supports_reasoning_content(self, model_name: str) -> bool:
         """检查模型是否支持 reasoning_content 字段
 
+        优先按内置模型目录（ai_providers.py BuiltinModel）的能力声明判定，
+        覆盖 deepseek-v4 / glm / qwen / kimi 等声明 reasoning_content=True
+        的现役推理模型；目录未覆盖的自定义模型回退到 DeepSeek-R1 系列
+        前缀匹配，保持对历史自定义模型名的兼容（Issue #529）。
+
         Args:
-            model_name: 模型名称（如 'deepseek-r1', 'glm-4.7'）
+            model_name: 模型名称（如 'deepseek-v4-flash', 'glm-4.7'）
 
         Returns:
             True 如果模型支持 reasoning_content
         """
-        # DeepSeek-R1 系列模型支持 reasoning_content
+        model_lower = model_name.lower().strip()
+        if not model_lower:
+            return False
+
+        reasoning_ids, known_ids = _builtin_reasoning_capability_index()
+        if model_lower in known_ids:
+            return model_lower in reasoning_ids
+
+        # 目录未命中的自定义模型：DeepSeek-R1 系列前缀回退（目录内
+        # deepseek-r1 系列已弃用，自定义端点可能仍暴露这些名称）
         deepseek_models = [
             "deepseek-r1",
             "deepseek-reasoner",
             "deepseek-r1-lite",
             "deepseek-r1-zero",
         ]
-
-        model_lower = model_name.lower()
         return any(model_lower.startswith(ds_model) for ds_model in deepseek_models)
+
+
+@lru_cache
+def _builtin_reasoning_capability_index() -> tuple[frozenset[str], frozenset[str]]:
+    """内置模型目录的 reasoning_content 能力索引。
+
+    返回 (支持模型的 id/别名集合, 目录内全部 id/别名集合)。ai_providers.py
+    的 BuiltinModel 声明是模型能力的单一来源；延迟导入以避免模块初始化
+    顺序耦合。
+    """
+    from backend.core.ai_providers import list_builtin_providers
+
+    reasoning_ids: set[str] = set()
+    known_ids: set[str] = set()
+    for declaration in list_builtin_providers():
+        for model in declaration.models:
+            identifiers = {
+                model.model_id.lower(),
+                *(alias.lower() for alias in model.aliases),
+            }
+            known_ids |= identifiers
+            if model.capabilities.reasoning_content:
+                reasoning_ids |= identifiers
+    return frozenset(reasoning_ids), frozenset(known_ids)
 
 
 @lru_cache
