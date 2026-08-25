@@ -26,17 +26,22 @@ jobs:
             const errors = [];
 
             const isFeatureLike = /^(feature|fix|refactor|docs|test|chore|perf|ci)\/.+/.test(head);
+            const isDependabot = /^dependabot\//.test(head);
             const isRelease = /^release\/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(head);
             const isHotfix = /^hotfix\/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(head);
 
             if (base === 'develop') {
-              if (!isFeatureLike && head !== 'main') {
-                errors.push('PR 到 develop 仅允许来自 feature/*、fix/*、refactor/*、docs/*、test/*、chore/*、perf/*、ci/* 或 main。');
+              if (!isFeatureLike && !isDependabot && head !== 'main') {
+                errors.push('PR 到 develop 仅允许来自 feature/*、fix/*、refactor/*、docs/*、test/*、chore/*、perf/*、ci/*、dependabot/* 或 main。');
               }
             } else if (base === 'main') {
               if (!isRelease && !isHotfix) {
                 errors.push('PR 到 main 仅允许来自 release/x.y.z 或 hotfix/x.y.z。普通开发请提交到 develop。');
               }
+            }
+
+            if (isDependabot && base !== 'develop') {
+              errors.push('dependabot/* 分支仅允许通过 PR 合并到 develop（dependabot.yml 中 target-branch 应为 develop）。');
             }
 
             if (isRelease && base !== 'main') {
