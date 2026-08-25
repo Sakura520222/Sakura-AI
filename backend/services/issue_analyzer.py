@@ -702,18 +702,30 @@ class IssueAnalyzer:
                 "tool_calls": tool_calls,
             }
 
-            # DeepSeek-R1 reasoning_content 支持
+            # reasoning_content 支持：优先用实际 winner 的有效能力（已含
+            # ai_model_override 覆盖），响应未携带能力信息时回退模型名判定
+            # / Prefer the winner's effective capabilities, falling back to
+            # model-name detection when the response carries no capabilities.
+            served_caps = getattr(
+                getattr(response, "meta", None), "served_capabilities", None
+            )
+            if served_caps is not None:
+                supports_reasoning = served_caps.reasoning_content
+            else:
+                strategy_config = get_strategy_config()
+                supports_reasoning = (
+                    strategy_config.is_model_supports_reasoning_content(
+                        context_model or ""
+                    )
+                )
             if (
                 hasattr(assistant_message, "reasoning_content")
                 and assistant_message.reasoning_content
+                and supports_reasoning
             ):
-                strategy_config = get_strategy_config()
-                if strategy_config.is_model_supports_reasoning_content(
-                    context_model or ""
-                ):
-                    assistant_msg_dict["reasoning_content"] = (
-                        assistant_message.reasoning_content
-                    )
+                assistant_msg_dict["reasoning_content"] = (
+                    assistant_message.reasoning_content
+                )
 
             messages.append(assistant_msg_dict)
 
