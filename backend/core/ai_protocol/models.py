@@ -411,6 +411,13 @@ class UnifiedResponseMeta:
     # Context window (tokens) of the winning candidate that actually served
     # the request, so callers budget against the real model, not the primary.
     context_window_tokens: int | None = None
+    # 实际服务候选（winner）的有效能力集（已应用 ai_model_override 覆盖），
+    # 供调用方按实际 winner 判断 reasoning_content 等字段是否可回传，
+    # 而不是退回目录默认能力（Issue #529）。
+    # Effective capabilities (post ai_model_override) of the winning
+    # candidate, so callers replay fields like reasoning_content based on
+    # the real winner instead of catalog defaults.
+    served_capabilities: ModelCapabilitySet | None = None
 
 
 class _AttributeProxy:

@@ -49,6 +49,9 @@ async def test_tool_loop_appends_pending_user_message_before_model_request(
         calculate_safe_context=lambda model, threshold: 100_000
     )
     reviewer.enable_compression = False
+    reviewer.context_compressor = SimpleNamespace(
+        estimate_messages_tokens=lambda msgs: 10
+    )
 
     strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
     monkeypatch.setattr(

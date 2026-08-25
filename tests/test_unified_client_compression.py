@@ -30,6 +30,7 @@ from backend.core.ai_protocol.models import (
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
+from backend.core.config import StrategyConfig
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.compression.unified_compressor import (
     UnifiedContextCompressor,
@@ -760,7 +761,13 @@ def _reviewer_under_test(monkeypatch, *, enable_compression, observer=None):
     reviewer.compression_threshold = 0.85
     reviewer.context_compressor = _FakeCompressor()
 
-    strategy_config = SimpleNamespace(get_context_enhancement_config=dict)
+    strategy_config = SimpleNamespace(
+        get_context_enhancement_config=dict,
+        # 工具循环保留 reasoning_content 前需要模型能力判定（Issue #529）
+        is_model_supports_reasoning_content=(
+            StrategyConfig().is_model_supports_reasoning_content
+        ),
+    )
     monkeypatch.setattr(
         "backend.services.ai_reviewer.reviewer.get_strategy_config",
         lambda: strategy_config,
