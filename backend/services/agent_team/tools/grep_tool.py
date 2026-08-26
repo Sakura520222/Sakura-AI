@@ -1,16 +1,17 @@
-"""Grep 工具 - 搜索文件内容
-
-优先使用系统 grep 命令，回退到 Python re 搜索。
-支持 files_with_matches 和 content 两种输出模式。
-"""
+"""Grep 工具 - 通过 workspace-scoped 执行器搜索文件内容。"""
 
 from __future__ import annotations
 
-import asyncio
-import re
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionRequest,
+    execute_request,
+    execution_workspace_key,
+    resolve_execution_runner,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 from backend.utils.search_excludes import SEARCH_EXCLUDES
 
@@ -82,9 +83,9 @@ class GrepTool(BaseTool):
         output_mode = args.get("output_mode", "files_with_matches")
         case_insensitive = args.get("case_insensitive", False)
 
-        workspace_path = Path(ctx.workspace)
-
-        # 尝试使用系统 grep；使用 -F 固定字符串匹配 + -- 分隔以避免 keyword 被解析为选项
+        # Grep is always executed through the injected runner.  In particular,
+        # there is no host-side Python fallback: a missing/unhealthy sandbox
+        # must fail closed instead of reading the workspace in the Web process.
         cmd_parts = ["grep", "-rn", "-F"]
         if case_insensitive:
             cmd_parts.append("-i")
@@ -95,16 +96,25 @@ class GrepTool(BaseTool):
         cmd_parts.extend(["--", keyword, "."])
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd_parts,
-                cwd=str(workspace_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            runner = resolve_execution_runner(
+                ctx.execution_runner,
+                ctx.workspace,
+                ctx.workspace_service,
             )
-            stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=30)
-            output = stdout.decode("utf-8", errors="replace").strip()
+            request = ExecutionRequest(
+                workspace_key=execution_workspace_key(
+                    ctx.workspace, ctx.workspace_service
+                ),
+                argv=tuple(cmd_parts),
+                cwd=PurePosixPath("."),
+                profile=ExecutionProfile.AGENT,
+                timeout_seconds=30,
+                cancel_event=ctx.cancel_event,
+            )
+            result = await execute_request(runner, request)
+            output = result.stdout.strip()
 
-            if output:
+            if result.returncode == 0 and output:
                 lines = output.split("\n")
                 max_lines = 100
                 truncated = len(lines) > max_lines
@@ -135,84 +145,34 @@ class GrepTool(BaseTool):
                     },
                 )
 
-        except TimeoutError, FileNotFoundError, OSError:
-            # grep 不可用或超时，回退到 Python 搜索
-            pass
+        except Exception as exc:
+            return ToolResult(
+                success=False,
+                error=f"grep 沙箱执行失败: {type(exc).__name__}: {exc}",
+            )
 
-        # Python 回退搜索
-        return await self._python_search(
-            keyword, file_ext, output_mode, case_insensitive, workspace_path
-        )
-
-    async def _python_search(
-        self,
-        keyword: str,
-        file_ext: str,
-        output_mode: str,
-        case_insensitive: bool,
-        workspace: Path,
-    ) -> ToolResult:
-        # 使用 re.escape 保持与系统 grep -F（固定字符串匹配）一致的语义
-        escaped_keyword = re.escape(keyword)
-        flags = re.IGNORECASE if case_insensitive else 0
-        try:
-            pattern = re.compile(escaped_keyword, flags)
-        except re.error:
-            pattern = None
-
-        matches: list[str] = []
-        max_results = 100
-
-        for file_path in workspace.rglob("*"):
-            if len(matches) >= max_results * 2:
-                break
-            if not file_path.is_file():
-                continue
-            if any(part in SEARCH_EXCLUDES for part in file_path.parts):
-                continue
-            if file_ext and file_path.suffix != file_ext:
-                continue
-
-            try:
-                text = await asyncio.to_thread(
-                    file_path.read_text,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                rel = str(file_path.relative_to(workspace))
-                for i, line in enumerate(text.split("\n"), start=1):
-                    if pattern:
-                        matched = bool(pattern.search(line))
-                    elif case_insensitive:
-                        matched = keyword.lower() in line.lower()
-                    else:
-                        matched = keyword in line
-                    if matched:
-                        matches.append(f"{rel}:{i}:{line.strip()}")
-            except OSError, UnicodeDecodeError:
-                continue
-
-        truncated = len(matches) > max_results
-        matches = matches[:max_results]
-
-        if output_mode == "files_with_matches":
-            files = sorted({m.split(":")[0] for m in matches if ":" in m})
+        if result.returncode == 1:
+            # grep's stable no-match status is a successful search result.
             return ToolResult(
                 success=True,
-                output={
-                    "files": files,
-                    "num_files": len(files),
-                    "keyword": keyword,
-                    "truncated": truncated,
-                },
+                output=(
+                    {
+                        "files": [],
+                        "num_files": 0,
+                        "keyword": keyword,
+                        "truncated": False,
+                    }
+                    if output_mode == "files_with_matches"
+                    else {
+                        "matches": [],
+                        "total": 0,
+                        "keyword": keyword,
+                        "truncated": False,
+                    }
+                ),
             )
 
         return ToolResult(
-            success=True,
-            output={
-                "matches": matches,
-                "total": len(matches),
-                "keyword": keyword,
-                "truncated": truncated,
-            },
+            success=False,
+            error=f"grep 执行失败 (rc={result.returncode}): {result.stderr}",
         )

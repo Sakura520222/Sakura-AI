@@ -9,7 +9,13 @@ from typing import Any
 
 from loguru import logger
 
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionRequest,
+    execute_request,
+    execution_workspace_key,
+    resolve_execution_runner,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 
@@ -54,10 +60,23 @@ class RevertFileTool(BaseTool):
         file_path = args["file_path"].strip()
         workspace_service = ctx.workspace_service
         resolved = workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
-        rel_path = str(resolved).replace("\\", "/")
+        workspace_root = workspace_service.resolve_inside_workspace(ctx.workspace)
+        rel_path = resolved.relative_to(workspace_root).as_posix()
 
-        executor = AgentTeamShellExecutor(ctx.workspace, workspace_service)
-        result = await executor.run_args(["git", "checkout", "HEAD", "--", rel_path])
+        runner = resolve_execution_runner(
+            ctx.execution_runner,
+            ctx.workspace,
+            workspace_service,
+        )
+        request = ExecutionRequest(
+            workspace_key=execution_workspace_key(
+                ctx.workspace, workspace_service
+            ),
+            argv=("git", "checkout", "HEAD", "--", rel_path),
+            profile=ExecutionProfile.AGENT,
+            cancel_event=ctx.cancel_event,
+        )
+        result = await execute_request(runner, request)
 
         if result.returncode != 0:
             return ToolResult(

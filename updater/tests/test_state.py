@@ -146,3 +146,19 @@ def test_job_state_from_dict_ignores_unknown_fields():
     """向前兼容：未来 schema 加字段，旧 updater 读不崩溃（已知字段正常构造）。"""
     job = JobState.from_dict({"job_id": "x", "state": "idle", "future_field": "v2"})
     assert job.job_id == "x"
+
+
+def test_job_state_preserves_three_image_target_across_round_trip(tmp_path):
+    path = str(tmp_path / "update-state.json")
+    job = JobState(
+        job_id="upd_images",
+        target_image="ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:" + "a" * 64,
+        target_sandboxd_image="ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "b" * 64,
+        target_runner_image="ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "c" * 64,
+        state="downloading",
+    )
+    save_state(path, UpdateStateStore(active_job_id=job.job_id, current_job=job))
+    restored = load_state(path).current_job
+    assert restored is not None
+    assert restored.target_sandboxd_image == job.target_sandboxd_image
+    assert restored.target_runner_image == job.target_runner_image

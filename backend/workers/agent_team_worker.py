@@ -33,11 +33,13 @@ from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.agent_team.sandbox_client import create_ready_execution_runner
 from backend.services.agent_team.submission_context import (
     build_agent_task_summary,
     load_agent_task_reference_context,
@@ -60,6 +62,57 @@ def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
 
 class AgentTeamWorker:
     """Agent 专家团队任务处理器 - 完整状态机。"""
+
+    async def _create_agent_execution_runner(
+        self,
+        workspace: Path,
+        workspace_service,
+    ) -> ExecutionRunner:
+        """Admit one workspace-scoped runner before any Agent code runs."""
+
+        settings = get_settings()
+        return await create_ready_execution_runner(
+            str(workspace),
+            workspace_service,
+            backend=getattr(settings, "agent_team_execution_backend", None),
+            deploy_mode=getattr(settings, "sakura_deploy_mode", "unknown"),
+            expected_runtime=getattr(settings, "agent_team_sandbox_runtime", None),
+            expected_instance_id=getattr(
+                settings,
+                "agent_team_sandbox_expected_instance_id",
+                None,
+            ),
+            expected_workspace_root=getattr(
+                settings,
+                "agent_team_sandbox_expected_workspace_root",
+                None,
+            ),
+            expected_digest=getattr(
+                settings,
+                "agent_team_sandbox_runner_image_digest",
+                None,
+            ),
+        )
+
+    async def _admit_workspace_runner(
+        self,
+        git_service: AgentTeamGitWorkspaceService,
+        workspace: Path,
+    ) -> ExecutionRunner:
+        """Create runner then install untrusted dependencies through it.
+
+        Every production-shaped workspace service must expose the installer;
+        omitting it is an infrastructure contract error rather than a reason
+        to skip runner admission or dependency isolation.
+        """
+
+        install_dependencies = git_service.install_workspace_dependencies
+        runner = await self._create_agent_execution_runner(
+            workspace,
+            git_service.workspace_service,
+        )
+        await install_dependencies(workspace, runner)
+        return runner
 
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
@@ -130,6 +183,19 @@ class AgentTeamWorker:
             repo_owner = task.repo_owner
             repo_name = task.repo_name
 
+            execution_runner = await self._admit_workspace_runner(
+                git_service,
+                workspace,
+            )
+            if cancel_event.is_set():
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 sandbox admission 阶段被取消",
+                )
+                return task_id
+
             # ── Phase 2: EDITING + SELF_REVIEWING (迭代循环) ──
             await self._update_task(
                 task_id,
@@ -150,6 +216,7 @@ class AgentTeamWorker:
                 checkpoint=checkpoint,
                 resume_cursor=resume_cursor,
                 resume_index=task.resume_count or 0,
+                execution_runner=execution_runner,
             )
             outcome = await loop_service.run(
                 task_title=task.title,
@@ -495,6 +562,20 @@ class AgentTeamWorker:
                 )
                 return task_id
 
+            execution_runner = await self._admit_workspace_runner(
+                git_service,
+                workspace_info.workspace,
+            )
+            if cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 sandbox admission 阶段被取消",
+                )
+                return task_id
+
             (
                 skills_summary,
                 skills_context,
@@ -511,6 +592,7 @@ class AgentTeamWorker:
                 task_id=task_id,
                 checkpoint=checkpoint,
                 resume_index=task.resume_count or 0,
+                execution_runner=execution_runner,
             )
             outcome = await loop_service.run(
                 task_title=task.title,
@@ -718,6 +800,20 @@ class AgentTeamWorker:
                 )
                 return task_id
 
+            execution_runner = await self._admit_workspace_runner(
+                git_service,
+                workspace_info.workspace,
+            )
+            if cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 sandbox admission 阶段被取消",
+                )
+                return task_id
+
             (
                 skills_summary,
                 skills_context,
@@ -734,6 +830,7 @@ class AgentTeamWorker:
                 task_id=task_id,
                 checkpoint=checkpoint,
                 resume_index=task.resume_count or 0,
+                execution_runner=execution_runner,
             )
 
             # follow-up 的 initial_feedback 留空，由 _consume_pending_prompts 消费管理员要求

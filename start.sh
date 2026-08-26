@@ -15,7 +15,13 @@
 #   ./start.sh --down         # 停止服务
 #   ./start.sh uninstall      # 卸载服务（默认保留 Docker 数据卷）
 #   ./start.sh uninstall --purge  # 同时删除 Docker 数据卷和 .deploy 状态
+#
+# Agent sandboxd 由本脚本独立管理（不属于 Compose services）：
+#   - sandboxd 容器独占 Docker API socket；Web/runner 永不挂载该 socket。
+#   - /run/sakura-ai-sandbox 使用独立 GID 9473、0660 UDS，并以只读方式挂给 Web。
+#   - 生产 image 模式必须提供 SAKURA_AGENT_RUNNER_IMAGE_DIGEST；缺失即 fail-closed。
 #   ./start.sh updater [action]  # 管理 host updater daemon（含 reinstall/uninstall）
+#   ./start.sh sandboxd [action] # 管理独立 Agent sandboxd daemon
 #   ./start.sh --help         # 显示帮助
 
 set -euo pipefail
@@ -312,6 +318,12 @@ init_deployment_env() {
         local persisted_password=""
         local persisted_project=""
         local persisted_image=""
+        local persisted_sandboxd_image=""
+        local persisted_sandboxd_digest=""
+        local persisted_runner_image=""
+        local persisted_runner_digest=""
+        local persisted_instance_id=""
+        local sandbox_state_present=0
         local line
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
@@ -319,6 +331,11 @@ init_deployment_env() {
                 SAKURA_DB_PASSWORD=*) persisted_password="${line#SAKURA_DB_PASSWORD=}" ;;
                 COMPOSE_PROJECT_NAME=*) persisted_project="${line#COMPOSE_PROJECT_NAME=}" ;;
                 SAKURA_AI_IMAGE=*) persisted_image="${line#SAKURA_AI_IMAGE=}" ;;
+                SAKURA_SANDBOXD_IMAGE=*) persisted_sandboxd_image="${line#SAKURA_SANDBOXD_IMAGE=}"; sandbox_state_present=1 ;;
+                SAKURA_SANDBOXD_IMAGE_DIGEST=*) persisted_sandboxd_digest="${line#SAKURA_SANDBOXD_IMAGE_DIGEST=}"; sandbox_state_present=1 ;;
+                SAKURA_AGENT_RUNNER_IMAGE=*) persisted_runner_image="${line#SAKURA_AGENT_RUNNER_IMAGE=}"; sandbox_state_present=1 ;;
+                SAKURA_AGENT_RUNNER_IMAGE_DIGEST=*) persisted_runner_digest="${line#SAKURA_AGENT_RUNNER_IMAGE_DIGEST=}"; sandbox_state_present=1 ;;
+                SAKURA_SANDBOX_INSTANCE_ID=*) persisted_instance_id="${line#SAKURA_SANDBOX_INSTANCE_ID=}"; sandbox_state_present=1 ;;
             esac
         done < "$DEPLOYMENT_ENV_FILE"
 
@@ -373,11 +390,59 @@ init_deployment_env() {
                     persisted_image="ghcr.io/sakura520222/sakura-ai:latest"
                     need_write=1
                 fi
+                # Sandbox image names/digests are durable deployment inputs.
+                # Do not invent a digest here: production startup remains
+                # fail-closed until CI/release or an administrator supplies
+                # both complete NAME@sha256 references.
+                if [[ "$sandbox_state_present" -eq 1 \
+                    || -n "${SAKURA_SANDBOXD_IMAGE:-}" \
+                    || -n "${SAKURA_SANDBOXD_IMAGE_DIGEST:-}" \
+                    || -n "${SAKURA_AGENT_RUNNER_IMAGE:-}" \
+                    || -n "${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}" \
+                    || -n "${SAKURA_SANDBOX_INSTANCE_ID:-}" ]]; then
+                    if [[ -z "$persisted_sandboxd_image" ]]; then
+                        persisted_sandboxd_image="${SAKURA_SANDBOXD_IMAGE:-ghcr.io/sakura520222/sakura-ai-sandboxd:latest}"
+                        need_write=1
+                    fi
+                    if [[ -z "$persisted_runner_image" ]]; then
+                        persisted_runner_image="${SAKURA_AGENT_RUNNER_IMAGE:-ghcr.io/sakura520222/sakura-ai-agent-runner:latest}"
+                        need_write=1
+                    fi
+                    if [[ -z "$persisted_sandboxd_digest" && -n "${SAKURA_SANDBOXD_IMAGE_DIGEST:-}" ]]; then
+                        persisted_sandboxd_digest="$SAKURA_SANDBOXD_IMAGE_DIGEST"
+                        need_write=1
+                    fi
+                    if [[ -z "$persisted_runner_digest" && -n "${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}" ]]; then
+                        persisted_runner_digest="$SAKURA_AGENT_RUNNER_IMAGE_DIGEST"
+                        need_write=1
+                    fi
+                    if [[ -z "$persisted_instance_id" && -n "${SAKURA_SANDBOX_INSTANCE_ID:-}" ]]; then
+                        persisted_instance_id="$SAKURA_SANDBOX_INSTANCE_ID"
+                        need_write=1
+                    fi
+                fi
                 if [[ "$need_write" -eq 1 ]]; then
-                    write_deployment_env_keys \
-                        "SAKURA_DB_PASSWORD=$persisted_password" \
-                        "COMPOSE_PROJECT_NAME=$persisted_project" \
-                        "SAKURA_AI_IMAGE=$persisted_image" || return 1
+                    if [[ "$sandbox_state_present" -eq 1 \
+                        || -n "${SAKURA_SANDBOXD_IMAGE:-}" \
+                        || -n "${SAKURA_SANDBOXD_IMAGE_DIGEST:-}" \
+                        || -n "${SAKURA_AGENT_RUNNER_IMAGE:-}" \
+                        || -n "${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}" \
+                        || -n "${SAKURA_SANDBOX_INSTANCE_ID:-}" ]]; then
+                        write_deployment_env_keys \
+                            "SAKURA_DB_PASSWORD=$persisted_password" \
+                            "COMPOSE_PROJECT_NAME=$persisted_project" \
+                            "SAKURA_AI_IMAGE=$persisted_image" \
+                            "SAKURA_SANDBOXD_IMAGE=$persisted_sandboxd_image" \
+                            "SAKURA_AGENT_RUNNER_IMAGE=$persisted_runner_image" \
+                            "SAKURA_SANDBOXD_IMAGE_DIGEST=$persisted_sandboxd_digest" \
+                            "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$persisted_runner_digest" \
+                            "SAKURA_SANDBOX_INSTANCE_ID=$persisted_instance_id" || return 1
+                    else
+                        write_deployment_env_keys \
+                            "SAKURA_DB_PASSWORD=$persisted_password" \
+                            "COMPOSE_PROJECT_NAME=$persisted_project" \
+                            "SAKURA_AI_IMAGE=$persisted_image" || return 1
+                    fi
                     info "已补全部署状态: $DEPLOYMENT_ENV_FILE"
                 fi
                 ;;
@@ -407,6 +472,11 @@ init_deployment_env() {
             # 写实际值：解析当前 SAKURA_AI_IMAGE 环境变量，缺省用默认 latest
             local image="${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}"
             echo "SAKURA_AI_IMAGE=$image"
+            echo "SAKURA_SANDBOXD_IMAGE=${SAKURA_SANDBOXD_IMAGE:-ghcr.io/sakura520222/sakura-ai-sandboxd:latest}"
+            echo "SAKURA_AGENT_RUNNER_IMAGE=${SAKURA_AGENT_RUNNER_IMAGE:-ghcr.io/sakura520222/sakura-ai-agent-runner:latest}"
+            [[ -n "${SAKURA_SANDBOXD_IMAGE_DIGEST:-}" ]] && echo "SAKURA_SANDBOXD_IMAGE_DIGEST=$SAKURA_SANDBOXD_IMAGE_DIGEST"
+            [[ -n "${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}" ]] && echo "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SAKURA_AGENT_RUNNER_IMAGE_DIGEST"
+            [[ -n "${SAKURA_SANDBOX_INSTANCE_ID:-}" ]] && echo "SAKURA_SANDBOX_INSTANCE_ID=$SAKURA_SANDBOX_INSTANCE_ID"
             echo "COMPOSE_PROJECT_NAME=$DEFAULT_PROD_COMPOSE_PROJECT"
             # 仅写入由本函数生成的 URL-safe hex secret；绝不记录到日志。
             echo "SAKURA_DB_PASSWORD=$db_password"
@@ -461,6 +531,983 @@ write_deployment_env_image() {
         fail "deployment.env 原子替换失败" >&2
         return 1
     fi
+}
+
+# ============================================================
+# Independent Agent sandboxd daemon management
+# ============================================================
+#
+# sandboxd is deliberately not a Compose service.  It is a host-controlled
+# sidecar container with the sole Docker API mount.  The Web/runner Compose
+# services receive only the read-only UDS directory.  These paths, identity
+# files, labels and lifecycle functions are separate from the Host Updater
+# block below; in particular, the updater group/socket/state are never reused.
+SANDBOX_GID="${SANDBOX_GID:-9473}"
+SANDBOX_RUNTIME_DIR="${SANDBOX_RUNTIME_DIR:-/run/sakura-ai-sandbox}"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-$UPDATER_PROJECT_ROOT/$DEPLOY_DIR/sandbox}"
+SANDBOX_CONTAINER_NAME="${SANDBOX_CONTAINER_NAME:-sakura-ai-sandboxd}"
+SANDBOX_CONTAINER_ID_FILE="$SANDBOX_STATE_DIR/container.id"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_IDENTITY_FILE="$SANDBOX_STATE_DIR/container.identity"
+SANDBOX_WORKSPACE_ROOT="${SAKURA_SANDBOX_WORKSPACE_ROOT:-$UPDATER_PROJECT_ROOT/workplace}"
+export SAKURA_SANDBOX_WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
+SANDBOX_IMAGE="${SAKURA_SANDBOXD_IMAGE:-ghcr.io/sakura520222/sakura-ai-sandboxd:latest}"
+SANDBOX_IMAGE_DIGEST="${SAKURA_SANDBOXD_IMAGE_DIGEST:-}"
+SANDBOX_RUNNER_IMAGE="${SAKURA_AGENT_RUNNER_IMAGE:-ghcr.io/sakura520222/sakura-ai-agent-runner:latest}"
+SANDBOX_RUNNER_DIGEST="${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}"
+SANDBOX_CONFIGURED_INSTANCE_ID="${SAKURA_SANDBOX_INSTANCE_ID:-}"
+SANDBOX_PROTOCOL_VERSION="1"
+SANDBOX_HEALTH_TIMEOUT="${SANDBOX_HEALTH_TIMEOUT:-90}"
+SANDBOX_STOP_TIMEOUT="${SANDBOX_STOP_TIMEOUT:-20}"
+# Source deployments still use the sandbox by default; this flag only allows
+# the source checkout to use a locally tagged runner before CI publishes a
+# digest.  Selecting the Backend's ``local`` execution backend remains a
+# separate explicit application setting.
+SANDBOX_SOURCE_MODE="${SAKURA_SANDBOX_SOURCE_MODE:-1}"
+
+sandbox_numeric_gid_is_safe() {
+    [[ "$SANDBOX_GID" =~ ^[0-9]+$ ]] || return 1
+    [[ "$SANDBOX_GID" != "9472" && "$SANDBOX_GID" -ge 1 && "$SANDBOX_GID" -le 2147483647 ]]
+}
+
+sandbox_path_is_absolute() {
+    [[ "$1" == /* && "$1" != "/" ]]
+}
+
+sandbox_path_has_no_link_components() {
+    local path="$1" current="/" part
+    sandbox_path_is_absolute "$path" || return 1
+    IFS='/' read -ra _sandbox_parts <<< "${path#/}"
+    for part in "${_sandbox_parts[@]}"; do
+        [[ -n "$part" && "$part" != "." && "$part" != ".." ]] || return 1
+        current="$current$part"
+        if [[ -L "$current" ]]; then
+            return 1
+        fi
+        [[ "$current" == "/" ]] || current="$current/"
+    done
+}
+
+sandbox_workspace_root_is_safe() {
+    sandbox_path_is_absolute "$SANDBOX_WORKSPACE_ROOT" || return 1
+    sandbox_path_has_no_link_components "$SANDBOX_WORKSPACE_ROOT"
+}
+
+sandbox_require_runtime_paths() {
+    sandbox_numeric_gid_is_safe || {
+        fail "sandboxd GID must be numeric, independent, and not updater GID 9472" >&2
+        return 1
+    }
+    sandbox_path_is_absolute "$SANDBOX_RUNTIME_DIR" || {
+        fail "sandboxd runtime directory must be an absolute path" >&2
+        return 1
+    }
+    sandbox_path_has_no_link_components "$SANDBOX_RUNTIME_DIR" || {
+        fail "refusing symlinked/reparse sandboxd runtime directory: $SANDBOX_RUNTIME_DIR" >&2
+        return 1
+    }
+    sandbox_path_is_absolute "$SANDBOX_STATE_DIR" || {
+        fail "sandboxd state directory must be an absolute path" >&2
+        return 1
+    }
+    sandbox_path_has_no_link_components "$SANDBOX_STATE_DIR" || {
+        fail "refusing symlinked/reparse sandboxd state directory: $SANDBOX_STATE_DIR" >&2
+        return 1
+    }
+    sandbox_workspace_root_is_safe || {
+        fail "refusing symlinked/reparse Agent workspace root" >&2
+        return 1
+    }
+}
+
+sandbox_prepare_directories() {
+    sandbox_require_runtime_paths || return 1
+    if [[ -e "$SANDBOX_RUNTIME_DIR" && ! -d "$SANDBOX_RUNTIME_DIR" ]]; then
+        fail "sandboxd runtime path is not a directory: $SANDBOX_RUNTIME_DIR" >&2
+        return 1
+    fi
+    if [[ -e "$SANDBOX_STATE_DIR" && ! -d "$SANDBOX_STATE_DIR" ]]; then
+        fail "sandboxd state path is not a directory: $SANDBOX_STATE_DIR" >&2
+        return 1
+    fi
+    if [[ ! -d "$SANDBOX_RUNTIME_DIR" ]]; then
+        install -d -m 0750 "$SANDBOX_RUNTIME_DIR" || return 1
+    fi
+    if [[ ! -d "$SANDBOX_STATE_DIR" ]]; then
+        install -d -m 0700 "$SANDBOX_STATE_DIR" || return 1
+    fi
+    if [[ ! -d "$SANDBOX_WORKSPACE_ROOT" ]]; then
+        install -d -m 0750 "$SANDBOX_WORKSPACE_ROOT" || return 1
+    fi
+    chmod 0750 "$SANDBOX_RUNTIME_DIR" || return 1
+    chmod 0700 "$SANDBOX_STATE_DIR" || return 1
+    # Numeric chown works even when the distribution has no name for this
+    # dedicated group.  Never fall back to 9472 (Host Updater).
+    chown "0:$SANDBOX_GID" "$SANDBOX_RUNTIME_DIR" || return 1
+    sandbox_path_has_no_link_components "$SANDBOX_RUNTIME_DIR" || return 1
+    sandbox_path_has_no_link_components "$SANDBOX_STATE_DIR" || return 1
+    sandbox_path_has_no_link_components "$SANDBOX_WORKSPACE_ROOT" || return 1
+}
+
+sandbox_immutable_reference_is_safe() {
+    # Registry digest: repository/name@sha256:<64 hex>; source builds may use
+    # Docker's local content ID sha256:<64 hex>.  Tags are never accepted.
+    [[ "$1" =~ ^([A-Za-z0-9][A-Za-z0-9._/-]{0,254}@)?sha256:[0-9a-f]{64}$ ]]
+}
+
+sandbox_registry_digest_is_safe() {
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}@sha256:[0-9a-f]{64}$ ]]
+}
+
+sandbox_load_deployment_config() {
+    # deployment.env is the durable source of image identity after the first
+    # production run.  Explicit environment values seed a new file; once a
+    # key exists, loading it here prevents an accidental restart with a
+    # different tag/digest pair.
+    [[ -f "$DEPLOYMENT_ENV_FILE" ]] || return 0
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            SAKURA_SANDBOXD_IMAGE=*) SANDBOX_IMAGE="${line#SAKURA_SANDBOXD_IMAGE=}" ;;
+            SAKURA_SANDBOXD_IMAGE_DIGEST=*) SANDBOX_IMAGE_DIGEST="${line#SAKURA_SANDBOXD_IMAGE_DIGEST=}" ;;
+            SAKURA_AGENT_RUNNER_IMAGE=*) SANDBOX_RUNNER_IMAGE="${line#SAKURA_AGENT_RUNNER_IMAGE=}" ;;
+            SAKURA_AGENT_RUNNER_IMAGE_DIGEST=*) SANDBOX_RUNNER_DIGEST="${line#SAKURA_AGENT_RUNNER_IMAGE_DIGEST=}" ;;
+            SAKURA_SANDBOX_WORKSPACE_ROOT=*) SANDBOX_WORKSPACE_ROOT="${line#SAKURA_SANDBOX_WORKSPACE_ROOT=}" ;;
+            SAKURA_SANDBOX_INSTANCE_ID=*) SANDBOX_CONFIGURED_INSTANCE_ID="${line#SAKURA_SANDBOX_INSTANCE_ID=}" ;;
+        esac
+    done < "$DEPLOYMENT_ENV_FILE"
+}
+
+sandbox_release_version() {
+    local image="${SAKURA_SANDBOX_RELEASE_VERSION:-}" line marker="" web_image=""
+    if [[ -z "$image" && -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == SAKURA_SANDBOX_RELEASE_VERSION=* ]]; then
+                marker="${line#SAKURA_SANDBOX_RELEASE_VERSION=}"
+            elif [[ "$line" == SAKURA_AI_IMAGE=* && -z "$web_image" ]]; then
+                web_image="${line#SAKURA_AI_IMAGE=}"
+            fi
+        done < "$DEPLOYMENT_ENV_FILE"
+        image="${web_image:-$marker}"
+    fi
+    if [[ "$image" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        printf '%s\n' "$image"
+        return 0
+    fi
+    if [[ "$image" =~ ^[^:]+:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    fail "cannot resolve a strict stable release version for sandbox manifest" >&2
+    return 1
+}
+
+sandbox_fetch_release_digests() {
+    local version release_url release_json asset_url manifest refs
+    version=$(sandbox_release_version) || return 1
+    command -v curl >/dev/null 2>&1 || {
+        fail "curl is required to fetch the signed release sandbox manifest" >&2
+        return 1
+    }
+    command -v python3 >/dev/null 2>&1 || {
+        fail "python3 is required to validate the release sandbox manifest" >&2
+        return 1
+    }
+    release_url="https://api.github.com/repos/Sakura520222/Sakura-AI/releases/tags/v$version"
+    release_json=$(curl --silent --show-error --fail --location \
+        --connect-timeout 5 --max-time 20 \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$release_url") || {
+        fail "unable to fetch stable release metadata for sandbox digest" >&2
+        return 1
+    }
+    asset_url=$(python3 - "$release_json" <<'PY'
+import json
+import sys
+
+try:
+    release = json.loads(sys.argv[1])
+    assets = release["assets"]
+    matches = [
+        item for item in assets
+        if isinstance(item, dict) and item.get("name") == "agent-sandbox-manifest.json"
+    ]
+    if len(matches) != 1:
+        raise ValueError("sandbox manifest asset is missing or ambiguous")
+    url = matches[0].get("browser_download_url") or matches[0].get("url")
+    if not isinstance(url, str) or not (
+        url.startswith("https://github.com/Sakura520222/Sakura-AI/releases/download/")
+        or url.startswith("https://api.github.com/repos/Sakura520222/Sakura-AI/releases/assets/")
+    ):
+        raise ValueError("sandbox manifest asset URL is not HTTPS")
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(1)
+print(url)
+PY
+    ) || {
+        fail "stable release has no safe agent-sandbox-manifest.json asset" >&2
+        return 1
+    }
+    manifest=$(curl --silent --show-error --fail --location \
+        --connect-timeout 5 --max-time 20 \
+        "$asset_url") || {
+        fail "unable to download agent-sandbox-manifest.json" >&2
+        return 1
+    }
+    refs=$(python3 - "$manifest" "$version" <<'PY'
+import json
+import re
+import sys
+
+digest = r"(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,254})@sha256:[0-9a-f]{64}"
+try:
+    payload = json.loads(sys.argv[1])
+    version = sys.argv[2]
+    required = {"schema_version", "manifest", "version", "channel", "sandboxd_image", "runner_image"}
+    if set(payload) != required:
+        raise ValueError("sandbox manifest keys are not exact")
+    if payload["schema_version"] != 1 or payload["manifest"] != "agent-sandbox":
+        raise ValueError("sandbox manifest schema identity is invalid")
+    if payload["version"] != version or payload["channel"] != "stable":
+        raise ValueError("sandbox manifest release identity is invalid")
+    sandboxd = payload["sandboxd_image"]
+    runner = payload["runner_image"]
+    if (
+        not isinstance(sandboxd, str)
+        or not re.fullmatch(digest, sandboxd)
+        or not sandboxd.startswith("ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:")
+    ):
+        raise ValueError("sandboxd image digest is invalid")
+    if (
+        not isinstance(runner, str)
+        or not re.fullmatch(digest, runner)
+        or not runner.startswith("ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:")
+    ):
+        raise ValueError("runner image digest is invalid")
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(1)
+print(sandboxd)
+print(runner)
+PY
+    ) || {
+        fail "agent-sandbox-manifest.json failed strict digest validation" >&2
+        return 1
+    }
+    local -a values=()
+    mapfile -t values <<< "$refs"
+    [[ "${#values[@]}" -eq 2 ]] || {
+        fail "agent-sandbox-manifest.json did not contain exactly two digests" >&2
+        return 1
+    }
+    printf '%s\n%s\n' "${values[0]}" "${values[1]}"
+}
+
+sandbox_ensure_production_digests() {
+    local existing_daemon="$SANDBOX_IMAGE_DIGEST" existing_runner="$SANDBOX_RUNNER_DIGEST"
+    if [[ -n "$existing_daemon" || -n "$existing_runner" ]]; then
+        if [[ -n "$existing_daemon" ]] && ! sandbox_registry_digest_is_safe "$existing_daemon"; then
+            fail "SAKURA_SANDBOXD_IMAGE_DIGEST is not a complete immutable reference" >&2
+            return 1
+        fi
+        if [[ -n "$existing_runner" ]] && ! sandbox_registry_digest_is_safe "$existing_runner"; then
+            fail "SAKURA_AGENT_RUNNER_IMAGE_DIGEST is not a complete immutable reference" >&2
+            return 1
+        fi
+    fi
+    if [[ -n "$existing_daemon" && -n "$existing_runner" ]] && \
+        ! current_release_probe=$(sandbox_release_version 2>/dev/null); then
+        # Explicit complete immutable references are sufficient for a source
+        # or isolated sandbox invocation that has no Web release identity.
+        return 0
+    fi
+    local refs
+    refs=$(sandbox_fetch_release_digests) || return 1
+    local fetched_daemon fetched_runner
+    fetched_daemon=$(sed -n '1p' <<< "$refs")
+    fetched_runner=$(sed -n '2p' <<< "$refs")
+    # Always compare against the Web release currently persisted in
+    # deployment.env.  This closes the old-digest retention gap after an
+    # updater Web upgrade; a direct manual start also converges stale pairs.
+    # A mismatch within the same explicitly persisted release is treated as
+    # tampering and remains fail-closed.
+    local persisted_release=""
+    if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        persisted_release="$(grep -E '^SAKURA_SANDBOX_RELEASE_VERSION=' "$DEPLOYMENT_ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+    fi
+    local current_release
+    current_release=$(sandbox_release_version) || return 1
+    if [[ "$persisted_release" == "$current_release" ]]; then
+        [[ -z "$existing_daemon" || "$existing_daemon" == "$fetched_daemon" ]] || {
+            fail "configured sandboxd digest disagrees with the same-release manifest" >&2
+            return 1
+        }
+        [[ -z "$existing_runner" || "$existing_runner" == "$fetched_runner" ]] || {
+            fail "configured runner digest disagrees with the same-release manifest" >&2
+            return 1
+        }
+    fi
+    SANDBOX_IMAGE_DIGEST="$fetched_daemon"
+    SANDBOX_RUNNER_DIGEST="$fetched_runner"
+    SANDBOX_IMAGE="${SANDBOX_IMAGE_DIGEST%@*}"
+    SANDBOX_RUNNER_IMAGE="${SANDBOX_RUNNER_DIGEST%@*}"
+    if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        write_deployment_env_keys \
+            "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE" \
+            "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST" \
+            "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE" \
+            "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST" \
+            "SAKURA_SANDBOX_RELEASE_VERSION=$current_release" \
+            "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT" || return 1
+    fi
+}
+
+sandbox_persist_runtime_identity() {
+    [[ -f "$DEPLOYMENT_ENV_FILE" ]] || return 0
+    [[ -n "$SANDBOX_IMAGE_DIGEST" && -n "$SANDBOX_RUNNER_DIGEST" ]] || return 1
+    write_deployment_env_keys \
+        "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE" \
+        "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST" \
+        "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE" \
+        "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST" \
+        "SAKURA_SANDBOX_RELEASE_VERSION=$(sandbox_release_version 2>/dev/null || true)" \
+        "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT" \
+        "SAKURA_SANDBOX_INSTANCE_ID=$SANDBOX_CONFIGURED_INSTANCE_ID"
+}
+
+sandbox_validate_configured_instance_id() {
+    [[ -z "$SANDBOX_CONFIGURED_INSTANCE_ID" || "$SANDBOX_CONFIGURED_INSTANCE_ID" =~ ^sandbox-[a-z0-9-]{8,55}$ ]]
+}
+
+sandbox_recover_missing_state_instance() {
+    # With state files gone, recover at most one container carrying the exact
+    # daemon labels and fixed name.  No substring/map matching is used: the
+    # JSON object and every label are compared structurally by Python.
+    local ids id payload instance
+    ids=$(docker ps -aq --no-trunc --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null || true)
+    [[ -n "$ids" ]] || return 1
+    instance=""
+    local matched=0 recovered_instance=""
+    while IFS= read -r id; do
+        [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || continue
+        payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || continue
+        if instance=$(python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$SANDBOX_PROTOCOL_VERSION" <<'PY'
+import json
+import re
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+    labels = obj["Config"]["Labels"]
+    name = obj["Name"]
+    service = labels["ai.sakura.managed-by"]
+    instance = labels["ai.sakura.instance-id"]
+    protocol = labels["ai.sakura.protocol-version"]
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if (
+    name != "/" + sys.argv[2]
+    or service != "sandboxd"
+    or protocol != sys.argv[3]
+    or not isinstance(instance, str)
+    or not re.fullmatch(r"sandbox-[a-z0-9-]{8,55}", instance)
+):
+    raise SystemExit(1)
+print(instance)
+PY
+        ); then
+            if [[ -n "$SANDBOX_CONFIGURED_INSTANCE_ID" && "$instance" != "$SANDBOX_CONFIGURED_INSTANCE_ID" ]]; then
+                continue
+            fi
+            matched=$((matched + 1))
+            recovered_instance="$instance"
+        fi
+    done <<< "$ids"
+    [[ "$matched" -eq 1 && -n "${recovered_instance:-}" ]] || return 1
+    printf '%s\n' "$recovered_instance"
+}
+
+sandbox_instance_id() {
+    local value=""
+    if [[ -f "$SANDBOX_INSTANCE_ID_FILE" ]]; then
+        IFS= read -r value < "$SANDBOX_INSTANCE_ID_FILE" || value=""
+    fi
+    if [[ "$value" =~ ^sandbox-[a-z0-9-]{8,55}$ ]]; then
+        SANDBOX_CONFIGURED_INSTANCE_ID="$value"
+        printf '%s\n' "$value"
+        return 0
+    fi
+    sandbox_validate_configured_instance_id || {
+        fail "SAKURA_SANDBOX_INSTANCE_ID is invalid" >&2
+        return 1
+    }
+    if [[ -n "$SANDBOX_CONFIGURED_INSTANCE_ID" ]]; then
+        value="$SANDBOX_CONFIGURED_INSTANCE_ID"
+    elif value=$(sandbox_recover_missing_state_instance 2>/dev/null); then
+        :
+    fi
+    if [[ -n "$value" ]]; then
+        local recovered_tmp="$SANDBOX_INSTANCE_ID_FILE.tmp.$$"
+        printf '%s\n' "$value" > "$recovered_tmp" || { rm -f -- "$recovered_tmp"; return 1; }
+        chmod 0600 "$recovered_tmp" || { rm -f -- "$recovered_tmp"; return 1; }
+        mv -f -- "$recovered_tmp" "$SANDBOX_INSTANCE_ID_FILE" || { rm -f -- "$recovered_tmp"; return 1; }
+        SANDBOX_CONFIGURED_INSTANCE_ID="$value"
+        printf '%s\n' "$value"
+        return 0
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        value="sandbox-$(openssl rand -hex 16 2>/dev/null || true)"
+    elif command -v python3 >/dev/null 2>&1; then
+        value="sandbox-$(python3 -c 'import secrets; print(secrets.token_hex(16))' 2>/dev/null || true)"
+    fi
+    [[ "$value" =~ ^sandbox-[a-z0-9-]{8,55}$ ]] || {
+        fail "cannot create stable sandboxd instance id" >&2
+        return 1
+    }
+    local tmp="$SANDBOX_INSTANCE_ID_FILE.tmp.$$"
+    printf '%s\n' "$value" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$SANDBOX_INSTANCE_ID_FILE" || { rm -f -- "$tmp"; return 1; }
+    SANDBOX_CONFIGURED_INSTANCE_ID="$value"
+    printf '%s\n' "$value"
+}
+
+sandbox_read_container_id() {
+    local value=""
+    [[ -f "$SANDBOX_CONTAINER_ID_FILE" ]] || return 1
+    IFS= read -r value < "$SANDBOX_CONTAINER_ID_FILE" || return 1
+    [[ "$value" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    printf '%s\n' "$value"
+}
+
+sandbox_container_inspect() {
+    local id="$1"
+    docker inspect --type container "$id" 2>/dev/null
+}
+
+sandbox_container_owned() {
+    local id="$1" instance="$2" payload
+    [[ "$id" != *$'\n'* && "$id" != *$'\r'* ]] || return 1
+    [[ "$instance" =~ ^sandbox-[a-z0-9-]{8,55}$ ]] || return 1
+    payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || return 1
+    python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$instance" "$SANDBOX_PROTOCOL_VERSION" <<'PY'
+import json
+import re
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+    labels = obj["Config"]["Labels"]
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(labels, dict):
+    raise SystemExit(1)
+if (
+    obj.get("Name") != "/" + sys.argv[2]
+    or labels.get("ai.sakura.managed-by") != "sandboxd"
+    or labels.get("ai.sakura.instance-id") != sys.argv[3]
+    or labels.get("ai.sakura.protocol-version") != sys.argv[4]
+    or not re.fullmatch(r"sandbox-[a-z0-9-]{8,55}", str(labels.get("ai.sakura.instance-id", "")))
+):
+    raise SystemExit(1)
+PY
+}
+
+sandbox_container_matches_expected() {
+    local id="$1" instance="$2" image_ref="$3" runner_ref="$4" payload
+    [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || return 1
+    python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$instance" "$SANDBOX_PROTOCOL_VERSION" "$image_ref" "$runner_ref" "$SANDBOX_WORKSPACE_ROOT" <<'PY'
+import json
+import re
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+    labels = obj["Config"]["Labels"]
+    image_ref = obj["Config"]["Image"]
+    image_id = obj["Image"]
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(labels, dict):
+    raise SystemExit(1)
+expected = {
+    "ai.sakura.managed-by": "sandboxd",
+    "ai.sakura.instance-id": sys.argv[3],
+    "ai.sakura.protocol-version": sys.argv[4],
+    "ai.sakura.runner-image-digest": sys.argv[6],
+    "ai.sakura.workspace-root": sys.argv[7],
+}
+if obj.get("Name") != "/" + sys.argv[2] or any(labels.get(k) != v for k, v in expected.items()):
+    raise SystemExit(1)
+if not re.fullmatch(r"sandbox-[a-z0-9-]{8,55}", str(labels.get("ai.sakura.instance-id", ""))):
+    raise SystemExit(1)
+# ``Config.Image`` is the immutable ref supplied to docker run.  The daemon
+# also records ``Image``; require it to be a content ID so a mocked/changed
+# container cannot pass by tag-only comparison.
+if image_ref != sys.argv[5] or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(image_id)):
+    raise SystemExit(1)
+PY
+}
+
+sandbox_container_id_from_name() {
+    local instance="$1" id="" found=0
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        if sandbox_container_owned "$id" "$instance"; then
+            printf '%s\n' "$id"
+            found=$((found + 1))
+        fi
+    done < <(docker ps -aq --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null || true)
+    [[ "$found" -eq 1 ]]
+}
+
+sandbox_write_identity() {
+    local id="$1" instance="$2" tmp="$SANDBOX_IDENTITY_FILE.tmp.$$"
+    printf '%s\n%s\n%s\n' "$id" "$instance" "$SANDBOX_CONTAINER_NAME" > "$tmp" || {
+        rm -f -- "$tmp"
+        return 1
+    }
+    chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$SANDBOX_IDENTITY_FILE" || { rm -f -- "$tmp"; return 1; }
+    printf '%s\n' "$id" > "$SANDBOX_CONTAINER_ID_FILE" || return 1
+    chmod 0600 "$SANDBOX_CONTAINER_ID_FILE"
+}
+
+sandbox_identity_matches() {
+    local id instance
+    instance=$(sandbox_instance_id) || return 1
+    id=$(sandbox_read_container_id) || return 1
+    sandbox_container_owned "$id" "$instance" || return 1
+    docker inspect --type container --format '{{.State.Running}}' "$id" 2>/dev/null | grep -qx true
+}
+
+sandbox_health_payload() {
+    [[ -S "$SANDBOX_SOCKET_PATH" ]] || return 1
+    curl --silent --show-error --connect-timeout 2 --max-time 5 \
+        --unix-socket "$SANDBOX_SOCKET_PATH" \
+        -H 'Accept: application/json' \
+        http://localhost/v1/health 2>/dev/null
+}
+
+sandbox_health_ready() {
+    local payload instance expected_digest workspace_root expected_profiles
+    payload=$(sandbox_health_payload) || return 1
+    instance=$(sandbox_instance_id) || return 1
+    expected_digest="$SANDBOX_RUNNER_DIGEST"
+    workspace_root="$SANDBOX_WORKSPACE_ROOT"
+    expected_profiles="agent,dependency"
+    python3 - "$payload" "$instance" "$expected_digest" "$workspace_root" "$expected_profiles" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+    data = payload["data"]
+    expected_instance = sys.argv[2]
+    expected_digest = sys.argv[3]
+    expected_workspace = sys.argv[4]
+    expected_profiles = set(sys.argv[5].split(","))
+except (KeyError, IndexError, TypeError, ValueError):
+    raise SystemExit(1)
+
+if set(payload) != {"protocol_version", "sandboxd_version", "data"}:
+    raise SystemExit(1)
+if payload.get("protocol_version") != 1 or not isinstance(payload.get("sandboxd_version"), str):
+    raise SystemExit(1)
+required = {"ready", "runtime", "profiles", "instance_id", "workspace_root", "runner_image_digest"}
+if not isinstance(data, dict) or set(data) != required:
+    raise SystemExit(1)
+if data.get("ready") is not True or data.get("runtime") != "docker":
+    raise SystemExit(1)
+if set(data.get("profiles", [])) != expected_profiles:
+    raise SystemExit(1)
+if data.get("instance_id") != expected_instance:
+    raise SystemExit(1)
+if data.get("workspace_root") != expected_workspace:
+    raise SystemExit(1)
+if not expected_digest or data.get("runner_image_digest") != expected_digest:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+sandbox_remove_stale_socket() {
+    if [[ -S "$SANDBOX_SOCKET_PATH" ]]; then
+        if sandbox_health_payload >/dev/null 2>&1; then
+            fail "sandboxd UDS listener is live; refusing to replace its socket" >&2
+            return 1
+        fi
+        rm -f -- "$SANDBOX_SOCKET_PATH" || return 1
+    elif [[ -e "$SANDBOX_SOCKET_PATH" || -L "$SANDBOX_SOCKET_PATH" ]]; then
+        fail "refusing to remove non-socket or symlinked sandboxd path" >&2
+        return 1
+    fi
+}
+
+sandbox_wait_ready() {
+    local elapsed=0
+    while [[ "$elapsed" -lt "$SANDBOX_HEALTH_TIMEOUT" ]]; do
+        if sandbox_identity_matches && sandbox_health_ready; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    fail "sandboxd did not become healthy within ${SANDBOX_HEALTH_TIMEOUT}s" >&2
+    return 1
+}
+
+sandbox_runner_reference() {
+    [[ -n "$SANDBOX_RUNNER_DIGEST" ]] && sandbox_immutable_reference_is_safe "$SANDBOX_RUNNER_DIGEST" || {
+        fail "SAKURA_AGENT_RUNNER_IMAGE_DIGEST must be an immutable sha256 reference (registry digest or local image ID)" >&2
+        return 1
+    }
+    printf '%s\n' "$SANDBOX_RUNNER_DIGEST"
+}
+
+sandbox_daemon_reference() {
+    [[ -n "$SANDBOX_IMAGE_DIGEST" ]] && sandbox_immutable_reference_is_safe "$SANDBOX_IMAGE_DIGEST" || {
+        fail "SAKURA_SANDBOXD_IMAGE_DIGEST must be an immutable sha256 reference (registry digest or local image ID)" >&2
+        return 1
+    }
+    printf '%s\n' "$SANDBOX_IMAGE_DIGEST"
+}
+
+sandbox_pull_or_build_images() {
+    local prod="$1" runner_ref daemon_ref
+    sandbox_load_deployment_config
+    if [[ "$prod" == "true" ]]; then
+        sandbox_ensure_production_digests || return 1
+        sandbox_registry_digest_is_safe "$SANDBOX_IMAGE_DIGEST" || {
+            fail "production sandbox requires SAKURA_SANDBOXD_IMAGE_DIGEST=NAME@sha256:<64>" >&2
+            return 1
+        }
+        sandbox_registry_digest_is_safe "$SANDBOX_RUNNER_DIGEST" || {
+            fail "production sandbox requires SAKURA_AGENT_RUNNER_IMAGE_DIGEST=NAME@sha256:<64>" >&2
+            return 1
+        }
+        daemon_ref=$(sandbox_daemon_reference) || return 1
+        runner_ref=$(sandbox_runner_reference) || return 1
+        # Pull the exact immutable references and pass those same references
+        # to docker run; never resolve or start a mutable channel tag.
+        docker pull "$daemon_ref" >/dev/null || return 1
+        docker pull "$runner_ref" >/dev/null || return 1
+    else
+        # The daemon image is still built independently from the Web image.
+        docker build -f docker/Dockerfile.sandboxd -t "$SANDBOX_IMAGE" . || return 1
+        SANDBOX_IMAGE_DIGEST=$(docker image inspect --format '{{.Id}}' "$SANDBOX_IMAGE" 2>/dev/null) || return 1
+        sandbox_immutable_reference_is_safe "$SANDBOX_IMAGE_DIGEST" || {
+            fail "source sandboxd build did not produce a content-addressed image ID" >&2
+            return 1
+        }
+        if [[ "$SANDBOX_SOURCE_MODE" == "1" ]]; then
+            docker build -f docker/Dockerfile.agent-sandbox -t "$SANDBOX_RUNNER_IMAGE" . || return 1
+            SANDBOX_RUNNER_DIGEST=$(docker image inspect --format '{{.Id}}' "$SANDBOX_RUNNER_IMAGE" 2>/dev/null) || return 1
+            sandbox_immutable_reference_is_safe "$SANDBOX_RUNNER_DIGEST" || {
+                fail "source runner build did not produce a content-addressed image ID" >&2
+                return 1
+            }
+        else
+            runner_ref=$(sandbox_runner_reference) || return 1
+            if ! docker image inspect "$runner_ref" >/dev/null 2>&1; then
+            docker pull "$runner_ref" >/dev/null || return 1
+            fi
+        fi
+    fi
+}
+
+sandbox_stop_known_container() {
+    local id="$1" elapsed=0 running=""
+    [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    running=$(docker inspect --type container --format '{{.State.Running}}' "$id" 2>/dev/null || true)
+    if [[ "$running" == "true" ]]; then
+        docker stop --time "$SANDBOX_STOP_TIMEOUT" "$id" >/dev/null 2>&1 || true
+    fi
+    while [[ "$elapsed" -lt "$SANDBOX_STOP_TIMEOUT" ]]; do
+        running=$(docker inspect --type container --format '{{.State.Running}}' "$id" 2>/dev/null || true)
+        [[ "$running" != "true" ]] && break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    running=$(docker inspect --type container --format '{{.State.Running}}' "$id" 2>/dev/null || true)
+    if [[ "$running" == "true" ]]; then
+        docker kill "$id" >/dev/null 2>&1 || true
+        running=$(docker inspect --type container --format '{{.State.Running}}' "$id" 2>/dev/null || true)
+    fi
+    [[ "$running" != "true" ]] || return 1
+}
+
+sandbox_cleanup_known_container() {
+    local id="$1"
+    sandbox_stop_known_container "$id" || return 1
+    docker rm "$id" >/dev/null 2>&1 || return 1
+}
+
+sandbox_start_container() {
+    local prod="${1:-false}" instance id runner_ref daemon_ref existing
+    local -a run_args=()
+    sandbox_prepare_directories || return 1
+    instance=$(sandbox_instance_id) || return 1
+    runner_ref=$(sandbox_runner_reference) || return 1
+    daemon_ref=$(sandbox_daemon_reference) || return 1
+    sandbox_persist_runtime_identity || return 1
+    export SAKURA_SANDBOXD_IMAGE="$SANDBOX_IMAGE"
+    export SAKURA_SANDBOXD_IMAGE_DIGEST="$SANDBOX_IMAGE_DIGEST"
+    export SAKURA_AGENT_RUNNER_IMAGE="$SANDBOX_RUNNER_IMAGE"
+    export SAKURA_AGENT_RUNNER_IMAGE_DIGEST="$SANDBOX_RUNNER_DIGEST"
+    export SAKURA_SANDBOX_WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
+    export SAKURA_SANDBOX_INSTANCE_ID="$instance"
+    if id=$(sandbox_read_container_id 2>/dev/null); then
+        if sandbox_identity_matches \
+            && sandbox_container_matches_expected "$id" "$instance" "$daemon_ref" "$runner_ref" \
+            && sandbox_health_ready; then
+            return 0
+        fi
+    fi
+    if existing=$(sandbox_container_id_from_name "$instance"); then
+        id="$existing"
+        if ! sandbox_container_matches_expected "$id" "$instance" "$daemon_ref" "$runner_ref"; then
+            # A changed image, runner digest, workspace, protocol or instance
+            # is an upgrade, not a restart.  Remove only the exact structured
+            # identity just found, then create a fresh container.
+            sandbox_cleanup_known_container "$id" || {
+                fail "unable to remove stale sandboxd container before rebuild" >&2
+                return 1
+            }
+            rm -f -- "$SANDBOX_CONTAINER_ID_FILE" "$SANDBOX_IDENTITY_FILE"
+        else
+            sandbox_write_identity "$id" "$instance" || return 1
+            if sandbox_identity_matches && sandbox_health_ready; then
+                return 0
+            fi
+            sandbox_stop_known_container "$id" || return 1
+            sandbox_remove_stale_socket || return 1
+            docker start "$id" >/dev/null || return 1
+            sandbox_write_identity "$id" "$instance" || return 1
+            if sandbox_wait_ready; then
+                return 0
+            fi
+            sandbox_cleanup_known_container "$id" || true
+            return 1
+        fi
+    fi
+    if docker ps -aq --filter "name=^/${SANDBOX_CONTAINER_NAME}$" | grep -q .; then
+        fail "sandboxd name is occupied but ownership cannot be proven; refusing replacement" >&2
+        return 1
+    fi
+    sandbox_remove_stale_socket || return 1
+    run_args=(
+        docker run --detach
+        --name "$SANDBOX_CONTAINER_NAME" \
+        --restart unless-stopped \
+        --label ai.sakura.managed-by=sandboxd \
+        --label "ai.sakura.instance-id=$instance" \
+        --label "ai.sakura.protocol-version=$SANDBOX_PROTOCOL_VERSION" \
+        --label "ai.sakura.runner-image-digest=$runner_ref" \
+        --label "ai.sakura.workspace-root=$SANDBOX_WORKSPACE_ROOT" \
+        --network none \
+        --read-only \
+        --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+        --mount "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock" \
+        --mount "type=bind,src=$SANDBOX_RUNTIME_DIR,dst=$SANDBOX_RUNTIME_DIR" \
+        --mount "type=bind,src=$SANDBOX_STATE_DIR,dst=/var/lib/sakura-ai-sandbox" \
+        --mount "type=bind,src=$SANDBOX_WORKSPACE_ROOT,dst=$SANDBOX_WORKSPACE_ROOT" \
+        "$daemon_ref" \
+        --socket "$SANDBOX_SOCKET_PATH" \
+        --socket-root "$SANDBOX_RUNTIME_DIR" \
+        --socket-group "$SANDBOX_GID" \
+        --socket-mode 0660 \
+        --workspace-root "$SANDBOX_WORKSPACE_ROOT" \
+        --state-dir /var/lib/sakura-ai-sandbox \
+        --instance-id "$instance" \
+        --runtime docker \
+        --runner-image "$runner_ref" \
+        --docker-binary docker
+    )
+    run_args+=(--runner-image-digest "$SANDBOX_RUNNER_DIGEST")
+    if ! "${run_args[@]}" >/dev/null; then
+        # Docker can create a container and still return an error (for
+        # example, a post-create attach failure).  Recover its exact ID by
+        # structured name/labels before returning, then remove it.
+        if id=$(sandbox_container_id_from_name "$instance"); then
+            sandbox_cleanup_known_container "$id" || true
+        fi
+        return 1
+    fi
+    id=$(docker inspect --type container --format '{{.Id}}' "$SANDBOX_CONTAINER_NAME" 2>/dev/null || true)
+    if [[ ! "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]]; then
+        if id=$(sandbox_container_id_from_name "$instance"); then
+            sandbox_cleanup_known_container "$id" || true
+        fi
+        return 1
+    fi
+    sandbox_container_owned "$id" "$instance" || {
+        fail "new sandboxd container failed ownership verification" >&2
+        sandbox_cleanup_known_container "$id" || true
+        return 1
+    }
+    if ! sandbox_container_matches_expected "$id" "$instance" "$daemon_ref" "$runner_ref"; then
+        fail "new sandboxd container failed immutable identity verification" >&2
+        sandbox_cleanup_known_container "$id" || true
+        return 1
+    fi
+    if ! sandbox_write_identity "$id" "$instance"; then
+        sandbox_cleanup_known_container "$id" || true
+        return 1
+    fi
+    if sandbox_wait_ready; then
+        return 0
+    fi
+    sandbox_cleanup_known_container "$id" || true
+    rm -f -- "$SANDBOX_CONTAINER_ID_FILE" "$SANDBOX_IDENTITY_FILE"
+    return 1
+}
+
+ensure_sandboxd_running() {
+    local prod="${1:-false}"
+    sandbox_pull_or_build_images "$prod" || return 1
+    sandbox_start_container "$prod"
+}
+
+sandbox_stop() {
+    local id instance
+    if [[ ! -e "$SANDBOX_RUNTIME_DIR" && ! -e "$SANDBOX_STATE_DIR" \
+        && ! -e "$SANDBOX_SOCKET_PATH" ]]; then
+        return 0
+    fi
+    sandbox_prepare_directories || return 1
+    sandbox_load_deployment_config
+    instance=$(sandbox_instance_id) || return 1
+    id=$(sandbox_read_container_id 2>/dev/null || sandbox_container_id_from_name "$instance" 2>/dev/null || true)
+    [[ -n "$id" ]] || return 0
+    sandbox_container_owned "$id" "$instance" || {
+        fail "refusing to stop an unowned sandboxd container" >&2
+        return 1
+    }
+    sandbox_write_identity "$id" "$instance" || return 1
+    if ! sandbox_stop_known_container "$id"; then
+        fail "sandboxd container did not stop within the bounded timeout" >&2
+        return 1
+    fi
+    if [[ -S "$SANDBOX_SOCKET_PATH" ]] && sandbox_health_payload >/dev/null 2>&1; then
+        fail "sandboxd UDS listener remains live after stop" >&2
+        return 1
+    fi
+}
+
+sandbox_uninstall() {
+    local purge="${1:-false}" id instance target expected
+    if [[ ! -e "$SANDBOX_RUNTIME_DIR" && ! -e "$SANDBOX_STATE_DIR" \
+        && ! -e "$SANDBOX_SOCKET_PATH" ]]; then
+        return 0
+    fi
+    sandbox_prepare_directories || return 1
+    sandbox_load_deployment_config
+    instance=$(sandbox_instance_id) || return 1
+    id=$(sandbox_read_container_id 2>/dev/null || sandbox_container_id_from_name "$instance" 2>/dev/null || true)
+    if [[ -n "$id" ]]; then
+        sandbox_container_owned "$id" "$instance" || {
+            fail "refusing to remove an unowned sandboxd container" >&2
+            return 1
+        }
+        sandbox_write_identity "$id" "$instance" || return 1
+        sandbox_stop_known_container "$id" || return 1
+        docker rm "$id" >/dev/null || return 1
+    fi
+    rm -f -- "$SANDBOX_CONTAINER_ID_FILE" "$SANDBOX_IDENTITY_FILE" "$SANDBOX_INSTANCE_ID_FILE" || return 1
+    if [[ -S "$SANDBOX_SOCKET_PATH" ]]; then
+        rm -f -- "$SANDBOX_SOCKET_PATH" || return 1
+    elif [[ -e "$SANDBOX_SOCKET_PATH" ]]; then
+        fail "refusing to remove non-socket sandboxd path" >&2
+        return 1
+    fi
+    if [[ "$purge" == "true" ]]; then
+        target="$SANDBOX_STATE_DIR"
+        expected="$UPDATER_PROJECT_ROOT/$DEPLOY_DIR/sandbox"
+        [[ "$target" == "$expected" && "$target" != "/" && "$target" != "$UPDATER_PROJECT_ROOT" ]] || {
+            fail "refusing unsafe sandboxd state purge target: $target" >&2
+            return 1
+        }
+        [[ ! -L "$target" && -d "$target" ]] || return 1
+        rm -rf -- "$target"
+    fi
+}
+
+sandbox_status() {
+    local instance id
+    if [[ ! -f "$SANDBOX_CONTAINER_ID_FILE" ]]; then
+        info "sandboxd 未安装/未运行"
+        return 0
+    fi
+    instance=$(sandbox_instance_id 2>/dev/null || true)
+    id=$(sandbox_read_container_id 2>/dev/null || true)
+    if [[ -n "$id" ]] && sandbox_container_owned "$id" "$instance"; then
+        if sandbox_identity_matches && sandbox_health_ready; then
+            ok "sandboxd 运行中 (instance=$instance, gid=$SANDBOX_GID)"
+        else
+            warn "sandboxd 容器存在但未通过健康/身份检查"
+        fi
+    else
+        warn "sandboxd 状态文件存在但容器身份无法验证"
+    fi
+}
+
+sandbox_require_root() {
+    if [[ "$(id -u)" != "0" ]]; then
+        fail "sandboxd lifecycle operations require root (socket group/mode are host-owned)" >&2
+        return 1
+    fi
+}
+
+cmd_sandbox() {
+    local action="${1:-status}" prod="false"
+    shift || true
+    case "$action" in
+        start)
+            sandbox_require_root || return $?
+            if should_use_production_mode false; then
+                prod="true"
+            fi
+            init_deployment_env || return $?
+            ensure_sandboxd_running "$prod"
+            ;;
+        stop)
+            sandbox_require_root || return $?
+            sandbox_stop
+            ;;
+        restart)
+            sandbox_require_root || return $?
+            sandbox_stop || return $?
+            if should_use_production_mode false; then
+                prod="true"
+            fi
+            ensure_sandboxd_running "$prod"
+            ;;
+        reinstall)
+            sandbox_require_root || return $?
+            sandbox_uninstall false || return $?
+            if should_use_production_mode false; then
+                prod="true"
+            fi
+            ensure_sandboxd_running "$prod"
+            ;;
+        uninstall)
+            sandbox_require_root || return $?
+            sandbox_uninstall false
+            ;;
+        status)
+            sandbox_status
+            ;;
+        *)
+            fail "未知 sandboxd 子命令: $action" >&2
+            echo "用法: ./start.sh sandboxd [start|stop|restart|reinstall|uninstall|status]" >&2
+            return 1
+            ;;
+    esac
 }
 
 # ============================================================
@@ -526,6 +1573,8 @@ select_production_compose_project() {
 
 select_compose_for_operation() {
     local requested_prod="${1:-false}"
+    sandbox_load_deployment_config
+    export SAKURA_SANDBOX_WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
     if should_use_production_mode "$requested_prod"; then
         COMPOSE_FILE="$PROD_COMPOSE_FILE"
         select_production_compose_project "$DEPLOYMENT_ENV_FILE"
@@ -1553,6 +2602,10 @@ cmd_status() {
         fi
     fi
 
+    # Report sandboxd independently.  Status is read-only: unlike the Web
+    # start path it never bootstraps a missing daemon or touches its state.
+    sandbox_status
+
     if [[ "$build_active" -eq 1 ]]; then
         local pid
         pid=$(runner_read_pid)
@@ -1662,6 +2715,15 @@ build_runner() {
 
     # --- preflight ---
     set_phase "preflight"
+
+    # sandboxd must be healthy before any Web container is started.  This is
+    # intentionally before the existing Compose down/build path so an image
+    # or daemon failure never leaves a running Web service without its Agent
+    # execution boundary.
+    if ! ensure_sandboxd_running "$prod"; then
+        set_phase "preflight" "fail"
+        return 1
+    fi
 
     if $prod; then
         # 生产模式：镜像不可变，跳过本地构建判定（requirements/Dockerfile 哈希），
@@ -1794,6 +2856,16 @@ build_runner() {
 
     if [[ $elapsed -ge $HEALTH_TIMEOUT ]]; then
         warn "服务启动超时 (${HEALTH_TIMEOUT}s)"
+    fi
+
+    # Re-check the independent daemon after Web startup.  A crash/restart in
+    # this window is a fail-closed deployment result rather than a usable Web
+    # service with a hidden local subprocess fallback.
+    if ! sandbox_health_ready; then
+        fail "sandboxd health/protocol/runtime/identity check failed after Web startup" >&2
+        $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
+        set_phase "health" "fail"
+        return 1
     fi
 
     # host updater daemon 恢复（spec §11.4）
@@ -1947,6 +3019,115 @@ updater_daemon_is_running() {
         --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1
 }
 
+# Production image updates are a three-image transaction owned by the host
+# updater. There is intentionally no Compose-only fallback here: writing
+# SAKURA_AI_IMAGE alone would leave sandboxd/runner on an unrelated release.
+require_image_updater_transaction() {
+    if ! updater_daemon_is_running; then
+        fail "生产镜像更新需要可用的 host updater daemon；拒绝 Web-only Compose fallback" >&2
+        fail "请先执行: sudo ./start.sh updater start" >&2
+        return 1
+    fi
+}
+
+# Build the structured development target accepted by updater's registry
+# verifier. The target must already be an immutable current development image;
+# a missing/ambiguous target fails closed instead of resolving a moving tag in
+# this shell process.
+updater_development_target_body() {
+    local image="$1" repository tag digest version revision
+    repository=$(image_repo_of "$image")
+    [[ "$repository" == "$DEFAULT_IMAGE_REPOSITORY" ]] || return 1
+    tag=$(image_tag_of "$image")
+    [[ "$tag" =~ ^dev-[0-9]{14}-v([0-9]+\.[0-9]+\.[0-9]+)-([0-9a-f]{40})$ ]] || return 1
+    version="${BASH_REMATCH[1]}"
+    revision="${BASH_REMATCH[2]}"
+    [[ "$image" == *@* ]] || return 1
+    digest="${image##*@}"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    printf '{"target":{"channel":"development","version":"%s","revision":"%s","tag":"%s","digest":"%s"}' \
+        "$version" "$revision" "$tag" "$digest"
+    printf '}\n'
+}
+
+# Submit and wait for one updater-owned three-image transaction. Stable
+# updates let the updater resolve the signed current release; development
+# updates must provide its exact structured target. HTTP/network failures are
+# terminal for this command and never fall back to direct Compose mutation.
+updater_submit_image_transaction() {
+    local channel="$1" image="$2" confirm="${3:-false}"
+    local payload job_id body_file http_status pattern body
+    require_image_updater_transaction || return 1
+
+    if [[ "$channel" == "stable" ]]; then
+        body='{}'
+        if [[ "$confirm" == "true" ]]; then
+            body='{"confirm_channel_switch":true}'
+        fi
+    elif [[ "$channel" == "development" ]]; then
+        if ! body=$(updater_development_target_body "$image"); then
+            fail "无法从当前 development 镜像构造 updater 结构化 target；请使用 WebUI 选择精确版本" >&2
+            return 1
+        fi
+        if [[ "$confirm" == "true" ]]; then
+            body="${body%?},\"confirm_channel_switch\":true}"
+        fi
+    else
+        fail "无法识别目标频道: $channel" >&2
+        return 1
+    fi
+
+    body_file=$(mktemp) || return 1
+    if ! http_status=$(curl --silent --show-error \
+        --connect-timeout 2 --max-time 300 \
+        --unix-socket "$UPDATER_SOCKET_PATH" \
+        -H 'Content-Type: application/json' -H 'Accept: application/json' \
+        --request POST --data "$body" \
+        --output "$body_file" \
+        --write-out '%{http_code}' \
+        http://localhost/v1/update); then
+        rm -f -- "$body_file"
+        fail "无法连接 host updater daemon；拒绝 Web-only Compose fallback" >&2
+        return 1
+    fi
+    payload=$(cat "$body_file" 2>/dev/null) || payload=""
+    rm -f -- "$body_file"
+
+    if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+        if ! job_id=$(updater_ipc_field job_id "$payload"); then
+            fail "updater 响应缺少 job_id: $payload" >&2
+            return 1
+        fi
+        if updater_ipc_wait_job "$job_id"; then
+            ok "镜像更新完成"
+            return 0
+        fi
+        fail "镜像更新未成功 (job: $job_id)" >&2
+        updater_ipc_show_job_logs "$job_id"
+        return 1
+    fi
+
+    pattern='"error"[[:space:]]*:[[:space:]]*"preflight_failed"'
+    if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
+        pattern='"name":"already_current"[[:space:]]*,[[:space:]]*"passed":false'
+        if [[ "$payload" =~ $pattern ]]; then
+            ok "${channel} 频道已是最新版本，无需更新"
+            return 0
+        fi
+        pattern='"name":"channel_switch_confirmed"[[:space:]]*,[[:space:]]*"passed":false'
+        if [[ "$payload" =~ $pattern ]]; then
+            fail "updater 检测到频道切换未确认，拒绝更新" >&2
+            return 1
+        fi
+        fail "updater 预检未通过 (422):" >&2
+        echo "$payload" >&2
+        return 1
+    fi
+
+    fail "updater 更新提交失败 (HTTP $http_status): $payload" >&2
+    return 1
+}
+
 updater_has_active_job() {
     local payload
     payload=$(updater_ipc_get /v1/status) || return 1
@@ -2069,11 +3250,15 @@ menu_wait_healthy() {
     return 1
 }
 
-# 手动 Compose 更新路径：拉取频道别名镜像 -> 记录到 deployment.env -> up -d。
-# 只重建镜像发生变化的 web 容器（与 updater ImageAdapter.activate 一致），
-# 不会 down 掉 MySQL/Redis。
+# 显式 source/local 调试 helper：拉取频道别名镜像 -> 记录到 deployment.env
+# -> up -d。image/production 的菜单更新路径绝不调用此 Web-only helper，而是
+# 交给 updater 的三镜像事务；保留本函数仅用于 source 模式的显式本地流程。
 apply_channel_image() {
     local channel="$1" repository channel_tag image compose_cmd digest
+    if [[ "$(read_deployment_mode)" == "image" ]]; then
+        fail "image/production mode channel updates must use the host updater three-image transaction" >&2
+        return 1
+    fi
     if ! channel_tag=$(channel_alias "$channel"); then
         fail "无法识别目标频道: $channel"
         return 1
@@ -2110,14 +3295,10 @@ apply_channel_image() {
     ensure_updater_running || warn "updater daemon 未拉起（更新功能不可用，服务不受影响）"
 }
 
-# 更新当前频道的镜像到最新（菜单 [3]）。
-# stable + daemon 运行时复用 updater 的 job 流水线（preflight/pull/activate/
-# health）；其余情况（development 频道、daemon 未运行）回退为直接 Compose 拉取
-# 频道别名。updater 的空 body 目标固定解析为最新 stable Release（jobs.check()），
-# development 频道更新要求结构化 target（WebUI 从镜像目录选择），CLI 端不重复
-# 实现 GHCR 目录解析，故 development 不走 daemon 路径。
+# 更新当前频道的镜像到最新（菜单 [3]）。image/production 模式所有更新都
+# 复用 updater 的三镜像 job；updater 不可用或请求失败时 fail closed。
 cmd_update_image() {
-    local image channel payload job_id body_file http_status pattern
+    local image channel
     require_image_deployment || return 1
     require_idle_image_deployment || return 1
     # 补全残缺部署状态（缺数据库密码/项目名/镜像时自动补写），确保后续镜像
@@ -2133,73 +3314,12 @@ cmd_update_image() {
         fail "当前镜像无法识别频道；镜像更新仅支持 stable/development 别名"
         return 1
     fi
-
-    if [[ "$channel" == "stable" ]] && updater_daemon_is_running; then
-        info "通过 host updater daemon 更新 stable 频道..."
-        body_file=$(mktemp) || return 1
-        # 不用 --fail：422 preflight_failed 的响应体需要读取并分类。
-        if ! http_status=$(curl --silent --show-error \
-            --connect-timeout 2 --max-time 300 \
-            --unix-socket "$UPDATER_SOCKET_PATH" \
-            -H 'Content-Type: application/json' -H 'Accept: application/json' \
-            --request POST --data '{}' \
-            --output "$body_file" \
-            --write-out '%{http_code}' \
-            http://localhost/v1/update); then
-            rm -f -- "$body_file"
-            fail "无法连接 host updater daemon"
-            return 1
-        fi
-        payload=$(cat "$body_file" 2>/dev/null) || payload=""
-        rm -f -- "$body_file"
-
-        if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
-            if ! job_id=$(updater_ipc_field job_id "$payload"); then
-                fail "updater 响应缺少 job_id: $payload"
-                return 1
-            fi
-            if updater_ipc_wait_job "$job_id"; then
-                ok "镜像更新完成"
-                return 0
-            fi
-            fail "镜像更新未成功 (job: $job_id)"
-            updater_ipc_show_job_logs "$job_id"
-            return 1
-        fi
-
-        pattern="\"error\"[[:space:]]*:[[:space:]]*\"preflight_failed\""
-        if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
-            # already_current 未通过 = 目标 digest 与运行 digest 相同：已是最新。
-            pattern="\"name\":\"already_current\"[[:space:]]*,[[:space:]]*\"passed\":false"
-            if [[ "$payload" =~ $pattern ]]; then
-                ok "stable 频道已是最新版本，无需更新"
-                return 0
-            fi
-            pattern="\"name\":\"channel_switch_confirmed\"[[:space:]]*,[[:space:]]*\"passed\":false"
-            if [[ "$payload" =~ $pattern ]]; then
-                fail "updater 检测到运行中容器不在 stable 频道，未带频道切换确认，拒绝更新"
-                info "请使用菜单 [4] 切换频道，或在 WebUI 版本管理器中操作"
-                return 1
-            fi
-            fail "updater 预检未通过 (422):"
-            echo "$payload"
-            return 1
-        fi
-
-        fail "updater 更新提交失败 (HTTP $http_status): $payload"
-        return 1
-    fi
-
-    if updater_daemon_is_running; then
-        info "development 频道刷新直接使用 Compose 别名镜像（updater 空 body 时目标固定为 stable）"
-    else
-        warn "host updater daemon 未运行；回退为手动 Compose 更新"
-    fi
-    apply_channel_image "$channel"
+    info "通过 host updater daemon 执行 ${channel} 三镜像事务..."
+    updater_submit_image_transaction "$channel" "$image" false
 }
 
 # 切换 stable/development 频道（菜单 [4]）：
-# 拉取目标频道别名 -> 更新 deployment.env -> up -d -> 等待健康检查。
+# 目标交给 host updater 完成 preflight/pull/activate/health；不允许只更新 Web。
 cmd_switch_channel() {
     local image channel repository choice target confirm
     require_image_deployment || return 1
@@ -2239,7 +3359,13 @@ cmd_switch_channel() {
             return 0
         fi
     fi
-    apply_channel_image "$target"
+    require_image_updater_transaction || return 1
+    if [[ "$target" == "development" && "$channel" != "development" ]]; then
+        fail "从 stable 切换 development 需要 updater 可验证的结构化 development target；请使用 WebUI 选择精确版本" >&2
+        return 1
+    fi
+    info "通过 host updater daemon 执行 ${target} 三镜像事务..."
+    updater_submit_image_transaction "$target" "$image" true
 }
 
 # ============================================================
@@ -2293,6 +3419,7 @@ render_main_menu() {
     ui_line "  ${BOLD}[10]${RESET} 生产镜像部署"
     ui_line "  ${BOLD}[11]${RESET} Updater daemon 管理"
     ui_line "  ${BOLD}[12]${RESET} 卸载 Sakura AI"
+    ui_line "  ${BOLD}[13]${RESET} Agent sandboxd 状态"
     ui_line "  ${BOLD}[0]${RESET} 退出"
     ui_blank
 }
@@ -2323,6 +3450,7 @@ menu_loop() {
             10) menu_run do_start false true ;;
             11) updater_menu_loop ;;
             12) menu_run cmd_uninstall ;;
+            13) menu_run cmd_sandbox status ;;
             0)  info "已退出" ; exit 0 ;;
             *)  warn "无效选项: $choice" ; sleep 1 ;;
         esac
@@ -2484,6 +3612,11 @@ cmd_uninstall() {
     confirm_sakura_uninstall "$purge" "$assume_yes" || return $?
     stop_deployment_for_uninstall || return $?
 
+    # Stop the independent Agent sandbox before deleting the Web stack.  Its
+    # Docker API mount and UDS are not managed by Compose and therefore need a
+    # separate verified lifecycle gate.
+    sandbox_uninstall "$purge" || return $?
+
     info "正在删除 Sakura AI Compose 服务..."
     sakura_compose_uninstall "$purge" || return $?
     cmd_updater_uninstall || return $?
@@ -2508,6 +3641,7 @@ do_down() {
     echo ""
     info "停止服务..."
     $compose_cmd down
+    sandbox_stop
     ok "服务已停止"
 }
 
@@ -2653,6 +3787,12 @@ main() {
         exit $?
     fi
 
+    if [[ "${1:-}" == "sandboxd" ]]; then
+        shift
+        cmd_sandbox "$@"
+        exit $?
+    fi
+
     # Parse args
     local rebuild=false
     local prod=false
@@ -2680,7 +3820,9 @@ main() {
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
                 echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 删除数据卷"
+                echo "  生产 Agent 沙箱由独立 sandboxd 管理；生产必须配置 runner immutable digest"
                 echo "  updater [action]  管理 host updater daemon（含 reinstall/uninstall；生产操作需 root）"
+                echo "  sandboxd [action] 管理 Agent sandboxd（start/stop/restart/reinstall/uninstall/status）"
                 echo ""
                 echo "断线续跑:"
                 echo "  构建过程在后台运行，SSH 断开不会中断。"

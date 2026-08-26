@@ -752,7 +752,7 @@ def _ensure_model_modules_imported() -> None:
 #   _append_dynamic_config_defaults 从 Settings 统一补插，保持每键单源。
 # - app_version 暂为模块级字面量：单一来源化（backend/__version__ 派生）
 #   列入后续路线（docs/plans/2026-08-16-unified-config-store.md §6）。
-APP_VERSION_DEFAULT = "3.1.3"
+APP_VERSION_DEFAULT = "3.2.0"
 
 
 def _settings_default_to_str(value: object) -> str:

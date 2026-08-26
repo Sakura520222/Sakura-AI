@@ -11,9 +11,13 @@ from .image import (
     ImageAdapter,
     ImageAdapterError,
     ImageCommandError,
+    ImageDeploymentAdapter,
     ImagePreflightError,
     atomic_update_deployment_env,
+    capture_deployment_snapshot,
+    restore_deployment_snapshot,
     write_deployment_env,
+    write_deployment_env_values,
 )
 
 __all__ = [
@@ -23,7 +27,11 @@ __all__ = [
     "ImageAdapter",
     "ImageAdapterError",
     "ImageCommandError",
+    "ImageDeploymentAdapter",
     "ImagePreflightError",
     "atomic_update_deployment_env",
+    "capture_deployment_snapshot",
+    "restore_deployment_snapshot",
     "write_deployment_env",
+    "write_deployment_env_values",
 ]

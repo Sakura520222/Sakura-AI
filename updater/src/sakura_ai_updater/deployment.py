@@ -126,6 +126,19 @@ class DeploymentStateProvider:
 
         return self._env().get("SAKURA_AI_IMAGE") or None
 
+    def sandbox_image_refs(self) -> dict[str, str | None]:
+        """Return the persisted immutable sandbox pair, if configured.
+
+        Development updates deliberately use this pair as-is because the
+        development channel has no stable sandbox manifest to borrow.
+        """
+
+        values = self._env()
+        return {
+            "sandboxd_image": values.get("SAKURA_SANDBOXD_IMAGE_DIGEST") or None,
+            "runner_image": values.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST") or None,
+        }
+
     def read_deploy_mode(self) -> str | None:
         """Read deployment mode from deployment.env, then process environment."""
 
@@ -408,4 +421,5 @@ class DeploymentStateProvider:
             "from_digest": running_digest,
             "deployment_mode": self.read_deploy_mode(),
             "running_container_digest": running_digest,
+            **self.sandbox_image_refs(),
         }
