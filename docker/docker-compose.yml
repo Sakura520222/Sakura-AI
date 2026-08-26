@@ -14,16 +14,30 @@ services:
       - ../.deploy/deployment.env
     group_add:
       - "9472"
+      # sandboxd owns this independent IPC group.  It is deliberately not
+      # the Host Updater group (9472).
+      - "9473"
+    environment:
+      AGENT_TEAM_SANDBOX_RUNTIME: ${SAKURA_SANDBOX_RUNTIME:-docker}
+      AGENT_TEAM_SANDBOX_RUNNER_IMAGE_DIGEST: ${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}
+      AGENT_TEAM_SANDBOX_EXPECTED_INSTANCE_ID: ${SAKURA_SANDBOX_INSTANCE_ID:-}
+      AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT: ${SAKURA_SANDBOX_WORKSPACE_ROOT:?SAKURA_SANDBOX_WORKSPACE_ROOT must be provided by start.sh}
     volumes:
       - type: bind
         source: /run/sakura-ai
         target: /run/sakura-ai
         read_only: true
+      - type: bind
+        source: /run/sakura-ai-sandbox
+        target: /run/sakura-ai-sandbox
+        read_only: true
       - ../logs:/app/logs
       - ../config:/app/config  # 存放 Setup Wizard 写入的 connection.json
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - ../requirements.txt:/app/requirements.txt  # 挂载依赖文件，支持热更新
-      - ../workplace:/app/workplace  # Agent 专家团队独立工作区
+      - type: bind
+        source: ${SAKURA_SANDBOX_WORKSPACE_ROOT:?SAKURA_SANDBOX_WORKSPACE_ROOT must be provided by start.sh}
+        target: /app/workplace  # Agent 专家团队独立工作区
       - ../Skills:/app/Skills  # Agent Skills 技能目录持久化
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     healthcheck:

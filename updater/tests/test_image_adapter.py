@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import stat
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,7 @@ from sakura_ai_updater.adapters.image import (
     ImageAdapter,
     ImageAdapterError,
     ImageCommandError,
+    _trusted_start_script,
 )
 
 
@@ -295,3 +298,388 @@ async def test_subprocess_timeout_kills_and_reaps_process(monkeypatch):
         await adapter.pull("image:v1")
     assert caught.value.error_code == "command_timeout"
     assert process_ref and process_ref[0].returncode == -9
+
+
+@pytest.mark.asyncio
+async def test_activate_is_three_image_transaction_and_reconciles_sandbox_first(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n"
+        "SAKURA_SANDBOXD_IMAGE_DIGEST=ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+        + "a" * 64
+        + "\nSAKURA_AGENT_RUNNER_IMAGE_DIGEST=ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+        + "b" * 64
+        + "\nCOMPOSE_PROJECT_NAME=sakura-ai\nOTHER=keep\n",
+        encoding="utf-8",
+    )
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(tuple(argv))
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", sandboxd, runner)
+
+    content = env.read_text(encoding="utf-8")
+    assert "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0\n" in content
+    assert f"SAKURA_SANDBOXD_IMAGE_DIGEST={sandboxd}\n" in content
+    assert f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={runner}\n" in content
+    assert calls[0][0:4] == ("bash", str(start.resolve()), "sandboxd", "reinstall")
+    assert calls[1][-2:] == ("up", "-d")
+
+
+@pytest.mark.asyncio
+async def test_sandbox_restart_failure_restores_all_three_image_keys(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    (project / "start.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    old_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    old_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n"
+        f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+    restart_attempts = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal restart_attempts
+        command = tuple(argv)
+        calls.append(command)
+        if command[0:4] == ("bash", str((project / "start.sh").resolve()), "sandboxd", "reinstall"):
+            restart_attempts += 1
+            if restart_attempts == 1:
+                return _Process(1, b"", b"sandbox not ready")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    with pytest.raises(ImageCommandError):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    content = env.read_text(encoding="utf-8")
+    assert f"SAKURA_AI_IMAGE={old_web}\n" in content
+    assert f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n" in content
+    assert f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n" in content
+    assert restart_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_old_sandbox_pair_is_rejected_before_any_write_or_reinstall(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    (project / "start.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    old_partial = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_partial}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    before = env.read_bytes()
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(tuple(argv))
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    with pytest.raises(ImageAdapterError, match="only one sandbox image digest"):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", sandboxd, runner)
+
+    assert env.read_bytes() == before
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_activation_failure_uninstalls_new_sandbox_before_old_compose(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    env = tmp_path / "deployment.env"
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*argv, **kwargs):
+        command = tuple(argv)
+        calls.append(command)
+        if command[-2:] == ("up", "-d") and calls.count(command) == 1:
+            return _Process(1, b"", b"new Web failed")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    with pytest.raises(ImageCommandError):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    assert calls == [
+        ("bash", str(start.resolve()), "sandboxd", "reinstall"),
+        (
+            "docker",
+            "compose",
+            "--env-file",
+            str(env),
+            "--project-name",
+            "sakura-ai",
+            "-f",
+            str(compose),
+            "up",
+            "-d",
+        ),
+        ("bash", str(start.resolve()), "sandboxd", "uninstall"),
+        (
+            "docker",
+            "compose",
+            "--env-file",
+            str(env),
+            "--project-name",
+            "sakura-ai",
+            "-f",
+            str(compose),
+            "up",
+            "-d",
+        ),
+    ]
+    assert env.read_text(encoding="utf-8") == (
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_rollback_does_not_start_old_compose_after_bounded_uninstall_failure(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    env = tmp_path / "deployment.env"
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+    compose_attempts = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal compose_attempts
+        command = tuple(argv)
+        calls.append(command)
+        if command[-2:] == ("up", "-d"):
+            compose_attempts += 1
+            if compose_attempts == 1:
+                return _Process(1, b"", b"new Web failed")
+            pytest.fail("old Web Compose must not run after uninstall failure")
+        if command[-2:] == ("sandboxd", "uninstall"):
+            return _Process(1, b"", b"sandbox busy")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    with pytest.raises(ImageAdapterError, match="rollback incomplete"):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    assert calls == [
+        ("bash", str(start.resolve()), "sandboxd", "reinstall"),
+        (
+            "docker",
+            "compose",
+            "--env-file",
+            str(env),
+            "--project-name",
+            "sakura-ai",
+            "-f",
+            str(compose),
+            "up",
+            "-d",
+        ),
+        ("bash", str(start.resolve()), "sandboxd", "uninstall"),
+        ("bash", str(start.resolve()), "sandboxd", "uninstall"),
+    ]
+    assert env.read_text(encoding="utf-8") == (
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_rollback_retries_uninstall_then_starts_old_compose(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    env = tmp_path / "deployment.env"
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+    compose_attempts = 0
+    uninstall_attempts = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal compose_attempts, uninstall_attempts
+        command = tuple(argv)
+        calls.append(command)
+        if command[-2:] == ("up", "-d"):
+            compose_attempts += 1
+            if compose_attempts == 1:
+                return _Process(1, b"", b"new Web failed")
+            return _Process()
+        if command[-2:] == ("sandboxd", "uninstall"):
+            uninstall_attempts += 1
+            if uninstall_attempts == 1:
+                return _Process(1, b"", b"sandbox busy")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    with pytest.raises(ImageCommandError):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    assert uninstall_attempts == 2
+    assert compose_attempts == 2
+    assert calls[-3:] == [
+        ("bash", str(start.resolve()), "sandboxd", "uninstall"),
+        ("bash", str(start.resolve()), "sandboxd", "uninstall"),
+        (
+            "docker",
+            "compose",
+            "--env-file",
+            str(env),
+            "--project-name",
+            "sakura-ai",
+            "-f",
+            str(compose),
+            "up",
+            "-d",
+        ),
+    ]
+    assert env.read_text(encoding="utf-8") == (
+        f"SAKURA_AI_IMAGE={old_web}\nCOMPOSE_PROJECT_NAME=sakura-ai\n"
+    )
+
+
+def _fake_root_lstat(monkeypatch, *, file_mode=0o700, file_uid=0, parent_mode=0o755):
+    real_lstat = os.lstat
+
+    def fake_lstat(path):
+        path = os.fspath(path)
+        result = real_lstat(path)
+        if stat.S_ISDIR(result.st_mode):
+            mode = stat.S_IFDIR | parent_mode
+        else:
+            mode = stat.S_IFREG | file_mode
+        return SimpleNamespace(st_mode=mode, st_uid=file_uid)
+
+    monkeypatch.setattr(image_module.os, "lstat", fake_lstat)
+    return fake_lstat
+
+
+def test_production_start_script_trusted_file_accepts_root_owned_tree(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    _fake_root_lstat(monkeypatch)
+    assert _trusted_start_script(start, project, lstat=image_module.os.lstat) == start
+
+
+@pytest.mark.parametrize(
+    ("file_mode", "file_uid", "parent_mode", "message"),
+    [
+        (0o700, 1000, 0o755, "owned by root"),
+        (0o720, 0, 0o755, "group/other writable"),
+        (0o700, 0, 0o777, "parent"),
+    ],
+)
+def test_production_start_script_rejects_owner_or_shared_writable_tree(
+    tmp_path, monkeypatch, file_mode, file_uid, parent_mode, message
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    _fake_root_lstat(
+        monkeypatch,
+        file_mode=file_mode,
+        file_uid=file_uid,
+        parent_mode=parent_mode,
+    )
+    with pytest.raises(ImageAdapterError, match=message):
+        _trusted_start_script(start, project, lstat=image_module.os.lstat)
+
+
+def test_production_start_script_rejects_symlink_and_outside_project(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    real_start = project / "real-start.sh"
+    real_start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    symlink = project / "start.sh"
+    try:
+        symlink.symlink_to(real_start)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this platform")
+    with pytest.raises(ImageAdapterError, match="symlinks"):
+        _trusted_start_script(symlink, project, lstat=os.lstat)

@@ -14,9 +14,11 @@ import inspect
 import json
 import os
 import re
+import stat
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -69,6 +71,104 @@ class HealthCheckTimeout(HealthCheckError):
         super().__init__(message, error_code="health_check_timeout")
 
 
+@dataclass(frozen=True, slots=True)
+class DeploymentSnapshot:
+    """Exact deployment.env snapshot used by the image transaction rollback."""
+
+    path: str
+    content: bytes | None
+    mode: int | None
+    uid: int | None
+    gid: int | None
+    values: dict[str, str]
+
+
+def _trusted_start_script(
+    path: str | os.PathLike[str],
+    project_root: str | os.PathLike[str],
+    *,
+    lstat: Callable[[str], Any] = os.lstat,
+) -> Path:
+    """Validate the production lifecycle entrypoint before executing it.
+
+    The updater is a root daemon, so resolving ``start.sh`` is not sufficient:
+    a writable parent directory could replace the file after a superficial
+    ``is_file`` check.  Keep this check aligned with the daemon backend's
+    production path policy: canonical, regular, root-owned, not shared-writable
+    file, and the complete directory chain protected from group/other writes.
+
+    ``lstat`` is injectable for Windows/static tests, where POSIX ownership
+    fields are unavailable and production Linux inodes must be simulated.
+    Source development mode deliberately bypasses this helper and only keeps
+    the existing no-symlink/canonical check.
+    """
+
+    absolute = os.path.abspath(os.fspath(path))
+    root = os.path.abspath(os.fspath(project_root))
+    try:
+        canonical = os.path.realpath(absolute)
+        canonical_root = os.path.realpath(root)
+        if canonical != absolute or canonical_root != root:
+            raise ImageAdapterError(
+                "production start.sh/project root must not contain symlinks"
+            )
+        if os.path.commonpath((canonical_root, canonical)) != canonical_root:
+            raise ImageAdapterError(
+                "production start.sh is outside the controlled project root"
+            )
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, ImageAdapterError):
+            raise
+        raise ImageAdapterError(
+            "cannot resolve controlled production start.sh path"
+        ) from exc
+
+    try:
+        file_stat = lstat(absolute)
+    except OSError as exc:
+        raise ImageAdapterError(
+            f"unsafe production start.sh: cannot lstat {absolute!r}"
+        ) from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ImageAdapterError(
+            f"unsafe production start.sh: {absolute!r} must be a regular file"
+        )
+    if getattr(file_stat, "st_uid", None) != 0:
+        raise ImageAdapterError(
+            f"unsafe production start.sh: {absolute!r} must be owned by root"
+        )
+    if stat.S_IMODE(file_stat.st_mode) & 0o022:
+        raise ImageAdapterError(
+            f"unsafe production start.sh: {absolute!r} must not be group/other writable"
+        )
+
+    directory = os.path.dirname(absolute)
+    while True:
+        try:
+            directory_stat = lstat(directory)
+        except OSError as exc:
+            raise ImageAdapterError(
+                f"unsafe production start.sh parent: cannot lstat {directory!r}"
+            ) from exc
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            raise ImageAdapterError(
+                f"unsafe production start.sh parent: {directory!r} must be a directory"
+            )
+        if getattr(directory_stat, "st_uid", None) != 0:
+            raise ImageAdapterError(
+                f"unsafe production start.sh parent: {directory!r} must be owned by root"
+            )
+        if stat.S_IMODE(directory_stat.st_mode) & 0o022:
+            raise ImageAdapterError(
+                f"unsafe production start.sh parent: {directory!r} must not be group/other writable"
+            )
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+    return Path(absolute)
+
+
 class HealthCheckVersionMismatch(HealthCheckError):
     """The endpoint stayed healthy but reported a different application version."""
 
@@ -83,6 +183,12 @@ class HealthCheckVersionMismatch(HealthCheckError):
 
 _COMPOSE_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _PRODUCTION_COMPOSE_PROJECT = "sakura-ai"
+_SANDBOXD_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-sandboxd"
+_RUNNER_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-agent-runner"
+# A failed managed uninstall gets the same single retry budget used by the
+# updater's bounded Docker pull recovery. Each attempt is individually capped
+# by ``command_timeout``; rollback never loops until success.
+_SANDBOX_UNINSTALL_RETRIES = 1
 
 
 def _read_compose_project_name(path: str) -> str:
@@ -133,34 +239,135 @@ def _fsync_parent(path: str | os.PathLike[str]) -> None:
         os.close(fd)
 
 
-def _replace_image_line(lines: list[str], image: str) -> list[str]:
-    """Replace or append ``SAKURA_AI_IMAGE`` while preserving other lines."""
+def _replace_env_lines(lines: list[str], values: Mapping[str, str]) -> list[str]:
+    """Replace or append deployment keys while preserving unrelated lines."""
 
     newline = "\n"
     if lines and lines[-1].endswith("\r\n"):
         newline = "\r\n"
     elif lines and lines[-1].endswith("\n"):
         newline = "\n"
-    replacement = f"SAKURA_AI_IMAGE={image}{newline}"
+    pending = dict(values)
     for index, line in enumerate(lines):
         stripped = line.lstrip()
         if stripped.startswith("#") or "=" not in line:
             continue
         key = line.split("=", 1)[0].strip()
-        if key == "SAKURA_AI_IMAGE":
-            lines[index] = replacement
-            return lines
-    if lines and not lines[-1].endswith(("\n", "\r")):
-        lines[-1] = f"{lines[-1]}{newline}"
-    lines.append(replacement)
+        if key in pending:
+            lines[index] = f"{key}={pending.pop(key)}{newline}"
+    if pending:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] = f"{lines[-1]}{newline}"
+        lines.extend(f"{key}={value}{newline}" for key, value in pending.items())
     return lines
 
 
-def write_deployment_env(path: str, image: str) -> None:
-    """Atomically update ``SAKURA_AI_IMAGE`` in a deployment env file.
+def _read_env_values(path: str) -> dict[str, str]:
+    """Read simple KEY=VALUE lines without shell evaluation."""
+
+    try:
+        content = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    values: dict[str, str] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip():
+            values[key.strip()] = value.strip().strip("\"'")
+    return values
+
+
+def _atomic_write_content(
+    destination: Path,
+    content: bytes,
+    *,
+    mode: int | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+) -> None:
+    """Atomically write exact content and preserve supplied file identity."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        dir=str(destination.parent),
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode)
+        if uid is not None and gid is not None and hasattr(os, "chown"):
+            try:
+                os.chown(temporary, uid, gid)
+            except PermissionError:
+                # A non-root updater cannot restore ownership it does not own;
+                # never silently change a file that was owned by somebody else.
+                try:
+                    current = os.stat(destination)
+                except FileNotFoundError:
+                    current = None
+                if current is None or current.st_uid != uid or current.st_gid != gid:
+                    raise
+        os.replace(temporary, destination)
+        _fsync_parent(destination)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def capture_deployment_snapshot(path: str) -> DeploymentSnapshot:
+    """Capture bytes, mode, owner and parsed values before a transaction."""
+
+    destination = Path(path)
+    try:
+        stat = destination.stat()
+        content = destination.read_bytes()
+    except FileNotFoundError:
+        return DeploymentSnapshot(path, None, None, None, None, {})
+    return DeploymentSnapshot(
+        path=str(destination),
+        content=content,
+        mode=stat.st_mode & 0o7777,
+        uid=getattr(stat, "st_uid", None),
+        gid=getattr(stat, "st_gid", None),
+        values=_read_env_values(path),
+    )
+
+
+def restore_deployment_snapshot(snapshot: DeploymentSnapshot) -> None:
+    """Restore an exact snapshot, including mode/owner when available."""
+
+    destination = Path(snapshot.path)
+    if snapshot.content is None:
+        try:
+            destination.unlink()
+        except FileNotFoundError:
+            return
+        return
+    _atomic_write_content(
+        destination,
+        snapshot.content,
+        mode=snapshot.mode,
+        uid=snapshot.uid,
+        gid=snapshot.gid,
+    )
+
+
+def write_deployment_env_values(path: str, values: Mapping[str, str]) -> None:
+    """Atomically update selected deployment keys preserving all other state.
 
     The temp file is created in the destination directory, fsynced before
-    rename, and the parent directory is fsynced afterwards.  Existing content
+    rename, and the parent directory is fsynced afterwards. Existing content
     (including comments and unrelated variables) is retained verbatim.
     """
 
@@ -171,25 +378,24 @@ def write_deployment_env(path: str, image: str) -> None:
     except FileNotFoundError:
         content = ""
     lines = content.splitlines(keepends=True)
-    updated = "".join(_replace_image_line(lines, image))
-    fd, temporary = tempfile.mkstemp(
-        dir=str(destination.parent),
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
-    )
+    updated = "".join(_replace_env_lines(lines, values)).encode("utf-8")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(updated)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, destination)
-        _fsync_parent(destination)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
+        stat = destination.stat()
+    except FileNotFoundError:
+        stat = None
+    _atomic_write_content(
+        destination,
+        updated,
+        mode=(stat.st_mode & 0o7777) if stat is not None else None,
+        uid=getattr(stat, "st_uid", None) if stat is not None else None,
+        gid=getattr(stat, "st_gid", None) if stat is not None else None,
+    )
+
+
+def write_deployment_env(path: str, image: str) -> None:
+    """Compatibility wrapper updating only ``SAKURA_AI_IMAGE``."""
+
+    write_deployment_env_values(path, {"SAKURA_AI_IMAGE": image})
 
 
 # More explicit alias used by callers that want to document the durability
@@ -256,6 +462,9 @@ class ImageAdapter:
         health_timeout: float = 90.0,
         health_poll_interval: float = 2.0,
         command_timeout: float = 600.0,
+        *,
+        production: bool = False,
+        trusted_lstat: Callable[[str], Any] | None = None,
     ) -> None:
         self.compose_file = compose_file
         self.deployment_env = deployment_env
@@ -264,6 +473,149 @@ class ImageAdapter:
         self.health_timeout = health_timeout
         self.health_poll_interval = health_poll_interval
         self.command_timeout = command_timeout
+        # The direct adapter API remains source/dev-friendly for callers and
+        # tests.  The real daemon factory passes ``production=True`` unless
+        # ``SAKURA_UPDATER_DEV=1`` is explicitly selected.
+        self.production = production
+        self._trusted_lstat = trusted_lstat or os.lstat
+        self._last_snapshot: DeploymentSnapshot | None = None
+        self._new_sandbox_install_attempted = False
+        self.activation_rollback_completed = False
+
+    def _project_start_script(self) -> Path:
+        """Derive and validate the repository-owned lifecycle entrypoint."""
+
+        compose = Path(self.compose_file)
+        try:
+            compose = compose.resolve(strict=False)
+        except OSError as exc:
+            raise ImageAdapterError("cannot resolve the production compose path") from exc
+        project_root = compose.parent.parent if compose.parent.name == "docker" else compose.parent
+        start_script = project_root / "start.sh"
+        try:
+            resolved = start_script.resolve(strict=True)
+        except OSError as exc:
+            raise ImageAdapterError("controlled start.sh is missing") from exc
+        if resolved != start_script or not resolved.is_file():
+            raise ImageAdapterError("controlled start.sh must not be a symlink")
+        if self.production:
+            return _trusted_start_script(
+                str(resolved),
+                str(project_root),
+                lstat=self._trusted_lstat,
+            )
+        return resolved
+
+    @staticmethod
+    def _sandbox_ref_parts(ref: str, label: str) -> tuple[str, str]:
+        if not isinstance(ref, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}@sha256:[0-9a-f]{64}", ref
+        ):
+            raise ImageAdapterError(f"{label} is not a complete immutable image ref")
+        repository, digest = ref.rsplit("@", 1)
+        return repository, digest
+
+    async def capture_snapshot(self) -> DeploymentSnapshot:
+        """Capture deployment.env before changing any image identity."""
+
+        snapshot = await asyncio.to_thread(capture_deployment_snapshot, self.deployment_env)
+        self._last_snapshot = snapshot
+        return snapshot
+
+    async def _run_compose_up(self) -> None:
+        compose_argv = ["docker", "compose", "--env-file", self.deployment_env]
+        project = await asyncio.to_thread(_read_compose_project_name, self.deployment_env)
+        compose_argv.extend(["--project-name", project, "-f", self.compose_file, "up", "-d"])
+        await self._run_command(compose_argv)
+
+    async def _run_sandboxd_reinstall(self) -> None:
+        start_script = self._project_start_script()
+        await self._run_command(["bash", str(start_script), "sandboxd", "reinstall"])
+
+    @staticmethod
+    def _snapshot_sandbox_refs(snapshot: DeploymentSnapshot) -> tuple[str | None, str | None]:
+        sandboxd = snapshot.values.get("SAKURA_SANDBOXD_IMAGE_DIGEST")
+        runner = snapshot.values.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST")
+        return sandboxd or None, runner or None
+
+    def _validate_snapshot_sandbox_refs(
+        self, snapshot: DeploymentSnapshot
+    ) -> tuple[str | None, str | None]:
+        """Reject partial/unsafe legacy state before the first env write."""
+
+        sandboxd_ref, runner_ref = self._snapshot_sandbox_refs(snapshot)
+        if (sandboxd_ref is None) != (runner_ref is None):
+            raise ImageAdapterError(
+                "deployment snapshot has only one sandbox image digest"
+            )
+        if sandboxd_ref is None:
+            return None, None
+        sandboxd_repository, _ = self._sandbox_ref_parts(
+            sandboxd_ref, "sandboxd snapshot"
+        )
+        runner_repository, _ = self._sandbox_ref_parts(runner_ref or "", "runner snapshot")
+        if (
+            sandboxd_repository != _SANDBOXD_REPOSITORY
+            or runner_repository != _RUNNER_REPOSITORY
+        ):
+            raise ImageAdapterError("deployment snapshot sandbox repository is not trusted")
+        return sandboxd_ref, runner_ref
+
+    async def _run_sandboxd_uninstall(self) -> None:
+        start_script = self._project_start_script()
+        await self._run_command(["bash", str(start_script), "sandboxd", "uninstall"])
+
+    async def _run_sandboxd_uninstall_with_retry(self) -> None:
+        """Remove a newly installed legacy sidecar with one bounded retry."""
+
+        attempts = _SANDBOX_UNINSTALL_RETRIES + 1
+        for attempt in range(attempts):
+            try:
+                await self._run_sandboxd_uninstall()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if attempt + 1 >= attempts:
+                    raise ImageAdapterError(
+                        "rollback incomplete: sandboxd uninstall failed after "
+                        f"{attempts} bounded attempts: {exc}"
+                    ) from exc
+
+    async def _restore_and_reconverge(
+        self,
+        snapshot: DeploymentSnapshot,
+        *,
+        remove_new_sandbox: bool = False,
+    ) -> None:
+        """Restore old env and converge the old sidecar before Web Compose.
+
+        A legacy deployment has no old sandbox pair.  If the new sidecar was
+        already installed before a later activation step failed, explicitly
+        uninstall that managed instance before bringing the old Web stack back.
+        Legacy rollback must prove that the new sidecar is gone before allowing
+        the old Web Compose stack to start. A failed uninstall stops rollback
+        immediately and leaves Web stopped for a safe retry.
+        """
+
+        await asyncio.to_thread(restore_deployment_snapshot, snapshot)
+        sandboxd_ref, _ = self._validate_snapshot_sandbox_refs(snapshot)
+        if sandboxd_ref is not None:
+            await self._run_sandboxd_reinstall()
+        elif remove_new_sandbox:
+            await self._run_sandboxd_uninstall_with_retry()
+        await self._run_compose_up()
+
+    async def rollback(self, snapshot: DeploymentSnapshot | None = None) -> None:
+        """Restore old env and converge the old sidecar before Web Compose."""
+
+        selected = snapshot or self._last_snapshot
+        if selected is None:
+            raise ImageAdapterError("no deployment snapshot is available for rollback")
+        await self._restore_and_reconverge(
+            selected,
+            remove_new_sandbox=self._new_sandbox_install_attempted,
+        )
 
     async def _run_command(
         self,
@@ -351,20 +703,76 @@ class ImageAdapter:
 
         await self._run_command(["docker", "pull", target_image])
 
-    async def activate(self, target_image: str) -> None:
-        """Persist target image and ask Compose to recreate the service."""
+    async def activate(
+        self,
+        target_image: str,
+        sandboxd_image: str | None = None,
+        runner_image: str | None = None,
+    ) -> None:
+        """Atomically activate Web plus sandboxd and runner identities.
 
-        # This write is deliberately after ``pull`` (the orchestrator calls
-        # those methods as separate state-machine steps).
-        await asyncio.to_thread(write_deployment_env, self.deployment_env, target_image)
-        compose_argv = ["docker", "compose", "--env-file", self.deployment_env]
-        project = await asyncio.to_thread(
-            _read_compose_project_name,
-            self.deployment_env,
-        )
-        compose_argv.extend(["--project-name", project])
-        compose_argv.extend(["-f", self.compose_file, "up", "-d"])
-        await self._run_command(compose_argv)
+        The deployment file is written only after pull/preflight have passed.
+        For a production transaction, sandboxd is reconciled through the
+        repository-owned ``start.sh sandboxd reinstall`` argv before Compose
+        is allowed to recreate Web. A failure restores the exact old file and
+        converges the old sidecar before retrying the old Web configuration.
+        """
+
+        if (sandboxd_image is None) != (runner_image is None):
+            raise ImageAdapterError("sandboxd and runner refs must be supplied together")
+        snapshot = await self.capture_snapshot()
+        self._new_sandbox_install_attempted = False
+        # Validate the old state before changing deployment.env.  A single
+        # persisted digest cannot be safely rolled back and is never treated as
+        # a legacy bootstrap state.
+        self._validate_snapshot_sandbox_refs(snapshot)
+        # Validate the repository-owned lifecycle entrypoint before changing
+        # deployment.env as well as immediately before execution.  This keeps
+        # an unsafe production path a true preflight failure with zero writes.
+        if sandboxd_image is not None:
+            self._project_start_script()
+        values: dict[str, str] = {"SAKURA_AI_IMAGE": target_image}
+        if sandboxd_image is not None and runner_image is not None:
+            sandboxd_repository, _ = self._sandbox_ref_parts(sandboxd_image, "sandboxd image")
+            runner_repository, _ = self._sandbox_ref_parts(runner_image, "runner image")
+            if sandboxd_repository != _SANDBOXD_REPOSITORY:
+                raise ImageAdapterError("sandboxd image repository is not trusted")
+            if runner_repository != _RUNNER_REPOSITORY:
+                raise ImageAdapterError("runner image repository is not trusted")
+            values.update(
+                {
+                    "SAKURA_SANDBOXD_IMAGE": sandboxd_repository,
+                    "SAKURA_SANDBOXD_IMAGE_DIGEST": sandboxd_image,
+                    "SAKURA_AGENT_RUNNER_IMAGE": runner_repository,
+                    "SAKURA_AGENT_RUNNER_IMAGE_DIGEST": runner_image,
+                }
+            )
+            release_match = re.search(r":v(\d+\.\d+\.\d+)(?:@|$)", target_image)
+            if release_match is not None:
+                values["SAKURA_SANDBOX_RELEASE_VERSION"] = release_match.group(1)
+        try:
+            self.activation_rollback_completed = False
+            self._new_sandbox_install_attempted = False
+            await asyncio.to_thread(write_deployment_env_values, self.deployment_env, values)
+            if sandboxd_image is not None:
+                # Mark before invoking the controlled lifecycle command: a
+                # command can create the managed sidecar and then fail its
+                # readiness probe.  Legacy rollback must remove that sidecar.
+                self._new_sandbox_install_attempted = True
+                await self._run_sandboxd_reinstall()
+            await self._run_compose_up()
+        except Exception:
+            try:
+                await self._restore_and_reconverge(
+                    snapshot,
+                    remove_new_sandbox=self._new_sandbox_install_attempted,
+                )
+                self.activation_rollback_completed = True
+            except Exception as rollback_exc:
+                raise ImageAdapterError(
+                    f"activation failed; rollback incomplete: {rollback_exc}"
+                ) from rollback_exc
+            raise
 
     async def inspect_running_digest(self) -> str:
         """Return the immutable digest captured by the running container."""
@@ -459,3 +867,8 @@ class ImageAdapter:
                     raise HealthCheckVersionMismatch(str(expected_version), mismatch)
                 raise HealthCheckTimeout()
             await asyncio.sleep(min(max(0.0, self.health_poll_interval), remaining))
+
+
+# The explicit name is useful at integration seams while preserving the
+# historical ``ImageAdapter`` import used by the updater daemon.
+ImageDeploymentAdapter = ImageAdapter

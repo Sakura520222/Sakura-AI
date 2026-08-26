@@ -24,6 +24,8 @@
 | [项目记忆系统使用指南](SAKURA_MEMORY_GUIDE.md) | `.sakura/` 目录结构、生命周期与配置说明 |
 | [Agent Skills 实现](agent-skills-python-implementation.md) | Skills 安装、索引、启停与工具集成说明 |
 | [Agent 文件工具实现](agent-file-tools-python-implementation.md) | Agent 工作区文件工具、安全边界与实现细节 |
+| [Agent OS 沙箱设计](superpowers/specs/2026-08-25-agent-os-sandbox-design.md) | Agent 执行信任域、sandboxd 协议、OCI 隔离与部署决策 |
+| [Agent OS 沙箱实施计划](superpowers/plans/2026-08-25-agent-os-sandbox-implementation.md) | 分片实现、测试矩阵、退出条件与 Linux 验收门 |
 
 ## 集成与运维
 
@@ -45,4 +47,4 @@
 
 > `superpowers/` 目录是开发流程工作产物（设计稿、实施计划），不属于用户文档。
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

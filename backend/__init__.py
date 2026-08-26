@@ -1,3 +1,3 @@
 """Sakura AI Backend"""
 
-__version__ = "3.1.3"
+__version__ = "3.2.0"

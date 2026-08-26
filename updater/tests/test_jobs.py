@@ -26,6 +26,18 @@ class _Release:
     async def fetch_manifest(self, version=None):
         return self.manifest
 
+    async def fetch_sandbox_manifest(self, version):
+        return {
+            "schema_version": 1,
+            "manifest": "agent-sandbox",
+            "version": version,
+            "channel": "stable",
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+            + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+            + "b" * 64,
+        }
+
     async def has_required_assets(self, manifest, version=None):
         return True
 
@@ -119,8 +131,38 @@ async def test_preflight_records_status_readiness_snapshot(tmp_path):
             "version": "3.1.0",
             "image": "ghcr.io/example/app:v3.1.0",
             "channel": "stable",
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+            + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+            + "b" * 64,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_preflight_rejects_partial_persisted_sandbox_pair(tmp_path):
+    class _PartialDeployment(_Deployment):
+        def sandbox_image_refs(self):
+            return {
+                "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+                + "a" * 64,
+                "runner_image": None,
+            }
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _Release(),
+        _PartialDeployment(),
+        disk_space_threshold=1,
+    )
+    result = await orchestrator.preflight("3.1.0")
+    checks = {item["name"]: item for item in result["checks"]}
+    assert result["can_update"] is False
+    assert checks["current_sandbox_pair_complete"]["passed"] is False
+    assert "only one sandbox image digest" in checks[
+        "current_sandbox_pair_complete"
+    ]["detail"]
 
 
 @pytest.mark.asyncio
@@ -136,11 +178,23 @@ async def test_update_success_clears_active_gate(tmp_path):
     store = load_state(path)
     assert store.active_job_id is None
     assert store.current_job and store.current_job.state == "success"
+    assert store.current_job.target_sandboxd_image == (
+        "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    )
+    assert store.current_job.target_runner_image == (
+        "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    )
     assert store.current_job.started_at and store.current_job.started_at.endswith("Z")
     assert store.current_job.updated_at and store.current_job.updated_at.endswith("Z")
     assert [call[0] for call in adapter.calls] == [
         "preflight",
         "preflight",
+        "preflight",
+        "preflight",
+        "preflight",
+        "preflight",
+        "pull",
+        "pull",
         "pull",
         "activate",
         "health",
@@ -226,7 +280,7 @@ async def test_update_retries_one_timed_out_pull_and_records_retry(tmp_path):
     assert job is not None
     assert job.state == "success"
     assert job.retry_count == 1
-    assert [call[0] for call in adapter.calls].count("pull") == 2
+    assert [call[0] for call in adapter.calls].count("pull") == 4
     assert [call[0] for call in adapter.calls][-2:] == ["activate", "health"]
 
 
@@ -323,3 +377,44 @@ def test_get_job_logs_returns_endpoint_snapshot_payload(tmp_path):
     )
     payload = orchestrator.get_job_logs("missing")
     assert payload == {"job_id": "missing", "logs": [], "truncated": False}
+
+
+@pytest.mark.asyncio
+async def test_health_failure_rolls_back_web_and_sandbox_transaction(tmp_path):
+    class _TransactionalAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.rollback_calls = []
+            self.health_calls = []
+
+        async def capture_snapshot(self):
+            return {"old": "deployment"}
+
+        async def activate(self, image, sandboxd_image, runner_image):
+            self.calls.append(("activate", image, sandboxd_image, runner_image))
+
+        async def rollback(self, snapshot):
+            self.rollback_calls.append(snapshot)
+
+        async def health_check(self, version):
+            self.health_calls.append(version)
+            if version == "3.1.0":
+                raise RuntimeError("new Web health failed")
+
+    adapter = _TransactionalAdapter()
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        adapter,
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(str(tmp_path / "state.json")).current_job
+    assert job is not None
+    assert job.state == "failed"
+    assert job.rollback_attempted is True
+    assert adapter.rollback_calls == [{"old": "deployment"}]
+    assert adapter.health_calls == ["3.1.0", "3.0.0"]

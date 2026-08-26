@@ -7,12 +7,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 from typing import Any
 
 from loguru import logger
 
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionRequest,
+    ExecutionRunner,
+    execute_request,
+    execution_workspace_key,
+)
 from backend.services.agent_team.file_tools import AgentTeamFileTools
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.grep_tool import (
     MAX_GREP_KEYWORD_LENGTH,
@@ -34,11 +41,17 @@ class AgentToolExecutor:
         self,
         workspace: str | Any,
         workspace_service: AgentTeamWorkspaceService | None = None,
+        execution_runner: ExecutionRunner | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
         self.file_tools = AgentTeamFileTools(self.workspace, self.workspace_service)
-        self.executor = AgentTeamShellExecutor(self.workspace, self.workspace_service)
+        # Keep construction usable for legacy file-only callers, but never
+        # synthesize a Local runner here.  Command/search handlers resolve the
+        # injected runner at the point of execution and fail closed if absent.
+        self.execution_runner = execution_runner
+        # 保留旧属性名，外部集成仍可能读取它。
+        self.executor = self.execution_runner
 
     async def execute_tool_call(self, tool_call: Any) -> dict[str, Any]:
         """执行单个工具调用，返回结果字典。"""
@@ -244,6 +257,7 @@ class AgentToolExecutor:
         ctx = ToolContext(
             workspace=str(self.workspace),
             workspace_service=self.workspace_service,
+            execution_runner=self.execution_runner,
             extra={},
         )
         error = tool.validate_input(tool_args, ctx)
@@ -261,7 +275,16 @@ class AgentToolExecutor:
         if not await is_agent_command_allowed(command):
             return {"error": "命令被安全策略拦截"}
 
-        result = await self.executor.run(command, timeout_seconds=120)
+        request = ExecutionRequest(
+            workspace_key=execution_workspace_key(
+                self.workspace, self.workspace_service
+            ),
+            command=command,
+            cwd=PurePosixPath("."),
+            profile=ExecutionProfile.AGENT,
+            timeout_seconds=120,
+        )
+        result = await execute_request(self.execution_runner, request)
         return {
             "returncode": result.returncode,
             "stdout": result.stdout[:5000],  # 限制输出大小

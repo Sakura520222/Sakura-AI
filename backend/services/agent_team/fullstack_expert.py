@@ -19,6 +19,7 @@ from backend.services.agent_team.context_compressor import compress_agent_team_m
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.prompt_config import (
     IMPLEMENTATION_SYSTEM_PROMPT,
     build_implementation_user_message,
@@ -129,6 +130,7 @@ class FullStackExpertAgent:
         checkpoint: ConversationCheckpointService | None = None,
         session_id: int | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
+        execution_runner: ExecutionRunner | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
@@ -137,6 +139,8 @@ class FullStackExpertAgent:
         self.checkpoint = checkpoint
         self.session_id = session_id
         self.restored_messages = initial_messages is not None
+        self.execution_runner = execution_runner
+        self._cancel_event: asyncio.Event | None = None
         self.messages: list[dict[str, Any]] = (
             [dict(message) for message in initial_messages]
             if initial_messages is not None
@@ -243,6 +247,8 @@ class FullStackExpertAgent:
         return ToolContext(
             workspace=str(self.workspace),
             workspace_service=self.workspace_service,
+            execution_runner=self.execution_runner,
+            cancel_event=self._cancel_event,
             read_file_state={},
             extra=extra,
         )
@@ -268,6 +274,7 @@ class FullStackExpertAgent:
         cancel_event: asyncio.Event | None = None,
     ) -> FullStackResult:
         """Run the Agent until completion or cancellation."""
+        self._cancel_event = cancel_event
         client, config = await create_agent_team_client()
         candidate = await client.resolve_role_primary_candidate(config.agent_role)
         context_window_tokens = (

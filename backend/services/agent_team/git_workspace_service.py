@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from backend.core.config import get_dynamic_config, get_settings
 from backend.core.github_app import GitHubAppClient
-from backend.services.agent_team.shell_executor import (
-    AgentTeamShellExecutor,
-    ShellCommandResult,
+from backend.services.agent_team.execution import (
+    ExecutionError,
+    ExecutionProfile,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionRunner,
+    TrustedGitRunner,
+    execute_request,
+    execution_workspace_key,
+    trusted_remote_urls_match,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
@@ -101,15 +109,18 @@ class AgentTeamGitWorkspaceService:
 
         repo_lock = await _get_repo_lock(repo_full_name)
         async with repo_lock:
-            base_executor = AgentTeamShellExecutor(
+            base_executor = TrustedGitRunner(
                 base_workspace, self.workspace_service
             )
-            repo_executor = AgentTeamShellExecutor(repo_root, self.workspace_service)
+            repo_executor = TrustedGitRunner(repo_root, self.workspace_service)
+            credential_token = self._get_installation_token(repo_owner, repo_name)
             if not (base_workspace / ".git").exists():
                 await self._run_checked_args(
                     base_executor,
                     ["git", "clone", "--branch", resolved_branch, clone_url, "."],
                     "clone repository",
+                    credential_token=credential_token,
+                    trusted_expected_remote=clone_url,
                 )
             else:
                 await self._run_checked_args(
@@ -121,6 +132,8 @@ class AgentTeamGitWorkspaceService:
                     base_executor,
                     ["git", "fetch", "origin", "--prune"],
                     "fetch repository",
+                    credential_token=credential_token,
+                    trusted_expected_remote=clone_url,
                 )
                 await self._run_checked_args(
                     base_executor,
@@ -156,13 +169,12 @@ class AgentTeamGitWorkspaceService:
                 cwd=base_workspace,
             )
 
-        worktree_executor = AgentTeamShellExecutor(worktree, self.workspace_service)
+        worktree_executor = TrustedGitRunner(worktree, self.workspace_service)
         commit_sha = (
             await self._run_checked_args(
                 worktree_executor, ["git", "rev-parse", "HEAD"], "read commit sha"
             )
         ).stdout.strip()
-        await self._install_workspace_dependencies(worktree_executor, worktree)
         return GitWorkspaceInfo(
             workspace=worktree,
             branch_name=branch_name,
@@ -170,10 +182,38 @@ class AgentTeamGitWorkspaceService:
             commit_sha=commit_sha,
         )
 
+    async def install_workspace_dependencies(
+        self,
+        workspace: str | Path,
+        execution_runner: ExecutionRunner,
+    ) -> None:
+        """安装工作区依赖 after the workspace-scoped runner is admitted.
+
+        The worker deliberately calls this only after Git has determined the
+        exact task worktree and after the runner has passed its sandbox health
+        gate.  Dependency hooks are untrusted code and therefore cannot use
+        ``TrustedGitRunner`` or a host fallback.
+        """
+
+        await self._install_workspace_dependencies(
+            execution_runner,
+            self.workspace_service.resolve_inside_workspace(workspace),
+        )
+
     async def _install_workspace_dependencies(
-        self, executor: AgentTeamShellExecutor, workspace: Path
+        self, executor: ExecutionRunner, workspace: Path
     ) -> None:
         """为工作区安装项目依赖（仅 Python 项目创建 venv）。"""
+        from loguru import logger
+
+        supports_profile = getattr(executor, "supports_profile", None)
+        if not callable(supports_profile) or not supports_profile(
+            ExecutionProfile.DEPENDENCY
+        ):
+            raise ExecutionError(
+                "Agent dependency installation requires an explicit sandbox runner"
+            )
+
         value = await get_dynamic_config("agent_team_auto_install_deps")
         settings = get_settings()
         enabled = getattr(settings, "agent_team_auto_install_deps", True)
@@ -189,24 +229,53 @@ class AgentTeamGitWorkspaceService:
 
         venv_dir = workspace / ".venv"
         if not venv_dir.exists():
-            from loguru import logger
-
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
-            await executor.run(
-                "python -m venv .venv",
-                timeout_seconds=600,
+            result = await execute_request(
+                executor,
+                ExecutionRequest(
+                    workspace_key=execution_workspace_key(
+                        workspace, self.workspace_service
+                    ),
+                    command="python -m venv .venv",
+                    profile=ExecutionProfile.DEPENDENCY,
+                    timeout_seconds=600,
+                ),
             )
+            if result.returncode != 0:
+                raise ExecutionError(
+                    f"创建 Agent 依赖 venv 失败: {result.stderr or result.stdout}"
+                )
 
-        pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
+        # sandboxd runner images are Linux OCI images even when the Web
+        # process is developed on Windows; use the container-visible path.
+        pip_cmd = ".venv/bin/pip"
         if has_pyproject:
-            await executor.run(
-                f"{pip_cmd} install -e . --quiet",
-                timeout_seconds=600,
+            result = await execute_request(
+                executor,
+                ExecutionRequest(
+                    workspace_key=execution_workspace_key(
+                        workspace, self.workspace_service
+                    ),
+                    command=f"{pip_cmd} install -e . --quiet",
+                    profile=ExecutionProfile.DEPENDENCY,
+                    timeout_seconds=600,
+                ),
             )
         elif has_requirements:
-            await executor.run(
-                f"{pip_cmd} install -r requirements.txt --quiet",
-                timeout_seconds=600,
+            result = await execute_request(
+                executor,
+                ExecutionRequest(
+                    workspace_key=execution_workspace_key(
+                        workspace, self.workspace_service
+                    ),
+                    command=f"{pip_cmd} install -r requirements.txt --quiet",
+                    profile=ExecutionProfile.DEPENDENCY,
+                    timeout_seconds=600,
+                ),
+            )
+        if result.returncode != 0:
+            raise ExecutionError(
+                f"安装 Agent 工作区依赖失败: {result.stderr or result.stdout}"
             )
 
     def make_branch_name(
@@ -251,7 +320,7 @@ class AgentTeamGitWorkspaceService:
         if not workspace.exists() or not (workspace / ".git").exists():
             raise RuntimeError("续跑工作区不存在或不是 Git 仓库")
 
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        executor = TrustedGitRunner(workspace, self.workspace_service)
         current_branch = (
             await self._run_checked_args(
                 executor, ["git", "branch", "--show-current"], "read current branch"
@@ -262,16 +331,18 @@ class AgentTeamGitWorkspaceService:
                 f"续跑分支不匹配: 当前 {current_branch or '(detached)'}，期望 {branch_name}"
             )
 
+        _, expected_remote_url = await self._get_repo_info(
+            repo_owner,
+            repo_name,
+            f"{repo_owner}/{repo_name}",
+        )
         remote_url = (
             await self._run_checked_args(
                 executor, ["git", "remote", "get-url", "origin"], "read remote url"
             )
         ).stdout.strip()
-        if (
-            f"/{repo_owner}/{repo_name}" not in remote_url
-            and f"{repo_owner}/{repo_name}.git" not in remote_url
-        ):
-            raise RuntimeError("续跑工作区 remote 与任务仓库不匹配")
+        if not trusted_remote_urls_match(remote_url, expected_remote_url):
+            raise RuntimeError("续跑工作区 remote 与 GitHub 仓库不匹配")
 
         if base_commit_sha:
             await self._run_checked_args(
@@ -293,15 +364,20 @@ class AgentTeamGitWorkspaceService:
 
     async def get_diff_summary(self, workspace: str | Path) -> str:
         """读取当前工作区 diff 摘要。"""
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
-        result = await self._run_checked(
-            executor, "git diff --stat && git status --short", "diff summary"
+        executor = TrustedGitRunner(workspace, self.workspace_service)
+        stat_result = await self._run_checked_args(
+            executor, ["git", "diff", "--stat"], "diff stat"
         )
-        return result.stdout.strip()
+        status_result = await self._run_checked_args(
+            executor, ["git", "status", "--short"], "status short"
+        )
+        return "\n".join(
+            item for item in (stat_result.stdout.strip(), status_result.stdout.strip()) if item
+        )
 
     async def get_changed_file_stats(self, workspace: str | Path) -> dict[str, dict]:
         """读取当前工作区未提交变更的逐文件行数统计。"""
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        executor = TrustedGitRunner(workspace, self.workspace_service)
         numstat = await self._run_checked_args(
             executor, ["git", "diff", "--numstat", "HEAD"], "diff numstat"
         )
@@ -346,13 +422,9 @@ class AgentTeamGitWorkspaceService:
             raise RuntimeError(f"无法获取 GitHub 仓库客户端: {repo_full_name}")
         repo = client.get_repo(repo_full_name)
         default_branch = repo.default_branch or "main"
-        clone_url = repo.clone_url
-        token = self._get_installation_token(repo_owner, repo_name)
-        if token:
-            clone_url = clone_url.replace(
-                "https://", f"https://x-access-token:{token}@"
-            )
-        return default_branch, clone_url
+        # 凭据只在 TrustedGitRunner 的单次 askpass 生命周期内注入；remote URL
+        # 永远保持公开地址，避免 token 落入 .git/config、异常或日志。
+        return default_branch, _strip_git_credentials(repo.clone_url)
 
     def _get_installation_token(self, repo_owner: str, repo_name: str) -> str:
         try:
@@ -367,25 +439,33 @@ class AgentTeamGitWorkspaceService:
 
     async def _run_checked(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         command: str,
         action: str,
-    ) -> ShellCommandResult:
-        result = await executor.run(command)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Git 工作区操作失败 ({action}): {result.stderr or result.stdout}"
-            )
-        return result
+    ) -> ExecutionResult:
+        try:
+            args = shlex.split(command)
+        except ValueError as exc:
+            raise RuntimeError(f"Git 工作区操作参数无效 ({action})") from exc
+        if not args:
+            raise RuntimeError(f"Git 工作区操作命令为空 ({action})")
+        return await self._run_checked_args(executor, args, action)
 
     async def _run_checked_args(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         args: list[str],
         action: str,
         cwd: str | Path = ".",
-    ) -> ShellCommandResult:
-        result = await executor.run_args(args, cwd=cwd)
+        credential_token: str | None = None,
+        trusted_expected_remote: str | None = None,
+    ) -> ExecutionResult:
+        result = await executor.run_args(
+            args,
+            cwd=cwd,
+            credential_token=credential_token,
+            trusted_expected_remote=trusted_expected_remote,
+        )
         if result.returncode != 0:
             raise RuntimeError(
                 f"Git 工作区操作失败 ({action}): {result.stderr or result.stdout}"
@@ -403,6 +483,54 @@ def _parse_numstat_count(value: str) -> int:
         return int(value)
     except TypeError, ValueError:
         return 0
+
+
+def _strip_git_credentials(value: str) -> str:
+    """移除 remote userinfo，并拒绝 query/fragment 形式的隐藏凭据。"""
+    if _looks_like_scp_remote(value):
+        userinfo, target = value.split("@", 1)
+        if userinfo == "git":
+            return value
+        return target
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https", "ssh"} or not parsed.netloc:
+            return value
+        if parsed.query or parsed.fragment:
+            raise ValueError("Git remote 不得包含 query 或 fragment")
+        if "@" not in parsed.netloc:
+            return value
+        if (
+            scheme == "ssh"
+            and parsed.username == "git"
+            and parsed.password is None
+        ):
+            return value
+        # 保留 host、端口、IPv6 方括号和大小写，只切掉最后一个 @ 之前的
+        # userinfo；TrustedGitRunner 会进一步要求 SSH URL 使用 git 用户。
+        host_netloc = parsed.netloc.rsplit("@", 1)[-1]
+        return urlunsplit(
+            (parsed.scheme, host_netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+    except (ValueError, TypeError):
+        if isinstance(value, str) and _looks_like_scp_remote(value):
+            userinfo, target = value.split("@", 1)
+            if userinfo == "git":
+                return value
+            return target
+        raise
+
+
+def _looks_like_scp_remote(value: str) -> bool:
+    """识别 user@host:path，避免误处理普通仓库相对路径。"""
+
+    if "://" in value or "\x00" in value:
+        return False
+    at_index = value.find("@")
+    if at_index <= 0:
+        return False
+    return ":" in value[at_index + 1 :] and "/" not in value[:at_index]
 
 
 def _normalize_git_path(value: str) -> str:

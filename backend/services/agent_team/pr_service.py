@@ -18,7 +18,8 @@ from loguru import logger
 from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import AgentTeamSourceType
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.execution import TrustedGitRunner
+from backend.services.agent_team.git_workspace_service import _strip_git_credentials
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -90,13 +91,13 @@ class AgentTeamPRService:
 
         通过 GitHub App installation token 创建提交，保持与记忆系统一致的 bot 身份。
         """
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        executor = TrustedGitRunner(workspace, self.workspace_service)
 
         # 确保 .gitignore 排除 Agent 工作区不应提交的路径
         await self._ensure_gitignore(executor)
 
         # 检查是否有变更
-        status_result = await executor.run("git status --porcelain")
+        status_result = await executor.run_args(["git", "status", "--porcelain"])
         if not status_result.stdout.strip():
             logger.info("工作区没有变更，跳过 commit")
             head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
@@ -143,7 +144,15 @@ class AgentTeamPRService:
                     ) from exc
                 await asyncio.sleep(1)
 
-        await self._sync_local_branch_to_commit(executor, branch_name, sha)
+        await self._sync_local_branch_to_commit(
+            executor,
+            branch_name,
+            sha,
+            credential_token=self._get_installation_token(
+                github_app, repo_owner, repo_name
+            ),
+            trusted_expected_remote=_strip_git_credentials(repo.clone_url),
+        )
         logger.info(
             "Agent API 提交成功: {}:{} @ {}",
             repo_owner + "/" + repo_name,
@@ -154,10 +163,10 @@ class AgentTeamPRService:
 
     async def _collect_changes_for_api_commit(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
     ) -> list[_ApiCommitChange]:
         """收集工作区中可通过 GitHub API 提交的文件变更。"""
-        status_result = await executor.run("git status --porcelain")
+        status_result = await executor.run_args(["git", "status", "--porcelain"])
         changes: list[_ApiCommitChange] = []
         for line in status_result.stdout.splitlines():
             if len(line) < 4:
@@ -195,7 +204,7 @@ class AgentTeamPRService:
 
     async def _get_git_file_mode(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         file_path: str,
     ) -> str:
         """读取 Git 索引中的文件模式，新增文件默认按普通文件处理。"""
@@ -262,12 +271,18 @@ class AgentTeamPRService:
 
     async def _sync_local_branch_to_commit(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         branch_name: str,
         commit_sha: str,
+        credential_token: str | None = None,
+        trusted_expected_remote: str | None = None,
     ) -> None:
         """同步本地工作区到 API 创建的远端提交。"""
-        fetch_result = await executor.run_args(["git", "fetch", "origin", branch_name])
+        fetch_result = await executor.run_args(
+            ["git", "fetch", "origin", branch_name],
+            credential_token=credential_token,
+            trusted_expected_remote=trusted_expected_remote,
+        )
         if fetch_result.returncode != 0:
             logger.warning("同步 Agent 远端分支失败: {}", fetch_result.stderr)
             return
@@ -275,9 +290,26 @@ class AgentTeamPRService:
         if reset_result.returncode != 0:
             logger.warning("重置 Agent 工作区到 API 提交失败: {}", reset_result.stderr)
 
+    @staticmethod
+    def _get_installation_token(
+        github_app: GitHubAppClient,
+        repo_owner: str,
+        repo_name: str,
+    ) -> str:
+        """读取单次 Git 操作所需 token；不把它写入 remote URL。"""
+        try:
+            installation = github_app.integration.get_installation(
+                owner=repo_owner,
+                repo=repo_name,
+            )
+            access_token = github_app.integration.get_access_token(installation.id)
+            return access_token.token
+        except Exception:
+            return ""
+
     async def _ensure_gitignore(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
     ) -> None:
         """确保 .gitignore 包含 Agent 工作区不应提交的路径。"""
         excludes = [

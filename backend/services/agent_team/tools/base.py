@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 from loguru import logger
 
 from backend.core.time_service import monotonic
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
 )
@@ -44,6 +46,12 @@ class ToolContext:
 
     workspace: str
     workspace_service: AgentTeamWorkspaceService
+    # Agent 外部命令必须经由 worker 注入的 workspace-scoped 执行器；None
+    # 只用于文件类工具或显式测试，任何外部命令工具都会 fail closed。
+    execution_runner: ExecutionRunner | None = None
+    # Worker cancellation is propagated to the current sandbox request.  This
+    # is an internal object reference and never part of the wire payload.
+    cancel_event: asyncio.Event | None = field(default=None, repr=False)
     # 文件读状态缓存：path → {content, mtime}
     read_file_state: dict[str, dict[str, Any]] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)

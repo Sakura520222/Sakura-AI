@@ -143,7 +143,9 @@ docker() {
 menu_wait_healthy() { return 0; }
 
 DIGEST_ENV="$DIGEST_DIR/deployment.env"
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV"
+# apply_channel_image is retained only for an explicit source/local flow;
+# production image updates are routed through the host updater transaction.
+printf 'SAKURA_DEPLOY_MODE=source\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV"
 
 # D1: 单条匹配 RepoDigests 提取 digest
 [ "$(image_digest_of "ghcr.io/sakura520222/sakura-ai:edge")" = "sha256:$FAKE_IMAGE_DIGEST" ] \
@@ -176,7 +178,7 @@ FAKE_REPO_DIGESTS=""
 
 # D6: 残缺部署状态（缺 COMPOSE_PROJECT_NAME）→ 中止，不执行 compose up
 DIGEST_ENV6="$DIGEST_DIR/deployment6.env"
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV6"
+printf 'SAKURA_DEPLOY_MODE=source\nSAKURA_DB_PASSWORD=%064d\n' 0 > "$DIGEST_ENV6"
 : > "$COMPOSE_CALLS"
 DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$DIGEST_ENV6" apply_channel_image development >/dev/null 2>&1
 rc=$?

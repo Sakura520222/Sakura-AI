@@ -1,0 +1,157 @@
+name: Agent sandbox image publish (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      version:
+        required: false
+        type: string
+      revision:
+        required: false
+        type: string
+    outputs:
+      sandboxd_digest:
+        description: Immutable sandboxd manifest digest
+        value: ${{ jobs.publish.outputs.sandboxd_digest }}
+      runner_digest:
+        description: Immutable Agent runner manifest digest
+        value: ${{ jobs.publish.outputs.runner_digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  SANDBOXD_REPOSITORY: ghcr.io/sakura520222/sakura-ai-sandboxd
+  RUNNER_REPOSITORY: ghcr.io/sakura520222/sakura-ai-agent-runner
+
+jobs:
+  publish:
+    name: Publish sandboxd and runner images
+    runs-on: ubuntu-24.04
+    outputs:
+      sandboxd_digest: ${{ steps.inspect.outputs.sandboxd_digest }}
+      runner_digest: ${{ steps.inspect.outputs.runner_digest }}
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+
+      - name: Validate channel and source identity
+        id: tags
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          [[ "$actual" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          if [[ -n "$REVISION" && "$REVISION" != "$actual" ]]; then
+            echo "requested revision does not match checked out source" >&2
+            exit 1
+          fi
+          case "$CHANNEL" in
+            stable)
+              [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+              primary="v$VERSION"
+              ;;
+            development)
+              primary="dev-${actual:0:12}"
+              ;;
+            *)
+              echo "unsupported sandbox channel: $CHANNEL" >&2
+              exit 1
+              ;;
+          esac
+          immutable="sha-${actual:0:40}"
+          {
+            echo "primary=$primary"
+            echo "immutable=$immutable"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish sandboxd
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.sandboxd
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.primary }}
+            ${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.immutable }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            com.sakura-ai.component=sandboxd
+
+      - name: Build and publish runner
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.agent-sandbox
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.primary }}
+            ${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.immutable }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            com.sakura-ai.component=agent-runner
+
+      - name: Inspect immutable manifest digests
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          sandboxd_digest=$(docker buildx imagetools inspect \
+            "${SANDBOXD_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
+            --format '{{json .Manifest.Digest}}')
+          runner_digest=$(docker buildx imagetools inspect \
+            "${RUNNER_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
+            --format '{{json .Manifest.Digest}}')
+          [[ "$sandboxd_digest" =~ ^"sha256:[0-9a-f]{64}"$ ]] || exit 1
+          [[ "$runner_digest" =~ ^"sha256:[0-9a-f]{64}"$ ]] || exit 1
+          sandboxd_digest=${sandboxd_digest//\"/}
+          runner_digest=${runner_digest//\"/}
+          echo "sandboxd_digest=$sandboxd_digest" >> "$GITHUB_OUTPUT"
+          echo "runner_digest=$runner_digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Agent sandbox immutable images"
+            echo "- sandboxd: ${SANDBOXD_REPOSITORY}@${sandboxd_digest}"
+            echo "- runner: ${RUNNER_REPOSITORY}@${runner_digest}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "sandboxd=${SANDBOXD_REPOSITORY}@${sandboxd_digest}"
+            echo "runner=${RUNNER_REPOSITORY}@${runner_digest}"
+          } > agent-sandbox-digests.txt
+
+      - name: Upload immutable sandbox digest record
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-sandbox-digests-${{ github.run_id }}
+          path: agent-sandbox-digests.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -7,9 +7,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionRequest,
+    ExecutionResult,
+    execute_request,
+    execution_workspace_key,
+    resolve_execution_runner,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
-from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
 class GitDiffTool(BaseTool):
@@ -62,17 +68,14 @@ class GitDiffTool(BaseTool):
         mode = args.get("mode", "summary")
         file_paths = args.get("file_paths")
 
-        workspace_service = ctx.workspace_service or AgentTeamWorkspaceService()
-        executor = AgentTeamShellExecutor(ctx.workspace, workspace_service)
-
         if mode == "summary":
-            return await self._run_summary(executor)
-        return await self._run_full(executor, file_paths, ctx)
+            return await self._run_summary(ctx)
+        return await self._run_full(file_paths, ctx)
 
-    async def _run_summary(self, executor: AgentTeamShellExecutor) -> ToolResult:
+    async def _run_summary(self, ctx: ToolContext) -> ToolResult:
         """git diff --stat + git status --short"""
-        stat_result = await executor.run_args(["git", "diff", "--stat"])
-        status_result = await executor.run_args(["git", "status", "--short"])
+        stat_result = await self._run_git(ctx, ("git", "diff", "--stat"))
+        status_result = await self._run_git(ctx, ("git", "status", "--short"))
         if stat_result.returncode != 0:
             return ToolResult(
                 success=False,
@@ -102,12 +105,12 @@ class GitDiffTool(BaseTool):
 
     async def _run_full(
         self,
-        executor: AgentTeamShellExecutor,
         file_paths: list[str] | None,
         ctx: ToolContext,
     ) -> ToolResult:
         """git diff [files] — 显示完整 diff 内容。"""
         git_args: list[str] = ["git", "diff"]
+        workspace_root = ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
         if file_paths and isinstance(file_paths, list):
             for fp in file_paths:
                 if not isinstance(fp, str) or not fp.strip():
@@ -115,10 +118,10 @@ class GitDiffTool(BaseTool):
                 resolved = ctx.workspace_service.resolve_inside_workspace(
                     ctx.workspace, fp.strip()
                 )
-                rel = str(resolved).replace("\\", "/")
+                rel = resolved.relative_to(workspace_root).as_posix()
                 git_args.append(rel)
 
-        result = await executor.run_args(git_args)
+        result = await self._run_git(ctx, tuple(git_args))
         if result.returncode != 0:
             return ToolResult(success=False, error=f"git diff 失败: {result.stderr}")
 
@@ -145,3 +148,23 @@ class GitDiffTool(BaseTool):
                 "truncated": truncated,
             },
         )
+
+    async def _run_git(
+        self,
+        ctx: ToolContext,
+        args: tuple[str, ...],
+    ) -> ExecutionResult:
+        runner = resolve_execution_runner(
+            ctx.execution_runner,
+            ctx.workspace,
+            ctx.workspace_service,
+        )
+        request = ExecutionRequest(
+            workspace_key=execution_workspace_key(
+                ctx.workspace, ctx.workspace_service
+            ),
+            argv=args,
+            profile=ExecutionProfile.AGENT,
+            cancel_event=ctx.cancel_event,
+        )
+        return await execute_request(runner, request)

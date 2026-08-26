@@ -30,6 +30,7 @@ from backend.services.agent_team.context_compressor import compress_agent_team_m
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.registry import (
@@ -160,6 +161,7 @@ class ProfessionalReviewAgent:
         checkpoint: ConversationCheckpointService | None = None,
         session_id: int | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
+        execution_runner: ExecutionRunner | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
@@ -168,6 +170,7 @@ class ProfessionalReviewAgent:
         self.checkpoint = checkpoint
         self.session_id = session_id
         self.restored_messages = initial_messages is not None
+        self.execution_runner = execution_runner
         self.messages: list[dict[str, Any]] = initial_messages or [
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT}
         ]
@@ -200,6 +203,7 @@ class ProfessionalReviewAgent:
         return ToolContext(
             workspace=str(self.workspace),
             workspace_service=self.workspace_service,
+            execution_runner=self.execution_runner,
             read_file_state={},
             extra=extra,
         )

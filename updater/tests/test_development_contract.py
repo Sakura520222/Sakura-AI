@@ -137,6 +137,18 @@ class _StableRelease:
             "updater": {"protocol_version": 1},
         }
 
+    async def fetch_sandbox_manifest(self, version):
+        return {
+            "schema_version": 1,
+            "manifest": "agent-sandbox",
+            "version": version,
+            "channel": "stable",
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+            + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+            + "b" * 64,
+        }
+
     async def has_required_assets(self, manifest, version=None):
         return True
 

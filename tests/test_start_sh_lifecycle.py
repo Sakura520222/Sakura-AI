@@ -26,6 +26,85 @@ def _run_bash(command: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_image_update_fails_closed_without_updater_and_never_calls_web_only_helper():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
+init_deployment_env() { :; }
+require_idle_image_deployment() { :; }
+updater_daemon_is_running() { return 1; }
+apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
+cmd_update_image
+"""
+    )
+
+    assert result.returncode != 0
+    assert "UNEXPECTED_WEB_ONLY" not in result.stdout
+    assert "Web-only Compose fallback" in result.stderr
+
+
+def test_image_update_request_failure_does_not_fallback_to_web_only_compose():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
+init_deployment_env() { :; }
+require_idle_image_deployment() { :; }
+updater_daemon_is_running() { return 0; }
+curl() { return 7; }
+apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
+cmd_update_image
+"""
+    )
+
+    assert result.returncode != 0
+    assert "UNEXPECTED_WEB_ONLY" not in result.stdout
+    assert "Web-only Compose fallback" in result.stderr
+
+
+def test_channel_switch_image_mode_uses_updater_gate_without_web_only_fallback():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
+init_deployment_env() { :; }
+require_idle_image_deployment() { :; }
+updater_daemon_is_running() { return 1; }
+apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
+printf '2\ny\n' | cmd_switch_channel
+""",
+    )
+
+    assert result.returncode != 0
+    assert "UNEXPECTED_WEB_ONLY" not in result.stdout
+    assert "Web-only Compose fallback" in result.stderr
+
+
 def test_updater_reinstall_is_ordered_prepare_stop_install_start_status():
     result = _run_bash(
         """
