@@ -266,6 +266,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
         "generate-release",
         "publish-updater-assets",
         "publish-stable-image",
+        "publish-stable-sandbox",
     ]
     condition = manifest["if"].strip()
     assert condition.startswith("always()")
@@ -299,6 +300,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert "docker manifest inspect" in run_text
     assert "update-manifest.json" in run_text
     assert 'gh release upload "$TAG_NAME" update-manifest.json --clobber' in run_text
+    assert 'gh release upload "$TAG_NAME" agent-sandbox-manifest.json --clobber' in run_text
     assert "gh release create" not in run_text
     assert "gh release edit" not in run_text
     assert "${{ inputs.version }}" not in text
@@ -313,6 +315,14 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert '"updater":{"protocol_version"' in run_text
     assert '"asset_linux_amd64"' in run_text
     assert '"asset_linux_arm64"' in run_text
+    assert 'cat > agent-sandbox-manifest.json' in run_text
+    assert '"manifest":"agent-sandbox"' in run_text
+    assert '"sandboxd_image"' in run_text
+    assert '"runner_image"' in run_text
+    # The updater v1 manifest remains strict and must not receive sandbox
+    # extension fields; the independent asset carries them instead.
+    assert '"sandbox":{"sandboxd_image"' not in run_text
+    assert '"deployment":{"env"' not in run_text
 
     smoke = next(
         step

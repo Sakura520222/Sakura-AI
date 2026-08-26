@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -99,8 +99,8 @@
 - **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
 - **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
 - **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **受控工具执行** — 文件 / 搜索 / shell 限制在工作区，黑名单阻止危险命令
-- **自动依赖与验证** — 检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行白名单测试
+- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
 - **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
 - **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
 - **实时管理员干预** — WebUI Live View 注入指导意见
@@ -155,7 +155,7 @@
 
 ### Docker 一键部署（推荐自建）
 
-**Linux 全量部署**（Web + MySQL + Redis + Host Updater）：
+**Linux 全量部署**（Web + MySQL + Redis + Host Updater + Agent sandboxd）：
 
 ```bash
 sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
@@ -171,9 +171,9 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装；也可以直接运行 `sudo ./start.sh` 进入交互式管理菜单，在 WebUI 之外完成更新当前频道镜像、切换 stable/development 频道等操作（stable 频道优先复用 Host Updater 的更新流水线，development 频道或 daemon 未运行时回退为 Compose 直接拉取频道别名镜像）。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
+`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装 Host Updater。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
 
-> **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
+> **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：
 >
 > ```bash
 > sudo ./start.sh updater reinstall

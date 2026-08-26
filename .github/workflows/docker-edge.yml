@@ -28,3 +28,15 @@ jobs:
       channel: development
       sync_dockerhub: true
     secrets: inherit
+
+  publish-sandbox-edge:
+    name: 发布 development Agent sandbox 镜像
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || inputs.confirm_branch == 'develop')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/sandbox-publish.yml
+    with:
+      source_ref: ${{ github.sha }}
+      channel: development
+    secrets: inherit

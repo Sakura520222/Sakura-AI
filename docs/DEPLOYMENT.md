@@ -11,8 +11,8 @@
 | 方式 | 适用场景 | 是否需要源码 | WebUI 手动更新 | 说明 |
 |---|---|---|---|---|
 | 官方在线服务 | 快速体验 | 否 | 由平台管理 | [https://ai.firefly520.top/](https://ai.firefly520.top/) 注册即用 |
-| Linux Docker 全量部署 | 生产自建（推荐） | 否 | 支持 | 拉起 Web + MySQL + Redis，并安装 Host Updater |
-| macOS / Windows Compose 部署 | 容器化自建 | 否 | 不支持 | 可检查新版本，更新时需手动拉取并重建容器 |
+| Linux Docker 全量部署 | 生产自建（推荐） | 否 | 支持 | 拉起 Web + MySQL + Redis，安装 Host Updater，并启用 Agent OS 沙箱 |
+| macOS / Windows Compose 部署 | 容器化自建 | 否 | 不支持 | 可检查新版本；不提供 Linux sandboxd，Agent shell/依赖执行会 fail-closed |
 | Docker 仅 Web 镜像 | 已有 MySQL/Redis | 否 | 不支持 | 仅启动 Web 容器，连接外部存储 |
 | 源码部署 / 开发 | 二次开发、自定义构建 | 是 | 不支持 | 克隆仓库本地运行 |
 
@@ -40,7 +40,30 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名，避免配置文件所在的 `docker/` 目录把网络和持久化卷错误命名为通用的 `docker_*`。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`、启动 Web/MySQL/Redis，等待 `/health` 返回实际运行版本，然后从对应 Release 下载 updater binary 与 `SHA256SUMS`，校验后初始化 GID 9472、`/run/sakura-ai` 和 updater daemon。生产 daemon 启动前还会验证 binary、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；校验失败时拒绝启动更新能力。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`，从当前 Release 的 `agent-sandbox-manifest.json` 解析 sandboxd 与 runner 的不可变 digest，创建独立 GID 9473 和 `/run/sakura-ai-sandbox`，先启动并验证 sandboxd，再启动 Web/MySQL/Redis。随后脚本下载并启动 Host Updater（独立 GID 9472 和 `/run/sakura-ai`）。生产 daemon 启动前会验证 binary、`start.sh`、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；任一身份、权限、协议、runtime、workspace 或 digest 不匹配都会 fail-closed。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+
+### Agent OS 沙箱（Linux）
+
+Agent 的 `shell`、`grep` 和自动依赖安装不会在 Web 进程中直接执行。Web 通过只读 UDS `/run/sakura-ai-sandbox/sandboxd.sock` 向独立 sandboxd 提交严格版本化请求；sandboxd 为每条请求创建一次性 runner 容器，并固定应用以下策略：
+
+- `--network none`、只读 rootfs、`65532:65532`、`--cap-drop ALL`、`no-new-privileges`；
+- CPU、内存、PID、`nofile` 与 combined stdout/stderr 字节上限；
+- 只精确挂载当前任务 worktree 到 `/workspace`，不挂载相邻任务、应用配置、两个 UDS 或 Docker socket；
+- 镜像、mount、network、runtime 和 Docker argv 全部由 sandboxd 固定，Backend/模型请求不能覆盖；
+- timeout、取消、daemon shutdown 和异常路径都执行有界 `kill/rm`；重启只回收经 service、instance、request、workspace labels 证明属于当前实例的容器。
+
+只有 sandboxd 专用容器挂载 `/var/run/docker.sock`。Web 与 runner 都不挂载该 socket。sandboxd 不是普通 Compose service，由 `start.sh` 独立管理：
+
+```bash
+sudo ./start.sh sandboxd status
+sudo ./start.sh sandboxd restart
+sudo ./start.sh sandboxd reinstall
+sudo ./start.sh sandboxd stop
+```
+
+生产 workspace 使用宿主 bind 目录（默认 `/opt/sakura-ai/workplace`），Web 内仍显示为 `/app/workplace`。`SAKURA_SANDBOX_WORKSPACE_ROOT` 是宿主路径身份，必须由 `start.sh` 计算和注入，不要手工改成容器路径。sandboxd 的稳定 instance ID、双镜像 digest、release version 和 workspace identity 保存在 `.deploy/deployment.env`；不要提交该文件。
+
+源码开发只有在 `SAKURA_DEPLOY_MODE=source` 且显式选择 `agent_team_execution_backend=local` 时才允许本地执行，此模式**不提供 OS 隔离**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
 
 > **MySQL 低内存调优：** compose 为 MySQL 8.4 显式设置了 `performance-schema=OFF`、`innodb-buffer-pool-size=64M`、`innodb-redo-log-capacity=32M`、`max-connections=40` 并关闭 X Plugin，空闲内存约 200MB（默认配置约 500MB）。代价是 `sys`/`performance_schema` 监控表不可用；业务数据量增长到数十 MB 以上时可酌情调大缓冲池。应用侧连接池上限为 30（`pool_size=10` + `max_overflow=20`，见 `backend/models/database.py`），40 连接仍有约 9 个余量。既有部署v3.1.1重新下载 `docker-compose.prod.yml` 后重跑 `sudo ./start.sh --prod` 即可生效，`up -d` 只重建 mysql 容器，`mysql_data` 数据卷保留。
 
@@ -48,12 +71,12 @@ sudo ./start.sh --prod
 
 ```bash
 mkdir sakura-ai && cd sakura-ai
-mkdir -p docker .deploy
+mkdir -p docker .deploy workplace
 curl -L https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
   -o docker/docker-compose.prod.yml
 umask 077
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%s\n' \
-  "$(openssl rand -hex 32)" > .deploy/deployment.env
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%s\nSAKURA_SANDBOX_WORKSPACE_ROOT=%s\n' \
+  "$(openssl rand -hex 32)" "$(pwd)/workplace" > .deploy/deployment.env
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
@@ -62,18 +85,19 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f doc
 ```powershell
 New-Item -ItemType Directory -Force sakura-ai | Out-Null
 Set-Location sakura-ai
-New-Item -ItemType Directory -Force docker, .deploy | Out-Null
+New-Item -ItemType Directory -Force docker, .deploy, workplace | Out-Null
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
   -OutFile "docker/docker-compose.prod.yml"
 $bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
 $dbPassword = [Convert]::ToHexString($bytes).ToLowerInvariant()
-@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "COMPOSE_PROJECT_NAME=sakura-ai", "SAKURA_DB_PASSWORD=$dbPassword") |
+$workspaceRoot = (Resolve-Path workplace).Path
+@("SAKURA_DEPLOY_MODE=image", "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest", "COMPOSE_PROJECT_NAME=sakura-ai", "SAKURA_DB_PASSWORD=$dbPassword", "SAKURA_SANDBOX_WORKSPACE_ROOT=$workspaceRoot") |
   Set-Content -Encoding ascii .deploy/deployment.env
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f docker/docker-compose.prod.yml up -d
 ```
 
-macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新；请手动拉取目标镜像并重新运行 Compose。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机，且要求 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+，见下方"九、Host Updater 守护进程"）。
+macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新，也不具备 Linux Agent OS 沙箱；请手动拉取目标镜像并重新运行 Compose。当前生产 Compose 需要 `SAKURA_SANDBOX_WORKSPACE_ROOT` 等由 `start.sh` 生成的部署身份，因此跨平台手工 Compose 仅适合 Agent 功能关闭的部署。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机；sandboxd 完整生命周期采用相同平台边界，且 Host Updater 要求 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
 首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。
 
@@ -334,7 +358,7 @@ $COMPOSE logs web | grep -A6 "Setup Wizard"
 
 ## 九、Host Updater 守护进程
 
-Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认更新后，Host Updater 执行预检、拉取镜像、原子更新部署状态、重建容器并校验新版本健康状态。它不会无人值守安装更新。
+Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认稳定版更新后，Host Updater 同时读取严格 v1 `update-manifest.json` 和同版本 `agent-sandbox-manifest.json`，预检并拉取 Web、sandboxd、runner 三个不可变镜像，原子更新部署状态，先重建并验证 sandboxd，再激活 Web。任一步失败时会恢复三项旧镜像状态并收敛旧 sidecar/Web；legacy 部署没有旧 sandbox pair 时会先卸载本次 sidecar，只有确认成功后才恢复旧 Web。它不会无人值守安装更新。
 
 **运行环境要求**：自 2026-08-21 起，updater 发布二进制在 Python 3.14 Bookworm（glibc 2.36）环境中构建，宿主机需要 glibc ≥ 2.36（Debian 12+、Ubuntu 24.04+）。更早版本基于 Bullseye（glibc 2.31）构建，可运行于更老的发行版；宿主机仍为 Ubuntu 20.04/22.04 或 Debian 11 等旧系统时，请勿升级到新二进制（自动更新确认前请先确认发行版满足要求），或改为仅容器部署并手动更新镜像。
 
@@ -356,7 +380,7 @@ action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updat
 
 ### WebUI 更新后同步 Host Updater
 
-WebUI 版本管理器当前负责更新 Sakura AI 应用镜像，不会替换或重启宿主机上的 Host Updater。预检中的“Updater 文件可用”只验证目标 Release 包含当前架构对应的 updater binary 与 `SHA256SUMS`，不代表更新任务会安装该 binary。因此，WebUI 更新应用成功后，正在运行的 updater 仍是更新前的版本。
+WebUI 版本管理器的稳定版事务会更新 Web、sandboxd 与 Agent runner，但不会替换或重启宿主机上的 Host Updater 二进制。预检中的“Updater 文件可用”只验证目标 Release 包含当前架构对应的 updater binary 与 `SHA256SUMS`，不代表更新任务会安装该 binary。因此，三镜像事务成功后，正在运行的 updater 仍可能是更新前的版本。
 
 等待 WebUI 更新任务成功，并确认应用健康接口已经返回目标版本：
 
@@ -375,7 +399,7 @@ sudo curl --fail --silent --show-error \
   http://updater/v1/health
 ```
 
-`install` 不会下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本并下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z` 时，安装器可以直接采用该版本，无需查询 `/health`；即使应用停止、启动失败或报告其他版本，也不会因此自动拒绝安装。因此，“`/health` 成功返回预期目标版本”是管理员必须手动完成的前置检查，而不是安装器保证。命令顺序必须是“先完成应用更新并人工确认健康，再安装 updater”；健康检查失败、不可用或版本不符时请勿继续。这套操作只同步管理员已经在 WebUI 确认过的 Release，不会启用定时任务或无人值守更新。
+`install` 不会下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本并下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z` 时，安装器可以直接采用该版本，无需查询 `/health`。因此，“`/health` 成功返回预期目标版本”仍是管理员重新安装 updater binary 前必须手动完成的检查。三镜像应用更新本身则由当前 updater 事务执行 health 与 rollback 门禁。
 
 ### 生产首次安装
 
@@ -425,12 +449,14 @@ SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater st
 ### 安全边界
 
 - Web 容器通过只读挂载 `/run/sakura-ai` 目录（Unix Domain Socket）与 updater 通信，**不挂载 `docker.sock`**
+- Web 容器通过另一个只读目录 `/run/sakura-ai-sandbox` 与 sandboxd 通信；两个 UDS、GID、状态目录、协议与生命周期完全独立
+- 只有 sandboxd 专用容器持有 Docker socket；sandboxd 请求协议不接受任意镜像、宿主路径、network、runtime 或 Docker argv
 - 生产部署必须位于 root-owned、group/other 不可写的目录链中；推荐固定使用 `/opt/sakura-ai`。updater 启动时会对 binary、Compose 和 `deployment.env` 逐级 `lstat` 并 fail-closed，拒绝 symlink、非 root owner、共享写权限或非 `0600` 的部署状态
 - updater 不依赖 systemd 或 cron 自启；宿主机重启后，在 `/opt/sakura-ai` 运行 `sudo ./start.sh updater start`，或再次执行 `sudo ./start.sh --prod`。`start` 会重新创建 tmpfs 中消失的 `/run/sakura-ai` 后再拉起 daemon；这只恢复更新服务，不会自动安装应用更新
 
 ## 十、卸载
 
-默认卸载会停止仍在后台运行的部署 runner，确认没有活动 updater 更新任务，删除 Compose 容器/网络并卸载 Host Updater，但保留 MySQL、Redis、配置、ChromaDB、日志、工作区和 Skills 等 Docker 数据卷，同时保留 `.deploy/deployment.env`，方便以后用原密码和原数据重新部署：
+默认卸载会停止仍在后台运行的部署 runner，确认没有活动 updater 更新任务，停止并删除经身份验证的 sandboxd，删除 Compose 容器/网络并卸载 Host Updater，但保留 MySQL、Redis、配置、ChromaDB、日志、工作区和 Skills 等数据，同时保留 `.deploy/deployment.env`，方便以后用原密码和原数据重新部署：
 
 ```bash
 cd /opt/sakura-ai
@@ -451,4 +477,4 @@ sudo ./start.sh uninstall --purge
 
 ---
 
-*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

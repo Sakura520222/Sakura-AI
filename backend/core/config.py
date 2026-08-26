@@ -744,6 +744,24 @@ class Settings(BaseSettings):
     # ========== Agent 模式配置 ==========
     agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
+    # Agent command execution backend.  ``sandbox`` is the production-safe
+    # value; ``local`` is source-development-only and is rejected for image
+    # deployments by the sandbox runner selector.
+    agent_team_execution_backend: Literal["sandbox", "local"] = "sandbox"
+    agent_team_sandbox_socket: str = "/run/sakura-ai-sandbox/sandboxd.sock"
+    agent_team_sandbox_timeout_seconds: float = Field(900.0, gt=0, le=3600)
+    agent_team_sandbox_max_output_bytes: int = Field(
+        8 * 1024 * 1024,
+        gt=0,
+        le=64 * 1024 * 1024,
+    )
+    # Deployment-owned sandbox identity.  These values are read from the
+    # process environment only; they are intentionally not dynamic app_config
+    # fields that an Agent or WebUI request can change at runtime.
+    agent_team_sandbox_runtime: str | None = None
+    agent_team_sandbox_runner_image_digest: str | None = None
+    agent_team_sandbox_expected_instance_id: str | None = None
+    agent_team_sandbox_expected_workspace_root: str | None = None
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
@@ -756,7 +774,6 @@ class Settings(BaseSettings):
     agent_team_pr_review_blocking_severities: str = "critical,major"
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
-    agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = True
     agent_team_skills_root: str = "./Skills"
     # Module G: 候选池缓存
@@ -1225,13 +1242,13 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "descriptions": {
                     "agent_team_enabled": "启用后，超级管理员可手动创建和执行 Agent 任务；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
+                    "agent_team_execution_backend": "Agent 命令执行后端；sandbox 通过独立 sandboxd 隔离，local 仅限源码开发且镜像部署拒绝",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_run_tests": "提交前自动运行验证命令检查代码",
-                    "agent_team_test_command_blocklist": "Shell 命令黑名单（逗号分隔），在默认黑名单基础上额外拦截的命令。默认黑名单已包含 curl、wget、ssh、sudo 等高危命令。",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
                     "agent_team_candidate_cache_ttl": "候选池内存缓存有效期（秒），0 表示每次实时查询",
@@ -1239,6 +1256,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "keys": [
                     "agent_team_enabled",
                     "agent_team_workspace_root",
+                    "agent_team_execution_backend",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
@@ -1249,7 +1267,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_pr_review_blocking_severities",
                     "agent_team_run_tests",
                     "agent_team_auto_install_deps",
-                    "agent_team_test_command_blocklist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
                     "agent_team_candidate_cache_ttl",
@@ -1473,6 +1490,10 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "medium", "label": "Medium"},
         {"value": "low", "label": "Low"},
     ],
+    "agent_team_execution_backend": [
+        {"value": "sandbox", "label": "Sandbox（推荐）"},
+        {"value": "local", "label": "Local（仅源码开发）"},
+    ],
     "star_aid_summary_language": [
         {"value": "", "label": "跟随界面语言"},
         {"value": "zh-CN", "label": "简体中文"},
@@ -1646,6 +1667,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     # Agent
     "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
+    "agent_team_execution_backend": "Agent 执行后端",
     "agent_team_repo_allowlist": "仓库白名单",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
@@ -1655,7 +1677,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",
     "agent_team_pr_review_blocking_severities": "Agent PR 阻塞严重级别",
     "agent_team_run_tests": "自动运行验证命令",
-    "agent_team_test_command_blocklist": "Shell 命令黑名单",
     "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",

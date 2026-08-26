@@ -412,23 +412,23 @@ async def test_install_workspace_dependencies_skips_non_python(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
-    """Python projects with pyproject.toml should trigger venv creation."""
+async def test_install_workspace_dependencies_skips_without_dependency_runner(tmp_path):
+    """没有沙箱 dependency profile 时必须 fail closed，不得本地执行。"""
     (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
 
     from unittest.mock import AsyncMock, MagicMock, patch
 
     service = AgentTeamGitWorkspaceService.__new__(AgentTeamGitWorkspaceService)
     executor = MagicMock()
+    executor.supports_profile.return_value = False
     executor.run = AsyncMock()
 
     with patch(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
         new_callable=AsyncMock,
         return_value=None,
-    ):
+    ), pytest.raises(RuntimeError, match="explicit sandbox runner"):
         await service._install_workspace_dependencies(executor, tmp_path)
 
-    assert executor.run.call_count >= 1
-    calls_str = " ".join(str(c) for c in executor.run.call_args_list)
-    assert "venv" in calls_str
+    executor.run.assert_not_awaited()
+    assert not (tmp_path / ".venv").exists()

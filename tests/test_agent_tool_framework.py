@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from backend.services.agent_team.execution import LocalExecutionRunner
 from backend.services.agent_team.tool_executor import AgentToolExecutor
 from backend.services.agent_team.tools.base import ToolContext, ToolExecutor, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -55,6 +56,7 @@ def _setup_workspace(tmp_path):
     ctx = ToolContext(
         workspace=workspace,
         workspace_service=service,
+        execution_runner=LocalExecutionRunner(workspace, service),
         extra={"file_state": ReadFileState()},
     )
     return workspace, ctx
@@ -479,7 +481,11 @@ async def test_search_in_files_invalid_regex_case_insensitive_fallback(tmp_path)
 @pytest.mark.asyncio
 async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
     workspace, ctx = _setup_workspace(tmp_path)
-    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+    executor = AgentToolExecutor(
+        workspace,
+        ctx.workspace_service,
+        ctx.execution_runner,
+    )
 
     result = await executor._handle_search_in_files(
         {"keyword": "x" * (MAX_GREP_KEYWORD_LENGTH + 1)}
@@ -495,7 +501,11 @@ async def test_legacy_search_in_files_reuses_grep_tool(tmp_path):
         "needle = 1\n",
         encoding="utf-8",
     )
-    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+    executor = AgentToolExecutor(
+        workspace,
+        ctx.workspace_service,
+        ctx.execution_runner,
+    )
 
     result = await executor._handle_search_in_files(
         {"keyword": "needle", "file_extension": ".py"}

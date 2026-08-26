@@ -220,14 +220,28 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止与手动取消 |
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
-| 全局配置页「Agent 专家团队」组 | 验证命令黑名单 | 控制可执行的验证命令 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_max_iterations_per_task` | 单任务最大自动迭代次数 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
 | 全局配置页「Agent Skills」组 | `agent_team_skills_enabled` | Agent 是否可加载技能 |
 | 全局配置页「Agent Skills」组 | `agent_team_skills_root` | 技能本地存储根目录 |
 
-> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。
+> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、grep 和依赖 hook 使用 `AGENT` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+
+下列设置属于部署安全边界，不通过 WebUI 或数据库动态修改：
+
+| 环境变量 / Settings | 默认 / 来源 | 说明 |
+|---|---|---|
+| `AGENT_TEAM_SANDBOX_SOCKET` / `agent_team_sandbox_socket` | `/run/sakura-ai-sandbox/sandboxd.sock` | 独立 sandboxd UDS；不得与 updater socket 共用 |
+| `AGENT_TEAM_SANDBOX_RUNTIME` | `docker` | Backend health admission 期望的运行时 |
+| `AGENT_TEAM_SANDBOX_RUNNER_IMAGE_DIGEST` | Release 的 `agent-sandbox-manifest.json` | runner 的不可变镜像引用；生产必须是 `name@sha256:...` |
+| `AGENT_TEAM_SANDBOX_EXPECTED_INSTANCE_ID` | `start.sh` 持久化并注入 | 绑定当前受管 sandboxd 实例，缺失或不匹配即拒绝 Agent 执行 |
+| `AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT` | `start.sh` 计算的宿主绝对路径 | 仅作为 daemon 身份；Web 实际访问路径仍是 `/app/workplace` |
+| `AGENT_TEAM_SANDBOX_TIMEOUT_SECONDS` | 900 | Backend 请求上限；daemon 仍使用更严格的服务端 clamp |
+| `AGENT_TEAM_SANDBOX_MAX_OUTPUT_BYTES` | 1 MiB | stdout + stderr 合计字节上限 |
+
+生产 sandboxd 的镜像、runner 镜像、Docker 参数、网络、mount、UID/GID、capabilities、资源限制和宿主 workspace root 均由部署侧控制，不能由模型请求或 Web 动态配置覆盖。Web 与 runner 不挂载 Docker socket；只有独立 sandboxd 容器持有该 socket。
 
 详见 [Agent Skills 实现](agent-skills-python-implementation.md)、[Agent 文件工具实现](agent-file-tools-python-implementation.md)。
 
@@ -335,4 +349,4 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 ---
 
-*最后更新：2026-8-22 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

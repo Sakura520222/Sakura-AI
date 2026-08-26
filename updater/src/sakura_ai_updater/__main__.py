@@ -119,6 +119,11 @@ def serve(
                 compose_file=compose_file,
                 deployment_env=deployment_env,
                 health_url=health_url,
+                # Source development may intentionally run the Python updater
+                # as a non-root user.  A real daemon with explicit deployment
+                # paths is production-trusted by default; the dev override is
+                # the only way to select the non-root policy.
+                production=os.environ.get("SAKURA_UPDATER_DEV") != "1",
             )
             deployment = DeploymentStateProvider(
                 deployment_env=deployment_env,

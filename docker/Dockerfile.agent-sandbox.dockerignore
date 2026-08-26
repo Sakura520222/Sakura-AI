@@ -1,0 +1,18 @@
+# The runner Dockerfile has no COPY/ADD.  Keep the build context empty by
+# default so application source and deployment state cannot enter the image.
+*
+.*
+
+# Keep these explicit deny rules as documentation and regression-test targets;
+# they remain denied if the context policy is later relaxed for a tool asset.
+.deploy/
+config/
+workplace/
+repo/
+**/.env
+**/.env.*
+**/*secret*
+**/*secrets*
+**/*key*
+**/*token*
+**/logs/

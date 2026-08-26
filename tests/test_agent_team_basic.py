@@ -213,7 +213,6 @@ def test_agent_team_config_includes_policy_keys():
         "agent_team_enabled",
         "agent_team_workspace_root",
         "agent_team_max_concurrent",
-        "agent_team_test_command_blocklist",
     }
 
     assert required.issubset(AGENT_TEAM_DYNAMIC_KEYS)

@@ -2,6 +2,7 @@ import pytest
 
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
+    _strip_git_credentials,
 )
 
 
@@ -75,8 +76,31 @@ def test_get_installation_token_returns_empty_on_error():
     assert service._get_installation_token("owner", "repo") == ""
 
 
+def test_strip_git_credentials_from_remote_url():
+    assert (
+        _strip_git_credentials(
+            "https://x-access-token:secret@github.com/owner/repo.git"
+        )
+        == "https://github.com/owner/repo.git"
+    )
+    assert (
+        _strip_git_credentials("https://user@github.com/owner/repo.git")
+        == "https://github.com/owner/repo.git"
+    )
+    assert _strip_git_credentials("ssh://git@github.com/owner/repo.git") == (
+        "ssh://git@github.com/owner/repo.git"
+    )
+    with pytest.raises(ValueError, match="query|fragment"):
+        _strip_git_credentials("https://user@github.com/owner/repo.git?token=secret")
+    with pytest.raises(ValueError, match="query|fragment"):
+        _strip_git_credentials("https://github.com/owner/repo.git#fragment")
+    assert _strip_git_credentials("user:secret@github.com:owner/repo.git") == (
+        "github.com:owner/repo.git"
+    )
+
+
 @pytest.mark.asyncio
-async def test_get_repo_info_uses_tokenized_clone_url():
+async def test_get_repo_info_keeps_token_out_of_clone_url():
     class Repo:
         default_branch = "develop"
         clone_url = "https://github.com/owner/repo.git"
@@ -94,11 +118,10 @@ async def test_get_repo_info_uses_tokenized_clone_url():
     service = AgentTeamGitWorkspaceService(
         github_app=GithubApp(), workspace_service=object()
     )
-    service._get_installation_token = lambda owner, repo: "token"  # type: ignore[method-assign]
-
     default_branch, clone_url = await service._get_repo_info(
         "owner", "repo", "owner/repo"
     )
 
     assert default_branch == "develop"
-    assert clone_url == "https://x-access-token:token@github.com/owner/repo.git"
+    assert clone_url == "https://github.com/owner/repo.git"
+    assert "token" not in clone_url

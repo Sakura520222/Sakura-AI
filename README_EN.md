@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -99,8 +99,8 @@
 - **Multi-branch Parallel Workspaces** — Each task uses an isolated Git worktree, supporting parallel execution
 - **Two-agent Collaboration** — Full-stack expert plans and edits; professional reviewer does pre-push quality review
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
-- **Controlled Tool Execution** — File / search / shell scoped to workspace; blacklist blocks dangerous commands
-- **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` deps and runs allowlisted tests
+- **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with no network, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
+- **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
@@ -155,7 +155,7 @@ Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for 
 
 ### Docker One-Click Deployment (Recommended for Self-hosting)
 
-**Linux full deployment** (Web + MySQL + Redis + Host Updater):
+**Linux full deployment** (Web + MySQL + Redis + Host Updater + Agent sandboxd):
 
 ```bash
 sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
@@ -171,9 +171,9 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-`sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager; running `sudo ./start.sh` without arguments opens an interactive management menu that can also update the current channel image or switch between the stable/development channels outside the WebUI (the stable channel reuses the Host Updater update pipeline when the daemon is running; the development channel or an unavailable daemon falls back to a direct Compose pull of the channel alias image). macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
+`sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs the Host Updater. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
-> **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
+> **Synchronizing Host Updater after a WebUI update:** A stable WebUI update transaction updates Web, sandboxd, and the Agent runner together, but it does not replace the currently running Host Updater binary. After the update succeeds and `/health` reports the new version, run the following command in `/opt/sakura-ai` to align the Updater binary with that Release:
 >
 > ```bash
 > sudo ./start.sh updater reinstall

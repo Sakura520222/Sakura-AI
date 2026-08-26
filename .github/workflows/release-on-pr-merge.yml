@@ -789,17 +789,33 @@ jobs:
       sync_dockerhub: true
     secrets: inherit
 
+  publish-stable-sandbox:
+    name: 发布稳定 Agent sandbox 镜像
+    needs: generate-release
+    if: needs.generate-release.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/sandbox-publish.yml
+    with:
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      channel: stable
+      version: ${{ needs.generate-release.outputs.version }}
+    secrets: inherit
+
   publish-update-manifest:
     name: 发布更新清单
     needs:
       - generate-release
       - publish-updater-assets
       - publish-stable-image
+      - publish-stable-sandbox
     if: >-
       always() &&
       needs.generate-release.result == 'success' &&
       needs.publish-updater-assets.result == 'success' &&
-      needs.publish-stable-image.result == 'success'
+      needs.publish-stable-image.result == 'success' &&
+      needs.publish-stable-sandbox.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -814,6 +830,8 @@ jobs:
         env:
           VERSION: ${{ needs.generate-release.outputs.version }}
           RELEASE_ACTION: ${{ needs.generate-release.outputs.release_action }}
+          SANDBOXD_DIGEST: ${{ needs.publish-stable-sandbox.outputs.sandboxd_digest }}
+          RUNNER_DIGEST: ${{ needs.publish-stable-sandbox.outputs.runner_digest }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -840,13 +858,32 @@ jobs:
           # Created and refresh releases both require the concrete stable image
           # tag to exist before the manifest can become authoritative.
           image="ghcr.io/sakura520222/sakura-ai:v${VERSION}"
+          sandboxd_image="ghcr.io/sakura520222/sakura-ai-sandboxd"
+          runner_image="ghcr.io/sakura520222/sakura-ai-agent-runner"
+          [[ "$SANDBOXD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid published sandboxd digest: $SANDBOXD_DIGEST" >&2
+            exit 1
+          }
+          [[ "$RUNNER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid published runner digest: $RUNNER_DIGEST" >&2
+            exit 1
+          }
+          sandboxd_ref="${sandboxd_image}@${SANDBOXD_DIGEST}"
+          runner_ref="${runner_image}@${RUNNER_DIGEST}"
           docker manifest inspect "$image" >/dev/null || {
             echo "stable image not found: $image (release_action=$RELEASE_ACTION)" >&2
             exit 1
           }
 
+          # Keep the updater's strict v1 manifest byte-for-byte compatible.
+          # Agent sandbox identities are published as a separate asset so the
+          # existing updater parser never sees unknown top-level fields.
           cat > update-manifest.json <<JSON
           {"schema_version":1,"version":"${VERSION}","channel":"stable","min_upgrade_from":"0.0.0","image":"${image}","updater":{"protocol_version":${proto},"asset_linux_amd64":"sakura-ai-updater-linux-amd64","asset_linux_arm64":"sakura-ai-updater-linux-arm64"}}
+          JSON
+
+          cat > agent-sandbox-manifest.json <<JSON
+          {"schema_version":1,"manifest":"agent-sandbox","version":"${VERSION}","channel":"stable","sandboxd_image":"${sandboxd_ref}","runner_image":"${runner_ref}"}
           JSON
 
           jq -e '
@@ -861,9 +898,20 @@ jobs:
             and .updater.asset_linux_arm64 == "sakura-ai-updater-linux-arm64"
           ' update-manifest.json >/dev/null
 
+          jq -e --arg version "$VERSION" '
+            .schema_version == 1
+            and .manifest == "agent-sandbox"
+            and .version == $version
+            and .channel == "stable"
+            and (.sandboxd_image | test("^ghcr\\.io/sakura520222/sakura-ai-sandboxd@sha256:[0-9a-f]{64}$"))
+            and (.runner_image | test("^ghcr\\.io/sakura520222/sakura-ai-agent-runner@sha256:[0-9a-f]{64}$"))
+            and (keys | sort == ["channel","manifest","runner_image","sandboxd_image","schema_version","version"])
+          ' agent-sandbox-manifest.json >/dev/null
+
           TAG_NAME="v${VERSION}"
           gh release view "$TAG_NAME" >/dev/null
           gh release upload "$TAG_NAME" update-manifest.json --clobber
+          gh release upload "$TAG_NAME" agent-sandbox-manifest.json --clobber
 
       - name: 验证已发布 updater 的 HTTPS 就绪性
         env:

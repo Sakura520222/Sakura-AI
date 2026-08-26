@@ -1,0 +1,56 @@
+# Dedicated, non-root runner for the host-side sandboxd.
+#
+# This image is deliberately separate from the Web image.  It contains no
+# Sakura source/configuration, deployment state, Docker client, or credentials.
+# The daemon supplies the task workspace and bounded tmpfs mounts at runtime.
+
+FROM python:3.14-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/agent \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CI=true \
+    TERM=dumb \
+    NPM_CONFIG_PREFIX=/opt/npm-global \
+    CARGO_HOME=/home/agent/.cargo \
+    PATH=/opt/npm-global/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        bash \
+        build-essential \
+        ca-certificates \
+        cargo \
+        coreutils \
+        g++ \
+        git \
+        golang \
+        grep \
+        gzip \
+        jq \
+        libffi-dev \
+        make \
+        nodejs \
+        npm \
+        openjdk-17-jdk-headless \
+        pkg-config \
+        rustc \
+        tar \
+        unzip \
+        xz-utils \
+        zip \
+    && python -m pip install --no-cache-dir --disable-pip-version-check \
+        pytest \
+        ruff \
+    && groupadd --gid 65532 agent \
+    && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/agent \
+        --shell /bin/bash agent \
+    && mkdir -p /opt/npm-global /home/agent/.cargo /workspace \
+    && chown -R 65532:65532 /opt/npm-global /home/agent /workspace \
+    && rm -rf /var/lib/apt/lists/*
+
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT []
+CMD []

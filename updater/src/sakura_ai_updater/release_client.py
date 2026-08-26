@@ -11,9 +11,11 @@ import asyncio
 import inspect
 import json
 import platform
+import re
 import socket
 import ssl
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -41,6 +43,122 @@ class ReleaseNotFoundError(ReleaseClientError):
 
 class ManifestNotFoundError(ReleaseClientError):
     """A release exists but does not include update-manifest.json."""
+
+
+class SandboxManifestNotFoundError(ManifestNotFoundError):
+    """A stable release is missing its independent sandbox manifest asset."""
+
+
+class SandboxManifestInvalidError(ReleaseClientError):
+    """The independent sandbox manifest crossed the trust boundary invalidly."""
+
+
+SANDBOX_MANIFEST_SCHEMA_VERSION = 1
+SANDBOX_MANIFEST_TYPE = "agent-sandbox"
+SANDBOXD_IMAGE_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-sandboxd"
+RUNNER_IMAGE_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-agent-runner"
+_SANDBOX_DIGEST_RE = re.compile(r"^(?P<repository>[^@]+)@sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxManifest:
+    """Strict, independent stable Agent sandbox image manifest."""
+
+    schema_version: int
+    manifest: str
+    version: str
+    channel: str
+    sandboxd_image: str
+    runner_image: str
+
+    @property
+    def sandboxd_ref(self) -> str:
+        return self.sandboxd_image
+
+    @property
+    def runner_ref(self) -> str:
+        return self.runner_image
+
+
+def parse_sandbox_manifest(
+    data: Mapping[str, Any] | Any,
+    *,
+    expected_version: str | None = None,
+) -> SandboxManifest:
+    """Validate the separate ``agent-sandbox-manifest.json`` schema.
+
+    This parser intentionally does not share fields or permissive behaviour
+    with :func:`sakura_ai_updater.manifest.parse_manifest`: the updater v1
+    ``update-manifest.json`` contract must remain byte-for-schema compatible.
+    """
+
+    if not isinstance(data, Mapping):
+        raise SandboxManifestInvalidError("sandbox manifest must be an object")
+    required = {
+        "schema_version",
+        "manifest",
+        "version",
+        "channel",
+        "sandboxd_image",
+        "runner_image",
+    }
+    if set(data) != required:
+        missing = sorted(required - set(data))
+        unknown = sorted(set(data) - required)
+        detail: list[str] = []
+        if missing:
+            detail.append(f"missing={','.join(missing)}")
+        if unknown:
+            detail.append(f"unknown={','.join(unknown)}")
+        raise SandboxManifestInvalidError(
+            "invalid sandbox manifest keys" + (f" ({'; '.join(detail)})" if detail else "")
+        )
+    schema_version = data["schema_version"]
+    if isinstance(schema_version, bool) or schema_version != SANDBOX_MANIFEST_SCHEMA_VERSION:
+        raise SandboxManifestInvalidError(
+            f"unsupported sandbox manifest schema_version: {schema_version!r}"
+        )
+    if data["manifest"] != SANDBOX_MANIFEST_TYPE:
+        raise SandboxManifestInvalidError("sandbox manifest type is invalid")
+    version = data["version"]
+    parsed_version = parse_semver(version) if isinstance(version, str) else None
+    if parsed_version is None or parsed_version.prerelease:
+        raise SandboxManifestInvalidError("sandbox manifest version is invalid")
+    if expected_version is not None:
+        normalized_expected = expected_version.removeprefix("v")
+        normalized_parsed = parse_semver(normalized_expected)
+        if (
+            normalized_parsed is None
+            or normalized_parsed.prerelease
+            or version != normalized_expected
+        ):
+            raise SandboxManifestInvalidError(
+                "sandbox manifest version does not match the requested release"
+            )
+    if data["channel"] != "stable":
+        raise SandboxManifestInvalidError("sandbox manifest channel must be stable")
+
+    refs: list[str] = []
+    for field, repository in (
+        ("sandboxd_image", SANDBOXD_IMAGE_REPOSITORY),
+        ("runner_image", RUNNER_IMAGE_REPOSITORY),
+    ):
+        value = data[field]
+        if not isinstance(value, str) or _SANDBOX_DIGEST_RE.fullmatch(value) is None:
+            raise SandboxManifestInvalidError(f"{field} must be a full immutable digest")
+        match = _SANDBOX_DIGEST_RE.fullmatch(value)
+        assert match is not None
+        if match.group("repository") != repository:
+            raise SandboxManifestInvalidError(f"{field} repository is not trusted")
+        refs.append(value)
+    return SandboxManifest(
+        schema_version=schema_version,
+        manifest=SANDBOX_MANIFEST_TYPE,
+        version=version,
+        channel="stable",
+        sandboxd_image=refs[0],
+        runner_image=refs[1],
+    )
 
 
 def _request_failure_detail(exc: BaseException) -> str:
@@ -277,6 +395,60 @@ class ReleaseClient:
         """Compatibility alias for callers that use ``get_manifest``."""
 
         return await self.fetch_manifest(version)
+
+    async def fetch_sandbox_manifest(self, version: str) -> SandboxManifest:
+        """Fetch and strictly validate the same-release sandbox manifest.
+
+        Unlike ``fetch_manifest`` this method never returns a stale cached
+        value.  A stable preflight must prove that the Web, sandboxd, and
+        runner identities belong to the same release before any destructive
+        operation is started.
+        """
+
+        release_call = self.get_release(version)
+        release = (
+            await release_call
+            if inspect.isawaitable(release_call)
+            else release_call
+        )
+        assets = release.get("assets")
+        matches = [
+            asset
+            for asset in assets
+            if isinstance(asset, Mapping)
+            and asset.get("name") == "agent-sandbox-manifest.json"
+        ] if isinstance(assets, list) else []
+        if len(matches) != 1:
+            raise SandboxManifestNotFoundError(
+                "release has no unique 'agent-sandbox-manifest.json' asset"
+            )
+        asset = matches[0]
+        url = asset.get("browser_download_url") or asset.get("url")
+        if not isinstance(url, str) or not url:
+            raise SandboxManifestNotFoundError(
+                "sandbox manifest asset has no download URL"
+            )
+        # Keep the asset download on the canonical GitHub release surface.  A
+        # release API response containing an arbitrary URL must not redirect
+        # the updater to an untrusted host.
+        allowed_prefixes = (
+            f"https://github.com/{self.owner}/{self.repo}/releases/download/",
+            f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/assets/",
+        )
+        if not url.lower().startswith(tuple(prefix.lower() for prefix in allowed_prefixes)):
+            raise SandboxManifestInvalidError("sandbox manifest asset URL is not trusted")
+        payload_call = self._fetch_json(url)
+        payload = (
+            await payload_call
+            if inspect.isawaitable(payload_call)
+            else payload_call
+        )
+        return parse_sandbox_manifest(payload, expected_version=version.removeprefix("v"))
+
+    async def get_sandbox_manifest(self, version: str) -> SandboxManifest:
+        """Compatibility alias for callers using ``get_*`` naming."""
+
+        return await self.fetch_sandbox_manifest(version)
 
     async def latest_manifest(self) -> Any:
         return await self.fetch_manifest(None)
