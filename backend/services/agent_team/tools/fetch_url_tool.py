@@ -9,29 +9,28 @@ from typing import Any
 
 from loguru import logger
 
+from backend.services.agent_team.network_policy import (
+    get_agent_team_network_policy,
+    get_agent_tool_switch,
+    web_tool_denial_reason,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 # 模块级延迟单例
 _fetch_url_handler: Any | None = None
-_handler_unavailable: bool = False
 
 
 def _get_fetch_url_handler() -> Any | None:
-    """获取或创建 FetchUrlToolHandler 单例（仅当启用时）。"""
-    global _fetch_url_handler, _handler_unavailable
-    if _handler_unavailable:
-        return None
+    """获取或创建 FetchUrlToolHandler 单例。
+
+    The wrapper does not retain a negative availability cache.  Policy and
+    feature switches are read at each execution boundary instead.
+    """
+    global _fetch_url_handler
     if _fetch_url_handler is not None:
         return _fetch_url_handler
 
     try:
-        from backend.core.config import get_settings
-
-        settings = get_settings()
-        if not settings.web_search_enabled or not settings.fetch_url_enabled:
-            _handler_unavailable = True
-            return None
-
         from backend.services.ai_reviewer.tools.fetch_url_tool import (
             FetchUrlToolHandler,
         )
@@ -40,7 +39,6 @@ def _get_fetch_url_handler() -> Any | None:
         return _fetch_url_handler
     except Exception as exc:
         logger.warning("URL 抓取工具初始化失败: {}", exc)
-        _handler_unavailable = True
         return None
 
 
@@ -88,6 +86,21 @@ class FetchUrlTool(BaseTool):
         return None
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        try:
+            policy = await get_agent_team_network_policy()
+            if not policy.allows_web_tools:
+                return ToolResult(
+                    success=False,
+                    error=web_tool_denial_reason(self.name, policy),
+                )
+            if not await get_agent_tool_switch("web_search_enabled"):
+                return ToolResult(success=False, error="Web 搜索工具未启用")
+            if not await get_agent_tool_switch("fetch_url_enabled"):
+                return ToolResult(success=False, error="URL 抓取工具未启用")
+        except Exception as exc:
+            logger.error("URL 抓取授权读取失败，已拒绝请求: {}", exc)
+            return ToolResult(success=False, error="URL 抓取授权状态读取失败，已拒绝请求")
+
         handler = _get_fetch_url_handler()
         if handler is None:
             return ToolResult(success=False, error="URL 抓取工具未启用")

@@ -20,6 +20,7 @@ from backend.services.agent_team.execution import (
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.sandbox_client import (
     SandboxExecutionRunner,
     create_execution_runner,
@@ -72,11 +73,22 @@ def test_runner_factory_creates_only_explicit_local_or_sandbox(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_local_explicit_runner_honors_workspace_cancel_event(tmp_path: Path):
+async def test_local_explicit_runner_honors_workspace_cancel_event(
+    tmp_path: Path,
+    monkeypatch,
+):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     runner = LocalExecutionRunner(workspace, service)
     cancel_event = asyncio.Event()
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
 
     async def cancel_soon():
         await asyncio.sleep(0.05)
@@ -132,6 +144,82 @@ async def test_worker_admission_creates_runner_before_dependency_install(
 
 
 @pytest.mark.asyncio
+async def test_worker_runner_factory_reads_backend_fresh_after_cross_worker_switch(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """A long-lived worker must not reuse a stale local backend setting."""
+
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    selected_backends: list[str] = []
+    backend_values = iter(("local", "sandbox"))
+
+    async def fresh_config(key: str):
+        assert key == "agent_team_execution_backend"
+        return next(backend_values)
+
+    async def fake_create_ready(_path: str, _workspace_service, **kwargs):
+        selected_backends.append(kwargs["backend"])
+        return object()
+
+    # The process snapshot intentionally remains local while the simulated
+    # AppConfig value changes on the second task admission.
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_dynamic_config_fresh",
+        fresh_config,
+    )
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_settings",
+        lambda: SimpleNamespace(
+            agent_team_execution_backend="local",
+            sakura_deploy_mode="source",
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.create_ready_execution_runner",
+        fake_create_ready,
+    )
+
+    worker = AgentTeamWorker()
+    await worker._create_agent_execution_runner(workspace, service)
+    await worker._create_agent_execution_runner(workspace, service)
+
+    assert selected_backends == ["local", "sandbox"]
+
+
+@pytest.mark.asyncio
+async def test_worker_runner_factory_fails_closed_when_backend_db_read_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    factory_called = False
+
+    async def broken_config(_key: str):
+        raise RuntimeError("database connection details must not escape")
+
+    async def fake_create_ready(*_args, **_kwargs):
+        nonlocal factory_called
+        factory_called = True
+        return object()
+
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_dynamic_config_fresh",
+        broken_config,
+    )
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.create_ready_execution_runner",
+        fake_create_ready,
+    )
+
+    with pytest.raises(RuntimeError, match="configuration is unavailable"):
+        await AgentTeamWorker()._create_agent_execution_runner(workspace, service)
+    assert factory_called is False
+
+
+@pytest.mark.asyncio
 async def test_dependency_installation_uses_dependency_profile_only(
     monkeypatch,
     tmp_path: Path,
@@ -142,6 +230,8 @@ async def test_dependency_installation_uses_dependency_profile_only(
     requests = []
 
     class FakeSandboxRunner:
+        egress_capability = "egress"
+
         def supports_profile(self, profile):
             return profile is ExecutionProfile.DEPENDENCY
 
@@ -166,13 +256,116 @@ async def test_dependency_installation_uses_dependency_profile_only(
         install_enabled,
     )
 
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
     git_service = AgentTeamGitWorkspaceService(workspace_service=service)
     await git_service.install_workspace_dependencies(workspace, FakeSandboxRunner())
 
     assert len(requests) == 2
     assert all(item.profile is ExecutionProfile.DEPENDENCY for item in requests)
-    assert requests[0].command == "python -m venv .venv"
-    assert requests[1].command == ".venv/bin/pip install -r requirements.txt --quiet"
+    assert requests[0].command == "python -m venv /workspace/.venv"
+    assert requests[1].command == (
+        "/workspace/.venv/bin/pip install -r requirements.txt --quiet"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dependency_installation_is_explicitly_skipped_for_offline_policy(
+    monkeypatch,
+    tmp_path: Path,
+):
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
+    requests = []
+
+    class OfflineSandboxRunner:
+        egress_capability = "none"
+
+        def supports_profile(self, profile):
+            return profile is ExecutionProfile.DEPENDENCY
+
+        async def execute(self, request):
+            requests.append(request)
+            return ExecutionResult(exit_code=0)
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    async def install_enabled(_key):
+        return True
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        install_enabled,
+    )
+
+    git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    await git_service.install_workspace_dependencies(workspace, OfflineSandboxRunner())
+
+    assert requests == []
+    assert not (workspace / ".venv").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("egress_capability", ["host", "bridge", "container:other", "bad network"])
+async def test_dependency_installation_rejects_uncontrolled_network_capability(
+    monkeypatch,
+    tmp_path: Path,
+    egress_capability: str,
+):
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
+
+    class UnsafeSandboxRunner:
+        def supports_profile(self, profile):
+            return profile is ExecutionProfile.DEPENDENCY
+
+        @property
+        def egress_capability(self):
+            return egress_capability
+
+        async def execute(self, request):
+            raise AssertionError(f"unsafe capability must not execute: {request}")
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    async def install_enabled(_key):
+        return True
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        install_enabled,
+    )
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
+    git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    with pytest.raises(RuntimeError, match="sandboxd egress capability"):
+        await git_service.install_workspace_dependencies(
+            workspace,
+            UnsafeSandboxRunner(),
+        )
+
+
 def test_all_production_worker_loops_inject_the_admitted_runner():
     source = Path("backend/workers/agent_team_worker.py").read_text(encoding="utf-8")
     assert source.count("execution_runner=execution_runner") == 3

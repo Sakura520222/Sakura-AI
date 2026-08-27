@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -93,6 +95,8 @@ def test_start_script_has_independent_fail_closed_lifecycle():
         "--socket-mode 0660",
         "--mount \"type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock\"",
         "SAKURA_AGENT_RUNNER_IMAGE_DIGEST",
+        "SAKURA_SANDBOX_EGRESS_NETWORK",
+        "--egress-network \"$SANDBOX_EGRESS_NETWORK\"",
     ):
         assert symbol in script
     assert "SANDBOX_GID=\"${SANDBOX_GID:-9472}\"" not in script
@@ -101,6 +105,16 @@ def test_start_script_has_independent_fail_closed_lifecycle():
     )
     assert "workspace_root" in script
     assert "instance_id" in script
+
+
+def test_named_egress_is_checked_by_startup_and_sandboxd_before_ready():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+    runtime = (ROOT / "sandboxer" / "src" / "sakura_ai_sandboxer" / "docker_runtime.py").read_text(encoding="utf-8")
+    app = (ROOT / "sandboxer" / "src" / "sakura_ai_sandboxer" / "app.py").read_text(encoding="utf-8")
+    assert 'docker network inspect "$SANDBOX_EGRESS_NETWORK"' in start
+    assert '"network",\n                "inspect"' in runtime
+    assert "validate_egress_network" in app
+    assert "service.mark_runtime_ready()" in app
 
 
 def test_production_compose_injects_sandbox_identity_contract():
@@ -118,6 +132,53 @@ def test_production_compose_injects_sandbox_identity_contract():
     assert environment["AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT"] == (
         "${SAKURA_SANDBOX_WORKSPACE_ROOT:?SAKURA_SANDBOX_WORKSPACE_ROOT must be provided by start.sh}"
     )
+
+
+def test_standalone_source_compose_resolves_absolute_workspace_identity():
+    """The source fallback must satisfy sandboxd's host-path admission gate."""
+
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("Docker is unavailable")
+
+    environment = os.environ.copy()
+    environment.pop("SAKURA_SANDBOX_WORKSPACE_ROOT", None)
+    environment["PWD"] = str(ROOT)
+    # Override the deployment-time env_file for this read-only config probe;
+    # a fresh source checkout intentionally does not carry .deploy state.
+    override = "services:\n  web:\n    env_file: []\n"
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-f",
+            str(ROOT / "docker" / "docker-compose.yml"),
+            "-f",
+            "-",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        env=environment,
+        input=override,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+    web = config["services"]["web"]
+    expected = web["environment"]["AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT"]
+    workspace_mount = next(
+        mount
+        for mount in _volumes(web)
+        if mount.get("target") == "/app/workplace"
+    )
+    assert Path(expected).is_absolute()
+    assert workspace_mount["source"] == expected
+    assert Path(expected).resolve() == (ROOT / "workplace").resolve()
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
@@ -150,6 +211,7 @@ def test_start_script_requires_both_production_digests_and_structured_identity()
     assert "agent-sandbox-manifest.json" in script
     assert "sandbox_ensure_production_digests" in script
     assert "SAKURA_SANDBOX_WORKSPACE_ROOT" in script
+    assert 'ai.sakura.egress-network=$SANDBOX_EGRESS_NETWORK' in script
 
 
 def test_source_and_registry_image_reference_contracts_are_distinct():
@@ -157,8 +219,8 @@ def test_source_and_registry_image_reference_contracts_are_distinct():
     assert "docker image inspect --format '{{.Id}}' \"$SANDBOX_IMAGE\"" in script
     assert "docker image inspect --format '{{.Id}}' \"$SANDBOX_RUNNER_IMAGE\"" in script
     assert "sandbox_registry_digest_is_safe" in script
-    assert "docker pull \"$daemon_ref\"" in script
-    assert "docker pull \"$runner_ref\"" in script
+    assert 'sandbox_pull_image "sandboxd" "$daemon_ref"' in script
+    assert 'sandbox_pull_image "Agent runner" "$runner_ref"' in script
 
 
 def test_upgrade_and_create_failure_paths_are_fail_closed_and_bounded():
@@ -223,3 +285,8 @@ def test_sandbox_workflow_builds_both_images_and_has_immutable_output():
     assert "Dockerfile.agent-sandbox" in publish
     assert "docker buildx imagetools inspect" in publish
     assert "@sha256" in publish or "digest" in publish
+    assert "Resolve immutable runner image ID" in quality
+    assert "SAKURA_SANDBOX_DOCKER_INTEGRATION: '1'" in quality
+    assert "SAKURA_AGENT_RUNNER_IMAGE_DIGEST" in quality
+    assert "-v /var/run/docker.sock:/var/run/docker.sock" not in quality
+    assert "unexpectedly skipped" in quality

@@ -9,6 +9,7 @@ import pytest
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
@@ -24,6 +25,19 @@ from backend.services.agent_team.workspace_service import (
     _rmtree_onexc,
 )
 from backend.workers.agent_team_worker import _merge_modified_files
+
+
+@pytest.fixture
+def full_access_local_policy(monkeypatch):
+    """Make direct LocalExecutionRunner tests explicit about host risk."""
+
+    async def read_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        read_policy,
+    )
 
 
 def _run_git(cwd: Path, *args: str) -> str:
@@ -313,7 +327,10 @@ def test_delete_operations_reject_path_escape(tmp_path, method_name, args):
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
+async def test_shell_executor_uses_workspace_and_python_env(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -326,7 +343,10 @@ async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_run_args_allows_https_url(tmp_path):
+async def test_shell_executor_run_args_allows_https_url(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -368,7 +388,10 @@ def test_parse_changed_file_stats_counts_lines_and_statuses():
 
 
 @pytest.mark.asyncio
-async def test_changed_file_stats_include_staged_changes(tmp_path):
+async def test_changed_file_stats_include_staged_changes(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -402,7 +425,7 @@ def test_merge_modified_files_normalizes_and_includes_git_stats():
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_blocks_parent_escape(tmp_path):
+async def test_shell_executor_blocks_parent_escape(tmp_path, full_access_local_policy):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)

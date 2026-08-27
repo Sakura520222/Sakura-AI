@@ -58,12 +58,33 @@ jobs:
             sakura-ai-agent-runner:ci \
             id -u)" = 65532
           ! docker run --rm --network none \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
             sakura-ai-agent-runner:ci \
             test -e /var/run/docker.sock
 
-      - name: Optional real Docker adapter integration
-        if: ${{ env.SAKURA_SANDBOX_DOCKER_INTEGRATION == '1' }}
+      - name: Resolve immutable runner image ID
+        id: runner-image
+        run: |
+          set -euo pipefail
+          digest="$(docker image inspect --format '{{.Id}}' sakura-ai-agent-runner:ci)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Real Docker adapter integration
         env:
           SAKURA_SANDBOX_DOCKER_INTEGRATION: '1'
-        run: pytest sandboxer/tests/integration/test_docker_isolation.py -q
+          SAKURA_AGENT_RUNNER_IMAGE_DIGEST: ${{ steps.runner-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # The daemon's ownership contract requires a root-owned sandboxd;
+          # run this host-level gate as root so the real non-root runner can
+          # use the bind-mounted task worktree.  No test may be silently
+          # skipped when this mandatory CI gate is enabled.
+          output_file="$(mktemp)"
+          trap 'rm -f "$output_file"' EXIT
+          sudo --preserve-env=PATH,SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST \
+            python -m pytest sandboxer/tests/integration/test_docker_isolation.py -q \
+            | tee "$output_file"
+          if grep -Eq '[0-9]+ skipped' "$output_file"; then
+            echo 'Docker sandbox integration unexpectedly skipped a test' >&2
+            exit 1
+          fi

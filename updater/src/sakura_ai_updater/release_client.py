@@ -324,6 +324,46 @@ class ReleaseClient:
                 return dict(release)
         raise ReleaseNotFoundError(f"stable release {expected_tag!r} was not found")
 
+    async def resolve_stable_target(
+        self,
+        version: str | None = None,
+        *,
+        expected_digest: str | None = None,
+    ) -> Any:
+        """Resolve a published stable release to a verified image identity.
+
+        GitHub release filtering is deliberately part of this operation.  A
+        caller holding a syntactically valid ``vX.Y.Z@sha256:...`` value must
+        not be able to bypass the release policy by skipping the API lookup;
+        draft and prerelease tags are never accepted.  The registry client
+        then performs the independent release-tag/latest-alias digest check.
+        """
+
+        release_call = self.latest_release() if version is None else self.get_release(version)
+        release = (
+            await release_call
+            if inspect.isawaitable(release_call)
+            else release_call
+        )
+        if not isinstance(release, Mapping) or not self._stable_release(release):
+            raise ReleaseNotFoundError("no stable release is available")
+        tag = release.get("tag_name")
+        parsed = self._stable_release_version(release)
+        if not isinstance(tag, str) or parsed is None or parsed.prerelease or parsed.build:
+            raise ReleaseNotFoundError("stable release tag is invalid")
+        normalized = str(parsed)
+        if tag != f"v{normalized}":
+            raise ReleaseNotFoundError("stable release tag must use the v-prefixed form")
+        if version is not None and version.removeprefix("v") != normalized:
+            raise ReleaseNotFoundError("stable release version does not match the requested version")
+
+        from sakura_ai_updater.registry import RegistryClient
+
+        return await RegistryClient().resolve_stable_target(
+            normalized,
+            expected_digest=expected_digest,
+        )
+
     @staticmethod
     def _asset(release: Mapping[str, Any], name: str) -> Mapping[str, Any] | None:
         assets = release.get("assets")
@@ -449,6 +489,21 @@ class ReleaseClient:
         """Compatibility alias for callers using ``get_*`` naming."""
 
         return await self.fetch_sandbox_manifest(version)
+
+    async def resolve_development_sandbox_pair(self, target: Any) -> Any:
+        """Resolve the sandbox pair for one exact development revision.
+
+        Development builds are not GitHub Releases, so they cannot use the
+        stable ``agent-sandbox-manifest.json`` asset.  Delegate to the strict
+        GHCR registry client, which verifies both the canonical development
+        tag and the revision-only immutable tag for each sandbox repository.
+        The import remains local to keep release-client bootstrap usable in
+        environments that only exercise stable release parsing.
+        """
+
+        from sakura_ai_updater.registry import RegistryClient
+
+        return await RegistryClient().resolve_development_sandbox_pair(target)
 
     async def latest_manifest(self) -> Any:
         return await self.fetch_manifest(None)

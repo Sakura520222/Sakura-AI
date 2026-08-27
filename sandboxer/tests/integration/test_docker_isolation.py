@@ -20,7 +20,7 @@ from sakura_ai_sandboxer.docker_runtime import (
     DockerRuntimeAdapter,
     _workspace_key_for_relative_identity,
 )
-from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest
+from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest, NetworkMode
 
 
 def _integration_config(tmp_path: Path) -> tuple[SandboxdConfig, str]:
@@ -86,6 +86,7 @@ async def test_real_docker_is_nonroot_offline_readonly_and_cleans_container(tmp_
             "! getent hosts example.com"
         ),
         profile=ExecutionProfile.AGENT,
+        network_mode=NetworkMode.NONE,
         timeout_seconds=20,
     )
     result = await adapter.execute(
@@ -216,6 +217,7 @@ async def test_real_docker_timeout_removes_one_shot_container(tmp_path: Path):
         workspace_key=key,
         command="sleep 60",
         profile=ExecutionProfile.AGENT,
+        network_mode=NetworkMode.NONE,
         timeout_seconds=1,
     )
     result = await adapter.execute(
@@ -226,3 +228,121 @@ async def test_real_docker_timeout_removes_one_shot_container(tmp_path: Path):
     )
     assert result.timed_out is True
     assert not adapter._active
+
+
+@pytest.mark.asyncio
+async def test_real_docker_egress_capability_uses_default_bridge_and_reaches_dns(
+    tmp_path: Path,
+):
+    """The opt-in integration gate proves full_access is usable by default."""
+
+    config, key = _integration_config(tmp_path)
+    adapter = DockerRuntimeAdapter(config)
+    request = ExecutionRequest(
+        request_id="integration-egress",
+        workspace_key=key,
+        command="getent hosts example.com",
+        profile=ExecutionProfile.AGENT,
+        network_mode=NetworkMode.EGRESS,
+        timeout_seconds=10,
+    )
+    result = await adapter.execute(
+        request,
+        cancel_event=asyncio.Event(),
+        max_output_bytes=4096,
+        deadline=asyncio.get_running_loop().time() + 15,
+    )
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip()
+    assert not adapter._active
+
+
+@pytest.mark.asyncio
+async def test_real_docker_linked_worktree_git_metadata_is_scoped_and_usable(
+    tmp_path: Path,
+):
+    """A linked worktree must not depend on the Web container's /app path."""
+
+    config, _ = _integration_config(tmp_path)
+    root = tmp_path / "workplace"
+    base = root / "owner" / "repo" / "base"
+    workspace = root / "owner" / "repo" / "worktrees" / "42-linked"
+    key = _workspace_key_for_relative_identity("owner/repo/worktrees/42-linked")
+    base.mkdir(parents=True)
+    workspace.mkdir(parents=True)
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    async def run_git(*args: str):
+        return await asyncio.to_thread(
+            subprocess.run,
+            list(args),
+            cwd=base,
+            check=False,
+            capture_output=True,
+            env=environment,
+            timeout=20,
+        )
+
+    try:
+        for args in (
+            ("git", "init", "--initial-branch=main"),
+            ("git", "config", "user.name", "sandbox-test"),
+            ("git", "config", "user.email", "sandbox@example.invalid"),
+        ):
+            result = await run_git(*args)
+            assert result.returncode == 0, result.stderr.decode(errors="replace")
+        (base / "README.md").write_text("linked\n", encoding="utf-8")
+        for args in (("git", "add", "README.md"), ("git", "commit", "-m", "init")):
+            result = await run_git(*args)
+            assert result.returncode == 0, result.stderr.decode(errors="replace")
+        result = await run_git(
+            "git", "worktree", "add", "-B", "task-linked", str(workspace), "main"
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+        adapter = DockerRuntimeAdapter(config)
+        request = ExecutionRequest(
+            request_id="integration-linked-worktree",
+            workspace_key=key,
+            command=(
+                "set -eu; "
+                "test \"$(git rev-parse --show-toplevel)\" = /workspace; "
+                "test \"$(stat -c '%u:%a' /workspace/.git)\" = 0:444; "
+                "test \"$(stat -c '%u:%a' /sakura-git/worktree/gitdir)\" = 0:444; "
+                "test \"$(stat -c '%u:%a' /sakura-git/worktree/commondir)\" = 0:444; "
+                "test ! -w /workspace/.git; "
+                "test ! -w /sakura-git/worktree/gitdir; "
+                "test ! -w /sakura-git/worktree/commondir; "
+                "test ! -w /sakura-git/common/HEAD; "
+                "git status --short; "
+                "test \"$(git show HEAD:README.md)\" = linked"
+            ),
+            profile=ExecutionProfile.AGENT,
+            network_mode=NetworkMode.NONE,
+            timeout_seconds=20,
+        )
+        result = await adapter.execute(
+            request,
+            cancel_event=asyncio.Event(),
+            max_output_bytes=4096,
+            deadline=asyncio.get_running_loop().time() + 25,
+        )
+        assert result.exit_code == 0, result.stderr
+        assert not adapter._active
+    finally:
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "worktree", "remove", "--force", str(workspace)],
+            cwd=base,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=environment,
+            timeout=20,
+        )

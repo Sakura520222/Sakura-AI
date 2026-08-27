@@ -97,7 +97,12 @@ class _RecoveringDockerRuntime:
     name = "docker"
 
     def __init__(self) -> None:
+        self.validated = False
         self.recovered = False
+
+    async def validate_egress_network(self, *, deadline: float) -> None:
+        del deadline
+        self.validated = True
 
     async def recover_orphans(self, *, deadline: float) -> None:
         del deadline
@@ -135,6 +140,7 @@ async def test_health_is_strict_and_ready_only_after_orphan_recovery(tmp_path: P
         "ready",
         "runtime",
         "profiles",
+        "egress_capability",
         "instance_id",
         "workspace_root",
         "runner_image_digest",
@@ -143,3 +149,17 @@ async def test_health_is_strict_and_ready_only_after_orphan_recovery(tmp_path: P
     assert payload["data"]["runtime"] == "docker"
     assert payload["data"]["instance_id"] == "sandbox-12345678"
     assert payload["data"]["runner_image_digest"] == LOCAL_IMAGE_ID
+
+
+@pytest.mark.asyncio
+async def test_named_egress_network_is_validated_before_ready(tmp_path: Path):
+    runtime = _RecoveringDockerRuntime()
+    app = create_app(
+        _docker_config(tmp_path, egress_network="sakura-egress"),
+        runtime=runtime,
+    )
+
+    async with app.router.lifespan_context(app):
+        assert runtime.validated is True
+        assert runtime.recovered is True
+        assert app.state.sandbox_service.health().ready is True

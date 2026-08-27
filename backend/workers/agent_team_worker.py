@@ -18,7 +18,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from backend.core.config import get_settings
+from backend.core.config import get_dynamic_config_fresh, get_settings
 from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamFeedback,
@@ -70,11 +70,29 @@ class AgentTeamWorker:
     ) -> ExecutionRunner:
         """Admit one workspace-scoped runner before any Agent code runs."""
 
+        # Backend selection is an admission/security decision.  Do not use
+        # the process-local Settings snapshot here: another Web worker may
+        # have just switched the deployment from local to sandbox.  The fresh
+        # helper reads AppConfig directly and raises on an active DB failure,
+        # so an old worker cannot silently continue with a stale local value.
+        try:
+            backend_value = await get_dynamic_config_fresh(
+                "agent_team_execution_backend"
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Agent execution backend configuration is unavailable; refusing runner admission"
+            ) from exc
+        if not isinstance(backend_value, str) or not backend_value.strip():
+            raise RuntimeError(
+                "Agent execution backend configuration is missing; refusing runner admission"
+            )
+
         settings = get_settings()
         return await create_ready_execution_runner(
             str(workspace),
             workspace_service,
-            backend=getattr(settings, "agent_team_execution_backend", None),
+            backend=backend_value,
             deploy_mode=getattr(settings, "sakura_deploy_mode", "unknown"),
             expected_runtime=getattr(settings, "agent_team_sandbox_runtime", None),
             expected_instance_id=getattr(

@@ -86,6 +86,24 @@ def create_app(
     async def lifespan(_app: FastAPI):
         recover_orphans = getattr(service.runtime, "recover_orphans", None)
         if service.runtime.name == "docker":
+            validate_egress_network = getattr(
+                service.runtime,
+                "validate_egress_network",
+                None,
+            )
+            if service.config.egress_network not in {"none", "bridge"}:
+                # Named networks are deployment-owned capabilities.  They
+                # must be present before the daemon publishes a healthy UDS;
+                # otherwise full_access would be persisted successfully but
+                # fail only on the first execution.
+                if not callable(validate_egress_network):
+                    raise RuntimeError(
+                        "Docker runtime cannot validate its configured egress network"
+                    )
+                await validate_egress_network(
+                    deadline=time.monotonic()
+                    + service.config.cleanup_margin_seconds
+                )
             # A Docker daemon must never advertise a usable socket before it
             # has removed only its own orphaned task containers.  Missing
             # recovery support is a startup error, not an ``unavailable``

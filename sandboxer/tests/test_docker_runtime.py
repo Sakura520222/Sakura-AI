@@ -8,15 +8,28 @@ from pathlib import Path
 import pytest
 from sakura_ai_sandboxer.config import SandboxdConfig
 from sakura_ai_sandboxer.docker_runtime import (
+    CONTAINER_GIT_COMMON,
+    CONTAINER_GIT_WORKTREE,
     DOCKER_CLI_ENV,
+    FIXED_ENVIRONMENT,
+    RUNNER_GID,
+    RUNNER_UID,
     DockerRuntimeAdapter,
+    WorkspaceOwnershipError,
     WorkspaceResolver,
     _CommandResult,
     _ContainerState,
+    _decode_container_id,
+    _handoff_tree,
     _workspace_key_for_relative_identity,
 )
-from sakura_ai_sandboxer.errors import ImageUnavailableError, InvalidRequestError
-from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest
+from sakura_ai_sandboxer.errors import (
+    CleanupFailedError,
+    ImageUnavailableError,
+    InvalidRequestError,
+    RuntimeUnavailableError,
+)
+from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest, NetworkMode
 
 IMAGE = "registry.example/sakura-agent@sha256:" + "a" * 64
 
@@ -35,6 +48,7 @@ def _request(workspace_key: str, **overrides: object) -> ExecutionRequest:
         "command": "printf 'ok'; echo --network host",
         "profile": ExecutionProfile.AGENT,
         "timeout_seconds": 5,
+        "network_mode": NetworkMode.NONE,
     }
     values.update(overrides)
     return ExecutionRequest(**values)
@@ -49,6 +63,16 @@ def _config(root: Path, **overrides: object) -> SandboxdConfig:
     }
     values.update(overrides)
     return SandboxdConfig(**values)
+
+
+@pytest.mark.parametrize("value", [b"container-42\v", b"container-42\f"])
+def test_decode_container_id_rejects_non_crlf_control_framing(value: bytes):
+    with pytest.raises(RuntimeUnavailableError):
+        _decode_container_id(value)
+
+
+def test_decode_container_id_accepts_crlf_framing():
+    assert _decode_container_id(b"container-42\r\n") == "container-42"
 
 
 @pytest.mark.asyncio
@@ -133,6 +157,412 @@ async def test_docker_lifecycle_uses_only_fixed_server_owned_argv(tmp_path: Path
     assert any(item == "ai.sakura.instance-id=sandbox-test123" for item in create)
     assert any(item == "ai.sakura.request-id=request-42" for item in create)
     assert any(item == f"ai.sakura.workspace-key={key}" for item in create)
+
+
+@pytest.mark.asyncio
+async def test_docker_logs_uses_supported_flags_and_fails_on_log_process_error(
+    tmp_path: Path,
+):
+    root, _ = _workspace(tmp_path)
+    observed: list[tuple[str, ...]] = []
+
+    class _Stream:
+        def __init__(self, *chunks: bytes) -> None:
+            self._chunks = list(chunks)
+
+        async def read(self, _size: int) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+    class _Process:
+        def __init__(self, returncode: int, *stdout_chunks: bytes) -> None:
+            self.stdout = _Stream(*stdout_chunks)
+            self.stderr = _Stream(b"")
+            self.returncode = returncode
+
+        def kill(self) -> None:
+            return None
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    adapter = DockerRuntimeAdapter(_config(root))
+
+    async def spawn(argv: tuple[str, ...]) -> _Process:
+        observed.append(argv)
+        return _Process(0, b"ok\n", b"")
+
+    adapter._spawn_process = spawn  # type: ignore[method-assign]
+    output = await adapter._collect_logs(
+        "container-42",
+        1024,
+        asyncio.get_running_loop().time() + 2,
+    )
+    assert output == ("ok\n", "", False)
+    assert observed == [("docker", "logs", "--follow", "container-42")]
+
+    async def failing_spawn(argv: tuple[str, ...]) -> _Process:
+        observed.append(argv)
+        return _Process(1, b"unknown flag\n", b"")
+
+    adapter._spawn_process = failing_spawn  # type: ignore[method-assign]
+    with pytest.raises(RuntimeUnavailableError, match="log collection"):
+        await adapter._collect_logs(
+            "container-42",
+            1024,
+            asyncio.get_running_loop().time() + 2,
+        )
+
+
+def test_linked_worktree_gets_task_metadata_and_readonly_common_mounts(
+    tmp_path: Path,
+):
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    common = root / "owner" / "repo" / "base" / ".git"
+    task_gitdir = common / "worktrees" / workspace.name
+    task_gitdir.mkdir(parents=True)
+    (workspace / ".git").write_text(
+        "gitdir: /app/workplace/owner/repo/base/.git/worktrees/42-feature\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "gitdir").write_text(
+        "/app/workplace/owner/repo/worktrees/42-feature/.git\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+
+    adapter = DockerRuntimeAdapter(_config(root))
+    argv = adapter.build_create_argv(
+        _request(key),
+        workspace=workspace,
+        container_name="sakura-sandbox-sandbox-test123-request-42",
+    )
+    mounts = [argv[index + 1] for index, item in enumerate(argv) if item == "--mount"]
+    assert mounts[0].endswith(",dst=/workspace,rw,bind-propagation=rprivate")
+    assert any(
+        f"src={common},dst={CONTAINER_GIT_COMMON},readonly,bind-propagation=rprivate"
+        in mount
+        for mount in mounts
+    )
+    assert any(
+        f"src={task_gitdir},dst={CONTAINER_GIT_WORKTREE},rw,bind-propagation=rprivate"
+        in mount
+        for mount in mounts
+    )
+    assert f"GIT_DIR={CONTAINER_GIT_WORKTREE}" in argv
+    assert f"GIT_COMMON_DIR={CONTAINER_GIT_COMMON}" in argv
+    assert "GIT_WORK_TREE=/workspace" in argv
+
+
+def test_linked_worktree_rejects_metadata_for_another_task(tmp_path: Path):
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    common = root / "owner" / "repo" / "base" / ".git"
+    task_gitdir = common / "worktrees" / workspace.name
+    task_gitdir.mkdir(parents=True)
+    (workspace / ".git").write_text(
+        "gitdir: /app/workplace/owner/repo/base/.git/worktrees/43-other\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "gitdir").write_text(
+        "/app/workplace/owner/repo/worktrees/42-feature/.git\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+
+    adapter = DockerRuntimeAdapter(_config(root))
+    with pytest.raises(InvalidRequestError, match="Git metadata"):
+        adapter.build_create_argv(
+            _request(key),
+            workspace=workspace,
+            container_name="sakura-sandbox-sandbox-test123-request-42",
+        )
+
+
+def test_linked_worktree_requires_runner_read_access_to_common_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    common = root / "owner" / "repo" / "base" / ".git"
+    task_gitdir = common / "worktrees" / workspace.name
+    task_gitdir.mkdir(parents=True)
+    (workspace / ".git").write_text(
+        "gitdir: /app/workplace/owner/repo/base/.git/worktrees/42-feature\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "gitdir").write_text(
+        "/app/workplace/owner/repo/worktrees/42-feature/.git\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.access",
+        lambda *args, **kwargs: False,
+    )
+
+    adapter = DockerRuntimeAdapter(_config(root))
+    with pytest.raises(InvalidRequestError, match="Git metadata"):
+        adapter.build_create_argv(
+            _request(key),
+            workspace=workspace,
+            container_name="sakura-sandbox-sandbox-test123-request-42",
+        )
+
+
+def test_linked_worktree_handoff_protects_all_git_pointer_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    common = root / "owner" / "repo" / "base" / ".git"
+    task_gitdir = common / "worktrees" / workspace.name
+    task_gitdir.mkdir(parents=True)
+    (workspace / ".git").write_text(
+        "gitdir: /app/workplace/owner/repo/base/.git/worktrees/42-feature\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "gitdir").write_text(
+        "/app/workplace/owner/repo/worktrees/42-feature/.git\n",
+        encoding="utf-8",
+    )
+    (task_gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+    adapter = DockerRuntimeAdapter(_config(root))
+    snapshot = adapter.workspace_resolver.resolve_snapshot(key)
+    plan = adapter._resolve_git_mount_plan(workspace)
+    assert plan is not None
+    handed_off: list[Path] = []
+    readonly: list[Path] = []
+    protected: list[Path] = []
+    monkeypatch.setattr("sakura_ai_sandboxer.docker_runtime.os.name", "posix")
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.geteuid",
+        lambda: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime._handoff_tree",
+        lambda path, *, runner_uid, runner_gid: handed_off.append(path),
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime._set_owner_readonly",
+        lambda path: readonly.append(path),
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime._protect_pointer_parent",
+        lambda path: protected.append(path),
+    )
+
+    adapter._handoff_workspace_to_runner(snapshot.path, plan)
+
+    assert handed_off == [workspace, task_gitdir]
+    assert readonly == [workspace / ".git", task_gitdir / "gitdir", task_gitdir / "commondir"]
+    assert protected == [workspace, task_gitdir]
+
+
+def test_runner_environment_prefers_workspace_venv_and_sets_virtualenv(tmp_path: Path):
+    root, key = _workspace(tmp_path)
+    adapter = DockerRuntimeAdapter(_config(root))
+    argv = adapter.build_create_argv(
+        _request(key),
+        workspace=root / "owner" / "repo" / "worktrees" / "42-feature",
+        container_name="sakura-sandbox-sandbox-test123-request-42",
+    )
+    assert any(
+        item.startswith("PATH=/workspace/.venv/bin:") for item in argv
+    )
+    assert "VIRTUAL_ENV=/workspace/.venv" in argv
+    assert "VIRTUAL_ENV=/workspace/.venv" in FIXED_ENVIRONMENT
+
+
+def test_egress_network_is_server_owned_and_agent_stays_offline(tmp_path: Path):
+    root, key = _workspace(tmp_path)
+    adapter = DockerRuntimeAdapter(_config(root, egress_network="sakura-egress"))
+    dependency_argv = adapter.build_create_argv(
+        _request(
+            key,
+            profile=ExecutionProfile.DEPENDENCY,
+            network_mode=NetworkMode.EGRESS,
+        ),
+        workspace=root / "owner" / "repo" / "worktrees" / "42-feature",
+        container_name="sakura-sandbox-sandbox-test123-request-42",
+    )
+    assert dependency_argv[dependency_argv.index("--network") + 1] == "sakura-egress"
+    agent_argv = adapter.build_create_argv(
+        _request(key),
+        workspace=root / "owner" / "repo" / "worktrees" / "42-feature",
+        container_name="sakura-sandbox-sandbox-test123-request-42",
+    )
+    assert agent_argv[agent_argv.index("--network") + 1] == "none"
+
+
+@pytest.mark.parametrize("profile", [ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY])
+def test_explicit_egress_capability_uses_server_fixed_network(
+    tmp_path: Path,
+    profile: ExecutionProfile,
+):
+    root, key = _workspace(tmp_path)
+    adapter = DockerRuntimeAdapter(_config(root, egress_network="bridge"))
+    argv = adapter.build_create_argv(
+        _request(key, profile=profile, network_mode=NetworkMode.EGRESS),
+        workspace=root / "owner" / "repo" / "worktrees" / "42-feature",
+        container_name="sakura-sandbox-sandbox-test123-request-42",
+    )
+    assert argv[argv.index("--network") + 1] == "bridge"
+
+
+def test_explicit_none_capability_keeps_both_profiles_offline(tmp_path: Path):
+    root, key = _workspace(tmp_path)
+    adapter = DockerRuntimeAdapter(_config(root, egress_network="sakura-egress"))
+    for profile in (ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY):
+        argv = adapter.build_create_argv(
+            _request(key, profile=profile, network_mode=NetworkMode.NONE),
+            workspace=root / "owner" / "repo" / "worktrees" / "42-feature",
+            container_name="sakura-sandbox-sandbox-test123-request-42",
+        )
+        assert argv[argv.index("--network") + 1] == "none"
+
+
+@pytest.mark.parametrize(
+    "network",
+    ["host", "container:other", "ns:/run/netns/x", "--network=host", "bad network", ""],
+)
+def test_egress_network_rejects_uncontrolled_names(tmp_path: Path, network: str):
+    root, _ = _workspace(tmp_path)
+    with pytest.raises(ValueError, match="egress_network"):
+        _config(root, egress_network=network)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result, output",
+    [
+        (_CommandResult(0, b"sakura-egress\n"), True),
+        (_CommandResult(1, stderr=b"network not found"), False),
+        (_CommandResult(0, b"other-network\n"), False),
+    ],
+)
+async def test_named_egress_network_is_validated_without_leaking_name(
+    tmp_path: Path,
+    result: _CommandResult,
+    output: bool,
+):
+    root, _ = _workspace(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        calls.append(argv)
+        return result
+
+    adapter = DockerRuntimeAdapter(
+        _config(root, egress_network="sakura-egress"),
+        command_runner=command_runner,
+    )
+    if output:
+        await adapter.validate_egress_network(
+            deadline=asyncio.get_running_loop().time() + 2
+        )
+    else:
+        with pytest.raises(RuntimeUnavailableError, match="egress network") as error:
+            await adapter.validate_egress_network(
+                deadline=asyncio.get_running_loop().time() + 2
+            )
+        assert "sakura-egress" not in str(error.value)
+    assert calls == [
+        (
+            "docker",
+            "network",
+            "inspect",
+            "--format={{.Name}}",
+            "sakura-egress",
+        )
+    ]
+
+
+def test_workspace_handoff_never_widens_to_world_writable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "main.py"
+    file_path.write_text("print('ok')\n", encoding="utf-8")
+    (workspace / "nested").mkdir()
+    chown_calls: list[tuple[str, int, int, bool]] = []
+    chmod_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.chown",
+        lambda path, uid, gid, *, follow_symlinks: chown_calls.append(
+            (str(path), uid, gid, follow_symlinks)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.chmod",
+        lambda path, mode: chmod_calls.append((str(path), mode)),
+    )
+
+    _handoff_tree(workspace, runner_uid=RUNNER_UID, runner_gid=RUNNER_GID)
+
+    assert chown_calls
+    assert all(
+        uid == RUNNER_UID and gid == RUNNER_GID and follow_symlinks is False
+        for _path, uid, gid, follow_symlinks in chown_calls
+    )
+    assert chmod_calls
+    assert all(mode & 0o002 == 0 and mode & 0o020 == 0 for _path, mode in chmod_calls)
+    assert all(mode != 0o777 for _path, mode in chmod_calls)
+
+
+def test_workspace_handoff_rejects_descendant_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "target.txt"
+    target.write_text("data", encoding="utf-8")
+    link = workspace / "link.txt"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.chown",
+        lambda *args, **kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.chmod",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(WorkspaceOwnershipError, match="symlink|reparse"):
+        _handoff_tree(workspace, runner_uid=RUNNER_UID, runner_gid=RUNNER_GID)
+
+
+@pytest.mark.asyncio
+async def test_workspace_handoff_is_reused_after_venv_creation(tmp_path: Path, monkeypatch):
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    adapter = DockerRuntimeAdapter(_config(root))
+    snapshot = adapter.workspace_resolver.resolve_snapshot(key)
+    calls: list[Path] = []
+
+    def fake_handoff(path: Path, _git_mount_plan):
+        calls.append(path)
+
+    monkeypatch.setattr(adapter, "_handoff_workspace_to_runner", fake_handoff)
+    await adapter._ensure_workspace_handoff(snapshot, None)
+    (workspace / ".venv").mkdir()
+    (workspace / ".venv" / "python").symlink_to("/usr/bin/python3")
+    await adapter._ensure_workspace_handoff(snapshot, None)
+
+    assert calls == [workspace]
 
 
 def test_create_argv_cannot_be_changed_by_request_owned_fields(tmp_path: Path):
@@ -282,10 +712,9 @@ async def test_orphan_recovery_requires_exact_service_and_instance_labels(tmp_pa
         del deadline
         calls.append(argv)
         if argv[1] == "ps":
-            return _CommandResult(0, b"deadbeef\nforeign\n")
+            return _CommandResult(0, b"deadbeef\n")
         if argv[1] == "inspect" and "Config.Labels" in argv[2]:
-            labels = owned if argv[-1] == "deadbeef" else {**owned, "ai.sakura.instance-id": "other"}
-            return _CommandResult(0, json.dumps(labels).encode())
+            return _CommandResult(0, json.dumps(owned).encode())
         return _CommandResult(0)
 
     await DockerRuntimeAdapter(_config(root), command_runner=command_runner).recover_orphans(
@@ -296,6 +725,137 @@ async def test_orphan_recovery_requires_exact_service_and_instance_labels(tmp_pa
     ps = next(argv for argv in calls if argv[1] == "ps")
     assert "label=ai.sakura.managed-by=sandboxd" in ps
     assert "label=ai.sakura.instance-id=sandbox-test123" in ps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "inspect_result",
+    [
+        _CommandResult(1, stderr=b"inspect failed"),
+        _CommandResult(0, b"not-json"),
+        _CommandResult(0, b"{}"),
+    ],
+)
+async def test_orphan_recovery_fails_startup_when_owned_candidate_cannot_be_verified(
+    tmp_path: Path,
+    inspect_result: _CommandResult,
+):
+    root, _ = _workspace(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        calls.append(argv)
+        if argv[1] == "ps":
+            return _CommandResult(0, b"deadbeef\n")
+        if argv[1] == "inspect":
+            return inspect_result
+        return _CommandResult(0)
+
+    with pytest.raises(RuntimeUnavailableError, match="orphan|ownership"):
+        await DockerRuntimeAdapter(
+            _config(root), command_runner=command_runner
+        ).recover_orphans(deadline=asyncio.get_running_loop().time() + 2)
+    assert not any(argv[1] == "rm" for argv in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "listing",
+    [
+        b"not a container id\n",
+        b"deadbeef\n!\n",
+        b"deadbeef\v123456\n",
+        b"deadbeef\f123456\n",
+        b"\xff\n",
+    ],
+)
+async def test_orphan_recovery_rejects_every_nonempty_malformed_ps_row(
+    tmp_path: Path,
+    listing: bytes,
+):
+    root, _ = _workspace(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        calls.append(argv)
+        if argv[1] == "ps":
+            return _CommandResult(0, listing)
+        raise AssertionError("malformed ps output must fail before inspect/rm")
+
+    with pytest.raises(RuntimeUnavailableError, match="listing|identifier|ASCII"):
+        await DockerRuntimeAdapter(
+            _config(root), command_runner=command_runner
+        ).recover_orphans(deadline=asyncio.get_running_loop().time() + 2)
+    assert [argv[1] for argv in calls] == ["ps"]
+
+
+@pytest.mark.asyncio
+async def test_pre_id_cleanup_workspace_label_mismatch_fences_lease(
+    tmp_path: Path,
+):
+    root, key = _workspace(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    labels = {
+        "ai.sakura.managed-by": "sandboxd",
+        "ai.sakura.instance-id": "sandbox-test123",
+        "ai.sakura.request-id": "request-42",
+        "ai.sakura.workspace-key": "another-workspace",
+    }
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        calls.append(argv)
+        if argv[1] == "create":
+            return _CommandResult(1, stderr=b"create failed")
+        if argv[1] == "ps":
+            return _CommandResult(0, b"container-42\n")
+        if argv[1] == "inspect":
+            return _CommandResult(0, json.dumps(labels).encode())
+        raise AssertionError(f"unexpected command: {argv}")
+
+    adapter = DockerRuntimeAdapter(_config(root), command_runner=command_runner)
+    with pytest.raises(CleanupFailedError):
+        await adapter.execute(
+            _request(key),
+            cancel_event=asyncio.Event(),
+            max_output_bytes=1024,
+            deadline=asyncio.get_running_loop().time() + 2,
+        )
+
+    lease = adapter._workspace_leases["owner/repo/worktrees/42-feature"]
+    assert lease.cleanup_pending is True
+    with pytest.raises(InvalidRequestError, match="cleanup is still in progress"):
+        await adapter._acquire_workspace_lease("request-43", lease.snapshot)
+    assert [argv[1] for argv in calls] == ["create", "ps", "inspect"]
+
+
+@pytest.mark.asyncio
+async def test_pre_id_cleanup_inspect_exception_fences_lease(tmp_path: Path):
+    root, key = _workspace(tmp_path)
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        if argv[1] == "create":
+            return _CommandResult(1, stderr=b"create failed")
+        if argv[1] == "ps":
+            return _CommandResult(0, b"container-42\n")
+        if argv[1] == "inspect":
+            raise RuntimeError("inspect transport failed")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    adapter = DockerRuntimeAdapter(_config(root), command_runner=command_runner)
+    with pytest.raises(CleanupFailedError):
+        await adapter.execute(
+            _request(key),
+            cancel_event=asyncio.Event(),
+            max_output_bytes=1024,
+            deadline=asyncio.get_running_loop().time() + 2,
+        )
+
+    lease = adapter._workspace_leases["owner/repo/worktrees/42-feature"]
+    assert lease.cleanup_pending is True
 
 
 @pytest.mark.asyncio
@@ -428,6 +988,100 @@ async def test_create_id_cancelled_while_registering_cleans_known_container(
     assert [argv[1] for argv in calls] == ["create", "kill", "rm"]
     assert not adapter._active
     assert not adapter._workspace_leases
+
+
+@pytest.mark.asyncio
+async def test_pre_id_cleanup_keeps_workspace_lease_until_delayed_scan_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root, key = _workspace(tmp_path)
+    cleanup_release = asyncio.Event()
+    create_calls: list[tuple[str, ...]] = []
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        create_calls.append(argv)
+        if argv[1] == "create":
+            return _CommandResult(1, stderr=b"create failed")
+        raise AssertionError("delayed cleanup is replaced below")
+
+    adapter = DockerRuntimeAdapter(
+        _config(root, cleanup_margin_seconds=0.01),
+        command_runner=command_runner,
+    )
+
+    async def delayed_cleanup(request_id: str, workspace_key: str, deadline: float) -> None:
+        del request_id, workspace_key, deadline
+        await cleanup_release.wait()
+
+    monkeypatch.setattr(adapter, "_cleanup_owned_request", delayed_cleanup)
+    with pytest.raises(CleanupFailedError, match="still in progress"):
+        await adapter.execute(
+            _request(key),
+            cancel_event=asyncio.Event(),
+            max_output_bytes=1024,
+            deadline=asyncio.get_running_loop().time() + 5,
+        )
+
+    lease = adapter._workspace_leases["owner/repo/worktrees/42-feature"]
+    assert lease.cleanup_pending is True
+    with pytest.raises(InvalidRequestError, match="cleanup is still in progress"):
+        await adapter._acquire_workspace_lease("request-43", lease.snapshot)
+
+    cleanup_release.set()
+    for _ in range(20):
+        if not adapter._workspace_leases:
+            break
+        await asyncio.sleep(0)
+    assert not adapter._workspace_leases
+    assert [argv[1] for argv in create_calls] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_detached_pre_id_cleanup_failure_keeps_fenced_lease_and_is_consumed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    root, key = _workspace(tmp_path)
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def command_runner(argv: tuple[str, ...], deadline: float) -> _CommandResult:
+        del deadline
+        if argv[1] == "create":
+            return _CommandResult(1, stderr=b"create failed")
+        raise AssertionError("ownership scan is replaced below")
+
+    adapter = DockerRuntimeAdapter(
+        _config(root, cleanup_margin_seconds=0.01),
+        command_runner=command_runner,
+    )
+
+    async def failed_cleanup(request_id: str, workspace_key: str, deadline: float) -> None:
+        del request_id, workspace_key, deadline
+        cleanup_started.set()
+        await cleanup_release.wait()
+        raise CleanupFailedError()
+
+    monkeypatch.setattr(adapter, "_cleanup_owned_request", failed_cleanup)
+    with pytest.raises(CleanupFailedError, match="still in progress"):
+        await adapter.execute(
+            _request(key),
+            cancel_event=asyncio.Event(),
+            max_output_bytes=1024,
+            deadline=asyncio.get_running_loop().time() + 2,
+        )
+    await cleanup_started.wait()
+    cleanup_release.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    lease = adapter._workspace_leases["owner/repo/worktrees/42-feature"]
+    assert lease.cleanup_pending is True
+    with pytest.raises(InvalidRequestError, match="cleanup is still in progress"):
+        await adapter._acquire_workspace_lease("request-43", lease.snapshot)
+    assert "sandbox pre-ID cleanup failed" in caplog.text
 
 
 @pytest.mark.asyncio

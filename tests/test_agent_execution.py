@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 from pathlib import Path, PurePosixPath
 
 import pytest
 
+import backend.services.agent_team.execution as execution_module
 from backend.services.agent_team.execution import (
     ExecutionError,
     ExecutionProfile,
@@ -19,6 +21,7 @@ from backend.services.agent_team.execution import (
     execute_request,
     execution_workspace_key,
 )
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.grep_tool import GrepTool
 from backend.services.agent_team.tools.shell_tool import ShellTool
@@ -466,6 +469,138 @@ async def test_trusted_git_rejects_object_alternates_without_token(tmp_path):
         )
 
 
+def test_trusted_git_lock_isolated_by_event_loop(tmp_path):
+    """A repository lock must not be reused across asyncio event loops."""
+
+    service, workspace = _workspace(tmp_path)
+    del service
+    locks = []
+
+    async def capture_lock():
+        lock = execution_module._workspace_git_lock(workspace)
+        locks.append(lock)
+        async with lock:
+            pass
+
+    asyncio.run(capture_lock())
+    asyncio.run(capture_lock())
+
+    assert len(locks) == 2
+    assert locks[0] is not locks[1]
+
+
+@pytest.mark.asyncio
+async def test_trusted_git_run_request_rejects_outer_overrides(tmp_path, monkeypatch):
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    request = ExecutionRequest(
+        workspace_key="task-1",
+        argv=("git", "--version"),
+        profile=ExecutionProfile.TRUSTED_CONTROL,
+    )
+    calls: list[ExecutionRequest] = []
+
+    async def fake_execute(received: ExecutionRequest) -> ExecutionResult:
+        calls.append(received)
+        return ExecutionResult(command="git --version", cwd=".", exit_code=0)
+
+    monkeypatch.setattr(runner, "execute", fake_execute)
+
+    result = await runner.run(request)
+    assert result.returncode == 0
+    assert calls == [request]
+
+    with pytest.raises(ValueError, match="非默认"):
+        await runner.run(request, cwd=workspace)
+    with pytest.raises(ValueError, match="非默认"):
+        await runner.run(request, timeout_seconds=30)
+    with pytest.raises(ValueError, match="非默认"):
+        await runner.run(request, profile=ExecutionProfile.AGENT)
+    assert calls == [request]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("relative_path", "target_is_directory"),
+    [
+        (Path("objects") / "aa", True),
+        (Path("objects") / "pack" / "attacker.pack", False),
+        (Path("objects") / "info" / "attacker", False),
+    ],
+)
+async def test_trusted_git_rejects_object_structure_reparse_points(
+    tmp_path,
+    relative_path,
+    target_is_directory,
+):
+    """Object roots and pack/info children cannot redirect Git metadata."""
+
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    await runner.run_args(["git", "init"])
+
+    outside = tmp_path / "outside-object-target"
+    if target_is_directory:
+        outside.mkdir()
+    else:
+        outside.write_text("outside\n", encoding="utf-8")
+    link = workspace / ".git" / relative_path
+    try:
+        link.symlink_to(outside, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unavailable on this platform: {exc}")
+
+    with pytest.raises(ExecutionError, match="objects|symlink/reparse"):
+        await runner.run_args(["git", "status", "--short"])
+
+
+@pytest.mark.asyncio
+async def test_trusted_git_object_direct_scan_has_node_cap(tmp_path, monkeypatch):
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    await runner.run_args(["git", "init"])
+
+    monkeypatch.setattr(execution_module, "MAX_GIT_OBJECTS_DIRECT_NODES", 1)
+    with pytest.raises(ExecutionError, match="objects.*节点数量超过上限"):
+        await runner.run_args(["git", "status", "--short"])
+
+
+@pytest.mark.asyncio
+async def test_trusted_git_object_pack_info_scan_has_node_cap(tmp_path, monkeypatch):
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    await runner.run_args(["git", "init"])
+    marker = workspace / ".git" / "objects" / "pack" / "pack-marker"
+    marker.write_text("marker\n", encoding="utf-8")
+
+    monkeypatch.setattr(execution_module, "MAX_GIT_OBJECTS_AUX_NODES", 0)
+    with pytest.raises(ExecutionError, match="objects/pack.*节点数量超过上限"):
+        await runner.run_args(["git", "status", "--short"])
+
+
+@pytest.mark.asyncio
+async def test_trusted_git_refs_logs_scan_has_node_cap(tmp_path, monkeypatch):
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    await runner.run_args(["git", "init"])
+
+    # Remove the empty refs tree so the shared cap can specifically exercise
+    # logs rather than failing first on the normal refs/heads directories.
+    refs = workspace / ".git" / "refs"
+    for child in (refs / "heads", refs / "tags"):
+        if child.exists():
+            child.rmdir()
+    if refs.exists():
+        refs.rmdir()
+    logs = workspace / ".git" / "logs"
+    logs.mkdir()
+    (logs / "HEAD").write_text("log\n", encoding="utf-8")
+
+    monkeypatch.setattr(execution_module, "MAX_GIT_REFS_LOGS_NODES", 1)
+    with pytest.raises(ExecutionError, match="Git metadata logs.*节点数量超过上限"):
+        await runner.run_args(["git", "status", "--short"])
+
+
 @pytest.mark.asyncio
 async def test_trusted_git_real_local_config_rejects_hook_before_token(tmp_path):
     """真实 Git 配置检查必须在凭据创建和 hook 执行之前失败。"""
@@ -572,6 +707,49 @@ async def test_trusted_git_validates_worktree_pointer_chain(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_trusted_git_revalidates_metadata_at_spawn_boundary(tmp_path, monkeypatch):
+    """A metadata replacement between preflight and spawn is fail-closed."""
+
+    service, workspace = _workspace(tmp_path)
+    runner = TrustedGitRunner(workspace, service)
+    await runner.run_args(["git", "init"])
+    link = workspace / ".git" / "refs" / "heads" / "race"
+    link.write_text("0" * 40 + "\n", encoding="utf-8")
+
+    original_validate = runner._validate_git_metadata_before_execution
+    validation_count = 0
+
+    async def replace_before_final_validation():
+        nonlocal validation_count
+        validation_count += 1
+        if validation_count == 2:
+            outside = tmp_path / "outside-race-target"
+            outside.mkdir()
+            try:
+                link.unlink()
+                link.symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                pytest.skip(f"symlink unavailable on this platform: {exc}")
+        await original_validate()
+
+    monkeypatch.setattr(
+        runner,
+        "_validate_git_metadata_before_execution",
+        replace_before_final_validation,
+    )
+
+    with pytest.raises(ExecutionError, match="symlink/reparse"):
+        await runner.execute(
+            ExecutionRequest(
+                workspace_key=execution_workspace_key(workspace, service),
+                argv=("git", "status", "--short"),
+                profile=ExecutionProfile.TRUSTED_CONTROL,
+            )
+        )
+    assert validation_count == 2
+
+
+@pytest.mark.asyncio
 async def test_trusted_git_rejects_gitdir_pointer_outside_controlled_repo_before_token(
     tmp_path, monkeypatch
 ):
@@ -646,6 +824,13 @@ async def test_local_runner_uses_fixed_environment_without_parent_secret(
 ):
     service, workspace = _workspace(tmp_path)
     monkeypatch.setenv("SAKURA_AGENT_CANARY_SECRET", "parent-secret-value")
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
     runner = LocalExecutionRunner(workspace, service)
 
     result = await runner.run_args(
@@ -792,8 +977,15 @@ def test_execution_result_keeps_legacy_returncode_view():
 
 
 @pytest.mark.asyncio
-async def test_timeout_result_is_explicit(tmp_path):
+async def test_timeout_result_is_explicit(tmp_path, monkeypatch):
     service, workspace = _workspace(tmp_path)
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
     runner = LocalExecutionRunner(workspace, service)
 
     result = await runner.run_args(
@@ -855,15 +1047,34 @@ def test_trusted_git_askpass_distinguishes_username_and_password(tmp_path):
     runner = TrustedGitRunner(workspace, service)
     askpass_dir = runner._create_askpass("secret-token")
     askpass_path = askpass_dir / ("askpass.cmd" if os.name == "nt" else "askpass")
-    script = askpass_path.read_text(encoding="utf-8")
+    try:
+        script = askpass_path.read_text(encoding="utf-8")
+        assert "secret-token" not in script
+        assert (askpass_dir / "token").read_text(encoding="utf-8").strip() == (
+            "secret-token"
+        )
 
-    assert "x-access-token" in script
-    assert "username" in script.lower()
-    assert "secret-token" not in script
-    assert (askpass_dir / "token").read_text(encoding="utf-8").strip() == (
-        "secret-token"
-    )
-    runner._cleanup_askpass(askpass_dir)
+        def run_askpass(prompt: str) -> str:
+            if os.name == "nt":
+                command = ["cmd.exe", "/d", "/c", str(askpass_path), prompt]
+            else:
+                command = [str(askpass_path), prompt]
+            completed = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return completed.stdout.strip()
+
+        # Exercise the generated script instead of asserting a particular
+        # source spelling (the POSIX implementation intentionally accepts
+        # both ``Username`` and ``username`` prompts).
+        assert run_askpass("Username for https://github.com:") == "x-access-token"
+        assert run_askpass("Password for https://github.com:") == "secret-token"
+        assert run_askpass("credential:") == "secret-token"
+    finally:
+        runner._cleanup_askpass(askpass_dir)
     assert not askpass_dir.exists()
 
 
@@ -930,3 +1141,23 @@ def test_trusted_git_cleanup_reports_delete_failure(monkeypatch, tmp_path):
     with pytest.raises(ExecutionError, match="清理失败"):
         TrustedGitRunner._cleanup_askpass(tmp_path / "askpass")
     assert len(attempts) == 3
+
+
+@pytest.mark.asyncio
+async def test_trusted_git_async_cleanup_runs_off_event_loop(tmp_path, monkeypatch):
+    directory = tmp_path / "runtime"
+    directory.mkdir()
+    observed: list[str] = []
+
+    async def fake_to_thread(func, *args):
+        observed.append(func.__name__)
+        return func(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+    await TrustedGitRunner._cleanup_temporary_directory_async(
+        directory,
+        "Git 运行时目录",
+    )
+
+    assert observed == ["_cleanup_temporary_directory"]
+    assert not directory.exists()

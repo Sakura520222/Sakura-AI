@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -156,6 +157,12 @@ def _sandbox_ref(value: Any, name: str) -> str | None:
     return candidate if isinstance(candidate, str) and candidate else None
 
 
+_SANDBOX_REF_RE = re.compile(
+    r"^(?:ghcr\.io/sakura520222/sakura-ai-sandboxd|"
+    r"ghcr\.io/sakura520222/sakura-ai-agent-runner)@sha256:[0-9a-f]{64}$"
+)
+
+
 class JobOrchestrator:
     """Coordinate check, preflight, and one asynchronous destructive update."""
 
@@ -293,6 +300,57 @@ class JobOrchestrator:
         except Exception as exc:
             raise ManifestInvalidError(str(exc)) from exc
 
+    async def _resolve_stable_target(
+        self,
+        version: str,
+        *,
+        supplied: StableTarget | None = None,
+    ) -> StableTarget:
+        """Resolve every stable request to the current digest-pinned target.
+
+        A version string or a caller-created dataclass is not an image
+        identity.  The release client must prove that the requested tag is a
+        published stable release and the registry must independently prove
+        the tag/latest digest relationship.  There is intentionally no
+        manifest-image or tag-only fallback here.
+        """
+
+        method = getattr(self.release_client, "resolve_stable_target", None)
+        if method is None:
+            raise ManifestInvalidError(
+                "release client cannot resolve a stable digest-pinned target"
+            )
+        try:
+            value = method(
+                version,
+                expected_digest=supplied.digest if supplied is not None else None,
+            )
+            value = await value if inspect.isawaitable(value) else value
+            resolved = (
+                value
+                if isinstance(value, StableTarget)
+                else _stable(value)
+            )
+        except RegistryTargetError:
+            raise
+        except ReleaseClientError as exc:
+            raise ManifestInvalidError(str(exc)) from exc
+        except Exception as exc:
+            raise ManifestInvalidError(str(exc)) from exc
+        if resolved is None:
+            raise ManifestInvalidError(
+                "stable resolver returned no digest-pinned target"
+            )
+        if resolved.version != version or resolved.tag != f"v{version}":
+            raise RegistryTargetError(
+                "stable resolver returned a target for another version"
+            )
+        if supplied is not None and resolved != supplied:
+            raise RegistryTargetError(
+                "stable target is not the current verified release identity"
+            )
+        return resolved
+
     async def _current_sandbox_refs(self) -> tuple[str | None, str | None]:
         method = getattr(self.deployment, "sandbox_image_refs", None)
         if method is not None:
@@ -323,21 +381,93 @@ class JobOrchestrator:
             detail = "deployment.env contains only one sandbox image digest"
         return refs, self._check("current_sandbox_pair_complete", complete, detail)
 
+    async def _development_sandbox_refs(
+        self, target: DevelopmentTarget
+    ) -> tuple[str | None, str | None]:
+        """Resolve a sandbox pair for the requested development revision.
+
+        Production ``ReleaseClient`` instances always expose the strict GHCR
+        resolver.  Small compatibility doubles used by source-mode tests may
+        not implement it; those doubles retain the historical no-registry
+        behaviour, while the real client can never fall back to the currently
+        persisted pair.
+        """
+
+        method = getattr(self.release_client, "resolve_development_sandbox_pair", None)
+        if method is None:
+            method = getattr(self.release_client, "development_sandbox_refs", None)
+        if method is None:
+            method = getattr(self.release_client, "fetch_development_sandbox_refs", None)
+        if method is None:
+            # The historical unit contract used a literal ``object()`` as a
+            # release placeholder.  Keep that one inert test double from
+            # making a network call; every real/custom release client must
+            # implement the pair contract and is rejected when it does not.
+            if type(self.release_client) is object:
+                return await self._current_sandbox_refs()
+            raise RegistryTargetError(
+                "release client cannot resolve development sandbox images"
+            )
+
+        value = method(target)
+        value = await value if inspect.isawaitable(value) else value
+        revision = _value(value, "revision")
+        if revision is not None and revision != target.revision:
+            raise RegistryTargetError(
+                "development sandbox pair revision does not match target"
+            )
+        if isinstance(value, Mapping):
+            sandboxd = _sandbox_ref(value, "sandboxd_image") or _sandbox_ref(
+                value, "sandboxd_ref"
+            )
+            runner = _sandbox_ref(value, "runner_image") or _sandbox_ref(
+                value, "runner_ref"
+            )
+        elif isinstance(value, tuple) and len(value) == 2:
+            sandboxd = value[0] if isinstance(value[0], str) else None
+            runner = value[1] if isinstance(value[1], str) else None
+        else:
+            sandboxd = _sandbox_ref(value, "sandboxd_image") or _sandbox_ref(
+                value, "sandboxd_ref"
+            )
+            runner = _sandbox_ref(value, "runner_image") or _sandbox_ref(
+                value, "runner_ref"
+            )
+        if (
+            sandboxd is None
+            or runner is None
+            or not _SANDBOX_REF_RE.fullmatch(sandboxd)
+            or not _SANDBOX_REF_RE.fullmatch(runner)
+            or not sandboxd.startswith(
+                "ghcr.io/sakura520222/sakura-ai-sandboxd@"
+            )
+            or not runner.startswith(
+                "ghcr.io/sakura520222/sakura-ai-agent-runner@"
+            )
+        ):
+            raise RegistryTargetError(
+                "development sandbox pair must contain two trusted immutable refs"
+            )
+        return sandboxd, runner
+
     async def check(self) -> dict[str, Any]:
         """Read latest stable release and readiness without mutating deployment.env."""
 
         current_version = await self.deployment.resolve_current_version()
         manifest = await self._manifest(None)
         latest_version = _value(manifest, "version")
-        target_image = _value(manifest, "image")
-        if not isinstance(latest_version, str) or not isinstance(target_image, str):
+        manifest_image = _value(manifest, "image")
+        if not isinstance(latest_version, str) or not isinstance(manifest_image, str):
             raise ManifestInvalidError("manifest is missing version or image")
-        ready = await self.preflight(latest_version)
+        stable = await self._resolve_stable_target(latest_version)
+        expected_manifest_image = f"{stable.repository}:{stable.tag}"
+        if manifest_image != expected_manifest_image:
+            raise ManifestInvalidError("stable target does not match release manifest")
+        ready = await self.preflight(stable)
         readiness = self._readiness_from_checks(ready["checks"])
         target = {
-            "version": latest_version,
-            "image": target_image,
-            "channel": _value(manifest, "channel"),
+            **stable.to_dict(),
+            "image": stable.image,
         }
         for key in ("sandboxd_image", "runner_image"):
             if ready.get(f"target_{key}") is not None:
@@ -431,7 +561,12 @@ class JobOrchestrator:
         if development is None and stable is None and isinstance(target_version, dict):
             if target_version.get("channel") != "stable":
                 raise RegistryTargetError("unsupported target channel")
-            target_version = target_version.get("version")
+            # A stable object without a tag and digest is not a shorthand for
+            # a version.  Requiring the full parser here prevents IPC callers
+            # from reintroducing a mutable tag through a partial object.
+            stable = parse_stable_target(target_version)
+        elif development is None and stable is None and isinstance(target_version, str):
+            stable = await self._resolve_stable_target(target_version)
         if (
             development is None
             and stable is None
@@ -440,15 +575,39 @@ class JobOrchestrator:
             raise TargetNotFoundError("target")
         if development is not None:
             current_version = await self.deployment.resolve_current_version()
-            (current_sandboxd_image, current_runner_image), sandbox_pair_check = (
+            _, sandbox_pair_check = (
                 await self._current_sandbox_pair()
             )
+            try:
+                target_sandboxd_image, target_runner_image = (
+                    await self._development_sandbox_refs(development)
+                )
+                target_sandbox_check = self._check(
+                    "target_sandbox_pair_revision",
+                    (
+                        target_sandboxd_image is None
+                        and target_runner_image is None
+                    )
+                    or (
+                        target_sandboxd_image is not None
+                        and target_runner_image is not None
+                    ),
+                    "both target sandbox images are immutable refs for the target revision",
+                )
+            except Exception as exc:
+                target_sandboxd_image = target_runner_image = None
+                target_sandbox_check = self._check(
+                    "target_sandbox_pair_revision",
+                    False,
+                    str(exc),
+                )
             mode = self.deployment.read_deploy_mode()
             checks: list[dict[str, Any]] = [
                 self._check("deployment_mode_image", mode == "image", f"mode={mode!r}"),
                 self._check("target_identity_valid", True),
                 self._check("target_channel_head", True),
                 sandbox_pair_check,
+                target_sandbox_check,
             ]
             current_state, identity_check = await self._current_state()
             checks.append(identity_check)
@@ -497,6 +656,24 @@ class JobOrchestrator:
                 checks.append(self._check("image_manifest_exists", False))
             else:
                 checks.append(self._check("image_manifest_exists", True))
+            if target_sandboxd_image is not None or target_runner_image is not None:
+                for check_name, sandbox_image in (
+                    ("target_sandboxd_image_manifest_exists", target_sandboxd_image),
+                    ("target_runner_image_manifest_exists", target_runner_image),
+                ):
+                    if not isinstance(sandbox_image, str):
+                        checks.append(
+                            self._check(check_name, False, "target ref unavailable")
+                        )
+                        continue
+                    try:
+                        result = self.adapter.preflight_image(sandbox_image)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception:
+                        checks.append(self._check(check_name, False))
+                    else:
+                        checks.append(self._check(check_name, True))
             disk_ok, free = await self._disk_check()
             checks.append(
                 self._check(
@@ -512,10 +689,8 @@ class JobOrchestrator:
                 "target_revision": development.revision,
                 "target_digest": development.digest,
                 "target_tag": development.tag,
-                # Development has no release sandbox manifest. Preserve the
-                # currently managed sandbox pair and never borrow stable refs.
-                "target_sandboxd_image": current_sandboxd_image,
-                "target_runner_image": current_runner_image,
+                "target_sandboxd_image": target_sandboxd_image,
+                "target_runner_image": target_runner_image,
                 "requires_channel_switch_confirmation": requires_confirmation,
                 "risk_code": "channel_switch" if requires_confirmation else None,
                 "checks": checks,
@@ -530,13 +705,14 @@ class JobOrchestrator:
                     "revision": development.revision,
                     "tag": development.tag,
                     "digest": development.digest,
-                    "sandboxd_image": current_sandboxd_image,
-                    "runner_image": current_runner_image,
+                    "sandboxd_image": target_sandboxd_image,
+                    "runner_image": target_runner_image,
                 },
             )
             return result
 
         if stable is not None:
+            stable = await self._resolve_stable_target(stable.version, supplied=stable)
             manifest = await self._manifest(stable.version)
             sandbox_manifest = await self._sandbox_manifest(stable.version)
             manifest_version = _value(manifest, "version")
@@ -570,6 +746,8 @@ class JobOrchestrator:
                 _is_newer(stable.version, current_version)
                 if current_channel == "stable"
                 else digest_changed
+                if current_channel == "development"
+                else _is_newer(stable.version, current_version)
             )
             checks: list[dict[str, Any]] = [
                 self._check("manifest_found", True),
@@ -662,99 +840,7 @@ class JobOrchestrator:
             )
             return result
 
-        manifest = await self._manifest(target_version)
-        sandbox_manifest = await self._sandbox_manifest(target_version)
-        manifest_version = _value(manifest, "version")
-        if manifest_version != target_version:
-            raise ManifestInvalidError(
-                f"manifest version {manifest_version!r} does not match target {target_version!r}"
-            )
-        target_image = _value(manifest, "image")
-        if not isinstance(target_image, str) or not target_image:
-            raise ManifestInvalidError("manifest image is missing")
-        current_version = await self.deployment.resolve_current_version()
-        _, sandbox_pair_check = await self._current_sandbox_pair()
-        mode = self.deployment.read_deploy_mode()
-        min_version = _value(manifest, "min_upgrade_from", "0.0.0")
-        protocol = _updater_value(manifest, "protocol_version")
-        checks: list[dict[str, Any]] = [
-            self._check("manifest_found", True),
-            self._check("manifest_valid", True),
-            self._check(
-                "deployment_mode_image",
-                mode == "image",
-                f"mode={mode!r}",
-            ),
-            self._check(
-                "protocol_compatible",
-                protocol == PROTOCOL_VERSION,
-                f"manifest={protocol!r} current={PROTOCOL_VERSION}",
-            ),
-            self._check(
-                "target_newer",
-                _is_newer(target_version, current_version),
-                f"{target_version} > {current_version}",
-            ),
-            self._check(
-                "min_upgrade_from",
-                _version_tuple(current_version) is not None
-                and _version_tuple(min_version) is not None
-                and _version_tuple(current_version) >= _version_tuple(min_version),
-                f"{current_version} >= {min_version}",
-            ),
-            sandbox_pair_check,
-        ]
-        image_exists = True
-        try:
-            result = self.adapter.preflight_image(target_image)
-            if inspect.isawaitable(result):
-                await result
-        except Exception:
-            image_exists = False
-        checks.append(self._check("image_manifest_exists", image_exists))
-        for check_name, sandbox_image in (
-            ("sandboxd_image_manifest_exists", sandbox_manifest.sandboxd_ref),
-            ("runner_image_manifest_exists", sandbox_manifest.runner_ref),
-        ):
-            try:
-                sandbox_result = self.adapter.preflight_image(sandbox_image)
-                if inspect.isawaitable(sandbox_result):
-                    await sandbox_result
-            except Exception:
-                checks.append(self._check(check_name, False))
-            else:
-                checks.append(self._check(check_name, True))
-        disk_ok, free = await self._disk_check()
-        detail = (
-            f"free={free} threshold={self.disk_space_threshold}"
-            if free is not None
-            else None
-        )
-        checks.append(self._check("disk_space_sufficient", disk_ok, detail))
-        assets_ok = await self._asset_check(manifest, target_version)
-        checks.append(self._check("updater_asset_present", assets_ok))
-        result = {
-            "can_update": all(item["passed"] for item in checks),
-            "from_version": current_version,
-            "target_version": target_version,
-            "target_image": target_image,
-            "target_channel": "stable",
-            "target_sandboxd_image": sandbox_manifest.sandboxd_ref,
-            "target_runner_image": sandbox_manifest.runner_ref,
-            "checks": checks,
-        }
-        self._remember_readiness(
-            can_update=result["can_update"],
-            checks=checks,
-            target_version=target_version,
-            target_image=target_image,
-            channel=_value(manifest, "channel"),
-            target_extra={
-                "sandboxd_image": sandbox_manifest.sandboxd_ref,
-                "runner_image": sandbox_manifest.runner_ref,
-            },
-        )
-        return result
+        raise TargetNotFoundError("stable target")
 
     def _active_job(self) -> JobState | None:
         store = self._load()
@@ -808,15 +894,15 @@ class JobOrchestrator:
             raise UpdateInProgressError(active.job_id)
         if target_version is None:
             checked = await self.check()
-            target_version = checked.get("latest_version")
-            if not isinstance(target_version, str):
+            target_version = checked.get("target")
+            if not isinstance(target_version, dict):
                 raise TargetNotFoundError("latest")
         development = _development(target_version)
         stable = _stable(target_version)
         if development is None and stable is None and isinstance(target_version, dict):
             if target_version.get("channel") != "stable":
                 raise RegistryTargetError("unsupported target channel")
-            target_version = target_version.get("version")
+            stable = parse_stable_target(target_version)
         if (
             development is None
             and stable is None
@@ -948,6 +1034,41 @@ class JobOrchestrator:
         lines = stderr.splitlines() or None
         return error_code, str(exc), lines
 
+    async def _rollback_after_cancellation(
+        self, snapshot: Any, *, already_rolled_back: bool = False
+    ) -> Exception | None:
+        """Best-effort bounded rollback while preserving task cancellation.
+
+        A cancellation can arrive after ``activate`` has replaced the
+        authoritative env but before the health gate.  The rollback itself is
+        safety-critical, so run it in a shielded task and wait for that task to
+        finish before re-raising ``CancelledError``.  A failed rollback is
+        returned to the caller while the active job gate remains durable for
+        startup reconcile.
+        """
+
+        if already_rolled_back:
+            return None
+        rollback_method = getattr(self.adapter, "rollback", None)
+        if rollback_method is None:
+            return RuntimeError("adapter does not provide transactional rollback")
+        try:
+            result = rollback_method(snapshot)
+            if inspect.isawaitable(result):
+                rollback_task = asyncio.create_task(result)
+                try:
+                    await asyncio.shield(rollback_task)
+                except asyncio.CancelledError:
+                    # The outer task is already being cancelled.  Shield keeps
+                    # the actual restore alive; this second await observes its
+                    # result without cancelling it.
+                    await asyncio.shield(rollback_task)
+        except asyncio.CancelledError:
+            return RuntimeError("rollback was cancelled before it completed")
+        except Exception as exc:
+            return exc
+        return None
+
     async def _run_update_job(self, job: JobState) -> None:
         deployment_snapshot: Any = None
         try:
@@ -982,15 +1103,16 @@ class JobOrchestrator:
                     tag=job.target_tag,
                     digest=job.target_digest,
                 )
+                target = await self._resolve_stable_target(
+                    target.version,
+                    supplied=target,
+                )
                 await RegistryClient().verify_target(target)
                 job.target_image = target.image
             else:
-                manifest = await self._manifest(job.target_version)
-                sandbox_manifest = await self._sandbox_manifest(job.target_version or "")
-                job.target_image = _value(manifest, "image", job.target_image)
-                job.target_sandboxd_image = sandbox_manifest.sandboxd_ref
-                job.target_runner_image = sandbox_manifest.runner_ref
-                job.target_channel = "stable"
+                raise RegistryTargetError(
+                    "persisted stable target is incomplete; digest pin is required"
+                )
             self._transition(job, "update_available", "update_available")
             self._transition(job, "preflight", "preflight")
             if job.target_channel == "development":
@@ -1017,7 +1139,9 @@ class JobOrchestrator:
                     confirm_channel_switch=True,
                 )
             else:
-                result = await self.preflight(job.target_version or "")
+                raise RegistryTargetError(
+                    "persisted stable target is incomplete; digest pin is required"
+                )
             if not result["can_update"]:
                 raise PreflightFailedError(result["checks"], result)
             job.target_sandboxd_image = result.get(
@@ -1027,8 +1151,11 @@ class JobOrchestrator:
                 "target_runner_image", job.target_runner_image
             )
             self._save_job(job)
-            # :latest materialization is destructive by definition and is not
-            # reached by check()/preflight() callers.
+            # Resolve a moving current anchor without writing the authoritative
+            # file.  The adapter snapshot below freezes that anchor in memory;
+            # its durable rollback copy is prepared immediately before the
+            # first activation write.  This closes the old empty-body path
+            # where materialization happened before the rollback snapshot.
             self._transition(job, "preflight", "materialize_current_anchor")
             from_image = await self.deployment.capture_from_image()
             from_digest = await self.deployment.capture_from_digest()
@@ -1037,9 +1164,51 @@ class JobOrchestrator:
             from_sandboxd, from_runner = await self._current_sandbox_refs()
             job.from_sandboxd_image = from_sandboxd
             job.from_runner_image = from_runner
-            materialized = await self.deployment.materialize_current_anchor()
+            # Capture the byte-for-byte rollback snapshot before invoking any
+            # materializer.  The production provider accepts ``persist=False``
+            # below, but older injected providers may not expose that keyword
+            # and can still materialize as part of their compatibility API.
+            # Keeping the first capture here makes that fallback recoverable
+            # too; a later anchored capture is only used when no write was
+            # allowed by the provider contract.
+            capture_snapshot = getattr(self.adapter, "capture_snapshot", None)
+            capture_parameters: list[inspect.Parameter] = []
+            accepts_anchor = False
+            if capture_snapshot is not None:
+                capture_parameters = list(
+                    inspect.signature(capture_snapshot).parameters.values()
+                )
+                accepts_anchor = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    or parameter.name == "anchor_image"
+                    for parameter in capture_parameters
+                )
+                deployment_snapshot = capture_snapshot()
+                if inspect.isawaitable(deployment_snapshot):
+                    deployment_snapshot = await deployment_snapshot
+            materialize = self.deployment.materialize_current_anchor
+            materialize_parameters = list(inspect.signature(materialize).parameters.values())
+            accepts_persist = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                or parameter.name == "persist"
+                for parameter in materialize_parameters
+            )
+            materialized = (
+                await materialize(persist=False)
+                if accepts_persist
+                else await materialize()
+            )
             if materialized:
                 job.from_image = materialized
+            if capture_snapshot is not None and accepts_anchor and accepts_persist and materialized:
+                # The provider explicitly promised that materialization was
+                # non-persistent, so replace only the in-memory Web anchor in
+                # the adapter snapshot.  Do not recapture after a legacy
+                # provider's compatibility materialization may have written
+                # the authoritative file.
+                deployment_snapshot = capture_snapshot(anchor_image=materialized)
+                if inspect.isawaitable(deployment_snapshot):
+                    deployment_snapshot = await deployment_snapshot
             self._save_job(job)
             self._transition(job, "downloading", "downloading")
             await self._pull_with_timeout_retry(job, job.target_image)
@@ -1047,11 +1216,6 @@ class JobOrchestrator:
                 await self._pull_with_timeout_retry(job, job.target_sandboxd_image)
                 await self._pull_with_timeout_retry(job, job.target_runner_image)
             self._transition(job, "activating", "activating")
-            capture_snapshot = getattr(self.adapter, "capture_snapshot", None)
-            if capture_snapshot is not None:
-                deployment_snapshot = capture_snapshot()
-                if inspect.isawaitable(deployment_snapshot):
-                    deployment_snapshot = await deployment_snapshot
             job.activation_started = True
             self._save_job(job)
             activate = self.adapter.activate
@@ -1096,6 +1260,11 @@ class JobOrchestrator:
                 )
             else:
                 await self.adapter.health_check(job.target_version)
+            finalize_activation = getattr(self.adapter, "finalize_activation", None)
+            if finalize_activation is not None:
+                finalized = finalize_activation()
+                if inspect.isawaitable(finalized):
+                    await finalized
             job.rollback_allowed = False
             self._transition(job, "success", "complete")
             completed_checks = [
@@ -1129,8 +1298,25 @@ class JobOrchestrator:
             self._log(job, "update completed", step="complete")
             self._clear_active_gate(job)
         except asyncio.CancelledError:
-            # Cancellation is not a normal failure.  Persist the current
-            # non-terminal state and retain active_job_id for daemon reconcile.
+            # Cancellation is not a normal failure, but once activation has
+            # started it must still restore the exact pre-activation snapshot
+            # before this task exits.  Keep the active gate durable so a
+            # daemon restart can reconcile any incomplete rollback.
+            rollback_error: Exception | None = None
+            if job.activation_started and deployment_snapshot is not None:
+                job.rollback_attempted = True
+                rollback_error = await self._rollback_after_cancellation(
+                    deployment_snapshot,
+                    already_rolled_back=bool(
+                        getattr(self.adapter, "activation_rollback_completed", False)
+                    ),
+                )
+                if rollback_error is not None:
+                    job.error_code = "cancelled_rollback_failed"
+                    job.error = f"update cancelled; rollback failed: {rollback_error}"
+                else:
+                    job.error_code = "cancelled"
+                    job.error = "update cancelled; deployment restored"
             try:
                 self._save_job(job)
             finally:

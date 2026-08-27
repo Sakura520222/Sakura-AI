@@ -4,7 +4,24 @@
 # Sakura source/configuration, deployment state, Docker client, or credentials.
 # The daemon supplies the task workspace and bounded tmpfs mounts at runtime.
 
+ARG SAKURA_BUILD_CHANNEL=unknown
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
 FROM python:3.14-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
+
+ARG SAKURA_BUILD_CHANNEL=unknown
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
+LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI" \
+      org.opencontainers.image.revision="${SAKURA_BUILD_REVISION}" \
+      org.opencontainers.image.version="${SAKURA_BUILD_VERSION}" \
+      org.opencontainers.image.created="${SAKURA_BUILD_CREATED}" \
+      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}" \
+      com.sakura-ai.component="agent-runner"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/agent \

@@ -94,6 +94,17 @@ def serve(
         # Early-fail：在 flock 外提前检测 socket 路径可用性，避免 bind 时才发现目录缺失
         prepare_socket_path(socket_path)
 
+        # Recover an image transaction before reconciling its job gate.  The
+        # deployment journal is written before the first authoritative env
+        # replacement; a process crash between activation and health must
+        # restore the exact old bytes before the daemon can serve new actions.
+        if deployment_env is not None:
+            from sakura_ai_updater.adapters.image import (
+                recover_pending_deployment_transaction,
+            )
+
+            recover_pending_deployment_transaction(deployment_env)
+
         # 3. 崩溃恢复（§7.6 6 invariant）：中断/stale-gate job 处理 + 清 active_job_id
         store = load_state(state_path)
         store, changed = reconcile_interrupted_job(store)

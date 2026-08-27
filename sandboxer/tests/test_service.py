@@ -10,7 +10,7 @@ from sakura_ai_sandboxer.errors import (
     RequestConflictError,
     RuntimeUnavailableError,
 )
-from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest
+from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest, NetworkMode
 from sakura_ai_sandboxer.runtime import FakeRuntimeAdapter, RuntimeResult
 from sakura_ai_sandboxer.service import SandboxExecutionService
 
@@ -22,6 +22,7 @@ def _request(request_id: str = "request-1", **overrides) -> ExecutionRequest:
         "command": "printf ok",
         "profile": ExecutionProfile.AGENT,
         "timeout_seconds": 1,
+        "network_mode": NetworkMode.NONE,
     }
     values.update(overrides)
     return ExecutionRequest(**values)

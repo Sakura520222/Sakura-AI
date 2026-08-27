@@ -37,14 +37,32 @@ jobs:
     steps:
       - name: 计算同步分支
         id: branches
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
+          INPUT_TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "source=${{ inputs.source_branch }}" >> "$GITHUB_OUTPUT"
-            echo "target=${{ inputs.target_branch }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          validate_branch() {
+            local value="$1"
+            [[ -n "$value" && ${#value} -le 255 ]] || return 1
+            [[ "$value" != *[!A-Za-z0-9._/-]* ]] || return 1
+            [[ "$value" != /* && "$value" != */ && "$value" != -* ]] || return 1
+            [[ "$value" != *..* && "$value" != *@\{* && "$value" != *//* ]] || return 1
+            git check-ref-format --branch "$value" >/dev/null
+          }
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            source="$INPUT_SOURCE_BRANCH"
+            target="$INPUT_TARGET_BRANCH"
           else
-            echo "source=main" >> "$GITHUB_OUTPUT"
-            echo "target=develop" >> "$GITHUB_OUTPUT"
+            source=main
+            target=develop
           fi
+          validate_branch "$source" || { echo "invalid source branch ref" >&2; exit 1; }
+          validate_branch "$target" || { echo "invalid target branch ref" >&2; exit 1; }
+          [[ "$source" != "$target" ]] || { echo "source and target branches must differ" >&2; exit 1; }
+          printf 'source=%s\n' "$source" >> "$GITHUB_OUTPUT"
+          printf 'target=%s\n' "$target" >> "$GITHUB_OUTPUT"
 
       - name: 检查推送令牌类型
         id: push-token
@@ -105,10 +123,24 @@ jobs:
       - name: 同步失败时创建 Issue
         if: failure()
         uses: actions/github-script@v9
+        env:
+          SOURCE_BRANCH: ${{ steps.branches.outputs.source }}
+          TARGET_BRANCH: ${{ steps.branches.outputs.target }}
         with:
           script: |
-            const source = '${{ steps.branches.outputs.source }}';
-            const target = '${{ steps.branches.outputs.target }}';
+            const source = process.env.SOURCE_BRANCH || '';
+            const target = process.env.TARGET_BRANCH || '';
+            const validBranch = (value) => (
+              value.length > 0 && value.length <= 255 &&
+              /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) &&
+              !value.includes('..') && !value.includes('@{') &&
+              !value.includes('//') && !value.endsWith('/') &&
+              !value.endsWith('.') && !value.split('/').includes('.') &&
+              !value.split('/').includes('..')
+            );
+            if (!validBranch(source) || !validBranch(target) || source === target) {
+              throw new Error('invalid branch ref in failure notification');
+            }
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.issues.create({
               owner: context.repo.owner,
@@ -143,4 +175,27 @@ jobs:
       source_ref: ${{ needs.sync-main-to-develop.outputs.revision }}
       channel: development
       sync_dockerhub: true
+    secrets: inherit
+
+  # GITHUB_TOKEN pushes do not trigger docker-edge.yml. Keep the fallback
+  # publication a three-image transaction: the Web tag must be published
+  # successfully before the matching sandbox pair is materialized for the
+  # exact synchronized revision.
+  publish-synchronized-development-sandbox:
+    name: 发布同步后的 development Agent sandbox 镜像
+    needs:
+      - sync-main-to-develop
+      - publish-synchronized-development
+    if: >-
+      needs.sync-main-to-develop.outputs.changed == 'true' &&
+      needs.sync-main-to-develop.outputs.target == 'develop' &&
+      needs.sync-main-to-develop.outputs.using_pat != 'true' &&
+      needs.publish-synchronized-development.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/sandbox-publish.yml
+    with:
+      source_ref: ${{ needs.sync-main-to-develop.outputs.revision }}
+      channel: development
     secrets: inherit

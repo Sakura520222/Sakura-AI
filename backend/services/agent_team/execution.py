@@ -17,14 +17,17 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
 import time
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 from urllib.parse import unquote, urlsplit
 
+from backend.services.agent_team.network_policy import get_agent_team_network_policy
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
@@ -74,6 +77,13 @@ MAX_ENV_KEY_LENGTH = 128
 MAX_ENV_VALUE_LENGTH = 8_192
 MAX_TIMEOUT_SECONDS = 3_600
 MAX_GIT_CONFIG_BYTES = 1_048_576
+# Metadata scans intentionally avoid the potentially enormous Git object
+# database, but refs/logs and the bounded objects subtrees still need an
+# explicit fail-closed node budget so a malicious repository cannot turn a
+# trusted Git call into an unbounded directory walk.
+MAX_GIT_REFS_LOGS_NODES = 65_536
+MAX_GIT_OBJECTS_DIRECT_NODES = 512
+MAX_GIT_OBJECTS_AUX_NODES = 8_192
 
 _DEFAULT_REMOTE_PORTS = {"http": 80, "https": 443, "ssh": 22}
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -90,6 +100,72 @@ _GIT_SAFE_CONFIG = (
     ("core.editor", "true"),
     ("sequence.editor", "true"),
 )
+
+class _ReentrantAsyncLock:
+    """Task-reentrant asyncio lock used by nested TrustedGit entry points."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task[Any] | None = None
+        self._depth = 0
+
+    async def __aenter__(self) -> Self:
+        owner = asyncio.current_task()
+        if owner is None:
+            raise RuntimeError("TrustedGit lock requires an active asyncio task")
+        if self._owner is owner:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._owner = owner
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        owner = asyncio.current_task()
+        if owner is not self._owner:
+            raise RuntimeError("TrustedGit lock released by a different task")
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+
+
+_WORKSPACE_GIT_LOCKS: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    weakref.WeakValueDictionary[str, _ReentrantAsyncLock],
+] = weakref.WeakKeyDictionary()
+_WORKSPACE_GIT_LOCKS_GUARD = threading.Lock()
+
+
+def _workspace_git_lock(scope: Path) -> _ReentrantAsyncLock:
+    """Return a process-local lock for one controlled repository.
+
+    Base, repository, and linked-worktree paths share the same common
+    ``.git`` metadata.  The lock is keyed by the canonical repository scope
+    and held from validation through subprocess completion, so cooperating
+    trusted Git calls cannot invalidate one another between the final check
+    and ``create_subprocess_exec``.  Weak values keep idle repository scopes
+    from growing an unbounded process-wide registry.
+    """
+
+    # asyncio primitives are event-loop scoped.  Keep a weak per-loop registry
+    # so a long-lived runner reused by another loop cannot await the lock bound
+    # to the first loop (which otherwise raises RuntimeError when contention
+    # causes asyncio.Lock to consult its loop).  A loop object, rather than its
+    # reusable integer id, also prevents id reuse from aliasing two loops.
+    loop = asyncio.get_running_loop()
+    key = os.path.normcase(str(scope.resolve()))
+    with _WORKSPACE_GIT_LOCKS_GUARD:
+        per_loop_locks = _WORKSPACE_GIT_LOCKS.get(loop)
+        if per_loop_locks is None:
+            per_loop_locks = weakref.WeakValueDictionary()
+            _WORKSPACE_GIT_LOCKS[loop] = per_loop_locks
+        lock = per_loop_locks.get(key)
+        if lock is None:
+            lock = _ReentrantAsyncLock()
+            per_loop_locks[key] = lock
+        return lock
 
 
 class ExecutionProfile(StrEnum):
@@ -379,6 +455,23 @@ class LocalExecutionRunner:
             raise UnsupportedExecutionProfile(
                 f"LocalExecutionRunner 不支持 profile: {request.profile.value}"
             )
+        # Trusted Git control operations are deliberately outside the Agent
+        # network policy: they are application-constructed argv calls with a
+        # short-lived credential boundary.  Only untrusted Agent commands
+        # need the policy gate here.
+        if request.profile is ExecutionProfile.AGENT:
+            try:
+                network_policy = await get_agent_team_network_policy()
+            except Exception as exc:
+                raise ExecutionError(
+                    "local Agent backend 无法读取网络策略，已拒绝执行"
+                ) from exc
+            if not network_policy.allows_local_backend:
+                raise ExecutionError(
+                    "local Agent backend 仅在 full_access 下可用；local 在宿主进程执行，"
+                    f"无法兑现 {network_policy.value} 网络隔离。请切换为 sandbox，"
+                    "或由超级管理员明确选择 full_access 并确认宿主网络风险"
+                )
         safe_cwd = self.workspace_service.resolve_inside_workspace(
             self.workspace, request.cwd
         )
@@ -660,11 +753,22 @@ class TrustedGitRunner(LocalExecutionRunner):
         self.git_path = self._resolve_system_git(self.workspace)
         self._active_askpass_paths: set[Path] = set()
         self._active_askpass_tokens: dict[Path, str] = {}
+        # Serialize the synchronous metadata walk when several entry points on
+        # this runner are dispatched concurrently.  Do not cache identities:
+        # refs/logs leaves are security-sensitive and a mutable task gitdir can
+        # replace one without changing an ancestor directory identity.
+        self._metadata_scan_lock = threading.RLock()
 
     def supports_profile(self, profile: ExecutionProfile) -> bool:
         return profile is ExecutionProfile.TRUSTED_CONTROL
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Serialize trusted Git against the shared repository metadata."""
+
+        async with _workspace_git_lock(self._git_lock_scope()):
+            return await self._execute_locked(request)
+
+    async def _execute_locked(self, request: ExecutionRequest) -> ExecutionResult:
         """只执行固定系统 Git 的 TRUSTED_CONTROL argv。"""
         if request.profile is not ExecutionProfile.TRUSTED_CONTROL:
             raise UnsupportedExecutionProfile(
@@ -694,7 +798,7 @@ class TrustedGitRunner(LocalExecutionRunner):
         # Git may traverse repository metadata even for read-only commands. Keep
         # this check at the shared execution boundary so direct ``execute`` calls
         # cannot bypass the same fail-closed policy used by ``run_args``.
-        self._validate_git_metadata_before_execution()
+        await self._validate_git_metadata_before_execution()
         askpass_value = request.env.get("GIT_ASKPASS")
         if askpass_value:
             try:
@@ -721,6 +825,11 @@ class TrustedGitRunner(LocalExecutionRunner):
         )
         try:
             await self._validate_local_git_config(runtime_env, hooks_dir)
+            # The local-config preflight above performs a subprocess await.
+            # Revalidate immediately before the real Git spawn so a concurrent
+            # untrusted writer cannot change the task gitdir during that gap.
+            self._validate_workspace_git_layout()
+            await self._validate_git_metadata_before_execution()
             result = await super().execute(secured_request)
             active_token = self._active_askpass_tokens.get(
                 Path(askpass_value).resolve() if askpass_value else Path()
@@ -733,7 +842,20 @@ class TrustedGitRunner(LocalExecutionRunner):
                 )
             return replace(result, command=_display_args(display_argv))
         finally:
-            self._cleanup_temporary_directory(runtime_dir, "Git 运行时目录")
+            await self._cleanup_temporary_directory_async(
+                runtime_dir,
+                "Git 运行时目录",
+            )
+
+    def _git_lock_scope(self) -> Path:
+        """Return the common repository root shared by base/worktree callers."""
+
+        try:
+            return self._controlled_repo_root()
+        except ExecutionError:
+            # Keep malformed workspaces on a deterministic per-workspace lock;
+            # the normal validation path below still rejects them fail-closed.
+            return self.workspace
 
     def _build_env(self, extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
         """Trusted Git 不使用工作区 venv 中可能被伪造的可执行文件。"""
@@ -1142,10 +1264,47 @@ class TrustedGitRunner(LocalExecutionRunner):
                 raise UnsupportedExecutionProfile(
                     "TrustedGitRunner 只接受 TRUSTED_CONTROL 请求"
                 )
+            # ExecutionRequest is already the fully specified protocol object.
+            # Silently ignoring outer values would make a caller believe its
+            # cwd/timeout/profile took effect, and could undermine auditing of
+            # the command boundary.  Keep the legacy wrapper usable only when
+            # all outer values are their documented defaults.
+            if (
+                PurePosixPath(str(cwd).replace("\\", "/")) != PurePosixPath(".")
+                or timeout_seconds != 600
+                or profile is not ExecutionProfile.TRUSTED_CONTROL
+            ):
+                raise ValueError(
+                    "ExecutionRequest 不得同时提供非默认 cwd、timeout 或 profile"
+                )
             return await self.execute(command_or_request)
         raise ValueError("TrustedGitRunner 只接受 Git argv，不接受 shell command")
 
     async def run_args(
+        self,
+        args: Sequence[str],
+        cwd: str | Path = ".",
+        timeout_seconds: float = 600,
+        *,
+        profile: ExecutionProfile = ExecutionProfile.TRUSTED_CONTROL,
+        credential_token: str | None = None,
+        trusted_expected_remote: str | None = None,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> ExecutionResult:
+        """Run one trusted Git request under the repository metadata lock."""
+
+        async with _workspace_git_lock(self._git_lock_scope()):
+            return await self._run_args_locked(
+                args,
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                profile=profile,
+                credential_token=credential_token,
+                trusted_expected_remote=trusted_expected_remote,
+                extra_env=extra_env,
+            )
+
+    async def _run_args_locked(
         self,
         args: Sequence[str],
         cwd: str | Path = ".",
@@ -1166,6 +1325,13 @@ class TrustedGitRunner(LocalExecutionRunner):
 
         self._reject_url_userinfo(args_tuple)
         self._reject_unsafe_git_options(args_tuple)
+        separator_seen = False
+        for arg in args_tuple:
+            if arg == "--":
+                separator_seen = True
+                continue
+            if not separator_seen:
+                self._validate_command_arg(arg)
         requested_env = dict(extra_env or {})
         if set(requested_env).intersection(_TRUSTED_INTERNAL_ENV_KEYS):
             raise ExecutionError("Git 内部环境变量只能由 runner 注入")
@@ -1191,7 +1357,7 @@ class TrustedGitRunner(LocalExecutionRunner):
         self._validate_workspace_git_layout()
         # Run this before any Git-backed config/remote preflight as well as before
         # askpass creation. This keeps every TrustedGit entry point fail-closed.
-        self._validate_git_metadata_before_execution()
+        await self._validate_git_metadata_before_execution()
         await self._validate_workspace_git_config_before_token()
         if credential_token:
             await self._validate_credential_remote(
@@ -1221,13 +1387,22 @@ class TrustedGitRunner(LocalExecutionRunner):
                 }
             )
         try:
-            result = await super().run_args(
-                args_tuple,
-                cwd=cwd,
-                timeout_seconds=timeout_seconds,
+            request = ExecutionRequest(
+                workspace_key=execution_workspace_key(
+                    self.workspace,
+                    self.workspace_service,
+                ),
+                argv=args_tuple,
+                cwd=PurePosixPath(str(cwd).replace("\\", "/")),
                 profile=ExecutionProfile.TRUSTED_CONTROL,
-                extra_env=merged_env,
+                timeout_seconds=timeout_seconds,
+                env=merged_env,
             )
+            # The outer run_args lock remains held while execute performs its
+            # final metadata check and spawns Git.  The repository lock is
+            # task-reentrant so the shared public execute boundary can still
+            # be used (and remains easy to instrument in tests).
+            result = await self.execute(request)
             return self._redact_result(
                 result,
                 credential_token,
@@ -1247,7 +1422,10 @@ class TrustedGitRunner(LocalExecutionRunner):
                 self._active_askpass_paths.discard(resolved_askpass)
                 self._active_askpass_tokens.pop(resolved_askpass, None)
             if askpass_dir is not None:
-                self._cleanup_askpass(askpass_dir)
+                await self._cleanup_temporary_directory_async(
+                    askpass_dir,
+                    "Git askpass 临时目录",
+                )
 
     async def _validate_workspace_git_config_before_token(self) -> None:
         if not os.path.lexists(str(self.workspace / ".git")):
@@ -1256,7 +1434,10 @@ class TrustedGitRunner(LocalExecutionRunner):
         try:
             await self._validate_local_git_config(runtime_env, hooks_dir)
         finally:
-            self._cleanup_temporary_directory(runtime_dir, "Git 运行时目录")
+            await self._cleanup_temporary_directory_async(
+                runtime_dir,
+                "Git 运行时目录",
+            )
 
     async def _validate_credential_remote(
         self,
@@ -1337,24 +1518,94 @@ class TrustedGitRunner(LocalExecutionRunner):
                 raise ExecutionError("Git remote 必须恰好有一个 URL")
             return values[0]
         finally:
-            self._cleanup_temporary_directory(runtime_dir, "Git 运行时目录")
+            await self._cleanup_temporary_directory_async(
+                runtime_dir,
+                "Git 运行时目录",
+            )
 
-    def _validate_git_metadata_before_execution(self) -> None:
-        """在每次 Git 执行前拒绝 metadata 的 symlink/reparse 与 alternates。"""
+    async def _validate_git_metadata_before_execution(self) -> None:
+        """在线程池中检查 Git metadata，避免阻塞 asyncio event loop。
+
+        Git 的 common ``.git`` 目录可能包含数量巨大的 objects。安全边界
+        只需要检查 Git 会用来重定向路径、执行 hook 或访问 refs/logs 的
+        metadata；不会在每次控制面调用时递归整个 common repository。
+        """
+
+        await asyncio.to_thread(self._validate_git_metadata_snapshot)
+
+    def _validate_git_metadata_snapshot(self) -> None:
+        """串行化一次 metadata 扫描，避免并发请求重复递归扫描。"""
+
+        with self._metadata_scan_lock:
+            self._validate_git_metadata_snapshot_locked()
+
+    def _validate_git_metadata_snapshot_locked(self) -> None:
+        """检查安全相关 metadata 路径，不复用可变树的旧快照。"""
 
         roots = self._git_metadata_roots()
+        repo_root = self._controlled_repo_root()
         git_entry = self.workspace / ".git"
         if os.path.lexists(str(git_entry)):
-            self._reject_metadata_node(git_entry, self._controlled_repo_root(), ".git")
+            self._reject_metadata_node(git_entry, repo_root, ".git")
+
         for root in roots:
-            repo_root = self._controlled_repo_root()
             self._reject_metadata_node(root, repo_root, "Git metadata")
+
+            # These files/directories are the bounded set of metadata that the
+            # trusted Git commands can use for path redirection, executable
+            # hooks, or index/ref state.  In particular, do not recursively
+            # walk objects: object databases are routinely very large and the
+            # alternates files are checked explicitly below.
+            direct_paths = (
+                Path("config"),
+                Path("config.worktree"),
+                Path("HEAD"),
+                Path("index"),
+                Path("index.lock"),
+                Path("packed-refs"),
+                Path("shallow"),
+                Path("FETCH_HEAD"),
+                Path("ORIG_HEAD"),
+                Path("MERGE_HEAD"),
+                Path("CHERRY_PICK_HEAD"),
+                Path("REVERT_HEAD"),
+                Path("BISECT_HEAD"),
+                Path("hooks"),
+                Path("info"),
+            )
+            for relative_path in direct_paths:
+                candidate = root / relative_path
+                if os.path.lexists(str(candidate)):
+                    self._reject_metadata_node(
+                        candidate,
+                        repo_root,
+                        f"Git metadata {relative_path}",
+                    )
+
+            objects = root / "objects"
+            if os.path.lexists(str(objects)):
+                self._validate_git_objects_layout(objects, repo_root)
+
+            # Refs and reflogs are the only potentially nested trees we need
+            # to inspect.  They are rescanned on every invocation because a
+            # mutable task gitdir may replace a leaf while preserving the
+            # identity/timestamps of its ancestor directory.
+            for relative_path in (Path("refs"), Path("logs")):
+                candidate = root / relative_path
+                if os.path.lexists(str(candidate)):
+                    self._reject_metadata_tree(
+                        candidate,
+                        repo_root,
+                        f"Git metadata {relative_path}",
+                    )
+
             for alternate_name in (
                 Path("objects") / "info" / "alternates",
                 Path("objects") / "info" / "http-alternates",
             ):
                 alternate = root / alternate_name
                 if os.path.lexists(str(alternate)):
+                    self._reject_metadata_node(alternate, repo_root, "Git alternates")
                     raise ExecutionError("Git objects alternates 不被允许")
 
     def _git_metadata_roots(self) -> tuple[Path, ...]:
@@ -1405,20 +1656,50 @@ class TrustedGitRunner(LocalExecutionRunner):
         repo_root: Path,
         label: str,
     ) -> None:
-        """递归 lstat metadata，拒绝 symlink、junction 和其他 reparse point。"""
+        """lstat 一个 metadata 节点，拒绝 symlink/reparse 路径。"""
 
         cls._reject_metadata_components(path, repo_root, label)
+        try:
+            node_stat = os.lstat(path)
+        except OSError as exc:
+            raise ExecutionError(f"{label} 无法 lstat: {path}") from exc
+        if cls._is_reparse_stat(node_stat):
+            raise ExecutionError(f"{label} 路径不得包含 symlink/reparse")
+
+    def _reject_metadata_tree(
+        self,
+        path: Path,
+        repo_root: Path,
+        label: str,
+    ) -> None:
+        """有限递归检查 refs/logs，每次都 lstat 每个叶子节点。"""
+
+        self._reject_metadata_node(path, repo_root, label)
         try:
             root_stat = os.lstat(path)
         except OSError as exc:
             raise ExecutionError(f"{label} 无法 lstat: {path}") from exc
-        if cls._is_reparse_stat(root_stat):
-            raise ExecutionError(f"{label} 路径不得包含 symlink/reparse")
         if not stat.S_ISDIR(root_stat.st_mode):
             return
-        stack = [path]
+
+        # Some Windows filesystems do not reliably update a parent directory's
+        # timestamp when a child reparse point is created.  Walk every node so
+        # a replacement of a refs/logs leaf cannot be hidden by a stale cache.
+        stack: list[Path] = [path]
+        nodes_seen = 1
+        if nodes_seen > MAX_GIT_REFS_LOGS_NODES:
+            raise ExecutionError(f"{label} 节点数量超过上限")
         while stack:
             current = stack.pop()
+            try:
+                current_stat = os.lstat(current)
+            except OSError as exc:
+                raise ExecutionError(f"{label} 无法 lstat: {current}") from exc
+            if self._is_reparse_stat(current_stat):
+                raise ExecutionError(f"{label} 路径不得包含 symlink/reparse")
+            if not stat.S_ISDIR(current_stat.st_mode):
+                continue
+
             try:
                 with os.scandir(current) as entries:
                     for entry in entries:
@@ -1429,14 +1710,98 @@ class TrustedGitRunner(LocalExecutionRunner):
                             raise ExecutionError(
                                 f"{label} 无法 lstat: {child}"
                             ) from exc
-                        if cls._is_reparse_stat(child_stat):
+                        if self._is_reparse_stat(child_stat):
                             raise ExecutionError(
                                 f"{label} 不得包含 symlink/reparse: {child.name}"
                             )
+                        nodes_seen += 1
+                        if nodes_seen > MAX_GIT_REFS_LOGS_NODES:
+                            raise ExecutionError(f"{label} 节点数量超过上限")
                         if stat.S_ISDIR(child_stat.st_mode):
                             stack.append(child)
             except OSError as exc:
                 raise ExecutionError(f"{label} 无法遍历") from exc
+
+    def _validate_git_objects_layout(
+        self,
+        objects: Path,
+        repo_root: Path,
+    ) -> None:
+        """Check object fanout roots without walking loose object files.
+
+        The common object database may contain millions of files.  Its
+        security-relevant structure is bounded: every direct child is lstat'd,
+        two-hex fanout roots are checked as directories, and ``pack``/``info``
+        have their direct children checked for reparse points.  We never walk
+        inside the fanout directories themselves.
+        """
+
+        self._reject_metadata_node(objects, repo_root, "Git objects")
+        try:
+            objects_stat = os.lstat(objects)
+        except OSError as exc:
+            raise ExecutionError(f"Git objects 无法 lstat: {objects}") from exc
+        if not stat.S_ISDIR(objects_stat.st_mode):
+            return
+
+        direct_nodes_seen = 0
+        try:
+            with os.scandir(objects) as entries:
+                for entry in entries:
+                    direct_nodes_seen += 1
+                    if direct_nodes_seen > MAX_GIT_OBJECTS_DIRECT_NODES:
+                        raise ExecutionError("Git objects 直属节点数量超过上限")
+                    child = Path(entry.path)
+                    try:
+                        child_stat = os.lstat(child)
+                    except OSError as exc:
+                        raise ExecutionError(
+                            f"Git objects 无法 lstat: {child}"
+                        ) from exc
+                    if self._is_reparse_stat(child_stat):
+                        raise ExecutionError(
+                            f"Git objects 不得包含 symlink/reparse: {child.name}"
+                        )
+                    if not stat.S_ISDIR(child_stat.st_mode):
+                        continue
+                    if child.name.lower() in {"pack", "info"}:
+                        self._reject_metadata_direct_children(
+                            child,
+                            repo_root,
+                            f"Git objects/{child.name}",
+                        )
+        except OSError as exc:
+            raise ExecutionError("Git objects 无法遍历直属目录") from exc
+
+    def _reject_metadata_direct_children(
+        self,
+        path: Path,
+        repo_root: Path,
+        label: str,
+    ) -> None:
+        """lstat one bounded metadata directory level without recursion."""
+
+        nodes_seen = 0
+        try:
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    nodes_seen += 1
+                    if nodes_seen > MAX_GIT_OBJECTS_AUX_NODES:
+                        raise ExecutionError(f"{label} 节点数量超过上限")
+                    child = Path(entry.path)
+                    try:
+                        child_stat = os.lstat(child)
+                    except OSError as exc:
+                        raise ExecutionError(
+                            f"{label} 无法 lstat: {child}"
+                        ) from exc
+                    if self._is_reparse_stat(child_stat):
+                        raise ExecutionError(
+                            f"{label} 不得包含 symlink/reparse: {child.name}"
+                        )
+                    self._reject_metadata_components(child, repo_root, label)
+        except OSError as exc:
+            raise ExecutionError(f"{label} 无法遍历直属节点") from exc
 
     @classmethod
     def _reject_metadata_components(
@@ -1507,6 +1872,29 @@ class TrustedGitRunner(LocalExecutionRunner):
                 last_error = exc
                 time.sleep(0.01)
         raise ExecutionError(f"{label}清理失败: {directory}") from last_error
+
+    @staticmethod
+    async def _cleanup_temporary_directory_async(
+        directory: Path,
+        label: str,
+    ) -> None:
+        """Run retrying temporary-directory cleanup outside the event loop."""
+
+        cleanup_task = asyncio.create_task(
+            asyncio.to_thread(
+                TrustedGitRunner._cleanup_temporary_directory,
+                directory,
+                label,
+            )
+        )
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            # A cancelled Git request must still finish its bounded cleanup
+            # before propagating cancellation.  The worker thread performs no
+            # event-loop work and is limited to the existing three attempts.
+            await cleanup_task
+            raise
 
     @staticmethod
     def _create_askpass(token: str) -> Path:

@@ -137,6 +137,16 @@ class _StableRelease:
             "updater": {"protocol_version": 1},
         }
 
+    async def resolve_stable_target(self, version=None, *, expected_digest=None):
+        version = version or "3.0.2"
+        digest = expected_digest or ("sha256:" + "c" * 64)
+        return {
+            "channel": "stable",
+            "version": version,
+            "tag": f"v{version}",
+            "digest": digest,
+        }
+
     async def fetch_sandbox_manifest(self, version):
         return {
             "schema_version": 1,
@@ -171,6 +181,30 @@ class _UnknownChannelDeployment(_Deployment):
 class _InvalidImageIdentityDeployment(_Deployment):
     async def current_state(self):
         raise DeploymentError("running image has no matching repository digest")
+
+
+@pytest.mark.asyncio
+async def test_development_missing_sandbox_pair_is_not_updateable(monkeypatch, tmp_path):
+    class _MissingPairRelease:
+        pass
+
+    async def verify(self, target):
+        return target
+
+    monkeypatch.setattr("sakura_ai_updater.jobs.RegistryClient.verify_target", verify)
+    result = await JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _MissingPairRelease(),
+        _Deployment(),
+        disk_space_threshold=1,
+    ).preflight(_target(), confirm_channel_switch=True)
+    check = next(
+        item for item in result["checks"] if item["name"] == "target_sandbox_pair_revision"
+    )
+    assert result["can_update"] is False
+    assert check["passed"] is False
+    assert "cannot resolve development sandbox images" in check["detail"]
 
 
 @pytest.mark.asyncio

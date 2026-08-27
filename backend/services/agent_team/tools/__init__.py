@@ -14,6 +14,7 @@ from backend.services.agent_team.tools.registry import (
     get_fullstack_tools,
     get_reviewer_tools,
     get_tool_definitions,
+    get_tool_definitions_fresh,
     tool_registry,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "get_fullstack_tools",
     "get_reviewer_tools",
     "get_tool_definitions",
+    "get_tool_definitions_fresh",
     "tool_registry",
 ]

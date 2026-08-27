@@ -21,7 +21,12 @@ services:
       AGENT_TEAM_SANDBOX_RUNTIME: ${SAKURA_SANDBOX_RUNTIME:-docker}
       AGENT_TEAM_SANDBOX_RUNNER_IMAGE_DIGEST: ${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}
       AGENT_TEAM_SANDBOX_EXPECTED_INSTANCE_ID: ${SAKURA_SANDBOX_INSTANCE_ID:-}
-      AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT: ${SAKURA_SANDBOX_WORKSPACE_ROOT:?SAKURA_SANDBOX_WORKSPACE_ROOT must be provided by start.sh}
+      # Standalone source Compose must remain usable without start.sh having
+      # exported an interpolation variable.  Compose exposes the invocation
+      # directory as PWD; using it for both fields keeps the Web admission
+      # identity byte-for-byte equal to the host bind source and, unlike the
+      # old ../workplace fallback, always provides an absolute path.
+      AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT: ${SAKURA_SANDBOX_WORKSPACE_ROOT:-${PWD}/workplace}
     volumes:
       - type: bind
         source: /run/sakura-ai
@@ -36,7 +41,7 @@ services:
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - ../requirements.txt:/app/requirements.txt  # 挂载依赖文件，支持热更新
       - type: bind
-        source: ${SAKURA_SANDBOX_WORKSPACE_ROOT:?SAKURA_SANDBOX_WORKSPACE_ROOT must be provided by start.sh}
+        source: ${SAKURA_SANDBOX_WORKSPACE_ROOT:-${PWD}/workplace}
         target: /app/workplace  # Agent 专家团队独立工作区
       - ../Skills:/app/Skills  # Agent Skills 技能目录持久化
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化

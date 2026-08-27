@@ -92,8 +92,6 @@ class FetchUrlToolHandler:
         "fetch_url_max_redirects",
     ]
 
-    _CONFIG_CACHE_TTL = 60
-
     def __init__(self) -> None:
         settings = get_settings()
         self._timeout: int = settings.fetch_url_timeout
@@ -106,11 +104,24 @@ class FetchUrlToolHandler:
             settings.fetch_url_allowed_content_types
         )
         self._max_redirects: int = settings.fetch_url_max_redirects
-        self._last_config_load: float = 0.0
 
     async def _load_config(self) -> None:
-        if monotonic() - self._last_config_load < self._CONFIG_CACHE_TTL:
-            return
+        """Load current URL-fetch policy before every request.
+
+        Do not retain a module or handler TTL: administrators expect a
+        change to domain/redirect/content limits to affect the next call.
+        """
+        settings = get_settings()
+        self._timeout = settings.fetch_url_timeout
+        self._max_content_length = settings.fetch_url_max_content_length
+        self._max_download_size = settings.fetch_url_max_download_size
+        self._domain_policy = settings.fetch_url_domain_policy
+        self._domain_list = settings.fetch_url_domain_list
+        self._force_https = settings.fetch_url_force_https
+        self._allowed_content_types = self._parse_content_types(
+            settings.fetch_url_allowed_content_types
+        )
+        self._max_redirects = settings.fetch_url_max_redirects
 
         try:
             from sqlalchemy import select
@@ -127,33 +138,30 @@ class FetchUrlToolHandler:
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
 
-            if not config_values:
-                return
-
-            if config_values.get("fetch_url_timeout") is not None:
+            if "fetch_url_timeout" in config_values:
                 self._timeout = int(config_values["fetch_url_timeout"])
-            if config_values.get("fetch_url_max_content_length") is not None:
+            if "fetch_url_max_content_length" in config_values:
                 self._max_content_length = int(
                     config_values["fetch_url_max_content_length"]
                 )
-            if config_values.get("fetch_url_max_download_size") is not None:
+            if "fetch_url_max_download_size" in config_values:
                 self._max_download_size = int(
                     config_values["fetch_url_max_download_size"]
                 )
-            if config_values.get("fetch_url_domain_policy") is not None:
+            if "fetch_url_domain_policy" in config_values:
                 self._domain_policy = config_values["fetch_url_domain_policy"]
-            if config_values.get("fetch_url_domain_list") is not None:
+            if "fetch_url_domain_list" in config_values:
                 self._domain_list = config_values["fetch_url_domain_list"]
-            if config_values.get("fetch_url_force_https") is not None:
-                self._force_https = config_values["fetch_url_force_https"] == "true"
-            if config_values.get("fetch_url_allowed_content_types") is not None:
+            if "fetch_url_force_https" in config_values:
+                self._force_https = str(
+                    config_values["fetch_url_force_https"]
+                ).strip().lower() in {"true", "1", "yes", "on"}
+            if "fetch_url_allowed_content_types" in config_values:
                 self._allowed_content_types = self._parse_content_types(
                     config_values["fetch_url_allowed_content_types"]
                 )
-            if config_values.get("fetch_url_max_redirects") is not None:
+            if "fetch_url_max_redirects" in config_values:
                 self._max_redirects = int(config_values["fetch_url_max_redirects"])
-
-            self._last_config_load = monotonic()
 
         except (ValueError, TypeError) as e:
             logger.warning(f"URL 抓取配置值格式无效，使用环境变量默认值: {e}")
