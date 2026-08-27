@@ -185,7 +185,7 @@ TERM=dumb
 - 容器只看到 `/workspace`，且工作目录固定为 `/workspace/<cwd>`。
 - 容器内不得出现 `/app`、`/run/sakura-ai`、`/run/sakura-ai-sandbox` 或宿主 Docker socket 挂载。
 - sandboxd 在 handoff 前对任务树执行不跟随 symlink/reparse 的全树预检，拒绝后代链接、特殊节点、硬链接和嵌套挂载，并以 no-follow fd 重新校验 inode 后再逐节点变更；handoff 在 venv 创建前只执行一次，合法 venv symlink 不会被误判。不能完成合同时拒绝启动，绝不通过 `0777` 或未验证 ACL 放宽权限。
-- linked worktree 的 `.git` 指针不直接作为容器路径使用：当前 task 的 `.git/worktrees/<name>` 元数据以可写 `/sakura-git/worktree` 挂载，base checkout 的 common `.git` 以只读 `/sakura-git/common` 挂载，并注入固定 `GIT_DIR`、`GIT_COMMON_DIR` 和 `GIT_WORK_TREE`。服务端按当前 workspace 身份严格匹配 `gitdir`/`commondir` 指针；交接后 `.git`、`gitdir`、`commondir` 指针由 root-owned `0444` 保护，common metadata 必须已具备 UID 65532 的遍历/只读权限。其他 task 和 base metadata 不获得可写挂载。
+- linked worktree 的 `.git` 指针不直接作为容器路径使用：base checkout 的 common `.git` 以只读 `/sakura-git/common` 挂载，当前 task 的 `.git/worktrees/<name>` 元数据再由服务端按已验证的 task 名称以可写子 bind 挂载到 `/sakura-git/common/worktrees/<validated-task-name>`。这种 nested 布局保持 task metadata 中原生 `commondir=../..` 的相对语义，使其在容器内解析回 `/sakura-git/common`；同时只覆盖当前 task 的可写子树，不让 common metadata 或其他 task metadata 可写。容器注入固定 `GIT_DIR`、`GIT_COMMON_DIR` 和 `GIT_WORK_TREE`。服务端按当前 workspace 身份严格匹配 `gitdir`/`commondir` 指针；交接后 `.git`、`gitdir`、`commondir` 指针由 root-owned `0444` 保护，common metadata 必须已具备 UID 65532 的遍历/只读权限。
 
 ## 7. sandboxd UDS 协议
 
