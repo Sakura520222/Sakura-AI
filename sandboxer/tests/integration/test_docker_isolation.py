@@ -207,14 +207,15 @@ async def test_real_docker_is_nonroot_offline_readonly_and_cleans_container(tmp_
     assert not adapter._active
 
 
-def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
-    """Document Docker's create-time bind identity independently of sandboxd.
+def test_docker_create_defers_bind_source_resolution_until_start(tmp_path: Path):
+    """Document Docker's start-time bind source resolution independently.
 
     The adapter's workspace lease prevents a cooperative Phase 4 manager from
     doing this replacement.  An external root process that ignores the lease
     is outside the threat model; this opt-in helper only records the real
-    Docker semantic that a source replacement after ``create`` does not change
-    the already configured container mount.
+    Docker semantic that a source replacement after ``create`` is observed at
+    ``start`` time.  The adapter must therefore verify the workspace after
+    ``create`` and before ``start``; the unit TOCTOU tests cover that gate.
     """
 
     config, _key = _integration_config(tmp_path)
@@ -311,7 +312,7 @@ def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
         assert logs.returncode == 0, _redact_docker_stderr(
             logs.stderr, tmp_path=tmp_path
         )
-        assert logs.stdout == b"original\n"
+        assert logs.stdout == b"replacement\n"
     finally:
         if created:
             subprocess.run(
