@@ -134,34 +134,44 @@ def test_production_compose_injects_sandbox_identity_contract():
     )
 
 
-def test_standalone_source_compose_resolves_absolute_workspace_identity():
+def test_standalone_source_compose_resolves_absolute_workspace_identity(tmp_path: Path):
     """The source fallback must satisfy sandboxd's host-path admission gate."""
 
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("Docker is unavailable")
 
+    # Compose merges stdin overrides with the file configuration, so an
+    # ``env_file: []`` override cannot remove the source file's deployment
+    # env_file.  Build the smallest source-checkout layout in tmp_path
+    # instead; this keeps the probe independent from a developer's runtime
+    # .deploy state and from a clean checkout that has no deployment.env.
+    temp_root = tmp_path
+    (temp_root / "docker").mkdir()
+    (temp_root / ".deploy").mkdir()
+    (temp_root / ".deploy" / "deployment.env").write_text(
+        "# Non-sensitive test fixture\n",
+        encoding="utf-8",
+    )
+    compose_file = temp_root / "docker" / "docker-compose.yml"
+    shutil.copy2(ROOT / "docker" / "docker-compose.yml", compose_file)
+
     environment = os.environ.copy()
     environment.pop("SAKURA_SANDBOX_WORKSPACE_ROOT", None)
-    environment["PWD"] = str(ROOT)
-    # Override the deployment-time env_file for this read-only config probe;
-    # a fresh source checkout intentionally does not carry .deploy state.
-    override = "services:\n  web:\n    env_file: []\n"
+    environment.pop("COMPOSE_FILE", None)
+    environment["PWD"] = str(temp_root)
     result = subprocess.run(
         [
             docker,
             "compose",
             "-f",
-            str(ROOT / "docker" / "docker-compose.yml"),
-            "-f",
-            "-",
+            str(compose_file),
             "config",
             "--format",
             "json",
         ],
-        cwd=ROOT,
+        cwd=temp_root,
         env=environment,
-        input=override,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -178,7 +188,64 @@ def test_standalone_source_compose_resolves_absolute_workspace_identity():
     )
     assert Path(expected).is_absolute()
     assert workspace_mount["source"] == expected
-    assert Path(expected).resolve() == (ROOT / "workplace").resolve()
+    assert Path(expected).resolve() == (temp_root / "workplace").resolve()
+
+
+def test_standalone_source_compose_honors_explicit_absolute_workspace_override(
+    tmp_path: Path,
+):
+    """An explicit absolute workspace remains stable from an external cwd."""
+
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("Docker is unavailable")
+
+    temp_root = tmp_path / "source"
+    external_cwd = tmp_path / "external-cwd"
+    explicit_workspace = tmp_path / "explicit-workplace"
+    (temp_root / "docker").mkdir(parents=True)
+    (temp_root / ".deploy").mkdir()
+    external_cwd.mkdir()
+    explicit_workspace.mkdir()
+    (temp_root / ".deploy" / "deployment.env").write_text(
+        "# Non-sensitive test fixture\n",
+        encoding="utf-8",
+    )
+    compose_file = temp_root / "docker" / "docker-compose.yml"
+    shutil.copy2(ROOT / "docker" / "docker-compose.yml", compose_file)
+
+    environment = os.environ.copy()
+    environment.pop("COMPOSE_FILE", None)
+    environment["PWD"] = str(external_cwd)
+    environment["SAKURA_SANDBOX_WORKSPACE_ROOT"] = str(explicit_workspace)
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-f",
+            str(compose_file),
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=external_cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+    web = config["services"]["web"]
+    expected = web["environment"]["AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT"]
+    workspace_mount = next(
+        mount
+        for mount in _volumes(web)
+        if mount.get("target") == "/app/workplace"
+    )
+    assert expected == str(explicit_workspace)
+    assert workspace_mount["source"] == expected
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
