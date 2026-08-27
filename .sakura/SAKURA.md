@@ -6,7 +6,7 @@
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
 - 语言统计: Python: 6468203, HTML: 1078294, Shell: 175475, Dockerfile: 3619
-- 累计反思 11 次
+- 累计反思 10 次
 
 ## 3. 核心审查原则
 - **完整性验证**：PR描述/提交/文件清单/diff一致性核对；功能点逐项勾选，差异>10%标minor
@@ -25,21 +25,28 @@
 - **安全脱敏分级**：except块对外响应必须标注错误类别
 - **文档数值验证**：涉及资源计算须强制提供计算公式及依据
 - **全链路影响分析**：修改核心数据结构时须检索所有读取点
+- **CI红灯阻断**：任意GitHub Actions失败须标记为error，PR合并前须提供全绿run链接
+- **异常捕获粒度**：禁止except Exception:，须捕获具体异常并加错误标签注释(#USER_INPUT_ERROR/#INTERNAL_ERROR)
+- **文档-代码同步**：文档声明约束须有代码实现或校验，缺失标记为error
 
 ## 5. Agent/Worker/Webhook
 - Shell白名单!=安全须检查$()反引号;&&|&等；输出须双层限额
 - 长连接/worker禁止except:continue无日志无退避
+- 依赖文件缓存统一：cache-dependency-path须指向项目依赖文件（requirements.txt/pyproject.toml）
+- Shell错误码对齐：exit/return须返回0-255明确错误码，CI用set-e或捕获防silent success
+- 新增服务层异常映射：errors.py须对应HTTP状态码与翻译条目
 
 ## 6. 知识库维护
 - .sakura/更新须增量追加或精确修改，禁止覆盖式重写
 - 元数据修改须提供计算依据；核心文件修改视为与代码变更同等重要
+- 单一真值源：URL/版本等常量须从中心位置引用，避免硬编码
 
-## 7. 最新反思要点（累计11次）
-- **PR533/530**：diff接近阈值时切compact模式，AI按需查看变更；运行时配置保存后按提示重启
-- **Issue535**：read_file行范围越界应标记为bug+enhancement，需统一错误策略与结构化提示
-- **Issue534**：模糊需求具象化、单一真值源、i18n同步、上下文推断
-- **PR533全链路**：CI红灯阻断、Mock/生产API对齐、配置项全库引用追踪、文档-代码双向验证
-- **模型能力驱动**：用served_capabilities替代硬编码前缀，元数据同步、回退路径覆盖
+## 7. 最新反思要点（累计10次）
+- **PR533(incr2)**：CI红灯阻断、POSIX mock对齐、配置键消费追踪、异常标签、文档同步、大规模PR拆分
+- **ISSUE534**：模糊需求具象化、单一真值源、i18n翻译同步、重复检测基于内容相似度
+- **PR533(初评)**：依赖缓存统一、Shell错误码对齐、服务异常映射、大PR全链路审查、日志监控标签化
+- **PR530(incr2)**：能力声明一致性、元数据完整性、回退路径覆盖、压缩器同步、单元测试规范
+- **PR530(初评)**：配置变更审查、异常捕获粒度、回归行为验证
 
 ## 8. 技术栈
 FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议AI（OpenAI/Anthropic/Gemini） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
