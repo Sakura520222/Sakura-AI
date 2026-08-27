@@ -477,7 +477,11 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                 "--tmpfs",
                 f"{CONTAINER_HOME}:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700,size={self.config.home_tmpfs_bytes}",
                 "--mount",
-                f"type=bind,src={source},dst={CONTAINER_WORKSPACE},rw,bind-propagation=rprivate",
+                # A bind mount is writable by default.  ``rw`` is not a
+                # standalone long-syntax field on all supported Docker
+                # versions; omitting it preserves the writable default while
+                # keeping the propagation policy explicit.
+                f"type=bind,src={source},dst={CONTAINER_WORKSPACE},bind-propagation=rprivate",
                 "--workdir",
                 f"{CONTAINER_WORKSPACE}/{workdir}" if workdir != "." else CONTAINER_WORKSPACE,
                 "--entrypoint",
@@ -506,7 +510,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                     "--mount",
                     (
                         f"type=bind,src={worktree_source},dst={CONTAINER_GIT_WORKTREE},"
-                        "rw,bind-propagation=rprivate"
+                        "bind-propagation=rprivate"
                     ),
                     "--env",
                     f"GIT_DIR={CONTAINER_GIT_WORKTREE}",

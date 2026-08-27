@@ -239,17 +239,31 @@ def test_linked_worktree_gets_task_metadata_and_readonly_common_mounts(
         container_name="sakura-sandbox-sandbox-test123-request-42",
     )
     mounts = [argv[index + 1] for index, item in enumerate(argv) if item == "--mount"]
-    assert mounts[0].endswith(",dst=/workspace,rw,bind-propagation=rprivate")
+    assert mounts[0].endswith(",dst=/workspace,bind-propagation=rprivate")
+    assert ",dst=/workspace,rw," not in mounts[0]
+    assert ",dst=/workspace,readonly" not in mounts[0]
+    common_mount = next(
+        mount
+        for mount in mounts
+        if f"dst={CONTAINER_GIT_COMMON}" in mount
+    )
+    task_mount = next(
+        mount
+        for mount in mounts
+        if f"dst={CONTAINER_GIT_WORKTREE}" in mount
+    )
     assert any(
         f"src={common},dst={CONTAINER_GIT_COMMON},readonly,bind-propagation=rprivate"
         in mount
         for mount in mounts
     )
+    assert ",readonly" in common_mount
     assert any(
-        f"src={task_gitdir},dst={CONTAINER_GIT_WORKTREE},rw,bind-propagation=rprivate"
+        f"src={task_gitdir},dst={CONTAINER_GIT_WORKTREE},bind-propagation=rprivate"
         in mount
         for mount in mounts
     )
+    assert ",readonly" not in task_mount
     assert f"GIT_DIR={CONTAINER_GIT_WORKTREE}" in argv
     assert f"GIT_COMMON_DIR={CONTAINER_GIT_COMMON}" in argv
     assert "GIT_WORK_TREE=/workspace" in argv
