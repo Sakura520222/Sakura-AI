@@ -5,8 +5,8 @@
 
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
-- 语言统计: Python: 6453518, HTML: 1078294, Shell: 175475, Dockerfile: 3619
-- 累计反思 5 次
+- 语言统计: Python: 6468203, HTML: 1078294, Shell: 175475, Dockerfile: 3619
+- 累计反思 11 次
 
 ## 3. 核心审查原则
 - **完整性验证**：PR描述/提交/文件清单/diff一致性核对；功能点逐项勾选，差异>10%标minor
@@ -34,10 +34,12 @@
 - .sakura/更新须增量追加或精确修改，禁止覆盖式重写
 - 元数据修改须提供计算依据；核心文件修改视为与代码变更同等重要
 
-## 7. 最新反思要点（累计5次）
-- **PR530 增量审查**：diff接近阈值时切compact模式，AI按需查看变更
-- **PR524 运行时配置**：应用时区等重启键保存后按提示重启
-- **ISSUE528/529**：AI模型调用超时治理与多路径语义一致性
+## 7. 最新反思要点（累计11次）
+- **PR533/530**：diff接近阈值时切compact模式，AI按需查看变更；运行时配置保存后按提示重启
+- **Issue535**：read_file行范围越界应标记为bug+enhancement，需统一错误策略与结构化提示
+- **Issue534**：模糊需求具象化、单一真值源、i18n同步、上下文推断
+- **PR533全链路**：CI红灯阻断、Mock/生产API对齐、配置项全库引用追踪、文档-代码双向验证
+- **模型能力驱动**：用served_capabilities替代硬编码前缀，元数据同步、回退路径覆盖
 
 ## 8. 技术栈
 FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议AI（OpenAI/Anthropic/Gemini） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
