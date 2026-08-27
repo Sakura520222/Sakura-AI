@@ -26,6 +26,43 @@ def _run_bash(command: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_sandbox_container_id_from_name_rejects_nonempty_malformed_ps_rows():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_CONTAINER_NAME='sakura-ai-sandboxd-test'
+sandbox_container_owned() { return 0; }
+docker() {
+    printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'not-a-docker-id'
+}
+sandbox_container_id_from_name 'sandbox-test1234'
+'''
+    )
+
+    assert result.returncode != 0
+
+
+def test_sandbox_container_id_from_name_accepts_one_full_hex_ps_id():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_CONTAINER_NAME='sakura-ai-sandboxd-test'
+sandbox_container_owned() { return 0; }
+docker() {
+    printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+}
+sandbox_container_id_from_name 'sandbox-test1234'
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+
+
 def test_image_update_fails_closed_without_updater_and_never_calls_web_only_helper():
     result = _run_bash(
         """
@@ -407,6 +444,185 @@ compose_pull_with_native_progress
     assert "--progress tty" not in fallback.stdout
 
 
+def test_production_web_pull_failure_keeps_authoritative_env_unchanged():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+export DEPLOY_DIR="$case_dir/.deploy"
+mkdir -p "$DEPLOY_DIR"
+export DEPLOYMENT_ENV_FILE="$DEPLOY_DIR/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' \
+  'SAKURA_DB_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'SAKURA_SANDBOX_EGRESS_NETWORK=bridge' > "$DEPLOYMENT_ENV_FILE"
+cp "$DEPLOYMENT_ENV_FILE" "$case_dir/before"
+prod=true
+production_prepare_env_stage
+DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+  sandbox_lifecycle_enabled() { return 1; }
+  production_verify_stable_web_alias() { PRODUCTION_STABLE_MANIFEST_DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+  sandbox_pull_image() {
+    [[ "$1" == 'Web' ]] || return 1
+    return 1
+}
+if production_prepare_and_pull_images; then
+    exit 1
+fi
+production_restore_env_transaction 1
+cmp -s "$DEPLOYMENT_ENV_FILE" "$case_dir/before"
+[[ ! -e "$PRODUCTION_STAGED_ENV_FILE" ]]
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_production_partial_sandbox_pull_failure_keeps_authoritative_env_unchanged():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+export DEPLOY_DIR="$case_dir/.deploy"
+mkdir -p "$DEPLOY_DIR"
+export DEPLOYMENT_ENV_FILE="$DEPLOY_DIR/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' \
+  'SAKURA_DB_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'SAKURA_SANDBOX_EGRESS_NETWORK=bridge' > "$DEPLOYMENT_ENV_FILE"
+cp "$DEPLOYMENT_ENV_FILE" "$case_dir/before"
+prod=true
+production_prepare_env_stage
+DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+  sandbox_lifecycle_enabled() { return 0; }
+  production_verify_stable_web_alias() { PRODUCTION_STABLE_MANIFEST_DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+  sandbox_pull_image() {
+    printf '%s\n' "$1" >> "$case_dir/pulls"
+    [[ "$1" == 'Web' ]] && return 0
+    return 1
+}
+sandbox_pull_or_build_images() {
+    sandbox_pull_image 'sandboxd' 'ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    return 1
+}
+if production_prepare_and_pull_images; then
+    exit 1
+fi
+grep -Fxq 'Web' "$case_dir/pulls"
+grep -Fxq 'sandboxd' "$case_dir/pulls"
+production_restore_env_transaction 1
+cmp -s "$DEPLOYMENT_ENV_FILE" "$case_dir/before"
+[[ ! -e "$PRODUCTION_STAGED_ENV_FILE" ]]
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_production_transaction_cleanup_failure_is_idempotent_and_keeps_committed_env():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+deploy_root="$case_dir/.deploy"
+mkdir -p "$deploy_root"
+authoritative="$deploy_root/deployment.env"
+staged="$deploy_root/.deployment.env.pending-test"
+original="$deploy_root/.deployment.env.original-test"
+journal="$deploy_root/.deployment.env.transaction"
+printf '%s\n' 'SAKURA_AI_IMAGE=old-image' 'COMPOSE_PROJECT_NAME=sakura-ai' > "$authoritative"
+cp "$authoritative" "$original"
+cp "$authoritative" "$staged"
+PRODUCTION_AUTH_ENV_FILE="$authoritative"
+PRODUCTION_STAGED_ENV_FILE="$staged"
+PRODUCTION_ORIGINAL_ENV_FILE="$original"
+PRODUCTION_TRANSACTION_JOURNAL_FILE="$journal"
+PRODUCTION_ENV_COMMITTED=0
+production_write_transaction_journal prepared
+printf '%s\n' 'SAKURA_AI_IMAGE=committed-image' 'COMPOSE_PROJECT_NAME=sakura-ai' > "$staged"
+production_commit_env_stage
+cp "$authoritative" "$case_dir/committed"
+
+# Simulate the precise failure: the journal unlink fails, so the complete
+# journal+rollback pair must remain available for the next trap/restart.
+production_remove_transaction_file() {
+    if [[ "$1" == "$PRODUCTION_TRANSACTION_JOURNAL_FILE" ]]; then
+        return 1
+    fi
+    rm -f -- "$1"
+}
+if production_restore_env_transaction 0; then
+    exit 1
+fi
+cmp -s "$authoritative" "$case_dir/committed"
+[[ -f "$original" && -f "$journal" ]]
+
+# A second EXIT-trap attempt and a fresh-process-style recovery must both be
+# strict no-ops for the already committed authority while cleanup is blocked.
+if production_restore_env_transaction 1; then
+    exit 1
+fi
+cmp -s "$authoritative" "$case_dir/committed"
+[[ -f "$original" && -f "$journal" ]]
+if production_recover_env_transaction "$authoritative" "$journal" "$deploy_root"; then
+    exit 1
+fi
+cmp -s "$authoritative" "$case_dir/committed"
+[[ -f "$original" && -f "$journal" ]]
+''',
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_production_pinned_web_ref_still_requires_stable_alias_digest_match():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+export DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.2.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
+sandbox_load_deployment_config() { :; }
+sandbox_release_version() { printf '%s\n' '3.2.0'; }
+sandbox_lifecycle_enabled() { return 1; }
+sandbox_pull_image() { printf 'UNEXPECTED_PULL\n'; return 99; }
+docker() {
+    if [[ "$*" == *':latest' ]]; then
+        printf '%s\n' '{"Descriptor":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    else
+        printf '%s\n' '{"Descriptor":{"digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}'
+    fi
+}
+if production_prepare_and_pull_images; then
+    exit 1
+fi
+''',
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "UNEXPECTED_PULL" not in result.stdout
+    assert "manifest digest 不一致" in result.stderr
+
+
 def test_start_sh_help_documents_destructive_scope_and_lifecycle_commands():
     result = _run_bash("bash ./start.sh --help")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -417,6 +633,90 @@ def test_start_sh_help_documents_destructive_scope_and_lifecycle_commands():
     assert 'set_phase "pull"' in script
     assert "$COMPOSE up -d --pull never" not in script
     assert "$COMPOSE up -d --pull always" not in script
+
+
+def test_source_local_or_disabled_mode_skips_root_owned_sandbox_and_sandbox_requires_root():
+    result = _run_bash(
+        """
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+id() { if [[ "$1" == "-u" ]]; then printf '1000\\n'; else command id "$@"; fi; }
+AGENT_TEAM_EXECUTION_BACKEND=local
+if sandbox_lifecycle_enabled false; then exit 1; fi
+AGENT_TEAM_ENABLED=false
+AGENT_TEAM_EXECUTION_BACKEND=sandbox
+if sandbox_lifecycle_enabled false; then exit 1; fi
+unset AGENT_TEAM_ENABLED
+AGENT_TEAM_EXECUTION_BACKEND=sandbox
+if sandbox_lifecycle_enabled false; then
+    if sandbox_require_root; then exit 1; fi
+else
+    exit 1
+fi
+"""
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "require root" in result.stderr
+
+
+def test_standalone_source_compose_has_workspace_default_without_interpolation_env():
+    compose = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "SAKURA_SANDBOX_WORKSPACE_ROOT:-${PWD}/workplace" in compose
+    assert "SAKURA_SANDBOX_WORKSPACE_ROOT:?" not in compose
+
+
+def test_legacy_dependency_network_is_migrated_to_server_owned_egress():
+    result = _run_bash(
+        """
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+if ! sandbox_egress_network_is_safe none; then exit 1; fi
+if ! sandbox_egress_network_is_safe sakura-deps_1; then exit 1; fi
+for value in host container:abc ns:abc '-bad' 'bad/name' 'bad name' ''; do
+    if sandbox_egress_network_is_safe "$value"; then exit 1; fi
+done
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+DEPLOY_DIR="$case_dir"
+printf 'SAKURA_DEPLOY_MODE=source\nSAKURA_SANDBOX_DEPENDENCY_NETWORK=sakura-deps_1\n' > "$DEPLOYMENT_ENV_FILE"
+SANDBOX_EGRESS_NETWORK=bridge
+sandbox_load_deployment_config
+[[ "$SANDBOX_EGRESS_NETWORK" == sakura-deps_1 ]]
+printf 'SAKURA_DEPLOY_MODE=source\nSAKURA_SANDBOX_DEPENDENCY_NETWORK=none\n' > "$DEPLOYMENT_ENV_FILE"
+SANDBOX_EGRESS_NETWORK=bridge
+init_deployment_env
+grep -Fq 'SAKURA_SANDBOX_EGRESS_NETWORK=bridge' "$DEPLOYMENT_ENV_FILE"
+! grep -Fq 'SAKURA_SANDBOX_DEPENDENCY_NETWORK=' "$DEPLOYMENT_ENV_FILE"
+"""
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_egress_network_defaults_to_bridge_and_rejects_runtime_namespace_inputs():
+    result = _run_bash(
+        """
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+[[ "$SANDBOX_EGRESS_NETWORK" == bridge ]]
+if ! sandbox_egress_network_is_safe bridge; then exit 1; fi
+if ! sandbox_egress_network_is_safe sakura-egress_1; then exit 1; fi
+for value in host container:abc ns:abc '--network=host' 'bad/name' 'bad name' ''; do
+    if sandbox_egress_network_is_safe "$value"; then exit 1; fi
+done
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+DEPLOY_DIR="$case_dir"
+printf 'SAKURA_SANDBOX_EGRESS_NETWORK=sakura-egress_1\\n' > "$DEPLOYMENT_ENV_FILE"
+sandbox_load_deployment_config
+[[ "$SANDBOX_EGRESS_NETWORK" == sakura-egress_1 ]]
+"""
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_uninstall_refuses_to_signal_live_pid_without_matching_runner_identity():

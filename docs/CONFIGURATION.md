@@ -221,6 +221,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
+| 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 完全隔离；`web_tools`（默认）仅授权受控 Web 工具；`full_access` 允许 Agent/Dependency runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_max_iterations_per_task` | 单任务最大自动迭代次数 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
@@ -238,8 +239,19 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | `AGENT_TEAM_SANDBOX_RUNNER_IMAGE_DIGEST` | Release 的 `agent-sandbox-manifest.json` | runner 的不可变镜像引用；生产必须是 `name@sha256:...` |
 | `AGENT_TEAM_SANDBOX_EXPECTED_INSTANCE_ID` | `start.sh` 持久化并注入 | 绑定当前受管 sandboxd 实例，缺失或不匹配即拒绝 Agent 执行 |
 | `AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT` | `start.sh` 计算的宿主绝对路径 | 仅作为 daemon 身份；Web 实际访问路径仍是 `/app/workplace` |
+| `SAKURA_SANDBOX_EGRESS_NETWORK` | `bridge`；部署管理员固定 | sandboxd 服务端把 wire 上的 `egress` 能力映射到该 Docker 网络；允许内置 `bridge` 或安全的 named network，拒绝 `host`、`container:*`、`ns:*` 和任意参数 |
+| `SAKURA_SANDBOX_DEPENDENCY_NETWORK` | 旧部署兼容键 | 仅用于迁移旧 deployment.env；新生命周期使用 `SAKURA_SANDBOX_EGRESS_NETWORK`，WebUI 和执行请求都不接触 Docker 网络名 |
 | `AGENT_TEAM_SANDBOX_TIMEOUT_SECONDS` | 900 | Backend 请求上限；daemon 仍使用更严格的服务端 clamp |
 | `AGENT_TEAM_SANDBOX_MAX_OUTPUT_BYTES` | 1 MiB | stdout + stderr 合计字节上限 |
+
+`agent_team_network_policy` 每次 Agent 工具或 sandbox 调用都会从数据库 fresh 读取，保存后
+下一次调用立即生效：`offline` 禁止受控 Web 工具且 runner 为 `network none`；`web_tools`
+（默认）只允许 `search_web`/`fetch_url`（仍受既有开关和 SSRF/域名策略约束），runner 仍为
+`network none`；`full_access` 同时把 Agent 与 Dependency runner 映射为 UDS `network_mode=egress`。
+请求只携带 `none|egress` 能力，不携带 Docker 网络名。sandboxd 服务端固定使用
+`SAKURA_SANDBOX_EGRESS_NETWORK`（默认 Docker `bridge`），因此全权限模式在全新 Docker
+环境无需额外创建网络即可出网；若配置 named network，该网络必须由部署管理员预先管理。
+`local` backend 无法兑现 `offline` 的 OS 隔离要求，会明确拒绝执行，不会静默降级。
 
 生产 sandboxd 的镜像、runner 镜像、Docker 参数、网络、mount、UID/GID、capabilities、资源限制和宿主 workspace root 均由部署侧控制，不能由模型请求或 Web 动态配置覆盖。Web 与 runner 不挂载 Docker socket；只有独立 sandboxd 容器持有该 socket。
 

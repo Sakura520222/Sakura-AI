@@ -15,6 +15,7 @@ from .errors import (
     ConcurrencyLimitError,
     DaemonShuttingDownError,
     InvalidRequestError,
+    PolicyDeniedError,
     RequestConflictError,
 )
 from .models import (
@@ -23,6 +24,7 @@ from .models import (
     ExecutionData,
     ExecutionRequest,
     HealthData,
+    NetworkMode,
 )
 from .runtime import RuntimeAdapter, RuntimeResult, UnavailableRuntimeAdapter
 
@@ -97,6 +99,11 @@ class SandboxExecutionService:
             ready=self._runtime_ready and not self._shutting_down,
             runtime=self.runtime.name,
             profiles=["agent", "dependency"],
+            # Health advertises a capability, never the deployment-owned
+            # Docker network name.
+            egress_capability=(
+                "egress" if self.config.egress_network != "none" else "none"
+            ),
             instance_id=self.config.instance_id or "",
             workspace_root=self.config.workspace_root or "",
             runner_image_digest=self.config.runner_image_digest or "",
@@ -104,6 +111,14 @@ class SandboxExecutionService:
 
     async def execute(self, request: ExecutionRequest) -> ExecutionData:
         """Atomically admit one request and await its one-shot task."""
+
+        if (
+            request.network_mode is NetworkMode.EGRESS
+            and self.config.egress_network == "none"
+        ):
+            raise PolicyDeniedError(
+                "egress network capability is unavailable in this sandboxd deployment"
+            )
 
         async with self._lock:
             self._prune_ledger_locked()

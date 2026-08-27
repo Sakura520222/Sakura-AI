@@ -109,7 +109,10 @@ class GitDiffTool(BaseTool):
         ctx: ToolContext,
     ) -> ToolResult:
         """git diff [files] — 显示完整 diff 内容。"""
-        git_args: list[str] = ["git", "diff"]
+        # Keep every user-selected path after Git's option terminator.  This
+        # preserves literal filenames such as ``--stat`` or ``-p`` instead of
+        # letting Git parse them as additional diff options.
+        git_args: list[str] = ["git", "diff", "--"]
         workspace_root = ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
         if file_paths and isinstance(file_paths, list):
             for fp in file_paths:

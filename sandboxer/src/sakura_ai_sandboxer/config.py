@@ -34,6 +34,9 @@ DEFAULT_HOME_TMPFS_BYTES = 128 * 1024 * 1024
 DEFAULT_SOCKET_OWNER = 0
 DEFAULT_SOCKET_GROUP = 9473
 DEFAULT_SOCKET_MODE = 0o660
+# The daemon owns the concrete Docker network.  ``bridge`` is the only
+# default and is intentionally not exposed to Backend request payloads.
+DEFAULT_EGRESS_NETWORK = "bridge"
 
 # Production references carry a repository/name and digest.  A source
 # checkout may instead use Docker's content-addressed local image ID after a
@@ -45,6 +48,7 @@ _IMAGE_DIGEST_RE = re.compile(
 _IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 _SAFE_BINARY_NAMES = frozenset({"docker", "podman"})
 _INSTANCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
+_NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 
 
 def _versioned_envelope_bytes(payload: dict[str, object]) -> int:
@@ -169,6 +173,12 @@ class SandboxdConfig:
     workspace_root: str | None = None
     instance_id: str | None = None
     oci_runtime: str | None = None
+    # Agent/Dependency requests always use ``none`` unless the request
+    # explicitly carries the constrained ``egress`` capability.  The daemon
+    # then resolves that capability to this server-owned Docker network.
+    # ``host``/container/namespace forms and arbitrary Docker arguments are
+    # rejected.
+    egress_network: str = DEFAULT_EGRESS_NETWORK
     pids_limit: int = DEFAULT_PIDS_LIMIT
     memory_bytes: int = DEFAULT_MEMORY_BYTES
     cpus: float = DEFAULT_CPUS
@@ -278,6 +288,19 @@ class SandboxdConfig:
             r"[A-Za-z0-9][A-Za-z0-9_.-]{0,31}", self.oci_runtime
         ):
             raise ValueError("oci_runtime is invalid")
+        if not isinstance(self.egress_network, str):
+            raise ValueError("egress_network must be a string")
+        egress_network = self.egress_network.strip()
+        if egress_network != "none" and (
+            egress_network.casefold() in {"host", "bridge"}
+            and egress_network != DEFAULT_EGRESS_NETWORK
+            or egress_network.casefold().startswith(("container:", "ns:"))
+            or not _NETWORK_NAME_RE.fullmatch(egress_network)
+        ):
+            raise ValueError(
+                "egress_network must be bridge, none, or an explicitly administered network name"
+            )
+        object.__setattr__(self, "egress_network", egress_network)
         _require_int(self.pids_limit, "pids_limit", 1, 4096)
         _require_int(
             self.memory_bytes,
@@ -306,6 +329,7 @@ class SandboxdConfig:
 
 __all__ = [
     "DEFAULT_CLEANUP_MARGIN_SECONDS",
+    "DEFAULT_EGRESS_NETWORK",
     "DEFAULT_LEDGER_CAPACITY",
     "DEFAULT_LEDGER_TTL_SECONDS",
     "DEFAULT_MAX_CONCURRENT",

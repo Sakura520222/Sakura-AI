@@ -43,6 +43,7 @@ prod=true SAKURA_AI_IMAGE="" DEPLOY_DIR="$W2" DEPLOYMENT_ENV_FILE="$W2/deploymen
 assert_contains "$W2/deployment.env" "SAKURA_DEPLOY_MODE=image" "S2: image 模式写 image"
 assert_contains "$W2/deployment.env" "SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest" "S2: image 模式写实际镜像值（默认 latest）"
 assert_contains "$W2/deployment.env" "COMPOSE_PROJECT_NAME=sakura-ai" "S2: image 模式固定生产 Compose 项目名"
+assert_contains "$W2/deployment.env" "SAKURA_SANDBOX_EGRESS_NETWORK=bridge" "S2: sandbox egress 默认 bridge"
 assert_not_contains "$W2/deployment.env" 'SAKURA_AI_IMAGE=${' "S2: 不写 shell 表达式"
 password_w2=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$W2/deployment.env")
 [[ "$password_w2" =~ ^[0-9a-f]{64}$ ]] && report 0 "S2: image 模式生成 64 位十六进制数据库密码" || report 1 "S2: 数据库密码格式错误"
@@ -215,10 +216,11 @@ assert_contains "$E3_ENV" "SAKURA_DB_PASSWORD=$E3_PW" "E3: 环境变量密码被
 
 # E4: 完整合法状态不触发补全（内容不变）
 E4_ENV="$DIGEST_DIR/e4.env"
-printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:%s\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\n' "$FAKE_IMAGE_DIGEST" 8 > "$E4_ENV"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:edge@sha256:%s\nCOMPOSE_PROJECT_NAME=sakura-ai\nSAKURA_DB_PASSWORD=%064d\nSAKURA_SANDBOX_DEPENDENCY_NETWORK=none\n' "$FAKE_IMAGE_DIGEST" 8 > "$E4_ENV"
 E4_BEFORE=$(cat "$E4_ENV")
 DEPLOY_DIR="$DIGEST_DIR" DEPLOYMENT_ENV_FILE="$E4_ENV" init_deployment_env >/dev/null 2>&1
-[[ "$(cat "$E4_ENV")" == "$E4_BEFORE" ]] && report 0 "E4: 完整状态不重写" || report 1 "E4: 完整状态被修改"
+[[ "$(grep -c '^SAKURA_SANDBOX_EGRESS_NETWORK=bridge$' "$E4_ENV")" -eq 1 && "$(grep -c '^SAKURA_SANDBOX_DEPENDENCY_NETWORK=' "$E4_ENV")" -eq 0 ]] \
+    && report 0 "E4: 旧依赖网络键迁移为 bridge" || report 1 "E4: 旧依赖网络键未安全迁移"
 
 # E5: 镜像部署成功后自动拉起 host updater daemon
 ENSURE_LOG="$DIGEST_DIR/ensure.log"

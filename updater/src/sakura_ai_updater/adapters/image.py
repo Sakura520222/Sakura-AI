@@ -17,6 +17,7 @@ import re
 import stat
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,6 +190,8 @@ _RUNNER_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-agent-runner"
 # updater's bounded Docker pull recovery. Each attempt is individually capped
 # by ``command_timeout``; rollback never loops until success.
 _SANDBOX_UNINSTALL_RETRIES = 1
+_TRANSACTION_SCHEMA_VERSION = 1
+_TRANSACTION_STATES = frozenset({"prepared", "committed"})
 
 
 def _read_compose_project_name(path: str) -> str:
@@ -325,6 +328,137 @@ def _atomic_write_content(
         raise
 
 
+def _transaction_paths(path: str | os.PathLike[str]) -> tuple[Path, Path]:
+    """Return the journal and rollback-copy paths for one deployment file."""
+
+    destination = Path(path)
+    journal = destination.with_name(f".{destination.name}.transaction.json")
+    backup = destination.with_name(f".{destination.name}.rollback")
+    return journal, backup
+
+
+def _read_transaction_journal(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ImageAdapterError(
+            f"deployment transaction journal is unreadable: {str(path)!r}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ImageAdapterError("deployment transaction journal is not an object")
+    if data.get("schema_version") != _TRANSACTION_SCHEMA_VERSION:
+        raise ImageAdapterError("unsupported deployment transaction journal schema")
+    if data.get("state") not in _TRANSACTION_STATES:
+        raise ImageAdapterError("invalid deployment transaction journal state")
+    return data
+
+
+def _write_transaction_journal(path: Path, data: Mapping[str, Any]) -> None:
+    """Durably write a journal without exposing deployment secrets in logs."""
+
+    content = json.dumps(
+        dict(data), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    _atomic_write_content(path, content, mode=0o600)
+
+
+def _unlink_transaction_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ImageAdapterError(
+            f"cannot remove deployment transaction file {str(path)!r}: {exc}"
+        ) from exc
+
+
+def recover_pending_deployment_transaction(path: str) -> None:
+    """Recover a deployment transaction left by a cancelled/crashed updater.
+
+    ``prepared`` means the authoritative file may have been replaced but the
+    update never reached its final health gate, so the exact rollback copy is
+    restored before the updater daemon starts serving.  ``committed`` is only
+    written after the health gate and is therefore safe to finish by deleting
+    the retained rollback copy.  Any malformed journal or failed restore is a
+    hard error; silently deleting either artifact would turn an interrupted
+    deployment into an unrecoverable mixed state.
+    """
+
+    destination = Path(path)
+    journal, default_backup = _transaction_paths(path)
+    try:
+        journal_data = _read_transaction_journal(journal)
+    except FileNotFoundError:
+        return
+
+    recorded_destination = journal_data.get("deployment_env")
+    if recorded_destination != str(destination):
+        raise ImageAdapterError("deployment transaction journal path mismatch")
+    backup_value = journal_data.get("backup")
+    if backup_value is not None and not isinstance(backup_value, str):
+        raise ImageAdapterError("deployment transaction journal backup is invalid")
+    backup = Path(backup_value) if backup_value else default_backup
+    if backup.parent != destination.parent:
+        raise ImageAdapterError("deployment transaction backup escapes its directory")
+
+    if journal_data["state"] == "committed":
+        # The new authoritative file has passed all gates.  Keep the committed
+        # state if cleanup itself fails so the next daemon startup can retry it.
+        _unlink_transaction_file(backup)
+        _unlink_transaction_file(journal)
+        return
+
+    had_content = journal_data.get("had_content")
+    if type(had_content) is not bool:
+        raise ImageAdapterError("deployment transaction journal content marker is invalid")
+    if had_content:
+        if not backup.is_file() or backup.is_symlink():
+            raise ImageAdapterError(
+                "deployment transaction rollback copy is missing or unsafe"
+            )
+        try:
+            content = backup.read_bytes()
+        except OSError as exc:
+            raise ImageAdapterError("cannot read deployment transaction rollback copy") from exc
+        mode = journal_data.get("mode")
+        uid = journal_data.get("uid")
+        gid = journal_data.get("gid")
+        if mode is not None and (not isinstance(mode, int) or mode < 0):
+            raise ImageAdapterError("deployment transaction mode is invalid")
+        if uid is not None and not isinstance(uid, int):
+            raise ImageAdapterError("deployment transaction uid is invalid")
+        if gid is not None and not isinstance(gid, int):
+            raise ImageAdapterError("deployment transaction gid is invalid")
+        _atomic_write_content(destination, content, mode=mode, uid=uid, gid=gid)
+        try:
+            if destination.read_bytes() != content:
+                raise ImageAdapterError(
+                    "deployment transaction rollback verification failed"
+                )
+        except OSError as exc:
+            raise ImageAdapterError(
+                "cannot verify deployment transaction rollback"
+            ) from exc
+    else:
+        try:
+            destination.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ImageAdapterError(
+                "cannot remove deployment file during transaction rollback"
+            ) from exc
+        if destination.exists():
+            raise ImageAdapterError(
+                "deployment transaction rollback could not remove deployment file"
+            )
+    _unlink_transaction_file(backup)
+    _unlink_transaction_file(journal)
+
+
 def capture_deployment_snapshot(path: str) -> DeploymentSnapshot:
     """Capture bytes, mode, owner and parsed values before a transaction."""
 
@@ -341,6 +475,36 @@ def capture_deployment_snapshot(path: str) -> DeploymentSnapshot:
         uid=getattr(stat, "st_uid", None),
         gid=getattr(stat, "st_gid", None),
         values=_read_env_values(path),
+    )
+
+
+def _snapshot_with_values(
+    snapshot: DeploymentSnapshot, values: Mapping[str, str]
+) -> DeploymentSnapshot:
+    """Return an in-memory snapshot with selected env keys replaced.
+
+    The helper intentionally does not touch the destination.  It is used to
+    freeze a moving ``:latest`` anchor in the rollback snapshot while keeping
+    the authoritative file unchanged until activation has actually begun.
+    """
+
+    if snapshot.content is None:
+        return snapshot
+    try:
+        text = snapshot.content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ImageAdapterError("deployment.env is not valid UTF-8") from exc
+    lines = text.splitlines(keepends=True)
+    updated = "".join(_replace_env_lines(lines, values)).encode("utf-8")
+    updated_values = dict(snapshot.values)
+    updated_values.update(values)
+    return DeploymentSnapshot(
+        path=snapshot.path,
+        content=updated,
+        mode=snapshot.mode,
+        uid=snapshot.uid,
+        gid=snapshot.gid,
+        values=updated_values,
     )
 
 
@@ -479,8 +643,12 @@ class ImageAdapter:
         self.production = production
         self._trusted_lstat = trusted_lstat or os.lstat
         self._last_snapshot: DeploymentSnapshot | None = None
+        self._pending_snapshot: DeploymentSnapshot | None = None
         self._new_sandbox_install_attempted = False
         self.activation_rollback_completed = False
+        self._transaction_journal: Path | None = None
+        self._transaction_backup: Path | None = None
+        self._transaction_active = False
 
     def _project_start_script(self) -> Path:
         """Derive and validate the repository-owned lifecycle entrypoint."""
@@ -515,12 +683,106 @@ class ImageAdapter:
         repository, digest = ref.rsplit("@", 1)
         return repository, digest
 
-    async def capture_snapshot(self) -> DeploymentSnapshot:
-        """Capture deployment.env before changing any image identity."""
+    async def capture_snapshot(
+        self, *, anchor_image: str | None = None
+    ) -> DeploymentSnapshot:
+        """Capture deployment.env before changing any image identity.
 
+        ``anchor_image`` is an in-memory replacement for a moving current
+        image.  It lets the orchestrator capture an immutable rollback target
+        without materializing ``:latest`` in the authoritative file first.
+        """
+
+        if not self._transaction_active:
+            await asyncio.to_thread(
+                recover_pending_deployment_transaction, self.deployment_env
+            )
         snapshot = await asyncio.to_thread(capture_deployment_snapshot, self.deployment_env)
+        if anchor_image is not None:
+            snapshot = _snapshot_with_values(
+                snapshot, {"SAKURA_AI_IMAGE": anchor_image}
+            )
         self._last_snapshot = snapshot
+        self._pending_snapshot = snapshot
         return snapshot
+
+    async def _begin_transaction(self, snapshot: DeploymentSnapshot) -> None:
+        """Persist the exact rollback copy before the first env replacement."""
+
+        if self._transaction_active:
+            raise ImageAdapterError("another deployment transaction is already active")
+        await asyncio.to_thread(
+            recover_pending_deployment_transaction, self.deployment_env
+        )
+        journal, default_backup = _transaction_paths(self.deployment_env)
+        backup = default_backup.with_name(
+            f"{default_backup.name}.{os.getpid()}.{uuid.uuid4().hex}"
+        )
+        if snapshot.content is not None:
+            await asyncio.to_thread(
+                _atomic_write_content,
+                backup,
+                snapshot.content,
+                mode=snapshot.mode or 0o600,
+                uid=snapshot.uid,
+                gid=snapshot.gid,
+            )
+        data = {
+            "schema_version": _TRANSACTION_SCHEMA_VERSION,
+            "state": "prepared",
+            "deployment_env": str(Path(self.deployment_env)),
+            "backup": str(backup) if snapshot.content is not None else None,
+            "had_content": snapshot.content is not None,
+            "mode": snapshot.mode,
+            "uid": snapshot.uid,
+            "gid": snapshot.gid,
+        }
+        try:
+            await asyncio.to_thread(_write_transaction_journal, journal, data)
+        except BaseException:
+            if snapshot.content is not None:
+                try:
+                    await asyncio.to_thread(_unlink_transaction_file, backup)
+                except Exception as cleanup_exc:
+                    raise ImageAdapterError(
+                        "cannot prepare deployment transaction and rollback copy "
+                        f"cleanup failed: {cleanup_exc}"
+                    ) from cleanup_exc
+            raise
+        self._transaction_journal = journal
+        self._transaction_backup = backup if snapshot.content is not None else None
+        self._transaction_active = True
+
+    async def _cleanup_transaction(self) -> None:
+        """Delete journal/rollback artifacts, preserving them on any failure."""
+
+        journal = self._transaction_journal
+        backup = self._transaction_backup
+        if backup is not None:
+            await asyncio.to_thread(_unlink_transaction_file, backup)
+        if journal is not None:
+            await asyncio.to_thread(_unlink_transaction_file, journal)
+        self._transaction_journal = None
+        self._transaction_backup = None
+        self._transaction_active = False
+
+    async def _commit_transaction(self) -> None:
+        """Mark a health-checked activation committed, then clean artifacts."""
+
+        if not self._transaction_active:
+            return
+        journal = self._transaction_journal
+        if journal is None:
+            raise ImageAdapterError("deployment transaction journal is missing")
+        data = await asyncio.to_thread(_read_transaction_journal, journal)
+        data["state"] = "committed"
+        await asyncio.to_thread(_write_transaction_journal, journal, data)
+        await self._cleanup_transaction()
+
+    async def finalize_activation(self) -> None:
+        """Finalize the transaction after the caller's health gate succeeds."""
+
+        await self._commit_transaction()
 
     async def _run_compose_up(self) -> None:
         compose_argv = ["docker", "compose", "--env-file", self.deployment_env]
@@ -616,6 +878,7 @@ class ImageAdapter:
             selected,
             remove_new_sandbox=self._new_sandbox_install_attempted,
         )
+        await self._cleanup_transaction()
 
     async def _run_command(
         self,
@@ -720,7 +983,14 @@ class ImageAdapter:
 
         if (sandboxd_image is None) != (runner_image is None):
             raise ImageAdapterError("sandboxd and runner refs must be supplied together")
-        snapshot = await self.capture_snapshot()
+        # The orchestrator may have captured an in-memory snapshot whose Web
+        # ref is already pinned to the old running digest.  Consume that
+        # snapshot so activation and rollback share one transaction boundary;
+        # direct callers still get the historical capture-on-activate path.
+        snapshot = self._pending_snapshot
+        self._pending_snapshot = None
+        if snapshot is None:
+            snapshot = await self.capture_snapshot()
         self._new_sandbox_install_attempted = False
         # Validate the old state before changing deployment.env.  A single
         # persisted digest cannot be safely rolled back and is never treated as
@@ -753,6 +1023,7 @@ class ImageAdapter:
         try:
             self.activation_rollback_completed = False
             self._new_sandbox_install_attempted = False
+            await self._begin_transaction(snapshot)
             await asyncio.to_thread(write_deployment_env_values, self.deployment_env, values)
             if sandboxd_image is not None:
                 # Mark before invoking the controlled lifecycle command: a
@@ -767,6 +1038,7 @@ class ImageAdapter:
                     snapshot,
                     remove_new_sandbox=self._new_sandbox_install_attempted,
                 )
+                await self._cleanup_transaction()
                 self.activation_rollback_completed = True
             except Exception as rollback_exc:
                 raise ImageAdapterError(

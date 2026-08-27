@@ -53,7 +53,8 @@ LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI
       org.opencontainers.image.revision="${SAKURA_BUILD_REVISION}" \
       org.opencontainers.image.version="${SAKURA_BUILD_VERSION}" \
       org.opencontainers.image.created="${SAKURA_BUILD_CREATED}" \
-      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}"
+      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}" \
+      com.sakura-ai.component="web"
 
 # 运行期通用编译工具链（Agent Team 编译 C/C++/Rust/CGO Go 项目必需）
 RUN apt-get update && apt-get install -y \

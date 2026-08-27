@@ -167,7 +167,7 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                    command="python -m venv .venv",
+                    command="python -m venv /workspace/.venv",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )
@@ -363,7 +363,9 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                    command=".venv/bin/pip install -r requirements.txt --quiet",
+                    command=(
+                        "/workspace/.venv/bin/pip install -r requirements.txt --quiet"
+                    ),
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )
@@ -575,7 +577,7 @@ async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                    command="python -m venv .venv",
+                    command="python -m venv /workspace/.venv",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )

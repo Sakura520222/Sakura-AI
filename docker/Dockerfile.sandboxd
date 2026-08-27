@@ -9,12 +9,14 @@
 ARG SAKURA_BUILD_VERSION=unknown
 ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+ARG SAKURA_BUILD_CHANNEL=unknown
 
 FROM python:3.14-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
 
 ARG SAKURA_BUILD_VERSION=unknown
 ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+ARG SAKURA_BUILD_CHANNEL=unknown
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -28,6 +30,7 @@ LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI
       org.opencontainers.image.version="${SAKURA_BUILD_VERSION}" \
       org.opencontainers.image.revision="${SAKURA_BUILD_REVISION}" \
       org.opencontainers.image.created="${SAKURA_BUILD_CREATED}" \
+      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}" \
       com.sakura-ai.component="sandboxd"
 
 # The daemon invokes the host Docker CLI through the mounted API socket.  It

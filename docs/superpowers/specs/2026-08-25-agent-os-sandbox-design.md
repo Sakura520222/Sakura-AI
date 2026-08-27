@@ -1,13 +1,13 @@
 # Agent OS 级沙箱设计
 
 日期：2026-08-25
-状态：代码与静态合同已完成；真实 Linux Docker 运行时质量门待执行
+状态：审查修复与 WebUI 动态网络策略实现中；真实 Linux Docker 运行时质量门待执行
 关联 Issue：[GitHub Issue #528](https://github.com/Sakura520222/Sakura-AI/issues/528)
 实施计划：[2026-08-25-agent-os-sandbox-implementation.md](../plans/2026-08-25-agent-os-sandbox-implementation.md)
 
 ## 1. 决策摘要
 
-Agent 生成或影响的命令不得继续由 Sakura AI Web 进程直接执行。Docker 部署采用由宿主 `start.sh` 独立管理的专用 `sakura-ai-sandboxd` 容器，通过专用 Unix Domain Socket 接收强类型执行请求，并为每次请求创建一个一次性 OCI 容器。只有 sandboxd 容器持有 Docker socket；它不属于 Web Compose service。runner 默认无网络、非 root、只读根文件系统、无 Linux capabilities、启用 `no-new-privileges`，只读或读写挂载当前任务工作区，并受 CPU、内存、进程数、文件描述符、输出量与总时长限制。
+Agent 生成或影响的命令不得继续由 Sakura AI Web 进程直接执行。Docker 部署采用由宿主 `start.sh` 独立管理的专用 `sakura-ai-sandboxd` 容器，通过专用 Unix Domain Socket 接收强类型执行请求，并为每次请求创建一个一次性 OCI 容器。只有 sandboxd 容器持有 Docker socket；它不属于 Web Compose service。runner 默认不允许原始命令出网、非 root、只读根文件系统、无 Linux capabilities、启用 `no-new-privileges`，只读或读写挂载当前任务工作区，并受 CPU、内存、进程数、文件描述符、输出量与总时长限制。超级管理员可在 WebUI 将 Agent 网络策略切换为“隔离”“仅受控 Web 工具”或“完全访问”；策略从下一次工具调用开始生效，不要求重启 Web 或 sandboxd。
 
 Web 容器永远不挂载 Docker socket；sandboxd 与 Host Updater 也不得共用 socket、协议、进程、状态目录或权限组。两者可以复用实现模式，但安全职责必须独立。
 
@@ -16,8 +16,9 @@ Web 容器永远不挂载 Docker socket；sandboxd 与 Host Updater 也不得共
 | 执行域 | 典型操作 | 执行位置 | 规则 |
 | --- | --- | --- | --- |
 | `TRUSTED_CONTROL` | clone/fetch/worktree、提交、推送、创建 PR | Web 后端的受控服务 | 只接受应用构造的 argv；不得运行模型文本；凭据按单次调用注入 |
-| `UNTRUSTED_AGENT` | ShellTool、GrepTool 的外部命令、构建、测试 | sandboxd 一次性容器 | 默认离线；最小环境；严格资源与挂载限制；不可回退裸执行 |
-| `UNTRUSTED_DEPENDENCY` | 仓库依赖安装、构建脚本 | sandboxd 一次性容器 | 与 Agent 命令相同隔离；首版默认离线，只消费镜像内依赖或显式缓存 |
+| `UNTRUSTED_AGENT` | ShellTool、GrepTool 的外部命令、构建、测试 | sandboxd 一次性容器 | 默认不允许原始命令出网；管理员可热切换到服务端固定 egress；最小环境；严格资源与挂载限制；不可回退裸执行 |
+| `UNTRUSTED_DEPENDENCY` | 仓库依赖安装、构建脚本 | sandboxd 一次性容器 | 与 Agent 命令相同隔离；仅“完全访问”策略允许在线安装，否则只消费镜像内依赖或显式缓存 |
+| `TRUSTED_WEB_TOOL` | `search_web`、`fetch_url` | Web 后端受控工具 Adapter | 不进入 runner；复用提供商配置、SSRF/域名/大小/重定向限制；由 Agent 网络策略与工具开关共同授权 |
 
 ## 2. 目标与非目标
 
@@ -36,7 +37,7 @@ Web 容器永远不挂载 Docker socket；sandboxd 与 Host Updater 也不得共
 - 不在 Web 容器内运行 bubblewrap/nsjail 作为 Docker 部署的默认方案。
 - 不给业务容器挂载 `/var/run/docker.sock`，不使用 `privileged: true`。
 - 首版不承诺 Windows/macOS 原生 OS 沙箱；这些平台使用显式开发模式或拒绝启用。
-- 首版不提供任意公网访问。受控包代理、gVisor 和 microVM 属于后续增强。
+- 不尝试把“完全访问”伪装成安全的受限网络：管理员选择该策略即明确接受不可信命令可访问公网、局域网、宿主网关和云 metadata 的风险；文件系统、身份、capability、资源与 socket 隔离仍继续强制。
 - 沙箱不防御宿主机内核或 OCI runtime 的零日漏洞；高风险多租户应叠加 gVisor 或 microVM。
 
 ## 3. 威胁模型
@@ -59,7 +60,7 @@ Web 容器永远不挂载 Docker socket；sandboxd 与 Host Updater 也不得共
 1. 命令读取宿主或 Web 容器秘密。
 2. `../`、绝对路径、软链接或挂载技巧逃出任务工作区。
 3. 访问 Docker/updater/sandboxd socket。
-4. 访问 MySQL、Redis、云 metadata、宿主机管理端口或其他容器网络。
+4. 在 `offline` / `web_tools` 策略下访问互联网、MySQL、Redis、云 metadata、宿主机管理端口或其他容器网络；在 `full_access` 下不得把网络授权扩大为 Docker socket、宿主网络 namespace 或新增挂载权限。
 5. fork bomb、内存/CPU/输出洪泛、超时后残留进程或容器。
 6. 通过容器名、mount source、runtime、网络名等字段注入宿主机 Docker 参数。
 7. sandboxd 不可用时由调用方自动退回 `create_subprocess_shell`。
@@ -90,8 +91,8 @@ one-shot runner container
 请求生命周期：
 
 1. Backend 根据任务记录解析工作区标识和相对工作目录，不接受模型提供宿主机路径。
-2. `SandboxRunner` 生成 request ID，发送强类型请求；调用方只可选择公开 profile，不可传 Docker 参数。
-3. sandboxd 校验协议、字段长度、工作区标识、相对路径、命令大小、超时和 profile。
+2. `SandboxRunner` 生成 request ID，并从 `app_config` 新鲜读取超级管理员选择的网络策略。模型与 Tool 参数不包含网络字段。
+3. Backend 将策略解析为协议枚举 `none` / `egress`；sandboxd 校验协议、字段长度、工作区标识、相对路径、命令大小、超时、profile 和网络枚举，并把 `egress` 映射到服务端固定网络。
 4. sandboxd 自己构造完整容器命令，创建带管理 label 的唯一一次性容器。
 5. sandboxd 并发读取 stdout/stderr，按字节上限截断；超时或取消时 kill，随后强制 remove。
 6. sandboxd 返回结构化结果；清理不能确认时返回基础设施错误而不是成功。
@@ -123,6 +124,12 @@ GitHub App token 不得写进 clone URL 或 `.git/config`。受信任 Git 控制
 
 仓库声明的构建 backend、setup hook、npm lifecycle 等均可执行代码，所以自动依赖安装必须使用 `UNTRUSTED_DEPENDENCY` profile。若首版离线策略不能满足依赖获取，应明确跳过并报告，而不是在 Web 进程中执行。
 
+### ADR-7：网络策略由管理员热配置，网络实现仍由 sandboxd 固定
+
+安全默认值不能成为自部署用户无法退出的产品限制。全局配置页提供 `offline`、`web_tools`、`full_access` 三档 Agent 网络策略，只有超级管理员可以修改。Backend 在每次工具执行前读取最新持久化值；配置保存后，下一次工具调用和下一次一次性 runner 容器立即使用新策略，已经创建的容器不被中途改网。
+
+WebUI、模型和普通执行请求都不能提交 Docker 网络名。Backend 到 sandboxd 的深模块接口只包含 `none` / `egress` 枚举；sandboxd 将 `egress` 映射为启动时固定的网络（默认 Docker `bridge`，自部署管理员可在宿主部署配置中改为专用 named network）。`host`、`container:*`、`ns:*` 和任意 Docker argv 仍不进入请求接口。选择 `full_access` 是管理员对广泛网络访问的明确授权，不会解除非 root、只读根文件系统、capability、资源、工作区和 socket 隔离。
+
 ## 6. Backend 执行器合同
 
 ### 6.1 统一请求与结果
@@ -152,7 +159,7 @@ class ExecutionResult:
     infrastructure_error: str | None
 ```
 
-`command` 与 `argv` 必须且只能提供一个。shell 模式在 runner 镜像内固定用 `/bin/bash --noprofile --norc -lc`；调用者不能更换 shell。argv 模式不经过 shell。
+`command` 与 `argv` 必须且只能提供一个。shell 模式在 runner 镜像内固定用 `/bin/bash --noprofile --norc -lc`；调用者不能更换 shell。argv 模式不经过 shell。Backend 的公共 `ExecutionRequest` 不暴露网络参数；只有 `SandboxExecutionRunner` 在序列化 UDS 请求时，根据新鲜读取的管理员策略附加 `network_mode=none|egress`。
 
 ### 6.2 环境合同
 
@@ -160,7 +167,8 @@ class ExecutionResult:
 
 ```text
 HOME=/home/agent
-PATH=<runner image fixed path>
+PATH=/workspace/.venv/bin:<runner image fixed path>
+VIRTUAL_ENV=/workspace/.venv
 LANG=C.UTF-8
 LC_ALL=C.UTF-8
 CI=true
@@ -176,6 +184,8 @@ TERM=dumb
 - sandboxd 配置唯一权威工作区根或 Docker volume；请求不能覆盖它。
 - 容器只看到 `/workspace`，且工作目录固定为 `/workspace/<cwd>`。
 - 容器内不得出现 `/app`、`/run/sakura-ai`、`/run/sakura-ai-sandbox` 或宿主 Docker socket 挂载。
+- sandboxd 在 handoff 前对任务树执行不跟随 symlink/reparse 的全树预检，拒绝后代链接、特殊节点、硬链接和嵌套挂载，并以 no-follow fd 重新校验 inode 后再逐节点变更；handoff 在 venv 创建前只执行一次，合法 venv symlink 不会被误判。不能完成合同时拒绝启动，绝不通过 `0777` 或未验证 ACL 放宽权限。
+- linked worktree 的 `.git` 指针不直接作为容器路径使用：当前 task 的 `.git/worktrees/<name>` 元数据以可写 `/sakura-git/worktree` 挂载，base checkout 的 common `.git` 以只读 `/sakura-git/common` 挂载，并注入固定 `GIT_DIR`、`GIT_COMMON_DIR` 和 `GIT_WORK_TREE`。服务端按当前 workspace 身份严格匹配 `gitdir`/`commondir` 指针；交接后 `.git`、`gitdir`、`commondir` 指针由 root-owned `0444` 保护，common metadata 必须已具备 UID 65532 的遍历/只读权限。其他 task 和 base metadata 不获得可写挂载。
 
 ## 7. sandboxd UDS 协议
 
@@ -190,15 +200,18 @@ TERM=dumb
 
 ### 7.2 版本与端点
 
-所有响应包含 `protocol_version` 和 `sandboxd_version`。首版端点：
+所有响应包含 `protocol_version` 和 `sandboxd_version`。当前 wire protocol 为 v2：
+`network_mode` 是每个执行请求的必填能力声明，`egress_capability` 是健康响应的必填
+能力声明；v1 请求不会静默按 `none` 解释。HTTP 端点路径暂保持 `/v1`，路径是服务
+路由命名空间，不代表 wire protocol 版本。端点如下：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/v1/health` | 版本、运行时、镜像 digest、可用 profile，不泄露宿主路径 |
-| `POST` | `/v1/executions` | 同步执行一个有上限的请求并返回结构化结果 |
+| `GET` | `/v1/health` | v2 版本、运行时、镜像 digest、可用 profile、`none` / `egress` 能力，不泄露实际 Docker 网络名 |
+| `POST` | `/v1/executions` | 使用必填 `network_mode=none|egress` 同步执行一个有上限的请求并返回结构化结果 |
 | `POST` | `/v1/executions/{id}/cancel` | 幂等取消；kill 并 remove 对应容器 |
 
-不提供通用 `command` 管理端点，不允许客户端提交 Docker create/run 参数。v1 可先使用同步执行；Backend HTTP 总超时必须大于请求执行上限与固定清理宽限之和。
+不提供通用 `command` 管理端点，不允许客户端提交 Docker create/run 参数。v2 继续使用同步执行；Backend HTTP 总超时必须大于请求执行上限与固定清理宽限之和。
 
 ### 7.3 错误分类
 
@@ -230,14 +243,14 @@ TERM=dumb
 --cpus 2
 --ulimit nofile=1024:1024
 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m
---tmpfs /home/agent:rw,nosuid,nodev,size=128m
+--tmpfs /home/agent:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700,size=128m
 --mount <server-owned exact workspace>:/workspace:rw
 --workdir /workspace/<validated-relative-cwd>
 --label ai.sakura.managed-by=sandboxd
 --label ai.sakura.request-id=<validated-id>
 ```
 
-容器镜像必须通过部署配置固定为不可变 digest；客户端只能选择 profile，不能选择镜像。可选 `runsc` runtime 由宿主配置决定，健康端点报告实际 runtime。
+容器镜像必须通过部署配置固定为不可变 digest；客户端只能提交公开 profile 和 `none` / `egress` 枚举，不能选择镜像、Docker 网络名或其他运行时参数。`egress` 总是映射到 sandboxd 启动时固定的网络。可选 `runsc` runtime 由宿主配置决定，健康端点报告实际 runtime。
 
 ### 8.2 生命周期和恢复
 
@@ -245,11 +258,28 @@ TERM=dumb
 - create/start/attach/inspect/kill/remove 使用 argv 调用，不通过 shell。
 - daemon 启动时只扫描同时具有 managed-by 和实例标识 label 的遗留容器；确认归属后清理。
 - timeout/cancel 先 `kill`，再带固定超时 `rm -f`；所有路径在 `finally` 中清理。
+- 在 Docker `create` 尚未返回容器 ID 的失败/取消路径，若带 label 的延迟清理仍在运行，sandboxd 保留 workspace lease 并拒绝同一目录的新任务；只有清理 worker 结束后才释放 lease，避免工作区被复用或被并发清理。
 - daemon 收到终止信号后停止接收新请求，取消在途容器并等待有界清理。
 
-### 8.3 网络阶段
+### 8.3 网络策略
 
-首版两个 profile 均为 `none`。这能完整解决 Issue 的秘密泄漏和本地横向访问风险，但意味着依赖安装只能使用 runner 镜像内已有工具和显式挂载的只读缓存。后续如增加网络，必须由仅允许公共包仓库的独立代理提供；runner 本身仍不加入 Sakura AI Compose 网络，也不得直接访问 RFC1918、link-local、metadata 或宿主网关。
+Agent 网络策略是全局配置页“Agent”分组中的超级管理员配置：
+
+| WebUI 值 | Agent shell / 构建 / 测试 | 自动依赖安装 | `search_web` / `fetch_url` |
+| --- | --- | --- | --- |
+| `offline` | `--network none` | 仅允许镜像内依赖或显式离线缓存；需要在线下载时跳过并说明 | 对 Agent 隐藏并在执行入口再次拒绝 |
+| `web_tools` | `--network none` | 同 `offline` | 由 Web 后端执行；还必须分别满足 `web_search_enabled`、`fetch_url_enabled` 及域名/SSRF 限制 |
+| `full_access` | sandboxd 固定 egress 网络 | 使用同一 egress 网络，可在线安装 | 可用；仍受各工具自己的开关和限制 |
+
+默认值为 `web_tools`：开箱即可使用受控搜索/抓取，而模型生成的任意 shell 仍不出网。自部署管理员选择 `full_access` 后，下一次 Agent 或 Dependency 执行立即使用 egress；它明确允许访问公网、局域网、宿主网关和 metadata，不承诺 RFC1918 隔离。实际网络由 sandboxd 启动配置固定，默认 Docker `bridge` 以保证自部署场景无需额外宿主配置即可工作，也允许运维改成带代理/防火墙的 named network。runner 永远不加入 Sakura AI 的应用 Compose 网络，且不能使用 `host`、`container:*` 或 `ns:*`。
+
+配置热生效遵循以下合同：
+
+1. WebUI 保存事务提交后清除动态配置缓存并更新当前 Settings 视图。
+2. `SandboxExecutionRunner.execute()` 对每次调用执行一次 fresh/read-through 配置解析，不能依赖进程启动快照或 60 秒 TTL；多 Web worker 最迟在下一次调用读取数据库值。
+3. Agent 的 `search_web` / `fetch_url` wrapper 在每次调用时检查策略和工具开关，不能永久缓存“未启用”状态；配置参数也必须在本次调用前刷新。
+4. sandboxd 对每个请求固定一次网络模式；在途容器不热切换，避免半次命令跨策略运行。
+5. 配置变更和每次 runner 创建记录有效策略、profile、request/task ID 和镜像 digest，但不记录 API Key、完整命令或页面正文。
 
 ## 9. Runner 镜像
 
@@ -258,7 +288,7 @@ TERM=dumb
 - 固定非 root 用户 UID/GID 65532，HOME 可写位置由 tmpfs 提供。
 - 提供 Agent 当前承诺的 Python、Node.js、Go、Rust、Java、C/C++ 与常用构建工具。
 - Rust/Cargo 等工具链安装到全局只读路径，不依赖 `/root`。
-- 包管理器默认 offline/frozen；缓存路径只读挂载时不得自动改权限。
+- 包管理器仅在 `full_access` 下启动在线安装；其他策略的自动依赖步骤显式跳过或只消费离线缓存，缓存路径只读挂载时不得自动改权限。联网 pip 仅运行在 `DEPENDENCY` profile。
 - 镜像不包含 Sakura AI 配置、源码、凭据或 Docker CLI/socket。
 - release 发布 digest，sandboxd 只接受部署状态中固定的 digest。
 
@@ -268,12 +298,14 @@ TERM=dumb
 
 | 配置 | 默认 | 说明 |
 | --- | --- | --- |
-| `agent_team_execution_backend` | image 部署为 `sandbox`；source 为 `local` | `sandbox` / `local` |
+| `agent_team_execution_backend` | `sandbox`（image 与 source 均默认） | `sandbox` / `local`；`local` 仅允许 source 下显式选择 |
+| `agent_team_network_policy` | `web_tools` | WebUI 超级管理员动态配置：`offline` / `web_tools` / `full_access`；下一次工具调用生效 |
 | `agent_team_sandbox_socket` | `/run/sakura-ai-sandbox/sandboxd.sock` | 仅管理员环境配置，不允许任务覆盖 |
 | `agent_team_sandbox_timeout_seconds` | `900` | 服务端再做上下限夹取 |
 | `agent_team_sandbox_max_output_bytes` | `8388608` | stdout+stderr 总上限 |
+| sandboxd `--egress-network` | `bridge` | 仅宿主部署配置；`full_access` 映射到该网络，WebUI/模型不能提交网络名；可改为专用 named network |
 
-资源参数、镜像 digest、工作区宿主映射、runtime 和 GID 属于宿主 deployment state，不放进可由 WebUI 动态修改的 `app_config`。
+资源参数、镜像 digest、工作区宿主映射、runtime、egress 网络名和 GID 属于宿主 deployment state，不放进可由 WebUI 动态修改的 `app_config`。WebUI 只控制是否使用服务端已固定的 egress 能力。
 
 `start.sh` 增加独立的 `sandboxd start|stop|restart|reinstall|uninstall|status` 生命周期。生产启动顺序必须是：验证部署目录和 sandboxd/runner 双 digest → 安装/启动 sandboxd → 验证 `/v1/health` 的 protocol、runtime、instance、workspace 和 digest → 启动 Web。Updater 与 sandboxd 使用不同 GID、UDS、状态目录和协议；稳定版升级通过 updater 的三镜像事务共同更新 Web、sandboxd 与 runner。
 
@@ -302,6 +334,9 @@ TERM=dumb
 - 路径校验：拒绝绝对路径、`..`、空字节、未知 workspace key。
 - 协议：版本不兼容、未知字段/profile、超限字段均 fail closed。
 - Docker argv：参数完全由服务端生成；镜像/mount/runtime/network 不可由请求覆盖。
+- 动态网络策略：WebUI 三档值严格校验；保存后下一次执行使用新值；旧进程缓存、模块级 negative cache 和多 worker 读取均不能让禁用/启用延迟到重启。
+- 权限分离：模型 Tool schema 不出现网络字段；伪造 Docker 网络名、`host`、`container:*`、`ns:*` 和未知策略均 fail closed。
+- 受控 Web 工具：`offline` 拒绝 Agent 搜索/抓取，`web_tools` 与 `full_access` 仅在各自工具开关开启时允许；`fetch_url` 的 DNS 重绑定、私网/metadata、重定向、域名和大小限制继续覆盖。
 - timeout/cancel/output limit：容器被 kill/remove，结果分类稳定。
 - Git 凭据：remote URL 与 `.git/config` 不含 token；临时 askpass 在成功/失败/取消后删除。
 - 旁路扫描：GrepTool、自动依赖安装和模型工具无裸 subprocess。
@@ -311,12 +346,15 @@ TERM=dumb
 在真实 Linux Docker runner 上验证：
 
 1. 可在工作区创建/修改文件，不能读取相邻任务或宿主文件。
-2. 网络 profile 为 none，不能访问互联网、MySQL、Redis、宿主网关和 metadata 地址。
+2. `offline` 与 `web_tools` 的 runner 网络为 none，不能访问互联网、MySQL、Redis、宿主网关和 metadata；`full_access` 可访问外部 HTTP/DNS，且网络名仍不能由请求覆盖。
 3. 进程以 65532 运行，capabilities 为空，`NoNewPrivs` 生效，根文件系统只读。
 4. fork bomb/PID、CPU、内存、磁盘临时空间和输出洪泛均被限制。
 5. 超时、Backend 取消、sandboxd 重启后没有带管理 label 的遗留容器。
-6. Web 容器内不存在 Docker socket，runner 内不存在两个 UDS。
-7. 正常的 Python/Node/Go/Rust/Java/C++ 小项目可离线执行已安装工具链。
+6. 原生 Linux runner 可以写入固定 UID/GID handoff 后的任务 worktree，并可通过固定 venv PATH 找到刚安装的工具；linked worktree 的 Git status/diff 不依赖 Web 的 `/app` 路径。
+7. Web 容器内不存在 Docker socket，runner 内不存在两个 UDS。
+8. 正常的 Python/Node/Go/Rust/Java/C++ 小项目可离线执行已安装工具链。
+9. 同一长生命周期 Backend 进程内依次切换 `web_tools → full_access → offline`，下一次一次性容器分别使用 `none → egress → none`；在途容器保持创建时策略。
+10. WebUI 开启、关闭再重新开启 Web 搜索/URL 抓取后无需重启，Agent 工具立即按新配置执行；`offline` 始终优先拒绝。
 
 ### 12.3 完成定义
 
@@ -326,12 +364,13 @@ TERM=dumb
 - 所有模型影响的子进程和依赖脚本都进入沙箱。
 - Web 与 runner 均无 Docker socket；秘密 canary 集成测试通过。
 - 真实 Linux Docker 隔离、资源、取消和遗留清理测试通过。
+- WebUI 可选择三档 Agent 网络策略；`full_access` 在默认自部署环境真实可联网，策略切换无需重启且有审计记录。
 - 中英文配置/部署文档说明本地模式风险、离线限制与运维命令。
 - Python/Ruff/现有 Agent Team 测试无回归。
 
 ## 13. 后续增强
 
-1. 受控 package proxy：仅域名/证书固定的公共包仓库，阻断私网与 metadata。
+1. 受控 package proxy：为 `web_tools` 与 `full_access` 之间增加仅域名/证书固定的包仓库策略，阻断私网与 metadata。
 2. gVisor：高风险部署可配置 `runsc`，不改变 Backend 协议。
 3. rootless Docker/Podman：作为宿主 daemon 的运行时选项验证兼容矩阵。
 4. microVM：多租户或强对抗环境可实现 Firecracker backend，继续复用 execution contract。

@@ -748,6 +748,12 @@ class Settings(BaseSettings):
     # value; ``local`` is source-development-only and is rejected for image
     # deployments by the sandbox runner selector.
     agent_team_execution_backend: Literal["sandbox", "local"] = "sandbox"
+    # Agent network policy is deliberately independent from the server-owned
+    # Docker egress network.  ``web_tools`` keeps shell/build/test runners
+    # offline while allowing the controlled Web adapters by default.
+    agent_team_network_policy: Literal["offline", "web_tools", "full_access"] = (
+        "web_tools"
+    )
     agent_team_sandbox_socket: str = "/run/sakura-ai-sandbox/sandboxd.sock"
     agent_team_sandbox_timeout_seconds: float = Field(900.0, gt=0, le=3600)
     agent_team_sandbox_max_output_bytes: int = Field(
@@ -1243,6 +1249,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled": "启用后，超级管理员可手动创建和执行 Agent 任务；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_execution_backend": "Agent 命令执行后端；sandbox 通过独立 sandboxd 隔离，local 仅限源码开发且镜像部署拒绝",
+                    "agent_team_network_policy": (
+                        "Agent 网络策略：offline 完全隔离；web_tools（默认）仅允许受控 Web 工具；"
+                        "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
+                    ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
@@ -1257,6 +1267,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled",
                     "agent_team_workspace_root",
                     "agent_team_execution_backend",
+                    "agent_team_network_policy",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
@@ -1494,6 +1505,11 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "sandbox", "label": "Sandbox（推荐）"},
         {"value": "local", "label": "Local（仅源码开发）"},
     ],
+    "agent_team_network_policy": [
+        {"value": "offline", "label": "隔离（Offline）"},
+        {"value": "web_tools", "label": "仅受控 Web 工具（推荐）"},
+        {"value": "full_access", "label": "完全访问（Full access）"},
+    ],
     "star_aid_summary_language": [
         {"value": "", "label": "跟随界面语言"},
         {"value": "zh-CN", "label": "简体中文"},
@@ -1668,6 +1684,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_execution_backend": "Agent 执行后端",
+    "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
@@ -1755,7 +1772,7 @@ def get_dynamic_config_input_type(key: str) -> str:
     return "text"
 
 
-async def get_dynamic_config(key: str) -> Any:
+async def get_dynamic_config(key: str, *, fresh: bool = False) -> Any:
     """从数据库读取配置值，回退到 Settings 默认值
 
     Args:
@@ -1764,6 +1781,9 @@ async def get_dynamic_config(key: str) -> Any:
     Returns:
         配置值（已转换类型）
     """
+    if fresh:
+        return await get_dynamic_config_fresh(key)
+
     if key in (
         "ai_provider",
         "openai_api_base",
@@ -1814,6 +1834,107 @@ async def get_dynamic_config(key: str) -> Any:
     # 3. 回退到 Settings 默认值
     settings = get_settings()
     return getattr(settings, key, None)
+
+
+async def get_dynamic_config_fresh(key: str) -> Any:
+    """Read one dynamic setting without the process-level cache.
+
+    Long-lived Agent workers and tool adapters must use this path at the
+    admission point of every operation.  A WebUI save may happen in another
+    worker, so invalidating this process's cache is not a sufficient
+    freshness guarantee.
+    """
+    if key in (
+        "ai_provider",
+        "openai_api_base",
+        "openai_api_key",
+        "openai_model",
+        "openai_temperature",
+        "openai_max_tokens",
+        "summary_provider",
+        "summary_api_base",
+        "summary_api_key",
+        "summary_model",
+        "agent_team_model_provider",
+        "agent_team_api_base",
+        "agent_team_api_key",
+        "agent_team_model",
+        "agent_team_review_model",
+        "agent_team_summary_model",
+        "scan_model",
+        "sakura_reflection_model",
+        "sakura_issue_reflection_model",
+        "sakura_consolidation_model",
+        "sakura_use_summary_model",
+        "sakura_extraction_provider",
+        "sakura_extraction_api_base",
+        "sakura_extraction_api_key",
+        "sakura_extraction_model",
+    ):
+        return None
+
+    expected_type = _get_field_type(key)
+    # Security-sensitive admission settings must not silently fall back to a
+    # process-local Settings snapshot when the database is configured but
+    # unreadable.  ``_read_config_from_db`` still treats an uninitialised
+    # session (source/unit-test mode) as an intentional absence, so source
+    # development retains its documented defaults without weakening a live
+    # database failure into stale policy.
+    db_value = await _read_config_from_db(key, fail_closed=True)
+    if db_value is not None:
+        return _cast_config_type(db_value, expected_type)
+
+    settings = get_settings()
+    return getattr(settings, key, None)
+
+
+async def get_dynamic_config_fresh_with_revision(
+    key: str,
+) -> tuple[Any, str]:
+    """Read a dynamic value and its durable AppConfig revision.
+
+    The revision is intentionally metadata only (row ``updated_at`` with the
+    primary-key fallback); callers must still parse and authorize the value.
+    Database failures use the same fail-closed behavior as
+    :func:`get_dynamic_config_fresh` and never return a stale Settings value.
+    """
+
+    if key in (
+        "ai_provider",
+        "openai_api_base",
+        "openai_api_key",
+        "openai_model",
+        "openai_temperature",
+        "openai_max_tokens",
+        "summary_provider",
+        "summary_api_base",
+        "summary_api_key",
+        "summary_model",
+        "agent_team_model_provider",
+        "agent_team_api_base",
+        "agent_team_api_key",
+        "agent_team_model",
+        "agent_team_review_model",
+        "agent_team_summary_model",
+        "scan_model",
+        "sakura_reflection_model",
+        "sakura_issue_reflection_model",
+        "sakura_consolidation_model",
+        "sakura_use_summary_model",
+        "sakura_extraction_provider",
+        "sakura_extraction_api_base",
+        "sakura_extraction_api_key",
+        "sakura_extraction_model",
+    ):
+        return None, "legacy"
+
+    expected_type = _get_field_type(key)
+    db_value, revision = await _read_config_row_from_db(key, fail_closed=True)
+    if db_value is not None:
+        return _cast_config_type(db_value, expected_type), revision or "database"
+
+    settings = get_settings()
+    return getattr(settings, key, None), "settings-default"
 
 
 def validate_user_dynamic_config_value(key: str, value: Any) -> str:
@@ -1936,24 +2057,55 @@ def invalidate_user_dynamic_config_cache(
         _user_dynamic_config_cache.pop((int(user_id), key), None)
 
 
-async def _read_config_from_db(key: str) -> str | None:
-    """从 AppConfig 表读取配置值"""
+async def _read_config_row_from_db(
+    key: str,
+    *,
+    fail_closed: bool = False,
+) -> tuple[str | None, str | None]:
+    """Read a config row plus an audit-safe revision marker."""
+
     try:
         from sqlalchemy import select
 
         from backend.models.database import AppConfig, async_session
 
+        # The application has not initialised its database in source-only
+        # unit/test contexts.  That is a deliberate "no override" state,
+        # unlike an exception from an active session/engine.
+        if async_session is None:
+            return None, None
         async with async_session() as session:
             result = await session.execute(
-                select(AppConfig.key_value).where(AppConfig.key_name == key)
+                select(AppConfig.key_value, AppConfig.id, AppConfig.updated_at).where(
+                    AppConfig.key_name == key
+                )
             )
-            row = result.scalar_one_or_none()
-            if row is not None:
-                return str(row)
-            return None
-    except Exception as e:
-        logger.debug(f"从数据库读取配置 [{key}] 失败: {e}")
-        return None
+            row = result.one_or_none()
+            if row is None or row[0] is None:
+                return None, None
+            # updated_at is the meaningful cross-worker revision.  Include the
+            # row id as a deterministic fallback for old database rows where
+            # the timestamp may be absent in test fixtures.
+            revision = str(row[2] or row[1])
+            return str(row[0]), revision
+    except Exception:
+        if fail_closed:
+            raise
+        logger.debug(f"从数据库读取配置 [{key}] 失败")
+        return None, None
+
+
+async def _read_config_from_db(
+    key: str,
+    *,
+    fail_closed: bool = False,
+) -> str | None:
+    """从 AppConfig 表读取配置值"""
+    value, _revision = await _read_config_row_from_db(
+        key,
+        fail_closed=fail_closed,
+    )
+    return value
 
 
 def invalidate_dynamic_config_cache(keys: list[str] | None = None):

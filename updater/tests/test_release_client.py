@@ -6,6 +6,7 @@ from urllib.error import URLError
 import pytest
 from sakura_ai_updater.release_client import (
     ReleaseClient,
+    ReleaseNotFoundError,
     ReleaseUnavailableError,
     SandboxManifestInvalidError,
     SandboxManifestNotFoundError,
@@ -101,6 +102,39 @@ async def test_release_client_latest_uses_max_strict_stable_semver_not_timestamp
     release = await client.latest_release()
 
     assert release and release["tag_name"] == "v3.2.0"
+
+
+@pytest.mark.asyncio
+async def test_resolve_stable_target_rejects_draft_or_prerelease_and_uses_registry_pin(
+    monkeypatch,
+):
+    client = ReleaseClient()
+    stable = {
+        "tag_name": "v3.2.0",
+        "draft": False,
+        "prerelease": False,
+    }
+    monkeypatch.setattr(client, "get_release", lambda version: stable)
+    from sakura_ai_updater.registry import StableTarget
+
+    digest = "sha256:" + "a" * 64
+    async def resolve(self, version, *, expected_digest=None):
+        del self
+        assert version == "3.2.0"
+        assert expected_digest is None
+        return StableTarget("stable", version, f"v{version}", digest)
+
+    monkeypatch.setattr(
+        "sakura_ai_updater.registry.RegistryClient.resolve_stable_target", resolve
+    )
+    target = await client.resolve_stable_target("3.2.0")
+    assert target.image.endswith("v3.2.0@" + digest)
+
+    for flags in ((True, False), (False, True)):
+        release = {"tag_name": "v3.2.0", "draft": flags[0], "prerelease": flags[1]}
+        monkeypatch.setattr(client, "get_release", lambda version, release=release: release)
+        with pytest.raises(ReleaseNotFoundError):
+            await client.resolve_stable_target("3.2.0")
 
 
 @pytest.mark.asyncio

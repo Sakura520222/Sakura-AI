@@ -18,7 +18,12 @@ from backend.services.agent_team.execution import (
     ExecutionRequest,
     execution_workspace_key,
 )
+from backend.services.agent_team.network_policy import (
+    AgentTeamNetworkPolicy,
+    AgentTeamNetworkPolicyState,
+)
 from backend.services.agent_team.sandbox_client import (
+    PROTOCOL_VERSION,
     SandboxCleanupError,
     SandboxExecutionConfig,
     SandboxExecutionRunner,
@@ -53,7 +58,7 @@ async def test_runner_serializes_only_execution_contract(tmp_path: Path, monkeyp
     async def fake_request(method: str, path: str, json_body=None, **kwargs):
         requests.append((method, path, json_body))
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "request_id": json_body["request_id"],
@@ -86,12 +91,78 @@ async def test_runner_serializes_only_execution_contract(tmp_path: Path, monkeyp
         "profile",
         "timeout_seconds",
         "env",
+        "network_mode",
     }
     assert "image" not in payload
     assert "mount" not in payload
     assert "network" not in payload
+    assert payload["network_mode"] == "none"
     assert "runtime" not in payload
     assert payload["timeout_seconds"] == 10
+
+
+@pytest.mark.asyncio
+async def test_runner_reads_network_policy_before_each_execution(
+    tmp_path: Path,
+    monkeypatch,
+):
+    runner, workspace, service = _runner(tmp_path)
+    key = execution_workspace_key(workspace, service)
+    policies = iter(
+        [
+            AgentTeamNetworkPolicy.WEB_TOOLS,
+            AgentTeamNetworkPolicy.FULL_ACCESS,
+            AgentTeamNetworkPolicy.OFFLINE,
+        ]
+    )
+    payloads: list[dict] = []
+
+    async def read_policy():
+        return next(policies)
+
+    async def fake_request(method: str, path: str, json_body=None, **kwargs):
+        del method, path, kwargs
+        assert json_body is not None
+        payloads.append(json_body)
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "sandboxd_version": "test",
+            "data": {
+                "request_id": json_body["request_id"],
+                "exit_code": 0,
+                "stdout": "ok",
+                "stderr": "",
+                "timed_out": False,
+                "cancelled": False,
+                "output_truncated": False,
+            },
+        }
+
+    async def read_state():
+        policy = await read_policy()
+        return AgentTeamNetworkPolicyState(
+            policy=policy,
+            revision=f"revision-{policy.value}",
+        )
+
+    monkeypatch.setattr(sandbox_client, "get_agent_team_network_policy_state", read_state)
+    monkeypatch.setattr(runner, "_request", fake_request)
+    request = ExecutionRequest(
+        workspace_key=key,
+        command="printf secret-command",
+        profile=ExecutionProfile.AGENT,
+        timeout_seconds=1,
+    )
+
+    await runner.execute(request)
+    await runner.execute(request)
+    await runner.execute(request)
+
+    assert [payload["network_mode"] for payload in payloads] == [
+        "none",
+        "egress",
+        "none",
+    ]
 
 
 @pytest.mark.asyncio
@@ -129,7 +200,7 @@ async def test_runner_rejects_wrong_workspace_and_malformed_response(tmp_path: P
 
     async def malformed(*args, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {"request_id": "not-enough-fields", "unexpected": True},
         }
@@ -376,7 +447,7 @@ async def test_client_truncates_oversized_utf8_response_data(tmp_path: Path, mon
 
     async def fake_request(method: str, path: str, json_body=None, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "request_id": json_body["request_id"],
@@ -416,7 +487,7 @@ async def test_client_rejects_oversized_http_envelope(tmp_path: Path, monkeypatc
         return httpx.Response(
             200,
             json={
-                "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
                 "sandboxd_version": "test",
                 "data": {"stdout": "x" * 1000},
             },
@@ -435,7 +506,7 @@ async def test_client_rejects_unknown_error_fields_and_codes(tmp_path: Path, mon
         return httpx.Response(
             500,
             json={
-                "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
                 "sandboxd_version": "test",
                 "error": "INTERNAL_ERROR",
                 "data": {},
@@ -450,7 +521,7 @@ async def test_client_rejects_unknown_error_fields_and_codes(tmp_path: Path, mon
         return httpx.Response(
             500,
             json={
-                "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
                 "sandboxd_version": "test",
                 "error": "FUTURE_ERROR",
             },
@@ -462,12 +533,35 @@ async def test_client_rejects_unknown_error_fields_and_codes(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
+async def test_client_rejects_legacy_v1_response_without_implicit_compatibility(
+    tmp_path: Path,
+    monkeypatch,
+):
+    runner, _workspace, _service = _runner(tmp_path)
+
+    async def legacy_response(*args, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "protocol_version": 1,
+                "sandboxd_version": "legacy",
+                "data": {},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", legacy_response)
+    with pytest.raises(SandboxProtocolError, match="protocol version"):
+        await runner.health()
+
+
+@pytest.mark.asyncio
 async def test_ensure_ready_validates_full_daemon_identity_contract(tmp_path: Path, monkeypatch):
     runner, _workspace, _service = _runner(tmp_path)
     health = SimpleNamespace(
         ready=True,
         runtime="runc",
         profiles=["agent", "dependency"],
+        egress_capability="none",
         instance_id="sandbox-instance-1",
         workspace_root="/app/workplace/",
         runner_image_digest=(
@@ -487,6 +581,55 @@ async def test_ensure_ready_validates_full_daemon_identity_contract(tmp_path: Pa
         require_digest=True,
     )
     assert result is health
+    assert runner.egress_capability == "none"
+
+
+@pytest.mark.asyncio
+async def test_ensure_ready_exposes_only_server_advertised_egress_capability(
+    tmp_path: Path,
+    monkeypatch,
+):
+    runner, _workspace, _service = _runner(tmp_path)
+
+    async def fake_health():
+        return SimpleNamespace(
+            ready=True,
+            runtime="runc",
+            profiles=["agent", "dependency"],
+            egress_capability="egress",
+            instance_id="sandbox-instance-1",
+            workspace_root="/app/workplace",
+            runner_image_digest=None,
+        )
+
+    monkeypatch.setattr(runner, "health", fake_health)
+    await runner.ensure_ready()
+    assert runner.egress_capability == "egress"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("egress_capability", ["host", "bridge", "container:x", "ns:/tmp/x", "bad network"])
+async def test_ensure_ready_rejects_uncontrolled_egress_capability(
+    tmp_path: Path,
+    monkeypatch,
+    egress_capability: str,
+):
+    runner, _workspace, _service = _runner(tmp_path)
+
+    async def fake_health():
+        return SimpleNamespace(
+            ready=True,
+            runtime="runc",
+            profiles=["agent", "dependency"],
+            egress_capability=egress_capability,
+            instance_id="sandbox-instance-1",
+            workspace_root="/app/workplace",
+            runner_image_digest=None,
+        )
+
+    monkeypatch.setattr(runner, "health", fake_health)
+    with pytest.raises(SandboxProtocolError, match="egress capability"):
+        await runner.ensure_ready()
 
 
 @pytest.mark.asyncio
@@ -501,6 +644,7 @@ async def test_ensure_ready_image_requires_all_expected_identities(
             ready=True,
             runtime="runc",
             profiles=["agent", "dependency"],
+            egress_capability="none",
             instance_id="sandbox-instance-1",
             workspace_root="/app/workplace",
             runner_image_digest="registry.example/runner@sha256:" + "1" * 64,
@@ -521,12 +665,13 @@ async def test_health_envelope_ready_true_admits_matching_identity_and_digest(
 
     async def fake_request(*args, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "ready": True,
                 "runtime": "runc",
                 "profiles": ["agent", "dependency"],
+                "egress_capability": "none",
                 "instance_id": "sandbox-instance-1",
                 "workspace_root": "/app/workplace",
                 "runner_image_digest": digest,
@@ -563,12 +708,13 @@ async def test_source_health_compares_bare_content_id_and_injected_workspace_ide
 
     async def fake_request(*args, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "ready": True,
                 "runtime": "runc",
                 "profiles": ["agent", "dependency"],
+                "egress_capability": "none",
                 "instance_id": "sandbox-instance-source",
                 "workspace_root": "C:\\deploy\\sakura\\workspaces\\",
                 "runner_image_digest": digest,
@@ -595,12 +741,13 @@ async def test_health_envelope_ready_false_fails_admission(
 
     async def fake_request(*args, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "ready": False,
                 "runtime": "runc",
                 "profiles": ["agent", "dependency"],
+                "egress_capability": "none",
                 "instance_id": "sandbox-instance-1",
                 "workspace_root": "/app/workplace",
                 "runner_image_digest": "registry.example/runner@sha256:" + "b" * 64,
@@ -621,12 +768,13 @@ async def test_health_envelope_rejects_legacy_ok_and_unknown_fields(
 
     async def fake_request(*args, **kwargs):
         return {
-            "protocol_version": 1,
+            "protocol_version": PROTOCOL_VERSION,
             "sandboxd_version": "test",
             "data": {
                 "ok": True,
                 "runtime": "runc",
                 "profiles": ["agent", "dependency"],
+                "egress_capability": "none",
                 "instance_id": "sandbox-instance-1",
                 "workspace_root": "/app/workplace",
                 "runner_image_digest": None,
@@ -664,7 +812,7 @@ async def test_outer_cancel_does_not_interrupt_independent_cancel_delivery(
             await cancel_release.wait()
             cancel_finished.set()
             return {
-                "protocol_version": 1,
+                "protocol_version": PROTOCOL_VERSION,
                 "sandboxd_version": "test",
                 "data": {
                     "request_id": path.split("/")[-2],
