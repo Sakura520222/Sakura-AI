@@ -10,7 +10,7 @@ import pytest
 from sakura_ai_sandboxer.config import SandboxdConfig
 from sakura_ai_sandboxer.docker_runtime import (
     CONTAINER_GIT_COMMON,
-    CONTAINER_GIT_WORKTREE,
+    CONTAINER_GIT_WORKTREE_ROOT,
     DOCKER_CLI_ENV,
     FIXED_ENVIRONMENT,
     RUNNER_GID,
@@ -21,6 +21,7 @@ from sakura_ai_sandboxer.docker_runtime import (
     _CommandResult,
     _ContainerState,
     _decode_container_id,
+    _GitMountPlan,
     _handoff_tree,
     _workspace_key_for_relative_identity,
 )
@@ -250,7 +251,7 @@ def test_linked_worktree_gets_task_metadata_and_readonly_common_mounts(
     task_mount = next(
         mount
         for mount in mounts
-        if f"dst={CONTAINER_GIT_WORKTREE}" in mount
+        if f"dst={CONTAINER_GIT_WORKTREE_ROOT}/42-feature" in mount
     )
     assert any(
         f"src={common},dst={CONTAINER_GIT_COMMON},readonly,bind-propagation=rprivate"
@@ -259,12 +260,13 @@ def test_linked_worktree_gets_task_metadata_and_readonly_common_mounts(
     )
     assert ",readonly" in common_mount
     assert any(
-        f"src={task_gitdir},dst={CONTAINER_GIT_WORKTREE},bind-propagation=rprivate"
+        f"src={task_gitdir},dst={CONTAINER_GIT_WORKTREE_ROOT}/42-feature,"
+        "bind-propagation=rprivate"
         in mount
         for mount in mounts
     )
     assert ",readonly" not in task_mount
-    assert f"GIT_DIR={CONTAINER_GIT_WORKTREE}" in argv
+    assert f"GIT_DIR={CONTAINER_GIT_WORKTREE_ROOT}/42-feature" in argv
     assert f"GIT_COMMON_DIR={CONTAINER_GIT_COMMON}" in argv
     assert "GIT_WORK_TREE=/workspace" in argv
 
@@ -291,6 +293,29 @@ def test_linked_worktree_rejects_metadata_for_another_task(tmp_path: Path):
             _request(key),
             workspace=workspace,
             container_name="sakura-sandbox-sandbox-test123-request-42",
+        )
+
+
+def test_linked_worktree_rejects_unsafe_task_name_for_nested_mount_destination(
+    tmp_path: Path,
+):
+    """A metadata name must not become an unescaped nested Docker path."""
+
+    root = tmp_path / "workplace"
+    workspace = root / "owner" / "repo" / "worktrees" / "42-feature"
+    common = root / "owner" / "repo" / "base" / ".git"
+    task_gitdir = common / "worktrees" / "42,evil"
+    task_gitdir.mkdir(parents=True)
+    workspace.mkdir(parents=True)
+    key = _workspace_key_for_relative_identity("owner/repo/worktrees/42-feature")
+
+    adapter = DockerRuntimeAdapter(_config(root))
+    with pytest.raises(InvalidRequestError, match="Git metadata"):
+        adapter.build_create_argv(
+            _request(key),
+            workspace=workspace,
+            container_name="sakura-sandbox-sandbox-test123-request-42",
+            git_mount_plan=_GitMountPlan(task_gitdir, common),
         )
 
 

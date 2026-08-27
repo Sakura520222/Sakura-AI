@@ -60,7 +60,13 @@ CONTAINER_HOME = "/home/agent"
 CONTAINER_TMP = "/tmp"
 CONTAINER_GIT_ROOT = "/sakura-git"
 CONTAINER_GIT_COMMON = f"{CONTAINER_GIT_ROOT}/common"
-CONTAINER_GIT_WORKTREE = f"{CONTAINER_GIT_ROOT}/worktree"
+# Keep the task metadata below the common Git directory.  Git's linked
+# worktree implementation resolves ``commondir`` relative to GIT_DIR; a
+# sibling mount (``/sakura-git/worktree``) breaks that resolution even when
+# GIT_COMMON_DIR happens to point at the right directory.  Docker permits a
+# second bind mount below a read-only bind mount, so the task directory can
+# retain its real relative layout while remaining the only writable subtree.
+CONTAINER_GIT_WORKTREE_ROOT = f"{CONTAINER_GIT_COMMON}/worktrees"
 RUNNER_UID = 65532
 RUNNER_GID = 65532
 # The workspace virtualenv is created by the trusted dependency admission
@@ -165,7 +171,9 @@ class _GitMountPlan:
     the daemon-owned workspace root and exposes it through stable container
     paths.  The task metadata is writable for Git's index/HEAD updates; the
     common repository metadata is mounted read-only and never handed to the
-    request as a writable source.
+    request as a writable source.  The runner destination deliberately keeps
+    the task directory nested under the common destination so Git's native
+    ``commondir=../..`` contract remains valid.
     """
 
     worktree_gitdir: Path
@@ -493,6 +501,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         if git_mount_plan is not None:
             common_source = str(git_mount_plan.common_gitdir)
             worktree_source = str(git_mount_plan.worktree_gitdir)
+            worktree_destination = self._container_git_worktree_path(git_mount_plan)
             for path in (common_source, worktree_source):
                 if any(char in path for char in ("\n", "\r", ",")):
                     raise InvalidRequestError("workspace Git metadata path is not mountable")
@@ -509,11 +518,11 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                     ),
                     "--mount",
                     (
-                        f"type=bind,src={worktree_source},dst={CONTAINER_GIT_WORKTREE},"
+                        f"type=bind,src={worktree_source},dst={worktree_destination},"
                         "bind-propagation=rprivate"
                     ),
                     "--env",
-                    f"GIT_DIR={CONTAINER_GIT_WORKTREE}",
+                    f"GIT_DIR={worktree_destination}",
                     "--env",
                     f"GIT_COMMON_DIR={CONTAINER_GIT_COMMON}",
                     "--env",
@@ -525,6 +534,23 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         argv.append(self.image_reference)
         argv.extend(command)
         return tuple(argv)
+
+    @staticmethod
+    def _container_git_worktree_path(git_mount_plan: _GitMountPlan) -> str:
+        """Return the canonical nested destination for one task's Git dir.
+
+        ``worktree_gitdir`` has already been derived below the daemon-owned
+        common Git directory and its final component has passed the strict
+        task-name validation.  Re-check the component here because this
+        helper is also used from the argv construction boundary: a future
+        caller must never be able to turn a metadata path into a Docker
+        destination or option fragment.
+        """
+
+        name = git_mount_plan.worktree_gitdir.name
+        if not _SAFE_DIR_RE.fullmatch(name) or name in {".", ".."}:
+            raise InvalidRequestError("workspace Git metadata path is invalid")
+        return f"{CONTAINER_GIT_WORKTREE_ROOT}/{name}"
 
     async def execute(
         self,
