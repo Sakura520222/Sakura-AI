@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
 from backend.core.config import get_settings
@@ -28,9 +29,16 @@ from backend.services.agent_team.execution import (
     ExecutionResult,
     execution_workspace_key,
 )
+from backend.services.agent_team.network_policy import (
+    get_agent_team_network_policy_state,
+    network_mode_for_policy,
+)
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
-PROTOCOL_VERSION = 1
+# Keep this wire constant independent from the sandboxer package so the Web
+# container never imports host-side daemon code.  v2 requires the explicit
+# network capability fields introduced by the Agent network policy contract.
+PROTOCOL_VERSION = 2
 DEFAULT_SOCKET_PATH = "/run/sakura-ai-sandbox/sandboxd.sock"
 DEFAULT_TIMEOUT_SECONDS = 900.0
 DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -324,6 +332,7 @@ class _HealthData(BaseModel):
     ready: StrictBool
     runtime: StrictStr
     profiles: list[StrictStr]
+    egress_capability: StrictStr
     instance_id: StrictStr
     workspace_root: StrictStr
     runner_image_digest: StrictStr | None
@@ -541,9 +550,20 @@ class SandboxExecutionRunner:
                 else configured_digest
             ),
         )
+        # Filled only by ``ensure_ready`` after the daemon's strict health
+        # identity/capability contract has been validated.  Dependency
+        # installation must never infer a network mode from a request or a
+        # local default.
+        self._egress_capability: str | None = None
 
     def supports_profile(self, profile: ExecutionProfile) -> bool:
         return profile in {ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY}
+
+    @property
+    def egress_capability(self) -> str | None:
+        """The server-advertised egress capability, never a network name."""
+
+        return self._egress_capability
 
     async def ensure_ready(
         self,
@@ -644,19 +664,91 @@ class SandboxExecutionRunner:
             )
         if expected_digest is not None and digest != expected_digest:
             raise SandboxProtocolError("sandboxd runner image digest does not match")
+        egress_capability = health.egress_capability.strip().lower()
+        if egress_capability not in {"none", "egress"}:
+            raise SandboxProtocolError("sandboxd egress capability is invalid")
+        self._egress_capability = egress_capability
         return health
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        request_id = uuid.uuid4().hex
+        audit_digest = self.config.expected_runner_image_digest or "unbound"
+
         if not self.supports_profile(request.profile):
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy="unavailable",
+                mode="none",
+                revision="unknown",
+                digest=audit_digest,
+                result="denied_unsupported_profile",
+            )
             raise SandboxPolicyError(
                 f"sandbox runner does not support profile {request.profile.value}"
             )
         if request.workspace_key != self.workspace_key:
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy="unavailable",
+                mode="none",
+                revision="unknown",
+                digest=audit_digest,
+                result="denied_workspace_mismatch",
+            )
             raise SandboxPolicyError("request workspace does not match the runner workspace")
         if request.env:
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy="unavailable",
+                mode="none",
+                revision="unknown",
+                digest=audit_digest,
+                result="denied_environment",
+            )
             raise SandboxPolicyError("sandbox requests cannot inject environment variables")
 
-        request_id = uuid.uuid4().hex
+        try:
+            policy_state = await get_agent_team_network_policy_state()
+            network_policy = policy_state.policy
+            network_mode = network_mode_for_policy(network_policy)
+        except Exception as exc:
+            # Do not include the exception text: database/driver errors can
+            # echo connection details, and the audit contract must never
+            # become a command/secret side channel.
+            logger.bind(error_type=type(exc).__name__).error(
+                "Agent sandbox network policy could not be read; execution denied"
+            )
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy="unavailable",
+                mode="none",
+                revision="unknown",
+                digest=audit_digest,
+                result="denied_policy_unavailable",
+            )
+            raise SandboxPolicyError(
+                "Agent network policy could not be read; execution was denied"
+            ) from exc
+
+        _audit_execution(
+            task=request.workspace_key,
+            request_id=request_id,
+            profile=request.profile.value,
+            policy=network_policy.value,
+            mode=network_mode,
+            revision=policy_state.revision,
+            digest=audit_digest,
+            result="admitted",
+        )
+
         timeout = min(float(request.timeout_seconds), self.config.timeout_seconds)
         payload: dict[str, Any] = {
             "request_id": request_id,
@@ -665,6 +757,7 @@ class SandboxExecutionRunner:
             "profile": request.profile.value,
             "timeout_seconds": timeout,
             "env": {},
+            "network_mode": network_mode,
         }
         if request.command is not None:
             payload["command"] = request.command
@@ -685,68 +778,108 @@ class SandboxExecutionRunner:
         )
         cancel_waiter: asyncio.Task[bool] | None = None
         try:
-            if request.cancel_event is None:
-                envelope = await request_task
-            else:
-                cancel_waiter = asyncio.create_task(
-                    request.cancel_event.wait(),
-                    name=f"sandbox-client-cancel-wait-{request_id}",
-                )
-                done, _ = await asyncio.wait(
-                    {request_task, cancel_waiter},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if cancel_waiter in done and request_task not in done:
-                    # The daemon owns the runtime process.  Always send the
-                    # exact request id and require its explicit acknowledgement;
-                    # a timeout or transport failure is infrastructure failure,
-                    # never a successful cancellation result.
-                    try:
-                        await self._cancel_request_bounded(request_id)
-                    except asyncio.CancelledError:
-                        # The independent delivery task remains shielded and
-                        # owns its own deadline; preserve the caller's cancel.
-                        raise
-                    except SandboxCleanupError:
-                        request_task.cancel()
-                        _detach_task(request_task)
-                        raise
-                    await self._drain_request_after_cancel(request_task)
-                    return ExecutionResult(
-                        command=request.command or " ".join(request.argv or ()),
-                        cwd=str(request.cwd),
-                        cancelled=True,
-                    )
-                else:
+            try:
+                if request.cancel_event is None:
                     envelope = await request_task
-        except asyncio.CancelledError:
-            if not request_task.done():
-                request_task.cancel()
-            _detach_task(request_task)
-            raise
-        finally:
-            if cancel_waiter is not None and not cancel_waiter.done():
-                cancel_waiter.cancel()
-                _detach_task(cancel_waiter)
+                else:
+                    cancel_waiter = asyncio.create_task(
+                        request.cancel_event.wait(),
+                        name=f"sandbox-client-cancel-wait-{request_id}",
+                    )
+                    done, _ = await asyncio.wait(
+                        {request_task, cancel_waiter},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if cancel_waiter in done and request_task not in done:
+                        # The daemon owns the runtime process.  Always send the
+                        # exact request id and require its explicit acknowledgement;
+                        # a timeout or transport failure is infrastructure failure,
+                        # never a successful cancellation result.
+                        try:
+                            await self._cancel_request_bounded(request_id)
+                        except asyncio.CancelledError:
+                            # The independent delivery task remains shielded and
+                            # owns its own deadline; preserve the caller's cancel.
+                            raise
+                        except SandboxCleanupError:
+                            request_task.cancel()
+                            _detach_task(request_task)
+                            raise
+                        await self._drain_request_after_cancel(request_task)
+                        _audit_execution(
+                            task=request.workspace_key,
+                            request_id=request_id,
+                            profile=request.profile.value,
+                            policy=network_policy.value,
+                            mode=network_mode,
+                            revision=policy_state.revision,
+                            digest=audit_digest,
+                            result="cancelled",
+                        )
+                        return ExecutionResult(
+                            command=request.command or " ".join(request.argv or ()),
+                            cwd=str(request.cwd),
+                            cancelled=True,
+                        )
+                    else:
+                        envelope = await request_task
+            except asyncio.CancelledError:
+                if not request_task.done():
+                    request_task.cancel()
+                _detach_task(request_task)
+                raise
+            finally:
+                if cancel_waiter is not None and not cancel_waiter.done():
+                    cancel_waiter.cancel()
+                    _detach_task(cancel_waiter)
 
-        data = self._parse_data(envelope, _ExecutionData)
-        if data.request_id != request_id:
-            raise SandboxProtocolError("sandboxd returned a mismatched request id")
-        stdout, stderr, truncated = _bound_output(
-            data.stdout,
-            data.stderr,
-            self.config.max_output_bytes,
-        )
-        return ExecutionResult(
-            command=request.command or " ".join(request.argv or ()),
-            cwd=str(request.cwd),
-            exit_code=data.exit_code,
-            stdout=stdout,
-            stderr=stderr,
-            timed_out=data.timed_out,
-            cancelled=data.cancelled,
-            output_truncated=data.output_truncated or truncated,
-        )
+            data = self._parse_data(envelope, _ExecutionData)
+            if data.request_id != request_id:
+                raise SandboxProtocolError("sandboxd returned a mismatched request id")
+            stdout, stderr, truncated = _bound_output(
+                data.stdout,
+                data.stderr,
+                self.config.max_output_bytes,
+            )
+            result = ExecutionResult(
+                command=request.command or " ".join(request.argv or ()),
+                cwd=str(request.cwd),
+                exit_code=data.exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                timed_out=data.timed_out,
+                cancelled=data.cancelled,
+                output_truncated=data.output_truncated or truncated,
+            )
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy=network_policy.value,
+                mode=network_mode,
+                revision=policy_state.revision,
+                digest=audit_digest,
+                result=(
+                    "completed_timeout"
+                    if result.timed_out
+                    else "completed_nonzero"
+                    if result.exit_code not in (None, 0)
+                    else "completed"
+                ),
+            )
+            return result
+        except BaseException as exc:
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy=network_policy.value,
+                mode=network_mode,
+                revision=policy_state.revision,
+                digest=audit_digest,
+                result=f"error_{type(exc).__name__}",
+            )
+            raise
 
     async def cancel(self, request_id: str) -> _CancelData:
         if not request_id or len(request_id) > 128 or "/" in request_id or "\\" in request_id:
@@ -933,6 +1066,61 @@ class SandboxExecutionRunner:
             raise SandboxProtocolError("sandboxd response data violates the contract") from exc
 
 
+async def read_sandbox_capability_status() -> dict[str, Any]:
+    """Read a UI-safe sandbox readiness projection without a workspace.
+
+    The configuration page needs to show whether the independent daemon is
+    reachable, but it must not create a workspace or expose Docker network
+    names.  Health is a control-plane request and therefore uses a lightweight
+    uninitialised runner whose only required field is the immutable client
+    configuration.
+    """
+
+    settings = get_settings()
+    try:
+        config = SandboxExecutionConfig(
+            socket_path=getattr(settings, "agent_team_sandbox_socket", DEFAULT_SOCKET_PATH),
+            timeout_seconds=min(
+                float(
+                    getattr(
+                        settings,
+                        "agent_team_sandbox_timeout_seconds",
+                        DEFAULT_TIMEOUT_SECONDS,
+                    )
+                ),
+                30.0,
+            ),
+            max_output_bytes=int(
+                getattr(
+                    settings,
+                    "agent_team_sandbox_max_output_bytes",
+                    DEFAULT_MAX_OUTPUT_BYTES,
+                )
+            ),
+            deploy_mode=getattr(settings, "sakura_deploy_mode", "unknown"),
+        )
+        probe = SandboxExecutionRunner.__new__(SandboxExecutionRunner)
+        probe.config = config
+        health = await probe.health()
+        runtime = health.runtime.strip().lower()
+        capability = health.egress_capability.strip().lower()
+        if capability not in {"none", "egress"}:
+            raise SandboxProtocolError("sandboxd egress capability is invalid")
+        available = bool(health.ready and runtime not in {"", "unknown", "none", "unavailable"})
+        return {
+            "available": available,
+            "egress_capability": capability,
+        }
+    except Exception as exc:
+        logger.bind(error_type=type(exc).__name__).warning(
+            "sandbox capability status is unavailable"
+        )
+        return {
+            "available": False,
+            "egress_capability": "unavailable",
+        }
+
+
 def _detach_task(task: asyncio.Task[Any]) -> None:
     if task.done():
         try:
@@ -948,6 +1136,37 @@ def _detach_task(task: asyncio.Task[Any]) -> None:
             pass
 
     task.add_done_callback(consume)
+
+
+def _audit_execution(
+    *,
+    task: str,
+    request_id: str,
+    profile: str,
+    policy: str,
+    mode: str,
+    revision: str,
+    digest: str,
+    result: str,
+) -> None:
+    """Emit the bounded execution audit projection.
+
+    This intentionally uses structured logger context and a constant message.
+    In particular, command/argv/cwd/env and exception details are not included
+    so an audit sink cannot accidentally persist execution secrets.
+    """
+
+    logger.bind(
+        event="agent_sandbox_execution",
+        task=str(task),
+        request=str(request_id),
+        profile=str(profile),
+        policy=str(policy),
+        mode=str(mode),
+        revision=str(revision),
+        digest=str(digest),
+        result=str(result),
+    ).info("agent sandbox execution")
 
 
 def _canonical_workspace_root(value: str) -> str:
@@ -1006,6 +1225,7 @@ __all__ = [
     "SandboxUnavailableError",
     "create_execution_runner",
     "create_ready_execution_runner",
+    "read_sandbox_capability_status",
     "resolve_execution_backend",
     "validate_execution_backend",
 ]

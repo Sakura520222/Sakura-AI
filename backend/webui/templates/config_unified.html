@@ -23,6 +23,26 @@
         </button>
     </div>
 
+    <section id="agent-network-status"
+             class="rounded-xl border border-sakura-200 bg-sakura-50/70 p-4 dark:border-sakura-800 dark:bg-sakura-950/30"
+             role="status" aria-live="polite">
+        <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-sakura-900 dark:text-sakura-100">
+                    {{ _('config.agent_network_status_title') }}
+                </h2>
+                <p id="agent-network-status-detail" class="mt-1 text-xs text-sakura-800 dark:text-sakura-200">
+                    {{ _('config.agent_network_status_loading') }}
+                </p>
+                <p id="agent-network-status-risk" class="mt-2 hidden text-xs font-medium text-amber-800 dark:text-amber-300"></p>
+            </div>
+            <span id="agent-network-status-badge"
+                  class="shrink-0 rounded-full bg-gray-200 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                …
+            </span>
+        </div>
+    </section>
+
     <div class="flex gap-6 h-[calc(100vh-10rem)]">
         <!-- 左侧锚点导航（独立滚动栏） -->
         <nav class="hidden lg:block w-52 flex-shrink-0 overflow-y-auto" aria-label="{{ _('config.general_title') }}">
@@ -1037,5 +1057,60 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
+</script>
+
+<script>
+(function () {
+    const detail = document.getElementById('agent-network-status-detail');
+    const risk = document.getElementById('agent-network-status-risk');
+    const badge = document.getElementById('agent-network-status-badge');
+    if (!detail || !risk || !badge) return;
+    const labels = {
+        backend: {{ _('config.agent_network_backend') | tojson }},
+        sandboxReady: {{ _('config.agent_network_sandbox_ready') | tojson }},
+        egress: {{ _('config.agent_network_egress') | tojson }},
+        policy: {{ _('config.agent_network_policy') | tojson }},
+        available: {{ _('config.agent_network_available') | tojson }},
+        unavailable: {{ _('config.agent_network_unavailable') | tojson }},
+        notApplicable: {{ _('config.agent_network_not_applicable') | tojson }},
+        fullRisk: {{ _('config.agent_network_full_access_risk') | tojson }},
+        localRisk: {{ _('config.agent_network_local_risk') | tojson }},
+        failed: {{ _('config.agent_network_status_failed') | tojson }},
+    };
+    const backendLabels = {sandbox: 'sandbox', local: 'local', unavailable: labels.unavailable};
+    const policyLabels = {offline: 'offline', web_tools: 'web_tools', full_access: 'full_access', unavailable: labels.unavailable};
+    const capabilityLabels = {none: 'none', egress: 'egress', not_applicable: labels.notApplicable, unavailable: labels.unavailable};
+    const yesNo = (value) => value === null ? labels.notApplicable : value ? labels.available : labels.unavailable;
+    async function refreshAgentNetworkStatus() {
+        try {
+            const response = await fetch('/config/agent-network-status', {
+                credentials: 'same-origin',
+                headers: {Accept: 'application/json'},
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error('status unavailable');
+            const backend = backendLabels[data.backend] || labels.unavailable;
+            const policy = policyLabels[data.policy] || labels.unavailable;
+            const capability = capabilityLabels[data.egress_capability] || labels.unavailable;
+            detail.textContent = `${labels.backend}: ${backend} · ${labels.policy}: ${policy} · ${labels.sandboxReady}: ${yesNo(data.sandbox_ready)} · ${labels.egress}: ${capability} (${yesNo(data.egress_available)})`;
+            badge.textContent = data.backend_ready ? labels.available : labels.unavailable;
+            badge.className = data.backend_ready
+                ? 'shrink-0 rounded-full bg-green-100 px-2 py-1 text-xs text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                : 'shrink-0 rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
+            const warnings = [];
+            if (data.full_access_risk) warnings.push(labels.fullRisk);
+            if (data.local_host_network) warnings.push(labels.localRisk);
+            risk.textContent = warnings.join(' ');
+            risk.classList.toggle('hidden', warnings.length === 0);
+        } catch (error) {
+            detail.textContent = labels.failed;
+            badge.textContent = labels.unavailable;
+            badge.className = 'shrink-0 rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
+            risk.textContent = labels.failed;
+            risk.classList.remove('hidden');
+        }
+    }
+    refreshAgentNetworkStatus();
+})();
 </script>
 {% endblock %}

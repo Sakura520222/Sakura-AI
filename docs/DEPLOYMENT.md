@@ -40,7 +40,7 @@ cd /opt/sakura-ai
 sudo ./start.sh --prod
 ```
 
-推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名。`start.sh --prod` 会生成 root-owned `0600` 的 `.deploy/deployment.env`，从当前 Release 的 `agent-sandbox-manifest.json` 解析 sandboxd 与 runner 的不可变 digest，创建独立 GID 9473 和 `/run/sakura-ai-sandbox`，先启动并验证 sandboxd，再启动 Web/MySQL/Redis。随后脚本下载并启动 Host Updater（独立 GID 9472 和 `/run/sakura-ai`）。生产 daemon 启动前会验证 binary、`start.sh`、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；任一身份、权限、协议、runtime、workspace 或 digest 不匹配都会 fail-closed。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
+推荐路径固定为 root 管理的 `/opt/sakura-ai`。启动脚本将 `COMPOSE_PROJECT_NAME=sakura-ai` 持久化到部署状态，并为所有 Compose 操作显式传入项目名。`start.sh --prod` 会先在 root-owned、权限为 `0600` 的 pending 状态副本中准备 `.deploy/deployment.env`；若 Web 初始值是移动的 `:latest`，脚本先从 GitHub 解析一个非 draft/prerelease 的具体稳定 Release，再拉取并固定该 Release 的 Web `:vX.Y.Z@sha256:...`，随后从同一 Release 的 `agent-sandbox-manifest.json` 固定 sandboxd/runner digest。只有完整解析验证以及 Web、sandboxd、runner 和 Compose 所需镜像的 pull/inspect 全部成功后，pending 副本才会原子替换权威 `.deploy/deployment.env`；任一步失败都会丢弃 pending 副本并保持旧状态，且在 Compose 启动前 fail-closed。脚本随后创建独立 GID 9473 和 `/run/sakura-ai-sandbox`，先启动并验证 sandboxd，再启动 Web/MySQL/Redis。随后脚本下载并启动 Host Updater（独立 GID 9472 和 `/run/sakura-ai`）。生产 daemon 启动前会验证 binary、`start.sh`、Compose、`deployment.env` 及其完整父目录链均由 root 控制且不可由 group/other 写入；任一身份、权限、协议、runtime、workspace 或 digest 不匹配都会 fail-closed。新版本检查会自动执行，但安装更新必须由超级管理员在 WebUI 版本管理器中手动确认。
 
 ### Agent OS 沙箱（Linux）
 
@@ -48,6 +48,8 @@ Agent 的 `shell`、`grep` 和自动依赖安装不会在 Web 进程中直接执
 
 - `--network none`、只读 rootfs、`65532:65532`、`--cap-drop ALL`、`no-new-privileges`；
 - CPU、内存、PID、`nofile` 与 combined stdout/stderr 字节上限；
+- 创建 runner 前由 root-owned sandboxd 仅将当前任务 worktree handoff 给固定 `65532:65532`；无法完成 ownership 合同时拒绝执行，绝不使用 `0777`；
+- 普通 linked worktree 的 task gitdir 以可写受控 mount 暴露，base common `.git` 只读暴露，并通过固定 `GIT_DIR`/`GIT_COMMON_DIR`/`GIT_WORK_TREE` 让 Git 不依赖 Web 容器的 `/app` 指针路径；不挂载相邻任务的可写 metadata；
 - 只精确挂载当前任务 worktree 到 `/workspace`，不挂载相邻任务、应用配置、两个 UDS 或 Docker socket；
 - 镜像、mount、network、runtime 和 Docker argv 全部由 sandboxd 固定，Backend/模型请求不能覆盖；
 - timeout、取消、daemon shutdown 和异常路径都执行有界 `kill/rm`；重启只回收经 service、instance、request、workspace labels 证明属于当前实例的容器。
@@ -61,7 +63,16 @@ sudo ./start.sh sandboxd reinstall
 sudo ./start.sh sandboxd stop
 ```
 
-生产 workspace 使用宿主 bind 目录（默认 `/opt/sakura-ai/workplace`），Web 内仍显示为 `/app/workplace`。`SAKURA_SANDBOX_WORKSPACE_ROOT` 是宿主路径身份，必须由 `start.sh` 计算和注入，不要手工改成容器路径。sandboxd 的稳定 instance ID、双镜像 digest、release version 和 workspace identity 保存在 `.deploy/deployment.env`；不要提交该文件。
+生产 workspace 使用宿主 bind 目录（默认 `/opt/sakura-ai/workplace`），Web 内仍显示为 `/app/workplace`。`SAKURA_SANDBOX_WORKSPACE_ROOT` 是宿主路径身份，必须由 `start.sh` 计算和注入，不要手工改成容器路径。sandboxd 的稳定 instance ID、双镜像 digest、release version、固定 egress 网络和 workspace identity 保存在 `.deploy/deployment.env`；不要提交该文件。
+
+Agent 网络访问由 WebUI 超级管理员配置 `agent_team_network_policy` 控制。`offline` 和 `web_tools` 的 Agent/Dependency runner 均使用 `network none`；`web_tools` 仅授权 `search_web`/`fetch_url`，并继续服从既有 Web 开关与 SSRF 防护。`full_access` 才会把两类 runner 映射为 UDS `network_mode=egress`。sandboxd 将该能力映射到部署侧固定的 `SAKURA_SANDBOX_EGRESS_NETWORK`，默认是 Docker 内置 `bridge`，因此全新 Docker 环境无需额外创建网络即可实际出网。若管理员需要独立出口或包仓库 allowlist，可配置一个 named network，例如：
+
+```bash
+docker network create sakura-ai-egress
+sudo env SAKURA_SANDBOX_EGRESS_NETWORK=sakura-ai-egress ./start.sh --prod
+```
+
+网络名只允许 `bridge` 或符合 sandboxd 校验的 named network（字母/数字、`.`、`_`、`-`，最长 63 个字符）；`host`、`container:*`、`ns:*`、路径/选项字符串及空值均拒绝。脚本会将它持久化并纳入 sandboxd 容器 label/identity drift 检查；不存在的 named network 会使 sandboxd 启动失败。请求和模型不能改变任何网络策略或 Docker 参数。旧版本的 `SAKURA_SANDBOX_DEPENDENCY_NETWORK` 仅作 deployment.env 迁移兼容，不应作为新配置入口。
 
 源码开发只有在 `SAKURA_DEPLOY_MODE=source` 且显式选择 `agent_team_execution_backend=local` 时才允许本地执行，此模式**不提供 OS 隔离**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
 
@@ -218,9 +229,16 @@ cd Sakura-AI
 **开发 Compose**（挂载源码，只启动 Web 服务）：
 
 ```bash
-cd docker
-docker-compose up -d
+mkdir -p workplace
+docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+开发 Compose 不要求预先导出 `SAKURA_SANDBOX_WORKSPACE_ROOT`：未设置时安全地使用
+仓库根目录下的 `workplace/`。它只启动 Web，不会替代独立的 sandboxd。普通非 root
+源码启动、显式 `local` 后端或已禁用 Agent 时，`start.sh` 不会无条件创建 root-owned
+sandboxd；如果要在源码环境启用 OS 沙箱，请由管理员显式执行
+`sudo ./start.sh sandboxd start`，并使用 `sandbox` 后端。sandboxd 无法通过 root/身份/健康
+检查时，Agent 请求保持 fail-closed，不会降级到 Web 进程执行。
 
 **本地直接运行**：
 

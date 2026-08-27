@@ -35,7 +35,7 @@ from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.registry import (
     create_executor,
-    get_tool_definitions,
+    get_tool_definitions_fresh,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -238,7 +238,7 @@ class ProfessionalReviewAgent:
             github_repo=github_repo,
             sakura_ref=sakura_ref,
         )
-        tool_schemas = get_tool_definitions("reviewer")
+        tool_schemas = await get_tool_definitions_fresh("reviewer")
         # 工具循环不设轮次与时长上限：依赖模型自然停止（submit_review / 纯文本
         # 完成）与手动取消（cancel_check / cancel_event）。agent_team_timeout_seconds
         # 仅约束单次 AI 请求的 HTTP 超时，不约束整体轮数与时长。

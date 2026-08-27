@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +19,7 @@ from starlette.requests import Request
 
 from backend.core import config_sections
 from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_RANGES
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.webui.deps import require_csrf, require_super_admin
 from backend.webui.routes import config as config_routes
 from backend.webui.routes.agent_team import router as agent_team_router
@@ -292,6 +294,89 @@ def test_issue_config_hint_excludes_removed_auto_comment_toggle():
     en_hint = next(line for line in en.splitlines() if "issue_config_hint:" in line)
     assert "自动评论" not in zh_hint
     assert "auto comment" not in en_hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_network_status_local_full_access_is_host_ready(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Local readiness is host-unrestricted, not dependent on sandbox egress."""
+
+    async def fresh_policy_state():
+        return SimpleNamespace(
+            policy=AgentTeamNetworkPolicy.FULL_ACCESS,
+            revision="revision-42",
+        )
+
+    async def fresh_config(key: str):
+        assert key == "agent_team_execution_backend"
+        return "local"
+
+    async def unexpected_sandbox_probe():
+        raise AssertionError("local status must not probe sandboxd egress")
+
+    monkeypatch.setattr(
+        config_routes,
+        "get_agent_team_network_policy_state",
+        fresh_policy_state,
+    )
+    monkeypatch.setattr(config_routes, "get_dynamic_config_fresh", fresh_config)
+    monkeypatch.setattr(
+        config_routes,
+        "get_settings",
+        lambda: SimpleNamespace(sakura_deploy_mode="source"),
+    )
+    monkeypatch.setattr(
+        config_routes,
+        "read_sandbox_capability_status",
+        unexpected_sandbox_probe,
+    )
+
+    response = await config_routes.agent_network_status(user={})
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload == {
+        "backend": "local",
+        "backend_ready": True,
+        "sandbox_ready": False,
+        "egress_capability": "not_applicable",
+        "egress_available": None,
+        "policy": "full_access",
+        "policy_revision": "revision-42",
+        "full_access_risk": True,
+        "local_host_network": True,
+    }
+
+
+def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
+    template = (
+        Path(__file__).parents[1]
+        / "backend"
+        / "webui"
+        / "templates"
+        / "config_unified.html"
+    ).read_text(encoding="utf-8")
+    en = (
+        Path(__file__).parents[1]
+        / "backend"
+        / "webui"
+        / "translations"
+        / "en.yaml"
+    ).read_text(encoding="utf-8")
+    zh = (
+        Path(__file__).parents[1]
+        / "backend"
+        / "webui"
+        / "translations"
+        / "zh-CN.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "not_applicable: labels.notApplicable" in template
+    assert "value === null ? labels.notApplicable" in template
+    assert "agent_network_local_risk" in template
+    assert 'agent_network_not_applicable: "Not applicable"' in en
+    assert 'agent_network_not_applicable: "不适用"' in zh
 
 
 # ---------- general/save 通用循环 ----------

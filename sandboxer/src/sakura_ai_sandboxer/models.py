@@ -1,4 +1,4 @@
-"""Strict wire models for the sandboxd v1 protocol."""
+"""Strict wire models for the sandboxd v2 protocol."""
 
 from __future__ import annotations
 
@@ -35,6 +35,13 @@ class ExecutionProfile(StrEnum):
 
     AGENT = "agent"
     DEPENDENCY = "dependency"
+
+
+class NetworkMode(StrEnum):
+    """The only network capabilities accepted on the sandboxd wire."""
+
+    NONE = "none"
+    EGRESS = "egress"
 
 
 class ErrorCode(StrEnum):
@@ -74,7 +81,11 @@ class ExecutionRequest(StrictModel):
     cwd: StrictStr = "."
     profile: ExecutionProfile
     timeout_seconds: StrictFloat = Field(gt=0, le=MAX_TIMEOUT_SECONDS)
-    # An empty object is retained for forward protocol compatibility.  v1 does
+    # v2 requires callers to state the constrained capability explicitly; no
+    # v1 omission is silently accepted and no Docker network name or runtime
+    # namespace can cross the UDS boundary.
+    network_mode: NetworkMode
+    # An empty object is retained for forward protocol compatibility.  v2 does
     # not allow callers to pass even a single environment key.
     env: dict[StrictStr, StrictStr] = Field(default_factory=dict)
 
@@ -111,7 +122,7 @@ class ExecutionRequest(StrictModel):
     @classmethod
     def validate_env(cls, value: dict[str, str]) -> dict[str, str]:
         if value:
-            raise ValueError("environment injection is not supported by protocol v1")
+            raise ValueError("environment injection is not supported by protocol v2")
         for key, item in value.items():
             if (
                 not key
@@ -166,6 +177,9 @@ class HealthData(StrictModel):
     ready: StrictBool
     runtime: StrictStr
     profiles: list[ExecutionProfile]
+    # A capability value only; the concrete Docker network is daemon-owned
+    # and must never be exposed over the health endpoint.
+    egress_capability: StrictStr
     instance_id: StrictStr
     workspace_root: StrictStr
     runner_image_digest: StrictStr
@@ -214,6 +228,7 @@ __all__ = [
     "ExecutionProfile",
     "ExecutionRequest",
     "HealthData",
+    "NetworkMode",
     "ResponseEnvelope",
     "validate_protocol_envelope",
 ]

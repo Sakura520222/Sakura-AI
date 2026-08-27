@@ -12,6 +12,8 @@ CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_PATH = ROOT / ".github" / "workflows" / "release-on-pr-merge.yml"
 DOCKER_PUBLISH_PATH = ROOT / ".github" / "workflows" / "docker-publish.yml"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
+SANDBOX_PUBLISH_PATH = WORKFLOWS_DIR / "sandbox-publish.yml"
+GITFLOW_SYNC_PATH = WORKFLOWS_DIR / "gitflow-sync-main-to-develop.yml"
 BUILD_IMAGE = (
     "python:3.14-slim-bookworm@"
     "sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52"
@@ -256,6 +258,81 @@ def test_docker_hub_stable_sync_tags_the_copied_docker_hub_image():
     )
     assert 'crane tag "$SOURCE" latest' not in run_text
     assert 'crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"' in run_text
+
+
+def test_development_web_and_sandbox_tags_share_the_full_revision_identity():
+    _, web_text = _load(DOCKER_PUBLISH_PATH)
+    _, sandbox_text = _load(SANDBOX_PUBLISH_PATH)
+
+    # The updater asks GHCR for the complete Web target tag and then checks a
+    # revision-only alias on each sandbox repository. Both reusable workflows
+    # must therefore derive those tags from the same UTC timestamp, version,
+    # and full checked-out commit SHA.
+    assert 'DEV_TAG="dev-${UTC_CREATED}-v${VERSION}-${REVISION}"' in web_text
+    assert 'primary="dev-${utc_created}-v${VERSION}-${actual}"' in sandbox_text
+    assert 'immutable="sha-${actual:0:40}"' in sandbox_text
+    assert 'echo "revision=$actual"' in sandbox_text
+    assert "org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}" in sandbox_text
+    assert "org.opencontainers.image.version=${{ steps.tags.outputs.version }}" in sandbox_text
+    assert "com.sakura-ai.build.channel=${{ inputs.channel }}" in sandbox_text
+    assert 'com.sakura-ai.component="web"' in (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert 'com.sakura-ai.component="agent-runner"' in (ROOT / "docker" / "Dockerfile.agent-sandbox").read_text(encoding="utf-8")
+    assert "org.opencontainers.image.revision=${{ github.sha }}" not in sandbox_text
+    assert "${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.primary }}" in sandbox_text
+    assert "${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.primary }}" in sandbox_text
+
+
+def test_gitflow_failure_notification_uses_validated_environment_branches():
+    workflow, _ = _load(GITFLOW_SYNC_PATH)
+    branches = next(step for step in workflow["jobs"]["sync-main-to-develop"]["steps"] if step.get("id") == "branches")
+    branch_run = branches["run"]
+    assert "INPUT_SOURCE_BRANCH" in branches["env"]
+    assert "INPUT_TARGET_BRANCH" in branches["env"]
+    assert "git check-ref-format --branch" in branch_run
+    assert "validate_branch \"$source\"" in branch_run
+    assert "validate_branch \"$target\"" in branch_run
+
+    notify = next(
+        step
+        for step in workflow["jobs"]["sync-main-to-develop"]["steps"]
+        if step.get("name") == "同步失败时创建 Issue"
+    )
+    assert notify["env"] == {
+        "SOURCE_BRANCH": "${{ steps.branches.outputs.source }}",
+        "TARGET_BRANCH": "${{ steps.branches.outputs.target }}",
+    }
+    script = notify["with"]["script"]
+    assert "process.env.SOURCE_BRANCH" in script
+    assert "process.env.TARGET_BRANCH" in script
+    assert "validBranch" in script
+    assert "'${{ steps.branches.outputs.source }}'" not in script
+    assert "'${{ steps.branches.outputs.target }}'" not in script
+    assert "steps.branches.outputs.source" not in script
+    assert "steps.branches.outputs.target" not in script
+
+
+def test_gitflow_token_fallback_publishes_web_and_matching_sandbox_pair():
+    workflow, text = _load(GITFLOW_SYNC_PATH)
+    jobs = workflow["jobs"]
+    web = jobs["publish-synchronized-development"]
+    sandbox = jobs["publish-synchronized-development-sandbox"]
+
+    assert web["uses"] == "./.github/workflows/docker-publish.yml"
+    assert web["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert web["with"]["channel"] == "development"
+    assert sandbox["uses"] == "./.github/workflows/sandbox-publish.yml"
+    assert sandbox["needs"] == [
+        "sync-main-to-develop",
+        "publish-synchronized-development",
+    ]
+    assert sandbox["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert sandbox["with"]["channel"] == "development"
+    condition = sandbox["if"]
+    assert "needs.sync-main-to-develop.outputs.changed == 'true'" in condition
+    assert "needs.sync-main-to-develop.outputs.using_pat != 'true'" in condition
+    assert "needs.publish-synchronized-development.result == 'success'" in condition
+    assert "docker-publish.yml" in text
+    assert "sandbox-publish.yml" in text
 
 
 def test_publish_update_manifest_waits_for_release_assets_and_stable_image():

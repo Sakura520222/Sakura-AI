@@ -9,7 +9,6 @@ import httpx
 from loguru import logger
 
 from backend.core.config import get_settings
-from backend.core.time_service import monotonic
 
 
 class WebSearchToolHandler:
@@ -29,8 +28,6 @@ class WebSearchToolHandler:
         "web_search_timeout": "web_search_timeout",
     }
 
-    _CONFIG_CACHE_TTL = 60  # 配置缓存有效期（秒）
-
     def __init__(self) -> None:
         """初始化 Web 搜索工具"""
         settings = get_settings()
@@ -40,12 +37,20 @@ class WebSearchToolHandler:
         self._max_results: int = settings.web_search_max_results
         self._max_content_length: int = settings.web_search_max_content_length
         self._timeout: int = settings.web_search_timeout
-        self._last_config_load: float = 0.0
 
     async def _load_config(self) -> None:
-        """从数据库加载配置（覆盖环境变量默认值），带 TTL 缓存"""
-        if monotonic() - self._last_config_load < self._CONFIG_CACHE_TTL:
-            return
+        """从数据库加载当前配置，覆盖环境变量默认值。
+
+        This is intentionally a per-call read.  The handler is a long-lived
+        singleton used by Agent workers, and a WebUI save must govern the
+        very next search rather than waiting for a local TTL to expire.
+        """
+        settings = get_settings()
+        self._provider = settings.web_search_provider
+        self._api_key = settings.web_search_api_key
+        self._max_results = settings.web_search_max_results
+        self._max_content_length = settings.web_search_max_content_length
+        self._timeout = settings.web_search_timeout
 
         try:
             from sqlalchemy import select
@@ -63,23 +68,18 @@ class WebSearchToolHandler:
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
 
-            if not config_values:
-                return
-
-            if config_values.get("web_search_provider"):
+            if "web_search_provider" in config_values:
                 self._provider = config_values["web_search_provider"]
-            if config_values.get("web_search_api_key"):
+            if "web_search_api_key" in config_values:
                 self._api_key = config_values["web_search_api_key"]
-            if config_values.get("web_search_max_results"):
+            if "web_search_max_results" in config_values:
                 self._max_results = int(config_values["web_search_max_results"])
-            if config_values.get("web_search_max_content_length"):
+            if "web_search_max_content_length" in config_values:
                 self._max_content_length = int(
                     config_values["web_search_max_content_length"]
                 )
-            if config_values.get("web_search_timeout"):
+            if "web_search_timeout" in config_values:
                 self._timeout = int(config_values["web_search_timeout"])
-
-            self._last_config_load = monotonic()
 
         except (ValueError, TypeError) as e:
             logger.warning(f"Web 搜索配置值格式无效，使用环境变量默认值: {e}")

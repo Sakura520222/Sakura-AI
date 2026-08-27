@@ -21,6 +21,7 @@ from backend.services.agent_team.execution import (
     execution_workspace_key,
     trusted_remote_urls_match,
 )
+from backend.services.agent_team.network_policy import get_agent_team_network_policy
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -39,8 +40,6 @@ _repo_locks_guard = asyncio.Lock()
 # 防止 Lock 字典无限增长的简单上限。
 # 实际场景中仓库数量远小于此值，超出时清理最旧的条目。
 _REPO_LOCKS_MAX_SIZE = 256
-
-
 async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
     """获取同仓库 clone/fetch/worktree 操作的进程内锁。
 
@@ -227,6 +226,30 @@ class AgentTeamGitWorkspaceService:
         if not has_pyproject and not has_requirements:
             return
 
+        try:
+            network_policy = await get_agent_team_network_policy()
+        except Exception as exc:
+            raise ExecutionError(
+                "Agent dependency installation 无法读取网络策略，已拒绝在线安装"
+            ) from exc
+        if not network_policy.allows_dependency_network:
+            logger.warning(
+                "Agent 工作区检测到依赖文件，但网络策略为 {}；"
+                "跳过在线依赖安装，仅消费镜像内依赖或显式离线缓存。",
+                network_policy.value,
+            )
+            return
+
+        # ``full_access`` is the only policy that may run untrusted package
+        # hooks online.  The sandbox runner maps this policy to its fixed
+        # server-owned egress capability; no deployment network name is read
+        # or accepted by this Backend service.
+        egress_capability = getattr(executor, "egress_capability", None)
+        if egress_capability != "egress":
+            raise ExecutionError(
+                "Agent dependency installation requires the sandboxd egress capability"
+            )
+
         venv_dir = workspace / ".venv"
         if not venv_dir.exists():
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
@@ -236,7 +259,7 @@ class AgentTeamGitWorkspaceService:
                     workspace_key=execution_workspace_key(
                         workspace, self.workspace_service
                     ),
-                    command="python -m venv .venv",
+                    command="python -m venv /workspace/.venv",
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
                 ),
@@ -248,7 +271,10 @@ class AgentTeamGitWorkspaceService:
 
         # sandboxd runner images are Linux OCI images even when the Web
         # process is developed on Windows; use the container-visible path.
-        pip_cmd = ".venv/bin/pip"
+        # The daemon maps this full-access dependency request to its
+        # server-owned egress network.  No request or model field can select
+        # or widen that network.
+        pip_cmd = "/workspace/.venv/bin/pip"
         if has_pyproject:
             result = await execute_request(
                 executor,
@@ -268,7 +294,9 @@ class AgentTeamGitWorkspaceService:
                     workspace_key=execution_workspace_key(
                         workspace, self.workspace_service
                     ),
-                    command=f"{pip_cmd} install -r requirements.txt --quiet",
+                    command=(
+                        f"{pip_cmd} install -r requirements.txt --quiet"
+                    ),
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
                 ),

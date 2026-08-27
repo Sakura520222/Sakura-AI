@@ -19,7 +19,9 @@
 # Agent sandboxd 由本脚本独立管理（不属于 Compose services）：
 #   - sandboxd 容器独占 Docker API socket；Web/runner 永不挂载该 socket。
 #   - /run/sakura-ai-sandbox 使用独立 GID 9473、0660 UDS，并以只读方式挂给 Web。
-#   - 生产 image 模式必须提供 SAKURA_AGENT_RUNNER_IMAGE_DIGEST；缺失即 fail-closed。
+#   - Agent 网络策略只通过 Backend 传递 none/egress 能力；sandboxd 将 egress
+#     映射到这里配置的管理员固定网络，默认 bridge。网络名永不来自 WebUI/请求。
+#   - 生产 image 模式必须解析 SAKURA_AGENT_RUNNER_IMAGE_DIGEST；缺失即 fail-closed。
 #   ./start.sh updater [action]  # 管理 host updater daemon（含 reinstall/uninstall）
 #   ./start.sh sandboxd [action] # 管理独立 Agent sandboxd daemon
 #   ./start.sh --help         # 显示帮助
@@ -215,6 +217,372 @@ DEPLOYMENT_ENV_FILE="$DEPLOY_DIR/deployment.env"
 # - 写实际值（非 ${...} 表达式）：deployment.env 记录"当时实际选择的镜像"。
 # - durability：write temp → fsync(sync -d) → atomic mv，满足 spec §9.5。
 # - digest 具体化（:latest → :vX.Y.Z@sha256:...）留给 Slice 4 updater activate。
+PRODUCTION_AUTH_ENV_FILE=""
+PRODUCTION_STAGED_ENV_FILE=""
+PRODUCTION_ORIGINAL_ENV_FILE=""
+PRODUCTION_TRANSACTION_JOURNAL_FILE=""
+PRODUCTION_ENV_COMMITTED=0
+PRODUCTION_STABLE_MANIFEST_DIGEST=""
+
+deployment_env_absolute_path() {
+    if [[ "$DEPLOYMENT_ENV_FILE" == /* ]]; then
+        printf '%s\n' "$DEPLOYMENT_ENV_FILE"
+    else
+        printf '%s/%s\n' "$UPDATER_PROJECT_ROOT" "$DEPLOYMENT_ENV_FILE"
+    fi
+}
+
+production_remove_transaction_file() {
+    local path="$1"
+    if [[ -e "$path" || -L "$path" ]]; then
+        rm -f -- "$path" || return 1
+    fi
+}
+
+production_sync_transaction_file() {
+    local path="$1"
+    if sync -d "$path" 2>/dev/null; then
+        return 0
+    fi
+    if sync "$path" 2>/dev/null; then
+        return 0
+    fi
+    if sync 2>/dev/null; then
+        return 0
+    fi
+    fail "无法持久化生产部署事务文件: $path" >&2
+    return 1
+}
+
+production_write_transaction_journal() {
+    local state="$1" tmp="$PRODUCTION_TRANSACTION_JOURNAL_FILE.tmp.$$"
+    [[ -n "$PRODUCTION_TRANSACTION_JOURNAL_FILE" ]] || {
+        fail "production deployment transaction journal path is not initialized" >&2
+        return 1
+    }
+    case "$state" in
+        prepared|committing|committed|restored) ;;
+        *)
+            fail "invalid production deployment transaction state: $state" >&2
+            return 1
+            ;;
+    esac
+    {
+        printf 'schema_version=1\n'
+        printf 'state=%s\n' "$state"
+        printf 'authoritative=%s\n' "$PRODUCTION_AUTH_ENV_FILE"
+        printf 'staged=%s\n' "$PRODUCTION_STAGED_ENV_FILE"
+        printf 'original=%s\n' "$PRODUCTION_ORIGINAL_ENV_FILE"
+        if [[ -f "$PRODUCTION_ORIGINAL_ENV_FILE" ]]; then
+            printf 'had_original=1\n'
+        else
+            printf 'had_original=0\n'
+        fi
+    } > "$tmp" || return 1
+    if ! chmod 600 "$tmp"; then
+        if ! production_remove_transaction_file "$tmp"; then
+            fail "无法清理失败的生产部署事务 journal 临时文件: $tmp" >&2
+        fi
+        fail "无法将生产部署事务 journal 权限设置为 0600" >&2
+        return 1
+    fi
+    if ! production_sync_transaction_file "$tmp"; then
+        if ! production_remove_transaction_file "$tmp"; then
+            fail "无法清理未持久化的生产部署事务 journal 临时文件: $tmp" >&2
+        fi
+        return 1
+    fi
+    if ! mv -f -- "$tmp" "$PRODUCTION_TRANSACTION_JOURNAL_FILE"; then
+        fail "生产部署事务 journal 原子提交失败；保留临时 journal 以便恢复" >&2
+        return 1
+    fi
+}
+
+production_transaction_journal_field() {
+    local journal="$1" field="$2" line value=""
+    [[ -f "$journal" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            "$field="*) value="${line#*=}" ;;
+        esac
+    done < "$journal" || return 1
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+production_cleanup_committed_transaction() {
+    # Once the committed marker is durable, the authoritative file has passed
+    # every deployment gate.  Cleanup must never roll that file back.  Remove
+    # the journal before its rollback copy; if journal removal fails, the
+    # complete journal+backup pair remains available for a safe retry.
+    production_remove_transaction_file "$PRODUCTION_STAGED_ENV_FILE" || return 1
+    if [[ -e "$PRODUCTION_TRANSACTION_JOURNAL_FILE" || -L "$PRODUCTION_TRANSACTION_JOURNAL_FILE" ]]; then
+        production_remove_transaction_file "$PRODUCTION_TRANSACTION_JOURNAL_FILE" || return 1
+    fi
+    # The journal is gone, so a stale rollback copy cannot be interpreted as an
+    # active transaction by a later EXIT trap.  A failure here leaves only an
+    # unreferenced backup and never touches the committed authority.
+    PRODUCTION_ENV_COMMITTED=0
+    production_remove_transaction_file "$PRODUCTION_ORIGINAL_ENV_FILE" || return 1
+    DEPLOYMENT_ENV_FILE="$PRODUCTION_AUTH_ENV_FILE"
+}
+
+production_recover_env_transaction() {
+    local authoritative="$1" journal="$2" deploy_root="$3"
+    local state="" recorded_auth="" staged="" original="" had_original="" line
+    [[ -f "$journal" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            state=*) state="${line#state=}" ;;
+            authoritative=*) recorded_auth="${line#authoritative=}" ;;
+            staged=*) staged="${line#staged=}" ;;
+            original=*) original="${line#original=}" ;;
+            had_original=*) had_original="${line#had_original=}" ;;
+            schema_version=1) ;;
+            *)
+                fail "生产部署事务 journal 含未知字段，拒绝自动恢复" >&2
+                return 1
+                ;;
+        esac
+    done < "$journal"
+    [[ "$recorded_auth" == "$authoritative" ]] || {
+        fail "生产部署事务 journal 权威路径不匹配，拒绝恢复" >&2
+        return 1
+    }
+    [[ "$staged" == "$deploy_root/"* && "$original" == "$deploy_root/"* ]] || {
+        fail "生产部署事务 journal 路径越出 .deploy，拒绝恢复" >&2
+        return 1
+    }
+    case "$state" in
+        committed)
+            # committed is written only after all deployment gates pass.  A
+            # crash after that point needs cleanup, not a rollback to an older
+            # image.
+            production_remove_transaction_file "$staged" || return 1
+            # Keep the journal paired with its rollback copy until the journal
+            # itself has been removed.  If journal cleanup fails, the next
+            # startup can retry without ever treating a committed deployment
+            # as a rollback candidate.
+            production_remove_transaction_file "$journal" || return 1
+            production_remove_transaction_file "$original" || return 1
+            ;;
+        prepared|committing|restored)
+            case "$had_original" in
+                1)
+                    [[ -f "$original" && ! -L "$original" ]] || {
+                        fail "生产部署事务原始备份缺失或不安全，拒绝启动" >&2
+                        return 1
+                    }
+                    local restore_tmp="$authoritative.restore.$$"
+                    if ! cp -- "$original" "$restore_tmp"; then
+                        fail "无法复制生产部署事务原始备份，拒绝覆盖权威状态" >&2
+                        return 1
+                    fi
+                    if ! chmod 600 "$restore_tmp" || ! production_sync_transaction_file "$restore_tmp"; then
+                        if ! production_remove_transaction_file "$restore_tmp"; then
+                            fail "无法清理失败的生产部署事务恢复临时文件: $restore_tmp" >&2
+                        fi
+                        fail "生产部署事务恢复副本无法持久化，拒绝启动" >&2
+                        return 1
+                    fi
+                    if ! mv -f -- "$restore_tmp" "$authoritative"; then
+                        fail "生产部署事务恢复原子替换失败；保留备份和 journal" >&2
+                        return 1
+                    fi
+                    cmp -s "$authoritative" "$original" || {
+                        fail "生产部署事务恢复校验失败；保留备份和 journal" >&2
+                        return 1
+                    }
+                    ;;
+                0)
+                    production_remove_transaction_file "$authoritative" || {
+                        fail "无法移除无原始部署状态的半完成生产事务" >&2
+                        return 1
+                    }
+                    [[ ! -e "$authoritative" ]] || {
+                        fail "无原始部署状态的生产事务恢复后权威文件仍存在" >&2
+                        return 1
+                    }
+                    ;;
+                *)
+                    fail "生产部署事务 journal 的 had_original 无效" >&2
+                    return 1
+                    ;;
+            esac
+            production_remove_transaction_file "$staged" || return 1
+            # Keep original/journal until the restored authoritative file is
+            # verified; remove the journal first so a failed cleanup leaves a
+            # complete retryable recovery record instead of a dangling path.
+            production_remove_transaction_file "$journal" || return 1
+            production_remove_transaction_file "$original" || return 1
+            ;;
+        *)
+            fail "生产部署事务 journal 状态无效: $state" >&2
+            return 1
+            ;;
+    esac
+}
+
+production_prepare_env_stage() {
+    local authoritative stage original journal deploy_root saved_env
+    authoritative=$(deployment_env_absolute_path)
+    if [[ "$DEPLOY_DIR" == /* ]]; then
+        deploy_root="$DEPLOY_DIR"
+    else
+        deploy_root="$UPDATER_PROJECT_ROOT/$DEPLOY_DIR"
+    fi
+    mkdir -p "$deploy_root" || return 1
+    journal="$deploy_root/.deployment.env.transaction"
+    if [[ -e "$journal" ]]; then
+        production_recover_env_transaction "$authoritative" "$journal" "$deploy_root" || return 1
+    fi
+    stage="$deploy_root/.deployment.env.pending.$$"
+    original="$deploy_root/.deployment.env.original.$$"
+    production_remove_transaction_file "$stage" || return 1
+    production_remove_transaction_file "$original" || return 1
+    if [[ -e "$authoritative" && ! -f "$authoritative" ]]; then
+        fail "production deployment state is not a regular file: $authoritative" >&2
+        return 1
+    fi
+    if [[ -f "$authoritative" ]]; then
+        cp -- "$authoritative" "$original" || return 1
+        cp -- "$authoritative" "$stage" || {
+            if ! production_remove_transaction_file "$original"; then
+                fail "无法清理生产部署事务原始备份；拒绝继续" >&2
+            fi
+            return 1
+        }
+    fi
+    PRODUCTION_AUTH_ENV_FILE="$authoritative"
+    PRODUCTION_STAGED_ENV_FILE="$stage"
+    PRODUCTION_ORIGINAL_ENV_FILE="$original"
+    PRODUCTION_TRANSACTION_JOURNAL_FILE="$journal"
+    PRODUCTION_ENV_COMMITTED=0
+    export PRODUCTION_AUTH_ENV_FILE PRODUCTION_STAGED_ENV_FILE PRODUCTION_ORIGINAL_ENV_FILE PRODUCTION_TRANSACTION_JOURNAL_FILE
+    if ! production_write_transaction_journal prepared; then
+        if ! production_remove_transaction_file "$stage"; then
+            fail "无法清理生产部署事务 pending 文件；保留以便人工恢复: $stage" >&2
+        fi
+        if ! production_remove_transaction_file "$original"; then
+            fail "无法清理生产部署事务原始备份；保留以便人工恢复: $original" >&2
+        fi
+        return 1
+    fi
+    saved_env="$DEPLOYMENT_ENV_FILE"
+    DEPLOYMENT_ENV_FILE="$stage"
+    if ! init_deployment_env; then
+        DEPLOYMENT_ENV_FILE="$saved_env"
+        if ! production_restore_env_transaction 1; then
+            fail "生产部署状态初始化失败且事务恢复失败；保留 journal/备份，拒绝继续" >&2
+        fi
+        return 1
+    fi
+    DEPLOYMENT_ENV_FILE="$saved_env"
+    production_write_transaction_journal prepared || return 1
+}
+
+production_commit_env_stage() {
+    [[ -n "$PRODUCTION_STAGED_ENV_FILE" && -f "$PRODUCTION_STAGED_ENV_FILE" ]] || {
+        fail "production deployment stage is missing; refusing to commit partial state" >&2
+        return 1
+    }
+    [[ -n "$PRODUCTION_TRANSACTION_JOURNAL_FILE" && -f "$PRODUCTION_TRANSACTION_JOURNAL_FILE" ]] || {
+        fail "production deployment transaction journal is missing; refusing to commit" >&2
+        return 1
+    }
+    production_write_transaction_journal committing || return 1
+    chmod 600 "$PRODUCTION_STAGED_ENV_FILE" || return 1
+    production_sync_transaction_file "$PRODUCTION_STAGED_ENV_FILE" || return 1
+    mv -f -- "$PRODUCTION_STAGED_ENV_FILE" "$PRODUCTION_AUTH_ENV_FILE" || {
+        fail "production deployment.env atomic commit failed" >&2
+        return 1
+    }
+    DEPLOYMENT_ENV_FILE="$PRODUCTION_AUTH_ENV_FILE"
+    PRODUCTION_ENV_COMMITTED=1
+    production_sync_transaction_file "$PRODUCTION_AUTH_ENV_FILE" || return 1
+    production_write_transaction_journal committed || return 1
+}
+
+production_restore_env_transaction() {
+    local status="${1:-1}"
+    [[ -n "$PRODUCTION_AUTH_ENV_FILE" ]] || return 0
+    if [[ "$status" == "0" ]]; then
+        production_cleanup_committed_transaction
+        return $?
+    fi
+    local journal_state=""
+    if [[ -f "$PRODUCTION_TRANSACTION_JOURNAL_FILE" ]]; then
+        journal_state=$(production_transaction_journal_field "$PRODUCTION_TRANSACTION_JOURNAL_FILE" state) || {
+            fail "生产 deployment.env 事务 journal 状态不可读；拒绝破坏权威文件" >&2
+            return 1
+        }
+        if [[ "$journal_state" == "committed" ]]; then
+            # A committed journal is a successful deployment even when a
+            # previous EXIT trap failed during artifact cleanup.  Retrying the
+            # cleanup is strictly idempotent and must not roll back authority.
+            production_cleanup_committed_transaction
+            return $?
+        fi
+    elif [[ "$PRODUCTION_ENV_COMMITTED" == "1" ]]; then
+        # Without a journal there is no durable evidence that the original
+        # backup is safe to use.  Never remove or overwrite a committed
+        # authority on the strength of an in-memory flag alone.
+        fail "生产 deployment.env 已提交但事务 journal 缺失；拒绝回滚权威文件" >&2
+        return 1
+    fi
+    if [[ "$PRODUCTION_ENV_COMMITTED" == "1" ]]; then
+        # A successful commit can still be followed by a caller-side failure
+        # (or an interrupted EXIT trap).  Mark the rollback intent before
+        # replacing the authoritative file so a crash during restore cannot
+        # be mistaken for a successfully committed deployment.
+        if ! production_write_transaction_journal restored; then
+            fail "无法记录生产 deployment.env 恢复意图；保留新状态、备份和 journal" >&2
+            return 1
+        fi
+        if [[ -f "$PRODUCTION_ORIGINAL_ENV_FILE" ]]; then
+            local restore_tmp="$PRODUCTION_AUTH_ENV_FILE.restore.$$"
+            cp -- "$PRODUCTION_ORIGINAL_ENV_FILE" "$restore_tmp" || {
+                fail "无法复制生产 deployment.env 原始备份；保留备份和 journal" >&2
+                return 1
+            }
+            if ! chmod 600 "$restore_tmp" || ! production_sync_transaction_file "$restore_tmp"; then
+                if ! production_remove_transaction_file "$restore_tmp"; then
+                    fail "无法清理失败的生产 deployment.env 恢复临时文件: $restore_tmp" >&2
+                fi
+                fail "生产 deployment.env 恢复副本无法持久化；保留备份和 journal" >&2
+                return 1
+            fi
+            mv -f -- "$restore_tmp" "$PRODUCTION_AUTH_ENV_FILE" || {
+                fail "生产 deployment.env 恢复原子替换失败；保留备份和 journal" >&2
+                return 1
+            }
+            cmp -s "$PRODUCTION_AUTH_ENV_FILE" "$PRODUCTION_ORIGINAL_ENV_FILE" || {
+                fail "生产 deployment.env 恢复校验失败；保留备份和 journal" >&2
+                return 1
+            }
+        else
+            local had_original=""
+            if [[ -n "$journal_state" ]]; then
+                had_original=$(production_transaction_journal_field "$PRODUCTION_TRANSACTION_JOURNAL_FILE" had_original) || {
+                    fail "生产 deployment.env 事务缺少 had_original 标记；拒绝删除权威文件" >&2
+                    return 1
+                }
+            fi
+            if [[ "$had_original" != "0" ]]; then
+                fail "生产 deployment.env 原始备份缺失；拒绝删除权威文件" >&2
+                return 1
+            fi
+            production_remove_transaction_file "$PRODUCTION_AUTH_ENV_FILE" || return 1
+            [[ ! -e "$PRODUCTION_AUTH_ENV_FILE" ]] || return 1
+        fi
+    fi
+    production_remove_transaction_file "$PRODUCTION_STAGED_ENV_FILE" || return 1
+    production_remove_transaction_file "$PRODUCTION_TRANSACTION_JOURNAL_FILE" || return 1
+    production_remove_transaction_file "$PRODUCTION_ORIGINAL_ENV_FILE" || return 1
+    DEPLOYMENT_ENV_FILE="$PRODUCTION_AUTH_ENV_FILE"
+    PRODUCTION_ENV_COMMITTED=0
+}
+
 generate_deployment_db_password() {
     local generated=""
     if command -v openssl >/dev/null 2>&1; then
@@ -272,6 +640,11 @@ write_deployment_env_keys() {
     tmp="$DEPLOY_DIR/.deployment.env.keys.$$"
     : > "$tmp"
     while IFS= read -r line || [[ -n "$line" ]]; do
+        # Remove the retired dependency-only network key on the first durable
+        # state rewrite.  It must not remain an alternative source of truth.
+        if [[ "$line" == SAKURA_SANDBOX_DEPENDENCY_NETWORK=* ]]; then
+            continue
+        fi
         replaced=0
         for arg in "$@"; do
             if [[ "$line" == "${arg%%=*}="* ]]; then
@@ -312,6 +685,10 @@ init_deployment_env() {
     if ${prod:-false}; then
         mode="image"
     fi
+    sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+        fail "SAKURA_SANDBOX_EGRESS_NETWORK 不是受支持的管理员网络名" >&2
+        return 1
+    }
 
     if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
         local persisted_mode=""
@@ -322,6 +699,10 @@ init_deployment_env() {
         local persisted_sandboxd_digest=""
         local persisted_runner_image=""
         local persisted_runner_digest=""
+        local persisted_egress_network=""
+        local egress_network_present=0
+        local persisted_dependency_network=""
+        local dependency_network_present=0
         local persisted_instance_id=""
         local sandbox_state_present=0
         local line
@@ -335,15 +716,46 @@ init_deployment_env() {
                 SAKURA_SANDBOXD_IMAGE_DIGEST=*) persisted_sandboxd_digest="${line#SAKURA_SANDBOXD_IMAGE_DIGEST=}"; sandbox_state_present=1 ;;
                 SAKURA_AGENT_RUNNER_IMAGE=*) persisted_runner_image="${line#SAKURA_AGENT_RUNNER_IMAGE=}"; sandbox_state_present=1 ;;
                 SAKURA_AGENT_RUNNER_IMAGE_DIGEST=*) persisted_runner_digest="${line#SAKURA_AGENT_RUNNER_IMAGE_DIGEST=}"; sandbox_state_present=1 ;;
+                SAKURA_SANDBOX_EGRESS_NETWORK=*) persisted_egress_network="${line#SAKURA_SANDBOX_EGRESS_NETWORK=}"; egress_network_present=1 ;;
+                SAKURA_SANDBOX_DEPENDENCY_NETWORK=*) persisted_dependency_network="${line#SAKURA_SANDBOX_DEPENDENCY_NETWORK=}"; dependency_network_present=1 ;;
                 SAKURA_SANDBOX_INSTANCE_ID=*) persisted_instance_id="${line#SAKURA_SANDBOX_INSTANCE_ID=}"; sandbox_state_present=1 ;;
             esac
         done < "$DEPLOYMENT_ENV_FILE"
 
+        if [[ "$egress_network_present" -eq 1 ]]; then
+            SANDBOX_EGRESS_NETWORK="$persisted_egress_network"
+            sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+                fail "deployment.env 中的 SAKURA_SANDBOX_EGRESS_NETWORK 不是受支持的管理员网络名" >&2
+                return 1
+            }
+        elif [[ "$dependency_network_present" -eq 1 ]]; then
+            # Migrate the retired dependency-only key.  ``none`` was the old
+            # default and must become the new default bridge rather than
+            # silently leaving full_access without an egress capability.
+            if [[ "$persisted_dependency_network" == "none" ]]; then
+                SANDBOX_EGRESS_NETWORK="bridge"
+            else
+                SANDBOX_EGRESS_NETWORK="$persisted_dependency_network"
+            fi
+            sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+                fail "deployment.env 中的 SAKURA_SANDBOX_DEPENDENCY_NETWORK 不是受支持的管理员网络名" >&2
+                return 1
+            }
+        fi
+
         case "$persisted_mode" in
             source)
+                if [[ "$egress_network_present" -eq 0 || "$dependency_network_present" -eq 1 ]]; then
+                    write_deployment_env_keys \
+                        "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK" || return 1
+                    info "已补全部署状态: $DEPLOYMENT_ENV_FILE"
+                fi
                 ;;
             image)
                 local need_write=0
+                if [[ "$egress_network_present" -eq 0 || "$dependency_network_present" -eq 1 ]]; then
+                    need_write=1
+                fi
                 # 自动补全缺失的部署状态（数据库凭据/项目名/镜像引用），让残缺
                 # 文件也能直接部署：
                 # - 缺数据库密码：仅当 MySQL 数据卷不存在（全新部署）才生成新
@@ -432,6 +844,7 @@ init_deployment_env() {
                             "SAKURA_DB_PASSWORD=$persisted_password" \
                             "COMPOSE_PROJECT_NAME=$persisted_project" \
                             "SAKURA_AI_IMAGE=$persisted_image" \
+                            "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK" \
                             "SAKURA_SANDBOXD_IMAGE=$persisted_sandboxd_image" \
                             "SAKURA_AGENT_RUNNER_IMAGE=$persisted_runner_image" \
                             "SAKURA_SANDBOXD_IMAGE_DIGEST=$persisted_sandboxd_digest" \
@@ -441,7 +854,8 @@ init_deployment_env() {
                         write_deployment_env_keys \
                             "SAKURA_DB_PASSWORD=$persisted_password" \
                             "COMPOSE_PROJECT_NAME=$persisted_project" \
-                            "SAKURA_AI_IMAGE=$persisted_image" || return 1
+                            "SAKURA_AI_IMAGE=$persisted_image" \
+                            "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK" || return 1
                     fi
                     info "已补全部署状态: $DEPLOYMENT_ENV_FILE"
                 fi
@@ -468,6 +882,7 @@ init_deployment_env() {
     {
         echo "# Sakura AI 部署状态（由 start.sh 初始化；updater 接管后以 atomic write 维护）"
         echo "SAKURA_DEPLOY_MODE=$mode"
+        echo "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK"
         if [[ "$mode" == "image" ]]; then
             # 写实际值：解析当前 SAKURA_AI_IMAGE 环境变量，缺省用默认 latest
             local image="${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}"
@@ -557,7 +972,7 @@ SANDBOX_IMAGE_DIGEST="${SAKURA_SANDBOXD_IMAGE_DIGEST:-}"
 SANDBOX_RUNNER_IMAGE="${SAKURA_AGENT_RUNNER_IMAGE:-ghcr.io/sakura520222/sakura-ai-agent-runner:latest}"
 SANDBOX_RUNNER_DIGEST="${SAKURA_AGENT_RUNNER_IMAGE_DIGEST:-}"
 SANDBOX_CONFIGURED_INSTANCE_ID="${SAKURA_SANDBOX_INSTANCE_ID:-}"
-SANDBOX_PROTOCOL_VERSION="1"
+SANDBOX_PROTOCOL_VERSION="2"
 SANDBOX_HEALTH_TIMEOUT="${SANDBOX_HEALTH_TIMEOUT:-90}"
 SANDBOX_STOP_TIMEOUT="${SANDBOX_STOP_TIMEOUT:-20}"
 # Source deployments still use the sandbox by default; this flag only allows
@@ -565,6 +980,21 @@ SANDBOX_STOP_TIMEOUT="${SANDBOX_STOP_TIMEOUT:-20}"
 # digest.  Selecting the Backend's ``local`` execution backend remains a
 # separate explicit application setting.
 SANDBOX_SOURCE_MODE="${SAKURA_SANDBOX_SOURCE_MODE:-1}"
+# ``egress`` is a server-owned capability.  The concrete network defaults to
+# Docker's built-in bridge so full_access works on a fresh installation without
+# an extra ``docker network create`` step.  A retired dependency-only key is
+# read only by the deployment-state migration above.
+if [[ -n "${SAKURA_SANDBOX_EGRESS_NETWORK:-}" ]]; then
+    SANDBOX_EGRESS_NETWORK="$SAKURA_SANDBOX_EGRESS_NETWORK"
+elif [[ -n "${SAKURA_SANDBOX_DEPENDENCY_NETWORK:-}" ]]; then
+    if [[ "$SAKURA_SANDBOX_DEPENDENCY_NETWORK" == "none" ]]; then
+        SANDBOX_EGRESS_NETWORK="bridge"
+    else
+        SANDBOX_EGRESS_NETWORK="$SAKURA_SANDBOX_DEPENDENCY_NETWORK"
+    fi
+else
+    SANDBOX_EGRESS_NETWORK="bridge"
+fi
 
 sandbox_numeric_gid_is_safe() {
     [[ "$SANDBOX_GID" =~ ^[0-9]+$ ]] || return 1
@@ -595,6 +1025,10 @@ sandbox_workspace_root_is_safe() {
 }
 
 sandbox_require_runtime_paths() {
+    sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+        fail "SAKURA_SANDBOX_EGRESS_NETWORK 不是受支持的管理员网络名" >&2
+        return 1
+    }
     sandbox_numeric_gid_is_safe || {
         fail "sandboxd GID must be numeric, independent, and not updater GID 9472" >&2
         return 1
@@ -660,47 +1094,150 @@ sandbox_registry_digest_is_safe() {
     [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}@sha256:[0-9a-f]{64}$ ]]
 }
 
+sandbox_egress_network_is_safe() {
+    local network="$1"
+    # This is deployment-owned input, not a Docker argv fragment.  ``bridge``
+    # is the safe built-in default; named networks are optional administrator
+    # choices.  Host networking and namespace/container joins are forbidden.
+    if [[ "$network" == "none" || "$network" == "bridge" ]]; then
+        return 0
+    fi
+    [[ "$network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]] || return 1
+    case "${network,,}" in
+        host|bridge|container:*|ns:*) return 1 ;;
+    esac
+}
+
 sandbox_load_deployment_config() {
     # deployment.env is the durable source of image identity after the first
     # production run.  Explicit environment values seed a new file; once a
     # key exists, loading it here prevents an accidental restart with a
     # different tag/digest pair.
-    [[ -f "$DEPLOYMENT_ENV_FILE" ]] || return 0
-    local line
+    if [[ ! -f "$DEPLOYMENT_ENV_FILE" ]]; then
+        sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+            fail "SAKURA_SANDBOX_EGRESS_NETWORK 不是受支持的管理员网络名" >&2
+            return 1
+        }
+        return 0
+    fi
+    local line persisted_egress_network_present=0 legacy_dependency_network=""
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             SAKURA_SANDBOXD_IMAGE=*) SANDBOX_IMAGE="${line#SAKURA_SANDBOXD_IMAGE=}" ;;
             SAKURA_SANDBOXD_IMAGE_DIGEST=*) SANDBOX_IMAGE_DIGEST="${line#SAKURA_SANDBOXD_IMAGE_DIGEST=}" ;;
             SAKURA_AGENT_RUNNER_IMAGE=*) SANDBOX_RUNNER_IMAGE="${line#SAKURA_AGENT_RUNNER_IMAGE=}" ;;
             SAKURA_AGENT_RUNNER_IMAGE_DIGEST=*) SANDBOX_RUNNER_DIGEST="${line#SAKURA_AGENT_RUNNER_IMAGE_DIGEST=}" ;;
+            SAKURA_SANDBOX_EGRESS_NETWORK=*) SANDBOX_EGRESS_NETWORK="${line#SAKURA_SANDBOX_EGRESS_NETWORK=}"; persisted_egress_network_present=1 ;;
+            SAKURA_SANDBOX_DEPENDENCY_NETWORK=*) legacy_dependency_network="${line#SAKURA_SANDBOX_DEPENDENCY_NETWORK=}" ;;
             SAKURA_SANDBOX_WORKSPACE_ROOT=*) SANDBOX_WORKSPACE_ROOT="${line#SAKURA_SANDBOX_WORKSPACE_ROOT=}" ;;
             SAKURA_SANDBOX_INSTANCE_ID=*) SANDBOX_CONFIGURED_INSTANCE_ID="${line#SAKURA_SANDBOX_INSTANCE_ID=}" ;;
         esac
     done < "$DEPLOYMENT_ENV_FILE"
+    if [[ "$persisted_egress_network_present" -eq 0 && -n "$legacy_dependency_network" ]]; then
+        # Legacy deployment.env files carried only the dependency key.  The
+        # old ``none`` default migrates to bridge so full_access does not
+        # silently persist an unavailable egress capability.
+        if [[ "$legacy_dependency_network" == "none" ]]; then
+            SANDBOX_EGRESS_NETWORK="bridge"
+        else
+            SANDBOX_EGRESS_NETWORK="$legacy_dependency_network"
+        fi
+    fi
+    sandbox_egress_network_is_safe "$SANDBOX_EGRESS_NETWORK" || {
+        fail "deployment.env 中的 SAKURA_SANDBOX_EGRESS_NETWORK 不是受支持的管理员网络名" >&2
+        return 1
+    }
+}
+
+sandbox_latest_stable_version() {
+    local release_json=""
+    command -v curl >/dev/null 2>&1 || {
+        fail "curl is required to resolve the latest stable Release" >&2
+        return 1
+    }
+    command -v python3 >/dev/null 2>&1 || {
+        fail "python3 is required to validate the latest stable Release" >&2
+        return 1
+    }
+    release_json=$(curl --silent --show-error --fail --location \
+        --connect-timeout 5 --max-time 20 \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "https://api.github.com/repos/Sakura520222/Sakura-AI/releases/latest") || {
+        fail "unable to resolve the latest stable Sakura AI Release" >&2
+        return 1
+    }
+    python3 - "$release_json" <<'PY'
+import json
+import re
+import sys
+
+try:
+    release = json.loads(sys.argv[1])
+    tag = release.get("tag_name")
+    if release.get("draft") or release.get("prerelease"):
+        raise ValueError("latest Release is draft or prerelease")
+    if not isinstance(tag, str) or not re.fullmatch(
+        r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag
+    ):
+        raise ValueError("latest Release tag is not a strict stable version")
+except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(1)
+print(tag.removeprefix("v"))
+PY
+}
+
+sandbox_release_version_from_reference() {
+    local image="$1"
+    # A fresh production deployment starts with the moving Web ``:latest``
+    # alias. Resolve it through the official stable Release API before any
+    # sandbox image is selected; never pair :latest with an independently
+    # resolved sandbox head. A latest reference may carry its digest because
+    # it is still an alias that must be resolved to the stable Release.
+    if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:latest(@sha256:[0-9a-f]{64})?$ ]]; then
+        sandbox_latest_stable_version
+        return $?
+    fi
+    # Persisted Web identities are accepted only when they identify the
+    # official repository, an exact stable ``vX.Y.Z`` tag, and a complete
+    # manifest digest. Splitting a Docker reference at the first colon is
+    # unsafe (the digest itself contains a colon), so match the full grammar
+    # in one expression instead.
+    if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))@sha256:[0-9a-f]{64}$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    # An explicit release marker is already a version, not a Docker tag.
+    if [[ "$image" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        printf '%s\n' "$image"
+        return 0
+    fi
+    fail "cannot resolve a strict official Web release reference for sandbox manifest: $image" >&2
+    return 1
 }
 
 sandbox_release_version() {
     local image="${SAKURA_SANDBOX_RELEASE_VERSION:-}" line marker="" web_image=""
     if [[ -z "$image" && -f "$DEPLOYMENT_ENV_FILE" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
-            if [[ "$line" == SAKURA_SANDBOX_RELEASE_VERSION=* ]]; then
+            if [[ "$line" == SAKURA_SANDBOX_RELEASE_VERSION=* && -z "$marker" ]]; then
                 marker="${line#SAKURA_SANDBOX_RELEASE_VERSION=}"
             elif [[ "$line" == SAKURA_AI_IMAGE=* && -z "$web_image" ]]; then
                 web_image="${line#SAKURA_AI_IMAGE=}"
             fi
         done < "$DEPLOYMENT_ENV_FILE"
+        # The Web image is the authoritative deployment identity. The release
+        # marker is only a compatibility fallback for older state files that
+        # have no Web image entry; never let a stale marker hide a changed Web
+        # reference.
         image="${web_image:-$marker}"
     fi
-    if [[ "$image" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        printf '%s\n' "$image"
-        return 0
-    fi
-    if [[ "$image" =~ ^[^:]+:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    fail "cannot resolve a strict stable release version for sandbox manifest" >&2
-    return 1
+    [[ -n "$image" ]] || {
+        fail "cannot resolve a strict official Web release reference for sandbox manifest" >&2
+        return 1
+    }
+    sandbox_release_version_from_reference "$image"
 }
 
 sandbox_fetch_release_digests() {
@@ -729,17 +1266,23 @@ import sys
 
 try:
     release = json.loads(sys.argv[1])
+    if release.get("draft") or release.get("prerelease"):
+        raise ValueError("release is draft or prerelease")
     assets = release["assets"]
     matches = [
-        item for item in assets
-        if isinstance(item, dict) and item.get("name") == "agent-sandbox-manifest.json"
+        item
+        for item in assets
+        if isinstance(item, dict)
+        and item.get("name") == "agent-sandbox-manifest.json"
     ]
     if len(matches) != 1:
         raise ValueError("sandbox manifest asset is missing or ambiguous")
     url = matches[0].get("browser_download_url") or matches[0].get("url")
     if not isinstance(url, str) or not (
         url.startswith("https://github.com/Sakura520222/Sakura-AI/releases/download/")
-        or url.startswith("https://api.github.com/repos/Sakura520222/Sakura-AI/releases/assets/")
+        or url.startswith(
+            "https://api.github.com/repos/Sakura520222/Sakura-AI/releases/assets/"
+        )
     ):
         raise ValueError("sandbox manifest asset URL is not HTTPS")
 except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -806,6 +1349,56 @@ PY
     printf '%s\n%s\n' "${values[0]}" "${values[1]}"
 }
 
+sandbox_pull_image() {
+    local component="$1" reference="$2" actual_digest=""
+    if ! docker pull "$reference" >/dev/null; then
+        fail "无法拉取 ${component} 镜像: $reference" >&2
+        fail "恢复：检查 Docker daemon、GHCR 登录状态和网络后重试；未启动 Web 或 sandboxd" >&2
+        return 1
+    fi
+    if ! docker image inspect "$reference" >/dev/null 2>&1; then
+        fail "拉取后的 ${component} 镜像无法通过 docker image inspect 验证: $reference" >&2
+        return 1
+    fi
+    if sandbox_registry_digest_is_safe "$reference"; then
+        actual_digest=$(image_digest_of "${reference%@*}" 2>/dev/null || true)
+        if [[ "$actual_digest" != "${reference##*@}" ]]; then
+            fail "拉取后的 ${component} RepoDigests 与请求的 immutable ref 不一致: $reference" >&2
+            return 1
+        fi
+    fi
+}
+
+sandbox_pin_latest_web_image() {
+    local persisted="" version="" web_image="" web_digest=""
+    PRODUCTION_WEB_IMAGE=""
+    PRODUCTION_WEB_DIGEST=""
+    [[ -f "$DEPLOYMENT_ENV_FILE" ]] || return 0
+    persisted=$(grep -E '^SAKURA_AI_IMAGE=' "$DEPLOYMENT_ENV_FILE" | tail -n 1 | cut -d= -f2- || true)
+    if [[ ! "$persisted" =~ ^ghcr\.io/sakura520222/sakura-ai:latest(@sha256:[0-9a-f]{64})?$ ]]; then
+        return 0
+    fi
+    version=$(sandbox_release_version) || return 1
+    web_image="ghcr.io/sakura520222/sakura-ai:v${version}"
+    sandbox_pull_image "Web" "$web_image" || return 1
+    if ! web_digest=$(image_digest_of "$web_image" 2>/dev/null); then
+        fail "无法解析稳定 Web 镜像 digest: $web_image" >&2
+        fail "恢复：确认 docker image inspect 能返回 GHCR RepoDigests 后重试" >&2
+        return 1
+    fi
+    if [[ ! "$web_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        fail "稳定 Web 镜像 digest 无效: $web_digest" >&2
+        return 1
+    fi
+    if [[ -n "${PRODUCTION_STABLE_MANIFEST_DIGEST:-}" && "$web_digest" != "$PRODUCTION_STABLE_MANIFEST_DIGEST" ]]; then
+        fail "拉取的稳定 Web 镜像 digest 与已验证的 stable manifest 不一致；拒绝 pin" >&2
+        return 1
+    fi
+    PRODUCTION_WEB_IMAGE="${web_image}@${web_digest}"
+    PRODUCTION_WEB_DIGEST="$web_digest"
+    info "已将 Web :latest 解析为同一稳定 Release: ${web_image}@${web_digest}"
+}
+
 sandbox_ensure_production_digests() {
     local existing_daemon="$SANDBOX_IMAGE_DIGEST" existing_runner="$SANDBOX_RUNNER_DIGEST"
     if [[ -n "$existing_daemon" || -n "$existing_runner" ]]; then
@@ -822,6 +1415,25 @@ sandbox_ensure_production_digests() {
         ! current_release_probe=$(sandbox_release_version 2>/dev/null); then
         # Explicit complete immutable references are sufficient for a source
         # or isolated sandbox invocation that has no Web release identity.
+        # Once a deployment has a Web/release marker, however, an unresolved
+        # marker must fail closed instead of silently retaining an old pair.
+        local release_identity_present=0 release_line
+        [[ -n "${SAKURA_SANDBOX_RELEASE_VERSION:-}" ]] && release_identity_present=1
+        if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
+            while IFS= read -r release_line || [[ -n "$release_line" ]]; do
+                case "$release_line" in
+                    SAKURA_AI_IMAGE=|SAKURA_SANDBOX_RELEASE_VERSION=) ;;
+                    SAKURA_AI_IMAGE=*|SAKURA_SANDBOX_RELEASE_VERSION=*)
+                        release_identity_present=1
+                        ;;
+                esac
+            done < "$DEPLOYMENT_ENV_FILE"
+        fi
+        if [[ "$release_identity_present" -eq 1 ]]; then
+            fail "无法解析已配置 Web/release 的稳定版本；拒绝沿用旧 sandbox 镜像对" >&2
+            fail "恢复：确认 GitHub Release 与 deployment.env 后重试；未启动 sandboxd" >&2
+            return 1
+        fi
         return 0
     fi
     local refs
@@ -854,28 +1466,26 @@ sandbox_ensure_production_digests() {
     SANDBOX_RUNNER_DIGEST="$fetched_runner"
     SANDBOX_IMAGE="${SANDBOX_IMAGE_DIGEST%@*}"
     SANDBOX_RUNNER_IMAGE="${SANDBOX_RUNNER_DIGEST%@*}"
-    if [[ -f "$DEPLOYMENT_ENV_FILE" ]]; then
-        write_deployment_env_keys \
-            "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE" \
-            "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST" \
-            "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE" \
-            "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST" \
-            "SAKURA_SANDBOX_RELEASE_VERSION=$current_release" \
-            "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT" || return 1
-    fi
+    PRODUCTION_SANDBOX_RELEASE_VERSION="$current_release"
 }
 
 sandbox_persist_runtime_identity() {
     [[ -f "$DEPLOYMENT_ENV_FILE" ]] || return 0
     [[ -n "$SANDBOX_IMAGE_DIGEST" && -n "$SANDBOX_RUNNER_DIGEST" ]] || return 1
-    write_deployment_env_keys \
-        "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE" \
-        "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST" \
-        "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE" \
-        "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST" \
-        "SAKURA_SANDBOX_RELEASE_VERSION=$(sandbox_release_version 2>/dev/null || true)" \
-        "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT" \
+    local -a state_keys=(
+        "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE"
+        "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST"
+        "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE"
+        "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST"
+        "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK"
+        "SAKURA_SANDBOX_RELEASE_VERSION=$(sandbox_release_version 2>/dev/null || true)"
+        "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT"
         "SAKURA_SANDBOX_INSTANCE_ID=$SANDBOX_CONFIGURED_INSTANCE_ID"
+    )
+    if [[ -n "${PRODUCTION_WEB_IMAGE:-}" ]]; then
+        state_keys+=("SAKURA_AI_IMAGE=$PRODUCTION_WEB_IMAGE")
+    fi
+    write_deployment_env_keys "${state_keys[@]}"
 }
 
 sandbox_validate_configured_instance_id() {
@@ -1020,7 +1630,7 @@ sandbox_container_matches_expected() {
     local id="$1" instance="$2" image_ref="$3" runner_ref="$4" payload
     [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
     payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || return 1
-    python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$instance" "$SANDBOX_PROTOCOL_VERSION" "$image_ref" "$runner_ref" "$SANDBOX_WORKSPACE_ROOT" <<'PY'
+    python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$instance" "$SANDBOX_PROTOCOL_VERSION" "$image_ref" "$runner_ref" "$SANDBOX_WORKSPACE_ROOT" "$SANDBOX_EGRESS_NETWORK" <<'PY'
 import json
 import re
 import sys
@@ -1040,6 +1650,7 @@ expected = {
     "ai.sakura.protocol-version": sys.argv[4],
     "ai.sakura.runner-image-digest": sys.argv[6],
     "ai.sakura.workspace-root": sys.argv[7],
+    "ai.sakura.egress-network": sys.argv[8],
 }
 if obj.get("Name") != "/" + sys.argv[2] or any(labels.get(k) != v for k, v in expected.items()):
     raise SystemExit(1)
@@ -1054,14 +1665,19 @@ PY
 }
 
 sandbox_container_id_from_name() {
-    local instance="$1" id="" found=0
-    while IFS= read -r id; do
-        [[ -n "$id" ]] || continue
+    local instance="$1" id="" found=0 listing
+    listing=$(docker ps -aq --no-trunc --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null) || return 1
+    [[ -n "$listing" ]] || return 1
+    while IFS= read -r id || [[ -n "$id" ]]; do
+        # This listing is used for recovery before a trusted container ID is
+        # available.  Any non-empty row must be a full Docker hex ID; do not
+        # filter malformed output and accidentally release/reuse state.
+        [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
         if sandbox_container_owned "$id" "$instance"; then
             printf '%s\n' "$id"
             found=$((found + 1))
         fi
-    done < <(docker ps -aq --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null || true)
+    done <<< "$listing"
     [[ "$found" -eq 1 ]]
 }
 
@@ -1094,13 +1710,21 @@ sandbox_health_payload() {
 }
 
 sandbox_health_ready() {
-    local payload instance expected_digest workspace_root expected_profiles
+    local payload instance expected_digest workspace_root expected_profiles expected_network_capability container_id
     payload=$(sandbox_health_payload) || return 1
     instance=$(sandbox_instance_id) || return 1
+    container_id=$(sandbox_read_container_id 2>/dev/null) || return 1
+    # Health is necessary but not sufficient: the UDS can be served by an old
+    # container after its server-owned egress capability has drifted. Recheck
+    # the structured Docker identity on every readiness probe.
+    sandbox_container_matches_expected \
+        "$container_id" "$instance" "$SANDBOX_IMAGE_DIGEST" "$SANDBOX_RUNNER_DIGEST" || return 1
     expected_digest="$SANDBOX_RUNNER_DIGEST"
     workspace_root="$SANDBOX_WORKSPACE_ROOT"
     expected_profiles="agent,dependency"
-    python3 - "$payload" "$instance" "$expected_digest" "$workspace_root" "$expected_profiles" <<'PY'
+    expected_network_capability="egress"
+    [[ "$SANDBOX_EGRESS_NETWORK" == "none" ]] && expected_network_capability="none"
+    python3 - "$payload" "$instance" "$expected_digest" "$workspace_root" "$expected_profiles" "$expected_network_capability" <<'PY'
 import json
 import sys
 
@@ -1111,14 +1735,23 @@ try:
     expected_digest = sys.argv[3]
     expected_workspace = sys.argv[4]
     expected_profiles = set(sys.argv[5].split(","))
+    expected_network_capability = sys.argv[6]
 except (KeyError, IndexError, TypeError, ValueError):
     raise SystemExit(1)
 
 if set(payload) != {"protocol_version", "sandboxd_version", "data"}:
     raise SystemExit(1)
-if payload.get("protocol_version") != 1 or not isinstance(payload.get("sandboxd_version"), str):
+if payload.get("protocol_version") != 2 or not isinstance(payload.get("sandboxd_version"), str):
     raise SystemExit(1)
-required = {"ready", "runtime", "profiles", "instance_id", "workspace_root", "runner_image_digest"}
+required = {
+    "ready",
+    "runtime",
+    "profiles",
+    "instance_id",
+    "egress_capability",
+    "workspace_root",
+    "runner_image_digest",
+}
 if not isinstance(data, dict) or set(data) != required:
     raise SystemExit(1)
 if data.get("ready") is not True or data.get("runtime") != "docker":
@@ -1128,6 +1761,8 @@ if set(data.get("profiles", [])) != expected_profiles:
 if data.get("instance_id") != expected_instance:
     raise SystemExit(1)
 if data.get("workspace_root") != expected_workspace:
+    raise SystemExit(1)
+if data.get("egress_capability") != expected_network_capability:
     raise SystemExit(1)
 if not expected_digest or data.get("runner_image_digest") != expected_digest:
     raise SystemExit(1)
@@ -1169,6 +1804,19 @@ sandbox_runner_reference() {
     printf '%s\n' "$SANDBOX_RUNNER_DIGEST"
 }
 
+sandbox_ensure_egress_network_exists() {
+    case "$SANDBOX_EGRESS_NETWORK" in
+        none|bridge)
+            return 0
+            ;;
+    esac
+    docker network inspect "$SANDBOX_EGRESS_NETWORK" >/dev/null 2>&1 || {
+        fail "configured sandbox egress network does not exist: $SANDBOX_EGRESS_NETWORK" >&2
+        fail "恢复：由管理员创建该 Docker network 后重试；start.sh 不会自动创建或替换它" >&2
+        return 1
+    }
+}
+
 sandbox_daemon_reference() {
     [[ -n "$SANDBOX_IMAGE_DIGEST" ]] && sandbox_immutable_reference_is_safe "$SANDBOX_IMAGE_DIGEST" || {
         fail "SAKURA_SANDBOXD_IMAGE_DIGEST must be an immutable sha256 reference (registry digest or local image ID)" >&2
@@ -1181,6 +1829,9 @@ sandbox_pull_or_build_images() {
     local prod="$1" runner_ref daemon_ref
     sandbox_load_deployment_config
     if [[ "$prod" == "true" ]]; then
+        if [[ -z "${PRODUCTION_WEB_IMAGE:-}" ]]; then
+            sandbox_pin_latest_web_image || return 1
+        fi
         sandbox_ensure_production_digests || return 1
         sandbox_registry_digest_is_safe "$SANDBOX_IMAGE_DIGEST" || {
             fail "production sandbox requires SAKURA_SANDBOXD_IMAGE_DIGEST=NAME@sha256:<64>" >&2
@@ -1194,8 +1845,8 @@ sandbox_pull_or_build_images() {
         runner_ref=$(sandbox_runner_reference) || return 1
         # Pull the exact immutable references and pass those same references
         # to docker run; never resolve or start a mutable channel tag.
-        docker pull "$daemon_ref" >/dev/null || return 1
-        docker pull "$runner_ref" >/dev/null || return 1
+        sandbox_pull_image "sandboxd" "$daemon_ref" || return 1
+        sandbox_pull_image "Agent runner" "$runner_ref" || return 1
     else
         # The daemon image is still built independently from the Web image.
         docker build -f docker/Dockerfile.sandboxd -t "$SANDBOX_IMAGE" . || return 1
@@ -1214,10 +1865,158 @@ sandbox_pull_or_build_images() {
         else
             runner_ref=$(sandbox_runner_reference) || return 1
             if ! docker image inspect "$runner_ref" >/dev/null 2>&1; then
-            docker pull "$runner_ref" >/dev/null || return 1
+                sandbox_pull_image "Agent runner" "$runner_ref" || return 1
             fi
         fi
     fi
+}
+
+production_web_reference_is_safe() {
+    [[ "$1" =~ ^ghcr\.io/sakura520222/sakura-ai:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)@sha256:[0-9a-f]{64}$ ]]
+}
+
+production_manifest_digest() {
+    local reference="$1" payload
+    command -v python3 >/dev/null 2>&1 || {
+        fail "python3 is required to verify production Web manifest identity" >&2
+        return 1
+    }
+    payload=$(docker manifest inspect --verbose "$reference") || {
+        fail "无法读取生产 Web manifest: $reference" >&2
+        return 1
+    }
+    python3 - "$payload" <<'PY'
+import json
+import re
+import sys
+
+digest_pattern = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+try:
+    payload = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError) as exc:
+    print(f"invalid Docker manifest JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def direct_descriptor_digest(value):
+    if not isinstance(value, dict):
+        return None
+    for key in ("Descriptor", "descriptor"):
+        descriptor = value.get(key)
+        if isinstance(descriptor, dict) and descriptor.get("digest") is not None:
+            return descriptor.get("digest")
+    digest = value.get("digest")
+    return digest if digest is not None else None
+
+
+digests = []
+if isinstance(payload, dict):
+    direct = direct_descriptor_digest(payload)
+    if direct is not None:
+        digests.append(direct)
+    elif isinstance(payload.get("manifests"), list):
+        for item in payload["manifests"]:
+            digest = direct_descriptor_digest(item)
+            if digest is not None:
+                digests.append(digest)
+elif isinstance(payload, list):
+    for item in payload:
+        digest = direct_descriptor_digest(item)
+        if digest is not None:
+            digests.append(digest)
+
+if not digests or any(not isinstance(item, str) or not digest_pattern.fullmatch(item) for item in digests):
+    print("Docker manifest did not contain a complete sha256 digest", file=sys.stderr)
+    raise SystemExit(1)
+
+print(",".join(sorted(set(digests))))
+PY
+}
+
+production_verify_stable_web_alias() {
+    local version="$1" latest_digest tagged_digest
+    [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+        fail "无法验证非严格 stable Web 版本: $version" >&2
+        return 1
+    }
+    latest_digest=$(production_manifest_digest "ghcr.io/sakura520222/sakura-ai:latest") || return 1
+    tagged_digest=$(production_manifest_digest "ghcr.io/sakura520222/sakura-ai:v${version}") || return 1
+    if [[ "$latest_digest" != "$tagged_digest" ]]; then
+        fail "生产 Web :latest 与官方 v${version} manifest digest 不一致；拒绝部署" >&2
+        fail "恢复：等待 GHCR stable alias 收敛后重试，不会 pin 不一致的镜像" >&2
+        return 1
+    fi
+    PRODUCTION_STABLE_MANIFEST_DIGEST="$latest_digest"
+}
+
+production_prepare_and_pull_images() {
+    local persisted_web="" web_ref="" release_version=""
+    PRODUCTION_STABLE_MANIFEST_DIGEST=""
+    sandbox_load_deployment_config || return 1
+    persisted_web=$(read_deployment_value "SAKURA_AI_IMAGE" "$DEPLOYMENT_ENV_FILE")
+    [[ -n "$persisted_web" ]] || {
+        fail "production deployment state has no Web image reference" >&2
+        return 1
+    }
+
+    # Resolve the moving stable alias before touching deployment.env.  For an
+    # existing state file, only a complete official vX.Y.Z@sha256 reference is
+    # accepted; a mutable tag can never be carried into the production pull.
+    if [[ "$persisted_web" =~ ^ghcr\.io/sakura520222/sakura-ai:latest(@sha256:[0-9a-f]{64})?$ ]]; then
+        release_version=$(sandbox_release_version) || return 1
+        production_verify_stable_web_alias "$release_version" || return 1
+        sandbox_pin_latest_web_image || return 1
+        web_ref="$PRODUCTION_WEB_IMAGE"
+    else
+        production_web_reference_is_safe "$persisted_web" || {
+            fail "production Web image must be an official digest-pinned stable ref" >&2
+            return 1
+        }
+        release_version=$(sandbox_release_version) || return 1
+        production_verify_stable_web_alias "$release_version" || return 1
+        web_ref="$persisted_web"
+        sandbox_pull_image "Web" "$web_ref" || return 1
+        PRODUCTION_WEB_IMAGE="$web_ref"
+        PRODUCTION_WEB_DIGEST="${web_ref##*@}"
+        if [[ "$PRODUCTION_WEB_DIGEST" != "$PRODUCTION_STABLE_MANIFEST_DIGEST" ]]; then
+            fail "已 pin 的稳定 Web digest 与官方 stable manifest 不一致；拒绝部署" >&2
+            return 1
+        fi
+    fi
+    [[ -n "$web_ref" ]] || {
+        fail "production Web image resolution returned an empty reference" >&2
+        return 1
+    }
+
+    if sandbox_lifecycle_enabled true; then
+        sandbox_pull_or_build_images true || return 1
+        [[ -n "$release_version" ]] || release_version=$(sandbox_release_version) || return 1
+    fi
+
+    # All writes up to this point target the pending stage file.  Compose's
+    # pull is also part of the transaction, so a registry or dependency pull
+    # failure leaves the authoritative deployment.env byte-for-byte intact.
+    if sandbox_lifecycle_enabled true; then
+        write_deployment_env_keys \
+            "SAKURA_AI_IMAGE=$web_ref" \
+            "SAKURA_SANDBOXD_IMAGE=$SANDBOX_IMAGE" \
+            "SAKURA_SANDBOXD_IMAGE_DIGEST=$SANDBOX_IMAGE_DIGEST" \
+            "SAKURA_AGENT_RUNNER_IMAGE=$SANDBOX_RUNNER_IMAGE" \
+            "SAKURA_AGENT_RUNNER_IMAGE_DIGEST=$SANDBOX_RUNNER_DIGEST" \
+            "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK" \
+            "SAKURA_SANDBOX_RELEASE_VERSION=$release_version" \
+            "SAKURA_SANDBOX_WORKSPACE_ROOT=$SANDBOX_WORKSPACE_ROOT" || return 1
+    else
+        write_deployment_env_keys \
+            "SAKURA_AI_IMAGE=$web_ref" \
+            "SAKURA_SANDBOX_EGRESS_NETWORK=$SANDBOX_EGRESS_NETWORK" || return 1
+    fi
+
+    compose_pull_with_native_progress || {
+        fail "无法拉取生产 Compose 镜像；权威 deployment.env 保持不变" >&2
+        return 1
+    }
 }
 
 sandbox_stop_known_container() {
@@ -1251,6 +2050,7 @@ sandbox_start_container() {
     local prod="${1:-false}" instance id runner_ref daemon_ref existing
     local -a run_args=()
     sandbox_prepare_directories || return 1
+    sandbox_ensure_egress_network_exists || return 1
     instance=$(sandbox_instance_id) || return 1
     runner_ref=$(sandbox_runner_reference) || return 1
     daemon_ref=$(sandbox_daemon_reference) || return 1
@@ -1309,6 +2109,7 @@ sandbox_start_container() {
         --label "ai.sakura.protocol-version=$SANDBOX_PROTOCOL_VERSION" \
         --label "ai.sakura.runner-image-digest=$runner_ref" \
         --label "ai.sakura.workspace-root=$SANDBOX_WORKSPACE_ROOT" \
+        --label "ai.sakura.egress-network=$SANDBOX_EGRESS_NETWORK" \
         --network none \
         --read-only \
         --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
@@ -1326,6 +2127,7 @@ sandbox_start_container() {
         --instance-id "$instance" \
         --runtime docker \
         --runner-image "$runner_ref" \
+        --egress-network "$SANDBOX_EGRESS_NETWORK" \
         --docker-binary docker
     )
     run_args+=(--runner-image-digest "$SANDBOX_RUNNER_DIGEST")
@@ -1371,6 +2173,31 @@ ensure_sandboxd_running() {
     local prod="${1:-false}"
     sandbox_pull_or_build_images "$prod" || return 1
     sandbox_start_container "$prod"
+}
+
+sandbox_start_production_transaction() {
+    # Explicit sandboxd lifecycle commands share the production startup
+    # contract: initialization and image identity resolution may only touch a
+    # pending copy.  The authoritative deployment.env is committed after the
+    # immutable Web/sandbox image pulls and inspections have succeeded.
+    production_prepare_env_stage || return 1
+    DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+    if ! sandbox_pull_or_build_images true; then
+        production_restore_env_transaction 1
+        return 1
+    fi
+    if ! sandbox_start_container true; then
+        # A failed container convergence must not leave the staged release
+        # identity as the durable state.  The EXIT trap in the main startup
+        # path performs the same restoration for its runner.
+        production_restore_env_transaction 1
+        return 1
+    fi
+    if ! production_commit_env_stage; then
+        production_restore_env_transaction 1
+        return 1
+    fi
+    production_restore_env_transaction 0
 }
 
 sandbox_stop() {
@@ -1443,6 +2270,13 @@ sandbox_status() {
         info "sandboxd 未安装/未运行"
         return 0
     fi
+    # The durable deployment file owns the daemon identity, including the
+    # dependency network.  Load it before checking health so a named network
+    # is not accidentally compared as the default ``none`` during --status.
+    if ! sandbox_load_deployment_config; then
+        warn "sandboxd 部署配置无效，拒绝健康检查"
+        return 0
+    fi
     instance=$(sandbox_instance_id 2>/dev/null || true)
     id=$(sandbox_read_container_id 2>/dev/null || true)
     if [[ -n "$id" ]] && sandbox_container_owned "$id" "$instance"; then
@@ -1454,6 +2288,46 @@ sandbox_status() {
     else
         warn "sandboxd 状态文件存在但容器身份无法验证"
     fi
+}
+
+sandbox_lifecycle_enabled() {
+    local prod="${1:-false}"
+    # start.sh cannot read the database-backed Agent settings before Web is
+    # running.  These optional process/deployment environment overrides are
+    # therefore an explicit host-side lifecycle hint: ``local`` or a disabled
+    # Agent skips the root-owned sidecar, while ``sandbox`` always requires a
+    # root invocation and fails closed when that privilege is unavailable.
+    local backend="${AGENT_TEAM_EXECUTION_BACKEND:-${SAKURA_AGENT_TEAM_EXECUTION_BACKEND:-}}"
+    local enabled="${AGENT_TEAM_ENABLED:-${SAKURA_AGENT_TEAM_ENABLED:-}}"
+    case "${enabled,,}" in
+        0|false|no|off)
+            return 1
+            ;;
+        1|true|yes|on)
+            ;;
+    esac
+    case "${backend,,}" in
+        local)
+            return 1
+            ;;
+        sandbox)
+            return 0
+            ;;
+        "")
+            ;;
+        *)
+            fail "unknown Agent execution backend '$backend'; refusing to bypass sandbox" >&2
+            return 0
+            ;;
+    esac
+    # Production always prepares the boundary.  For an ordinary source
+    # checkout, a non-root developer must opt into the root-owned sandboxd;
+    # otherwise the Web can still start and Agent sandbox requests fail closed
+    # at admission instead of failing the whole source startup.
+    if [[ "$prod" == "true" || "$(id -u)" == "0" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 sandbox_require_root() {
@@ -1472,8 +2346,12 @@ cmd_sandbox() {
             if should_use_production_mode false; then
                 prod="true"
             fi
-            init_deployment_env || return $?
-            ensure_sandboxd_running "$prod"
+            if [[ "$prod" == "true" ]]; then
+                sandbox_start_production_transaction
+            else
+                init_deployment_env || return $?
+                ensure_sandboxd_running "$prod"
+            fi
             ;;
         stop)
             sandbox_require_root || return $?
@@ -1485,7 +2363,11 @@ cmd_sandbox() {
             if should_use_production_mode false; then
                 prod="true"
             fi
-            ensure_sandboxd_running "$prod"
+            if [[ "$prod" == "true" ]]; then
+                sandbox_start_production_transaction
+            else
+                ensure_sandboxd_running "$prod"
+            fi
             ;;
         reinstall)
             sandbox_require_root || return $?
@@ -1493,7 +2375,11 @@ cmd_sandbox() {
             if should_use_production_mode false; then
                 prod="true"
             fi
-            ensure_sandboxd_running "$prod"
+            if [[ "$prod" == "true" ]]; then
+                sandbox_start_production_transaction
+            else
+                ensure_sandboxd_running "$prod"
+            fi
             ;;
         uninstall)
             sandbox_require_root || return $?
@@ -2703,6 +3589,14 @@ build_runner() {
     local current_hash=""
     local dockerfile_hash=""
 
+    if [[ "$prod" == "true" && -n "${PRODUCTION_STAGED_ENV_FILE:-}" ]]; then
+        [[ -f "$PRODUCTION_STAGED_ENV_FILE" ]] || {
+            fail "production deployment stage disappeared before runner start" >&2
+            return 1
+        }
+        DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+    fi
+
     # runner 会重新 source start.sh，因此必须从持久化状态恢复 Compose 文件和项目。
     select_compose_for_operation "$prod"
 
@@ -2716,13 +3610,24 @@ build_runner() {
     # --- preflight ---
     set_phase "preflight"
 
-    # sandboxd must be healthy before any Web container is started.  This is
-    # intentionally before the existing Compose down/build path so an image
-    # or daemon failure never leaves a running Web service without its Agent
-    # execution boundary.
-    if ! ensure_sandboxd_running "$prod"; then
-        set_phase "preflight" "fail"
-        return 1
+    # sandboxd must be healthy before any Web container is started when the
+    # host has selected the sandbox backend.  An ordinary non-root source
+    # checkout, an explicit local backend, or a disabled Agent may start the
+    # Web service without the root-owned sidecar; Agent admission then fails
+    # closed until an administrator starts sandboxd explicitly.
+    if sandbox_lifecycle_enabled "$prod"; then
+        sandbox_require_root || {
+            set_phase "preflight" "fail"
+            return 1
+        }
+        if [[ "$prod" == "true" ]]; then
+            info "生产模式：延迟 sandboxd 启动，待 Web/sandboxd/runner 全部拉取并校验后提交部署状态"
+        elif ! ensure_sandboxd_running "$prod"; then
+            set_phase "preflight" "fail"
+            return 1
+        fi
+    else
+        info "跳过 sandboxd 生命周期（source/local 或 Agent 已禁用）"
     fi
 
     if $prod; then
@@ -2813,17 +3718,23 @@ build_runner() {
         if [[ "$rebuild" == "true" ]]; then
             info "--rebuild 生产模式：重新拉取最新镜像"
         fi
-        # 不写本地哈希：镜像版本由 GHCR 发布管理，本地 requirements/Dockerfile 哈希无意义
-        info "停止现有容器..."
-        $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
         set_phase "pull"
-        info "拉取最新镜像"
-        if ! compose_pull_with_native_progress; then
+        info "解析并拉取生产 Web/sandboxd/runner 镜像（成功后才提交 deployment.env）"
+        if ! production_prepare_and_pull_images; then
+            fail "无法完成生产三镜像解析/拉取/inspect；权威 deployment.env 保持旧状态" >&2
             set_phase "pull" "fail"
             return 1
         fi
         set_phase "start"
+        # All image pulls and inspections have succeeded.  Only now may the
+        # old containers be stopped and the independently managed sandboxd be
+        # converged to the same immutable release pair.
         info "启动服务..."
+        $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
+        if sandbox_lifecycle_enabled "$prod" && ! sandbox_start_container "$prod"; then
+            fail "sandboxd 启动失败；恢复旧 deployment.env，Web 不启动" >&2
+            return 1
+        fi
         if $COMPOSE up -d >> "$BUILD_LOG" 2>&1; then
             ok "服务已启动"
         else
@@ -2855,17 +3766,37 @@ build_runner() {
     done
 
     if [[ $elapsed -ge $HEALTH_TIMEOUT ]]; then
-        warn "服务启动超时 (${HEALTH_TIMEOUT}s)"
+        if [[ "$prod" == "true" ]]; then
+            fail "服务启动超时 (${HEALTH_TIMEOUT}s)；权威 deployment.env 保持旧状态" >&2
+            $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
+            set_phase "health" "fail"
+            return 1
+        else
+            warn "服务启动超时 (${HEALTH_TIMEOUT}s)"
+        fi
     fi
 
     # Re-check the independent daemon after Web startup.  A crash/restart in
     # this window is a fail-closed deployment result rather than a usable Web
     # service with a hidden local subprocess fallback.
-    if ! sandbox_health_ready; then
-        fail "sandboxd health/protocol/runtime/identity check failed after Web startup" >&2
-        $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
-        set_phase "health" "fail"
-        return 1
+    if sandbox_lifecycle_enabled "$prod"; then
+        if ! sandbox_health_ready; then
+            fail "sandboxd health/protocol/runtime/identity check failed after Web startup" >&2
+            $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
+            set_phase "health" "fail"
+            return 1
+        fi
+    fi
+
+    # Production keeps the pending deployment state until Web and the
+    # independent sandboxd have both passed their health gates.  This is the
+    # sole authoritative replacement in the direct --prod path.
+    if [[ "$prod" == "true" ]]; then
+        if ! production_commit_env_stage; then
+            fail "生产 deployment.env 提交失败；恢复旧状态并拒绝完成部署" >&2
+            set_phase "health" "fail"
+            return 1
+        fi
     fi
 
     # host updater daemon 恢复（spec §11.4）
@@ -2882,6 +3813,9 @@ build_runner() {
     $COMPOSE ps >> "$BUILD_LOG" 2>&1 || true
     echo "" >> "$BUILD_LOG"
 
+    if [[ "$prod" == "true" ]]; then
+        production_restore_env_transaction 0
+    fi
     clear_runner_identity
 }
 
@@ -3630,8 +4564,12 @@ cmd_uninstall() {
 }
 
 do_down() {
-    local prod=${1:-false}
+    local prod=${1:-false} manage_sandbox=false
     select_compose_for_operation "$prod"
+    if sandbox_lifecycle_enabled "$prod"; then
+        sandbox_require_root || return $?
+        manage_sandbox=true
+    fi
     local compose_cmd
     compose_cmd=$(detect_compose)
     if [[ -z "$compose_cmd" ]]; then
@@ -3641,7 +4579,11 @@ do_down() {
     echo ""
     info "停止服务..."
     $compose_cmd down
-    sandbox_stop
+    if [[ "$manage_sandbox" == "true" ]]; then
+        sandbox_stop
+    else
+        info "未启动 sandboxd，无需停止独立 Agent 边界"
+    fi
     ok "服务已停止"
 }
 
@@ -3670,15 +4612,22 @@ do_start() {
         info "生产模式：使用生产 compose ($PROD_COMPOSE_FILE)"
     fi
 
-    # 先初始化部署状态（detect_compose 依赖 deployment.env 是否存在来决定 --env-file）
+    # 生产模式先准备一个 pending 状态副本。初始化/解析期间只写该副本，
+    # 权威 deployment.env 由后台 runner 在三镜像 pull+inspect 成功后原子提交。
     mkdir -p "$DEPLOY_DIR"
-    init_deployment_env
+    if [[ "$prod" == "true" ]]; then
+        production_prepare_env_stage || return 1
+        DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+    else
+        init_deployment_env
+    fi
     select_compose_for_operation "$prod"
 
     # Detect compose
     COMPOSE=$(detect_compose)
     if [[ -z "$COMPOSE" ]]; then
         fail "Docker Compose 未安装"
+        production_restore_env_transaction 1
         exit 1
     fi
 
@@ -3698,11 +4647,13 @@ do_start() {
         trap 'trap - INT; return 0' INT
         tail -f "$BUILD_LOG" || true
         trap - INT
+        production_restore_env_transaction 1
         exit 0
     fi
     if runner_pid_is_live; then
         fail "build.pid refers to a live process whose runner identity cannot be verified"
         fail "refusing to start a second deployment runner; inspect PID $(runner_read_pid) manually"
+        production_restore_env_transaction 1
         exit 1
     fi
 
@@ -3734,8 +4685,27 @@ set -euo pipefail
 export _START_SH_SOURCED=1
 cd "${abs_script_dir}"
 source "${abs_script_dir}/start.sh"
-trap 'clear_runner_identity' EXIT
 export prod="${prod}"
+export PRODUCTION_STAGED_ENV_FILE="${PRODUCTION_STAGED_ENV_FILE}"
+export PRODUCTION_AUTH_ENV_FILE="${PRODUCTION_AUTH_ENV_FILE}"
+export PRODUCTION_ORIGINAL_ENV_FILE="${PRODUCTION_ORIGINAL_ENV_FILE}"
+export PRODUCTION_TRANSACTION_JOURNAL_FILE="${PRODUCTION_TRANSACTION_JOURNAL_FILE}"
+export PRODUCTION_ENV_COMMITTED=0
+if [[ -n "$PRODUCTION_STAGED_ENV_FILE" ]]; then
+    DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
+fi
+production_runner_exit() {
+    local runner_status="$1"
+    if ! production_restore_env_transaction "$runner_status"; then
+        fail "生产部署事务清理/恢复失败；保留 journal/备份供下一次启动恢复" >&2
+        runner_status=1
+    fi
+    if ! clear_runner_identity; then
+        runner_status=1
+    fi
+    return "$runner_status"
+}
+trap 'runner_status=$?; production_runner_exit "$runner_status"' EXIT
 build_runner "${rebuild}" "${prod}"
 RUNNER_EOF
     chmod +x "$runner_script"
@@ -3751,6 +4721,7 @@ RUNNER_EOF
         kill -TERM -- -"$bg_pid" 2>/dev/null || true
         kill -TERM "$bg_pid" 2>/dev/null || true
         clear_runner_identity
+        production_restore_env_transaction 1
         return 1
     fi
 

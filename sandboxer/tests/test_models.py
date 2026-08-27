@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-from sakura_ai_sandboxer.models import ExecutionRequest
+from sakura_ai_sandboxer.models import ExecutionRequest, NetworkMode
 
 
 def _request(**overrides):
@@ -12,6 +12,7 @@ def _request(**overrides):
         "command": "printf ok",
         "profile": "agent",
         "timeout_seconds": 1,
+        "network_mode": NetworkMode.NONE,
     }
     values.update(overrides)
     return values
@@ -34,6 +35,13 @@ def test_request_requires_one_command_form_and_empty_environment():
         ExecutionRequest.model_validate(_request(env={"SECRET": "no"}))
 
 
+def test_request_requires_explicit_network_mode_in_v2():
+    values = _request()
+    values.pop("network_mode")
+    with pytest.raises(ValidationError):
+        ExecutionRequest.model_validate(values)
+
+
 @pytest.mark.parametrize(
     "cwd",
     ["/etc", "../escape", "safe/../escape", r"safe\\path", "safe//path"],
@@ -46,3 +54,18 @@ def test_request_cwd_stays_relative_posix(cwd):
 def test_request_rejects_unknown_fields_even_when_the_value_is_null():
     with pytest.raises(ValidationError):
         ExecutionRequest.model_validate(_request(network=None))
+
+
+@pytest.mark.parametrize("network_mode", ["none", "egress"])
+def test_request_accepts_only_constrained_network_capabilities(network_mode):
+    request = ExecutionRequest.model_validate(_request(network_mode=network_mode))
+    assert request.network_mode.value == network_mode
+
+
+@pytest.mark.parametrize(
+    "network_mode",
+    ["host", "bridge", "container:other", "ns:/run/netns/x", "--network=host"],
+)
+def test_request_rejects_docker_network_names_and_arguments(network_mode):
+    with pytest.raises(ValidationError):
+        ExecutionRequest.model_validate(_request(network_mode=network_mode))

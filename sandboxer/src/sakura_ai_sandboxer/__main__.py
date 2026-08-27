@@ -7,6 +7,7 @@ import argparse
 from . import __version__
 from .config import (
     DEFAULT_CLEANUP_MARGIN_SECONDS,
+    DEFAULT_EGRESS_NETWORK,
     DEFAULT_LEDGER_CAPACITY,
     DEFAULT_LEDGER_TTL_SECONDS,
     DEFAULT_MAX_CONCURRENT,
@@ -46,6 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-image-digest", default=None)
     parser.add_argument("--docker-binary", default="docker")
     parser.add_argument("--oci-runtime", default=None)
+    parser.add_argument(
+        "--egress-network",
+        dest="egress_network",
+        default=DEFAULT_EGRESS_NETWORK,
+        help=(
+            "server-owned Docker network for the constrained egress capability; "
+            "default 'bridge'; the Backend cannot override this value."
+        ),
+    )
     parser.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT)
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--max-timeout-seconds", type=float, default=DEFAULT_MAX_TIMEOUT_SECONDS)
@@ -96,6 +106,7 @@ def main(argv: list[str] | None = None) -> None:
             runner_image_digest=args.runner_image_digest,
             docker_binary=args.docker_binary,
             oci_runtime=args.oci_runtime,
+            egress_network=args.egress_network,
         )
     )
 

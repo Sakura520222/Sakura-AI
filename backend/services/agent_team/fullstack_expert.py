@@ -28,7 +28,7 @@ from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.registry import (
     create_executor,
-    get_tool_definitions,
+    get_tool_definitions_fresh,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -281,7 +281,7 @@ class FullStackExpertAgent:
             candidate.model.context_window_tokens if candidate else None
         )
         ctx = self._build_context(skills_context)
-        tool_schemas = get_tool_definitions("agent")
+        tool_schemas = await get_tool_definitions_fresh("agent")
         self._prepare_restored_messages(
             task_title=task_title,
             task_summary=task_summary,
