@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,7 +21,112 @@ from sakura_ai_sandboxer.docker_runtime import (
     DockerRuntimeAdapter,
     _workspace_key_for_relative_identity,
 )
-from sakura_ai_sandboxer.models import ExecutionProfile, ExecutionRequest, NetworkMode
+from sakura_ai_sandboxer.models import (
+    ExecutionProfile,
+    ExecutionRequest,
+    NetworkMode,
+)
+
+_DOCKER_DIAGNOSTIC_LIMIT = 2048
+_DOCKER_ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_DOCKER_SECRET_RE = re.compile(
+    r"(?i)(?P<key>authorization|cookie|password|secret|token|api[_-]?key)"
+    r"\s*[:=]\s*[^\s,;]+"
+)
+_DOCKER_DIGEST_RE = re.compile(r"(?i)sha256:[0-9a-f]{64}")
+
+
+def _redact_docker_stderr(value: bytes | str, *, tmp_path: Path) -> str:
+    """Return bounded Docker stderr safe to include in CI failure output.
+
+    Docker errors may echo bind sources, image IDs, or request/environment
+    fragments.  This helper is intentionally test-only: the production
+    adapter continues to collapse these failures to its typed generic error.
+    Keep the small amount of text that is useful for classifying a runner
+    failure, while removing paths, digests, and credential-shaped values.
+    """
+
+    if isinstance(value, bytes):
+        text = value[: _DOCKER_DIAGNOSTIC_LIMIT * 4].decode(
+            "utf-8", errors="replace"
+        )
+    else:
+        text = value[: _DOCKER_DIAGNOSTIC_LIMIT * 4]
+    text = _DOCKER_ANSI_RE.sub("", text).replace("\x00", "")
+    text = text.replace(str(tmp_path), "<tmp-path>")
+    text = _DOCKER_SECRET_RE.sub(r"\g<key>=<redacted>", text)
+    text = _DOCKER_DIGEST_RE.sub("<image-digest>", text)
+    # A Docker daemon can report a path after the exact pytest directory has
+    # already been normalized (for example after resolving a symlink).  Do
+    # not print arbitrary absolute host paths from that fallback text.
+    text = re.sub(
+        r"(?<![A-Za-z0-9_.-])(?:[A-Za-z]:[\\/]|/)(?:[^\s'\"]+)",
+        "<host-path>",
+        text,
+    )
+    text = " ".join(text.split())
+    return text[:_DOCKER_DIAGNOSTIC_LIMIT] or "<empty>"
+
+
+async def _execute_with_docker_diagnostics(
+    adapter: DockerRuntimeAdapter,
+    request: ExecutionRequest,
+    *,
+    tmp_path: Path,
+    deadline: float,
+):
+    """Run the real adapter and attach sanitized create stderr on failure.
+
+    The runtime intentionally exposes only generic typed errors to callers.
+    For this opt-in CI gate, wrap the command seam locally so a failed create
+    still leaves actionable, bounded evidence in the pytest failure without
+    changing the production error contract.
+    """
+
+    original_run_command = adapter._run_command
+    observed: list[tuple[int, bytes]] = []
+
+    async def capture_create_result(argv: tuple[str, ...], command_deadline: float):
+        result = await original_run_command(argv, command_deadline)
+        if len(argv) > 1 and argv[1] == "create" and result.returncode != 0:
+            observed.append((result.returncode, result.stderr))
+        return result
+
+    adapter._run_command = capture_create_result
+    try:
+        return await adapter.execute(
+            request,
+            cancel_event=asyncio.Event(),
+            max_output_bytes=4096,
+            deadline=deadline,
+        )
+    except Exception:
+        if observed:
+            return pytest.fail(
+                "Docker adapter create failed "
+                f"(returncode={observed[0][0]}): "
+                f"{_redact_docker_stderr(observed[0][1], tmp_path=tmp_path)}"
+            )
+        raise
+    finally:
+        adapter._run_command = original_run_command
+
+
+def test_docker_stderr_diagnostic_is_bounded_and_redacted(tmp_path: Path):
+    raw = (
+        f"invalid mount source {tmp_path / 'workplace'} "
+        "token=secret-value sha256="
+        + "a" * 64
+        + " "
+        + "x" * (_DOCKER_DIAGNOSTIC_LIMIT * 2)
+    )
+    diagnostic = _redact_docker_stderr(raw, tmp_path=tmp_path)
+
+    assert len(diagnostic) <= _DOCKER_DIAGNOSTIC_LIMIT
+    assert str(tmp_path) not in diagnostic
+    assert "secret-value" not in diagnostic
+    assert "sha256:" not in diagnostic
+    assert "invalid mount source" in diagnostic
 
 
 def _integration_config(tmp_path: Path) -> tuple[SandboxdConfig, str]:
@@ -89,10 +195,10 @@ async def test_real_docker_is_nonroot_offline_readonly_and_cleans_container(tmp_
         network_mode=NetworkMode.NONE,
         timeout_seconds=20,
     )
-    result = await adapter.execute(
+    result = await _execute_with_docker_diagnostics(
+        adapter,
         request,
-        cancel_event=asyncio.Event(),
-        max_output_bytes=4096,
+        tmp_path=tmp_path,
         deadline=asyncio.get_running_loop().time() + 25,
     )
     assert result.exit_code == 0, result.stderr
@@ -158,7 +264,11 @@ def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
             timeout=20,
         )
         if create.returncode != 0:
-            pytest.fail("Docker create failed in the opt-in mount identity test")
+            pytest.fail(
+                "Docker create failed in the opt-in mount identity test "
+                f"(returncode={create.returncode}): "
+                f"{_redact_docker_stderr(create.stderr, tmp_path=tmp_path)}"
+            )
         created = True
 
         workspace.rename(moved)
@@ -173,7 +283,11 @@ def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
             timeout=20,
         )
         if start.returncode != 0:
-            pytest.fail("Docker start failed in the opt-in mount identity test")
+            pytest.fail(
+                "Docker start failed in the opt-in mount identity test "
+                f"(returncode={start.returncode}): "
+                f"{_redact_docker_stderr(start.stderr, tmp_path=tmp_path)}"
+            )
         wait = subprocess.run(
             [docker, "wait", container_name],
             check=False,
@@ -182,7 +296,11 @@ def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
             timeout=20,
         )
         if wait.returncode != 0 or wait.stdout.strip() != b"0":
-            pytest.fail("Docker wait failed in the opt-in mount identity test")
+            pytest.fail(
+                "Docker wait failed in the opt-in mount identity test "
+                f"(returncode={wait.returncode}): "
+                f"{_redact_docker_stderr(wait.stderr, tmp_path=tmp_path)}"
+            )
         logs = subprocess.run(
             [docker, "logs", container_name],
             check=False,
@@ -190,7 +308,9 @@ def test_docker_create_pins_bind_source_before_host_replacement(tmp_path: Path):
             env=environment,
             timeout=20,
         )
-        assert logs.returncode == 0
+        assert logs.returncode == 0, _redact_docker_stderr(
+            logs.stderr, tmp_path=tmp_path
+        )
         assert logs.stdout == b"original\n"
     finally:
         if created:
@@ -220,10 +340,10 @@ async def test_real_docker_timeout_removes_one_shot_container(tmp_path: Path):
         network_mode=NetworkMode.NONE,
         timeout_seconds=1,
     )
-    result = await adapter.execute(
+    result = await _execute_with_docker_diagnostics(
+        adapter,
         request,
-        cancel_event=asyncio.Event(),
-        max_output_bytes=4096,
+        tmp_path=tmp_path,
         deadline=asyncio.get_running_loop().time() + 5,
     )
     assert result.timed_out is True
@@ -246,10 +366,10 @@ async def test_real_docker_egress_capability_uses_default_bridge_and_reaches_dns
         network_mode=NetworkMode.EGRESS,
         timeout_seconds=10,
     )
-    result = await adapter.execute(
+    result = await _execute_with_docker_diagnostics(
+        adapter,
         request,
-        cancel_event=asyncio.Event(),
-        max_output_bytes=4096,
+        tmp_path=tmp_path,
         deadline=asyncio.get_running_loop().time() + 15,
     )
     assert result.exit_code == 0, result.stderr
@@ -327,10 +447,10 @@ async def test_real_docker_linked_worktree_git_metadata_is_scoped_and_usable(
             network_mode=NetworkMode.NONE,
             timeout_seconds=20,
         )
-        result = await adapter.execute(
+        result = await _execute_with_docker_diagnostics(
+            adapter,
             request,
-            cancel_event=asyncio.Event(),
-            max_output_bytes=4096,
+            tmp_path=tmp_path,
             deadline=asyncio.get_running_loop().time() + 25,
         )
         assert result.exit_code == 0, result.stderr
