@@ -27,14 +27,21 @@ jobs:
 
       - name: Install sandboxer test dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e './sandboxer[dev]' ruff
+          set -euo pipefail
+          venv="$RUNNER_TEMP/sandboxer-quality-venv"
+          python -m venv "$venv"
+          "$venv/bin/python" -m pip install --upgrade pip
+          "$venv/bin/python" -m pip install -e './sandboxer[dev]' ruff
+          echo "SANDBOXER_QUALITY_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
+          echo "SANDBOXER_QUALITY_RUFF=$venv/bin/ruff" >> "$GITHUB_ENV"
 
       - name: Ruff sandboxer
-        run: ruff check sandboxer
+        run: |
+          "$SANDBOXER_QUALITY_RUFF" check sandboxer
 
       - name: Run sandboxer unit tests
-        run: pytest sandboxer/tests -q
+        run: |
+          "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests -q
 
       - name: Build untrusted runner image
         run: |
@@ -81,8 +88,8 @@ jobs:
           # skipped when this mandatory CI gate is enabled.
           output_file="$(mktemp)"
           trap 'rm -f "$output_file"' EXIT
-          sudo --preserve-env=PATH,SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST \
-            python -m pytest sandboxer/tests/integration/test_docker_isolation.py -q \
+          sudo --preserve-env=SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST \
+            "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests/integration/test_docker_isolation.py -q \
             | tee "$output_file"
           if grep -Eq '[0-9]+ skipped' "$output_file"; then
             echo 'Docker sandbox integration unexpectedly skipped a test' >&2
