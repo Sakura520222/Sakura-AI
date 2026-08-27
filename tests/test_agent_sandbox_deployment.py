@@ -355,5 +355,12 @@ def test_sandbox_workflow_builds_both_images_and_has_immutable_output():
     assert "Resolve immutable runner image ID" in quality
     assert "SAKURA_SANDBOX_DOCKER_INTEGRATION: '1'" in quality
     assert "SAKURA_AGENT_RUNNER_IMAGE_DIGEST" in quality
+    assert 'venv="$RUNNER_TEMP/sandboxer-quality-venv"' in quality
+    assert 'python -m venv "$venv"' in quality
+    assert 'SANDBOXER_QUALITY_PYTHON=$venv/bin/python' in quality
+    assert 'SANDBOXER_QUALITY_RUFF=$venv/bin/ruff' in quality
+    assert '"$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests/integration/' in quality
+    assert "sudo --preserve-env=SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST" in quality
+    assert "sudo --preserve-env=PATH" not in quality
     assert "-v /var/run/docker.sock:/var/run/docker.sock" not in quality
     assert "unexpectedly skipped" in quality
