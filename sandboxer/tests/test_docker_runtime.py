@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 
@@ -493,6 +494,8 @@ def test_workspace_handoff_never_widens_to_world_writable(
     (workspace / "nested").mkdir()
     chown_calls: list[tuple[str, int, int, bool]] = []
     chmod_calls: list[tuple[str, int]] = []
+    fd_chown_calls: list[tuple[int, int, int]] = []
+    fd_chmod_calls: list[tuple[int, int]] = []
     monkeypatch.setattr(
         "sakura_ai_sandboxer.docker_runtime.os.chown",
         lambda path, uid, gid, *, follow_symlinks: chown_calls.append(
@@ -504,17 +507,53 @@ def test_workspace_handoff_never_widens_to_world_writable(
         "sakura_ai_sandboxer.docker_runtime.os.chmod",
         lambda path, mode: chmod_calls.append((str(path), mode)),
     )
+    # POSIX handoff is descriptor-based.  Mock both APIs so this test does
+    # not require the test process to be root (the CI runner is intentionally
+    # unprivileged), while ``raising=False`` keeps the test runnable on
+    # platforms whose ``os`` module has no descriptor ownership functions.
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.fchown",
+        lambda file_descriptor, uid, gid: fd_chown_calls.append(
+            (file_descriptor, uid, gid)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "sakura_ai_sandboxer.docker_runtime.os.fchmod",
+        lambda file_descriptor, mode: fd_chmod_calls.append((file_descriptor, mode)),
+        raising=False,
+    )
 
     _handoff_tree(workspace, runner_uid=RUNNER_UID, runner_gid=RUNNER_GID)
 
-    assert chown_calls
-    assert all(
-        uid == RUNNER_UID and gid == RUNNER_GID and follow_symlinks is False
-        for _path, uid, gid, follow_symlinks in chown_calls
-    )
-    assert chmod_calls
-    assert all(mode & 0o002 == 0 and mode & 0o020 == 0 for _path, mode in chmod_calls)
-    assert all(mode != 0o777 for _path, mode in chmod_calls)
+    if os.name == "posix":
+        assert fd_chown_calls
+        assert all(
+            isinstance(file_descriptor, int)
+            and file_descriptor >= 0
+            and uid == RUNNER_UID
+            and gid == RUNNER_GID
+            for file_descriptor, uid, gid in fd_chown_calls
+        )
+        assert fd_chmod_calls
+        assert all(
+            mode & 0o002 == 0 and mode & 0o020 == 0
+            for _file_descriptor, mode in fd_chmod_calls
+        )
+        assert all(mode != 0o777 for _file_descriptor, mode in fd_chmod_calls)
+        assert not chown_calls
+        assert not chmod_calls
+    else:
+        assert chown_calls
+        assert all(
+            uid == RUNNER_UID and gid == RUNNER_GID and follow_symlinks is False
+            for _path, uid, gid, follow_symlinks in chown_calls
+        )
+        assert chmod_calls
+        assert all(
+            mode & 0o002 == 0 and mode & 0o020 == 0 for _path, mode in chmod_calls
+        )
+        assert all(mode != 0o777 for _path, mode in chmod_calls)
 
 
 def test_workspace_handoff_rejects_descendant_symlink(
