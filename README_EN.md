@@ -181,11 +181,11 @@ sudo ./start.sh --prod
 >
 > `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops, installs, starts, and reports the new daemon state; if installation fails, it attempts to restore the existing daemon. If an older updater does not support the atomic maintenance gate, the command fails closed and requires the administrator to stop that legacy daemon explicitly first. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
 
-Uninstall preserves Docker data volumes by default. Only explicit `--purge` removes the volumes and `.deploy` state:
+Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and the `.deploy` state. Both modes share the single `UNINSTALL` confirmation word:
 
 ```bash
-sudo ./start.sh uninstall          # Preserve data for a later redeployment
-sudo ./start.sh uninstall --purge  # Permanently delete database/cache volumes and deployment state
+sudo ./start.sh uninstall          # Standard uninstall: preserve data for a later redeployment
+sudo ./start.sh uninstall --purge  # Full uninstall: permanently delete volumes, images, and deployment state
 ```
 
 **Web image only** (bring your own MySQL/Redis):
