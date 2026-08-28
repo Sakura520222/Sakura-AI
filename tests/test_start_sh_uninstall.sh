@@ -14,18 +14,10 @@ report() { if [ "$1" -eq 0 ]; then echo "[OK] $2"; pass=$((pass+1)); else echo "
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# fake docker 记录 argv 供断言；image inspect 仅对预设存在的镜像返回 0。
+# fake docker 记录 argv 供断言；compose 与 rmi 默认成功。
 FAKE_LOG="$TMPDIR/docker_calls.log"
-EXISTING_IMAGE="ghcr.io/sakura520222/sakura-ai-sandboxd:persisted"
 docker() {
     printf '%s\n' "$*" >> "$FAKE_LOG"
-    case "$1" in
-        image)
-            # 仅 sandboxd 镜像视为存在；runner 镜像不存在以覆盖跳过分支。
-            [ "$2" = "inspect" ] && [ "$3" = "$EXISTING_IMAGE" ] && return 0
-            return 1
-            ;;
-    esac
     return 0
 }
 
@@ -68,46 +60,66 @@ sakura_compose_uninstall true >/dev/null 2>&1
 grep -q -- "down --remove-orphans --volumes --rmi all" "$FAKE_LOG" \
     && report 0 "K2: 完全卸载追加 --volumes --rmi all" || report 1 "K2: 完全卸载追加 --volumes --rmi all"
 
-# --- P 组：镜像清理循环 ---
+# --- P 组：镜像清理循环（按仓库前缀枚举） ---
 
-cat > "$TMPDIR/deployment.env" <<EOF
-SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest
-SAKURA_SANDBOXD_IMAGE=$EXISTING_IMAGE
-SAKURA_AGENT_RUNNER_IMAGE=ghcr.io/sakura520222/sakura-ai-agent-runner:persisted
+# image_ls.txt 模拟 docker image ls 输出：历史版本 tag、latest、无 tag 的
+# sandboxd、sakura digest-pull dangling、无关 dangling、无关仓库。
+cat > "$TMPDIR/image_ls.txt" <<'EOF'
+abc111 ghcr.io/sakura520222/sakura-ai v1.2.3
+abc222 ghcr.io/sakura520222/sakura-ai latest
+abc333 ghcr.io/sakura520222/sakura-ai-sandboxd <none>
+abc444 <none> <none>
+abc555 <none> <none>
+abc666 mysql 8.4
 EOF
-DEPLOYMENT_ENV_FILE="$TMPDIR/deployment.env"
-SANDBOX_IMAGE=""
-SANDBOX_RUNNER_IMAGE=""
 
-# P1: 按 deployment.env 记录逐个删除；inspect 失败的镜像跳过
-: > "$FAKE_LOG"
-purge_sakura_images >/dev/null 2>&1
-grep -q -- "rmi $EXISTING_IMAGE" "$FAKE_LOG" \
-    && ! grep -q -- "rmi .*runner:persisted" "$FAKE_LOG" \
-    && report 0 "P1: 记录镜像删除，缺失镜像跳过" || report 1 "P1: 记录镜像删除，缺失镜像跳过"
-
-# P2: rmi 失败不阻断（inspect 命中但删除失败仍返回 0）
 docker() {
-    case "$1" in
-        image)
-            [ "$2" = "inspect" ] && return 0
+    printf '%s\n' "$*" >> "$FAKE_LOG"
+    case "$1 $2" in
+        "image ls") cat "$TMPDIR/image_ls.txt" ;;
+        "image inspect")
+            # argv: image inspect --format <template> <id> → id 为 $5。
+            case "$5" in
+                abc444) printf '%s\n' '[ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:0123]' ;;
+                abc555) printf '%s\n' '[postgres@sha256:0123]' ;;
+            esac
             ;;
     esac
-    return 1
+    return 0
+}
+
+# P1: sakura 仓库镜像全删（含历史 tag 与 RepoDigests 归属的 dangling）；无关镜像保留
+: > "$FAKE_LOG"
+purge_sakura_images >/dev/null 2>&1
+grep -q "rmi -f abc111" "$FAKE_LOG" \
+    && grep -q "rmi -f abc222" "$FAKE_LOG" \
+    && grep -q "rmi -f abc333" "$FAKE_LOG" \
+    && grep -q "rmi -f abc444" "$FAKE_LOG" \
+    && ! grep -q "rmi -f abc555" "$FAKE_LOG" \
+    && ! grep -q "rmi -f abc666" "$FAKE_LOG" \
+    && report 0 "P1: 仓库前缀枚举删除，无关镜像保留" || report 1 "P1: 仓库前缀枚举删除，无关镜像保留"
+
+# P2: rmi 失败不阻断（全部删除失败仍返回 0）
+docker() {
+    case "$1" in rmi) return 1 ;; esac
+    return 0
 }
 purge_sakura_images >/dev/null 2>&1
 report $? "P2: rmi 失败仅告警不阻断"
 
-# P3: deployment.env 缺失时安全跳过（inspect 默认引用不存在 → 无 rmi）
+# P3: 无本地镜像时安全跳过
+cat > "$TMPDIR/image_ls.txt" <<'EOF'
+EOF
+docker() {
+    case "$1 $2" in "image ls") cat "$TMPDIR/image_ls.txt" ;; esac
+    return 0
+}
 : > "$FAKE_LOG"
-SANDBOX_IMAGE=""
-SANDBOX_RUNNER_IMAGE=""
-rm -f "$TMPDIR/deployment.env"
 purge_sakura_images >/dev/null 2>&1
-if ! grep -q "rmi" "$FAKE_LOG"; then
-    report 0 "P3: 无部署状态时跳过镜像删除"
+if [ $? -eq 0 ] && [ ! -s "$FAKE_LOG" ]; then
+    report 0 "P3: 无本地镜像时安全跳过"
 else
-    report 1 "P3: 无部署状态时跳过镜像删除"
+    report 1 "P3: 无本地镜像时安全跳过"
 fi
 
 echo ""

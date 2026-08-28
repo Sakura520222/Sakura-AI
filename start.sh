@@ -4546,21 +4546,32 @@ sakura_compose_uninstall() {
     "${compose_cmd[@]}"
 }
 
-# 完全卸载时按 deployment.env 记录删除 sandboxd/Agent runner 镜像。
-# Remove sandboxd/Agent runner images recorded in deployment.env during a
-# full uninstall.  Must run before purge_sakura_deployment_state: once the
-# state is gone the image references cannot be recovered.  A missing or
-# in-use image only warns and never blocks the rest of the uninstall.
+# 完全卸载时删除 Sakura 官方仓库的全部本地镜像 (web/sandboxd/Agent runner)。
+# Remove every local image from the official Sakura repositories during a
+# full uninstall.  ``compose down --rmi all`` and the persisted references
+# only cover the current release: digest pulls leave untagged images whose
+# identity lives only in RepoDigests, and updater-driven releases keep old
+# version tags behind.  Enumerating by repository prefix covers all three;
+# a missing or in-use image only warns and never blocks the uninstall.
 purge_sakura_images() {
-    local image
-    sandbox_load_deployment_config || return $?
-    for image in "$SANDBOX_IMAGE" "$SANDBOX_RUNNER_IMAGE"; do
-        [[ -n "$image" ]] || continue
-        docker image inspect "$image" >/dev/null 2>&1 || continue
-        info "正在删除镜像 $image..."
-        docker rmi "$image" >/dev/null 2>&1 \
-            || warn "镜像 $image 删除失败（可能被占用），已跳过"
-    done
+    local id repo tag digests
+    while read -r id repo tag; do
+        [[ -n "$id" ]] || continue
+        if [[ "$repo" == "<none>" ]]; then
+            # 无 tag 镜像按 RepoDigests 判定归属，避免误删无关 dangling 层。
+            digests=$(docker image inspect --format '{{join .RepoDigests " "}}' "$id" 2>/dev/null) \
+                || continue
+            [[ "$digests" == *"ghcr.io/sakura520222/sakura-ai"* ]] || continue
+        else
+            case "$repo" in
+                ghcr.io/sakura520222/sakura-ai | ghcr.io/sakura520222/sakura-ai-*) ;;
+                *) continue ;;
+            esac
+        fi
+        info "正在删除镜像 ($id) $repo:$tag..."
+        docker rmi -f "$id" >/dev/null 2>&1 \
+            || warn "镜像 $id 删除失败（可能被占用），已跳过"
+    done < <(docker image ls --format '{{.ID}} {{.Repository}} {{.Tag}}' | awk '!seen[$1]++')
 }
 
 purge_sakura_deployment_state() {
@@ -4603,7 +4614,8 @@ cmd_uninstall() {
     sakura_compose_uninstall "$purge" || return $?
     cmd_updater_uninstall || return $?
     if [[ "$purge" == "true" ]]; then
-        # 先按 deployment.env 记录删除 sandboxd/runner 镜像，再清除部署状态。
+        # 按仓库前缀枚举删除全部本地 Sakura 镜像（含历史版本与 digest-pull
+        # 镜像），再清除部署状态。
         purge_sakura_images || return $?
         purge_sakura_deployment_state || return $?
         ok "Sakura AI 已完全卸载；数据卷、镜像和部署状态已删除"

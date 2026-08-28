@@ -95,21 +95,24 @@ def test_full_uninstall_removes_compose_stack_images():
     assert "compose_cmd+=(--volumes --rmi all)" in script
 
 
-def test_full_uninstall_removes_recorded_images_before_deployment_state():
+def test_full_uninstall_purges_images_by_repository_before_state():
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
     purge_images = script.index("purge_sakura_images() {")
     cmd_uninstall = script.index("cmd_uninstall() {")
     body = script[cmd_uninstall:]
-    # Images must be removed while deployment.env still exists, then the
-    # deployment state is purged.
+    # Image removal must still happen before the deployment state is purged.
     assert "purge_sakura_images || return $?" in body
     assert body.index("purge_sakura_images || return $?") < body.index(
         "purge_sakura_deployment_state || return $?"
     )
-    # Recorded sandboxd/runner references drive the removal loop.
+    # The loop enumerates local images by repository prefix: digest pulls
+    # leave untagged images only attributable via RepoDigests, and updater
+    # releases keep old version tags behind that --rmi all never sees.
     loop_body = script[purge_images: script.index("purge_sakura_deployment_state() {")]
-    assert 'for image in "$SANDBOX_IMAGE" "$SANDBOX_RUNNER_IMAGE"' in loop_body
-    assert 'docker rmi "$image"' in loop_body
+    assert "docker image ls --format '{{.ID}} {{.Repository}} {{.Tag}}'" in loop_body
+    assert "ghcr.io/sakura520222/sakura-ai-*) ;;" in loop_body
+    assert "{{join .RepoDigests \" \"}}" in loop_body
+    assert 'docker rmi -f "$id"' in loop_body
 
 
 def test_uninstall_help_documents_purge_semantics():
