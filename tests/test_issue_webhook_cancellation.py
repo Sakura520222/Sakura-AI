@@ -315,6 +315,172 @@ async def test_close_transition_keeps_completed_and_cancels_active_rows():
 
 
 @pytest.mark.asyncio
+async def test_reopen_transition_restores_owner_scoped_short_and_full_rows():
+    from sqlalchemy.dialects import sqlite
+
+    from backend.services.issue_service import IssueService
+
+    owner_short = SimpleNamespace(
+        repo_owner="owner",
+        repo_name="sakura-ai-test",
+        issue_state="closed",
+        status="cancelled",
+    )
+    owner_full = SimpleNamespace(
+        repo_owner="owner",
+        repo_name="owner/sakura-ai-test",
+        issue_state="closed",
+        status="completed",
+    )
+    other_owner = SimpleNamespace(
+        repo_owner="other-owner",
+        repo_name="sakura-ai-test",
+        issue_state="closed",
+        status="cancelled",
+    )
+
+    class LifecycleSession:
+        def __init__(self):
+            self.statement = None
+            self.commits = 0
+
+        async def execute(self, statement):
+            self.statement = statement
+            for record in (owner_short, owner_full, other_owner):
+                if record.repo_owner == "owner" and record.repo_name in {
+                    "sakura-ai-test",
+                    "owner/sakura-ai-test",
+                }:
+                    record.issue_state = "open"
+            return SimpleNamespace(rowcount=2)
+
+        async def commit(self):
+            self.commits += 1
+
+    session = LifecycleSession()
+    result = await IssueService().mark_issue_reopened(
+        "owner", "sakura-ai-test", 536, session
+    )
+
+    compiled = str(
+        session.statement.compile(
+            dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "repo_owner = 'owner'" in compiled
+    assert "'sakura-ai-test'" in compiled
+    assert "'owner/sakura-ai-test'" in compiled
+    assert result == {"state_updated": 2}
+    assert owner_short.issue_state == owner_full.issue_state == "open"
+    assert other_owner.issue_state == "closed"
+    assert owner_short.status == "cancelled"
+    assert owner_full.status == "completed"
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_reopen_transition_is_idempotent_when_no_records_match():
+    from backend.services.issue_service import IssueService
+
+    class EmptySession:
+        def __init__(self):
+            self.commits = 0
+
+        async def execute(self, _statement):
+            return SimpleNamespace(rowcount=0)
+
+        async def commit(self):
+            self.commits += 1
+
+    session = EmptySession()
+    result = await IssueService().mark_issue_reopened(
+        "owner", "missing-repo", 536, session
+    )
+
+    assert result == {"state_updated": 0}
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_reopened_syncs_short_name_row_when_semantic_linking_disabled(
+    monkeypatch, webhook_dependencies
+):
+    webhook, issue_service, events = webhook_dependencies
+    row = SimpleNamespace(issue_state="closed", status="cancelled")
+
+    async def mark_reopened(owner, repo, number, db):
+        events.append(("reopen", owner, repo, number, db))
+        row.issue_state = "open"
+        return {"state_updated": 1}
+
+    async def disabled(_name):
+        return False
+
+    monkeypatch.setattr(issue_service, "mark_issue_reopened", mark_reopened)
+    monkeypatch.setattr(webhook, "get_dynamic_config", disabled)
+
+    response = await webhook.handle_issue_event(_issue_payload("reopened"))
+
+    assert response.status_code == 200
+    assert json.loads(response.body.decode()) == {
+        "status": "skipped",
+        "reason": "feature disabled",
+    }
+    assert row.issue_state == "open"
+    assert row.status == "cancelled"
+    assert len(events) == 1
+    assert events[0][:4] == ("reopen", "owner", "sakura-ai-test", 536)
+
+
+@pytest.mark.asyncio
+async def test_reopened_syncs_db_after_semantic_vector_reopen(
+    monkeypatch, webhook_dependencies
+):
+    webhook, issue_service, events = webhook_dependencies
+    webhook.settings.enable_semantic_issue_linking = True
+    row_states = {
+        ("owner", "sakura-ai-test"): "closed",
+        ("owner", "owner/sakura-ai-test"): "closed",
+        ("other-owner", "sakura-ai-test"): "closed",
+    }
+
+    class FakeEmbeddingService:
+        async def upsert_issue(self, owner, repo, number, **kwargs):
+            events.append(("vector-reopen", owner, repo, number, kwargs))
+
+    async def mark_reopened(owner, repo, number, _db):
+        events.append(("reopen", owner, repo, number))
+        for identity in list(row_states):
+            if identity[0] == owner and identity[1] in {
+                repo,
+                f"{owner}/{repo}",
+            }:
+                row_states[identity] = "open"
+        return {"state_updated": 2}
+
+    async def disabled(_name):
+        return False
+
+    from backend.services import issue_embedding_service
+
+    monkeypatch.setattr(
+        issue_embedding_service, "IssueEmbeddingService", FakeEmbeddingService
+    )
+    monkeypatch.setattr(issue_service, "mark_issue_reopened", mark_reopened)
+    monkeypatch.setattr(webhook, "get_dynamic_config", disabled)
+
+    response = await webhook.handle_issue_event(_issue_payload("reopened"))
+
+    assert response.status_code == 200
+    assert row_states == {
+        ("owner", "sakura-ai-test"): "open",
+        ("owner", "owner/sakura-ai-test"): "open",
+        ("other-owner", "sakura-ai-test"): "closed",
+    }
+    assert [event[0] for event in events] == ["vector-reopen", "reopen"]
+
+
+@pytest.mark.asyncio
 async def test_save_result_drops_stale_worker_after_close_wins_race():
     from backend.services.issue_service import IssueService
 
