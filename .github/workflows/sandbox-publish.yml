@@ -166,14 +166,18 @@ jobs:
           set -euo pipefail
           sandboxd_digest=$(docker buildx imagetools inspect \
             "${SANDBOXD_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
-            --format '{{json .Manifest.Digest}}')
+            --format '{{.Manifest.Digest}}')
           runner_digest=$(docker buildx imagetools inspect \
             "${RUNNER_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
-            --format '{{json .Manifest.Digest}}')
-          [[ "$sandboxd_digest" =~ ^"sha256:[0-9a-f]{64}"$ ]] || exit 1
-          [[ "$runner_digest" =~ ^"sha256:[0-9a-f]{64}"$ ]] || exit 1
-          sandboxd_digest=${sandboxd_digest//\"/}
-          runner_digest=${runner_digest//\"/}
+            --format '{{.Manifest.Digest}}')
+          [[ "$sandboxd_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "sandboxd manifest inspection did not return a valid digest" >&2
+            exit 1
+          }
+          [[ "$runner_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "runner manifest inspection did not return a valid digest" >&2
+            exit 1
+          }
           echo "sandboxd_digest=$sandboxd_digest" >> "$GITHUB_OUTPUT"
           echo "runner_digest=$runner_digest" >> "$GITHUB_OUTPUT"
           {
