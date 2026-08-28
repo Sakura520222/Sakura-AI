@@ -144,6 +144,173 @@ async def test_worker_admission_creates_runner_before_dependency_install(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dependency_file", "auto_install_enabled"),
+    [
+        (None, True),
+        ("requirements.txt", False),
+    ],
+    ids=["non-python-workspace", "auto-install-disabled"],
+)
+async def test_local_worker_admission_skips_inapplicable_dependency_install(
+    monkeypatch,
+    tmp_path: Path,
+    dependency_file: str | None,
+    auto_install_enabled: bool,
+):
+    """Local source development must admit workspaces without dependency work."""
+
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    if dependency_file:
+        (workspace / dependency_file).write_text(
+            "example-package\n", encoding="utf-8"
+        )
+
+    async def backend_config(key: str):
+        assert key == "agent_team_execution_backend"
+        return "local"
+
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_dynamic_config_fresh",
+        backend_config,
+    )
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_settings",
+        lambda: SimpleNamespace(sakura_deploy_mode="source"),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(
+            agent_team_auto_install_deps=auto_install_enabled,
+        ),
+    )
+
+    async def configured_auto_install(_key: str):
+        return auto_install_enabled
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        configured_auto_install,
+    )
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
+    worker = AgentTeamWorker()
+    git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    admitted = await worker._admit_workspace_runner(git_service, workspace)
+
+    assert isinstance(admitted, LocalExecutionRunner)
+
+
+@pytest.mark.asyncio
+async def test_local_worker_admission_installs_python_dependencies_with_local_runner(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """Local/full-access source mode must run dependency setup through the local runner."""
+
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text(
+        "example-package\n", encoding="utf-8"
+    )
+
+    async def backend_config(key: str):
+        assert key == "agent_team_execution_backend"
+        return "local"
+
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_dynamic_config_fresh",
+        backend_config,
+    )
+    monkeypatch.setattr(
+        "backend.workers.agent_team_worker.get_settings",
+        lambda: SimpleNamespace(sakura_deploy_mode="source"),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    async def install_enabled(_key: str):
+        return True
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        install_enabled,
+    )
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
+    commands: list[str] = []
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+        def kill(self):
+            self.returncode = -9
+
+    async def fake_shell(command, **_kwargs):
+        commands.append(command)
+        return FakeProcess()
+
+    async def fake_exec(*args, **_kwargs):
+        commands.append(" ".join(str(arg) for arg in args))
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.asyncio.create_subprocess_shell",
+        fake_shell,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.asyncio.create_subprocess_exec",
+        fake_exec,
+    )
+
+    requests: list[ExecutionRequest] = []
+    real_execute = LocalExecutionRunner.execute
+
+    async def observed_execute(self, request):
+        requests.append(request)
+        return await real_execute(self, request)
+
+    monkeypatch.setattr(LocalExecutionRunner, "execute", observed_execute)
+
+    worker = AgentTeamWorker()
+    git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    admitted = await worker._admit_workspace_runner(git_service, workspace)
+
+    assert isinstance(admitted, LocalExecutionRunner)
+    assert [request.profile for request in requests] == [
+        ExecutionProfile.DEPENDENCY,
+        ExecutionProfile.DEPENDENCY,
+    ]
+    assert len(commands) == 2
+    assert "venv" in commands[0]
+    assert "requirements.txt" in commands[1]
+
+
+@pytest.mark.asyncio
 async def test_worker_runner_factory_reads_backend_fresh_after_cross_worker_switch(
     monkeypatch,
     tmp_path: Path,

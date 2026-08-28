@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit, urlunsplit
 
 from backend.core.config import get_dynamic_config, get_settings
@@ -16,6 +16,7 @@ from backend.services.agent_team.execution import (
     ExecutionRequest,
     ExecutionResult,
     ExecutionRunner,
+    LocalExecutionRunner,
     TrustedGitRunner,
     execute_request,
     execution_workspace_key,
@@ -189,9 +190,10 @@ class AgentTeamGitWorkspaceService:
         """安装工作区依赖 after the workspace-scoped runner is admitted.
 
         The worker deliberately calls this only after Git has determined the
-        exact task worktree and after the runner has passed its sandbox health
-        gate.  Dependency hooks are untrusted code and therefore cannot use
-        ``TrustedGitRunner`` or a host fallback.
+        exact task worktree and after the runner has passed its backend
+        admission gate.  Dependency hooks are untrusted code and therefore
+        cannot use ``TrustedGitRunner`` or an implicit host fallback; the
+        explicit local-development path is separately gated by ``full_access``.
         """
 
         await self._install_workspace_dependencies(
@@ -205,14 +207,6 @@ class AgentTeamGitWorkspaceService:
         """为工作区安装项目依赖（仅 Python 项目创建 venv）。"""
         from loguru import logger
 
-        supports_profile = getattr(executor, "supports_profile", None)
-        if not callable(supports_profile) or not supports_profile(
-            ExecutionProfile.DEPENDENCY
-        ):
-            raise ExecutionError(
-                "Agent dependency installation requires an explicit sandbox runner"
-            )
-
         value = await get_dynamic_config("agent_team_auto_install_deps")
         settings = get_settings()
         enabled = getattr(settings, "agent_team_auto_install_deps", True)
@@ -221,10 +215,41 @@ class AgentTeamGitWorkspaceService:
         if not enabled:
             return
 
-        has_pyproject = (workspace / "pyproject.toml").exists()
-        has_requirements = (workspace / "requirements.txt").exists()
+        pyproject_path = self._resolve_dependency_path(workspace, "pyproject.toml")
+        requirements_path = self._resolve_dependency_path(
+            workspace, "requirements.txt"
+        )
+        has_pyproject = pyproject_path.is_file()
+        has_requirements = requirements_path.is_file()
         if not has_pyproject and not has_requirements:
             return
+
+        if type(executor) is LocalExecutionRunner:
+            try:
+                network_policy = await get_agent_team_network_policy()
+            except Exception as exc:
+                raise ExecutionError(
+                    "Agent 本地依赖安装无法读取网络策略，已拒绝在线安装"
+                ) from exc
+            if not network_policy.allows_local_backend:
+                raise ExecutionError(
+                    "Agent 本地依赖安装仅在 full_access 下可用；"
+                    f"当前策略为 {network_policy.value}，不能在宿主联网安装依赖"
+                )
+            await self._install_local_workspace_dependencies(
+                executor,
+                workspace,
+                has_pyproject=has_pyproject,
+            )
+            return
+
+        supports_profile = getattr(executor, "supports_profile", None)
+        if not callable(supports_profile) or not supports_profile(
+            ExecutionProfile.DEPENDENCY
+        ):
+            raise ExecutionError(
+                "Agent dependency installation requires an explicit sandbox runner"
+            )
 
         try:
             network_policy = await get_agent_team_network_policy()
@@ -250,7 +275,7 @@ class AgentTeamGitWorkspaceService:
                 "Agent dependency installation requires the sandboxd egress capability"
             )
 
-        venv_dir = workspace / ".venv"
+        venv_dir = self._resolve_dependency_path(workspace, ".venv")
         if not venv_dir.exists():
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
             result = await execute_request(
@@ -268,6 +293,13 @@ class AgentTeamGitWorkspaceService:
                 raise ExecutionError(
                     f"创建 Agent 依赖 venv 失败: {result.stderr or result.stdout}"
                 )
+
+        # Re-resolve after the bootstrap request.  A replacement symlink or
+        # junction must never redirect the final pip request outside the task
+        # workspace.
+        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        if venv_dir.exists() and not venv_dir.is_dir():
+            raise ExecutionError("Agent 依赖 venv 不在工作区内或不是目录")
 
         # sandboxd runner images are Linux OCI images even when the Web
         # process is developed on Windows; use the container-visible path.
@@ -305,6 +337,108 @@ class AgentTeamGitWorkspaceService:
             raise ExecutionError(
                 f"安装 Agent 工作区依赖失败: {result.stderr or result.stdout}"
             )
+
+    async def _install_local_workspace_dependencies(
+        self,
+        executor: LocalExecutionRunner,
+        workspace: Path,
+        *,
+        has_pyproject: bool,
+    ) -> None:
+        """在 full_access 源码开发模式下使用本机 venv 安装依赖。
+
+        This path is deliberately separate from the sandbox protocol.  It
+        uses only application-constructed argv, the current host interpreter,
+        and the task workspace's OS-specific ``.venv`` layout; no Linux
+        container path or shell command is ever passed to the local runner.
+        """
+
+        from loguru import logger
+
+        if executor.workspace != workspace:
+            raise ExecutionError("Agent 本地依赖 runner 与工作区不匹配")
+
+        workspace_key = execution_workspace_key(workspace, self.workspace_service)
+        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        if not venv_dir.exists():
+            logger.info("Agent 工作区创建本地 venv: {}", venv_dir)
+            result = await execute_request(
+                executor,
+                ExecutionRequest(
+                    workspace_key=workspace_key,
+                    argv=(
+                        str(executor.dependency_python_executable),
+                        "-m",
+                        "venv",
+                        ".venv",
+                    ),
+                    cwd=PurePosixPath("."),
+                    profile=ExecutionProfile.DEPENDENCY,
+                    timeout_seconds=600,
+                ),
+            )
+            if result.returncode != 0:
+                raise ExecutionError(
+                    f"创建 Agent 本地依赖 venv 失败: {result.stderr or result.stdout}"
+                )
+
+        # Re-resolve after the bootstrap request before deriving the host
+        # interpreter path, so a newly-created/replaced link cannot escape the
+        # task workspace between the two dependency requests.
+        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        try:
+            dependency_python = executor.dependency_venv_python()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ExecutionError(
+                "Agent 本地依赖 Python 路径不在工作区内"
+            ) from exc
+        if has_pyproject:
+            dependency_args = (
+                str(dependency_python),
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                ".",
+                "--quiet",
+            )
+        else:
+            dependency_args = (
+                str(dependency_python),
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                "requirements.txt",
+                "--quiet",
+            )
+        result = await execute_request(
+            executor,
+            ExecutionRequest(
+                workspace_key=workspace_key,
+                argv=dependency_args,
+                cwd=PurePosixPath("."),
+                profile=ExecutionProfile.DEPENDENCY,
+                timeout_seconds=600,
+            ),
+        )
+        if result.returncode != 0:
+            raise ExecutionError(
+                f"安装 Agent 本地工作区依赖失败: {result.stderr or result.stdout}"
+            )
+
+    def _resolve_dependency_path(self, workspace: Path, relative_path: str) -> Path:
+        """Resolve a dependency path and reject links escaping the workspace."""
+
+        try:
+            return self.workspace_service.resolve_inside_workspace(
+                workspace,
+                relative_path,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ExecutionError(
+                f"Agent 依赖路径不在工作区内: {relative_path}"
+            ) from exc
 
     def make_branch_name(
         self,

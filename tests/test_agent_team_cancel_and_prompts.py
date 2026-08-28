@@ -1,10 +1,20 @@
 """Agent Team 取消信号传播与 User Prompt 消费测试。"""
 
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from backend.services.agent_team.execution import (
+    ExecutionError,
+    ExecutionProfile,
+    ExecutionResult,
+    LocalExecutionRunner,
+    TrustedGitRunner,
+)
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
     FullStackResult,
@@ -16,6 +26,7 @@ from backend.services.agent_team.iteration_loop import (
     IterationLoopService,
     PendingGuidance,
 )
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.prompt_config import (
     IMPLEMENTATION_SYSTEM_PROMPT,
     build_implementation_user_message,
@@ -401,24 +412,281 @@ async def test_install_workspace_dependencies_skips_non_python(tmp_path):
     """Non-Python projects should not create .venv or call pip."""
     from unittest.mock import AsyncMock, MagicMock
 
-    service = AgentTeamGitWorkspaceService.__new__(AgentTeamGitWorkspaceService)
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
     executor = MagicMock()
     executor.run = AsyncMock()
 
-    await service._install_workspace_dependencies(executor, tmp_path)
+    async def install_enabled(_key):
+        return True
 
-    assert not (tmp_path / ".venv").exists()
+    from unittest.mock import patch
+
+    with patch(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        new=install_enabled,
+    ), patch(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        return_value=SimpleNamespace(agent_team_auto_install_deps=True),
+    ):
+        await service._install_workspace_dependencies(executor, workspace)
+
+    assert not (workspace / ".venv").exists()
     executor.run.assert_not_awaited()
+    executor.supports_profile.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_skips_when_auto_install_disabled(
+    monkeypatch, tmp_path
+):
+    """Disabled auto-install must return before runner admission."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n")
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+
+    async def install_disabled(_key):
+        return False
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        install_disabled,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    # This object intentionally does not implement the runner protocol.  The
+    # switch must be checked before the fail-closed runner admission.
+    await service._install_workspace_dependencies(object(), workspace)
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
+    monkeypatch, tmp_path
+):
+    """Source local execution installs dependencies through host Python argv."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n")
+    executor = LocalExecutionRunner(workspace, workspace_service)
+    requests = []
+
+    async def capture(request):
+        requests.append(request)
+        if len(requests) == 1:
+            (workspace / ".venv").mkdir()
+        return ExecutionResult(exit_code=0)
+
+    monkeypatch.setattr(executor, "execute", capture)
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    await service.install_workspace_dependencies(workspace, executor)
+
+    assert len(requests) == 2
+    assert all(item.profile is ExecutionProfile.DEPENDENCY for item in requests)
+    assert all(item.command is None for item in requests)
+    assert requests[0].argv == (
+        str(Path(sys.executable).resolve()),
+        "-m",
+        "venv",
+        ".venv",
+    )
+    venv_python = workspace / ".venv" / (
+        "Scripts" if os.name == "nt" else "bin"
+    ) / ("python.exe" if os.name == "nt" else "python")
+    assert requests[1].argv == (
+        str(venv_python.resolve()),
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        "requirements.txt",
+        "--quiet",
+    )
+    assert all("/workspace/" not in " ".join(item.argv or ()) for item in requests)
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_does_not_treat_trusted_git_as_local(
+    monkeypatch, tmp_path
+):
+    """Only the exact LocalExecutionRunner type may use host installation."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n")
+    executor = TrustedGitRunner(workspace, workspace_service)
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    with pytest.raises(ExecutionError, match="explicit sandbox runner"):
+        await service.install_workspace_dependencies(workspace, executor)
+
+    assert not (workspace / ".venv").exists()
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_rejects_external_venv_symlink(
+    monkeypatch, tmp_path
+):
+    """An external venv link must be rejected before any runner execution."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    outside = tmp_path / "outside-venv"
+    outside.mkdir()
+    try:
+        (workspace / ".venv").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    (workspace / "requirements.txt").write_text("example-package\n")
+    executor = LocalExecutionRunner(workspace, workspace_service)
+    spawned = False
+
+    async def fail_execute(_request):
+        nonlocal spawned
+        spawned = True
+        raise AssertionError("external venv must fail before spawn")
+
+    monkeypatch.setattr(executor, "execute", fail_execute)
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    with pytest.raises(ExecutionError, match="工作区|venv"):
+        await service.install_workspace_dependencies(workspace, executor)
+    assert spawned is False
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_rejects_external_venv_python_symlink(
+    monkeypatch, tmp_path
+):
+    """The final venv interpreter must also remain inside the workspace."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    script_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    venv_python = workspace / ".venv" / script_dir / executable
+    venv_python.parent.mkdir(parents=True)
+    outside = tmp_path / f"outside-{executable}"
+    outside.write_text("not an interpreter\n")
+    try:
+        venv_python.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    (workspace / "requirements.txt").write_text("example-package\n")
+    executor = LocalExecutionRunner(workspace, workspace_service)
+    spawned = False
+
+    async def fail_execute(_request):
+        nonlocal spawned
+        spawned = True
+        raise AssertionError("external venv Python must fail before spawn")
+
+    monkeypatch.setattr(executor, "execute", fail_execute)
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    with pytest.raises(ExecutionError, match="工作区|Python"):
+        await service.install_workspace_dependencies(workspace, executor)
+    assert spawned is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manifest", ["pyproject.toml", "requirements.txt"])
+async def test_install_workspace_dependencies_rejects_external_manifest_symlink(
+    monkeypatch, tmp_path, manifest
+):
+    """Dependency manifests must not resolve outside the task workspace."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    outside = tmp_path / f"outside-{manifest}"
+    outside.write_text("[project]\nname='outside'\n" if manifest.startswith("py") else "x\n")
+    try:
+        (workspace / manifest).symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    executor = LocalExecutionRunner(workspace, workspace_service)
+    spawned = False
+
+    async def fail_execute(_request):
+        nonlocal spawned
+        spawned = True
+        raise AssertionError("external manifest must fail before spawn")
+
+    monkeypatch.setattr(executor, "execute", fail_execute)
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    with pytest.raises(ExecutionError, match="工作区|依赖"):
+        await service.install_workspace_dependencies(workspace, executor)
+    assert spawned is False
 
 
 @pytest.mark.asyncio
 async def test_install_workspace_dependencies_skips_without_dependency_runner(tmp_path):
     """没有沙箱 dependency profile 时必须 fail closed，不得本地执行。"""
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
-
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    service = AgentTeamGitWorkspaceService.__new__(AgentTeamGitWorkspaceService)
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    (workspace / "pyproject.toml").write_text("[project]\nname='test'\n")
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
     executor = MagicMock()
     executor.supports_profile.return_value = False
     executor.run = AsyncMock()
@@ -428,7 +696,7 @@ async def test_install_workspace_dependencies_skips_without_dependency_runner(tm
         new_callable=AsyncMock,
         return_value=None,
     ), pytest.raises(RuntimeError, match="explicit sandbox runner"):
-        await service._install_workspace_dependencies(executor, tmp_path)
+        await service._install_workspace_dependencies(executor, workspace)
 
     executor.run.assert_not_awaited()
-    assert not (tmp_path / ".venv").exists()
+    assert not (workspace / ".venv").exists()

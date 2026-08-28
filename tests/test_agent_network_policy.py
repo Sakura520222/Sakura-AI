@@ -10,6 +10,7 @@ from backend.services.agent_team.execution import (
     ExecutionProfile,
     ExecutionRequest,
     LocalExecutionRunner,
+    execution_workspace_key,
 )
 from backend.services.agent_team.tools import fetch_url_tool, web_search_tool
 from backend.services.agent_team.tools.base import ToolContext
@@ -136,7 +137,7 @@ async def test_local_backend_fails_closed_for_offline_policy(tmp_path, monkeypat
     )
     runner = LocalExecutionRunner(workspace, service)
     request = ExecutionRequest(
-        workspace_key="owner-repo",
+        workspace_key=execution_workspace_key(workspace, service),
         command="echo should-not-run",
         profile=ExecutionProfile.AGENT,
         timeout_seconds=1,
