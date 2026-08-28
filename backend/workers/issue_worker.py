@@ -3,6 +3,7 @@
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -86,6 +87,13 @@ class IssueWorker:
         ] = {}
         self._task_executions: dict[str, dict[str, Any | None]] = {}
         self._task_execution_statuses: dict[str, dict[str, str | None]] = {}
+        # A worker task can hand a synchronous GitHub mutation to
+        # ``asyncio.to_thread``.  Cancelling the worker only cancels the await
+        # around that thread, so retain every in-flight write until its child
+        # task has really finished.
+        self._task_external_writes: dict[
+            str, dict[str, set[asyncio.Task[Any]]]
+        ] = {}
         from backend.services.activity_observability.integration_service import (
             ActivityIntegrationService,
         )
@@ -159,6 +167,121 @@ class IssueWorker:
         if executions is None:
             self._task_executions = executions = {}
         executions.setdefault(task_key, {})[task_id] = execution
+
+    def _register_external_write(
+        self, task_key: str, task_id: str, write_task: asyncio.Task[Any]
+    ) -> None:
+        writes = getattr(self, "_task_external_writes", None)
+        if writes is None:
+            self._task_external_writes = writes = {}
+        writes.setdefault(task_key, {}).setdefault(task_id, set()).add(write_task)
+
+    def _unregister_external_write(
+        self, task_key: str, task_id: str, write_task: asyncio.Task[Any]
+    ) -> None:
+        writes = getattr(self, "_task_external_writes", {}).get(task_key)
+        if writes is None:
+            return
+        task_writes = writes.get(task_id)
+        if task_writes is None:
+            return
+        task_writes.discard(write_task)
+        if not task_writes:
+            writes.pop(task_id, None)
+        if not writes:
+            getattr(self, "_task_external_writes", {}).pop(task_key, None)
+
+    def _get_external_writes(
+        self, task_key: str, task_id: str
+    ) -> tuple[asyncio.Task[Any], ...]:
+        return tuple(
+            write_task
+            for write_task in getattr(self, "_task_external_writes", {})
+            .get(task_key, {})
+            .get(task_id, set())
+            if not write_task.done()
+        )
+
+    async def _run_external_write(
+        self,
+        task_key: str,
+        task_id: str,
+        cancel_event: asyncio.Event,
+        operation: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Run one external mutation through a cancellation-safe child task.
+
+        ``asyncio.to_thread`` cannot stop the synchronous function once its
+        thread has started.  The child task is therefore shielded from the
+        worker's cancellation, recorded while it is in flight, and drained
+        before the original ``CancelledError`` is re-raised.  The operation
+        factory is intentionally called only in the child after the last
+        cancellation check, so a write is never started after cooperative
+        cancellation has already been requested.
+        """
+        self._raise_if_cancelled(cancel_event)
+
+        async def _run() -> Any:
+            self._raise_if_cancelled(cancel_event)
+            return await operation()
+
+        write_task = asyncio.create_task(_run())
+        self._register_external_write(task_key, task_id, write_task)
+        cancellation: asyncio.CancelledError | None = None
+        result: Any = None
+        write_error: BaseException | None = None
+        try:
+            while not write_task.done():
+                try:
+                    await asyncio.shield(write_task)
+                except asyncio.CancelledError as exc:
+                    # Keep waiting even when duplicate lifecycle cancellation
+                    # injects another CancelledError into this worker task.
+                    if cancellation is None:
+                        cancellation = exc
+                except BaseException:
+                    # The child is done; retrieve its result below so its
+                    # exception is observed and not reported as unhandled.
+                    break
+
+            try:
+                result = write_task.result()
+            except BaseException as exc:
+                write_error = exc
+
+            # Cancellation of the worker takes precedence after the external
+            # write has drained.  This preserves normal task cancellation while
+            # still observing any write exception for diagnostics.
+            if cancellation is not None:
+                raise cancellation
+            if write_error is not None:
+                raise write_error
+            return result
+        finally:
+            self._unregister_external_write(task_key, task_id, write_task)
+
+    @staticmethod
+    async def _await_tasks_cancel_safe(
+        tasks: list[asyncio.Task[Any]],
+    ) -> list[Any]:
+        """Await task handles without letting caller cancellation abort drain."""
+        if not tasks:
+            return []
+        gathered = asyncio.gather(*tasks, return_exceptions=True)
+        cancellation: asyncio.CancelledError | None = None
+        while not gathered.done():
+            try:
+                await asyncio.shield(gathered)
+            except asyncio.CancelledError as exc:
+                # A cancelled webhook request must still wait for the worker
+                # it has already signalled before its lifecycle cleanup ends.
+                if cancellation is None:
+                    cancellation = exc
+
+        results = list(gathered.result())
+        if cancellation is not None:
+            raise cancellation
+        return results
 
     def _get_execution(self, task_key: str, task_id: str) -> Any | None:
         return getattr(self, "_task_executions", {}).get(task_key, {}).get(task_id)
@@ -245,11 +368,16 @@ class IssueWorker:
                 event.set()
                 changed = True
             task = task_handles.get(task_id)
-            if was_set or task is None or task is current_task:
+            # ``was_set`` only controls whether another cancellation request is
+            # needed.  A duplicate close/delete webhook must still await a task
+            # whose first cancellation is currently converging; otherwise its
+            # lifecycle cleanup can race the first caller's ``gather``.
+            if task is None or task is current_task:
                 continue
             try:
-                if not task.done() and task.cancel():
-                    changed = True
+                if not task.done():
+                    if not was_set and task.cancel():
+                        changed = True
                     pending.append(task)
                     pending_ids.append(task_id)
             except (AttributeError, RuntimeError):
@@ -257,8 +385,30 @@ class IssueWorker:
                 # event remains set and the normal worker cleanup still runs.
                 continue
 
-        if pending:
-            results = await asyncio.gather(*pending, return_exceptions=True)
+        # Include writes registered by a worker even if a task-handle mock or
+        # an admission edge case has temporarily lost the outer handle.  In
+        # the normal path the outer task awaits its writes itself, so this is
+        # an idempotent safety net.
+        pending_write_tasks: list[asyncio.Task[Any]] = []
+        for task_id in task_events:
+            pending_write_tasks.extend(self._get_external_writes(task_key, task_id))
+        pending_all: list[asyncio.Task[Any]] = []
+        seen: set[int] = set()
+        for task in (*pending, *pending_write_tasks):
+            marker = id(task)
+            if marker not in seen:
+                seen.add(marker)
+                pending_all.append(task)
+
+        drain_cancellation: asyncio.CancelledError | None = None
+        if pending_all:
+            try:
+                results = await self._await_tasks_cancel_safe(pending_all)
+            except asyncio.CancelledError as exc:
+                # Finish local registry cleanup below, then preserve the
+                # cancellation of the webhook request itself.
+                drain_cancellation = exc
+                results = []
             for result in results:
                 if isinstance(result, BaseException) and not isinstance(
                     result, asyncio.CancelledError
@@ -275,6 +425,8 @@ class IssueWorker:
                 self._unregister_task(task_key, task_id)
         if changed:
             logger.info("[cancel] 已终止 Issue 分析任务: {}", task_key)
+        if drain_cancellation is not None:
+            raise drain_cancellation
         return changed
 
     @staticmethod
@@ -644,6 +796,53 @@ class IssueWorker:
                         ),
                     )
 
+        async def _start_execution_cancel_safe(**kwargs: Any) -> Any:
+            """Shield observability admission until its execution is bound.
+
+            ``start_execution`` persists the invocation/work unit and lease
+            before it finishes constructing the returned bundle.  Cancelling
+            this worker while that await is in progress must not strand that
+            durable work unit without a handle that can finish and release it.
+            """
+            self._raise_if_cancelled(cancel_event)
+
+            admission_task = asyncio.create_task(
+                self.activity_integration.start_execution(**kwargs)
+            )
+            cancellation: asyncio.CancelledError | None = None
+            result: Any = None
+            admission_error: BaseException | None = None
+            while not admission_task.done():
+                try:
+                    await asyncio.shield(admission_task)
+                except asyncio.CancelledError as exc:
+                    if cancellation is None:
+                        cancellation = exc
+                except BaseException:
+                    # The child is complete; retrieve its exception below so
+                    # it is observed and classified by the caller.
+                    break
+
+            try:
+                result = admission_task.result()
+            except BaseException as exc:
+                admission_error = exc
+
+            if admission_error is not None:
+                if cancellation is not None:
+                    raise cancellation
+                raise admission_error
+
+            if not getattr(result, "merged", False):
+                # Bind before propagating the cancellation.  The outer
+                # process cancellation handler can then finish the exact
+                # execution and release its lease.
+                self._bind_execution(task_key, task_id, result)
+
+            if cancellation is not None:
+                raise cancellation
+            return result
+
         try:
             admission = await self.activity_integration.admit_issue(
                 issue_info,
@@ -661,7 +860,7 @@ class IssueWorker:
             )
             if resolver is not None:
                 role_snapshot = await resolver("main")
-            execution = await self.activity_integration.start_execution(
+            execution = await _start_execution_cancel_safe(
                 session_id=admission.session_id,
                 trigger_ids=[admission.trigger_id],
                 role_snapshot=role_snapshot,
@@ -676,7 +875,6 @@ class IssueWorker:
                     execution.invocation_id,
                 )
                 return task_id
-            self._bind_execution(task_key, task_id, execution)
         except Exception as observability_exc:
             # Observability admission is best-effort for legacy callers that lack
             # immutable repository identity; the core analysis still runs, but
@@ -1057,13 +1255,18 @@ class IssueWorker:
                                     body_with_marker: str,
                                     _resource_identity: dict[str, Any],
                                 ) -> Any:
-                                    return await asyncio.to_thread(
-                                        issue_service.github_app.create_issue_comment,
-                                        repo_owner,
-                                        repo_name,
-                                        issue_number,
-                                        body_with_marker,
-                                        raise_on_error=True,
+                                    return await self._run_external_write(
+                                        task_key,
+                                        task_id,
+                                        cancel_event,
+                                        lambda: asyncio.to_thread(
+                                            issue_service.github_app.create_issue_comment,
+                                            repo_owner,
+                                            repo_name,
+                                            issue_number,
+                                            body_with_marker,
+                                            raise_on_error=True,
+                                        ),
                                     )
 
                                 self._raise_if_cancelled(cancel_event)
@@ -1079,12 +1282,17 @@ class IssueWorker:
                                     await db.commit()
                         else:
                             self._raise_if_cancelled(cancel_event)
-                            success = await issue_service.post_analysis_comment(
-                                repo_owner,
-                                repo_name,
-                                issue_number,
-                                analysis_record,
-                                db,
+                            success = await self._run_external_write(
+                                task_key,
+                                task_id,
+                                cancel_event,
+                                lambda: issue_service.post_analysis_comment(
+                                    repo_owner,
+                                    repo_name,
+                                    issue_number,
+                                    analysis_record,
+                                    db,
+                                ),
                             )
                         if success:
                             logger.info(f"[{task_id}] 已发布分析评论")
@@ -1101,12 +1309,20 @@ class IssueWorker:
                         )
                         if labels_data:
                             self._raise_if_cancelled(cancel_event)
-                            result = await issue_service.apply_suggested_labels(
-                                repo_owner,
-                                repo_name,
-                                issue_number,
-                                labels_data,
-                                db,
+                            result = await self._run_external_write(
+                                task_key,
+                                task_id,
+                                cancel_event,
+                                lambda: issue_service.apply_suggested_labels(
+                                    repo_owner,
+                                    repo_name,
+                                    issue_number,
+                                    labels_data,
+                                    db,
+                                    cancellation_checkpoint=lambda: self._raise_if_cancelled(
+                                        cancel_event
+                                    ),
+                                ),
                             )
                             if result.get("applied"):
                                 logger.info(
@@ -1137,11 +1353,19 @@ class IssueWorker:
                             if assignees_data:
                                 self._raise_if_cancelled(cancel_event)
                                 assign_result = (
-                                    await issue_service.apply_suggested_assignees(
-                                        repo_owner,
-                                        repo_name,
-                                        issue_number,
-                                        assignees_data,
+                                    await self._run_external_write(
+                                        task_key,
+                                        task_id,
+                                        cancel_event,
+                                        lambda: issue_service.apply_suggested_assignees(
+                                            repo_owner,
+                                            repo_name,
+                                            issue_number,
+                                            assignees_data,
+                                            cancellation_checkpoint=lambda: self._raise_if_cancelled(
+                                                cancel_event
+                                            ),
+                                        ),
                                     )
                                 )
                                 if assign_result.get("applied"):
@@ -1172,12 +1396,17 @@ class IssueWorker:
                             original_title = issue_info.get("title", "")
                             if suggested_title and suggested_title != original_title:
                                 self._raise_if_cancelled(cancel_event)
-                                success = await asyncio.to_thread(
-                                    self.github_app.update_issue_title,
-                                    repo_owner,
-                                    repo_name,
-                                    issue_number,
-                                    suggested_title,
+                                success = await self._run_external_write(
+                                    task_key,
+                                    task_id,
+                                    cancel_event,
+                                    lambda: asyncio.to_thread(
+                                        self.github_app.update_issue_title,
+                                        repo_owner,
+                                        repo_name,
+                                        issue_number,
+                                        suggested_title,
+                                    ),
                                 )
                                 if success:
                                     logger.info(

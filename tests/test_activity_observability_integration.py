@@ -28,6 +28,7 @@ from backend.services.activity_observability.contracts import RoleConfigSnapshot
 from backend.services.activity_observability.integration_service import (
     ActivityIntegrationService,
     AdmissionError,
+    ObservedExecutionBundle,
 )
 
 
@@ -270,6 +271,128 @@ async def test_cancelled_execution_stops_lease_heartbeat_and_releases_lease(
     stored_work_unit = await db.get(ActivityInvocationWorkUnit, execution.work_unit.id)
     assert stored_work_unit.status == "cancelled"
     assert await db.get(ActivityThreadLease, execution.thread.id) is None
+
+
+@pytest.mark.asyncio
+async def test_start_execution_cleans_up_when_bundle_build_fails(
+    db, resource, snapshot
+):
+    """A committed admission must not strand its queued work unit on build failure."""
+    service = ActivityIntegrationService(db=db)
+    admitted = await service.admit_synchronize(
+        resource, delivery_id="admission-build-failure"
+    )
+
+    async def fail_build(*_args, **_kwargs):
+        raise RuntimeError("bundle construction failed")
+
+    service.build_execution_bundle = fail_build
+
+    with pytest.raises(RuntimeError, match="bundle construction failed"):
+        await service.start_execution(
+            session_id=admitted.session_id,
+            trigger_ids=[admitted.trigger_id],
+            role_snapshot=snapshot,
+        )
+
+    invocations = (
+        (
+            await db.execute(
+                select(ActivityInvocation).where(
+                    ActivityInvocation.session_id == admitted.session_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(invocations) == 1
+    work_unit = await db.get(ActivityInvocationWorkUnit, invocations[0].id)
+    assert work_unit is not None
+    assert work_unit.status == "failed"
+    assert work_unit.error_message == "bundle construction failed"
+    assert await db.get(ActivityThreadLease, work_unit.thread_id) is None
+
+
+@pytest.mark.asyncio
+async def test_start_execution_cleans_up_when_admission_is_cancelled(
+    db, resource, snapshot
+):
+    """Cancellation after durable admission converges the exact work unit."""
+    service = ActivityIntegrationService(db=db)
+    admitted = await service.admit_synchronize(
+        resource, delivery_id="admission-cancelled"
+    )
+
+    async def cancel_build(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    service.build_execution_bundle = cancel_build
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.start_execution(
+            session_id=admitted.session_id,
+            trigger_ids=[admitted.trigger_id],
+            role_snapshot=snapshot,
+        )
+
+    invocations = (
+        (
+            await db.execute(
+                select(ActivityInvocation).where(
+                    ActivityInvocation.session_id == admitted.session_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(invocations) == 1
+    work_unit = await db.get(ActivityInvocationWorkUnit, invocations[0].id)
+    assert work_unit is not None
+    assert work_unit.status == "cancelled"
+    assert await db.get(ActivityThreadLease, work_unit.thread_id) is None
+
+
+@pytest.mark.asyncio
+async def test_start_execution_cleans_up_when_heartbeat_start_fails(
+    db, resource, snapshot, monkeypatch
+):
+    """A heartbeat startup error finishes and releases the newly admitted lane."""
+    service = ActivityIntegrationService(db=db)
+    admitted = await service.admit_synchronize(
+        resource, delivery_id="admission-heartbeat-failure"
+    )
+
+    def fail_heartbeat(_bundle):
+        raise RuntimeError("heartbeat startup failed")
+
+    monkeypatch.setattr(ObservedExecutionBundle, "start_lease_heartbeat", fail_heartbeat)
+
+    with pytest.raises(RuntimeError, match="heartbeat startup failed"):
+        await service.start_execution(
+            session_id=admitted.session_id,
+            trigger_ids=[admitted.trigger_id],
+            role_snapshot=snapshot,
+        )
+
+    invocations = (
+        (
+            await db.execute(
+                select(ActivityInvocation).where(
+                    ActivityInvocation.session_id == admitted.session_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(invocations) == 1
+    work_unit = await db.get(ActivityInvocationWorkUnit, invocations[0].id)
+    assert work_unit is not None
+    assert work_unit.status == "failed"
+    assert work_unit.error_message == "heartbeat startup failed"
+    assert await db.get(ActivityThreadLease, work_unit.thread_id) is None
 
 
 @pytest.mark.asyncio
