@@ -364,3 +364,78 @@ def test_sandbox_workflow_builds_both_images_and_has_immutable_output():
     assert "sudo --preserve-env=PATH" not in quality
     assert "-v /var/run/docker.sock:/var/run/docker.sock" not in quality
     assert "unexpectedly skipped" in quality
+
+
+def test_sandbox_publish_digest_inspection_executes_unquoted_manifest_contract(
+    tmp_path: Path,
+):
+    """Execute the publish step with a Docker-format-compatible fake CLI."""
+
+    bash = shutil.which("bash")
+    if bash is None or os.name != "posix":
+        pytest.skip("the workflow shell contract requires a POSIX bash")
+
+    publish = yaml.safe_load(
+        (ROOT / ".github/workflows/sandbox-publish.yml").read_text(encoding="utf-8")
+    )
+    inspect_step = next(
+        step
+        for step in publish["jobs"]["publish"]["steps"]
+        if step.get("id") == "inspect"
+    )
+    script = inspect_step["run"].replace(
+        "${{ steps.tags.outputs.immutable }}", "test-tag"
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+format=''
+while (($#)); do
+    if [[ "$1" == "--format" ]]; then
+        format="$2"
+        shift 2
+    else
+        shift
+    fi
+done
+digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+case "$format" in
+    *'{{json .Manifest.Digest}}'*) printf '"sha256:%s"\\n' "$digest" ;;
+    *'{{.Manifest.Digest}}'*) printf 'sha256:%s\\n' "$digest" ;;
+    *) exit 2 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+            "SANDBOXD_REPOSITORY": "ghcr.io/example/sandboxd",
+            "RUNNER_REPOSITORY": "ghcr.io/example/runner",
+            "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "github-summary"),
+        }
+    )
+    result = subprocess.run(
+        [bash, "-c", script],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    github_output = (tmp_path / "github-output").read_text(encoding="utf-8")
+    assert "sandboxd_digest=sha256:" in github_output
+    assert "runner_digest=sha256:" in github_output
+    digest_record = (tmp_path / "agent-sandbox-digests.txt").read_text(
+        encoding="utf-8"
+    )
+    assert digest_record.count("@sha256:" + "a" * 64) == 2
