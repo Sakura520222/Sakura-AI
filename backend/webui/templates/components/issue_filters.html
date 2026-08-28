@@ -25,6 +25,7 @@
             <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('scan.completed') }}</option>
             <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('queue.failed') }}</option>
             <option value="analyzing" {% if status == 'analyzing' %}selected{% endif %}>{{ _('common.processing') }}</option>
+            <option value="cancelled" {% if status == 'cancelled' %}selected{% endif %}>{{ _('issue.cancelled_status') }}</option>
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>{{ _('common.pending') }}</option>
         </select>
         <button type="button" onclick="loadPage(1)"

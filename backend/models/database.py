@@ -151,6 +151,7 @@ class IssueAnalysisStatus(str, enum.Enum):
     ANALYZING = "analyzing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class IssueCategory(str, enum.Enum):

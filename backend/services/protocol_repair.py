@@ -11,6 +11,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.services.ai_task_deadline import AITaskDeadline
 from backend.webui.sse import publish_event
 
@@ -26,6 +27,12 @@ ProtocolRepairBeforeCall = Callable[
 TIMEOUT_TOOL_ERROR = (
     "Task deadline reached; this tool call was not executed."
 )
+
+
+def _raise_if_cancelled(cancel_event: Any) -> None:
+    """Keep cancellation distinct from protocol/API failures."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise ReviewCancelledError()
 
 
 def _tool_call_id(tool_call: Any) -> Any:
@@ -91,12 +98,17 @@ async def run_protocol_repair_loop(
     先本地解析 final_text（零模型调用的快路径）；失败则进入累积式修复循环，
     每轮把当轮具体协议违规注入 user 修复消息。上限内全部失败则降级。
     """
+    _raise_if_cancelled(cancel_event)
+
     # 1. 本地解析快路径
     try:
         result = parse_fn(final_text)
         if on_repaired is not None:
             await on_repaired(final_text, final_text, result)
+        _raise_if_cancelled(cancel_event)
         return result
+    except ReviewCancelledError:
+        raise
     except error_type as first_error:
         logger.warning(
             "{label} 协议解析失败，进入修复循环（上限 {n}）: {err}",
@@ -116,6 +128,7 @@ async def run_protocol_repair_loop(
     pre_call_control = before_call or pre_call
 
     for attempt in range(1, max_attempts + 1):
+        _raise_if_cancelled(cancel_event)
         instruction = repair_instruction + VIOLATION_SUFFIX.format(error=last_error)
         repair_messages = [
             *repair_messages,
@@ -170,6 +183,8 @@ async def run_protocol_repair_loop(
 
         try:
             response = await api_client.call_with_retry(**call_kwargs)
+        except ReviewCancelledError:
+            raise
         except Exception as call_error:
             logger.error(
                 "{label} 协议修复调用失败（第 {n} 轮），降级: {err}",
@@ -185,8 +200,12 @@ async def run_protocol_repair_loop(
                 log_label=log_label,
                 outcome="call_failed",
             )
-            return fallback_result_fn(call_error)
+            _raise_if_cancelled(cancel_event)
+            fallback_result = fallback_result_fn(call_error)
+            _raise_if_cancelled(cancel_event)
+            return fallback_result
 
+        _raise_if_cancelled(cancel_event)
         tracker.accumulate(response)
         current_text = response.choices[0].message.content or ""
 
@@ -201,6 +220,7 @@ async def run_protocol_repair_loop(
             result = parse_fn(current_text)
             if on_repaired is not None:
                 await on_repaired(final_text, current_text, result)
+            _raise_if_cancelled(cancel_event)
             await _publish_repair_event(
                 sse_channel,
                 attempt=attempt,
@@ -209,7 +229,10 @@ async def run_protocol_repair_loop(
                 log_label=log_label,
                 outcome="succeeded",
             )
+            _raise_if_cancelled(cancel_event)
             return result
+        except ReviewCancelledError:
+            raise
         except error_type as err:
             last_error = err
             logger.warning(
@@ -233,7 +256,10 @@ async def run_protocol_repair_loop(
         log_label=log_label,
         outcome="degraded",
     )
-    return fallback_result_fn(last_error)
+    _raise_if_cancelled(cancel_event)
+    fallback_result = fallback_result_fn(last_error)
+    _raise_if_cancelled(cancel_event)
+    return fallback_result
 
 
 async def _emit_event(
@@ -244,6 +270,8 @@ async def _emit_event(
     """best-effort 推送事件，吞掉可观测性侧异常，不影响修复主流程。"""
     try:
         await callback(event_type, data)
+    except ReviewCancelledError:
+        raise
     except Exception as exc:
         logger.warning("protocol repair event_callback failed: {}", exc)
 
@@ -267,5 +295,7 @@ async def _publish_repair_event(
     }
     try:
         await publish_event("protocol_repair_attempt", payload, channel=channel)
+    except ReviewCancelledError:
+        raise
     except Exception as exc:
         logger.warning("protocol repair SSE publish failed: {}", exc)
