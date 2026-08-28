@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -52,6 +53,35 @@ def _repo_name_candidates(*repo_names: str | None) -> tuple[str, ...]:
         if "/" in normalized:
             candidates.add(normalized.rsplit("/", 1)[-1])
     return tuple(candidates)
+
+
+def _issue_analysis_identity(
+    repo_owner: str | None,
+    repo_name: str | None,
+    issue_number: int,
+) -> list[Any]:
+    """Build an owner-scoped identity for IssueAnalysis lifecycle updates.
+
+    Issue records exist in both the historical short ``repo_name`` spelling
+    and the newer ``owner/repo`` spelling.  The owner predicate is mandatory
+    here: a short name alone must never allow one owner's Issue to mutate
+    another owner's same-named repository.
+    """
+    owner = str(repo_owner or "").strip()
+    name = str(repo_name or "").strip()
+    if not owner or not name:
+        return []
+
+    short_name = name.rsplit("/", 1)[-1].strip()
+    if not short_name:
+        return []
+
+    repo_names = _repo_name_candidates(short_name, f"{owner}/{short_name}")
+    return [
+        IssueAnalysis.repo_name.in_(repo_names),
+        IssueAnalysis.repo_owner == owner,
+        IssueAnalysis.issue_number == issue_number,
+    ]
 
 
 class IssueService:
@@ -309,21 +339,10 @@ class IssueService:
         in one transaction so a result save cannot observe a half-applied
         close.
         """
-        repo_names = _repo_name_candidates(
-            repo_name,
-            f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None,
-        )
-        if not repo_names:
+        identity = _issue_analysis_identity(repo_owner, repo_name, issue_number)
+        if not identity:
             return {"cancelled": 0, "state_updated": 0}
 
-        identity = [
-            IssueAnalysis.repo_name.in_(repo_names),
-            IssueAnalysis.issue_number == issue_number,
-        ]
-        if repo_owner:
-            # The short spelling is retained for compatibility with older
-            # rows, so owner must be part of every lifecycle predicate.
-            identity.append(IssueAnalysis.repo_owner == repo_owner)
         cancelled_result = await db.execute(
             update(IssueAnalysis)
             .where(
@@ -349,6 +368,35 @@ class IssueService:
 
         return {
             "cancelled": int(getattr(cancelled_result, "rowcount", 0) or 0),
+            "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
+        }
+
+    async def mark_issue_reopened(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        db: AsyncSession,
+    ) -> dict[str, int]:
+        """Restore the GitHub lifecycle state for one owner's Issue.
+
+        ``IssueAnalysis.status`` represents the analysis outcome and is left
+        untouched.  Only the independent GitHub lifecycle field is restored,
+        and both short and full repository spellings are matched under the
+        supplied owner.
+        """
+        identity = _issue_analysis_identity(repo_owner, repo_name, issue_number)
+        if not identity:
+            return {"state_updated": 0}
+
+        state_result = await db.execute(
+            update(IssueAnalysis)
+            .where(and_(*identity))
+            .values(issue_state="open")
+        )
+        await db.commit()
+
+        return {
             "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
         }
 
@@ -465,6 +513,8 @@ class IssueService:
         issue_number: int,
         suggested_labels: list,
         db: AsyncSession,
+        *,
+        cancellation_checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """应用建议标签到 Issue（集成 LabelService，支持自动创建和置信度过滤）
 
@@ -479,6 +529,10 @@ class IssueService:
             应用结果字典
         """
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
+
+        def checkpoint() -> None:
+            if cancellation_checkpoint is not None:
+                cancellation_checkpoint()
 
         if not suggested_labels:
             return result
@@ -497,6 +551,9 @@ class IssueService:
 
         existing_labels = await label_service.get_repo_labels(repo_owner, repo_name)
         existing_labels_lower = {k.lower(): k for k in existing_labels}
+        # A read-only label fetch may complete after cancellation was
+        # requested.  Re-check before entering the mutation loop.
+        checkpoint()
 
         for label in suggested_labels:
             label_name = label.get("name", "")
@@ -521,6 +578,10 @@ class IssueService:
                 default_info = label_service.DEFAULT_LABELS.get(
                     label_name, {"color": "0366d6", "description": ""}
                 )
+                # ``to_thread`` cannot be cancelled once GitHub has received
+                # the request.  Check immediately before each mutation so a
+                # later suggested label is never started after cancellation.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.create_label,
                     repo_owner,
@@ -541,6 +602,9 @@ class IssueService:
 
             # 根据置信度决定是否自动应用
             if confidence >= threshold:
+                # Creation above and applying the label are independent
+                # mutations; cancellation must be checked between them too.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.add_labels_to_issue,
                     repo_owner,
@@ -576,6 +640,8 @@ class IssueService:
         repo_name: str,
         issue_number: int,
         suggested_assignees: list[dict[str, Any]],
+        *,
+        cancellation_checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """应用建议指派人到 Issue（支持置信度过滤）
 
@@ -586,6 +652,10 @@ class IssueService:
         Returns:
             {"applied": [], "suggested": [], "failed": []}
         """
+        def checkpoint() -> None:
+            if cancellation_checkpoint is not None:
+                cancellation_checkpoint()
+
         threshold = await get_dynamic_config("issue_assignee_confidence_threshold")
         max_assign = await get_dynamic_config("issue_auto_assign_max")
         result: dict[str, Any] = {"applied": [], "suggested": [], "failed": []}
@@ -597,6 +667,10 @@ class IssueService:
         collaborators = await asyncio.to_thread(
             self.github_app.get_repo_collaborators, repo_owner, repo_name
         )
+        # Collaborator discovery is read-only; after it returns, do not begin
+        # an assignment mutation if the lifecycle cancellation arrived while
+        # the lookup was in flight.
+        checkpoint()
         if not collaborators:
             logger.warning(
                 f"Issue #{issue_number} 协作者列表为空，可能是权限不足，自动指派将降级为仅建议"
@@ -635,6 +709,9 @@ class IssueService:
 
             # 根据置信度决定是否自动指派
             if confidence >= threshold and len(result["applied"]) < max_assign:
+                # Check immediately before every add_assignees mutation in the
+                # loop, including after any previous mutation has completed.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.add_assignees_to_issue,
                     repo_owner,

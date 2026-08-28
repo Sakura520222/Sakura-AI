@@ -1709,36 +1709,41 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
                             body=issue_body,
                             state="open",
                         )
-                        # 同步数据库中的 issue_state
-                        try:
-                            from sqlalchemy import update as sql_update
-
-                            from backend.models.database import (
-                                IssueAnalysis as _IA,
-                            )
-                            from backend.models.database import (
-                                async_session as _as,
-                            )
-
-                            _repo_full = f"{repo_owner}/{repo_name}"
-                            async with _as() as _session:
-                                await _session.execute(
-                                    sql_update(_IA)
-                                    .where(
-                                        _IA.repo_name == _repo_full,
-                                        _IA.issue_number == issue_number,
-                                    )
-                                    .values(issue_state="open")
-                                )
-                                await _session.commit()
-                        except Exception as _e:
-                            logger.warning(
-                                f"同步 Issue reopened 状态到数据库失败: {_e}"
-                            )
                 else:
                     logger.debug("跳过 Pull Request 的 Issue 向量同步")
             except Exception as e:
                 logger.warning(f"语义 Issue 向量同步失败: {e}")
+
+        # reopened 事件：数据库生命周期恢复独立于语义向量开关。
+        if action == "reopened" and not is_pull_request:
+            try:
+                from backend.services.issue_service import issue_service
+
+                async with get_async_session() as session:
+                    reopen_result = await issue_service.mark_issue_reopened(
+                        repo_owner,
+                        repo_name,
+                        issue_number,
+                        session,
+                    )
+                logger.info(
+                    "Issue reopened 状态已同步 {}#{}, 恢复 {} 条分析记录",
+                    f"{repo_owner}/{repo_name}",
+                    issue_number,
+                    reopen_result.get("state_updated", 0),
+                )
+            except Exception as e:
+                logger.warning(f"同步 Issue reopened 状态到数据库失败: {e}")
+
+            # 让已恢复为 open 的 Issue 及时重新进入候选池。
+            try:
+                from backend.services.agent_team.candidate_service import (
+                    AgentTeamCandidateService,
+                )
+
+                AgentTeamCandidateService().invalidate_cache()
+            except Exception:
+                pass
 
         # closed 事件：向量同步 + 数据库分析状态/issue_state 更新
         if action == "closed":
