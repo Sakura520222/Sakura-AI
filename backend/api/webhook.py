@@ -1,6 +1,7 @@
 """GitHub Webhook API端点"""
 
 import asyncio
+import inspect
 import re
 from typing import Any
 
@@ -1567,6 +1568,35 @@ async def handle_revoke_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
 
+async def _cancel_issue_analysis_task(issue_info: dict[str, Any]) -> bool:
+    """Cancel active analysis for one Issue before lifecycle side effects."""
+    repo_full_name = str(issue_info.get("repo_full_name") or "").strip()
+    if not repo_full_name:
+        repo_owner = str(issue_info.get("repo_owner") or "").strip()
+        repo_name = str(issue_info.get("repo_name") or "").strip()
+        repo_full_name = f"{repo_owner}/{repo_name}"
+    task_key = f"{repo_full_name}#{issue_info.get('issue_number')}"
+
+    # Lazy import keeps webhook startup independent from the worker and lets the
+    # singleton cancel every in-process task for this Issue.
+    from backend.workers.issue_worker import get_issue_worker
+
+    worker = get_issue_worker()
+    if worker is None:
+        logger.debug("[webhook] Issue lifecycle event: 无 Issue worker {}", task_key)
+        return False
+
+    result = worker.cancel_task(task_key)
+    if inspect.isawaitable(result):
+        result = await result
+    cancelled = bool(result)
+    if cancelled:
+        logger.info("[webhook] Issue lifecycle event: 已取消分析任务 {}", task_key)
+    else:
+        logger.debug("[webhook] Issue lifecycle event: 无活跃分析任务 {}", task_key)
+    return cancelled
+
+
 async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 Issue 事件"""
     try:
@@ -1594,11 +1624,37 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
                 content={"status": "ignored", "reason": "bot self-event"}
             )
 
+        issue_payload = payload.get("issue") or {}
+        is_pull_request = isinstance(issue_payload, dict) and (
+            issue_payload.get("pull_request") is not None
+        )
+        if action in {"closed", "deleted"} and is_pull_request:
+            logger.info(
+                "跳过 Pull Request 的 Issue 生命周期事件: {}#{} ({})",
+                issue_info.get("repo_full_name")
+                or f"{issue_info.get('repo_owner', '')}/{issue_info.get('repo_name', '')}",
+                issue_info.get("issue_number"),
+                action,
+            )
+            return JSONResponse(
+                content={
+                    "status": "ignored",
+                    "action": action,
+                    "reason": "pull request issue event",
+                }
+            )
+
+        repo_owner = issue_info["repo_owner"]
+        repo_name = issue_info["repo_name"]
+        issue_number = issue_info["issue_number"]
+
+        # A close/delete must signal the worker before any durable lifecycle
+        # update or cleanup, otherwise a stale worker can finish in the gap.
+        if action in {"closed", "deleted"}:
+            await _cancel_issue_analysis_task(issue_info)
+
         # deleted 事件：清理数据库记录和向量索引 / deleted event: clean up DB and vector index
         if action == "deleted":
-            repo_owner = issue_info["repo_owner"]
-            repo_name = issue_info["repo_name"]
-            issue_number = issue_info["issue_number"]
             logger.info(f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}")
 
             # 延迟导入避免循环依赖 / lazy import to avoid circular dependency
@@ -1625,7 +1681,7 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
             try:
                 # 过滤 Pull Request（PR 也触发 issues 事件）
                 issue_payload = payload.get("issue", {})
-                if not issue_payload.get("pull_request"):
+                if not is_pull_request:
                     from backend.services.issue_embedding_service import (
                         IssueEmbeddingService,
                     )
@@ -1684,25 +1740,26 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
             except Exception as e:
                 logger.warning(f"语义 Issue 向量同步失败: {e}")
 
-        # closed 事件：向量同步 + 数据库 issue_state 更新
+        # closed 事件：向量同步 + 数据库分析状态/issue_state 更新
         if action == "closed":
-            # 同步数据库中的 issue_state
+            # Only active records become cancelled; completed records retain
+            # their terminal analysis status while their GitHub state closes.
             try:
-                from sqlalchemy import update as sql_update
+                from backend.services.issue_service import issue_service
 
-                from backend.models.database import IssueAnalysis, async_session
-
-                repo_full = f"{repo_owner}/{repo_name}"
-                async with async_session() as session:
-                    await session.execute(
-                        sql_update(IssueAnalysis)
-                        .where(
-                            IssueAnalysis.repo_name == repo_full,
-                            IssueAnalysis.issue_number == issue_number,
-                        )
-                        .values(issue_state="closed")
+                async with get_async_session() as session:
+                    close_result = await issue_service.mark_issue_closed(
+                        repo_owner,
+                        repo_name,
+                        issue_number,
+                        session,
                     )
-                    await session.commit()
+                logger.info(
+                    "Issue closed 状态已同步 {}#{}, 取消 {} 条分析记录",
+                    f"{repo_owner}/{repo_name}",
+                    issue_number,
+                    close_result.get("cancelled", 0),
+                )
             except Exception as e:
                 logger.warning(f"同步 Issue closed 状态到数据库失败: {e}")
 
