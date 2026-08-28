@@ -14,7 +14,7 @@
 #   ./start.sh --ps           # 查看服务容器状态
 #   ./start.sh --down         # 停止服务
 #   ./start.sh uninstall      # 卸载服务（默认保留 Docker 数据卷）
-#   ./start.sh uninstall --purge  # 同时删除 Docker 数据卷和 .deploy 状态
+#   ./start.sh uninstall --purge  # 完全卸载：删除数据卷、镜像和 .deploy 状态
 #
 # Agent sandboxd 由本脚本独立管理（不属于 Compose services）：
 #   - sandboxd 容器独占 Docker API socket；Web/runner 永不挂载该 socket。
@@ -4341,19 +4341,21 @@ render_main_menu() {
     ui_line "  ${DIM}后台任务: ${phase}${RESET}"
     ui_line "  ${DIM}Updater : ${daemon}${RESET}"
     ui_blank
+# Menu order follows the service lifecycle: control, status, build/deploy,
+# images, administration.
     ui_line "  ${BOLD}[1]${RESET} 启动服务 (自动检测构建)"
-    ui_line "  ${BOLD}[2]${RESET} 强制重建镜像并启动"
-    ui_line "  ${BOLD}[3]${RESET} 更新镜像 (当前频道)"
-    ui_line "  ${BOLD}[4]${RESET} 切换镜像频道 (正式/开发)"
-    ui_line "  ${BOLD}[5]${RESET} 查看构建/运行状态"
-    ui_line "  ${BOLD}[6]${RESET} 附加到构建日志"
-    ui_line "  ${BOLD}[7]${RESET} 停止正在进行的构建"
-    ui_line "  ${BOLD}[8]${RESET} 查看服务容器状态"
-    ui_line "  ${BOLD}[9]${RESET} 停止服务"
-    ui_line "  ${BOLD}[10]${RESET} 生产镜像部署"
-    ui_line "  ${BOLD}[11]${RESET} Updater daemon 管理"
-    ui_line "  ${BOLD}[12]${RESET} 卸载 Sakura AI"
-    ui_line "  ${BOLD}[13]${RESET} Agent sandboxd 状态"
+    ui_line "  ${BOLD}[2]${RESET} 停止服务"
+    ui_line "  ${BOLD}[3]${RESET} 查看构建/运行状态"
+    ui_line "  ${BOLD}[4]${RESET} 查看服务容器状态"
+    ui_line "  ${BOLD}[5]${RESET} Agent sandboxd 状态"
+    ui_line "  ${BOLD}[6]${RESET} 强制重建镜像并启动"
+    ui_line "  ${BOLD}[7]${RESET} 生产镜像部署"
+    ui_line "  ${BOLD}[8]${RESET} 附加到构建日志"
+    ui_line "  ${BOLD}[9]${RESET} 停止正在进行的构建"
+    ui_line "  ${BOLD}[10]${RESET} 更新镜像 (当前频道)"
+    ui_line "  ${BOLD}[11]${RESET} 切换镜像频道 (正式/开发)"
+    ui_line "  ${BOLD}[12]${RESET} Updater daemon 管理"
+    ui_line "  ${BOLD}[13]${RESET} 卸载 Sakura AI"
     ui_line "  ${BOLD}[0]${RESET} 退出"
     ui_blank
 }
@@ -4373,18 +4375,18 @@ menu_loop() {
         read -rp "  请选择操作: " choice || exit 0
         case "$choice" in
             1)  menu_run do_start false ;;
-            2)  menu_run do_start true ;;
-            3)  menu_run cmd_update_image ;;
-            4)  menu_run cmd_switch_channel ;;
-            5)  menu_run cmd_status ;;
-            6)  menu_run cmd_attach ;;
-            7)  menu_run cmd_stop ;;
-            8)  menu_run do_ps ;;
-            9)  menu_run do_down ;;
-            10) menu_run do_start false true ;;
-            11) updater_menu_loop ;;
-            12) menu_run cmd_uninstall ;;
-            13) menu_run cmd_sandbox status ;;
+            2)  menu_run do_down ;;
+            3)  menu_run cmd_status ;;
+            4)  menu_run do_ps ;;
+            5)  menu_run cmd_sandbox status ;;
+            6)  menu_run do_start true ;;
+            7)  menu_run do_start false true ;;
+            8)  menu_run cmd_attach ;;
+            9)  menu_run cmd_stop ;;
+            10) menu_run cmd_update_image ;;
+            11) menu_run cmd_switch_channel ;;
+            12) updater_menu_loop ;;
+            13) uninstall_menu_loop ;;
             0)  info "已退出" ; exit 0 ;;
             *)  warn "无效选项: $choice" ; sleep 1 ;;
         esac
@@ -4425,6 +4427,33 @@ updater_menu_loop() {
     done
 }
 
+# 卸载子菜单：标准卸载保留数据卷与部署状态，完全卸载追加数据卷/镜像/部署状态清除。
+# Uninstall submenu: standard uninstall keeps volumes and deployment state;
+# full uninstall additionally removes volumes, images, and deployment state.
+render_uninstall_menu() {
+    ui_title "卸载 Sakura AI"
+    ui_blank
+    ui_line "  ${BOLD}[1]${RESET} 标准卸载 (保留数据卷和部署状态，可重新部署)"
+    ui_line "  ${BOLD}[2]${RESET} 完全卸载 (删除数据卷、镜像和部署状态)"
+    ui_line "  ${BOLD}[0]${RESET} 返回主菜单"
+    ui_blank
+}
+
+uninstall_menu_loop() {
+    local choice
+    while true; do
+        render_uninstall_menu
+        ui_render
+        read -rp "  请选择操作: " choice || exit 0
+        case "$choice" in
+            1) menu_run cmd_uninstall ;;
+            2) menu_run cmd_uninstall --purge ;;
+            0) return 0 ;;
+            *) warn "无效选项: $choice" ; sleep 1 ;;
+        esac
+    done
+}
+
 do_ps() {
     local prod=${1:-false}
     select_compose_for_operation "$prod"
@@ -4440,7 +4469,7 @@ do_ps() {
 }
 
 confirm_sakura_uninstall() {
-    local purge="$1" assume_yes="$2" expected answer
+    local purge="$1" assume_yes="$2" answer
     if [[ "$assume_yes" == "true" ]]; then
         return 0
     fi
@@ -4449,16 +4478,16 @@ confirm_sakura_uninstall() {
         return 1
     fi
     echo ""
-    warn "即将停止并删除 Sakura AI 容器、网络和 Host Updater。"
     if [[ "$purge" == "true" ]]; then
-        warn "--purge 还会永久删除 Compose 数据卷（包括 MySQL/Redis）和 .deploy 状态。"
-        expected="PURGE SAKURA-AI"
+        warn "完全卸载将删除容器、网络、数据卷、全部镜像和 .deploy 部署状态，不可恢复。"
     else
+        warn "即将停止并删除 Sakura AI 容器、网络和 Host Updater。"
         info "Docker 数据卷和 .deploy/deployment.env 将保留，可供以后重新部署。"
-        expected="UNINSTALL"
     fi
-    read -r -p "输入 '$expected' 继续: " answer
-    if [[ "$answer" != "$expected" ]]; then
+    # 标准与完全卸载共用同一确认词，避免引入额外的确认提示词。
+    # Both modes share the single UNINSTALL confirmation word.
+    read -r -p "输入 'UNINSTALL' 继续: " answer
+    if [[ "$answer" != "UNINSTALL" ]]; then
         fail "确认内容不匹配，已取消卸载" >&2
         return 1
     fi
@@ -4510,9 +4539,28 @@ sakura_compose_uninstall() {
     fi
     compose_cmd+=(-f "$COMPOSE_FILE" down --remove-orphans)
     if [[ "$purge" == "true" ]]; then
-        compose_cmd+=(--volumes)
+        # 完全卸载连带删除整个 Compose 栈镜像 (Web/MySQL/Redis)。
+        # Full uninstall also removes every image used by the Compose stack.
+        compose_cmd+=(--volumes --rmi all)
     fi
     "${compose_cmd[@]}"
+}
+
+# 完全卸载时按 deployment.env 记录删除 sandboxd/Agent runner 镜像。
+# Remove sandboxd/Agent runner images recorded in deployment.env during a
+# full uninstall.  Must run before purge_sakura_deployment_state: once the
+# state is gone the image references cannot be recovered.  A missing or
+# in-use image only warns and never blocks the rest of the uninstall.
+purge_sakura_images() {
+    local image
+    sandbox_load_deployment_config || return $?
+    for image in "$SANDBOX_IMAGE" "$SANDBOX_RUNNER_IMAGE"; do
+        [[ -n "$image" ]] || continue
+        docker image inspect "$image" >/dev/null 2>&1 || continue
+        info "正在删除镜像 $image..."
+        docker rmi "$image" >/dev/null 2>&1 \
+            || warn "镜像 $image 删除失败（可能被占用），已跳过"
+    done
 }
 
 purge_sakura_deployment_state() {
@@ -4555,8 +4603,10 @@ cmd_uninstall() {
     sakura_compose_uninstall "$purge" || return $?
     cmd_updater_uninstall || return $?
     if [[ "$purge" == "true" ]]; then
+        # 先按 deployment.env 记录删除 sandboxd/runner 镜像，再清除部署状态。
+        purge_sakura_images || return $?
         purge_sakura_deployment_state || return $?
-        ok "Sakura AI 已完全卸载；Compose 数据卷和部署状态已删除"
+        ok "Sakura AI 已完全卸载；数据卷、镜像和部署状态已删除"
     else
         ok "Sakura AI 已卸载；Docker 数据卷和部署状态已保留"
     fi
@@ -4790,7 +4840,7 @@ main() {
                 echo "  --ps        查看服务容器状态"
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
-                echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 删除数据卷"
+                echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 完全卸载（含数据卷/镜像/部署状态）"
                 echo "  生产 Agent 沙箱由独立 sandboxd 管理；生产必须配置 runner immutable digest"
                 echo "  updater [action]  管理 host updater daemon（含 reinstall/uninstall；生产操作需 root）"
                 echo "  sandboxd [action] 管理 Agent sandboxd（start/stop/restart/reinstall/uninstall/status）"

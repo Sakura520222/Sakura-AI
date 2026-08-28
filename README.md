@@ -181,11 +181,11 @@ sudo ./start.sh --prod
 >
 > `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再依次停止、安装、启动并输出新状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁，命令会 fail-closed，并要求管理员先显式停止旧 daemon。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
 
-卸载默认保留数据库等 Docker 数据卷；只有显式 `--purge` 才会删除数据卷和 `.deploy` 部署状态：
+卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和 `.deploy` 部署状态。两种模式共用同一确认词 `UNINSTALL`：
 
 ```bash
-sudo ./start.sh uninstall          # 保留数据，可重新部署
-sudo ./start.sh uninstall --purge  # 永久删除数据库/缓存卷与部署状态
+sudo ./start.sh uninstall          # 标准卸载：保留数据，可重新部署
+sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据卷、镜像与部署状态
 ```
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
