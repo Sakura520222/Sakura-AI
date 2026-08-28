@@ -7,6 +7,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
     get_settings,
@@ -92,6 +93,11 @@ class IssueAnalyzer:
     """Issue AI 分析引擎"""
 
     REPAIR_INSTRUCTION = ISSUE_ANALYSIS_REPAIR_INSTRUCTION
+
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: Any) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ReviewCancelledError("Issue 分析已被取消")
 
     def __init__(self):
         settings = get_settings()
@@ -292,6 +298,8 @@ class IssueAnalyzer:
                 repo_name,
                 issue_number,
             )
+        except ReviewCancelledError:
+            raise
         except Exception as e:
             logger.warning("GitHub API 获取评论失败: {}", e)
             return None
@@ -338,12 +346,16 @@ class IssueAnalyzer:
         deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
+        self._raise_if_cancelled(cancel_event)
+
         # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
         if event_callback is not None:
             try:
                 await event_callback(
                     "message", {"role": "assistant", "content": response_text}
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as exc:
                 logger.warning("event_callback failed: {}", exc)
 
@@ -354,7 +366,7 @@ class IssueAnalyzer:
         except ValueError, TypeError:
             max_attempts = 3
 
-        return await run_protocol_repair_loop(
+        result = await run_protocol_repair_loop(
             parse_fn=self._parse_analysis_result,
             error_type=IssueProtocolError,
             base_messages=messages,
@@ -372,6 +384,8 @@ class IssueAnalyzer:
             cancel_event=cancel_event,
             deadline=deadline,
         )
+        self._raise_if_cancelled(cancel_event)
+        return result
 
     @staticmethod
     def _resolve_safe_context(response: Any, current_safe_context: int) -> int:
@@ -440,6 +454,8 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        self._raise_if_cancelled(cancel_event)
+
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
@@ -489,6 +505,8 @@ class IssueAnalyzer:
                 comments = await self._fetch_issue_comments(
                     github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as e:
                 logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
 
@@ -519,6 +537,8 @@ class IssueAnalyzer:
                         sakura_section += f"\n### 项目概述\n{sakura_md}"
                     if memory_md:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
+        except ReviewCancelledError:
+            raise
         except Exception as e:
             logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
 
@@ -546,6 +566,8 @@ class IssueAnalyzer:
             for initial_message in messages:
                 try:
                     await event_callback("message", initial_message)
+                except ReviewCancelledError:
+                    raise
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
@@ -580,6 +602,7 @@ class IssueAnalyzer:
                 cancel_event=cancel_event,
                 deadline=task_deadline,
             )
+            self._raise_if_cancelled(cancel_event)
 
             result["prompt_tokens"] = tracker.prompt_tokens
             result["completion_tokens"] = tracker.completion_tokens
@@ -598,6 +621,7 @@ class IssueAnalyzer:
                     result=result,
                     context=invocation_context,
                 )
+            self._raise_if_cancelled(cancel_event)
 
             logger.info(
                 "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
@@ -610,6 +634,7 @@ class IssueAnalyzer:
 
         while True:
             iteration += 1
+            self._raise_if_cancelled(cancel_event)
 
             try:
                 prompt_was_sent = task_deadline.timeout_prompt_sent
@@ -632,13 +657,18 @@ class IssueAnalyzer:
                 ):
                     try:
                         await event_callback("message", messages[-1])
+                    except ReviewCancelledError:
+                        raise
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
 
                 response = await self.api_client.call_with_retry(**call_kwargs)
+            except ReviewCancelledError:
+                raise
             except Exception as e:
+                self._raise_if_cancelled(cancel_event)
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
-                return {
+                api_error_result = {
                     "category": "other",
                     "priority": "medium",
                     "summary": f"AI 分析失败: {e!s}",
@@ -654,11 +684,16 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                self._raise_if_cancelled(cancel_event)
+                return api_error_result
+
+            self._raise_if_cancelled(cancel_event)
 
             # 验证响应有效性
             if not response.choices:
+                self._raise_if_cancelled(cancel_event)
                 logger.error("AI API 返回空响应")
-                return {
+                empty_response_result = {
                     "category": "other",
                     "priority": "medium",
                     "summary": "AI 分析失败：API 返回空响应",
@@ -674,6 +709,8 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                self._raise_if_cancelled(cancel_event)
+                return empty_response_result
 
             # 累积 token 使用
             tracker.accumulate(response)
@@ -733,6 +770,8 @@ class IssueAnalyzer:
             if event_callback:
                 try:
                     await event_callback("message", assistant_msg_dict)
+                except ReviewCancelledError:
+                    raise
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
@@ -758,6 +797,7 @@ class IssueAnalyzer:
 
             # 执行工具调用
             for tool_index, tool_call in enumerate(tool_calls):
+                self._raise_if_cancelled(cancel_event)
                 if task_deadline.is_expired():
                     await append_skipped_tool_results(
                         messages,
@@ -769,11 +809,14 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("tool_running", tool_call.id)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
                     result = await self.tool_handler.handle_tool_call(
                         tool_call, repo, None
                     )
+                    self._raise_if_cancelled(cancel_event)
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -801,8 +844,12 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("message", tool_msg)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
+                except ReviewCancelledError:
+                    raise
                 except Exception as e:
                     logger.error("工具调用失败: {}", e)
                     error_tool_msg = {
@@ -814,5 +861,7 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("message", error_tool_msg)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)

@@ -7,8 +7,9 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select, update
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
     get_sakura_memory_config,
@@ -67,11 +68,399 @@ class IssueWorker:
         self.analyzer = IssueAnalyzer()
         self.github_app = GitHubAppClient()
         self._background_tasks: set[asyncio.Task] = set()
+        # Cancellation signals are scoped by issue, but each running task owns
+        # its event so a later task can never inherit an already-set signal.
+        self._cancel_events: dict[str, dict[str, asyncio.Event]] = {}
+        # Keep task handles beside the event registry.  An Event alone cannot
+        # wake a task blocked in ``Semaphore.acquire()``; the handle lets the
+        # webhook interrupt and await that task before deleting/closing an
+        # Issue.
+        self._task_handles: dict[
+            str, dict[str, asyncio.Task[Any] | None]
+        ] = {}
+        # Each task owns exactly one analysis row.  Store the immutable row
+        # identity here so cancellation/failure cleanup never selects a newer
+        # sibling run for the same Issue.
+        self._task_analysis_records: dict[
+            str, dict[str, tuple[int, int | None]]
+        ] = {}
+        self._task_executions: dict[str, dict[str, Any | None]] = {}
+        self._task_execution_statuses: dict[str, dict[str, str | None]] = {}
         from backend.services.activity_observability.integration_service import (
             ActivityIntegrationService,
         )
 
         self.activity_integration = ActivityIntegrationService()
+
+    @staticmethod
+    def _make_task_key(issue_info: dict[str, Any]) -> str:
+        """Return the shared cancellation key for an Issue."""
+        repo_full_name = issue_info.get("repo_full_name") or (
+            f"{issue_info.get('repo_owner', '')}/{issue_info.get('repo_name', '')}"
+        )
+        return f"{repo_full_name}#{issue_info.get('issue_number', 0)}"
+
+    def _register_task(
+        self,
+        task_key: str,
+        task_id: str,
+        event: asyncio.Event | None = None,
+    ) -> asyncio.Event:
+        """Register one task before it is scheduled and return its signal."""
+        if not hasattr(self, "_cancel_events"):
+            self._cancel_events = {}
+        task_events = self._cancel_events.setdefault(task_key, {})
+        registered = event or asyncio.Event()
+        task_events[task_id] = registered
+        if not hasattr(self, "_task_handles"):
+            self._task_handles = {}
+        self._task_handles.setdefault(task_key, {})[task_id] = None
+        if not hasattr(self, "_task_analysis_records"):
+            self._task_analysis_records = {}
+        self._task_analysis_records.setdefault(task_key, {})
+        if not hasattr(self, "_task_executions"):
+            self._task_executions = {}
+        self._task_executions.setdefault(task_key, {})[task_id] = None
+        if not hasattr(self, "_task_execution_statuses"):
+            self._task_execution_statuses = {}
+        self._task_execution_statuses.setdefault(task_key, {})[task_id] = None
+        return registered
+
+    def _bind_task_handle(
+        self, task_key: str, task_id: str, task: asyncio.Task[Any]
+    ) -> None:
+        """Bind the scheduled task after its cancellation entry is created."""
+        handles = getattr(self, "_task_handles", None)
+        if handles is None:
+            self._task_handles = handles = {}
+        handles.setdefault(task_key, {})[task_id] = task
+
+        # A cancellation can be requested by a test double or an unusual task
+        # factory between registration and this binding.  Preserve that
+        # request instead of allowing the task to start after it was cancelled.
+        event = getattr(self, "_cancel_events", {}).get(task_key, {}).get(task_id)
+        if event is not None and event.is_set() and task is not asyncio.current_task():
+            task.cancel()
+
+    def _bind_analysis_record(
+        self, task_key: str, task_id: str, record: IssueAnalysis
+    ) -> None:
+        """Associate a worker task with its immutable analysis id/version."""
+        records = getattr(self, "_task_analysis_records", None)
+        if records is None:
+            self._task_analysis_records = records = {}
+        records.setdefault(task_key, {})[task_id] = (
+            record.id,
+            getattr(record, "analysis_version", None),
+        )
+
+    def _bind_execution(self, task_key: str, task_id: str, execution: Any) -> None:
+        executions = getattr(self, "_task_executions", None)
+        if executions is None:
+            self._task_executions = executions = {}
+        executions.setdefault(task_key, {})[task_id] = execution
+
+    def _get_execution(self, task_key: str, task_id: str) -> Any | None:
+        return getattr(self, "_task_executions", {}).get(task_key, {}).get(task_id)
+
+    def _get_execution_status(self, task_key: str, task_id: str) -> str | None:
+        return (
+            getattr(self, "_task_execution_statuses", {})
+            .get(task_key, {})
+            .get(task_id)
+        )
+
+    def _set_execution_status(
+        self, task_key: str, task_id: str, status: str
+    ) -> None:
+        statuses = getattr(self, "_task_execution_statuses", None)
+        if statuses is None:
+            self._task_execution_statuses = statuses = {}
+        statuses.setdefault(task_key, {})[task_id] = status
+
+    def _get_analysis_record_identity(
+        self, task_key: str, task_id: str
+    ) -> tuple[int, int | None] | None:
+        return (
+            getattr(self, "_task_analysis_records", {})
+            .get(task_key, {})
+            .get(task_id)
+        )
+
+    def _unregister_task(self, task_key: str, task_id: str) -> None:
+        """Remove only this task's signal; keep concurrent siblings intact."""
+        task_events = getattr(self, "_cancel_events", {}).get(task_key)
+        if task_events is not None:
+            task_events.pop(task_id, None)
+            if not task_events:
+                self._cancel_events.pop(task_key, None)
+
+        handles = getattr(self, "_task_handles", {}).get(task_key)
+        if handles is not None:
+            handles.pop(task_id, None)
+            if not handles:
+                self._task_handles.pop(task_key, None)
+
+        records = getattr(self, "_task_analysis_records", {}).get(task_key)
+        if records is not None:
+            identity = records.pop(task_id, None)
+            if identity is not None:
+                getattr(self, "_cancelled_analysis_notifications", set()).discard(
+                    identity[0]
+                )
+            if not records:
+                self._task_analysis_records.pop(task_key, None)
+
+        executions = getattr(self, "_task_executions", {}).get(task_key)
+        if executions is not None:
+            executions.pop(task_id, None)
+            if not executions:
+                self._task_executions.pop(task_key, None)
+
+        statuses = getattr(self, "_task_execution_statuses", {}).get(task_key)
+        if statuses is not None:
+            statuses.pop(task_id, None)
+            if not statuses:
+                self._task_execution_statuses.pop(task_key, None)
+
+    async def cancel_task(self, task_key: str) -> bool:
+        """Cancel and await every active task for one Issue.
+
+        Setting the event is still important for cooperative cancellation, but
+        it does not wake a task suspended in ``Semaphore.acquire``.  Cancel the
+        registered task handles as well and await their completion so lifecycle
+        webhooks can safely delete/close the Issue after worker cleanup.
+        """
+        task_events = getattr(self, "_cancel_events", {}).get(task_key, {})
+        if not task_events:
+            return False
+        task_handles = getattr(self, "_task_handles", {}).get(task_key, {})
+        changed = False
+        pending: list[asyncio.Task[Any]] = []
+        pending_ids: list[str] = []
+        current_task = asyncio.current_task()
+        for task_id, event in list(task_events.items()):
+            was_set = event.is_set()
+            if not was_set:
+                event.set()
+                changed = True
+            task = task_handles.get(task_id)
+            if was_set or task is None or task is current_task:
+                continue
+            try:
+                if not task.done() and task.cancel():
+                    changed = True
+                    pending.append(task)
+                    pending_ids.append(task_id)
+            except (AttributeError, RuntimeError):
+                # A synthetic test/task factory may expose a stale handle.  The
+                # event remains set and the normal worker cleanup still runs.
+                continue
+
+        if pending:
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    logger.warning(
+                        "[cancel] Issue 任务终止时出现异常 {}: {}",
+                        task_key,
+                        result,
+                    )
+            # A task cancelled before its coroutine first runs never reaches
+            # ``process_issue_analysis``'s finally block.  Remove those stale
+            # pre-registrations explicitly after the handle has been awaited.
+            for task_id in pending_ids:
+                self._unregister_task(task_key, task_id)
+        if changed:
+            logger.info("[cancel] 已终止 Issue 分析任务: {}", task_key)
+        return changed
+
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: asyncio.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ReviewCancelledError("Issue 分析已被取消")
+
+    async def _mark_active_analysis_cancelled(
+        self,
+        db,
+        *,
+        analysis_id: int | None,
+        reason: str,
+    ) -> tuple[IssueAnalysis | None, str | None]:
+        """Converge this task's exact analysis and return its terminal status.
+
+        A worker may have siblings analyzing the same Issue concurrently.  The
+        task-bound primary key is therefore mandatory; selecting by issue and
+        ordering by ``created_at`` can cancel or overwrite the wrong sibling.
+
+        The second tuple item is the persisted status after the race.  It lets
+        callers distinguish a real ``active -> cancelled`` transition (or a
+        close/delete that already committed ``cancelled``) from a completed or
+        failed row, without publishing a misleading cancelled event.
+        """
+        if analysis_id is None:
+            return None, None
+
+        result = await db.execute(
+            select(IssueAnalysis).where(IssueAnalysis.id == analysis_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None, None
+
+        active_statuses = {
+            IssueAnalysisStatus.PENDING.value,
+            IssueAnalysisStatus.ANALYZING.value,
+        }
+        current_status = getattr(record, "status", None)
+        if current_status not in active_statuses:
+            # An already-cancelled row is a valid lifecycle cancellation that
+            # the worker still needs to recognize, while completed/failed rows
+            # must retain their terminal observability status.
+            return record, current_status
+
+        update_result = await db.execute(
+            update(IssueAnalysis)
+            .where(
+                and_(
+                    IssueAnalysis.id == analysis_id,
+                    IssueAnalysis.status.in_(active_statuses),
+                )
+            )
+            .values(
+                status=IssueAnalysisStatus.CANCELLED.value,
+                error_message=reason,
+            )
+        )
+        await db.commit()
+
+        rowcount = getattr(update_result, "rowcount", None)
+        if rowcount is None or rowcount > 0:
+            # Keep lightweight test doubles and the identity map in sync with
+            # the conditional UPDATE without issuing a second SELECT.
+            record.status = IssueAnalysisStatus.CANCELLED.value
+            record.error_message = reason
+            await self._log_activity(
+                record.id,
+                "cancelled",
+                {"message": reason},
+            )
+            return record, IssueAnalysisStatus.CANCELLED.value
+        elif getattr(record, "status", None) != IssueAnalysisStatus.CANCELLED.value:
+            # Another lifecycle transaction won the race.  Read the exact row
+            # only; a missing row means the Issue was deleted.
+            current_result = await db.execute(
+                select(IssueAnalysis).where(IssueAnalysis.id == analysis_id)
+            )
+            record = current_result.scalar_one_or_none()
+            if record is None:
+                return None, None
+
+        return record, getattr(record, "status", None)
+
+    async def _converge_cancelled_analysis(
+        self,
+        db,
+        *,
+        analysis_id: int | None,
+        issue_info: dict[str, Any],
+        reason: str,
+    ) -> tuple[IssueAnalysis | None, str | None]:
+        """Persist cancellation and publish the matching Issue status event."""
+        record, status = await self._mark_active_analysis_cancelled(
+            db,
+            analysis_id=analysis_id,
+            reason=reason,
+        )
+        if status != IssueAnalysisStatus.CANCELLED.value:
+            return record, status
+
+        if record is not None:
+            notified = getattr(self, "_cancelled_analysis_notifications", None)
+            if notified is None:
+                self._cancelled_analysis_notifications = notified = set()
+            already_notified = analysis_id in notified
+            if not already_notified:
+                # Set before the await so duplicate cancellation paths cannot
+                # emit two SSE events for the same analysis row.
+                notified.add(analysis_id)
+            try:
+                if not already_notified:
+                    from backend.webui.sse import publish_event
+
+                    await publish_event(
+                        "issue:status_changed",
+                        {
+                            "issue_number": issue_info.get("issue_number"),
+                            "repo_name": issue_info.get("repo_name"),
+                            "status": IssueAnalysisStatus.CANCELLED.value,
+                        },
+                    )
+            except Exception as sse_exc:
+                logger.debug(
+                    "[{}] 发布取消 SSE 事件失败: {}",
+                    issue_info.get("task_id", "unknown"),
+                    sse_exc,
+                )
+        return record, status
+
+    async def _mark_analysis_failed(
+        self,
+        db,
+        *,
+        analysis_id: int | None,
+        reason: str,
+    ) -> IssueAnalysis | None:
+        """Conditionally mark this task's exact analysis row as failed."""
+        if analysis_id is None:
+            return None
+
+        result = await db.execute(
+            select(IssueAnalysis).where(IssueAnalysis.id == analysis_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+
+        update_result = await db.execute(
+            update(IssueAnalysis)
+            .where(
+                and_(
+                    IssueAnalysis.id == analysis_id,
+                    IssueAnalysis.status.in_(
+                        [
+                            IssueAnalysisStatus.PENDING.value,
+                            IssueAnalysisStatus.ANALYZING.value,
+                        ]
+                    ),
+                    or_(
+                        IssueAnalysis.issue_state.is_(None),
+                        IssueAnalysis.issue_state != "closed",
+                    ),
+                )
+            )
+            .values(
+                status=IssueAnalysisStatus.FAILED.value,
+                error_message=reason,
+            )
+        )
+        await db.commit()
+
+        rowcount = getattr(update_result, "rowcount", None)
+        if rowcount is None or rowcount > 0:
+            record.status = IssueAnalysisStatus.FAILED.value
+            record.error_message = reason
+            return record
+
+        # A close/delete/cancel may have won between the exact read and the
+        # conditional update.  Return the exact current row for classification;
+        # never fall back to a newer sibling analysis.
+        current_result = await db.execute(
+            select(IssueAnalysis).where(IssueAnalysis.id == analysis_id)
+        )
+        return current_result.scalar_one_or_none()
 
     @staticmethod
     async def _log_activity(
@@ -93,6 +482,92 @@ class IssueWorker:
         issue_info: dict[str, Any],
         *,
         deadline: AITaskDeadline | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> str:
+        """Register and run one Issue analysis task.
+
+        Submission registers the event before creating the asyncio task.  Direct
+        callers are supported as well, so this wrapper registers a missing event
+        synchronously when the coroutine starts and always removes only its own
+        task entry after the worker has finished.
+        """
+        task_id = str(issue_info.get("task_id") or uuid.uuid4())
+        task_key = self._make_task_key(issue_info)
+        task_events = getattr(self, "_cancel_events", {}).get(task_key, {})
+        registered_event = task_events.get(task_id)
+        if registered_event is None:
+            registered_event = self._register_task(
+                task_key,
+                task_id,
+                event=cancel_event,
+            )
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._bind_task_handle(task_key, task_id, current_task)
+        try:
+            return await self._run_issue_analysis(
+                issue_info,
+                deadline=deadline,
+                cancel_event=registered_event,
+                task_id=task_id,
+            )
+        except asyncio.CancelledError as cancellation:
+            # ``task.cancel()`` can interrupt the worker outside the nested DB
+            # try block (notably while waiting for the semaphore).  If this
+            # task already created a row, finish that exact row in a fresh
+            # session after the original session has rolled back.
+            registered_event.set()
+            identity = self._get_analysis_record_identity(task_key, task_id)
+            terminal_status = IssueAnalysisStatus.CANCELLED.value
+            if identity is not None:
+                try:
+                    async with async_session() as cleanup_db:
+                        _, persisted_status = await self._converge_cancelled_analysis(
+                            cleanup_db,
+                            analysis_id=identity[0],
+                            issue_info=issue_info,
+                            reason=str(cancellation) or "Issue 分析已被取消",
+                        )
+                    if persisted_status in {
+                        IssueAnalysisStatus.COMPLETED.value,
+                        IssueAnalysisStatus.FAILED.value,
+                    }:
+                        terminal_status = persisted_status
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "[{}] 取消时收敛 Issue 分析记录失败: {}",
+                        task_id,
+                        cleanup_exc,
+                    )
+            execution = self._get_execution(task_key, task_id)
+            if (
+                execution is not None
+                and self._get_execution_status(task_key, task_id) is None
+            ):
+                try:
+                    await execution.finish(terminal_status, error_message=None)
+                except Exception as finish_exc:
+                    logger.warning(
+                        "[{}] 取消时 issue observability finish 失败 (status={}): {}",
+                        task_id,
+                        terminal_status,
+                        finish_exc,
+                    )
+                else:
+                    self._set_execution_status(task_key, task_id, terminal_status)
+            # Preserve normal asyncio cancellation semantics for direct callers;
+            # ``cancel_task`` consumes this result while awaiting the handle.
+            raise
+        finally:
+            self._unregister_task(task_key, task_id)
+
+    async def _run_issue_analysis(
+        self,
+        issue_info: dict[str, Any],
+        *,
+        deadline: AITaskDeadline | None = None,
+        cancel_event: asyncio.Event,
+        task_id: str,
     ) -> str:
         """处理 Issue 分析任务
 
@@ -107,12 +582,13 @@ class IssueWorker:
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
-        task_id = issue_info.get("task_id", str(uuid.uuid4()))
-
         repo_owner = issue_info.get("repo_owner", "")
         repo_name = issue_info.get("repo_name", "")
         issue_number = issue_info.get("issue_number", 0)
         repo_full_name = issue_info.get("repo_full_name", f"{repo_owner}/{repo_name}")
+        task_key = self._make_task_key(issue_info)
+        analysis_id: int | None = None
+        analysis_record: IssueAnalysis | None = None
 
         logger.info(f"[{task_id}] 开始处理 Issue 分析: {repo_full_name}#{issue_number}")
 
@@ -125,7 +601,7 @@ class IssueWorker:
         ) -> None:
             """Best-effort terminal convergence for the observability bundle."""
             nonlocal execution_status, execution_target_status
-            if execution is None or execution_status == status:
+            if execution is None or execution_status is not None:
                 return
             execution_target_status = status
             try:
@@ -139,19 +615,26 @@ class IssueWorker:
                 )
                 return
             execution_status = status
+            self._set_execution_status(task_key, task_id, status)
 
         @asynccontextmanager
         async def _execution_scope():
             """Keep cancellation cleanup around semaphore and DB admission."""
+            cancellation_pending = False
             try:
                 semaphore = await _get_issue_semaphore()
                 async with semaphore:
                     yield
             except asyncio.CancelledError:
-                await _finish_execution("cancelled")
+                # The ORM record captured by this task may be stale: an
+                # independent lifecycle transaction can complete/fail it while
+                # this task is being cancelled.  Let the outer
+                # ``process_issue_analysis`` handler refresh the exact row in a
+                # fresh session and decide the execution terminal state.
+                cancellation_pending = True
                 raise
             finally:
-                if execution is not None and execution_status is None:
+                if not cancellation_pending and execution is not None and execution_status is None:
                     await _finish_execution(
                         execution_target_status or "failed",
                         error_message=(
@@ -193,6 +676,7 @@ class IssueWorker:
                     execution.invocation_id,
                 )
                 return task_id
+            self._bind_execution(task_key, task_id, execution)
         except Exception as observability_exc:
             # Observability admission is best-effort for legacy callers that lack
             # immutable repository identity; the core analysis still runs, but
@@ -209,11 +693,15 @@ class IssueWorker:
         async with _execution_scope():
             async with async_session() as db:
                 try:
+                    # Check after semaphore admission so a queued task that was
+                    # cancelled never creates an analysis record or calls AI.
+                    self._raise_if_cancelled(cancel_event)
                     # 1. 计算下一个分析版本号
                     max_version = await db.scalar(
                         select(func.max(IssueAnalysis.analysis_version)).where(
                             and_(
                                 IssueAnalysis.repo_name == repo_name,
+                                IssueAnalysis.repo_owner == repo_owner,
                                 IssueAnalysis.issue_number == issue_number,
                             )
                         )
@@ -234,6 +722,9 @@ class IssueWorker:
                     )
                     db.add(record)
                     await db.commit()
+                    analysis_id = record.id
+                    analysis_record = record
+                    self._bind_analysis_record(task_key, task_id, record)
                     await db.refresh(record)
 
                     # 2. 更新状态为 ANALYZING
@@ -273,9 +764,11 @@ class IssueWorker:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
                     # 3. 获取 repo 对象
+                    self._raise_if_cancelled(cancel_event)
                     client = self.github_app.get_repo_client(repo_owner, repo_name)
                     repo = None
                     if client:
+                        self._raise_if_cancelled(cancel_event)
                         repo = client.get_repo(repo_full_name)
 
                     # 4. 调用 AI 分析：对话流持久化到新可观测性 Canonical Transcript
@@ -326,6 +819,7 @@ class IssueWorker:
                         except Exception as exc:
                             logger.debug("issue observability callback failed: {}", exc)
 
+                    self._raise_if_cancelled(cancel_event)
                     analysis_result = await self.analyzer.analyze_issue(
                         issue_info=issue_info,
                         repo_owner=repo_owner,
@@ -343,27 +837,58 @@ class IssueWorker:
                             else None
                         ),
                         observer=execution.observer if execution is not None else None,
+                        cancel_event=cancel_event,
                         deadline=task_deadline,
                     )
+                    self._raise_if_cancelled(cancel_event)
 
                     # WorkUnit 终态由 execution.finish("completed") 统一收敛（见下方
                     # 成功路径），分析结果摘要持久化在 IssueAnalysis 记录中。
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
+                    self._raise_if_cancelled(cancel_event)
                     analysis_record = await issue_service.save_analysis_result(
-                        analysis_result, issue_info, db
+                        analysis_result,
+                        issue_info,
+                        db,
+                        analysis_id=analysis_id,
                     )
 
                     if not analysis_record:
-                        logger.error(f"[{task_id}] 未找到待更新的分析记录")
-                        if execution is not None:
-                            await _finish_execution(
-                                "failed",
-                                error_message="未找到待更新的 Issue 分析记录",
+                        # The conditional save can lose a close/cancel/delete
+                        # race after the worker's initial read.  This is a
+                        # normal stale-worker outcome, not an analysis failure.
+                        logger.info(
+                            "[{}] Issue 分析记录已由生命周期操作收敛，跳过后续副作用",
+                            task_id,
+                        )
+                        try:
+                            _, cancellation_status = await self._converge_cancelled_analysis(
+                                db,
+                                analysis_id=analysis_id,
+                                issue_info=issue_info,
+                                reason="Issue 分析记录已关闭或被删除",
                             )
+                        except Exception as cancel_exc:
+                            logger.warning(
+                                "[{}] 保存竞态后的取消收敛失败: {}",
+                                task_id,
+                                cancel_exc,
+                            )
+                            cancellation_status = None
+                        await _finish_execution(
+                            cancellation_status
+                            if cancellation_status
+                            in {
+                                IssueAnalysisStatus.COMPLETED.value,
+                                IssueAnalysisStatus.FAILED.value,
+                            }
+                            else "cancelled"
+                        )
                         return task_id
 
                     # 5.1 关联扫描记录（如果此 Issue 来自仓库扫描）
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         from backend.models.scan_models import RepoScan
 
@@ -374,14 +899,18 @@ class IssueWorker:
                         )
                         if scan and not scan.issue_analysis_id:
                             scan.issue_analysis_id = analysis_record.id
+                            self._raise_if_cancelled(cancel_event)
                             await db.commit()
                             logger.info(
                                 f"[{task_id}] 已关联扫描记录到分析: scan_id={scan.id}"
                             )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 关联扫描记录失败: {e}")
 
                     # 5.5 使用 AI 摘要更新 Issue 向量
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         from backend.services.issue_embedding_service import (
                             IssueEmbeddingService,
@@ -395,6 +924,7 @@ class IssueWorker:
                                 "priority": analysis_result.get("priority", ""),
                                 "feasibility": analysis_result.get("feasibility", ""),
                             }
+                            self._raise_if_cancelled(cancel_event)
                             await emb_service.upsert_issue(
                                 repo_owner,
                                 repo_name,
@@ -410,14 +940,18 @@ class IssueWorker:
                                 f"[{task_id}] 软 deadline 已到达，"
                                 "跳过 Issue 向量辅助调用"
                             )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 使用 AI 摘要更新向量失败: {e}")
 
                     # 6. 重复检测（优先使用 AI 摘要）
+                    self._raise_if_cancelled(cancel_event)
                     if (
                         not task_deadline.is_expired()
                         and await get_dynamic_config("issue_detect_duplicates")
                     ):
+                        self._raise_if_cancelled(cancel_event)
                         try:
                             summary = analysis_result.get("summary", "")
                             duplicates = await issue_service.detect_duplicates(
@@ -431,10 +965,13 @@ class IssueWorker:
                                 analysis_record.duplicate_of = duplicates[0].get(
                                     "issue_number"
                                 )
+                        except ReviewCancelledError:
+                            raise
                         except Exception as e:
                             logger.warning(f"[{task_id}] 重复检测失败: {e}")
 
                     # 7. 查找关联 PR
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         related_prs = await issue_service.find_related_prs(
                             repo_owner, repo_name, issue_number
@@ -443,12 +980,16 @@ class IssueWorker:
                             analysis_record.related_prs = json.dumps(
                                 related_prs, ensure_ascii=False
                             )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 查找关联 PR 失败: {e}")
 
+                    self._raise_if_cancelled(cancel_event)
                     await db.commit()
 
                     # 发布 SSE 事件通知前端（完成）
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         from backend.webui.sse import publish_event
 
@@ -460,9 +1001,12 @@ class IssueWorker:
                                 "status": "completed",
                             },
                         )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
+                    self._raise_if_cancelled(cancel_event)
                     await self._log_activity(
                         record.id,
                         "result",
@@ -475,6 +1019,7 @@ class IssueWorker:
                     )
 
                     # 8. 自动评论
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         activity_result_id = analysis_result.get("_activity_result_id")
                         if execution is not None and isinstance(
@@ -484,6 +1029,7 @@ class IssueWorker:
                             if not body:
                                 success = False
                             else:
+                                self._raise_if_cancelled(cancel_event)
                                 publication = (
                                     await execution.publication_service.create_pending(
                                         activity_result_id,
@@ -520,6 +1066,7 @@ class IssueWorker:
                                         raise_on_error=True,
                                     )
 
+                                self._raise_if_cancelled(cancel_event)
                                 terminal = await execution.publication_service.send(
                                     publication.id,
                                     body=body,
@@ -531,6 +1078,7 @@ class IssueWorker:
                                     analysis_record.comment_posted = 1
                                     await db.commit()
                         else:
+                            self._raise_if_cancelled(cancel_event)
                             success = await issue_service.post_analysis_comment(
                                 repo_owner,
                                 repo_name,
@@ -540,15 +1088,19 @@ class IssueWorker:
                             )
                         if success:
                             logger.info(f"[{task_id}] 已发布分析评论")
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 发布评论失败: {e}")
 
                     # 10. 应用建议标签；enabled、阈值与 auto_create 由 IssueService 统一处理。
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         labels_data = json.loads(
                             analysis_record.suggested_labels or "[]"
                         )
                         if labels_data:
+                            self._raise_if_cancelled(cancel_event)
                             result = await issue_service.apply_suggested_labels(
                                 repo_owner,
                                 repo_name,
@@ -569,16 +1121,21 @@ class IssueWorker:
                                 logger.warning(
                                     f"[{task_id}] 标签应用失败: {result['failed']}"
                                 )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 应用标签失败: {e}")
 
                     # 10.5 应用建议指派人
+                    self._raise_if_cancelled(cancel_event)
                     if await get_dynamic_config("issue_auto_assign"):
+                        self._raise_if_cancelled(cancel_event)
                         try:
                             assignees_data = json.loads(
                                 analysis_record.suggested_assignees or "[]"
                             )
                             if assignees_data:
+                                self._raise_if_cancelled(cancel_event)
                                 assign_result = (
                                     await issue_service.apply_suggested_assignees(
                                         repo_owner,
@@ -597,19 +1154,24 @@ class IssueWorker:
                                         f"[{task_id}] 指派失败: "
                                         f"{[a['username'] for a in assign_result['failed']]}"
                                     )
+                        except ReviewCancelledError:
+                            raise
                         except Exception as e:
                             logger.warning(f"[{task_id}] 应用指派人失败: {e}")
 
                     # 10.7 自动改写标题（优先从 DB 读取配置）
+                    self._raise_if_cancelled(cancel_event)
                     issue_auto_rewrite_title = await get_dynamic_config(
                         "issue_auto_rewrite_title"
                     )
 
                     if issue_auto_rewrite_title:
+                        self._raise_if_cancelled(cancel_event)
                         try:
                             suggested_title = analysis_record.suggested_title
                             original_title = issue_info.get("title", "")
                             if suggested_title and suggested_title != original_title:
+                                self._raise_if_cancelled(cancel_event)
                                 success = await asyncio.to_thread(
                                     self.github_app.update_issue_title,
                                     repo_owner,
@@ -621,6 +1183,8 @@ class IssueWorker:
                                     logger.info(
                                         f"[{task_id}] 已改写标题: {suggested_title}"
                                     )
+                        except ReviewCancelledError:
+                            raise
                         except Exception as e:
                             logger.warning(f"[{task_id}] 改写标题失败: {e}")
 
@@ -630,6 +1194,7 @@ class IssueWorker:
 
                     # 收集通知目标：作者 + 订阅者
                     notification_chat_ids = []
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         from backend.services.telegram_service import TelegramService
 
@@ -637,10 +1202,13 @@ class IssueWorker:
                         notification_chat_ids = await ts.get_notification_targets(
                             repo_full_name, issue_info.get("author", "")
                         )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 获取通知目标失败: {e}")
 
                     if priority == "critical":
+                        self._raise_if_cancelled(cancel_event)
                         try:
                             from backend.telegram.notifications import (
                                 get_notification_sender,
@@ -648,6 +1216,7 @@ class IssueWorker:
 
                             sender = get_notification_sender()
                             if sender and notification_chat_ids:
+                                self._raise_if_cancelled(cancel_event)
                                 await sender.send_critical_issue_alert(
                                     repo_name=repo_full_name,
                                     issue_number=issue_number,
@@ -662,10 +1231,13 @@ class IssueWorker:
                                     chat_ids=notification_chat_ids,
                                 )
                                 logger.info(f"[{task_id}] 已发送 Critical Issue 告警")
+                        except ReviewCancelledError:
+                            raise
                         except Exception as e:
                             logger.warning(f"[{task_id}] 发送告警失败: {e}")
 
                     # 12. 发送完成通知
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         from backend.telegram.notifications import (
                             get_notification_sender,
@@ -673,6 +1245,7 @@ class IssueWorker:
 
                         sender = get_notification_sender()
                         if sender and notification_chat_ids:
+                            self._raise_if_cancelled(cancel_event)
                             await sender.send_issue_analysis_complete(
                                 repo_name=repo_full_name,
                                 issue_number=issue_number,
@@ -682,10 +1255,13 @@ class IssueWorker:
                                 summary=analysis_result.get("summary"),
                                 chat_ids=notification_chat_ids,
                             )
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 发送完成通知失败: {e}")
 
                     # 13. 异步触发 .sakura/ Issue 反思 / Trigger .sakura/ issue reflection async
+                    self._raise_if_cancelled(cancel_event)
                     try:
                         sm_config = get_sakura_memory_config()
                         if (
@@ -695,12 +1271,14 @@ class IssueWorker:
                                 "issue_reflection", {}
                             ).get("enabled", True)
                         ):
+                            self._raise_if_cancelled(cancel_event)
                             from backend.services.sakura_memory_service import (
                                 get_sakura_memory_service,
                             )
 
                             sakura_memory_service = get_sakura_memory_service()
                             ensure_background_admission("issue_reflection")
+                            self._raise_if_cancelled(cancel_event)
                             task = asyncio.create_task(
                                 sakura_memory_service.reflect_issue(
                                     repo=repo,
@@ -723,6 +1301,8 @@ class IssueWorker:
                             self._background_tasks.add(task)
                             task.add_done_callback(self._background_tasks.discard)
                             logger.info(f"[{task_id}] 已触发 .sakura/ Issue 反思任务")
+                    except ReviewCancelledError:
+                        raise
                     except Exception as e:
                         logger.warning(
                             f"[{task_id}] 触发 .sakura/ Issue 反思失败（不影响分析）: {e}"
@@ -738,40 +1318,150 @@ class IssueWorker:
                         analysis_result.get("completion_tokens", 0),
                         analysis_result.get("estimated_cost", 0),
                     )
+                    self._raise_if_cancelled(cancel_event)
                     if execution is not None:
                         await _finish_execution("completed")
 
-                except Exception as e:
-                    logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
-                    if execution is not None:
-                        await _finish_execution("failed", error_message=str(e))
-
-                    # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
+                except ReviewCancelledError as e:
+                    logger.info("[{}] Issue 分析已取消: {}", task_id, e)
+                    cancellation_status = None
                     try:
-                        result = await db.execute(
-                            select(IssueAnalysis)
-                            .where(
-                                and_(
-                                    IssueAnalysis.issue_number == issue_number,
-                                    IssueAnalysis.repo_name == repo_name,
-                                    IssueAnalysis.status.in_(
-                                        [
-                                            IssueAnalysisStatus.PENDING.value,
-                                            IssueAnalysisStatus.ANALYZING.value,
-                                        ]
-                                    ),
+                        _, cancellation_status = await self._converge_cancelled_analysis(
+                            db,
+                            analysis_id=analysis_id,
+                            issue_info=issue_info,
+                            reason=str(e),
+                        )
+                    except Exception as cancel_exc:
+                        logger.warning(
+                            "[{}] 收敛 Issue 取消状态失败: {}",
+                            task_id,
+                            cancel_exc,
+                        )
+                    await _finish_execution(
+                        cancellation_status
+                        if cancellation_status
+                        in {
+                            IssueAnalysisStatus.COMPLETED.value,
+                            IssueAnalysisStatus.FAILED.value,
+                        }
+                        else "cancelled"
+                    )
+                    return task_id
+                except Exception as e:
+                    # A cancellation signal may race a provider/DB exception.
+                    # Once the lifecycle is cancelled/closed, never overwrite
+                    # it with FAILED.
+                    lifecycle_cancelled = cancel_event.is_set()
+                    current_record = None
+                    try:
+                        if analysis_id is not None and not lifecycle_cancelled:
+                            state_result = await db.execute(
+                                select(IssueAnalysis).where(
+                                    IssueAnalysis.id == analysis_id
                                 )
                             )
-                            .order_by(IssueAnalysis.created_at.desc())
-                            .limit(1)
+                            current_record = state_result.scalar_one_or_none()
+                            current_status = getattr(current_record, "status", None)
+                            lifecycle_cancelled = current_record is None or (
+                                current_status == IssueAnalysisStatus.CANCELLED.value
+                                or (
+                                    current_status
+                                    not in {
+                                        IssueAnalysisStatus.COMPLETED.value,
+                                        IssueAnalysisStatus.FAILED.value,
+                                    }
+                                    and getattr(current_record, "issue_state", None)
+                                    == "closed"
+                                )
+                            )
+                    except Exception as state_exc:
+                        logger.debug(
+                            "[{}] 检查 Issue 生命周期状态失败: {}",
+                            task_id,
+                            state_exc,
                         )
-                        record = result.scalar_one_or_none()
-                        if record:
-                            record.status = IssueAnalysisStatus.FAILED.value
-                            record.error_message = str(e)
-                            await db.commit()
+
+                    if lifecycle_cancelled:
+                        cancellation_status = None
+                        try:
+                            _, cancellation_status = await self._converge_cancelled_analysis(
+                                db,
+                                analysis_id=analysis_id,
+                                issue_info=issue_info,
+                                reason=str(e) or "Issue 分析已被取消",
+                            )
+                        except Exception as cancel_exc:
+                            logger.warning(
+                                "[{}] 异常后收敛 Issue 取消状态失败: {}",
+                                task_id,
+                                cancel_exc,
+                            )
+                        await _finish_execution(
+                            cancellation_status
+                            if cancellation_status
+                            in {
+                                IssueAnalysisStatus.COMPLETED.value,
+                                IssueAnalysisStatus.FAILED.value,
+                            }
+                            else "cancelled"
+                        )
+                        return task_id
+
+                    logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
+
+                    # Update FAILED only for this task's active exact row.  A
+                    # rowcount of zero means another lifecycle transition won;
+                    # classify it as cancellation rather than failure.
+                    failed_record = None
+                    try:
+                        failed_record = await self._mark_analysis_failed(
+                            db,
+                            analysis_id=analysis_id,
+                            reason=str(e),
+                        )
+                        failed_status = getattr(failed_record, "status", None)
+                        failed_is_cancelled = analysis_id is not None and (
+                            failed_record is None
+                            or (
+                                failed_status
+                                not in {
+                                    IssueAnalysisStatus.COMPLETED.value,
+                                    IssueAnalysisStatus.FAILED.value,
+                                }
+                                and (
+                                    failed_status
+                                    == IssueAnalysisStatus.CANCELLED.value
+                                    or getattr(failed_record, "issue_state", None)
+                                    == "closed"
+                                )
+                            )
+                        )
+                        if failed_is_cancelled:
+                            _, cancellation_status = await self._converge_cancelled_analysis(
+                                db,
+                                analysis_id=analysis_id,
+                                issue_info=issue_info,
+                                reason=str(e) or "Issue 分析已被取消",
+                            )
+                            await _finish_execution(
+                                cancellation_status
+                                if cancellation_status
+                                in {
+                                    IssueAnalysisStatus.COMPLETED.value,
+                                    IssueAnalysisStatus.FAILED.value,
+                                }
+                                else "cancelled"
+                            )
+                            return task_id
+
+                        if failed_status == IssueAnalysisStatus.COMPLETED.value:
+                            await _finish_execution("completed")
+                            return task_id
+
+                        if failed_record is not None:
                             await self._log_activity(
-                                record.id,
+                                failed_record.id,
                                 "error",
                                 {
                                     "message": f"Issue 分析失败: {e!s}",
@@ -785,15 +1475,24 @@ class IssueWorker:
                                 await publish_event(
                                     "issue:status_changed",
                                     {
-                                        "issue_number": issue_info.get("issue_number"),
+                                        "issue_number": issue_info.get(
+                                            "issue_number"
+                                        ),
                                         "repo_name": issue_info.get("repo_name"),
                                         "status": "failed",
                                     },
                                 )
                             except Exception:
                                 pass
-                    except Exception:
-                        pass
+                    except Exception as failure_exc:
+                        logger.warning(
+                            "[{}] 更新 Issue 失败状态失败: {}",
+                            task_id,
+                            failure_exc,
+                        )
+
+                    if execution is not None:
+                        await _finish_execution("failed", error_message=str(e))
 
         return task_id
 
@@ -816,17 +1515,44 @@ async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     issue_info["task_id"] = task_id
     worker = get_issue_worker()
     deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
-    task = asyncio.create_task(
-        worker.process_issue_analysis(issue_info, deadline=deadline)
+    task_key = worker._make_task_key(issue_info)
+    cancel_event = worker._register_task(
+        task_key,
+        task_id,
     )
+    task: asyncio.Task[Any] | None = None
     try:
+        task = asyncio.create_task(
+            worker.process_issue_analysis(
+                issue_info,
+                deadline=deadline,
+                cancel_event=cancel_event,
+            )
+        )
+        worker._bind_task_handle(task_key, task_id, task)
         register_background_task(task, "issue")
     except DatabaseResetRuntimeAdmissionClosed:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "[{}] 清理未登记的 Issue 任务失败: {}",
+                    task_id,
+                    cleanup_exc,
+                )
+        # The coroutine may never have started, so its ``finally`` cannot
+        # unregister the pre-created entry.  Always remove it explicitly when
+        # admission rejects the background handle.
+        worker._unregister_task(task_key, task_id)
+        raise
+    except BaseException:
+        # Do not leak a pre-registration if task creation itself is rejected.
+        if task is None:
+            worker._unregister_task(task_key, task_id)
         raise
     worker._background_tasks.add(task)
     task.add_done_callback(worker._background_tasks.discard)
