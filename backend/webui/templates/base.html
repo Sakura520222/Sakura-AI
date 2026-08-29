@@ -297,8 +297,22 @@
         .dark ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #9d174d, #831843); }
         .dark ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #831843, #500724); }
         /* highlight.js 与 Tailwind prose 兼容 */
-        .prose pre { --tw-prose-pre-bg: transparent; padding: 0; }
-        .prose pre code.hljs { background: transparent; padding: 0; }
+        .prose pre {
+            --tw-prose-pre-bg: transparent;
+            --tw-prose-pre-code: #24292e;
+            color: #24292e;
+            padding: 0;
+        }
+        .prose pre code.hljs {
+            background: transparent;
+            color: #24292e;
+            padding: 0;
+        }
+        .dark .prose pre {
+            --tw-prose-pre-code: #c9d1d9;
+            color: #c9d1d9;
+        }
+        .dark .prose pre code.hljs { color: #c9d1d9; }
         /* 樱花飘落动画 */
         @keyframes sakura-fall {
             0% { transform: translateY(-10vh) translateX(0) rotate(0deg); opacity: 1; }

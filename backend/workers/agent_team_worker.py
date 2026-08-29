@@ -25,6 +25,7 @@ from backend.models.agent_team_models import (
     AgentTeamFeedbackSource,
     AgentTeamIteration,
     AgentTeamPatchFile,
+    AgentTeamSourceType,
     AgentTeamTask,
     AgentTeamTaskStatus,
     AgentTeamUserPrompt,
@@ -36,6 +37,7 @@ from backend.services.agent_team.conversation_checkpoint import (
 from backend.services.agent_team.execution import ExecutionRunner, LocalExecutionRunner
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
+    StalePRHeadError,
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
@@ -58,6 +60,54 @@ def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
     if modified_files:
         return reason
     return "Agent 未能生成有效的代码修改"
+
+
+_DIRECT_PR_NOOP_MESSAGE = (
+    "Agent 未产生新的 Git 提交，请通过 Agent Team follow-up 补充要求；"
+    "如需重新执行 /agent，请先取消当前任务"
+)
+
+
+def _is_original_pr_task(task: AgentTeamTask) -> bool:
+    """Return whether a task targets the original PR head branch.
+
+    Older PR_REVIEW tasks were already created with a ``sakura-agent`` branch
+    and do not have the new head identity columns.  Keeping this discriminator
+    makes their resume/follow-up path backward compatible while all newly
+    created PR tasks use the original branch directly.
+    """
+
+    source_type = getattr(task, "source_type", None)
+    source_type = getattr(source_type, "value", source_type)
+    return (
+        source_type == AgentTeamSourceType.PR_REVIEW.value
+        and bool(getattr(task, "pr_head_branch", None))
+    )
+
+
+def _get_original_pr_target(
+    task: AgentTeamTask,
+) -> tuple[str, str, str, str]:
+    """Resolve the repository, branch and immutable SHA for a PR task."""
+
+    head_repo_full_name = getattr(task, "pr_head_repo_full_name", None)
+    if not head_repo_full_name:
+        head_repo_full_name = task.repo_full_name
+    parts = str(head_repo_full_name).split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise RuntimeError("PR head 仓库格式无效，无法准备原分支工作区")
+
+    head_branch = getattr(task, "pr_head_branch", None)
+    head_sha = getattr(task, "pr_head_sha", None)
+    if not head_branch or not head_sha:
+        raise RuntimeError("PR head branch/SHA 缺失，无法直接修改原 PR")
+    return parts[0], parts[1], str(head_branch), str(head_sha)
+
+
+def _build_github_pr_url(repo_full_name: str, pr_number: int | None) -> str | None:
+    if not repo_full_name or not pr_number:
+        return None
+    return f"https://github.com/{repo_full_name}/pull/{pr_number}"
 
 
 class AgentTeamWorker:
@@ -181,18 +231,53 @@ class AgentTeamWorker:
             )
 
             git_service = AgentTeamGitWorkspaceService()
+            direct_pr = _is_original_pr_task(task)
+            if direct_pr:
+                workspace_repo_owner, workspace_repo_name, head_branch, head_sha = (
+                    _get_original_pr_target(task)
+                )
+            else:
+                workspace_repo_owner = task.repo_owner
+                workspace_repo_name = task.repo_name
+                head_branch = None
+                head_sha = None
             if resume:
                 if not task.workspace_path or not task.branch_name:
                     raise RuntimeError("任务缺少可续跑的工作区或分支信息")
-                workspace_info = await git_service.resume_workspace(
-                    task.repo_owner,
-                    task.repo_name,
-                    task.workspace_path,
-                    task.branch_name,
-                    task.base_branch,
-                    task.base_commit_sha,
-                )
+                resume_kwargs = {}
+                if direct_pr:
+                    resume_kwargs = {
+                        "expected_remote_branch": head_branch,
+                        "expected_remote_sha": head_sha,
+                    }
+                try:
+                    workspace_info = await git_service.resume_workspace(
+                        workspace_repo_owner,
+                        workspace_repo_name,
+                        task.workspace_path,
+                        task.branch_name,
+                        task.base_branch,
+                        task.base_commit_sha,
+                        **resume_kwargs,
+                    )
+                except StalePRHeadError as exc:
+                    await self._mark_stale_original_pr_task(task_id, str(exc))
+                    return task_id
+                if direct_pr and await self._stop_if_stale_original_pr_workspace(
+                    task_id,
+                    workspace_info,
+                    head_sha,
+                ):
+                    return task_id
             else:
+                prepare_kwargs = {}
+                if direct_pr:
+                    prepare_kwargs = {
+                        "workspace_repo_owner": workspace_repo_owner,
+                        "workspace_repo_name": workspace_repo_name,
+                        "source_branch": head_branch,
+                        "source_commit_sha": head_sha,
+                    }
                 workspace_info = await git_service.prepare_workspace(
                     task.repo_owner,
                     task.repo_name,
@@ -201,6 +286,7 @@ class AgentTeamWorker:
                     task.base_branch,
                     task.id,
                     task.source_type,
+                    **prepare_kwargs,
                 )
 
             # 取消检查点
@@ -213,13 +299,14 @@ class AgentTeamWorker:
                 )
                 return task_id
 
-            await self._update_task(
-                task_id,
-                branch_name=workspace_info.branch_name,
-                base_branch=workspace_info.default_branch,
-                base_commit_sha=workspace_info.commit_sha,
-                workspace_path=str(workspace_info.workspace),
-            )
+            task_update = {
+                "branch_name": workspace_info.branch_name,
+                "base_commit_sha": workspace_info.commit_sha,
+                "workspace_path": str(workspace_info.workspace),
+            }
+            if not direct_pr:
+                task_update["base_branch"] = workspace_info.default_branch
+            await self._update_task(task_id, **task_update)
 
             workspace = workspace_info.workspace
             repo_owner = task.repo_owner
@@ -366,13 +453,43 @@ class AgentTeamWorker:
                     )
                 else:
                     logger.info("Agent commit message: 使用 AI 生成结果")
-                await pr_service.commit_and_push(
-                    workspace=str(workspace),
-                    branch_name=workspace_info.branch_name,
-                    commit_message=commit_message,
-                    repo_owner=repo_owner,
-                    repo_name=repo_name,
+                push_kwargs = {
+                    "workspace": str(workspace),
+                    "branch_name": workspace_info.branch_name,
+                    "commit_message": commit_message,
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                }
+                if direct_pr:
+                    push_kwargs.update(
+                        {
+                            "target_repo_owner": workspace_repo_owner,
+                            "target_repo_name": workspace_repo_name,
+                            "target_branch_name": head_branch,
+                            "expected_head_sha": head_sha,
+                        }
+                    )
+                commit_sha = await pr_service.commit_and_push(
+                    **push_kwargs,
                 )
+
+                if direct_pr:
+                    if commit_sha.lower() == head_sha.lower():
+                        await self._update_task(
+                            task_id,
+                            status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                            current_phase="waiting_human",
+                            estimated_cost=estimated_cost,
+                            error_message=_DIRECT_PR_NOOP_MESSAGE,
+                        )
+                        return task_id
+                    await self._finalize_original_pr_task(
+                        task_id=task_id,
+                        task=task,
+                        commit_sha=commit_sha,
+                        estimated_cost=estimated_cost,
+                    )
+                    return task_id
 
                 # 等待 GitHub 完成分支索引
                 await asyncio.sleep(get_settings().agent_team_branch_index_delay)
@@ -586,14 +703,47 @@ class AgentTeamWorker:
             )
 
             git_service = AgentTeamGitWorkspaceService()
-            workspace_info = await git_service.resume_workspace(
-                task.repo_owner,
-                task.repo_name,
-                task.workspace_path,
-                task.branch_name,
-                task.base_branch,
-                task.base_commit_sha,
-            )
+            direct_pr = _is_original_pr_task(task)
+            if direct_pr:
+                (
+                    workspace_repo_owner,
+                    workspace_repo_name,
+                    head_branch,
+                    expected_head_sha,
+                ) = (
+                    _get_original_pr_target(task)
+                )
+            else:
+                workspace_repo_owner = task.repo_owner
+                workspace_repo_name = task.repo_name
+                expected_head_sha = None
+            resume_kwargs = {}
+            if direct_pr:
+                resume_kwargs = {
+                    "expected_remote_branch": head_branch,
+                    "expected_remote_sha": expected_head_sha,
+                }
+            try:
+                workspace_info = await git_service.resume_workspace(
+                    workspace_repo_owner,
+                    workspace_repo_name,
+                    task.workspace_path,
+                    task.branch_name,
+                    task.base_branch,
+                    task.base_commit_sha,
+                    **resume_kwargs,
+                )
+            except StalePRHeadError as exc:
+                terminal = True
+                await self._mark_stale_original_pr_task(task_id, str(exc))
+                return task_id
+            if direct_pr and await self._stop_if_stale_original_pr_workspace(
+                task_id,
+                workspace_info,
+                expected_head_sha,
+            ):
+                terminal = True
+                return task_id
 
             if cancel_event.is_set():
                 terminal = True
@@ -744,13 +894,34 @@ class AgentTeamWorker:
                 logger.info("Agent PR 闭环 commit message: 使用 fallback 模板")
             else:
                 logger.info("Agent PR 闭环 commit message: 使用 AI 生成结果")
-            new_sha = await pr_service.commit_and_push(
-                workspace=str(workspace_info.workspace),
-                branch_name=task.branch_name,
-                commit_message=commit_message,
-                repo_owner=task.repo_owner,
-                repo_name=task.repo_name,
-            )
+            push_kwargs = {
+                "workspace": str(workspace_info.workspace),
+                "branch_name": task.branch_name,
+                "commit_message": commit_message,
+                "repo_owner": task.repo_owner,
+                "repo_name": task.repo_name,
+            }
+            if direct_pr:
+                push_kwargs.update(
+                    {
+                        "target_repo_owner": workspace_repo_owner,
+                        "target_repo_name": workspace_repo_name,
+                        "target_branch_name": head_branch,
+                        "expected_head_sha": expected_head_sha,
+                    }
+                )
+            new_sha = await pr_service.commit_and_push(**push_kwargs)
+
+            if direct_pr and new_sha.lower() == expected_head_sha.lower():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message=_DIRECT_PR_NOOP_MESSAGE,
+                )
+                return task_id
 
             await self._update_pr_body(pr_service, task, outcome, new_iteration_count)
 
@@ -825,14 +996,48 @@ class AgentTeamWorker:
 
             # 恢复 workspace
             git_service = AgentTeamGitWorkspaceService()
-            workspace_info = await git_service.resume_workspace(
-                task.repo_owner,
-                task.repo_name,
-                task.workspace_path,
-                task.branch_name,
-                task.base_branch,
-                task.base_commit_sha,
-            )
+            direct_pr = _is_original_pr_task(task)
+            if direct_pr:
+                (
+                    workspace_repo_owner,
+                    workspace_repo_name,
+                    head_branch,
+                    expected_head_sha,
+                ) = (
+                    _get_original_pr_target(task)
+                )
+            else:
+                workspace_repo_owner = task.repo_owner
+                workspace_repo_name = task.repo_name
+                head_branch = None
+                expected_head_sha = None
+            resume_kwargs = {}
+            if direct_pr:
+                resume_kwargs = {
+                    "expected_remote_branch": head_branch,
+                    "expected_remote_sha": expected_head_sha,
+                }
+            try:
+                workspace_info = await git_service.resume_workspace(
+                    workspace_repo_owner,
+                    workspace_repo_name,
+                    task.workspace_path,
+                    task.branch_name,
+                    task.base_branch,
+                    task.base_commit_sha,
+                    **resume_kwargs,
+                )
+            except StalePRHeadError as exc:
+                terminal = True
+                await self._mark_stale_original_pr_task(task_id, str(exc))
+                return task_id
+            if direct_pr and await self._stop_if_stale_original_pr_workspace(
+                task_id,
+                workspace_info,
+                expected_head_sha,
+            ):
+                terminal = True
+                return task_id
 
             if cancel_event.is_set():
                 terminal = True
@@ -980,13 +1185,34 @@ class AgentTeamWorker:
                 else "",
                 fallback_message=fallback_msg,
             )
-            new_sha = await pr_service.commit_and_push(
-                workspace=str(workspace_info.workspace),
-                branch_name=task.branch_name,
-                commit_message=commit_message,
-                repo_owner=task.repo_owner,
-                repo_name=task.repo_name,
-            )
+            push_kwargs = {
+                "workspace": str(workspace_info.workspace),
+                "branch_name": task.branch_name,
+                "commit_message": commit_message,
+                "repo_owner": task.repo_owner,
+                "repo_name": task.repo_name,
+            }
+            if direct_pr:
+                push_kwargs.update(
+                    {
+                        "target_repo_owner": workspace_repo_owner,
+                        "target_repo_name": workspace_repo_name,
+                        "target_branch_name": head_branch,
+                        "expected_head_sha": expected_head_sha,
+                    }
+                )
+            new_sha = await pr_service.commit_and_push(**push_kwargs)
+
+            if direct_pr and new_sha.lower() == expected_head_sha.lower():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message=_DIRECT_PR_NOOP_MESSAGE,
+                )
+                return task_id
 
             await self._update_pr_body(pr_service, task, outcome, new_iteration_count)
 
@@ -1029,6 +1255,46 @@ class AgentTeamWorker:
 
     # ── 辅助方法 ──────────────────────────────────────────
 
+    async def _stop_if_stale_original_pr_workspace(
+        self,
+        task_id: int,
+        workspace_info,
+        expected_head_sha: str | None,
+    ) -> bool:
+        """在 direct PR 闭环启动前阻止使用落后于远端 head 的旧代码树。"""
+        if not expected_head_sha:
+            return False
+        actual_sha = str(getattr(workspace_info, "commit_sha", "") or "")
+        if actual_sha.lower() == expected_head_sha.lower():
+            return False
+
+        message = (
+            "原 PR head 已在 Agent 执行期间被其他提交推进，当前工作区已过期；"
+            "旧 Agent 任务已终止，请重新触发 /agent"
+        )
+        await self._mark_stale_original_pr_task(task_id, message)
+        logger.warning(
+            "跳过过期的原 PR Agent workspace: task_id={}, local={}, expected={}",
+            task_id,
+            actual_sha[:12] or "(empty)",
+            expected_head_sha[:12],
+        )
+        return True
+
+    async def _mark_stale_original_pr_task(
+        self,
+        task_id: int,
+        message: str,
+    ) -> None:
+        """将过期 direct-PR 工作区标记为允许重建的失败终态。"""
+        await self._update_task(
+            task_id,
+            status=AgentTeamTaskStatus.FAILED.value,
+            current_phase="workspace_stale",
+            error_message=message,
+            failed_phase="workspace_stale",
+        )
+
     async def _load_task_reference_context(self, task: AgentTeamTask) -> str:
         """Rebuild source material for ``<reference_context>`` at run time."""
         try:
@@ -1066,6 +1332,64 @@ class AgentTeamWorker:
         )
         return new_iteration_count, prompt_tokens, completion_tokens, estimated_cost
 
+    async def _finalize_original_pr_task(
+        self,
+        *,
+        task_id: int,
+        task: AgentTeamTask,
+        commit_sha: str,
+        estimated_cost: int,
+    ) -> None:
+        """Record a commit pushed to the original PR instead of opening a PR."""
+
+        pr_number = getattr(task, "pr_number", None) or getattr(
+            task, "source_issue_number", None
+        )
+        if not pr_number:
+            raise RuntimeError("原 PR 任务缺少 PR number，无法记录提交结果")
+        pr_url = getattr(task, "pr_url", None) or _build_github_pr_url(
+            task.repo_full_name, pr_number
+        )
+        closed_loop_enabled = await self._resolve_bool_config(
+            "agent_team_pr_closed_loop_enabled",
+            get_settings().agent_team_pr_closed_loop_enabled,
+        )
+
+        await self._update_task(
+            task_id,
+            status=AgentTeamTaskStatus.PR_OPENED.value,
+            current_phase="pr_opened",
+            pr_number=pr_number,
+            pr_url=pr_url,
+            pr_head_sha=commit_sha,
+            estimated_cost=estimated_cost,
+            error_message=None,
+            failed_phase=None,
+            failed_role=None,
+            rate_limit_reset_at=None,
+        )
+        if not closed_loop_enabled:
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.COMPLETED.value,
+                current_phase="completed",
+                completed_at=_utc_now(),
+                estimated_cost=estimated_cost,
+                error_message=None,
+                failed_phase=None,
+                failed_role=None,
+                rate_limit_reset_at=None,
+            )
+
+        logger.info(
+            "Agent 已直接更新原 PR: task_id={}, pr=#{}, commit={} | "
+            "closed_loop={}, no replacement PR",
+            task_id,
+            pr_number,
+            commit_sha[:8],
+            closed_loop_enabled,
+        )
+
     async def _update_pr_body(
         self,
         pr_service: AgentTeamPRService,
@@ -1077,6 +1401,11 @@ class AgentTeamWorker:
 
         尽力而为语义：失败仅 logger.warning，不向调用方传播异常。
         """
+        if _is_original_pr_task(task):
+            # The original PR belongs to the contributor.  Direct Agent fixes
+            # must not replace its description with the generated Agent PR
+            # body; only the head branch is updated.
+            return
         try:
             fallback_body = pr_service.build_pr_body(
                 task_title=task.title,

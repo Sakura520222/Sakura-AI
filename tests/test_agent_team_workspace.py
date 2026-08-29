@@ -3,6 +3,8 @@
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -24,6 +26,7 @@ from backend.services.agent_team.workspace_service import (
     WorkspaceSecurityError,
     _rmtree_onexc,
 )
+from backend.webui.routes import agent_team as agent_team_routes
 from backend.workers.agent_team_worker import _merge_modified_files
 
 
@@ -61,6 +64,24 @@ def test_workspace_path_shape_and_creation(tmp_path):
         workspace == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI").resolve()
     )
     assert workspace.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_protects_active_direct_pr_head_repository():
+    db = SimpleNamespace(scalar=AsyncMock(return_value=1))
+
+    response = await agent_team_routes.delete_workspace(
+        db=db,
+        user={"user_id": 1},
+        csrf_token="token",
+        repo_owner="alice",
+        repo_name="repo-fork",
+    )
+
+    assert response.status_code == 200
+    assert "进行中的 Agent 任务" in response.body.decode("utf-8")
+    statement = str(db.scalar.await_args.args[0])
+    assert "pr_head_repo_full_name" in statement
 
 
 def test_workspace_base_and_task_worktree_paths(tmp_path):
@@ -147,6 +168,145 @@ async def test_prepare_workspace_creates_worktree_next_to_base_checkout(tmp_path
     )
     assert (info.workspace / ".git").exists()
     assert (info.workspace / "README.md").read_text(encoding="utf-8") == "# Repo\n"
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_for_pr_uses_original_head_branch_and_sha(tmp_path):
+    """PR_REVIEW 工作区应直接续写原 head，而不是生成 sakura-agent 分支。"""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    base_workspace = workspace_service.ensure_base_workspace("owner", "repo")
+    _run_git(base_workspace, "init")
+    _run_git(base_workspace, "config", "user.name", "Tester")
+    _run_git(base_workspace, "config", "user.email", "tester@example.com")
+    _run_git(base_workspace, "checkout", "-B", "main")
+    (base_workspace / "README.md").write_text("# Base\n", encoding="utf-8")
+    _run_git(base_workspace, "add", "README.md")
+    _run_git(base_workspace, "commit", "-m", "base")
+    base_sha = _run_git(base_workspace, "rev-parse", "HEAD")
+
+    _run_git(base_workspace, "checkout", "-B", "feature/pr")
+    (base_workspace / "pr-only.txt").write_text("from PR head\n", encoding="utf-8")
+    _run_git(base_workspace, "add", "pr-only.txt")
+    _run_git(base_workspace, "commit", "-m", "pr head")
+    head_sha = _run_git(base_workspace, "rev-parse", "HEAD")
+    _run_git(base_workspace, "checkout", "main")
+    _run_git(
+        base_workspace,
+        "update-ref",
+        "refs/remotes/origin/feature/pr",
+        head_sha,
+    )
+
+    class LocalGitWorkspaceService(AgentTeamGitWorkspaceService):
+        async def _get_repo_info(self, repo_owner, repo_name, repo_full_name):
+            assert (repo_owner, repo_name, repo_full_name) == (
+                "owner",
+                "repo",
+                "owner/repo",
+            )
+            return "main", "https://example.com/owner/repo.git"
+
+        def _get_installation_token(self, repo_owner, repo_name):
+            return ""
+
+        async def _run_checked_args(self, executor, args, action, **kwargs):
+            if action in {
+                "set remote url",
+                "fetch repository",
+                "fetch expected PR head branch",
+            }:
+                return ShellCommandResult(
+                    command=" ".join(args),
+                    cwd=str(executor.workspace),
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                )
+            if action == "read remote url":
+                return ShellCommandResult(
+                    command=" ".join(args),
+                    cwd=str(executor.workspace),
+                    returncode=0,
+                    stdout="https://example.com/owner/repo.git",
+                    stderr="",
+                )
+            return await super()._run_checked_args(executor, args, action, **kwargs)
+
+    git_service = LocalGitWorkspaceService(workspace_service=workspace_service)
+
+    info = await git_service.prepare_workspace(
+        "owner",
+        "repo",
+        source_issue_number=42,
+        task_id=123,
+        source_type="pr_review",
+        workspace_repo_owner="owner",
+        workspace_repo_name="repo",
+        source_branch="feature/pr",
+        source_commit_sha=head_sha,
+    )
+
+    assert info.branch_name == git_service.make_local_branch_name(123)
+    assert info.branch_name != "feature/pr"
+    assert info.commit_sha == head_sha
+    assert _run_git(info.workspace, "branch", "--show-current") == info.branch_name
+    assert (info.workspace / "pr-only.txt").read_text(encoding="utf-8") == (
+        "from PR head\n"
+    )
+
+    retry_info = await git_service.prepare_workspace(
+        "owner",
+        "repo",
+        source_issue_number=42,
+        task_id=124,
+        source_type="pr_review",
+        workspace_repo_owner="owner",
+        workspace_repo_name="repo",
+        source_branch="feature/pr",
+        source_commit_sha=head_sha,
+    )
+    assert retry_info.branch_name == git_service.make_local_branch_name(124)
+    assert retry_info.branch_name != info.branch_name
+    assert _run_git(retry_info.workspace, "branch", "--show-current") == (
+        retry_info.branch_name
+    )
+
+    resumed_info = await git_service.resume_workspace(
+        "owner",
+        "repo",
+        str(info.workspace),
+        info.branch_name,
+        "feature/pr",
+        head_sha,
+        expected_remote_branch="feature/pr",
+        expected_remote_sha=head_sha,
+    )
+    assert resumed_info.commit_sha == head_sha
+
+    with pytest.raises(RuntimeError, match="其他提交推进"):
+        await git_service.resume_workspace(
+            "owner",
+            "repo",
+            str(info.workspace),
+            info.branch_name,
+            "feature/pr",
+            head_sha,
+            expected_remote_branch="feature/pr",
+            expected_remote_sha="0" * 40,
+        )
+
+    with pytest.raises(RuntimeError, match="发生变化"):
+        await git_service.prepare_workspace(
+            "owner",
+            "repo",
+            source_issue_number=42,
+            task_id=125,
+            source_type="pr_review",
+            workspace_repo_owner="owner",
+            workspace_repo_name="repo",
+            source_branch="feature/pr",
+            source_commit_sha=base_sha,
+        )
 
 
 @pytest.mark.parametrize(

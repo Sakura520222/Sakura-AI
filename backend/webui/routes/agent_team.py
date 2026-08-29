@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -252,6 +252,21 @@ def _parse_task_overrides(
 
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
+
+
+def _workspace_repo_task_condition(repo_owner: str, repo_name: str):
+    """匹配占用指定物理仓库工作区的普通或 direct-PR 任务。"""
+    repo_full_name = f"{repo_owner}/{repo_name}"
+    return or_(
+        and_(
+            AgentTeamTask.repo_owner == repo_owner,
+            AgentTeamTask.repo_name == repo_name,
+        ),
+        and_(
+            AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+            AgentTeamTask.pr_head_repo_full_name == repo_full_name,
+        ),
+    )
 
 
 def _compact_json(value) -> str:
@@ -1269,8 +1284,7 @@ async def delete_workspace(
     """删除 Agent 仓库工作区目录。"""
     active_count = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
-            AgentTeamTask.repo_owner == repo_owner,
-            AgentTeamTask.repo_name == repo_name,
+            _workspace_repo_task_condition(repo_owner, repo_name),
             AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES),
         )
     )

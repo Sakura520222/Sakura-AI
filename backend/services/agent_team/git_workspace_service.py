@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -38,6 +39,10 @@ class GitWorkspaceInfo:
     branch_name: str
     default_branch: str
     commit_sha: str
+
+
+class StalePRHeadError(RuntimeError):
+    """Raised when an original PR head moved during workspace admission."""
 
 
 _repo_locks: dict[str, asyncio.Lock] = {}
@@ -116,32 +121,80 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         base_branch: str | None = None,
         task_id: int | None = None,
         source_type: str | None = None,
+        *,
+        workspace_repo_owner: str | None = None,
+        workspace_repo_name: str | None = None,
+        source_branch: str | None = None,
+        source_commit_sha: str | None = None,
     ) -> GitWorkspaceInfo:
-        """准备仓库 base checkout，并为当前 task 创建独立 worktree。"""
+        """准备仓库 checkout，并为当前 task 创建独立 worktree。
+
+        普通任务沿用 ``base_branch``/默认分支并创建 ``sakura-agent`` 分支。
+        PR_REVIEW 任务可以提供原 PR head 的仓库、分支和 SHA；此时 base
+        checkout 保持 detached，task worktree 从原 head SHA 创建一个仅供本地
+        使用的 task-local 分支。远端 push 目标由 task 的 PR head identity
+        单独维护，避免同一个 original branch 被多个 task worktree 同时 checkout。
+        """
         if task_id is None or task_id <= 0:
             raise RuntimeError("准备 Agent 工作区需要有效的 task_id")
 
-        repo_full_name = f"{repo_owner}/{repo_name}"
+        source_checkout = any(
+            value is not None
+            for value in (
+                workspace_repo_owner,
+                workspace_repo_name,
+                source_branch,
+                source_commit_sha,
+            )
+        )
+        if source_checkout and (not source_branch or not source_commit_sha):
+            raise RuntimeError("PR head checkout 缺少 branch 或 commit SHA")
+
+        workspace_repo_owner = workspace_repo_owner or repo_owner
+        workspace_repo_name = workspace_repo_name or repo_name
+        workspace_repo_full_name = f"{workspace_repo_owner}/{workspace_repo_name}"
         default_branch, clone_url = await self._get_repo_info(
-            repo_owner, repo_name, repo_full_name
+            workspace_repo_owner,
+            workspace_repo_name,
+            workspace_repo_full_name,
         )
-        resolved_branch = base_branch or default_branch
-        branch_name = self.make_branch_name(
-            task_id, source_issue_number, source_id, source_type
+        resolved_branch = (
+            source_branch if source_checkout else base_branch or default_branch
         )
-        repo_root = self.workspace_service.get_repo_root_path(repo_owner, repo_name)
+        if source_checkout:
+            if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", source_commit_sha):
+                raise RuntimeError("PR head commit SHA 格式无效")
+            # The original PR branch is a remote write target, not a local
+            # worktree identity.  A task-local branch lets a failed task remain
+            # resumable while a retry creates another worktree for the same PR.
+            branch_name = self.make_local_branch_name(task_id)
+        else:
+            branch_name = self.make_branch_name(
+                task_id, source_issue_number, source_id, source_type
+            )
+        repo_root = self.workspace_service.get_repo_root_path(
+            workspace_repo_owner, workspace_repo_name
+        )
         base_workspace = self.workspace_service.ensure_base_workspace(
-            repo_owner, repo_name
+            workspace_repo_owner, workspace_repo_name
         )
         worktree = self.workspace_service.get_task_worktree_path(
-            repo_owner, repo_name, task_id, branch_name
+            workspace_repo_owner, workspace_repo_name, task_id, branch_name
         )
 
-        repo_lock = await _get_repo_lock(repo_full_name)
+        repo_lock = await _get_repo_lock(workspace_repo_full_name)
         async with repo_lock:
             base_executor = TrustedGitRunner(base_workspace, self.workspace_service)
             repo_executor = TrustedGitRunner(repo_root, self.workspace_service)
-            credential_token = self._get_installation_token(repo_owner, repo_name)
+            credential_token = self._get_installation_token(
+                workspace_repo_owner, workspace_repo_name
+            )
+            if source_checkout:
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "check-ref-format", "--branch", source_branch],
+                    "validate PR head branch",
+                )
             if not (base_workspace / ".git").exists():
                 await self._run_checked_args(
                     base_executor,
@@ -150,6 +203,28 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                     credential_token=credential_token,
                     trusted_expected_remote=clone_url,
                 )
+                if source_checkout:
+                    actual_sha = (
+                        await self._run_checked_args(
+                            base_executor,
+                            ["git", "rev-parse", "HEAD"],
+                            "read PR head commit",
+                        )
+                    ).stdout.strip()
+                    if actual_sha.lower() != source_commit_sha.lower():
+                        raise RuntimeError(
+                            "PR head 分支在工作区创建前已发生变化，请重新触发 /agent"
+                        )
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "checkout", "--detach", source_commit_sha],
+                        "checkout PR head commit",
+                    )
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "reset", "--hard", source_commit_sha],
+                        "reset PR head commit",
+                    )
             else:
                 await self._run_checked_args(
                     base_executor,
@@ -163,16 +238,39 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                     credential_token=credential_token,
                     trusted_expected_remote=clone_url,
                 )
-                await self._run_checked_args(
-                    base_executor,
-                    ["git", "checkout", resolved_branch],
-                    "checkout base branch",
-                )
-                await self._run_checked_args(
-                    base_executor,
-                    ["git", "reset", "--hard", f"origin/{resolved_branch}"],
-                    "reset base branch",
-                )
+                if source_checkout:
+                    actual_sha = (
+                        await self._run_checked_args(
+                            base_executor,
+                            ["git", "rev-parse", f"origin/{resolved_branch}"],
+                            "read PR head branch",
+                        )
+                    ).stdout.strip()
+                    if actual_sha.lower() != source_commit_sha.lower():
+                        raise RuntimeError(
+                            "PR head 分支在任务创建后已发生变化，请重新触发 /agent"
+                        )
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "checkout", "--detach", source_commit_sha],
+                        "checkout PR head commit",
+                    )
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "reset", "--hard", source_commit_sha],
+                        "reset PR head commit",
+                    )
+                else:
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "checkout", resolved_branch],
+                        "checkout base branch",
+                    )
+                    await self._run_checked_args(
+                        base_executor,
+                        ["git", "reset", "--hard", f"origin/{resolved_branch}"],
+                        "reset base branch",
+                    )
 
             if worktree.exists():
                 await self._run_checked_args(
@@ -182,6 +280,11 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                     cwd=base_workspace,
                 )
             worktree.parent.mkdir(parents=True, exist_ok=True)
+            worktree_start = (
+                source_commit_sha
+                if source_checkout
+                else f"origin/{resolved_branch}"
+            )
             await self._run_checked_args(
                 repo_executor,
                 [
@@ -191,7 +294,7 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                     "-B",
                     branch_name,
                     str(worktree),
-                    f"origin/{resolved_branch}",
+                    worktree_start,
                 ],
                 "create task worktree",
                 cwd=base_workspace,
@@ -540,6 +643,12 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             source = "manual"
         return f"{self.BRANCH_PREFIX}/{prefix}-{source}"
 
+    def make_local_branch_name(self, task_id: int) -> str:
+        """生成仅供本地 worktree 使用的 task 分支名。"""
+        if task_id <= 0:
+            raise ValueError("task_id 必须为正整数")
+        return f"{self.BRANCH_PREFIX}/local-task-{task_id}"
+
     async def resume_workspace(
         self,
         repo_owner: str,
@@ -548,8 +657,13 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         branch_name: str,
         base_branch: str | None = None,
         base_commit_sha: str | None = None,
+        *,
+        expected_remote_branch: str | None = None,
+        expected_remote_sha: str | None = None,
     ) -> GitWorkspaceInfo:
         """恢复既有 Agent 工作区，不重置未提交改动。"""
+        if (expected_remote_branch is None) != (expected_remote_sha is None):
+            raise ValueError("远端分支校验必须同时提供 branch 和 commit SHA")
         workspace = self.workspace_service.ensure_within_base(workspace_path)
         if not self.workspace_service.is_path_inside_repo(
             repo_owner, repo_name, workspace
@@ -581,6 +695,32 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         ).stdout.strip()
         if not trusted_remote_urls_match(remote_url, expected_remote_url):
             raise RuntimeError("续跑工作区 remote 与 GitHub 仓库不匹配")
+
+        if expected_remote_branch and expected_remote_sha:
+            await self._run_checked_args(
+                executor,
+                ["git", "check-ref-format", "--branch", expected_remote_branch],
+                "validate expected PR head branch",
+            )
+            await self._run_checked_args(
+                executor,
+                ["git", "fetch", "origin", expected_remote_branch],
+                "fetch expected PR head branch",
+                credential_token=self._get_installation_token(repo_owner, repo_name),
+                trusted_expected_remote=expected_remote_url,
+            )
+            remote_sha = (
+                await self._run_checked_args(
+                    executor,
+                    ["git", "rev-parse", f"origin/{expected_remote_branch}"],
+                    "read expected PR head branch",
+                )
+            ).stdout.strip()
+            if remote_sha.lower() != expected_remote_sha.lower():
+                raise StalePRHeadError(
+                    "原 PR head 已在 Agent 执行期间被其他提交推进，"
+                    "请重新触发 /agent"
+                )
 
         if base_commit_sha:
             await self._run_checked_args(

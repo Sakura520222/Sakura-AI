@@ -50,36 +50,126 @@ def get_async_session():
 async def _mark_agent_task_external_reviewing(pr_info: dict[str, Any]) -> None:
     """Mark Agent Team PR task as waiting for external review."""
     branch = pr_info.get("branch") or ""
-    if not branch.startswith("sakura-agent/"):
+    if not branch:
         return
 
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
 
-    from backend.models.agent_team_models import AgentTeamTask, AgentTeamTaskStatus
+    from backend.models.agent_team_models import (
+        AgentTeamSourceType,
+        AgentTeamTask,
+        AgentTeamTaskStatus,
+    )
 
+    is_legacy_agent_branch = branch.startswith("sakura-agent/")
+    direct_branch_condition = and_(
+        AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+        AgentTeamTask.source_issue_number == pr_info["pr_number"],
+        AgentTeamTask.pr_head_branch == branch,
+    )
+    branch_condition = direct_branch_condition
+    if is_legacy_agent_branch:
+        # A contributor may legitimately name the original PR branch with the
+        # historical prefix.  Prefer the new direct-PR identity, but retain a
+        # fallback for pre-migration tasks that only stored branch_name.
+        branch_condition = or_(
+            direct_branch_condition,
+            and_(
+                AgentTeamTask.branch_name == branch,
+                AgentTeamTask.pr_head_branch.is_(None),
+            ),
+        )
+    conditions = [
+        AgentTeamTask.repo_owner == pr_info["repo_owner"],
+        AgentTeamTask.repo_name == pr_info["repo_name"],
+        AgentTeamTask.pr_number == pr_info["pr_number"],
+        branch_condition,
+        AgentTeamTask.status.in_(
+            [
+                AgentTeamTaskStatus.PR_OPENED.value,
+                AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+                AgentTeamTaskStatus.WAITING_HUMAN.value,
+            ]
+        ),
+    ]
     async with get_async_session() as session:
         result = await session.execute(
-            select(AgentTeamTask).where(
-                AgentTeamTask.repo_owner == pr_info["repo_owner"],
-                AgentTeamTask.repo_name == pr_info["repo_name"],
-                AgentTeamTask.pr_number == pr_info["pr_number"],
-                AgentTeamTask.branch_name == branch,
-            )
+            select(AgentTeamTask)
+            .where(*conditions)
+            .order_by(AgentTeamTask.id.desc())
+            .limit(1)
         )
-        task = result.scalar_one_or_none()
+        task = result.scalars().first()
         if not task:
             return
-        if task.status not in {
-            AgentTeamTaskStatus.PR_OPENED.value,
-            AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
-        }:
-            return
 
-        task.status = AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
-        task.current_phase = "external_reviewing"
+        if task.status != AgentTeamTaskStatus.WAITING_HUMAN.value:
+            task.status = AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
+            task.current_phase = "external_reviewing"
         if pr_info.get("head_sha"):
             task.pr_head_sha = pr_info["head_sha"]
         await session.commit()
+
+
+async def _is_original_pr_agent_task(pr_info: dict[str, Any]) -> bool:
+    """Check whether a PR event belongs to a direct original-head Agent task.
+
+    Direct PR tasks intentionally keep the contributor's branch name, so the
+    old ``sakura-agent/`` prefix is no longer a reliable marker when a GitHub
+    synchronize event is sent by the Agent installation user.
+    """
+
+    branch = pr_info.get("branch") or ""
+    if not branch:
+        return False
+
+    from sqlalchemy import select
+
+    from backend.models.agent_team_models import (
+        AgentTeamSourceType,
+        AgentTeamTask,
+        AgentTeamTaskStatus,
+    )
+
+    incoming_head_sha = pr_info.get("head_sha") or pr_info.get("after")
+    try:
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(AgentTeamTask)
+                .where(
+                    AgentTeamTask.repo_owner == pr_info["repo_owner"],
+                    AgentTeamTask.repo_name == pr_info["repo_name"],
+                    AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+                    AgentTeamTask.source_issue_number == pr_info["pr_number"],
+                    AgentTeamTask.pr_head_branch == branch,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                )
+                .order_by(AgentTeamTask.id.desc())
+            )
+            for task in result.scalars().all():
+                if task.status != AgentTeamTaskStatus.COMPLETED.value:
+                    return True
+                task_head_sha = getattr(task, "pr_head_sha", None)
+                if (
+                    incoming_head_sha
+                    and task_head_sha
+                    and str(task_head_sha).lower() == str(incoming_head_sha).lower()
+                ):
+                    # A completed direct task is still allowed to identify the
+                    # synchronize webhook for the commit it just produced.  A
+                    # later human commit has a different SHA and cannot use
+                    # this bot-filter bypass.
+                    return True
+            return False
+    except Exception as exc:
+        logger.warning("识别原 PR head 的 Agent 任务失败: {}", exc)
+        return False
 
 
 router = APIRouter()
@@ -540,6 +630,10 @@ async def handle_pull_request_event(
         author = pr_info.get("author", "")
         branch = pr_info.get("branch", "")
         is_agent_team_pr = branch.startswith("sakura-agent/")
+        if not is_agent_team_pr and bot_username and (
+            sender == bot_username or author == bot_username
+        ):
+            is_agent_team_pr = await _is_original_pr_agent_task(pr_info)
 
         if bot_username and (sender == bot_username or author == bot_username):
             if is_agent_team_pr:
@@ -2079,6 +2173,61 @@ async def _check_agent_permission(
     return None
 
 
+def _validate_pr_head_admission(
+    github_app: GitHubAppClient,
+    base_repo_full_name: str,
+    pr_head_info: dict[str, Any],
+) -> str | None:
+    """验证 direct PR 的 head 仓库和触发时 SHA 在入队前可写。"""
+    head_repo_full_name = str(pr_head_info.get("head_repo_full_name") or "").strip()
+    head_branch = str(pr_head_info.get("head_branch") or "").strip()
+    head_sha = str(pr_head_info.get("head_sha") or "").strip()
+    if not head_repo_full_name or head_repo_full_name.count("/") != 1:
+        return "原 PR head 仓库格式无效，无法直接修改当前 PR。"
+    if not head_branch or not head_sha:
+        return "原 PR head 分支或提交不存在，无法直接修改当前 PR。"
+
+    head_owner, head_name = head_repo_full_name.split("/", 1)
+    try:
+        base_client = pr_head_info.get("_base_client")
+        if head_repo_full_name.casefold() == base_repo_full_name.casefold() and base_client:
+            client = base_client
+        else:
+            client = github_app.get_repo_client(head_owner, head_name)
+        if not client:
+            return (
+                f"原 PR head 仓库 {head_repo_full_name} 未安装 Sakura-AI GitHub App，"
+                "无法直接写入原 PR。"
+            )
+
+        repo = client.get_repo(head_repo_full_name)
+        branch = repo.get_branch(head_branch)
+        actual_sha = getattr(getattr(branch, "commit", None), "sha", None)
+        if not actual_sha:
+            return "无法读取原 PR head 分支的当前提交，请稍后重试。"
+        if str(actual_sha).lower() != head_sha.lower():
+            return "原 PR head 在校验期间已发生变化，请重新触发 /agent。"
+
+        permissions = getattr(repo, "permissions", None)
+        if isinstance(permissions, dict) and permissions.get("push") is False:
+            return (
+                f"Sakura-AI GitHub App 对原 PR head 仓库 {head_repo_full_name} "
+                "没有 Contents 写入权限，无法直接修改原 PR。"
+            )
+    except Exception as exc:
+        logger.warning(
+            "校验原 PR head admission 失败: repo={}, branch={}, error={}",
+            head_repo_full_name,
+            head_branch,
+            exc,
+        )
+        return (
+            f"无法访问原 PR head 仓库 {head_repo_full_name} 或分支 {head_branch}，"
+            "请确认仓库已安装 Sakura-AI GitHub App 且 PR 仍然有效。"
+        )
+    return None
+
+
 async def _consume_agent_quota_or_cleanup(
     github_app: GitHubAppClient,
     repo_owner: str,
@@ -2472,16 +2621,71 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         ):
             return err
 
-        # 获取 PR head_sha（供 create_task_from_pr_review 记录）
-        def _get_pr_head_sha():
-            client = github_app.get_repo_client(repo_owner, repo_name)
-            if not client:
+        # 读取原 PR head 的完整可执行身份。PR_REVIEW 任务会直接续写该
+        # 分支，因此只保存 SHA 不足以定位 fork PR 的写入仓库。
+        def _get_pr_head_info():
+            try:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if not client:
+                    return None
+                repo = client.get_repo(repo_full_name)
+                pr = repo.get_pull(pr_number)
+                head = getattr(pr, "head", None)
+                head_repo = getattr(head, "repo", None)
+                return {
+                    "head_sha": getattr(head, "sha", None),
+                    "head_branch": getattr(head, "ref", None),
+                    "head_repo_full_name": getattr(head_repo, "full_name", None),
+                    "pr_url": getattr(pr, "html_url", None),
+                    # 只在当前请求内复用 base installation client；该对象不
+                    # 会写入 task，也不会进入响应或持久化字段。
+                    "_base_client": client,
+                }
+            except Exception as exc:
+                logger.warning("读取 PR head 信息失败: {}", exc)
                 return None
-            repo = client.get_repo(repo_full_name)
-            pr = repo.get_pull(pr_number)
-            return pr.head.sha if pr and pr.head else None
 
-        head_sha = await asyncio.to_thread(_get_pr_head_sha)
+        pr_head_info = await asyncio.to_thread(_get_pr_head_info)
+        if not pr_head_info or not all(
+            pr_head_info.get(key)
+            for key in ("head_sha", "head_branch", "head_repo_full_name")
+        ):
+            await _post_issue_comment(
+                github_app,
+                repo_owner,
+                repo_name,
+                repo_full_name,
+                pr_number,
+                "❌ 无法读取原 PR head 分支或提交，请确认 PR 仍然有效且 head 仓库可访问。",
+            )
+            return JSONResponse(
+                status_code=409,
+                content={"status": "error", "reason": "PR head unavailable"},
+            )
+
+        admission_error = await asyncio.to_thread(
+            _validate_pr_head_admission,
+            github_app,
+            repo_full_name,
+            pr_head_info,
+        )
+        if admission_error:
+            await _post_issue_comment(
+                github_app,
+                repo_owner,
+                repo_name,
+                repo_full_name,
+                pr_number,
+                f"❌ {admission_error}",
+            )
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "error",
+                    "reason": "PR head not writable",
+                    "detail": admission_error,
+                },
+            )
 
         # 创建 Agent 修复任务（自带 duplicate guard + PRReview 存在性检查）
         from backend.services.agent_team.candidate_service import (
@@ -2497,7 +2701,10 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     pr_number=pr_number,
                     started_by=commenter,
                     base_branch=base_branch,
-                    head_sha=head_sha,
+                    head_sha=pr_head_info["head_sha"],
+                    head_branch=pr_head_info["head_branch"],
+                    head_repo_full_name=pr_head_info["head_repo_full_name"],
+                    pr_url=pr_head_info.get("pr_url"),
                 )
             except ValueError as e:
                 logger.warning("/agent PR 创建任务失败: {}", e)
@@ -2535,7 +2742,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
         # 回复确认评论
-        branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
+        branch_info = (
+            f"（忽略 base:{base_branch}，PR 修复目标仍为原 head）" if base_branch else ""
+        )
         await _post_issue_comment(
             github_app,
             repo_owner,
@@ -2543,16 +2752,17 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
             repo_full_name,
             pr_number,
             f"Agent 修复任务已创建（ID: {task_id}）{branch_info}\n\n"
-            f"将基于 PR #{pr_number} 的审查意见创建独立修复分支并提交 PR。\n"
+            f"将基于 PR #{pr_number} 的审查意见生成修复。\n"
             f"由 @{commenter} 触发",
         )
 
         logger.info(
-            "/agent PR 任务已创建: {}#{}, task_id={}, base={}",
+            "/agent PR 任务已创建: {}#{}, task_id={}, head={}/{}",
             repo_full_name,
             pr_number,
             task_id,
-            base_branch or "default",
+            pr_head_info["head_repo_full_name"],
+            pr_head_info["head_branch"],
         )
 
         return JSONResponse(

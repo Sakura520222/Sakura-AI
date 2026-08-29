@@ -1,8 +1,10 @@
 """Unit tests for /agent command in webhook handler."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
+from github.GithubException import UnknownObjectException
 
 from backend.api import webhook
 from backend.services.database_reset_runtime_service import (
@@ -242,6 +244,207 @@ async def test_agent_command_ignored_on_pr():
     assert response.status_code == 200
     # /agent PR 命令由 handle_pr_agent_command 处理，功能禁用时返回 "skipped"
     assert b"skipped" in response.body, f"Expected 'skipped' but got: {response.body}"
+
+
+@pytest.mark.asyncio
+async def test_pr_agent_command_passes_original_head_identity(monkeypatch):
+    payload = _base_payload()
+    payload["issue"]["pull_request"] = {
+        "url": "https://api.github.com/repos/owner/repo/pulls/42"
+    }
+    captured = {}
+    comments = []
+
+    class HeadRepo:
+        full_name = "alice/repo-fork"
+
+    class PullRequest:
+        head = type(
+            "Head",
+            (),
+            {"sha": "b" * 40, "ref": "feature/original", "repo": HeadRepo()},
+        )()
+        html_url = "https://github.com/owner/repo/pull/42"
+
+    class Repo:
+        def get_pull(self, number):
+            assert number == 42
+            return PullRequest()
+
+        def get_branch(self, name):
+            assert name == "feature/original"
+            return SimpleNamespace(commit=SimpleNamespace(sha="b" * 40))
+
+    class Client:
+        def get_repo(self, full_name):
+            assert full_name in {"owner/repo", "alice/repo-fork"}
+            return Repo()
+
+    class GithubApp(_FakeGitHubApp):
+        def get_repo_client(self, owner, repo):
+            assert (owner, repo) in {("owner", "repo"), ("alice", "repo-fork")}
+            return Client()
+
+    class CapturingCandidateService:
+        async def create_task_from_pr_review(self, db, **kwargs):
+            captured.update(kwargs)
+            return _FakeTask()
+
+    def register_background(awaitable, source):
+        assert source == "agent_team_webhook"
+        awaitable.close()
+
+    async def record_comment(*args):
+        comments.append(args[-1])
+
+    _make_base_mocks(monkeypatch)
+    monkeypatch.setattr(webhook, "GitHubAppClient", GithubApp)
+    monkeypatch.setattr(webhook, "_post_issue_comment", record_comment)
+    monkeypatch.setattr(
+        webhook,
+        "create_registered_background_task",
+        register_background,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.AgentTeamCandidateService",
+        CapturingCandidateService,
+    )
+
+    response = await webhook.handle_pr_agent_command(payload)
+
+    assert response.status_code == 200
+    assert b"accepted" in response.body
+    assert captured["repo_full_name"] == "owner/repo"
+    assert captured["pr_number"] == 42
+    assert captured["head_sha"] == "b" * 40
+    assert captured["head_branch"] == "feature/original"
+    assert captured["head_repo_full_name"] == "alice/repo-fork"
+    assert captured["pr_url"] == "https://github.com/owner/repo/pull/42"
+    assert comments and "将基于 PR #42 的审查意见生成修复。" in comments[0]
+    assert "feature/original" not in comments[0]
+    assert "sakura-agent" not in comments[0]
+    assert "第二个 PR" not in comments[0]
+
+
+@pytest.mark.parametrize(
+    ("head_repo", "branch_sha", "expected_fragment"),
+    [
+        ("owner/repo", "b" * 40, None),
+        ("alice/repo-fork", "b" * 40, None),
+        ("alice/repo-fork", None, "未安装 Sakura-AI GitHub App"),
+        ("alice/repo-fork", "deleted", "无法访问原 PR head 仓库"),
+        ("alice/repo-fork", "c" * 40, "发生变化"),
+    ],
+)
+def test_validate_pr_head_admission_covers_repo_and_head_races(
+    head_repo, branch_sha, expected_fragment
+):
+    class Repo:
+        permissions = {"push": True}
+
+        def get_branch(self, branch):
+            assert branch == "feature/original"
+            if branch_sha == "deleted":
+                raise UnknownObjectException(404, {"message": "Not Found"})
+            return SimpleNamespace(commit=SimpleNamespace(sha=branch_sha))
+
+    class Client:
+        def get_repo(self, full_name):
+            assert full_name == head_repo
+            return Repo()
+
+    class App:
+        def get_repo_client(self, owner, repo):
+            if head_repo == "owner/repo":
+                return Client()
+            if branch_sha is None:
+                return None
+            if (owner, repo) == ("alice", "repo-fork"):
+                return Client()
+            return None
+
+    info = {
+        "head_repo_full_name": head_repo,
+        "head_branch": "feature/original",
+        "head_sha": "b" * 40,
+        "_base_client": Client() if head_repo == "owner/repo" else None,
+    }
+    error = webhook._validate_pr_head_admission(App(), "owner/repo", info)
+
+    if expected_fragment is None:
+        assert error is None
+    else:
+        assert error is not None
+        assert expected_fragment in error
+
+
+@pytest.mark.asyncio
+async def test_pr_agent_command_rejects_uninstalled_head_before_task_or_quota(
+    monkeypatch,
+):
+    payload = _base_payload()
+    payload["issue"]["pull_request"] = {
+        "url": "https://api.github.com/repos/owner/repo/pulls/42"
+    }
+    comments = []
+    calls = {"head_client": 0, "candidate": 0, "quota": 0}
+
+    class HeadRepo:
+        full_name = "alice/repo-fork"
+
+    class PullRequest:
+        head = SimpleNamespace(
+            sha="b" * 40,
+            ref="feature/original",
+            repo=HeadRepo(),
+        )
+        html_url = "https://github.com/owner/repo/pull/42"
+
+    class BaseRepo:
+        def get_pull(self, number):
+            assert number == 42
+            return PullRequest()
+
+    class Client:
+        def get_repo(self, full_name):
+            assert full_name == "owner/repo"
+            return BaseRepo()
+
+    class GithubApp(_FakeGitHubApp):
+        def get_repo_client(self, owner, repo):
+            if (owner, repo) == ("owner", "repo"):
+                return Client()
+            calls["head_client"] += 1
+            return None
+
+    class CapturingTelegramService(_FakeTelegramService):
+        async def check_and_consume_agent_quota(self, *args, **kwargs):
+            calls["quota"] += 1
+            return True, ""
+
+    class FailingCandidateService:
+        async def create_task_from_pr_review(self, *args, **kwargs):
+            calls["candidate"] += 1
+            raise AssertionError("admission must run before task creation")
+
+    async def record_comment(*args):
+        comments.append(args[-1])
+
+    _make_base_mocks(monkeypatch, telegram_service_cls=CapturingTelegramService)
+    monkeypatch.setattr(webhook, "GitHubAppClient", GithubApp)
+    monkeypatch.setattr(webhook, "_post_issue_comment", record_comment)
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.AgentTeamCandidateService",
+        FailingCandidateService,
+    )
+
+    response = await webhook.handle_pr_agent_command(payload)
+    body = json.loads(response.body.decode())
+
+    assert response.status_code == 409
+    assert body["reason"] == "PR head not writable"
+    assert calls == {"head_client": 1, "candidate": 0, "quota": 0}
+    assert comments and "未安装 Sakura-AI GitHub App" in comments[0]
 
 
 @pytest.mark.asyncio
