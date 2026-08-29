@@ -72,14 +72,15 @@ RUNNER_GID = 65532
 # The workspace virtualenv is created by the trusted dependency admission
 # step.  Keeping it first in the server-owned PATH makes every later Agent
 # command use the same environment without accepting request-side env values.
+CONTAINER_SANDBOX_VENV = f"{CONTAINER_WORKSPACE}/.venv/sandbox"
 FIXED_PATH = (
-    f"{CONTAINER_WORKSPACE}/.venv/bin:/usr/local/sbin:/usr/local/bin:"
+    f"{CONTAINER_SANDBOX_VENV}/bin:/usr/local/sbin:/usr/local/bin:"
     "/usr/sbin:/usr/bin:/sbin:/bin"
 )
 FIXED_ENVIRONMENT = (
     f"HOME={CONTAINER_HOME}",
     f"PATH={FIXED_PATH}",
-    f"VIRTUAL_ENV={CONTAINER_WORKSPACE}/.venv",
+    f"VIRTUAL_ENV={CONTAINER_SANDBOX_VENV}",
     "LANG=C.UTF-8",
     "LC_ALL=C.UTF-8",
     "CI=true",
@@ -380,7 +381,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         self._workspace_leases: dict[str, _WorkspaceLease] = {}
         self._lock = asyncio.Lock()
         # Handoff runs once for a stable workspace inode.  It must happen
-        # before the dependency runner creates ``.venv``; later one-shot
+        # before the dependency runner creates ``.venv/sandbox``; later one-shot
         # commands reuse the handoff so legitimate venv symlinks are never
         # mistaken for a pre-existing untrusted workspace symlink.  A daemon
         # restart clears this state and revalidates the complete tree.
@@ -2452,6 +2453,7 @@ def _detach_task(task: asyncio.Task[Any]) -> None:
 
 __all__ = [
     "CONTAINER_HOME",
+    "CONTAINER_SANDBOX_VENV",
     "CONTAINER_TMP",
     "CONTAINER_WORKSPACE",
     "DOCKER_CLI_ENV",
