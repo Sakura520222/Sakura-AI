@@ -1197,6 +1197,53 @@ async def test_timeout_result_is_explicit(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cancel_cleanup_failure_is_not_reported_as_cancelled(
+    tmp_path, monkeypatch
+):
+    """A failed tree cleanup must surface as infrastructure failure."""
+
+    service, workspace = _workspace(tmp_path)
+
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
+
+    async def failed_terminate(process_tree):
+        # Keep this test self-cleaning while simulating a tree-specific
+        # failure: the process has no descendants, so killing the parent is
+        # sufficient to avoid leaking it from the test process.
+        if process_tree._process.returncode is None:
+            process_tree._process.kill()
+        return "simulated process-tree cleanup failure"
+
+    monkeypatch.setattr(
+        execution_module._ProcessTreeController,
+        "terminate",
+        failed_terminate,
+    )
+    cancel_event = asyncio.Event()
+    cancel_event.set()
+    result = await asyncio.wait_for(
+        LocalExecutionRunner(workspace, service).execute(
+            ExecutionRequest(
+                workspace_key=execution_workspace_key(workspace, service),
+                argv=("python", "-c", "import time; time.sleep(10)"),
+                cancel_event=cancel_event,
+            )
+        ),
+        timeout=4,
+    )
+
+    assert not result.cancelled
+    assert result.infrastructure_error is not None
+    assert "simulated process-tree cleanup failure" in result.infrastructure_error
+
+
+@pytest.mark.asyncio
 async def test_trusted_git_runner_uses_ephemeral_askpass_without_token_in_argv(
     tmp_path, monkeypatch
 ):

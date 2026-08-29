@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -10,6 +11,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 from backend.core.config import get_dynamic_config, get_settings
 from backend.core.github_app import GitHubAppClient
+from backend.services.agent_team.dependency_venv import (
+    DependencyVenvLifecycleMixin,
+)
 from backend.services.agent_team.execution import (
     ExecutionError,
     ExecutionProfile,
@@ -41,6 +45,8 @@ _repo_locks_guard = asyncio.Lock()
 # 防止 Lock 字典无限增长的简单上限。
 # 实际场景中仓库数量远小于此值，超出时清理最旧的条目。
 _REPO_LOCKS_MAX_SIZE = 256
+
+
 async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
     """获取同仓库 clone/fetch/worktree 操作的进程内锁。
 
@@ -64,7 +70,7 @@ async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
         return lock
 
 
-class AgentTeamGitWorkspaceService:
+class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
     """负责 clone/fetch/checkout Agent 独立工作区。"""
 
     BRANCH_PREFIX = "sakura-agent"
@@ -84,19 +90,21 @@ class AgentTeamGitWorkspaceService:
     ) -> bool:
         """Apply the task cancellation signal to one dependency result.
 
-        A runner's ``cancelled`` bit is meaningful only when it corresponds
-        to the task event owned by the worker.  Check that event first so a
-        late non-zero result cannot turn a genuine cancellation into a
-        failure.  An unexplained cancellation remains an infrastructure
-        error and must not make admission look successful.
+        Cleanup failures are infrastructure errors even when the task was
+        concurrently cancelled.  After that check, a runner's ``cancelled``
+        bit is meaningful only when it corresponds to the task event owned by
+        the worker; an unexplained cancellation must not make admission look
+        successful.
         """
 
+        if result.infrastructure_error:
+            raise ExecutionError(
+                f"Agent 依赖安装执行清理失败: {result.infrastructure_error}"
+            )
         if cancel_event is not None and cancel_event.is_set():
             return True
         if result.cancelled:
-            raise ExecutionError(
-                "Agent 依赖安装收到未关联任务取消的执行结果"
-            )
+            raise ExecutionError("Agent 依赖安装收到未关联任务取消的执行结果")
         return False
 
     async def prepare_workspace(
@@ -131,9 +139,7 @@ class AgentTeamGitWorkspaceService:
 
         repo_lock = await _get_repo_lock(repo_full_name)
         async with repo_lock:
-            base_executor = TrustedGitRunner(
-                base_workspace, self.workspace_service
-            )
+            base_executor = TrustedGitRunner(base_workspace, self.workspace_service)
             repo_executor = TrustedGitRunner(repo_root, self.workspace_service)
             credential_token = self._get_installation_token(repo_owner, repo_name)
             if not (base_workspace / ".git").exists():
@@ -222,7 +228,7 @@ class AgentTeamGitWorkspaceService:
 
         await self._install_workspace_dependencies(
             execution_runner,
-            self.workspace_service.resolve_inside_workspace(workspace),
+            self._safe_workspace_path(workspace),
             cancel_event=cancel_event,
         )
 
@@ -245,14 +251,14 @@ class AgentTeamGitWorkspaceService:
             return
 
         pyproject_path = self._resolve_dependency_path(workspace, "pyproject.toml")
-        requirements_path = self._resolve_dependency_path(
-            workspace, "requirements.txt"
-        )
+        requirements_path = self._resolve_dependency_path(workspace, "requirements.txt")
         has_pyproject = pyproject_path.is_file()
         has_requirements = requirements_path.is_file()
         if not has_pyproject and not has_requirements:
             return
 
+        # TrustedGitRunner inherits the local process implementation but is a
+        # trusted-control runner, never an Agent dependency backend.
         if type(executor) is LocalExecutionRunner:
             try:
                 network_policy = await get_agent_team_network_policy()
@@ -305,18 +311,28 @@ class AgentTeamGitWorkspaceService:
                 "Agent dependency installation requires the sandboxd egress capability"
             )
 
-        venv_dir = self._resolve_dependency_path(workspace, ".venv/sandbox")
-        if venv_dir.exists() and not venv_dir.is_dir():
-            raise ExecutionError("Agent 依赖 venv 不在工作区内或不是目录")
-        if not venv_dir.exists():
+        venv_dir = self._agent_dependency_venv_path(workspace, "sandbox")
+        needs_bootstrap = not os.path.lexists(str(venv_dir))
+        if not needs_bootstrap and not self._dependency_venv_has_launchers(
+            venv_dir,
+            "sandbox",
+        ):
+            self._remove_agent_dependency_venv(workspace, "sandbox")
+            needs_bootstrap = True
+
+        if needs_bootstrap:
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
+            venv_dir = self._create_dependency_venv_directory(
+                workspace,
+                "sandbox",
+            )
             result = await execute_request(
                 executor,
                 ExecutionRequest(
                     workspace_key=execution_workspace_key(
                         workspace, self.workspace_service
                     ),
-                    command="python -m venv /workspace/.venv/sandbox",
+                    command=("python -m venv --copies /workspace/.venv/sandbox"),
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
                     cancel_event=cancel_event,
@@ -328,13 +344,14 @@ class AgentTeamGitWorkspaceService:
                 raise ExecutionError(
                     f"创建 Agent 依赖 venv 失败: {result.stderr or result.stdout}"
                 )
+            venv_dir = self._agent_dependency_venv_path(workspace, "sandbox")
+            if not self._dependency_venv_has_launchers(venv_dir, "sandbox"):
+                raise ExecutionError("创建 Agent sandbox 依赖 venv 不完整")
 
         # Re-resolve after the bootstrap request.  A replacement symlink or
         # junction must never redirect the final pip request outside the task
         # workspace.
-        venv_dir = self._resolve_dependency_path(workspace, ".venv/sandbox")
-        if venv_dir.exists() and not venv_dir.is_dir():
-            raise ExecutionError("Agent 依赖 venv 不在工作区内或不是目录")
+        venv_dir = self._agent_dependency_venv_path(workspace, "sandbox")
 
         # sandboxd runner images are Linux OCI images even when the Web
         # process is developed on Windows; use the container-visible path.
@@ -362,9 +379,7 @@ class AgentTeamGitWorkspaceService:
                     workspace_key=execution_workspace_key(
                         workspace, self.workspace_service
                     ),
-                    command=(
-                        f"{pip_cmd} install -r requirements.txt --quiet"
-                    ),
+                    command=(f"{pip_cmd} install -r requirements.txt --quiet"),
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
                     cancel_event=cancel_event,
@@ -399,10 +414,23 @@ class AgentTeamGitWorkspaceService:
             raise ExecutionError("Agent 本地依赖 runner 与工作区不匹配")
 
         workspace_key = execution_workspace_key(workspace, self.workspace_service)
-        venv_dir = self._resolve_dependency_path(workspace, ".venv/local")
-        if venv_dir.exists() and not venv_dir.is_dir():
-            raise ExecutionError("Agent 本地依赖 venv 不在工作区内或不是目录")
-        if not venv_dir.exists():
+        venv_dir = self._agent_dependency_venv_path(workspace, "local")
+        needs_bootstrap = not os.path.lexists(str(venv_dir))
+        if not needs_bootstrap and not self._dependency_venv_has_launchers(
+            venv_dir,
+            "local",
+        ):
+            self._remove_agent_dependency_venv(workspace, "local")
+            needs_bootstrap = True
+
+        if needs_bootstrap:
+            # Reserve the exact internal path before starting bootstrap. A
+            # cancellation/timeout/nonzero exit leaves a partial tree that the
+            # next admission detects and recreates.
+            venv_dir = self._create_dependency_venv_directory(
+                workspace,
+                "local",
+            )
             logger.info("Agent 工作区创建本地 venv: {}", venv_dir)
             result = await execute_request(
                 executor,
@@ -430,15 +458,13 @@ class AgentTeamGitWorkspaceService:
         # Re-resolve after the bootstrap request before deriving the host
         # interpreter path, so a newly-created/replaced link cannot escape the
         # task workspace between the two dependency requests.
-        venv_dir = self._resolve_dependency_path(workspace, ".venv/local")
-        if venv_dir.exists() and not venv_dir.is_dir():
-            raise ExecutionError("Agent 本地依赖 venv 不在工作区内或不是目录")
+        venv_dir = self._agent_dependency_venv_path(workspace, "local")
+        if not self._dependency_venv_has_launchers(venv_dir, "local"):
+            raise ExecutionError("创建 Agent 本地依赖 venv 不完整")
         try:
             dependency_python = executor.dependency_venv_python()
         except (OSError, RuntimeError, ValueError) as exc:
-            raise ExecutionError(
-                "Agent 本地依赖 Python 路径不在工作区内"
-            ) from exc
+            raise ExecutionError("Agent 本地依赖 Python 路径不在工作区内") from exc
         if has_pyproject:
             dependency_args = (
                 str(dependency_python),
@@ -584,7 +610,9 @@ class AgentTeamGitWorkspaceService:
             executor, ["git", "status", "--short"], "status short"
         )
         return "\n".join(
-            item for item in (stat_result.stdout.strip(), status_result.stdout.strip()) if item
+            item
+            for item in (stat_result.stdout.strip(), status_result.stdout.strip())
+            if item
         )
 
     async def get_changed_file_stats(self, workspace: str | Path) -> dict[str, dict]:
@@ -713,11 +741,7 @@ def _strip_git_credentials(value: str) -> str:
             raise ValueError("Git remote 不得包含 query 或 fragment")
         if "@" not in parsed.netloc:
             return value
-        if (
-            scheme == "ssh"
-            and parsed.username == "git"
-            and parsed.password is None
-        ):
+        if scheme == "ssh" and parsed.username == "git" and parsed.password is None:
             return value
         # 保留 host、端口、IPv6 方括号和大小写，只切掉最后一个 @ 之前的
         # userinfo；TrustedGitRunner 会进一步要求 SSH URL 使用 git 用户。
@@ -725,7 +749,7 @@ def _strip_git_credentials(value: str) -> str:
         return urlunsplit(
             (parsed.scheme, host_netloc, parsed.path, parsed.query, parsed.fragment)
         )
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         if isinstance(value, str) and _looks_like_scp_remote(value):
             userinfo, target = value.split("@", 1)
             if userinfo == "git":

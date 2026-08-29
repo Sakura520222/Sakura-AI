@@ -14,13 +14,16 @@ import math
 import os
 import re
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 import weakref
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -84,6 +87,21 @@ MAX_GIT_CONFIG_BYTES = 1_048_576
 MAX_GIT_REFS_LOGS_NODES = 65_536
 MAX_GIT_OBJECTS_DIRECT_NODES = 512
 MAX_GIT_OBJECTS_AUX_NODES = 8_192
+
+# A cancelled or timed-out process must not leave the caller waiting forever
+# for a descendant that inherited one of the stdout/stderr pipe handles.  The
+# values are deliberately short and bounded: a failed cleanup is surfaced as
+# infrastructure_error instead of being silently converted into success.
+_PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 2.0
+_PROCESS_TREE_COMMUNICATE_GRACE_SECONDS = 0.5
+
+# These constants are absent from ``subprocess`` on POSIX, but keeping the
+# documented Win32 values here lets platform-contract tests exercise the
+# Windows launch path without pretending the host is Windows.
+_WINDOWS_CREATE_NEW_PROCESS_GROUP = getattr(
+    subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+)
+_WINDOWS_CREATE_SUSPENDED = getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
 
 _DEFAULT_REMOTE_PORTS = {"http": 80, "https": 443, "ssh": 22}
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -343,6 +361,393 @@ def _consume_task(task: asyncio.Task[Any]) -> None:
         consume(task)
     else:
         task.add_done_callback(consume)
+
+
+class _ProcessTreeController:
+    """Keep one local subprocess and all of its descendants together.
+
+    POSIX children start in a fresh session, so the process id is also the
+    process-group id and cancellation can terminate the complete group.  On
+    Windows a Job Object is the only boundary here that is both race-resistant
+    for descendants created after admission and independent of command text.
+    The controller never accepts a user supplied pid or invokes a shell.
+    """
+
+    _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _PROCESS_TERMINATE = 0x0001
+    _PROCESS_SET_QUOTA = 0x0100
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self._pid = getattr(process, "pid", None)
+        self._process_group_id: int | None = None
+        self._kernel32: Any | None = None
+        self._job_handle: Any | None = None
+        self._setup_error: Exception | None = None
+
+        if not isinstance(self._pid, int) or self._pid <= 0:
+            # Test doubles and processes without a native pid do not expose a
+            # safe tree boundary.  Their existing process.kill() behavior is
+            # retained as a compatibility fallback.
+            return
+        if os.name == "nt":
+            try:
+                self._attach_windows_job(self._pid)
+            except Exception as exc:
+                # The process already exists when asyncio hands it back.  Do
+                # not let an attach failure escape before execute() has a
+                # chance to collect output and terminate the complete tree.
+                self._setup_error = exc
+        else:
+            # The caller passes start_new_session=True.  Keep the group id
+            # even when the parent has already exited: a descendant can still
+            # hold stdout/stderr open and must be terminated through this
+            # session's process group.
+            self._process_group_id = self._pid
+
+    @property
+    def setup_error(self) -> Exception | None:
+        """Return a Windows isolation setup failure, if one occurred."""
+
+        return self._setup_error
+
+    def _attach_windows_job(self, pid: int) -> None:
+        """Assign the child to a kill-on-close Windows Job Object."""
+
+        import ctypes
+        from ctypes import wintypes
+
+        class _JobObjectBasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
+
+        class _JobObjectExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _JobObjectBasicLimitInformation),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.AssignProcessToJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+        ]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+
+        job_handle = kernel32.CreateJobObjectW(None, None)
+        if not job_handle:
+            self._raise_windows_error(ctypes, "CreateJobObjectW")
+        try:
+            limits = _JobObjectExtendedLimitInformation()
+            limits.BasicLimitInformation.LimitFlags = (
+                self._JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            )
+            if not kernel32.SetInformationJobObject(
+                job_handle,
+                self._JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(limits),
+                ctypes.sizeof(limits),
+            ):
+                self._raise_windows_error(ctypes, "SetInformationJobObject")
+
+            process_handle = kernel32.OpenProcess(
+                self._PROCESS_TERMINATE | self._PROCESS_SET_QUOTA,
+                False,
+                pid,
+            )
+            if not process_handle:
+                self._raise_windows_error(ctypes, "OpenProcess")
+            try:
+                if not kernel32.AssignProcessToJobObject(job_handle, process_handle):
+                    self._raise_windows_error(ctypes, "AssignProcessToJobObject")
+            finally:
+                kernel32.CloseHandle(process_handle)
+        except BaseException:
+            kernel32.CloseHandle(job_handle)
+            raise
+
+        self._kernel32 = kernel32
+        self._job_handle = job_handle
+
+    def resume(self) -> str | None:
+        """Resume a Windows child after its Job Object has been attached.
+
+        ``asyncio`` exposes the process handle through its subprocess
+        transport, while ``subprocess.Popen`` closes the initial thread
+        handle before returning.  ``NtResumeProcess`` is the native operation
+        that reliably resumes the suspended process through that retained
+        process handle.  The process is created with CREATE_SUSPENDED and has
+        no opportunity to execute payload code before Job admission.
+        """
+
+        if os.name != "nt" or self._pid is None:
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            transport = getattr(self._process, "_transport", None)
+            get_extra_info = getattr(transport, "get_extra_info", None)
+            if get_extra_info is None:
+                raise ExecutionError("Windows subprocess transport 不可用")
+            popen = get_extra_info("subprocess")
+            process_handle = getattr(popen, "_handle", None)
+            if process_handle is None:
+                raise ExecutionError("Windows subprocess handle 不可用")
+
+            ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+            ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+            ntdll.NtResumeProcess.restype = ctypes.c_long
+            status = int(ntdll.NtResumeProcess(int(process_handle)))
+            if status != 0:
+                return f"Windows NtResumeProcess 失败 (status 0x{status & 0xFFFFFFFF:08x})"
+        except Exception as exc:
+            return f"Windows 恢复挂起进程失败: {exc}"
+        return None
+
+    @staticmethod
+    def _raise_windows_error(ctypes_module: Any, operation: str) -> None:
+        error_code = ctypes_module.get_last_error()
+        raise ExecutionError(f"Windows {operation} 失败 (error {error_code})")
+
+    @staticmethod
+    def _windows_taskkill_path() -> Path:
+        """Resolve the signed-in-system ``taskkill.exe`` without PATH lookup."""
+
+        import ctypes
+        from ctypes import wintypes
+
+        system_directory: str | None = None
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetSystemDirectoryW.argtypes = [
+                wintypes.LPWSTR,
+                wintypes.UINT,
+            ]
+            kernel32.GetSystemDirectoryW.restype = wintypes.UINT
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = kernel32.GetSystemDirectoryW(buffer, len(buffer))
+            if 0 < length < len(buffer):
+                system_directory = buffer.value
+        except (AttributeError, OSError, TypeError):
+            # Tests and constrained Windows environments may not expose the
+            # API.  The environment fallback still avoids PATH resolution and
+            # is checked for an absolute System32 path below.
+            system_directory = None
+        if not system_directory:
+            system_root = (
+                os.environ.get("SystemRoot")
+                or os.environ.get("SYSTEMROOT")
+                or os.environ.get("WINDIR")
+            )
+            if not system_root:
+                raise ExecutionError("无法定位 Windows System32 目录")
+            system_directory = os.path.join(system_root, "System32")
+        path = Path(system_directory) / "taskkill.exe"
+        if (
+            not path.is_absolute()
+            or path.parent.name.casefold() != "system32"
+            or path.name.casefold() != "taskkill.exe"
+        ):
+            raise ExecutionError("Windows taskkill 路径不是绝对 System32 路径")
+        return path
+
+    async def _terminate_windows_with_taskkill(self) -> str | None:
+        """Kill a native process tree through an absolute system binary."""
+
+        if self._pid is None:
+            return "Windows taskkill 缺少有效进程 id"
+        try:
+            taskkill = self._windows_taskkill_path()
+            process = await asyncio.create_subprocess_exec(
+                str(taskkill),
+                "/PID",
+                str(self._pid),
+                "/T",
+                "/F",
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            return f"Windows taskkill 启动失败: {exc}"
+
+        wait_task = asyncio.create_task(process.wait())
+        try:
+            returncode = await asyncio.wait_for(
+                asyncio.shield(wait_task),
+                timeout=_PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            try:
+                process.kill()
+            except (OSError, ProcessLookupError) as exc:
+                return f"Windows taskkill 超时且无法终止: {exc}"
+            try:
+                returncode = await asyncio.wait_for(
+                    asyncio.shield(wait_task),
+                    timeout=_PROCESS_TREE_COMMUNICATE_GRACE_SECONDS,
+                )
+            except (TimeoutError, asyncio.CancelledError) as exc:
+                wait_task.cancel()
+                with suppress(BaseException):
+                    await wait_task
+                return f"Windows taskkill 清理超时: {exc}"
+        except asyncio.CancelledError:
+            # A caller cancellation must not leave the helper alive.  The
+            # helper has no pipes and gets the same bounded kill treatment.
+            try:
+                process.kill()
+            except (OSError, ProcessLookupError):
+                pass
+            wait_task.cancel()
+            with suppress(BaseException):
+                await wait_task
+            raise
+        except Exception as exc:
+            wait_task.cancel()
+            with suppress(BaseException):
+                await wait_task
+            return f"Windows taskkill 等待失败: {exc}"
+
+        if returncode != 0:
+            return f"Windows taskkill 返回码 {returncode}"
+        return None
+
+    async def terminate(self) -> str | None:
+        """Terminate the complete process tree and report cleanup failures."""
+
+        errors: list[str] = []
+        if self._job_handle is not None and self._kernel32 is not None:
+            try:
+                if self._kernel32.TerminateJobObject(self._job_handle, 1):
+                    return None
+                errors.append("TerminateJobObject 返回失败")
+            except Exception as exc:
+                errors.append(f"TerminateJobObject 异常: {exc}")
+            # The job has KILL_ON_JOB_CLOSE, so a successful close is a
+            # complete-tree fallback when explicit termination raced teardown.
+            close_error = self._close_job_handle()
+            if close_error is None:
+                return None
+            errors.append(close_error)
+
+        if self._process_group_id is not None:
+            posix_error = self._terminate_posix_group()
+            if posix_error is None:
+                return None
+            errors.append(posix_error)
+
+        if os.name == "nt" and self._pid is not None:
+            taskkill_error = await self._terminate_windows_with_taskkill()
+            if taskkill_error is None:
+                return None
+            errors.append(taskkill_error)
+
+        if self._process.returncode is None:
+            try:
+                self._process.kill()
+            except (OSError, ProcessLookupError) as exc:
+                errors.append(f"父进程 fallback kill 失败: {exc}")
+            else:
+                # A top-level kill is intentionally not reported as complete
+                # tree cleanup.  Descendants may still hold inherited pipes.
+                errors.append("仅终止了父进程，进程树清理未确认")
+        elif not errors and self._process_group_id is None:
+            errors.append("未建立安全的进程树边界")
+        return "; ".join(errors) if errors else None
+
+    def _close_job_handle(self) -> str | None:
+        if self._job_handle is None or self._kernel32 is None:
+            return None
+        try:
+            if not self._kernel32.CloseHandle(self._job_handle):
+                return "Windows CloseHandle 失败"
+        except Exception as exc:
+            return f"Windows CloseHandle 异常: {exc}"
+        self._job_handle = None
+        return None
+
+    def _terminate_posix_group(self) -> str | None:
+        if self._process_group_id is None or self._pid is None:
+            return None
+        try:
+            current_group = os.getpgid(self._pid)
+        except ProcessLookupError:
+            # asyncio may reap the parent before communicate() observes EOF
+            # from a descendant.  The process-group id was captured at spawn
+            # time, so still issue the group kill; killpg itself reports the
+            # harmless "group already gone" case.
+            try:
+                os.killpg(self._process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                return None
+            except OSError as exc:
+                return f"killpg 失败: {exc}"
+            return None
+        except OSError as exc:
+            return f"读取本地进程组失败: {exc}"
+        if current_group != self._process_group_id:
+            return "本地进程组 identity 发生变化，拒绝 killpg"
+        try:
+            os.killpg(self._process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            return None
+        except OSError as exc:
+            return f"killpg 失败: {exc}"
+        return None
+
+    def close(self) -> str | None:
+        """Release the Windows Job Object after process output is collected."""
+
+        return self._close_job_handle()
 
 
 def _mask_sensitive_arg(value: str) -> str:
@@ -671,6 +1076,7 @@ class LocalExecutionRunner:
         elif request.profile is ExecutionProfile.DEPENDENCY:
             self._validate_dependency_request(request)
         env = self._build_env(request.env)
+        process_group_kwargs = self._process_group_kwargs()
         if request.command is not None:
             process = await asyncio.create_subprocess_shell(
                 request.command,
@@ -678,6 +1084,7 @@ class LocalExecutionRunner:
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **process_group_kwargs,
             )
             display_command = request.command
         else:
@@ -688,12 +1095,41 @@ class LocalExecutionRunner:
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **process_group_kwargs,
             )
             display_command = _display_args(args)
 
+        process_tree = _ProcessTreeController(process)
         communicate_task = asyncio.create_task(process.communicate())
         cancel_waiter: asyncio.Task[bool] | None = None
+        result: ExecutionResult | None = None
         try:
+            if process_tree.setup_error is not None:
+                _, _, cleanup_error = await self._terminate_and_collect(
+                    process,
+                    process_tree,
+                    communicate_task,
+                )
+                detail = f": {cleanup_error}" if cleanup_error else ""
+                raise ExecutionError(
+                    f"本地进程树隔离初始化失败{detail}"
+                ) from process_tree.setup_error
+
+            resume_error = process_tree.resume()
+            if resume_error:
+                _, _, cleanup_error = await self._terminate_and_collect(
+                    process,
+                    process_tree,
+                    communicate_task,
+                )
+                detail = self._join_infrastructure_errors(
+                    resume_error,
+                    cleanup_error,
+                )
+                raise ExecutionError(
+                    f"本地进程树恢复失败: {detail}"
+                )
+
             if request.cancel_event is None:
                 stdout, stderr = await asyncio.wait_for(
                     asyncio.shield(communicate_task),
@@ -707,46 +1143,90 @@ class LocalExecutionRunner:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if cancel_waiter in done and communicate_task not in done:
-                    await self._kill_process(process)
-                    stdout, stderr = await communicate_task
-                    return self._result(
+                    stdout, stderr, cleanup_error = (
+                        await self._terminate_and_collect(
+                            process,
+                            process_tree,
+                            communicate_task,
+                        )
+                    )
+                    result = self._result(
                         display_command,
                         safe_cwd,
                         process.returncode,
                         stdout,
                         stderr,
-                        cancelled=True,
+                        # A cancellation is only reported as completed
+                        # cancellation when tree cleanup was confirmed.  A
+                        # cleanup failure is an infrastructure failure and
+                        # must not be mistaken for a normal cancelled result.
+                        cancelled=cleanup_error is None,
+                        infrastructure_error=cleanup_error,
                     )
-                if communicate_task not in done:
+                elif communicate_task not in done:
                     raise TimeoutError
-                stdout, stderr = communicate_task.result()
+                else:
+                    stdout, stderr = communicate_task.result()
+
+            if result is None:
+                result = self._result(
+                    display_command,
+                    safe_cwd,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                )
         except TimeoutError:
-            await self._kill_process(process)
-            stdout, stderr = await communicate_task
-            return self._result(
+            stdout, stderr, cleanup_error = await self._terminate_and_collect(
+                process,
+                process_tree,
+                communicate_task,
+            )
+            result = self._result(
                 display_command,
                 safe_cwd,
                 process.returncode,
                 stdout,
                 stderr,
                 timed_out=True,
+                infrastructure_error=cleanup_error,
             )
         except asyncio.CancelledError:
-            await self._kill_process(process)
-            await communicate_task
+            cleanup_task = asyncio.create_task(
+                self._terminate_and_collect(
+                    process,
+                    process_tree,
+                    communicate_task,
+                )
+            )
+            try:
+                _, _, cleanup_error = await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                # Keep cleanup bounded even if a second cancellation arrives.
+                await cleanup_task
+                raise
+            if cleanup_error:
+                raise ExecutionError(
+                    f"本地进程树清理失败: {cleanup_error}"
+                )
             raise
         finally:
             if cancel_waiter is not None and not cancel_waiter.done():
                 cancel_waiter.cancel()
                 _consume_task(cancel_waiter)
+            close_error = process_tree.close()
+            if close_error and result is not None:
+                result = replace(
+                    result,
+                    infrastructure_error=self._join_infrastructure_errors(
+                        result.infrastructure_error,
+                        close_error,
+                    ),
+                )
 
-        return self._result(
-            display_command,
-            safe_cwd,
-            process.returncode,
-            stdout,
-            stderr,
-        )
+        if result is None:
+            raise ExecutionError("本地进程没有产生执行结果")
+        return result
 
     async def run(
         self,
@@ -859,9 +1339,125 @@ class LocalExecutionRunner:
         return env
 
     @staticmethod
-    async def _kill_process(process: asyncio.subprocess.Process) -> None:
+    def _process_group_kwargs() -> dict[str, object]:
+        """Return platform-specific child-tree isolation settings."""
+
+        if os.name == "nt":
+            return {
+                "creationflags": (
+                    _WINDOWS_CREATE_NEW_PROCESS_GROUP
+                    | _WINDOWS_CREATE_SUSPENDED
+                )
+            }
+        return {"start_new_session": True}
+
+    @staticmethod
+    async def _kill_process(
+        process: asyncio.subprocess.Process,
+        process_tree: _ProcessTreeController | None = None,
+    ) -> str | None:
+        if process_tree is not None:
+            # The parent can already have exited while a descendant still
+            # holds an inherited stdout/stderr pipe.  Always terminate the
+            # controller's group/job in that case; checking returncode here
+            # would leave communicate() waiting on the descendant.
+            return await process_tree.terminate()
         if process.returncode is None:
-            process.kill()
+            # Compatibility path for callers that provide no controller.
+            # LocalExecutionRunner always creates one for real processes.
+            try:
+                process.kill()
+            except (OSError, ProcessLookupError) as exc:
+                return f"父进程 fallback kill 失败: {exc}"
+            return "未建立安全的进程树边界"
+        return "未建立安全的进程树边界"
+
+    @staticmethod
+    def _close_process_transport(process: asyncio.subprocess.Process) -> str | None:
+        """Close subprocess pipes when a descendant ignores tree cleanup."""
+
+        transport = getattr(process, "_transport", None)
+        close_error: str | None = None
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception as exc:
+                close_error = f"关闭本地进程 transport 失败: {exc}"
+        # Test doubles and alternate event-loop implementations may not
+        # expose the private subprocess transport.  Close any public stream
+        # objects that provide a close method as a best-effort fallback.
+        for stream_name in ("stdin", "stdout", "stderr"):
+            stream = getattr(process, stream_name, None)
+            close = getattr(stream, "close", None)
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception as exc:
+                if close_error is None:
+                    close_error = f"关闭本地进程 {stream_name} 失败: {exc}"
+        return close_error
+
+    @staticmethod
+    async def _collect_communicate(
+        process: asyncio.subprocess.Process,
+        communicate_task: asyncio.Task[tuple[bytes, bytes]],
+    ) -> tuple[bytes, bytes, str | None]:
+        """Collect process output with a hard bound after termination."""
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communicate_task),
+                timeout=_PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
+            )
+            return stdout, stderr, None
+        except TimeoutError:
+            errors = ["等待本地进程输出关闭超时"]
+            close_error = LocalExecutionRunner._close_process_transport(process)
+            if close_error:
+                errors.append(close_error)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(communicate_task),
+                    timeout=_PROCESS_TREE_COMMUNICATE_GRACE_SECONDS,
+                )
+                return stdout, stderr, "; ".join(errors)
+            except TimeoutError:
+                errors.append("本地进程输出管道仍未关闭")
+                if not communicate_task.done():
+                    communicate_task.cancel()
+                with suppress(BaseException):
+                    await communicate_task
+                return b"", b"", "; ".join(errors)
+
+    @staticmethod
+    def _join_infrastructure_errors(*errors: str | None) -> str | None:
+        values = [error for error in errors if error]
+        return "; ".join(values) if values else None
+
+    async def _terminate_and_collect(
+        self,
+        process: asyncio.subprocess.Process,
+        process_tree: _ProcessTreeController,
+        communicate_task: asyncio.Task[tuple[bytes, bytes]],
+    ) -> tuple[bytes, bytes, str | None]:
+        """Terminate a process tree and collect output without unbounded waits."""
+
+        try:
+            termination_error = await self._kill_process(process, process_tree)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            termination_error = f"本地进程树终止异常: {exc}"
+        stdout, stderr, communicate_error = await self._collect_communicate(
+            process,
+            communicate_task,
+        )
+        return (
+            stdout,
+            stderr,
+            self._join_infrastructure_errors(termination_error, communicate_error),
+        )
 
     def _result(
         self,
@@ -873,6 +1469,7 @@ class LocalExecutionRunner:
         *,
         timed_out: bool = False,
         cancelled: bool = False,
+        infrastructure_error: str | None = None,
     ) -> ExecutionResult:
         return ExecutionResult(
             command=_mask_sensitive_arg(command),
@@ -882,6 +1479,7 @@ class LocalExecutionRunner:
             stderr=stderr.decode("utf-8", errors="replace"),
             timed_out=timed_out,
             cancelled=cancelled,
+            infrastructure_error=infrastructure_error,
         )
 
     def _validate_command(self, command: str) -> None:
