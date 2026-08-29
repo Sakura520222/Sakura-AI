@@ -3,7 +3,7 @@
 {% block title %}{{ _('about.title') }} - Sakura AI{% endblock %}
 
 {% block content %}
-<div class="space-y-6 max-w-2xl">
+<div class="space-y-6 max-w-4xl mx-auto">
     <!-- 页面标题 -->
     <div>
         <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('about.title') }}</h1>
@@ -20,8 +20,21 @@
             </div>
             <div>
                 <h2 class="text-xl font-bold">Sakura AI</h2>
-                <div class="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm text-gray-500 dark:text-gray-400">
                     <span class="font-mono">v{{ app_version }}</span>
+                    {% if build_channel == 'stable' %}
+                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400">{{ _('about.channel_stable') }}</span>
+                    {% elif build_channel == 'development' %}
+                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">{{ _('about.channel_development') }}</span>
+                    {% else %}
+                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _('about.channel_source') }}</span>
+                    {% endif %}
+                    {% if build_revision %}
+                    <span>|</span>
+                    <a href="{{ repo_url }}/commit/{{ build_revision }}" target="_blank" rel="noopener"
+                       class="font-mono text-sakura-600 dark:text-sakura-400 hover:underline"
+                       title="{{ _('about.build_revision') }}: {{ build_revision }}">{{ build_revision[:7] }}</a>
+                    {% endif %}
                     <span>|</span>
                     <span>{{ build_date }}</span>
                 </div>
@@ -102,6 +115,49 @@
                     <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('about.ai_model') }}</p>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- 项目链接 -->
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-6">
+        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">{{ _('about.links') }}</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <a href="{{ repo_url }}" target="_blank" rel="noopener"
+               class="group flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">
+                <div class="w-8 h-8 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium group-hover:text-sakura-600 dark:group-hover:text-sakura-400 transition-colors">{{ _('about.github_repo') }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('about.github_repo_desc') }}</p>
+                </div>
+            </a>
+            <a href="{{ repo_url }}#readme" target="_blank" rel="noopener"
+               class="group flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">
+                <div class="w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium group-hover:text-sakura-600 dark:group-hover:text-sakura-400 transition-colors">{{ _('about.documentation') }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('about.documentation_desc') }}</p>
+                </div>
+            </a>
+            <a href="{{ repo_url }}/issues" target="_blank" rel="noopener"
+               class="group flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">
+                <div class="w-8 h-8 bg-rose-100 dark:bg-rose-900/30 rounded-lg flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4 text-rose-600 dark:text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium group-hover:text-sakura-600 dark:group-hover:text-sakura-400 transition-colors">{{ _('about.report_issue') }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('about.report_issue_desc') }}</p>
+                </div>
+            </a>
         </div>
     </div>
 </div>
