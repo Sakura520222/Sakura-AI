@@ -77,6 +77,28 @@ class AgentTeamGitWorkspaceService:
         self.github_app = github_app or GitHubAppClient()
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
 
+    @staticmethod
+    def _dependency_result_was_cancelled(
+        result: ExecutionResult,
+        cancel_event: asyncio.Event | None,
+    ) -> bool:
+        """Apply the task cancellation signal to one dependency result.
+
+        A runner's ``cancelled`` bit is meaningful only when it corresponds
+        to the task event owned by the worker.  Check that event first so a
+        late non-zero result cannot turn a genuine cancellation into a
+        failure.  An unexplained cancellation remains an infrastructure
+        error and must not make admission look successful.
+        """
+
+        if cancel_event is not None and cancel_event.is_set():
+            return True
+        if result.cancelled:
+            raise ExecutionError(
+                "Agent 依赖安装收到未关联任务取消的执行结果"
+            )
+        return False
+
     async def prepare_workspace(
         self,
         repo_owner: str,
@@ -186,6 +208,8 @@ class AgentTeamGitWorkspaceService:
         self,
         workspace: str | Path,
         execution_runner: ExecutionRunner,
+        *,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
         """安装工作区依赖 after the workspace-scoped runner is admitted.
 
@@ -199,10 +223,15 @@ class AgentTeamGitWorkspaceService:
         await self._install_workspace_dependencies(
             execution_runner,
             self.workspace_service.resolve_inside_workspace(workspace),
+            cancel_event=cancel_event,
         )
 
     async def _install_workspace_dependencies(
-        self, executor: ExecutionRunner, workspace: Path
+        self,
+        executor: ExecutionRunner,
+        workspace: Path,
+        *,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
         """为工作区安装项目依赖（仅 Python 项目创建 venv）。"""
         from loguru import logger
@@ -240,6 +269,7 @@ class AgentTeamGitWorkspaceService:
                 executor,
                 workspace,
                 has_pyproject=has_pyproject,
+                cancel_event=cancel_event,
             )
             return
 
@@ -275,7 +305,9 @@ class AgentTeamGitWorkspaceService:
                 "Agent dependency installation requires the sandboxd egress capability"
             )
 
-        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        venv_dir = self._resolve_dependency_path(workspace, ".venv/sandbox")
+        if venv_dir.exists() and not venv_dir.is_dir():
+            raise ExecutionError("Agent 依赖 venv 不在工作区内或不是目录")
         if not venv_dir.exists():
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
             result = await execute_request(
@@ -284,11 +316,14 @@ class AgentTeamGitWorkspaceService:
                     workspace_key=execution_workspace_key(
                         workspace, self.workspace_service
                     ),
-                    command="python -m venv /workspace/.venv",
+                    command="python -m venv /workspace/.venv/sandbox",
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
+                    cancel_event=cancel_event,
                 ),
             )
+            if self._dependency_result_was_cancelled(result, cancel_event):
+                return
             if result.returncode != 0:
                 raise ExecutionError(
                     f"创建 Agent 依赖 venv 失败: {result.stderr or result.stdout}"
@@ -297,7 +332,7 @@ class AgentTeamGitWorkspaceService:
         # Re-resolve after the bootstrap request.  A replacement symlink or
         # junction must never redirect the final pip request outside the task
         # workspace.
-        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        venv_dir = self._resolve_dependency_path(workspace, ".venv/sandbox")
         if venv_dir.exists() and not venv_dir.is_dir():
             raise ExecutionError("Agent 依赖 venv 不在工作区内或不是目录")
 
@@ -306,7 +341,7 @@ class AgentTeamGitWorkspaceService:
         # The daemon maps this full-access dependency request to its
         # server-owned egress network.  No request or model field can select
         # or widen that network.
-        pip_cmd = "/workspace/.venv/bin/pip"
+        pip_cmd = "/workspace/.venv/sandbox/bin/pip"
         if has_pyproject:
             result = await execute_request(
                 executor,
@@ -317,6 +352,7 @@ class AgentTeamGitWorkspaceService:
                     command=f"{pip_cmd} install -e . --quiet",
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
+                    cancel_event=cancel_event,
                 ),
             )
         elif has_requirements:
@@ -331,8 +367,11 @@ class AgentTeamGitWorkspaceService:
                     ),
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
+                    cancel_event=cancel_event,
                 ),
             )
+        if self._dependency_result_was_cancelled(result, cancel_event):
+            return
         if result.returncode != 0:
             raise ExecutionError(
                 f"安装 Agent 工作区依赖失败: {result.stderr or result.stdout}"
@@ -344,6 +383,7 @@ class AgentTeamGitWorkspaceService:
         workspace: Path,
         *,
         has_pyproject: bool,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
         """在 full_access 源码开发模式下使用本机 venv 安装依赖。
 
@@ -359,7 +399,9 @@ class AgentTeamGitWorkspaceService:
             raise ExecutionError("Agent 本地依赖 runner 与工作区不匹配")
 
         workspace_key = execution_workspace_key(workspace, self.workspace_service)
-        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        venv_dir = self._resolve_dependency_path(workspace, ".venv/local")
+        if venv_dir.exists() and not venv_dir.is_dir():
+            raise ExecutionError("Agent 本地依赖 venv 不在工作区内或不是目录")
         if not venv_dir.exists():
             logger.info("Agent 工作区创建本地 venv: {}", venv_dir)
             result = await execute_request(
@@ -370,13 +412,16 @@ class AgentTeamGitWorkspaceService:
                         str(executor.dependency_python_executable),
                         "-m",
                         "venv",
-                        ".venv",
+                        ".venv/local",
                     ),
                     cwd=PurePosixPath("."),
                     profile=ExecutionProfile.DEPENDENCY,
                     timeout_seconds=600,
+                    cancel_event=cancel_event,
                 ),
             )
+            if self._dependency_result_was_cancelled(result, cancel_event):
+                return
             if result.returncode != 0:
                 raise ExecutionError(
                     f"创建 Agent 本地依赖 venv 失败: {result.stderr or result.stdout}"
@@ -385,7 +430,9 @@ class AgentTeamGitWorkspaceService:
         # Re-resolve after the bootstrap request before deriving the host
         # interpreter path, so a newly-created/replaced link cannot escape the
         # task workspace between the two dependency requests.
-        venv_dir = self._resolve_dependency_path(workspace, ".venv")
+        venv_dir = self._resolve_dependency_path(workspace, ".venv/local")
+        if venv_dir.exists() and not venv_dir.is_dir():
+            raise ExecutionError("Agent 本地依赖 venv 不在工作区内或不是目录")
         try:
             dependency_python = executor.dependency_venv_python()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -420,8 +467,11 @@ class AgentTeamGitWorkspaceService:
                 cwd=PurePosixPath("."),
                 profile=ExecutionProfile.DEPENDENCY,
                 timeout_seconds=600,
+                cancel_event=cancel_event,
             ),
         )
+        if self._dependency_result_was_cancelled(result, cancel_event):
+            return
         if result.returncode != 0:
             raise ExecutionError(
                 f"安装 Agent 本地工作区依赖失败: {result.stderr or result.stdout}"

@@ -478,7 +478,7 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
     async def capture(request):
         requests.append(request)
         if len(requests) == 1:
-            (workspace / ".venv").mkdir()
+            (workspace / ".venv" / "local").mkdir(parents=True)
         return ExecutionResult(exit_code=0)
 
     monkeypatch.setattr(executor, "execute", capture)
@@ -505,13 +505,13 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
         str(Path(sys.executable).resolve()),
         "-m",
         "venv",
-        ".venv",
+        ".venv/local",
     )
-    venv_python = workspace / ".venv" / (
+    venv_python = workspace / ".venv" / "local" / (
         "Scripts" if os.name == "nt" else "bin"
     ) / ("python.exe" if os.name == "nt" else "python")
     assert requests[1].argv == (
-        str(venv_python.resolve()),
+        str(venv_python),
         "-m",
         "pip",
         "install",
@@ -549,7 +549,7 @@ async def test_install_workspace_dependencies_does_not_treat_trusted_git_as_loca
     with pytest.raises(ExecutionError, match="explicit sandbox runner"):
         await service.install_workspace_dependencies(workspace, executor)
 
-    assert not (workspace / ".venv").exists()
+    assert not (workspace / ".venv" / "local").exists()
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_install_workspace_dependencies_rejects_external_venv_python_symli
     workspace = workspace_service.ensure_workspace("owner", "repo")
     script_dir = "Scripts" if os.name == "nt" else "bin"
     executable = "python.exe" if os.name == "nt" else "python"
-    venv_python = workspace / ".venv" / script_dir / executable
+    venv_python = workspace / ".venv" / "local" / script_dir / executable
     venv_python.parent.mkdir(parents=True)
     outside = tmp_path / f"outside-{executable}"
     outside.write_text("not an interpreter\n")
@@ -615,12 +615,14 @@ async def test_install_workspace_dependencies_rejects_external_venv_python_symli
     executor = LocalExecutionRunner(workspace, workspace_service)
     spawned = False
 
-    async def fail_execute(_request):
-        nonlocal spawned
-        spawned = True
-        raise AssertionError("external venv Python must fail before spawn")
+    async def validate_execute(request):
+        return await LocalExecutionRunner.execute(executor, request)
 
-    monkeypatch.setattr(executor, "execute", fail_execute)
+    monkeypatch.setattr(executor, "execute", validate_execute)
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
+    )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
         lambda _key: _async_value(True),

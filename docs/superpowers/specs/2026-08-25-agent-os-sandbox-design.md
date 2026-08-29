@@ -167,8 +167,8 @@ class ExecutionResult:
 
 ```text
 HOME=/home/agent
-PATH=/workspace/.venv/bin:<runner image fixed path>
-VIRTUAL_ENV=/workspace/.venv
+PATH=/workspace/.venv/sandbox/bin:<runner image fixed path>
+VIRTUAL_ENV=/workspace/.venv/sandbox
 LANG=C.UTF-8
 LC_ALL=C.UTF-8
 CI=true

@@ -826,13 +826,18 @@ async def test_local_runner_executes_dependency_profile_only_with_full_access(
     result = await runner.execute(
         ExecutionRequest(
             workspace_key=runner.workspace_key,
-            argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
+            argv=(
+                str(Path(sys.executable).resolve()),
+                "-m",
+                "venv",
+                ".venv/local",
+            ),
             profile=ExecutionProfile.DEPENDENCY,
         )
     )
 
     assert result.returncode == 0
-    assert (workspace / ".venv").is_dir()
+    assert (workspace / ".venv" / "local").is_dir()
 
 
 @pytest.mark.asyncio
@@ -853,12 +858,17 @@ async def test_local_runner_rejects_dependency_profile_without_full_access(
 
     request = ExecutionRequest(
         workspace_key=execution_workspace_key(workspace, service),
-        argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
+        argv=(
+            str(Path(sys.executable).resolve()),
+            "-m",
+            "venv",
+            ".venv/local",
+        ),
         profile=ExecutionProfile.DEPENDENCY,
     )
     with pytest.raises(ExecutionError, match="full_access"):
         await runner.execute(request)
-    assert not (workspace / ".venv").exists()
+    assert not (workspace / ".venv" / "local").exists()
 
 
 @pytest.mark.asyncio
@@ -972,7 +982,12 @@ async def test_local_runner_rechecks_full_access_between_dependency_requests(
     key = runner.workspace_key
     bootstrap = ExecutionRequest(
         workspace_key=key,
-        argv=(str(Path(sys.executable).resolve()), "-m", "venv", ".venv"),
+        argv=(
+            str(Path(sys.executable).resolve()),
+            "-m",
+            "venv",
+            ".venv/local",
+        ),
         profile=ExecutionProfile.DEPENDENCY,
     )
     dependency = ExecutionRequest(

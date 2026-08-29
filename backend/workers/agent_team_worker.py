@@ -116,6 +116,8 @@ class AgentTeamWorker:
         self,
         git_service: AgentTeamGitWorkspaceService,
         workspace: Path,
+        *,
+        cancel_event: asyncio.Event | None = None,
     ) -> ExecutionRunner:
         """Create runner then install untrusted dependencies through it.
 
@@ -129,7 +131,14 @@ class AgentTeamWorker:
             workspace,
             git_service.workspace_service,
         )
-        await install_dependencies(workspace, runner)
+        if cancel_event is None:
+            await install_dependencies(workspace, runner)
+        else:
+            await install_dependencies(
+                workspace,
+                runner,
+                cancel_event=cancel_event,
+            )
         return runner
 
     async def process_task(self, task_id: int, resume: bool = False) -> int:
@@ -204,6 +213,7 @@ class AgentTeamWorker:
             execution_runner = await self._admit_workspace_runner(
                 git_service,
                 workspace,
+                cancel_event=cancel_event,
             )
             if cancel_event.is_set():
                 await self._update_task(
@@ -583,6 +593,7 @@ class AgentTeamWorker:
             execution_runner = await self._admit_workspace_runner(
                 git_service,
                 workspace_info.workspace,
+                cancel_event=cancel_event,
             )
             if cancel_event.is_set():
                 terminal = True
@@ -821,6 +832,7 @@ class AgentTeamWorker:
             execution_runner = await self._admit_workspace_runner(
                 git_service,
                 workspace_info.workspace,
+                cancel_event=cancel_event,
             )
             if cancel_event.is_set():
                 terminal = True
