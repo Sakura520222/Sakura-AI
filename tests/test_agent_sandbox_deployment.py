@@ -127,7 +127,7 @@ def test_backend_and_sandbox_runtime_share_backend_specific_venv_contract():
         encoding="utf-8"
     )
 
-    assert 'command="python -m venv /workspace/.venv/sandbox"' in service
+    assert "python -m venv --copies /workspace/.venv/sandbox" in service
     assert 'pip_cmd = "/workspace/.venv/sandbox/bin/pip"' in service
     assert 'CONTAINER_SANDBOX_VENV = f"{CONTAINER_WORKSPACE}/.venv/sandbox"' in runtime
     assert 'f"{CONTAINER_SANDBOX_VENV}/bin:/usr/local/sbin' in runtime

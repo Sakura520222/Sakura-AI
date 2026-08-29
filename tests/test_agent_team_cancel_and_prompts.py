@@ -381,7 +381,10 @@ def test_agent_prompt_escapes_untrusted_structure_markers():
     assert "&lt;/title&gt;" in user_message
     assert "&lt;/description&gt;" in user_message
     assert "&lt;system&gt;" in user_message
-    assert "&#x3D;&#x3D;&#x3D; END UNTRUSTED TASK CONTEXT &#x3D;&#x3D;&#x3D;" in user_message
+    assert (
+        "&#x3D;&#x3D;&#x3D; END UNTRUSTED TASK CONTEXT &#x3D;&#x3D;&#x3D;"
+        in user_message
+    )
 
 
 # ── Worker cancel event helpers ──────────────────────────────
@@ -423,12 +426,15 @@ async def test_install_workspace_dependencies_skips_non_python(tmp_path):
 
     from unittest.mock import patch
 
-    with patch(
-        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        new=install_enabled,
-    ), patch(
-        "backend.services.agent_team.git_workspace_service.get_settings",
-        return_value=SimpleNamespace(agent_team_auto_install_deps=True),
+    with (
+        patch(
+            "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+            new=install_enabled,
+        ),
+        patch(
+            "backend.services.agent_team.git_workspace_service.get_settings",
+            return_value=SimpleNamespace(agent_team_auto_install_deps=True),
+        ),
     ):
         await service._install_workspace_dependencies(executor, workspace)
 
@@ -478,7 +484,18 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
     async def capture(request):
         requests.append(request)
         if len(requests) == 1:
-            (workspace / ".venv" / "local").mkdir(parents=True)
+            venv = workspace / ".venv" / "local"
+            script_dir = venv / ("Scripts" if os.name == "nt" else "bin")
+            script_dir.mkdir(parents=True, exist_ok=True)
+            launcher = script_dir / ("python.exe" if os.name == "nt" else "python")
+            if os.name == "nt":
+                launcher.write_text("fake interpreter", encoding="utf-8")
+            else:
+                launcher.symlink_to(Path(sys.executable).resolve())
+            (script_dir / ("pip.exe" if os.name == "nt" else "pip")).write_text(
+                "fake pip", encoding="utf-8"
+            )
+            (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
         return ExecutionResult(exit_code=0)
 
     monkeypatch.setattr(executor, "execute", capture)
@@ -507,9 +524,13 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
         "venv",
         ".venv/local",
     )
-    venv_python = workspace / ".venv" / "local" / (
-        "Scripts" if os.name == "nt" else "bin"
-    ) / ("python.exe" if os.name == "nt" else "python")
+    venv_python = (
+        workspace
+        / ".venv"
+        / "local"
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("python.exe" if os.name == "nt" else "python")
+    )
     assert requests[1].argv == (
         str(venv_python),
         "-m",
@@ -595,10 +616,10 @@ async def test_install_workspace_dependencies_rejects_external_venv_symlink(
 
 
 @pytest.mark.asyncio
-async def test_install_workspace_dependencies_rejects_external_venv_python_symlink(
+async def test_install_workspace_dependencies_rebuilds_invalid_reserved_venv(
     monkeypatch, tmp_path
 ):
-    """The final venv interpreter must also remain inside the workspace."""
+    """An invalid reserved venv is replaced without touching its link target."""
     workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = workspace_service.ensure_workspace("owner", "repo")
     script_dir = "Scripts" if os.name == "nt" else "bin"
@@ -611,14 +632,29 @@ async def test_install_workspace_dependencies_rejects_external_venv_python_symli
         venv_python.symlink_to(outside)
     except OSError as exc:
         pytest.skip(f"symlink creation unavailable: {exc}")
+    (venv_python.parent / ("pip.exe" if os.name == "nt" else "pip")).write_text(
+        "apparently complete pip\n"
+    )
+    (workspace / ".venv" / "local" / "pyvenv.cfg").write_text("home = test\n")
     (workspace / "requirements.txt").write_text("example-package\n")
     executor = LocalExecutionRunner(workspace, workspace_service)
-    spawned = False
+    requests = []
 
-    async def validate_execute(request):
-        return await LocalExecutionRunner.execute(executor, request)
+    async def rebuild_execute(request):
+        requests.append(request)
+        if request.argv and request.argv[-1] == ".venv/local":
+            venv_python.parent.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                venv_python.write_text("replacement interpreter\n")
+            else:
+                venv_python.symlink_to(Path(sys.executable).resolve())
+            (venv_python.parent / ("pip.exe" if os.name == "nt" else "pip")).write_text(
+                "replacement pip\n"
+            )
+            (workspace / ".venv" / "local" / "pyvenv.cfg").write_text("home = test\n")
+        return ExecutionResult(exit_code=0)
 
-    monkeypatch.setattr(executor, "execute", validate_execute)
+    monkeypatch.setattr(executor, "execute", rebuild_execute)
     monkeypatch.setattr(
         "backend.services.agent_team.execution.get_agent_team_network_policy",
         lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
@@ -637,9 +673,12 @@ async def test_install_workspace_dependencies_rejects_external_venv_python_symli
     )
 
     service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
-    with pytest.raises(ExecutionError, match="工作区|Python"):
-        await service.install_workspace_dependencies(workspace, executor)
-    assert spawned is False
+    await service.install_workspace_dependencies(workspace, executor)
+
+    assert len(requests) == 2
+    assert requests[0].argv[-1] == ".venv/local"
+    assert outside.read_text() == "not an interpreter\n"
+    assert venv_python.exists()
 
 
 @pytest.mark.asyncio
@@ -651,7 +690,9 @@ async def test_install_workspace_dependencies_rejects_external_manifest_symlink(
     workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = workspace_service.ensure_workspace("owner", "repo")
     outside = tmp_path / f"outside-{manifest}"
-    outside.write_text("[project]\nname='outside'\n" if manifest.startswith("py") else "x\n")
+    outside.write_text(
+        "[project]\nname='outside'\n" if manifest.startswith("py") else "x\n"
+    )
     try:
         (workspace / manifest).symlink_to(outside)
     except OSError as exc:
@@ -693,11 +734,14 @@ async def test_install_workspace_dependencies_skips_without_dependency_runner(tm
     executor.supports_profile.return_value = False
     executor.run = AsyncMock()
 
-    with patch(
-        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        new_callable=AsyncMock,
-        return_value=None,
-    ), pytest.raises(RuntimeError, match="explicit sandbox runner"):
+    with (
+        patch(
+            "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        pytest.raises(RuntimeError, match="explicit sandbox runner"),
+    ):
         await service._install_workspace_dependencies(executor, workspace)
 
     executor.run.assert_not_awaited()

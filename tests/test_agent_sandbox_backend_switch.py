@@ -31,6 +31,20 @@ from backend.services.agent_team.workspace_service import AgentTeamWorkspaceServ
 from backend.workers.agent_team_worker import AgentTeamWorker
 
 
+async def _async_value(value):
+    return value
+
+
+def _write_complete_sandbox_venv(workspace: Path) -> None:
+    venv = workspace / ".venv" / "sandbox"
+    scripts = venv / "bin"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "python").write_text("fake interpreter", encoding="utf-8")
+    (scripts / "pip").write_text("fake pip", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
+    (venv / "lib64").mkdir(exist_ok=True)
+
+
 def test_missing_runner_injection_fails_closed(tmp_path: Path):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
@@ -119,6 +133,7 @@ async def test_worker_admission_creates_runner_before_dependency_install(
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     calls: list[tuple[Path, object]] = []
+    prepared: list[tuple[Path, str]] = []
     runner = SimpleNamespace(
         supports_profile=lambda profile: profile
         in {ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY}
@@ -126,6 +141,9 @@ async def test_worker_admission_creates_runner_before_dependency_install(
 
     class FakeGitService:
         workspace_service = service
+
+        async def prepare_workspace_for_execution_backend(self, path, backend):
+            prepared.append((Path(path), backend))
 
         async def install_workspace_dependencies(self, path, execution_runner):
             calls.append((Path(path), execution_runner))
@@ -141,6 +159,7 @@ async def test_worker_admission_creates_runner_before_dependency_install(
     admitted = await worker._admit_workspace_runner(FakeGitService(), workspace)
 
     assert admitted is runner
+    assert prepared == [(workspace, "sandbox")]
     assert calls == [(workspace, runner)]
 
 
@@ -205,9 +224,69 @@ async def test_local_worker_admission_skips_inapplicable_dependency_install(
 
     worker = AgentTeamWorker()
     git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    prepared: list[tuple[Path, str]] = []
+
+    async def prepare(path, backend):
+        prepared.append((Path(path), backend))
+
+    monkeypatch.setattr(
+        git_service,
+        "prepare_workspace_for_execution_backend",
+        prepare,
+    )
     admitted = await worker._admit_workspace_runner(git_service, workspace)
 
     assert isinstance(admitted, LocalExecutionRunner)
+    assert prepared == [(workspace, "local")]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_worker_prepares_before_dependency_policy_skip(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """Policy skip still requires backend preparation before first execution."""
+
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
+    git_service = AgentTeamGitWorkspaceService(workspace_service=service)
+    prepared: list[tuple[Path, str]] = []
+
+    async def prepare(path, backend):
+        prepared.append((Path(path), backend))
+
+    monkeypatch.setattr(
+        git_service,
+        "prepare_workspace_for_execution_backend",
+        prepare,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.WEB_TOOLS),
+    )
+    runner = SimpleNamespace(
+        egress_capability="none",
+        supports_profile=lambda profile: profile is ExecutionProfile.DEPENDENCY,
+    )
+
+    async def create_runner(_workspace, _workspace_service):
+        return runner
+
+    worker = AgentTeamWorker()
+    monkeypatch.setattr(worker, "_create_agent_execution_runner", create_runner)
+
+    assert await worker._admit_workspace_runner(git_service, workspace) is runner
+    assert prepared == [(workspace, "sandbox")]
+    assert not (workspace / ".venv").exists()
 
 
 @pytest.mark.asyncio
@@ -284,6 +363,10 @@ async def test_local_worker_admission_installs_python_dependencies_with_local_ru
             ) / ("python.exe" if os.name == "nt" else "python")
             launcher.parent.mkdir(parents=True, exist_ok=True)
             launcher.write_text("fake interpreter", encoding="utf-8")
+            (launcher.parent / ("pip.exe" if os.name == "nt" else "pip")).write_text(
+                "fake pip", encoding="utf-8"
+            )
+            (venv_root / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
         return FakeProcess()
 
     monkeypatch.setattr(
@@ -412,6 +495,8 @@ async def test_dependency_installation_uses_dependency_profile_only(
 
         async def execute(self, request):
             requests.append(request)
+            if request.command and "-m venv" in request.command:
+                _write_complete_sandbox_venv(workspace)
             return ExecutionResult(
                 command=request.command or " ".join(request.argv or ()),
                 cwd=".",
@@ -444,7 +529,7 @@ async def test_dependency_installation_uses_dependency_profile_only(
 
     assert len(requests) == 2
     assert all(item.profile is ExecutionProfile.DEPENDENCY for item in requests)
-    assert requests[0].command == "python -m venv /workspace/.venv/sandbox"
+    assert requests[0].command == "python -m venv --copies /workspace/.venv/sandbox"
     assert requests[1].command == (
         "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
     )
