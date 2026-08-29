@@ -610,6 +610,22 @@ class Settings(BaseSettings):
     issue_vector_store_rich_metadata: bool = True
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
+    # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
+    issue_vision_enabled: bool = True  # 总开关；模型能力仍需勾选"支持图片多模态"
+    issue_vision_max_image_size_bytes: int = 10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    issue_vision_allowed_image_domains: str = (
+        # 允许下载的图片域名（逗号分隔，段内支持 ``*`` 通配）；仅 GitHub
+        # 资产域，私有仓库经 installation 凭据下载，避免向任意外链发起请求
+        "user-images.githubusercontent.com,"
+        "private-user-images.githubusercontent.com,"
+        "github.com/user-attachments,"
+        "objects.githubusercontent.com,"
+        "media.githubusercontent.com,"
+        "avatars.githubusercontent.com,"
+        "camo.githubusercontent.com,"
+        # GitHub 用户资产 302 跳转目标：S3 签名桶
+        "github-production-user-asset-*.s3.amazonaws.com"
+    )
 
     # ========== PR 审查价格配置 ==========
     review_price_per_1k_prompt: float = 0.0
@@ -1202,6 +1218,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
+                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将下载并以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -1216,6 +1233,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "max_concurrent_issues",
                     "issue_vector_store_rich_metadata",
                     "issue_include_comments",
+                    "issue_vision_enabled",
                 ],
             },
         ),
@@ -1680,6 +1698,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_include_comments": "分析时包含评论对话",
+    "issue_vision_enabled": "Issue 分析读取图片（需模型支持图片多模态）",
     # Agent
     "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
