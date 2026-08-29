@@ -85,6 +85,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis** — Auto-classification, priority, label recommendation, duplicate detection, linked PR discovery
+- **Image Multimodal Analysis** — Screenshots in Issue bodies and comments are downloaded with GitHub credentials and fed to the AI as multimodal input (requires the per-model "supports image input" capability and the unified config toggle)
 - **Strict Issue Output Contract** — `<SAKURA_ISSUE_ANALYSIS>` envelope + multi-round repair + safe degradation
 - **Auto-labeling** — High-confidence labels applied automatically
 - **Auto-assignment** — Assigns to appropriate repository collaborators

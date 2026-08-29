@@ -23,6 +23,7 @@ def _configure_analyzer(monkeypatch, analyzer, client):
         ai_temperature = 0.2
         issue_price_per_1k_prompt = 1
         issue_price_per_1k_completion = 1
+        issue_vision_enabled = False
 
     analyzer.api_client = client
     analyzer.tool_manager = SimpleNamespace(
@@ -86,6 +87,15 @@ async def test_issue_analyzer_reraises_provider_cancellation(monkeypatch):
     class _Client:
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
+
+        async def resolve_role_primary_candidate(self, _role):
+            return SimpleNamespace(
+                model=SimpleNamespace(
+                    model_id="model-x",
+                    context_window_tokens=100_000,
+                    capabilities=SimpleNamespace(vision=False),
+                )
+            )
 
         async def call_with_retry(self, **_kwargs):
             raise cancellation

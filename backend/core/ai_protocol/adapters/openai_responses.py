@@ -135,6 +135,21 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                     }
                 )
                 continue
+            if msg.images and msg.role != "tool":
+                # Responses 多模态消息：input_text + input_image / multimodal input
+                content_items: list[dict[str, Any]] = []
+                if msg.content:
+                    content_items.append({"type": "input_text", "text": msg.content})
+                for image in msg.images:
+                    if image.data:
+                        url = f"data:{image.media_type or 'image/png'};base64,{image.data}"
+                    elif image.url:
+                        url = image.url
+                    else:
+                        continue
+                    content_items.append({"type": "input_image", "image_url": url})
+                input_items.append({"role": msg.role, "content": content_items})
+                continue
             input_items.append({"role": msg.role, "content": msg.content or ""})
         return "\n\n".join(instructions), input_items
 
