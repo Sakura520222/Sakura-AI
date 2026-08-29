@@ -160,14 +160,17 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
 
-        async def install_workspace_dependencies(self, workspace, runner):
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
             assert runner is execution_runner
+            assert cancel_event is not None
             from backend.services.agent_team.execution import ExecutionRequest
 
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                    command="python -m venv /workspace/.venv",
+                    command="python -m venv /workspace/.venv/sandbox",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )
@@ -356,15 +359,18 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
 
-        async def install_workspace_dependencies(self, workspace, runner):
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
             assert runner is execution_runner
+            assert cancel_event is not None
             from backend.services.agent_team.execution import ExecutionRequest
 
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
                     command=(
-                        "/workspace/.venv/bin/pip install -r requirements.txt --quiet"
+                        "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
                     ),
                     profile=ExecutionProfile.DEPENDENCY,
                 )
@@ -570,14 +576,17 @@ async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
                 workspace=tmp_path,
             )
 
-        async def install_workspace_dependencies(self, workspace, runner):
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
             assert runner is execution_runner
+            assert cancel_event is not None
             from backend.services.agent_team.execution import ExecutionRequest
 
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                    command="python -m venv /workspace/.venv",
+                    command="python -m venv /workspace/.venv/sandbox",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )

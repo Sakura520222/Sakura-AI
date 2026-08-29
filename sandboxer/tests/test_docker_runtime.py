@@ -411,10 +411,10 @@ def test_runner_environment_prefers_workspace_venv_and_sets_virtualenv(tmp_path:
         container_name="sakura-sandbox-sandbox-test123-request-42",
     )
     assert any(
-        item.startswith("PATH=/workspace/.venv/bin:") for item in argv
+        item.startswith("PATH=/workspace/.venv/sandbox/bin:") for item in argv
     )
-    assert "VIRTUAL_ENV=/workspace/.venv" in argv
-    assert "VIRTUAL_ENV=/workspace/.venv" in FIXED_ENVIRONMENT
+    assert "VIRTUAL_ENV=/workspace/.venv/sandbox" in argv
+    assert "VIRTUAL_ENV=/workspace/.venv/sandbox" in FIXED_ENVIRONMENT
 
 
 def test_egress_network_is_server_owned_and_agent_stays_offline(tmp_path: Path):
@@ -636,8 +636,10 @@ async def test_workspace_handoff_is_reused_after_venv_creation(tmp_path: Path, m
 
     monkeypatch.setattr(adapter, "_handoff_workspace_to_runner", fake_handoff)
     await adapter._ensure_workspace_handoff(snapshot, None)
-    (workspace / ".venv").mkdir()
-    (workspace / ".venv" / "python").symlink_to("/usr/bin/python3")
+    (workspace / ".venv" / "sandbox" / "bin").mkdir(parents=True)
+    (workspace / ".venv" / "sandbox" / "bin" / "python").symlink_to(
+        "/usr/bin/python3"
+    )
     await adapter._ensure_workspace_handoff(snapshot, None)
 
     assert calls == [workspace]

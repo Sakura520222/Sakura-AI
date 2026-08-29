@@ -88,6 +88,14 @@ MAX_GIT_OBJECTS_AUX_NODES = 8_192
 _DEFAULT_REMOTE_PORTS = {"http": 80, "https": 443, "ssh": 22}
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
+# Keep dependency environments separate for each execution backend.  A local
+# venv contains host-specific shebangs and interpreter links; a sandbox venv
+# is created inside the Linux runner at a different mount point.  Sharing the
+# historical ``.venv`` root between the two backends makes a resumed task
+# depend on whichever backend happened to create it first.
+_LOCAL_DEPENDENCY_VENV = Path(".venv") / "local"
+_LOCAL_DEPENDENCY_VENV_ARG = ".venv/local"
+
 _GIT_SAFE_CONFIG = (
     ("credential.helper", ""),
     ("core.fsmonitor", "false"),
@@ -465,26 +473,88 @@ class LocalExecutionRunner:
         return Path(sys.executable).resolve()
 
     def dependency_venv_python(self) -> Path:
-        """Return the task-local venv interpreter using the host OS layout."""
+        """Return the lexical task-local venv launcher using the host layout.
+
+        POSIX ``venv`` normally creates ``bin/python`` as a symlink to the
+        interpreter that bootstrapped it.  The launcher *entry* therefore must
+        remain lexical here; resolving it would turn the normal venv link into
+        the host interpreter and make the dependency allowlist reject pip.
+        The containing venv and scripts directory are still resolved and
+        checked, while the final launcher is validated separately by
+        ``_validate_dependency_venv_python``.
+        """
 
         script_dir = "Scripts" if os.name == "nt" else "bin"
         executable = "python.exe" if os.name == "nt" else "python"
-        return self.workspace_service.resolve_inside_workspace(
-            self.workspace,
-            Path(".venv") / script_dir / executable,
+        venv_root = self.dependency_venv_root()
+        safe_script_dir = self.workspace_service.resolve_inside_workspace(
+            venv_root,
+            script_dir,
         )
+        # Do not call resolve_inside_workspace on the launcher itself: on
+        # POSIX that would dereference the expected link to sys.executable.
+        return safe_script_dir / executable
 
     def dependency_venv_root(self) -> Path:
         """Resolve the task-local venv root and reject external links."""
 
-        return self.workspace_service.resolve_inside_workspace(self.workspace, ".venv")
+        return self.workspace_service.resolve_inside_workspace(
+            self.workspace,
+            _LOCAL_DEPENDENCY_VENV,
+        )
+
+    def _validate_dependency_venv_python(self, launcher: Path) -> None:
+        """Validate a venv launcher without rejecting its normal POSIX link.
+
+        A venv launcher may be either a copied executable inside the task
+        workspace or a POSIX symlink to the exact interpreter used for venv
+        creation.  The latter is the standard Python layout and is the one
+        intentional exception to the usual final-path containment check.
+        Any other external target remains rejected.
+        """
+
+        expected_launcher = self.dependency_venv_python()
+        if self._normalize_dependency_executable(launcher) != self._normalize_dependency_executable(
+            expected_launcher
+        ):
+            raise UnsupportedExecutionProfile(
+                "LocalExecutionRunner 的依赖解释器路径不受支持"
+            )
+        try:
+            if not launcher.exists():
+                raise ExecutionError("Local dependency venv Python launcher 不存在")
+            if launcher.is_symlink():
+                resolved_launcher = launcher.resolve(strict=True)
+                if self._normalize_dependency_executable(
+                    resolved_launcher
+                ) == self._normalize_dependency_executable(
+                    self.dependency_python_executable
+                ):
+                    return
+            # Copied launchers, and symlinks to an in-workspace launcher, must
+            # still be contained by the task workspace.  This call is safe
+            # because it is intentionally not used for the normal external
+            # sys.executable symlink accepted above.
+            contained_launcher = self.workspace_service.resolve_inside_workspace(
+                self.workspace,
+                launcher,
+            )
+            if not contained_launcher.is_file():
+                raise ExecutionError("Local dependency venv Python launcher 不是文件")
+        except (OSError, RuntimeError, ValueError, WorkspaceSecurityError) as exc:
+            raise ExecutionError(
+                "Local dependency venv Python launcher 不在工作区内"
+            ) from exc
 
     @staticmethod
     def _normalize_dependency_executable(value: str | Path) -> str:
         """Normalize a trusted dependency interpreter path for comparison."""
 
         try:
-            return os.path.normcase(str(Path(value).resolve(strict=False)))
+            # Comparison must preserve a venv launcher's lexical identity;
+            # ``Path.resolve`` would collapse the POSIX symlink to the
+            # bootstrap interpreter.  The target is validated separately.
+            return os.path.normcase(os.path.abspath(os.fspath(value)))
         except (OSError, RuntimeError, TypeError) as exc:
             raise ExecutionError("Local dependency interpreter path 无效") from exc
 
@@ -515,26 +585,32 @@ class LocalExecutionRunner:
         bootstrap_executable = self._normalize_dependency_executable(
             self.dependency_python_executable
         )
-        venv_executable = self._normalize_dependency_executable(
-            self.dependency_venv_python()
-        )
         if executable == bootstrap_executable:
             expected = (
                 str(self.dependency_python_executable),
                 "-m",
                 "venv",
-                ".venv",
+                _LOCAL_DEPENDENCY_VENV_ARG,
             )
             if args != expected:
                 raise UnsupportedExecutionProfile(
                     "LocalExecutionRunner 的 venv 初始化参数不受支持"
                 )
+            venv_root = self.dependency_venv_root()
+            if venv_root.exists() and not venv_root.is_dir():
+                raise UnsupportedExecutionProfile(
+                    "LocalExecutionRunner 的依赖 venv 路径不是目录"
+                )
             return
 
+        venv_executable = self._normalize_dependency_executable(
+            self.dependency_venv_python()
+        )
         if executable != venv_executable:
             raise UnsupportedExecutionProfile(
                 "LocalExecutionRunner 的依赖解释器路径不受支持"
             )
+        self._validate_dependency_venv_python(Path(args[0]))
         if args[1:4] != ("-m", "pip", "install"):
             raise UnsupportedExecutionProfile(
                 "LocalExecutionRunner 的 pip 参数不受支持"
@@ -739,9 +815,11 @@ class LocalExecutionRunner:
     def _build_env(self, extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
         """从空白环境和明确的安全键构造子进程环境。"""
 
-        workspace_venv = self.workspace / ".venv"
+        workspace_venv = self.workspace / _LOCAL_DEPENDENCY_VENV
         if workspace_venv.exists():
-            venv_root = workspace_venv.resolve()
+            venv_root = self.dependency_venv_root()
+            if not venv_root.is_dir():
+                raise ExecutionError("Local dependency venv root 不是目录")
             script_dir = venv_root / ("Scripts" if os.name == "nt" else "bin")
         else:
             venv_root = Path(sys.prefix).resolve()

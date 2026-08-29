@@ -117,6 +117,23 @@ def test_named_egress_is_checked_by_startup_and_sandboxd_before_ready():
     assert "service.mark_runtime_ready()" in app
 
 
+def test_backend_and_sandbox_runtime_share_backend_specific_venv_contract():
+    """Dependency admission and Docker execution must target sandbox venv."""
+
+    service = (ROOT / "backend" / "services" / "agent_team" / "git_workspace_service.py").read_text(
+        encoding="utf-8"
+    )
+    runtime = (ROOT / "sandboxer" / "src" / "sakura_ai_sandboxer" / "docker_runtime.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'command="python -m venv /workspace/.venv/sandbox"' in service
+    assert 'pip_cmd = "/workspace/.venv/sandbox/bin/pip"' in service
+    assert 'CONTAINER_SANDBOX_VENV = f"{CONTAINER_WORKSPACE}/.venv/sandbox"' in runtime
+    assert 'f"{CONTAINER_SANDBOX_VENV}/bin:/usr/local/sbin' in runtime
+    assert 'f"VIRTUAL_ENV={CONTAINER_SANDBOX_VENV}"' in runtime
+
+
 def test_production_compose_injects_sandbox_identity_contract():
     config = yaml.safe_load(
         (ROOT / "docker" / "docker-compose.prod.yml").read_text(encoding="utf-8")

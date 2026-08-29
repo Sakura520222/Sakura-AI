@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
@@ -276,6 +277,13 @@ async def test_local_worker_admission_installs_python_dependencies_with_local_ru
 
     async def fake_exec(*args, **_kwargs):
         commands.append(" ".join(str(arg) for arg in args))
+        if "venv" in args:
+            venv_root = workspace / ".venv" / "local"
+            launcher = venv_root / (
+                "Scripts" if os.name == "nt" else "bin"
+            ) / ("python.exe" if os.name == "nt" else "python")
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_text("fake interpreter", encoding="utf-8")
         return FakeProcess()
 
     monkeypatch.setattr(
@@ -436,9 +444,9 @@ async def test_dependency_installation_uses_dependency_profile_only(
 
     assert len(requests) == 2
     assert all(item.profile is ExecutionProfile.DEPENDENCY for item in requests)
-    assert requests[0].command == "python -m venv /workspace/.venv"
+    assert requests[0].command == "python -m venv /workspace/.venv/sandbox"
     assert requests[1].command == (
-        "/workspace/.venv/bin/pip install -r requirements.txt --quiet"
+        "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
     )
 
 
