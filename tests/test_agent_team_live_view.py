@@ -12,6 +12,13 @@ TEMPLATE_PATH = (
     / "components"
     / "agent_team_live_view_fragment.html"
 )
+BASE_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "backend"
+    / "webui"
+    / "templates"
+    / "base.html"
+)
 
 
 def test_live_view_has_manual_refresh_and_natural_tool_views():
@@ -28,6 +35,14 @@ def test_live_view_sanitizes_markdown_before_html_rendering():
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
     assert "DOMPurify.sanitize(marked.parse(content))" in template
+
+
+def test_base_markdown_code_blocks_have_theme_appropriate_foreground_colors():
+    template = BASE_TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "--tw-prose-pre-code: #24292e" in template
+    assert ".prose pre code.hljs" in template
+    assert ".dark .prose pre code.hljs { color: #c9d1d9; }" in template
 
 
 def test_live_view_incremental_processes_tool_updates_without_new_messages():

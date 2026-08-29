@@ -100,6 +100,12 @@ class AgentTeamTask(Base):
     last_checkpoint_at = Column(UTCDateTime, nullable=True)
     pr_number = Column(BigInteger, nullable=True, index=True)
     pr_head_sha = Column(String(64), nullable=True, index=True)
+    # PR_REVIEW tasks continue the original PR head branch instead of creating
+    # a separate sakura-agent branch.  Keep the provider-owned head identity
+    # separate from the base repository metadata above so fork PRs can be
+    # addressed without changing review/source binding.
+    pr_head_branch = Column(String(255), nullable=True)
+    pr_head_repo_full_name = Column(String(255), nullable=True, index=True)
     pr_url = Column(String(500), nullable=True)
 
     iteration_count = Column(Integer, default=0, nullable=False)

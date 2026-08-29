@@ -48,10 +48,12 @@ def _review(rid, pr_number, status="completed", title="title", score=8):
 class _DraftDb:
     """Minimal AsyncSession double: filters in-memory rows by equality pairs."""
 
-    def __init__(self, reviews=(), comments=()):
+    def __init__(self, reviews=(), comments=(), task_statuses=()):
         self.reviews = list(reviews)
         self.comments = list(comments)
+        self.task_statuses = list(task_statuses)
         self.review_queries: list[dict[str, object]] = []
+        self.added = []
 
     async def scalar(self, stmt):
         where = stmt.whereclause
@@ -67,7 +69,16 @@ class _DraftDb:
             # 生产查询按 id 倒序取最新一条
             matched.sort(key=lambda row: row.id, reverse=True)
             return matched[0] if matched else None
-        # duplicate guard 的 AgentTeamTask count 查询：默认无进行中任务
+        if table_name == "agent_team_tasks":
+            excluded_statuses = set()
+            for clause in getattr(where, "clauses", ()):
+                if getattr(getattr(clause, "left", None), "key", None) != "status":
+                    continue
+                values = getattr(getattr(clause, "right", None), "value", None)
+                if isinstance(values, (list, tuple, set)):
+                    excluded_statuses.update(values)
+            return sum(status not in excluded_statuses for status in self.task_statuses)
+        # 其他查询默认没有匹配项。
         return 0
 
     async def execute(self, stmt):
@@ -78,6 +89,15 @@ class _DraftDb:
             if all(getattr(row, key, None) == value for key, value in pairs.items())
         ]
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: matched))
+
+    def add(self, entity):
+        self.added.append(entity)
+
+    async def commit(self):
+        return None
+
+    async def refresh(self, entity):
+        return None
 
 
 @pytest.fixture
@@ -142,6 +162,29 @@ async def test_draft_picks_latest_completed_review_for_same_pr(service):
 
 
 @pytest.mark.asyncio
+async def test_waiting_human_task_still_blocks_parallel_agent(service):
+    db = _DraftDb(
+        reviews=[_review(rid=320, pr_number=42)],
+        task_statuses=["waiting_human"],
+    )
+
+    with pytest.raises(ValueError, match="已存在进行中的 Agent 修复任务"):
+        await service.build_pr_review_task_draft(db, "owner/repo", 42)
+
+
+@pytest.mark.asyncio
+async def test_stale_failed_task_allows_agent_retry(service):
+    db = _DraftDb(
+        reviews=[_review(rid=320, pr_number=42)],
+        task_statuses=["failed"],
+    )
+
+    draft = await service.build_pr_review_task_draft(db, "owner/repo", 42)
+
+    assert draft["source_id"] == 320
+
+
+@pytest.mark.asyncio
 async def test_draft_summary_includes_matching_review_comments(service):
     """summary 应拼接本 PR 审查（source_id）下的评论。"""
 
@@ -164,3 +207,28 @@ async def test_draft_summary_includes_matching_review_comments(service):
     assert draft["source_issue_number"] == 7
     assert "审查意见" in draft["summary"]
     assert "nit" in draft["summary"]
+
+
+@pytest.mark.asyncio
+async def test_create_pr_review_task_persists_original_head_identity(service):
+    db = _DraftDb(reviews=[_review(rid=500, pr_number=7)])
+
+    task = await service.create_task_from_pr_review(
+        db,
+        "owner/repo",
+        7,
+        "alice",
+        base_branch="develop",
+        head_sha="a" * 40,
+        head_branch="feature/pr",
+        head_repo_full_name="alice/repo-fork",
+        pr_url="https://github.com/owner/repo/pull/7",
+    )
+
+    assert db.added == [task]
+    assert task.pr_number == 7
+    assert task.pr_head_sha == "a" * 40
+    assert task.pr_head_branch == "feature/pr"
+    assert task.pr_head_repo_full_name == "alice/repo-fork"
+    assert task.pr_url == "https://github.com/owner/repo/pull/7"
+    assert task.base_branch == "develop"

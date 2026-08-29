@@ -491,18 +491,41 @@ class AgentTeamCandidateService:
         ai_config_snapshot: dict | None = None,
         base_branch: str | None = None,
         head_sha: str | None = None,
+        head_branch: str | None = None,
+        head_repo_full_name: str | None = None,
+        pr_url: str | None = None,
         overrides: dict | None = None,
     ) -> AgentTeamTask:
         """从 PR 审查的 /agent 命令创建 Agent 修复任务。
 
         - source_type = PR_REVIEW
         - source_issue_number = PR number
-        - pr_head_sha 记录触发时的 PR head commit，用于后续增量判断
+        - pr_head_sha 记录触发时的 PR head commit，用于 workspace 基点和后续增量判断
+        - pr_head_branch / pr_head_repo_full_name 记录原 PR head 的可写目标
         - 同一 PR 仅允许一个非终态任务（已由 draft 方法 guard）
         """
+        if not head_sha:
+            raise ValueError("PR head commit 不存在，无法创建可写 Agent 任务")
+        if not head_branch:
+            raise ValueError("PR head 分支不存在，无法创建可写 Agent 任务")
+
+        head_repo_full_name = head_repo_full_name or repo_full_name
+        head_repo_parts = head_repo_full_name.split("/", 1)
+        if len(head_repo_parts) != 2 or not all(head_repo_parts):
+            raise ValueError("PR head 仓库格式无效，应为 owner/repo")
+
         values = await self.build_pr_review_task_draft(db, repo_full_name, pr_number)
         values["base_branch"] = base_branch
         values.update(overrides or {})
+        # These fields describe the immutable source selected by the PR event.
+        # Do not let generic task overrides replace the original PR write
+        # target; the base repository remains the task's review/source repo.
+        values["pr_number"] = pr_number
+        values["pr_head_branch"] = head_branch
+        values["pr_head_repo_full_name"] = head_repo_full_name
+        values["pr_url"] = pr_url or (
+            f"https://github.com/{repo_full_name}/pull/{pr_number}"
+        )
         task = AgentTeamTask(
             **values,
             started_by=started_by,
