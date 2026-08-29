@@ -33,7 +33,7 @@ from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
-from backend.services.agent_team.execution import ExecutionRunner
+from backend.services.agent_team.execution import ExecutionRunner, LocalExecutionRunner
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
@@ -121,16 +121,31 @@ class AgentTeamWorker:
     ) -> ExecutionRunner:
         """Create runner then install untrusted dependencies through it.
 
-        Every production-shaped workspace service must expose the installer;
-        omitting it is an infrastructure contract error rather than a reason
-        to skip runner admission or dependency isolation.
+        Every production-shaped workspace service must expose both the backend
+        preparation and installer hooks.  Preparation is unconditional: even
+        when dependency auto-install is disabled (or no dependency manifest
+        exists), sandboxd must not be asked to scan a worktree containing an
+        inactive host venv.  The backend is derived from the runner instance
+        that actually passed admission; the dynamic setting is not reread,
+        avoiding a configuration race between runner creation and preparation.
         """
 
+        prepare_workspace = getattr(
+            git_service,
+            "prepare_workspace_for_execution_backend",
+            None,
+        )
+        if not callable(prepare_workspace):
+            raise RuntimeError(
+                "Agent workspace service lacks backend preparation contract"
+            )
         install_dependencies = git_service.install_workspace_dependencies
         runner = await self._create_agent_execution_runner(
             workspace,
             git_service.workspace_service,
         )
+        backend = "local" if isinstance(runner, LocalExecutionRunner) else "sandbox"
+        await prepare_workspace(workspace, backend)
         if cancel_event is None:
             await install_dependencies(workspace, runner)
         else:

@@ -76,6 +76,11 @@ sudo env SAKURA_SANDBOX_EGRESS_NETWORK=sakura-ai-egress ./start.sh --prod
 
 源码开发只有在 `SAKURA_DEPLOY_MODE=source` 且显式选择 `agent_team_execution_backend=local` 时才允许本地执行，此模式**不提供 OS 隔离**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
 
+Agent 依赖环境只使用每个任务工作区内固定的 `.venv/local` 和
+`.venv/sandbox` 路径。这两个目录是 Agent 内部的临时目录，不承载用户数据；切换执行后端时，
+服务会在 runner admission 前删除非活动后端的目录，环境不完整时也会删除并重新创建。
+清理仅针对当前 task worktree 下的这两个精确路径，并且不会跟随 symlink/reparse 到外部目标。
+
 > **MySQL 低内存调优：** compose 为 MySQL 8.4 显式设置了 `performance-schema=OFF`、`innodb-buffer-pool-size=64M`、`innodb-redo-log-capacity=32M`、`max-connections=40` 并关闭 X Plugin，空闲内存约 200MB（默认配置约 500MB）。代价是 `sys`/`performance_schema` 监控表不可用；业务数据量增长到数十 MB 以上时可酌情调大缓冲池。应用侧连接池上限为 30（`pool_size=10` + `max_overflow=20`，见 `backend/models/database.py`），40 连接仍有约 9 个余量。既有部署v3.1.1重新下载 `docker-compose.prod.yml` 后重跑 `sudo ./start.sh --prod` 即可生效，`up -d` 只重建 mysql 容器，`mysql_data` 数据卷保留。
 
 **macOS（仅容器，不包含 Host Updater）**：

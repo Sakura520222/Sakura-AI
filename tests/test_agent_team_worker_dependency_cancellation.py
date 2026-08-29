@@ -21,6 +21,14 @@ class _BlockingDependencyService:
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.cancel_events: list[asyncio.Event | None] = []
+        self.prepared: list[tuple[Path, str]] = []
+
+    async def prepare_workspace_for_execution_backend(
+        self,
+        workspace: Path,
+        backend: str,
+    ) -> None:
+        self.prepared.append((workspace, backend))
 
     async def install_workspace_dependencies(
         self,
