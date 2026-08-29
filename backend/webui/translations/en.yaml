@@ -1536,6 +1536,10 @@ version_manager:
 about:
   title: "About"
   version: "Version"
+  channel_stable: "Stable"
+  channel_development: "Development"
+  channel_source: "Source"
+  build_revision: "Build Revision"
   tech_stack: "Tech Stack"
   backend_runtime: "Backend Runtime"
   web_framework: "Web Framework"
@@ -1543,6 +1547,13 @@ about:
   ai_model: "AI Model"
   cache: "Cache"
   description: "Sakura AI is an intelligent GitHub PR/Issue review bot that leverages AI to automatically analyze code quality, detect issues, and provide improvement suggestions."
+  links: "Project Links"
+  github_repo: "GitHub Repository"
+  github_repo_desc: "Browse the source and star the project"
+  documentation: "Documentation"
+  documentation_desc: "Deployment, configuration and usage guides"
+  report_issue: "Report an Issue"
+  report_issue_desc: "Submit an issue or feature request"
 
 # ========== Error ==========
 error:
