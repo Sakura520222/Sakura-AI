@@ -18,6 +18,7 @@ from backend.core.ai_protocol.models import (
     ResolvedEndpoint,
     ResolvedModel,
     RoleBinding,
+    UnifiedImagePart,
     UnifiedMessage,
     UnifiedRequest,
     UnifiedResponse,
@@ -25,6 +26,8 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
+    images_from_mapping,
+    strip_message_images,
 )
 
 __all__ = [
@@ -40,6 +43,7 @@ __all__ = [
     "ResolvedEndpoint",
     "ResolvedModel",
     "RoleBinding",
+    "UnifiedImagePart",
     "UnifiedMessage",
     "UnifiedRequest",
     "UnifiedResponse",
@@ -47,4 +51,6 @@ __all__ = [
     "UnifiedTool",
     "UnifiedToolCall",
     "UnifiedUsage",
+    "images_from_mapping",
+    "strip_message_images",
 ]

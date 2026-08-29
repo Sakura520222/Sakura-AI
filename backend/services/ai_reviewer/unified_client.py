@@ -38,6 +38,8 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
     UnifiedResponse,
     UnifiedTool,
+    images_from_mapping,
+    strip_message_images,
 )
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
@@ -242,6 +244,7 @@ def messages_from_legacy(
                 tool_call_id=msg.get("tool_call_id"),
                 reasoning_content=msg.get("reasoning_content"),
                 name=msg.get("name"),
+                images=images_from_mapping(msg.get("images")),
             )
         )
     return result
@@ -588,9 +591,18 @@ class UnifiedAIClient:
                 max_tokens or candidate.model.reasoning_params.max_output_tokens
             )
 
+            # vision 门控：能力不含 vision 的候选剔除图片附件，正文中的
+            # markdown 图片链接保持原样，模型仍可读取 URL / strip images
+            # for non-vision candidates; markdown links remain in the text.
+            request_messages = (
+                unified_messages
+                if candidate.model.capabilities.vision
+                else strip_message_images(unified_messages)
+            )
+
             request = UnifiedRequest(
                 model=candidate.model.model_id,
-                messages=list(unified_messages),
+                messages=list(request_messages),
                 max_tokens=effective_max_tokens,
                 tools=unified_tools,
                 tool_choice=tool_choice,
@@ -878,7 +890,11 @@ class UnifiedAIClient:
             )
             request = UnifiedRequest(
                 model=candidate.model.model_id,
-                messages=list(unified_messages),
+                messages=(
+                    list(unified_messages)
+                    if candidate.model.capabilities.vision
+                    else list(strip_message_images(unified_messages))
+                ),
                 max_tokens=max_tokens
                 or candidate.model.reasoning_params.max_output_tokens,
                 temperature=params["temperature"],
@@ -1417,7 +1433,11 @@ class UnifiedAIClient:
 
         compressed_request = UnifiedRequest(
             model=request.model,
-            messages=compressed,
+            messages=(
+                compressed
+                if candidate.model.capabilities.vision
+                else strip_message_images(compressed)
+            ),
             max_tokens=request.max_tokens,
             system=request.system,
             tools=request.tools,

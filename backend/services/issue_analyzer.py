@@ -31,6 +31,11 @@ from backend.services.ai_reviewer.tools import (
     ToolManager,
 )
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.issue_image_service import (
+    collect_issue_images,
+    extract_image_references,
+    strip_image_payloads_for_display,
+)
 from backend.services.issue_protocol import (
     IssueProtocolError,
     TaggedIssueAnalysisParser,
@@ -232,11 +237,14 @@ class IssueAnalyzer:
         collaborators: list[str],
         comments: list[dict[str, Any]] | None = None,
         project_knowledge: str = "",
+        image_count: int = 0,
     ) -> str:
         """构建用户消息
 
         project_knowledge（.sakura/ 项目知识）放在 END 标记之前，作为不可信证据的
         一部分，避免仓库侧可写文档在标记外注入指令覆盖分析协议或语言规则。
+        image_count > 0 时提示模型正文与评论中的图片已按出现顺序作为多模态
+        附件附加在本消息上。
         """
         parts = [
             "=== BEGIN UNTRUSTED ISSUE EVIDENCE ===",
@@ -276,6 +284,11 @@ class IssueAnalyzer:
         # so writable repo docs can't inject instructions outside the marked evidence.
         if project_knowledge:
             parts.append(project_knowledge)
+        if image_count:
+            parts.append(
+                f"\n**附带图片**: {image_count} 张来自正文与评论的图片"
+                "（按出现顺序）已作为附件附在本条消息上，请结合图片内容分析。"
+            )
         parts.append("=== END UNTRUSTED ISSUE EVIDENCE ===")
         return "\n".join(parts)
 
@@ -542,6 +555,43 @@ class IssueAnalyzer:
         except Exception as e:
             logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
 
+        # 解析角色 primary 候选：vision 能力判定与循环前的上下文窗口共用一次解析
+        # / Resolve the primary candidate once for vision gating and the
+        # context-window budget used by the tool loop below.
+        primary_candidate = await self.api_client.resolve_role_primary_candidate("main")
+        role_model = primary_candidate.model.model_id if primary_candidate else None
+        role_context_window = (
+            primary_candidate.model.context_window_tokens
+            if primary_candidate
+            else None
+        )
+        supports_vision = bool(
+            primary_candidate and primary_candidate.model.capabilities.vision
+        )
+
+        # 图片多模态（Issue #538）：正文与评论中的图片经白名单下载为 base64
+        # 附件；能力不含 vision 的候选由 UnifiedAIClient 在构建请求时剔除
+        # / Download images from body/comments as base64 attachments; non-vision
+        # candidates strip them when building the request.
+        images_payload: list[dict[str, Any]] = []
+        if settings.issue_vision_enabled and supports_vision:
+            image_urls = extract_image_references(issue_info.get("body", ""))
+            for comment in comments or ():
+                image_urls.extend(extract_image_references(comment.get("body", "")))
+            image_urls = list(dict.fromkeys(image_urls))
+            if image_urls:
+                self._raise_if_cancelled(cancel_event)
+                try:
+                    images_payload = await collect_issue_images(
+                        image_urls,
+                        github_app=github_app,
+                        installation_id=issue_info.get("installation_id"),
+                    )
+                except ReviewCancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("Issue 图片下载失败（不影响分析）: {}", e)
+
         # 构建提示词
         system_prompt = self._build_system_prompt(
             repo_full_name,
@@ -555,15 +605,20 @@ class IssueAnalyzer:
             collaborators,
             comments,
             project_knowledge=sakura_section,
+            image_count=len(images_payload),
         )
 
-        # 初始化消息列表
+        # 初始化消息列表（含多模态图片附件）
+        user_entry: dict[str, Any] = {"role": "user", "content": user_message}
+        if images_payload:
+            user_entry["images"] = images_payload
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            user_entry,
         ]
         if event_callback:
-            for initial_message in messages:
+            # 推送边界脱敏：base64 载荷不进入 SSE 与 Canonical Transcript
+            for initial_message in strip_image_payloads_for_display(messages):
                 try:
                     await event_callback("message", initial_message)
                 except ReviewCancelledError:
@@ -579,10 +634,6 @@ class IssueAnalyzer:
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
-        (
-            role_model,
-            role_context_window,
-        ) = await self.api_client.resolve_role_model_context("main")
         context_model = role_model
         safe_context = (
             int(role_context_window * 0.8)

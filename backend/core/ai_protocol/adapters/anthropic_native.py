@@ -240,6 +240,33 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                     }
                 )
             return {"role": "assistant", "content": blocks}
+        # 多模态消息：text blocks + image blocks / multimodal blocks
+        if message.images and role != "tool":
+            blocks: list[dict[str, Any]] = []
+            if message.content:
+                blocks.append({"type": "text", "text": message.content})
+            for image in message.images:
+                if image.data:
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type or "image/png",
+                                "data": image.data,
+                            },
+                        }
+                    )
+                elif image.url:
+                    # Anthropic 支持 URL source；无效 URL 由 API 侧报错并走 fallback
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": image.url},
+                        }
+                    )
+            if blocks:
+                return {"role": role if role in ("user", "assistant") else "user", "content": blocks}
         # 普通文本消息 / plain text
         return {
             "role": role if role in ("user", "assistant") else "user",
