@@ -94,6 +94,10 @@ MAX_GIT_OBJECTS_AUX_NODES = 8_192
 # infrastructure_error instead of being silently converted into success.
 _PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 2.0
 _PROCESS_TREE_COMMUNICATE_GRACE_SECONDS = 0.5
+# Keep the process-tree platform seam separate from the shared ``os`` module.
+# Tests can exercise the Windows admission contract on Linux without changing
+# ``os.name`` globally and making pathlib instantiate WindowsPath objects.
+_PROCESS_TREE_IS_WINDOWS = os.name == "nt"
 
 # These constants are absent from ``subprocess`` on POSIX, but keeping the
 # documented Win32 values here lets platform-contract tests exercise the
@@ -391,7 +395,7 @@ class _ProcessTreeController:
             # safe tree boundary.  Their existing process.kill() behavior is
             # retained as a compatibility fallback.
             return
-        if os.name == "nt":
+        if _PROCESS_TREE_IS_WINDOWS:
             try:
                 self._attach_windows_job(self._pid)
             except Exception as exc:
@@ -526,7 +530,7 @@ class _ProcessTreeController:
         no opportunity to execute payload code before Job admission.
         """
 
-        if os.name != "nt" or self._pid is None:
+        if not _PROCESS_TREE_IS_WINDOWS or self._pid is None:
             return None
         try:
             import ctypes
@@ -685,7 +689,7 @@ class _ProcessTreeController:
                 return None
             errors.append(posix_error)
 
-        if os.name == "nt" and self._pid is not None:
+        if _PROCESS_TREE_IS_WINDOWS and self._pid is not None:
             taskkill_error = await self._terminate_windows_with_taskkill()
             if taskkill_error is None:
                 return None
@@ -1342,7 +1346,7 @@ class LocalExecutionRunner:
     def _process_group_kwargs() -> dict[str, object]:
         """Return platform-specific child-tree isolation settings."""
 
-        if os.name == "nt":
+        if _PROCESS_TREE_IS_WINDOWS:
             return {
                 "creationflags": (
                     _WINDOWS_CREATE_NEW_PROCESS_GROUP
