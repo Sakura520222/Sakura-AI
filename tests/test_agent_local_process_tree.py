@@ -175,7 +175,7 @@ async def test_posix_group_is_killed_after_parent_has_been_reaped(
 def test_windows_process_creation_is_suspended(monkeypatch: pytest.MonkeyPatch):
     """The Windows launch contract must suspend before Job admission."""
 
-    monkeypatch.setattr(execution_module.os, "name", "nt")
+    monkeypatch.setattr(execution_module, "_PROCESS_TREE_IS_WINDOWS", True)
 
     kwargs = LocalExecutionRunner._process_group_kwargs()
     flags = int(kwargs["creationflags"])
@@ -204,7 +204,7 @@ async def test_windows_job_admission_precedes_process_resume(
         "backend.services.agent_team.execution.get_agent_team_network_policy",
         full_access_policy,
     )
-    monkeypatch.setattr(execution_module.os, "name", "nt")
+    monkeypatch.setattr(execution_module, "_PROCESS_TREE_IS_WINDOWS", True)
 
     class FakeProcess:
         pid = 12345
@@ -269,7 +269,7 @@ async def test_windows_job_admission_failure_does_not_resume_payload(
         "backend.services.agent_team.execution.get_agent_team_network_policy",
         full_access_policy,
     )
-    monkeypatch.setattr(execution_module.os, "name", "nt")
+    monkeypatch.setattr(execution_module, "_PROCESS_TREE_IS_WINDOWS", True)
 
     class FakeProcess:
         pid = 12345
