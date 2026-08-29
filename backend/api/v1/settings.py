@@ -85,13 +85,19 @@ async def get_about(
     user: dict = Depends(require_api_auth),
 ):
     """获取系统版本信息"""
+    from backend.core.branding import SAKURA_AI_REPO_URL
+    from backend.core.build_info import get_build_info
     from backend.webui.routes.auth import APP_VERSION
 
+    build_info = get_build_info()
     return success_response(
         data={
             "version": APP_VERSION,
             "build_date": get_time_service()
             .to_app_timezone(get_time_service().now_utc())
             .strftime("%Y-%m-%d"),
+            "channel": build_info["channel"],
+            "revision": build_info["revision"],
+            "repo_url": SAKURA_AI_REPO_URL,
         }
     )

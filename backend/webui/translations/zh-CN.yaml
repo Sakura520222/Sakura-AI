@@ -1537,6 +1537,10 @@ version_manager:
 about:
   title: "关于"
   version: "版本"
+  channel_stable: "稳定版"
+  channel_development: "开发版"
+  channel_source: "源码"
+  build_revision: "构建修订"
   tech_stack: "技术栈"
   backend_runtime: "后端运行时"
   web_framework: "Web 框架"
@@ -1544,6 +1548,13 @@ about:
   ai_model: "AI 模型"
   cache: "缓存"
   description: "Sakura AI 是一个智能的 GitHub PR/Issue 审查机器人，利用 AI 技术自动分析代码质量、发现问题并提供改进建议。"
+  links: "项目链接"
+  github_repo: "GitHub 仓库"
+  github_repo_desc: "浏览源码、提交 Star"
+  documentation: "使用文档"
+  documentation_desc: "部署、配置与使用指南"
+  report_issue: "问题反馈"
+  report_issue_desc: "提交 Issue 或功能建议"
 
 # ========== 错误页面 / Error ==========
 error:

@@ -512,7 +512,24 @@ async def about_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """关于页面"""
+    from backend.core.branding import SAKURA_AI_REPO_URL
+    from backend.core.build_info import get_build_info
     from backend.webui.routes.auth import APP_VERSION
+
+    build_info = get_build_info()
+    # 镜像部署展示真实构建日期；源码部署退化为当天日期（保持旧行为）
+    if build_info["created_at"]:
+        from backend.core.time_service import parse_rfc3339
+
+        build_date = get_time_service().to_app_timezone(
+            parse_rfc3339(build_info["created_at"])
+        ).strftime("%Y-%m-%d")
+    else:
+        build_date = (
+            get_time_service()
+            .to_app_timezone(get_time_service().now_utc())
+            .strftime("%Y-%m-%d")
+        )
 
     return render_template(
         "about.html",
@@ -522,7 +539,8 @@ async def about_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="about",
         app_version=APP_VERSION,
-        build_date=get_time_service()
-        .to_app_timezone(get_time_service().now_utc())
-        .strftime("%Y-%m-%d"),
+        build_date=build_date,
+        build_channel=build_info["channel"],
+        build_revision=build_info["revision"],
+        repo_url=SAKURA_AI_REPO_URL,
     )
