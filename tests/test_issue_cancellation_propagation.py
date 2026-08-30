@@ -23,6 +23,7 @@ def _configure_analyzer(monkeypatch, analyzer, client):
         ai_temperature = 0.2
         issue_price_per_1k_prompt = 1
         issue_price_per_1k_completion = 1
+        issue_vision_enabled = False
 
     analyzer.api_client = client
     analyzer.tool_manager = SimpleNamespace(
@@ -48,7 +49,7 @@ def _configure_analyzer(monkeypatch, analyzer, client):
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(False),
+        lambda _key, **_kwargs: _async_result(False),
     )
     monkeypatch.setattr(
         issue_analyzer_module,
@@ -87,6 +88,17 @@ async def test_issue_analyzer_reraises_provider_cancellation(monkeypatch):
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
 
+        async def resolve_role_candidates(self, _role):
+            return [
+                SimpleNamespace(
+                    model=SimpleNamespace(
+                        model_id="model-x",
+                        context_window_tokens=100_000,
+                        capabilities=SimpleNamespace(vision=False),
+                    )
+                )
+            ]
+
         async def call_with_retry(self, **_kwargs):
             raise cancellation
 
@@ -123,7 +135,7 @@ async def test_issue_analyzer_rechecks_cancellation_at_repair_return(monkeypatch
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(1),
+        lambda _key, **_kwargs: _async_result(1),
     )
 
     with pytest.raises(ReviewCancelledError):
