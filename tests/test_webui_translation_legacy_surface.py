@@ -68,3 +68,12 @@ def test_provider_catalog_and_role_binding_translation_surface_remains(filename)
     assert config["label"]["rerank_api_key"]
     assert "role binding" in config["ai_role_bindings_desc"].lower()
     assert "summary" in config["ai_account_editor_desc"].lower()
+
+
+@pytest.mark.parametrize("filename", ["zh-CN.yaml", "en.yaml"])
+def test_issue_vision_dynamic_config_has_localized_label_and_description(filename):
+    with (TRANSLATIONS_DIR / filename).open(encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)["config"]
+
+    assert config["label"]["issue_vision_enabled"]
+    assert config["desc"]["issue_vision_enabled"]
