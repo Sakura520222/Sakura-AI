@@ -49,7 +49,7 @@ def _configure_analyzer(monkeypatch, analyzer, client):
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(False),
+        lambda _key, **_kwargs: _async_result(False),
     )
     monkeypatch.setattr(
         issue_analyzer_module,
@@ -133,7 +133,7 @@ async def test_issue_analyzer_rechecks_cancellation_at_repair_return(monkeypatch
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(1),
+        lambda _key, **_kwargs: _async_result(1),
     )
 
     with pytest.raises(ReviewCancelledError):

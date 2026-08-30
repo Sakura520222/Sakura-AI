@@ -303,7 +303,7 @@ async def test_issue_protocol_repair_receives_shared_deadline_and_cancel_event(m
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: None,
+        lambda _key, **_kwargs: None,
     )
 
     deadline = AITaskDeadline.from_timeout(30)
@@ -409,7 +409,7 @@ async def test_issue_tool_loop_uses_tool_free_call_after_deadline_and_skips_tool
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(False),
+        lambda _key, **_kwargs: _async_result(False),
     )
     monkeypatch.setattr(
         issue_analyzer_module,
@@ -607,7 +607,7 @@ async def test_issue_tool_calls_returned_after_deadline_are_closed_before_timeou
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _async_result(False),
+        lambda _key, **_kwargs: _async_result(False),
     )
     monkeypatch.setattr(
         issue_analyzer_module,

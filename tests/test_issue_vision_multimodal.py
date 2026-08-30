@@ -9,10 +9,14 @@
 - IssueAnalyzer 的图片注入路径
 """
 
+import base64
+import io
+import random
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from PIL import Image
 
 import backend.services.issue_analyzer as issue_analyzer_module
 import backend.services.issue_image_service as issue_image_service_module
@@ -56,6 +60,29 @@ from backend.services.issue_image_service import (
     extract_image_references,
     strip_image_payloads_for_display,
 )
+
+
+def _png_bytes(*, size: tuple[int, int] = (8, 8), noisy: bool = False) -> bytes:
+    """Build a real PNG so downloader tests also exercise image validation."""
+    if noisy:
+        pixels = random.Random(538).randbytes(size[0] * size[1] * 3)
+        image = Image.frombytes("RGB", size, pixels)
+    else:
+        image = Image.new("RGB", size, (120, 80, 200))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+class _CountingStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]):
+        self.chunks = chunks
+        self.chunks_read = 0
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.chunks_read += 1
+            yield chunk
 
 # ---------------------------------------------------------------------------
 # 适配器渲染 / Adapter rendering
@@ -365,14 +392,14 @@ def test_fold_image_payloads_folds_all_protocol_shapes():
 
 def test_extract_image_references_mixed_and_deduped():
     text = (
-        "![a](https://user-images.githubusercontent.com/1.png)\n"
         '<img src="https://github.com/user-attachments/assets/abc.png">\n'
+        "![a](https://user-images.githubusercontent.com/1.png)\n"
         "![a again](https://user-images.githubusercontent.com/1.png)\n"
         "plain link https://example.test/no-image.png stays out\n"
     )
     assert extract_image_references(text) == [
-        "https://user-images.githubusercontent.com/1.png",
         "https://github.com/user-attachments/assets/abc.png",
+        "https://user-images.githubusercontent.com/1.png",
     ]
     assert extract_image_references(None) == []
     assert extract_image_references("") == []
@@ -434,7 +461,7 @@ def _mock_transport_settings(monkeypatch, *, max_size=1000):
 @pytest.mark.asyncio
 async def test_collect_issue_images_downloads_and_encodes(monkeypatch):
     _mock_transport_settings(monkeypatch)
-    payload = b"fakepng"
+    payload = _png_bytes()
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "user-images.githubusercontent.com":
@@ -466,8 +493,6 @@ async def test_collect_issue_images_downloads_and_encodes(monkeypatch):
 
     assert len(images) == 1
     assert images[0]["media_type"] == "image/png"
-    import base64
-
     assert base64.b64decode(images[0]["data"]) == payload
 
 
@@ -485,6 +510,7 @@ async def test_collect_issue_images_follows_redirect_to_s3_without_auth(monkeypa
         issue_image_service_module, "get_settings", lambda: _Settings()
     )
     seen_headers = []
+    payload = _png_bytes()
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen_headers.append(dict(request.headers))
@@ -502,7 +528,7 @@ async def test_collect_issue_images_follows_redirect_to_s3_without_auth(monkeypa
             return httpx.Response(
                 200,
                 headers={"content-type": "image/png"},
-                content=b"pngdata",
+                content=payload,
             )
         return httpx.Response(404)
 
@@ -529,6 +555,142 @@ async def test_collect_issue_images_follows_redirect_to_s3_without_auth(monkeypa
     # 首跳带 installation 凭据；S3 签名跳不带 Authorization
     assert seen_headers[0].get("authorization") == "Bearer tok"
     assert seen_headers[1].get("authorization") is None
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_resolves_relative_redirect_without_auth(
+    monkeypatch,
+):
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("authorization")))
+        if request.url.path == "/user-attachments/assets/start.png":
+            return httpx.Response(
+                302,
+                headers={"location": "/user-attachments/assets/final.png"},
+            )
+        if request.url.path == "/user-attachments/assets/final.png":
+            return httpx.Response(
+                200,
+                headers={"content-type": "image/png"},
+                content=payload,
+            )
+        return httpx.Response(404)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    github_app = SimpleNamespace(
+        integration=SimpleNamespace(
+            get_access_token=lambda installation_id: SimpleNamespace(token="tok")
+        )
+    )
+
+    images = await collect_issue_images(
+        ["https://github.com/user-attachments/assets/start.png"],
+        github_app=github_app,
+        installation_id=1,
+    )
+
+    assert len(images) == 1
+    assert len(seen) == 2
+    assert seen[0][1] == "Bearer tok"
+    assert seen[1][1] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("redirects", "expected_count"), [(3, 1), (4, 0)])
+async def test_collect_issue_images_enforces_researched_redirect_ceiling(
+    monkeypatch,
+    redirects,
+    expected_count,
+):
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        step = int(request.url.path.rsplit("/", 1)[-1])
+        if step < redirects:
+            return httpx.Response(
+                302,
+                headers={"location": f"/user-attachments/assets/{step + 1}"},
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        ["https://github.com/user-attachments/assets/0"]
+    )
+
+    assert len(images) == expected_count
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_resolves_installation_for_manual_reanalysis(
+    monkeypatch,
+):
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    def get_installation(*, owner, repo):
+        seen["repository"] = (owner, repo)
+        return SimpleNamespace(id=321)
+
+    def get_access_token(installation_id):
+        seen["installation_id"] = installation_id
+        return SimpleNamespace(token="manual-token")
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    github_app = SimpleNamespace(
+        integration=SimpleNamespace(
+            get_installation=get_installation,
+            get_access_token=get_access_token,
+        )
+    )
+
+    images = await collect_issue_images(
+        ["https://user-images.githubusercontent.com/a/b.png"],
+        github_app=github_app,
+        repo_owner="owner",
+        repo_name="private-repo",
+    )
+
+    assert len(images) == 1
+    assert seen == {
+        "repository": ("owner", "private-repo"),
+        "installation_id": 321,
+        "authorization": "Bearer manual-token",
+    }
 
 
 @pytest.mark.asyncio
@@ -566,6 +728,34 @@ async def test_collect_issue_images_rejects_bad_redirect_and_content_type(
 
 
 @pytest.mark.asyncio
+async def test_collect_issue_images_rejects_provider_unsupported_image_type(
+    monkeypatch,
+):
+    _mock_transport_settings(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/svg+xml"},
+            content=b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    assert (
+        await collect_issue_images(
+            ["https://user-images.githubusercontent.com/a/vector.svg"]
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
 async def test_collect_issue_images_respects_size_limit(monkeypatch):
     _mock_transport_settings(monkeypatch, max_size=10)
 
@@ -591,6 +781,180 @@ async def test_collect_issue_images_respects_size_limit(monkeypatch):
     )
     # 两张均因 Content-Length 超过防内存耗尽上限被跳过，无数量截取
     assert images == []
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_stops_stream_at_size_limit(monkeypatch):
+    _mock_transport_settings(monkeypatch, max_size=10)
+    stream = _CountingStream([b"a" * 6, b"b" * 6, b"c" * 6])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            stream=stream,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        ["https://user-images.githubusercontent.com/a/oversized.png"]
+    )
+
+    assert images == []
+    assert stream.chunks_read == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_compresses_payload_over_five_mb_threshold(
+    monkeypatch,
+):
+    payload = _png_bytes(size=(1500, 1500), noisy=True)
+    assert len(payload) > 5 * 1024 * 1024
+    _mock_transport_settings(monkeypatch, max_size=len(payload) + 1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        ["https://user-images.githubusercontent.com/a/large.png"]
+    )
+
+    assert len(images) == 1
+    assert images[0]["media_type"] == "image/webp"
+    compressed = base64.b64decode(images[0]["data"])
+    assert len(compressed) <= 500 * 1024
+    with Image.open(io.BytesIO(compressed)) as image:
+        assert image.format == "WEBP"
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_keeps_best_compression_below_five_mb(
+    monkeypatch,
+):
+    payload = _png_bytes(size=(256, 256), noisy=True)
+    _mock_transport_settings(monkeypatch, max_size=len(payload) + 1)
+    monkeypatch.setattr(
+        issue_image_service_module,
+        "_IMAGE_COMPRESSION_THRESHOLD_BYTES",
+        50_000,
+    )
+    monkeypatch.setattr(
+        issue_image_service_module,
+        "_IMAGE_OUTPUT_TARGET_BYTES",
+        1,
+    )
+    monkeypatch.setattr(
+        issue_image_service_module,
+        "_IMAGE_OUTPUT_FALLBACK_MAX_BYTES",
+        100_000,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        ["https://user-images.githubusercontent.com/a/fallback.png"]
+    )
+
+    assert len(images) == 1
+    compressed = base64.b64decode(images[0]["data"])
+    assert 1 < len(compressed) <= 100_000
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_caps_image_count(monkeypatch):
+    _mock_transport_settings(monkeypatch)
+    monkeypatch.setattr(issue_image_service_module, "_MAX_IMAGE_COUNT", 1)
+    payload = _png_bytes()
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        [
+            "https://user-images.githubusercontent.com/a/one.png",
+            "https://user-images.githubusercontent.com/a/two.png",
+        ]
+    )
+
+    assert len(images) == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_caps_total_encoded_size(monkeypatch):
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+    encoded_size = len(base64.b64encode(payload))
+    monkeypatch.setattr(
+        issue_image_service_module,
+        "_MAX_TOTAL_ENCODED_IMAGE_BYTES",
+        encoded_size + 1,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=payload,
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        [
+            "https://user-images.githubusercontent.com/a/one.png",
+            "https://user-images.githubusercontent.com/a/two.png",
+        ]
+    )
+
+    assert len(images) == 1
 
 
 def test_strip_image_payloads_for_display_removes_base64():
@@ -642,13 +1006,13 @@ def test_build_user_message_mentions_attached_images(monkeypatch):
         image_count=2,
     )
     assert "2 张" in message
-    assert "多模态附件" in message
+    assert "附带图片" in message
     plain = analyzer._build_user_message(
         {"issue_number": 1, "title": "t", "author": "a", "state": "open"},
         ["bug"],
         [],
     )
-    assert "多模态附件" not in plain
+    assert "附带图片" not in plain
 
 
 async def _result(value):
@@ -699,8 +1063,11 @@ async def test_analyze_issue_attaches_images_and_sanitizes_callback(monkeypatch)
         }
     ]
 
-    async def fake_collect(urls, **_kwargs):
+    async def fake_collect(urls, **kwargs):
         assert urls == ["https://user-images.githubusercontent.com/a/b.png"]
+        assert kwargs["installation_id"] == 42
+        assert kwargs["repo_owner"] == "owner"
+        assert kwargs["repo_name"] == "repo"
         return list(downloaded)
 
     monkeypatch.setattr(
@@ -717,7 +1084,7 @@ async def test_analyze_issue_attaches_images_and_sanitizes_callback(monkeypatch)
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _result(False),
+        lambda key, **_kwargs: _result(key == "issue_vision_enabled"),
     )
     monkeypatch.setattr(
         issue_analyzer_module,
@@ -776,7 +1143,7 @@ async def test_analyze_issue_attaches_images_and_sanitizes_callback(monkeypatch)
     # AI 请求收到完整 base64 附件
     sent_user = client.calls[0]["messages"][1]
     assert sent_user["images"] == downloaded
-    assert "多模态附件" in sent_user["content"]
+    assert "附带图片" in sent_user["content"]
     # 前端推送边界不含 base64
     pushed_user = next(data for _t, data in pushed if data.get("role") == "user")
     assert "data" not in pushed_user["images"][0]
@@ -793,7 +1160,8 @@ async def test_analyze_issue_skips_images_when_disabled(monkeypatch):
         ai_temperature = 0.2
         issue_price_per_1k_prompt = 1
         issue_price_per_1k_completion = 1
-        issue_vision_enabled = False
+        # The persisted dynamic value below must win over this stale process value.
+        issue_vision_enabled = True
 
     class _FakeClient:
         def __init__(self):
@@ -842,7 +1210,7 @@ async def test_analyze_issue_skips_images_when_disabled(monkeypatch):
     monkeypatch.setattr(
         issue_analyzer_module,
         "get_dynamic_config",
-        lambda _key: _result(False),
+        lambda _key, **_kwargs: _result(False),
     )
     monkeypatch.setattr(
         issue_analyzer_module,

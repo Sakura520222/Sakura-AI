@@ -1218,7 +1218,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
-                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将下载并以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
+                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
                 },
                 "keys": [
                     "enable_issue_analysis",

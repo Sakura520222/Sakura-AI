@@ -574,7 +574,11 @@ class IssueAnalyzer:
         # / Download images from body/comments as base64 attachments; non-vision
         # candidates strip them when building the request.
         images_payload: list[dict[str, Any]] = []
-        if settings.issue_vision_enabled and supports_vision:
+        vision_enabled = await get_dynamic_config(
+            "issue_vision_enabled",
+            fresh=True,
+        )
+        if vision_enabled and supports_vision:
             image_urls = extract_image_references(issue_info.get("body", ""))
             for comment in comments or ():
                 image_urls.extend(extract_image_references(comment.get("body", "")))
@@ -586,6 +590,8 @@ class IssueAnalyzer:
                         image_urls,
                         github_app=github_app,
                         installation_id=issue_info.get("installation_id"),
+                        repo_owner=repo_owner,
+                        repo_name=repo_name,
                     )
                 except ReviewCancelledError:
                     raise
