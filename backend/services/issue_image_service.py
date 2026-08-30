@@ -25,6 +25,7 @@ import httpx
 from loguru import logger
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import get_settings
 
 # 重定向跳数是 SSRF 防护边界（每跳都重新校验白名单），非业务可调项；
@@ -34,6 +35,10 @@ _DOWNLOAD_TIMEOUT_SECONDS = 30.0
 _IMAGE_COMPRESSION_THRESHOLD_BYTES = 5 * 1024 * 1024
 _IMAGE_OUTPUT_TARGET_BYTES = 500 * 1024
 _IMAGE_OUTPUT_FALLBACK_MAX_BYTES = 5 * 1024 * 1024
+# vision provider 尺寸上限（Anthropic 8000px、OpenAI 7680px 量级）的保守
+# 基线；低熵大尺寸图字节虽小也须缩到该范围内，否则整个请求会被拒
+# / conservative baseline under vision provider dimension ceilings.
+_IMAGE_MAX_DIMENSION = 7680
 _MAX_IMAGE_COUNT = 20
 _MAX_TOTAL_ENCODED_IMAGE_BYTES = 15 * 1024 * 1024
 _SUPPORTED_IMAGE_MEDIA_TYPES = frozenset(
@@ -45,7 +50,16 @@ _IMAGE_FORMAT_MEDIA_TYPES = {
     "WEBP": "image/webp",
 }
 
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+# CommonMark 图片目的地：支持可选 title（"x" / 'x' / (x)）、尖括号
+# destination 与一层平衡圆括号 / CommonMark image destinations with
+# optional titles, angle-bracket destinations and one level of parens.
+_MARKDOWN_IMAGE_RE = re.compile(
+    r"!\[[^\]]*\]\(\s*"
+    r"(?:<(?P<angle>https?://[^>]+)>"
+    r"|(?P<plain>https?://(?:\([^()\s]*\)|[^\s()])+))"
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?"
+    r"\s*\)"
+)
 _HTML_IMAGE_RE = re.compile(r"<img[^>]+src=[\"'](https?://[^\"']+)[\"']", re.IGNORECASE)
 
 
@@ -63,7 +77,12 @@ def extract_image_references(text: str | None) -> list[str]:
         key=lambda match: match.start(),
     )
     for match in matches:
-        url = match.group(1).strip()
+        if match.re is _MARKDOWN_IMAGE_RE:
+            # 尖括号目的地按 CommonMark 语义保留原文（含空格），由 URL
+            # 校验与下载层决定去留 / angle destinations keep raw form.
+            url = (match.group("angle") or match.group("plain") or "").strip()
+        else:
+            url = match.group(1).strip()
         if url and url not in seen:
             seen.add(url)
             urls.append(url)
@@ -135,6 +154,28 @@ def _validate_image_url(url: str, entries: list[str]) -> str | None:
     return url
 
 
+# installation token 只发 GitHub 第一方资产域的 https 请求：管理员白名单可
+# 含任意外部主机（自建图床等），token 绝不能跟随白名单外溢，也不经明文
+# http 泄漏 / installation tokens only travel to first-party GitHub hosts
+# over https, never to arbitrary allowlisted hosts or plaintext http.
+_GITHUB_TOKEN_HOST_SUFFIXES = ("github.com", "githubusercontent.com")
+
+
+def _url_accepts_github_token(url: str) -> bool:
+    """判断目标是否为可安全携带 GitHub token 的第一方 https 域。"""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return any(
+        host == suffix or host.endswith(f".{suffix}")
+        for suffix in _GITHUB_TOKEN_HOST_SUFFIXES
+    )
+
+
 def _normalize_image_media_type(value: str) -> str | None:
     media_type = value.split(";", 1)[0].strip().lower()
     if media_type == "image/jpg":
@@ -144,15 +185,20 @@ def _normalize_image_media_type(value: str) -> str | None:
     return media_type
 
 
-def _verified_image_media_type(payload: bytes) -> str | None:
-    """Verify bytes with Pillow instead of trusting Content-Type alone."""
+def _inspect_image_payload(payload: bytes) -> tuple[str, tuple[int, int]] | None:
+    """Verify bytes with Pillow; return (media_type, size) or None."""
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(io.BytesIO(payload)) as image:
                 media_type = _IMAGE_FORMAT_MEDIA_TYPES.get(image.format or "")
+                # verify() 后像素数据不可再读，尺寸须在 verify 前取
+                # / read size before verify(); pixel data is unusable after.
+                size = image.size
                 image.verify()
-        return media_type
+        if media_type is None:
+            return None
+        return media_type, size
     except (
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
@@ -169,8 +215,14 @@ def _encode_webp(image: Image.Image, quality: int) -> bytes:
     return output.getvalue()
 
 
-def _compress_image_payload(payload: bytes) -> bytes | None:
-    """Downscale and encode as WebP, preferring 500 KiB but allowing 5 MiB."""
+def _compress_image_payload(
+    payload: bytes, *, max_dimension: int | None = None
+) -> bytes | None:
+    """Downscale and encode as WebP, preferring 500 KiB but allowing 5 MiB.
+
+    ``max_dimension`` 同时约束输出尺寸：字节达标但尺寸超限时继续缩放，
+    避免 vision provider 按尺寸拒绝整个请求。
+    """
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -186,12 +238,18 @@ def _compress_image_payload(payload: bytes) -> bytes | None:
                 current = oriented.convert("RGBA" if has_alpha else "RGB")
 
         best: bytes | None = None
+        best_size: tuple[int, int] | None = None
         for attempt in range(8):
             quality = max(40, 86 - attempt * 6)
             encoded = _encode_webp(current, quality)
             if best is None or len(encoded) < len(best):
                 best = encoded
-            if len(encoded) <= _IMAGE_OUTPUT_TARGET_BYTES:
+                best_size = current.size
+            fits_bytes = len(encoded) <= _IMAGE_OUTPUT_TARGET_BYTES
+            fits_dimension = (
+                max_dimension is None or max(current.size) <= max_dimension
+            )
+            if fits_bytes and fits_dimension:
                 return encoded
 
             ratio = (_IMAGE_OUTPUT_TARGET_BYTES / len(encoded)) ** 0.5
@@ -204,8 +262,11 @@ def _compress_image_payload(payload: bytes) -> bytes | None:
                 break
             current = current.resize(new_size, Image.Resampling.LANCZOS)
 
-        if best is not None and len(best) <= _IMAGE_OUTPUT_FALLBACK_MAX_BYTES:
-            return best
+        if best is not None and best_size is not None:
+            if len(best) <= _IMAGE_OUTPUT_FALLBACK_MAX_BYTES and (
+                max_dimension is None or max(best_size) <= max_dimension
+            ):
+                return best
         return None
     except (
         Image.DecompressionBombError,
@@ -223,16 +284,25 @@ def _prepare_image_payload(
     declared = _normalize_image_media_type(declared_media_type)
     if declared is None:
         return None
-    if len(payload) > _IMAGE_COMPRESSION_THRESHOLD_BYTES:
-        compressed = _compress_image_payload(payload)
+    inspected = _inspect_image_payload(payload)
+    if inspected is None:
+        return None
+    media_type, size = inspected
+    # 触发归一化的条件：字节超阈值，或尺寸超 provider 上限（低熵大图字节
+    # 可能很小）/ compress when bytes exceed the threshold or dimensions
+    # exceed the provider ceiling (low-entropy images can be tiny in bytes).
+    if (
+        len(payload) > _IMAGE_COMPRESSION_THRESHOLD_BYTES
+        or max(size) > _IMAGE_MAX_DIMENSION
+    ):
+        compressed = _compress_image_payload(
+            payload, max_dimension=_IMAGE_MAX_DIMENSION
+        )
         if compressed is None:
             return None
         return compressed, "image/webp"
 
-    verified = _verified_image_media_type(payload)
-    if verified is None:
-        return None
-    return payload, verified
+    return payload, media_type
 
 
 async def _get_installation_token(
@@ -268,6 +338,12 @@ async def _get_installation_token(
         return None
 
 
+def _raise_if_cancelled(cancel_event: Any) -> None:
+    """下载循环的取消检查点，语义与 analyzer/worker 的取消一致。"""
+    if cancel_event is not None and cancel_event.is_set():
+        raise ReviewCancelledError("Issue 图片下载已被取消")
+
+
 async def _download_image(
     client: httpx.AsyncClient,
     url: str,
@@ -275,6 +351,7 @@ async def _download_image(
     *,
     token: str | None,
     max_size: int,
+    cancel_event: Any = None,
 ) -> dict[str, Any] | None:
     """下载单张图片（手动跟随重定向并逐跳校验白名单）。
 
@@ -282,7 +359,7 @@ async def _download_image(
     """
     current = url
     auth_headers = {"Accept": "application/octet-stream"}
-    if token:
+    if token and _url_accepts_github_token(url):
         auth_headers["Authorization"] = f"Bearer {token}"
     # 鉴权头只发首跳：重定向目标（S3 签名 URL 等）自带 query 鉴权，
     # 再带 Authorization 会被目标拒绝
@@ -336,6 +413,7 @@ async def _download_image(
 
                 buffer = bytearray()
                 async for chunk in response.aiter_bytes():
+                    _raise_if_cancelled(cancel_event)
                     if len(buffer) + len(chunk) > max_size:
                         logger.warning(
                             "图片流超过下载硬上限（中止）: {} bytes>{}",
@@ -383,8 +461,13 @@ async def collect_issue_images(
     installation_id: Any = None,
     repo_owner: str | None = None,
     repo_name: str | None = None,
+    cancel_event: Any = None,
 ) -> list[dict[str, Any]]:
-    """按配置下载图片列表，返回多模态 images 载荷（失败项自动跳过）。"""
+    """按配置下载图片列表，返回多模态 images 载荷（失败项自动跳过）。
+
+    ``cancel_event``（``asyncio.Event``）在每张图片之间与流式分块间检查，
+    取消时抛出 ``ReviewCancelledError`` 交由调用方走既有取消收尾。
+    """
     settings = get_settings()
     entries = _allowed_domain_entries()
     if not entries:
@@ -409,12 +492,14 @@ async def collect_issue_images(
         follow_redirects=False,
     ) as client:
         for url in valid_urls[:_MAX_IMAGE_COUNT]:
+            _raise_if_cancelled(cancel_event)
             image = await _download_image(
                 client,
                 url,
                 entries,
                 token=token,
                 max_size=settings.issue_vision_max_image_size_bytes,
+                cancel_event=cancel_event,
             )
             if image is not None:
                 encoded_bytes = len(image.get("data", ""))

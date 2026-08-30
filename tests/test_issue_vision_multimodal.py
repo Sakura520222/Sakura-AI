@@ -9,6 +9,7 @@
 - IssueAnalyzer 的图片注入路径
 """
 
+import asyncio
 import base64
 import io
 import random
@@ -28,6 +29,7 @@ from backend.core.ai_protocol.adapters.openai_compatible import (
 from backend.core.ai_protocol.adapters.openai_responses import (
     OpenAIResponsesAdapter,
 )
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.ai_protocol.models import (
     AuthScheme,
     ModelCapabilitySet,
@@ -135,10 +137,19 @@ def test_openai_responses_renders_input_image():
     body = OpenAIResponsesAdapter().serialize_request(_vision_request())
     user_item = body["input"][0]
     assert user_item["role"] == "user"
+    # 官方 OpenAPI schema 将 detail 声明为 required，缺省会遭严格端点拒绝
     assert user_item["content"] == [
         {"type": "input_text", "text": "look at this"},
-        {"type": "input_image", "image_url": "data:image/png;base64,YWJj"},
-        {"type": "input_image", "image_url": "https://img.example.test/a.png"},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,YWJj",
+            "detail": "auto",
+        },
+        {
+            "type": "input_image",
+            "image_url": "https://img.example.test/a.png",
+            "detail": "auto",
+        },
     ]
 
 
@@ -405,6 +416,26 @@ def test_extract_image_references_mixed_and_deduped():
     assert extract_image_references("") == []
 
 
+def test_extract_image_references_supports_commonmark_destination_forms():
+    """可选 title、尖括号目的地与一层平衡圆括号都是合法图片语法。"""
+    text = (
+        '![shot](https://host.example.test/a.png "diagnostic screenshot")\n'
+        "![alt](https://host.example.test/b.png 'single quoted title')\n"
+        "![parens title](https://host.example.test/c.png (title in parens))\n"
+        "![angled](<https://host.example.test/d folder/e.png>)\n"
+        "![wiki](https://host.example.test/wiki/Foo_(bar))\n"
+        "![legacy](https://host.example.test/f.png)\n"
+    )
+    assert extract_image_references(text) == [
+        "https://host.example.test/a.png",
+        "https://host.example.test/b.png",
+        "https://host.example.test/c.png",
+        "https://host.example.test/d folder/e.png",
+        "https://host.example.test/wiki/Foo_(bar)",
+        "https://host.example.test/f.png",
+    ]
+
+
 def test_validate_image_url_domain_allowlist():
     entries = ["user-images.githubusercontent.com", "github.com/user-attachments"]
     validate = issue_image_service_module._validate_image_url
@@ -443,6 +474,22 @@ def test_validate_image_url_s3_wildcard_pattern():
         "https://evil-production-user-asset-6210df.s3.amazonaws.com/x.png",
         entries,
     ) is None
+
+
+def test_url_accepts_github_token_scope():
+    """installation token 只允许发往 https 的 GitHub 第一方域。"""
+    accepts = issue_image_service_module._url_accepts_github_token
+    assert accepts("https://user-images.githubusercontent.com/a/b.png")
+    assert accepts("https://github.com/user-attachments/assets/x")
+    assert accepts("https://objects.githubusercontent.com/a")
+    # 明文 http 不带 token
+    assert not accepts("http://user-images.githubusercontent.com/a.png")
+    # 后缀伪造与任意外部域都不带 token
+    assert not accepts("https://evil-githubusercontent.com.attacker.test/a.png")
+    assert not accepts("https://github.com.attacker.test/a.png")
+    assert not accepts("https://my-images.example.test/a.png")
+    assert not accepts("ftp://user-images.githubusercontent.com/a.png")
+    assert not accepts("not a url")
 
 
 def _mock_transport_settings(monkeypatch, *, max_size=1000):
@@ -957,6 +1004,195 @@ async def test_collect_issue_images_caps_total_encoded_size(monkeypatch):
     assert len(images) == 1
 
 
+@pytest.mark.asyncio
+async def test_collect_issue_images_withholds_token_from_external_allowlist_host(
+    monkeypatch,
+):
+    """管理员把外部图床加进白名单时，installation token 不得发往该主机。"""
+    class _Settings:
+        issue_vision_max_image_size_bytes = 1000
+        issue_vision_allowed_image_domains = (
+            "user-images.githubusercontent.com,cdn.example.test"
+        )
+
+    monkeypatch.setattr(
+        issue_image_service_module, "get_settings", lambda: _Settings()
+    )
+    payload = _png_bytes()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("authorization")))
+        return httpx.Response(
+            200, headers={"content-type": "image/png"}, content=payload
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    github_app = SimpleNamespace(
+        integration=SimpleNamespace(
+            get_access_token=lambda installation_id: SimpleNamespace(token="tok")
+        )
+    )
+
+    images = await collect_issue_images(
+        [
+            "https://cdn.example.test/a.png",
+            "https://user-images.githubusercontent.com/a/b.png",
+        ],
+        github_app=github_app,
+        installation_id=1,
+    )
+
+    assert len(images) == 2
+    assert dict(seen) == {
+        "cdn.example.test": None,
+        "user-images.githubusercontent.com": "Bearer tok",
+    }
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_withholds_token_from_http_target(monkeypatch):
+    """白名单域的明文 http URL 也不得携带 token（防在线嗅探）。"""
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url.scheme), request.headers.get("authorization")))
+        return httpx.Response(
+            200, headers={"content-type": "image/png"}, content=payload
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    github_app = SimpleNamespace(
+        integration=SimpleNamespace(
+            get_access_token=lambda installation_id: SimpleNamespace(token="tok")
+        )
+    )
+
+    images = await collect_issue_images(
+        ["http://user-images.githubusercontent.com/a/b.png"],
+        github_app=github_app,
+        installation_id=1,
+    )
+
+    assert len(images) == 1
+    assert seen == [("http", None)]
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_downscales_oversized_dimensions(monkeypatch):
+    """低熵大尺寸图即使字节低于压缩阈值也要按 provider 尺寸上限归一化。"""
+    payload = _png_bytes(size=(7900, 200))
+    assert len(payload) < 5 * 1024 * 1024
+    _mock_transport_settings(monkeypatch, max_size=len(payload) + 1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "image/png"}, content=payload
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    images = await collect_issue_images(
+        ["https://user-images.githubusercontent.com/a/wide.png"]
+    )
+
+    assert len(images) == 1
+    assert images[0]["media_type"] == "image/webp"
+    decoded = base64.b64decode(images[0]["data"])
+    with Image.open(io.BytesIO(decoded)) as image:
+        assert image.format == "WEBP"
+        assert max(image.size) <= issue_image_service_module._IMAGE_MAX_DIMENSION
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_stops_between_urls_when_cancelled(monkeypatch):
+    _mock_transport_settings(monkeypatch)
+    payload = _png_bytes()
+    cancel_event = asyncio.Event()
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        cancel_event.set()  # 首张下载完成后外部取消
+        return httpx.Response(
+            200, headers={"content-type": "image/png"}, content=payload
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    with pytest.raises(ReviewCancelledError):
+        await collect_issue_images(
+            [
+                "https://user-images.githubusercontent.com/a/one.png",
+                "https://user-images.githubusercontent.com/a/two.png",
+            ],
+            cancel_event=cancel_event,
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_issue_images_aborts_stream_when_cancelled(monkeypatch):
+    _mock_transport_settings(monkeypatch)
+    cancel_event = asyncio.Event()
+
+    class _CancelAfterFirstChunk(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]):
+            self.chunks = chunks
+            self.chunks_read = 0
+
+        async def __aiter__(self):
+            for index, chunk in enumerate(self.chunks):
+                self.chunks_read += 1
+                if index == 0:
+                    cancel_event.set()
+                yield chunk
+
+    payload = _png_bytes()
+    stream = _CancelAfterFirstChunk([payload[i : i + 4] for i in range(0, len(payload), 4)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "image/png"}, stream=stream
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        issue_image_service_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+    with pytest.raises(ReviewCancelledError):
+        await collect_issue_images(
+            ["https://user-images.githubusercontent.com/a/slow.png"],
+            cancel_event=cancel_event,
+        )
+    assert stream.chunks_read < len(stream.chunks)
+
+
 def test_strip_image_payloads_for_display_removes_base64():
     messages = [
         {"role": "system", "content": "sys"},
@@ -1034,6 +1270,17 @@ async def test_analyze_issue_attaches_images_and_sanitizes_callback(monkeypatch)
 
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
+
+        async def resolve_role_candidates(self, _role):
+            return [
+                SimpleNamespace(
+                    model=SimpleNamespace(
+                        model_id="model-x",
+                        context_window_tokens=100_000,
+                        capabilities=SimpleNamespace(vision=True),
+                    )
+                )
+            ]
 
         async def resolve_role_primary_candidate(self, _role):
             return SimpleNamespace(
@@ -1170,6 +1417,9 @@ async def test_analyze_issue_skips_images_when_disabled(monkeypatch):
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
 
+        async def resolve_role_candidates(self, _role):
+            return []
+
         async def resolve_role_primary_candidate(self, _role):
             return SimpleNamespace(
                 model=SimpleNamespace(
@@ -1260,3 +1510,117 @@ async def test_analyze_issue_skips_images_when_disabled(monkeypatch):
 
     assert collect_calls == []
     assert "images" not in client.calls[0]["messages"][1]
+
+
+@pytest.mark.asyncio
+async def test_analyze_issue_collects_images_when_only_fallback_sees_vision(
+    monkeypatch,
+):
+    """primary 无 vision 但 fallback 候选支持时仍应收集图片，并透传取消信号。"""
+    class _Settings:
+        review_timeout_seconds = 120
+        ai_temperature = 0.2
+        issue_price_per_1k_prompt = 1
+        issue_price_per_1k_completion = 1
+        issue_vision_enabled = True
+
+    def _candidate(model_id: str, vision: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            model=SimpleNamespace(
+                model_id=model_id,
+                context_window_tokens=100_000,
+                capabilities=SimpleNamespace(vision=vision),
+            )
+        )
+
+    class _FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def resolve_role_candidates(self, _role):
+            return [_candidate("text-only", False), _candidate("vision", True)]
+
+        async def call_with_retry(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5),
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="final", tool_calls=None)
+                    )
+                ],
+            )
+
+    seen_kwargs = {}
+
+    async def fake_collect(urls, **kwargs):
+        seen_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        issue_analyzer_module, "collect_issue_images", fake_collect
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module, "get_settings", lambda: _Settings()
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_user_dynamic_config",
+        lambda *_args: _result("en"),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_dynamic_config",
+        lambda key, **_kwargs: _result(key == "issue_vision_enabled"),
+    )
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_model_context_manager",
+        lambda: SimpleNamespace(calculate_safe_context=lambda *_a: 80_000),
+    )
+    monkeypatch.setattr(
+        "backend.services.label_service.label_service.get_repo_labels",
+        lambda *_args: _result({"bug": {}}),
+    )
+    monkeypatch.setattr(
+        "backend.core.github_app.GitHubAppClient",
+        lambda: SimpleNamespace(get_repo_collaborators=lambda *_a: []),
+    )
+    monkeypatch.setattr(
+        "backend.services.sakura_memory_service.get_sakura_memory_service",
+        lambda: SimpleNamespace(
+            get_sakura_context=lambda *a, **k: _result({})
+        ),
+    )
+
+    async def fake_parse(_text, _messages, _tracker, **_kwargs):
+        return {"category": "bug"}
+
+    client = _FakeClient()
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    analyzer.api_client = client
+    analyzer.tool_manager = SimpleNamespace(
+        get_enabled_tools=lambda _repo: _result([])
+    )
+    analyzer.tool_handler = SimpleNamespace()
+    analyzer._refresh_ai_client = lambda: None
+    analyzer._refresh_runtime_config = lambda: None
+    analyzer._parse_or_repair_analysis = fake_parse
+    cancel_event = asyncio.Event()
+
+    await analyzer.analyze_issue(
+        {
+            "issue_number": 1,
+            "title": "title",
+            "body": "![shot](https://user-images.githubusercontent.com/a/b.png)",
+            "author": "author",
+            "state": "open",
+        },
+        "owner",
+        "repo",
+        cancel_event=cancel_event,
+    )
+
+    # fallback 候选支持 vision → 图片仍然收集
+    assert seen_kwargs, "fallback vision 候选也应触发图片收集"
+    assert seen_kwargs["cancel_event"] is cancel_event

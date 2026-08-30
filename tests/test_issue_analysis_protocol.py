@@ -339,14 +339,16 @@ async def test_issue_tool_loop_uses_tool_free_call_after_deadline_and_skips_tool
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
 
-        async def resolve_role_primary_candidate(self, _role):
-            return SimpleNamespace(
-                model=SimpleNamespace(
-                    model_id="model-x",
-                    context_window_tokens=100_000,
-                    capabilities=SimpleNamespace(vision=False),
+        async def resolve_role_candidates(self, _role):
+            return [
+                SimpleNamespace(
+                    model=SimpleNamespace(
+                        model_id="model-x",
+                        context_window_tokens=100_000,
+                        capabilities=SimpleNamespace(vision=False),
+                    )
                 )
-            )
+            ]
 
         async def call_with_retry(self, **kwargs):
             self.calls.append(kwargs)
@@ -546,14 +548,16 @@ async def test_issue_tool_calls_returned_after_deadline_are_closed_before_timeou
         async def resolve_role_model_context(self, _role):
             return "model-x", 100_000
 
-        async def resolve_role_primary_candidate(self, _role):
-            return SimpleNamespace(
-                model=SimpleNamespace(
-                    model_id="model-x",
-                    context_window_tokens=100_000,
-                    capabilities=SimpleNamespace(vision=False),
+        async def resolve_role_candidates(self, _role):
+            return [
+                SimpleNamespace(
+                    model=SimpleNamespace(
+                        model_id="model-x",
+                        context_window_tokens=100_000,
+                        capabilities=SimpleNamespace(vision=False),
+                    )
                 )
-            )
+            ]
 
         async def call_with_retry(self, **kwargs):
             self.calls.append(
