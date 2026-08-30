@@ -555,18 +555,20 @@ class IssueAnalyzer:
         except Exception as e:
             logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
 
-        # 解析角色 primary 候选：vision 能力判定与循环前的上下文窗口共用一次解析
-        # / Resolve the primary candidate once for vision gating and the
-        # context-window budget used by the tool loop below.
-        primary_candidate = await self.api_client.resolve_role_primary_candidate("main")
+        # 解析角色候选链：vision 判定须看整条链（fallback 候选也可能支持
+        # vision），上下文窗口预算沿用 primary 候选 / Resolve the role chain
+        # once; vision gating considers every candidate while the
+        # context-window budget below keeps using the primary candidate.
+        role_candidates = await self.api_client.resolve_role_candidates("main")
+        primary_candidate = role_candidates[0] if role_candidates else None
         role_model = primary_candidate.model.model_id if primary_candidate else None
         role_context_window = (
             primary_candidate.model.context_window_tokens
             if primary_candidate
             else None
         )
-        supports_vision = bool(
-            primary_candidate and primary_candidate.model.capabilities.vision
+        supports_vision = any(
+            candidate.model.capabilities.vision for candidate in role_candidates
         )
 
         # 图片多模态（Issue #538）：正文与评论中的图片经白名单下载为 base64
@@ -592,6 +594,7 @@ class IssueAnalyzer:
                         installation_id=issue_info.get("installation_id"),
                         repo_owner=repo_owner,
                         repo_name=repo_name,
+                        cancel_event=cancel_event,
                     )
                 except ReviewCancelledError:
                     raise

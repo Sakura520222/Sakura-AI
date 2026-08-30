@@ -147,7 +147,11 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                         url = image.url
                     else:
                         continue
-                    content_items.append({"type": "input_image", "image_url": url})
+                    # 官方 OpenAPI schema 将 detail 声明为 required；省略会
+                    # 被严格实现拒绝 / required by the official schema.
+                    content_items.append(
+                        {"type": "input_image", "image_url": url, "detail": "auto"}
+                    )
                 input_items.append({"role": msg.role, "content": content_items})
                 continue
             input_items.append({"role": msg.role, "content": msg.content or ""})
