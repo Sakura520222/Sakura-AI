@@ -38,7 +38,7 @@ loguru>=0.7.3
 python-telegram-bot>=21.0
 
 # RAG 功能
-chromadb>=0.4.0
+chromadb>=1.5.9
 watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
