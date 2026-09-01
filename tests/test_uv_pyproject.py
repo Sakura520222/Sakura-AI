@@ -70,3 +70,16 @@ def test_uv_lock_declares_supported_environments() -> None:
     assert not any("x86_64' and sys_platform == 'darwin'" in e or
                    "darwin' and platform_machine == 'x86_64'" in e
                    for e in environments)
+
+
+def test_development_cheatsheet_pip_annotation_includes_updater() -> None:
+    """开发指南速查块的 pip 注释必须包含 updater editable 安装。
+
+    根测试套件递归收集 updater/tests 并导入 src layout 的
+    sakura_ai_updater;pip 环境缺少 `pip install -e './updater[dev]'`
+    时会在收集期直接失败。
+    """
+    for name, heading in (("README.md", "## 开发指南"), ("README_EN.md", "## Development")):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+        assert "updater[dev]" in section, name
