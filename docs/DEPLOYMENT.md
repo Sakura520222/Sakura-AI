@@ -248,8 +248,9 @@ sandboxd；如果要在源码环境启用 OS 沙箱，请由管理员显式执�
 **本地直接运行**：
 
 ```bash
-pip install -r requirements.txt
-python -m backend.main
+uv sync                # 推荐:自动创建 .venv 并安装全部依赖(含 updater)
+# 传统 pip 方式:pip install -r requirements.txt
+uv run python -m backend.main
 ```
 
 > 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。
