@@ -7,6 +7,8 @@ Sakura AI is a Python 3.14+ FastAPI service for GitHub PR/Issue review, WebUI ad
 ## Setup, Build, and Development Commands
 
 ```bash
+uv sync
+# Classic pip alternative:
 python -m pip install -r requirements.txt
 python -m pip install -e "./updater[dev]"
 python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
@@ -19,7 +21,7 @@ python run_ruff.py --check
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Install the updater editable package before running the full suite. `run_ruff.py` without `--check` may modify and format files; use the check form for read-only validation.
+`uv sync` is the recommended setup: it creates `.venv`, installs all dependencies including the editable updater package, and locks them in `uv.lock`. `requirements.txt` remains the authoritative dependency source for pip/Docker builds; the root `pyproject.toml` mirrors it line by line, enforced by `tests/test_uv_pyproject.py` — update both when changing dependencies. Install the updater editable package (or use `uv sync`) before running the full suite. `run_ruff.py` without `--check` may modify and format files; use the check form for read-only validation.
 
 ## Coding Style and Testing
 

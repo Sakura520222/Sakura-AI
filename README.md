@@ -218,8 +218,9 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
-pip install -r requirements.txt
-python -m backend.main
+uv sync                # 推荐:自动创建 .venv 并安装全部依赖(含 updater)
+# 传统 pip 方式:pip install -r requirements.txt
+uv run python -m backend.main
 ```
 
 > 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。
@@ -270,11 +271,11 @@ AI 审查引擎 ── read_file · list_dir · search_files · git_info · comm
 ## 开发指南
 
 ```bash
-pip install -r requirements.txt      # 安装依赖
-python -m backend.main               # 启动应用
+uv sync                              # 安装依赖(传统方式:pip install -r requirements.txt)
+uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查
-python -m pytest -q                  # 运行测试
+uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
 ```
 

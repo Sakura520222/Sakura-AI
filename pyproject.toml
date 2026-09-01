@@ -1,0 +1,100 @@
+[project]
+name = "sakura-ai"
+version = "0.1.0"
+description = "GitHub PR/Issue AI review bot (FastAPI / SQLAlchemy async / MySQL / Redis / ChromaDB)"
+readme = "README.md"
+authors = [
+    { name = "sakura520222", email = "sakura520222@outlook.com" }
+]
+requires-python = ">=3.14"
+# 依赖与 requirements.txt 逐条一致(pip/Docker 构建的权威来源);
+# 同步由 tests/test_uv_pyproject.py 强制校验。
+# Dependencies mirror requirements.txt line by line (authoritative source for
+# pip/Docker builds); the sync is enforced by tests/test_uv_pyproject.py.
+dependencies = [
+    # Web框架
+    "fastapi>=0.141.1,<1.0.0",
+    "starlette>=1.6.0,<2.0.0",
+    "uvicorn[standard]>=0.52.1",
+    "python-multipart>=0.0.32",
+
+    # GitHub集成
+    "PyGithub>=2.9.1",
+    "cryptography>=44.0.2",
+
+    # AI集成
+    "openai>=1.10.0",
+    "httpx>=0.28.1",
+
+    # 数据库
+    "sqlalchemy>=2.0.52,<2.1",
+    "asyncmy>=0.2.14",
+    "asyncpg>=0.31.0",
+    "alembic>=1.18.5",
+
+    # 任务队列
+    "redis>=5.0.1",
+    "APScheduler>=3.11.3",
+
+    # 工具库
+    "typing-extensions>=4.5.0",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.15.0",
+    "Pillow>=12.3.0",
+    "tzlocal==5.4.4",
+    "tzdata==2026.3",
+
+    # 日志
+    "loguru>=0.7.3",
+
+    # Telegram Bot
+    "python-telegram-bot>=21.0",
+
+    # RAG 功能
+    "chromadb>=0.4.0",
+    "watchfiles>=0.20.0",
+    "python-slugify>=8.0.0",
+
+    # 支付网关
+    "stripe>=15.5.1",
+    "paddle-python-sdk>=1.15.0",
+
+    # WebUI
+    "jinja2>=3.1.6",
+    "python-jose[cryptography]>=3.5.0",
+    "itsdangerous>=2.2.0",
+    "pyotp>=2.10.0",
+    "qrcode[pil]>=8.2",
+    "webauthn>=3.0.0",
+
+    # API 限流
+    "slowapi>=0.1.10",
+
+    # URL 抓取与网络搜索工具
+    "beautifulsoup4>=4.12.0",
+    "duckduckgo-search>=8.1.1",
+
+    # Agent 专家团队常用验证工具
+    "ruff>=0.16.3",
+    "pytest>=9.1.1",
+]
+
+[dependency-groups]
+# 根测试套件递归发现 updater/tests,需要 updater 可导入且自带测试依赖
+# (pytest-asyncio / httpx);与 pip 流程的 `pip install -e './updater[dev]'` 对应。
+# The root test suite discovers updater/tests recursively, so updater must be
+# importable with its own test deps (pytest-asyncio / httpx); mirrors
+# `pip install -e './updater[dev]'` from the pip workflow.
+dev = [
+    "sakura-ai-updater[dev]",
+]
+
+[tool.uv]
+# 应用以 `python -m backend.main` 运行,不构建/安装根项目(虚拟项目)。
+# The app runs via `python -m backend.main`; the root project is virtual
+# (never built/installed).
+package = false
+
+[tool.uv.sources]
+sakura-ai-updater = { path = "updater", editable = true }

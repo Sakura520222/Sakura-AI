@@ -218,8 +218,9 @@ For persisted DEBUG logs, error filtering, and more see [Deployment Guide · Vie
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
-pip install -r requirements.txt
-python -m backend.main
+uv sync                # Recommended: creates .venv and installs all dependencies (incl. updater)
+# Classic pip: pip install -r requirements.txt
+uv run python -m backend.main
 ```
 
 > In local development, changes under `backend/` are hot-reloaded at module level inside the app subprocess (no process restart); changes to process-level modules such as `backend/main.py` or database models log a hint to restart manually. In-app restart requests (Setup completion, admin restart button) still respawn the whole process via the supervision loop.
@@ -270,11 +271,11 @@ Full architecture diagram, data flow, code structure, and interactive knowledge 
 ## Development
 
 ```bash
-pip install -r requirements.txt      # Install dependencies
-python -m backend.main               # Start the app
+uv sync                              # Install dependencies (classic: pip install -r requirements.txt)
+uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
 python run_ruff.py                   # Lint + fix + format
 python run_ruff.py --check           # Read-only check
-python -m pytest -q                  # Run tests
+uv run python -m pytest -q           # Run tests (pip envs: python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 ```
 
