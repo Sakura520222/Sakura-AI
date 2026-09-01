@@ -288,6 +288,9 @@ def test_start_script_requires_both_production_digests_and_structured_identity()
     assert "production sandbox requires SAKURA_AGENT_RUNNER_IMAGE_DIGEST=NAME@sha256:<64>" in script
     assert "--label \"ai.sakura.protocol-version=$SANDBOX_PROTOCOL_VERSION\"" in script
     assert "--label \"ai.sakura.runner-image-digest=$runner_ref\"" in script
+    assert "--label ai.sakura.managed-by=sandboxd-daemon" in script
+    assert '--runner-image "$SANDBOX_RUNNER_IMAGE"' in script
+    assert '--runner-image-digest "$SANDBOX_RUNNER_DIGEST"' in script
     assert "sandbox_container_matches_expected" in script
     assert "sandbox_cleanup_known_container" in script
     assert "set(data) != required" in script
@@ -314,11 +317,23 @@ def test_upgrade_and_create_failure_paths_are_fail_closed_and_bounded():
     assert "sandbox_container_matches_expected \"$id\" \"$instance\" \"$daemon_ref\" \"$runner_ref\"" in script
     assert "sandbox_cleanup_known_container \"$id\"" in script
     assert "docker start \"$id\"" in script
-    # Every post-run failure branch has a known-ID cleanup attempt.
+    # Expected-identity startup failures retain a stopped container for logs;
+    # untrusted or drifted identities still go through exact-ID cleanup.
     assert "if ! \"${run_args[@]}\" >/dev/null; then" in script
     assert "if id=$(sandbox_container_id_from_name \"$instance\"); then" in script
+    assert "sandbox_retain_failed_container \"$id\" || true" in script
     assert "sandbox_cleanup_known_container \"$id\" || true" in script
     assert "sandbox_stop_known_container" in script
+
+
+def test_controller_label_is_disjoint_from_runner_orphan_recovery_label():
+    start_script = (ROOT / "start.sh").read_text(encoding="utf-8")
+    runtime = (
+        ROOT / "sandboxer" / "src" / "sakura_ai_sandboxer" / "docker_runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "--label ai.sakura.managed-by=sandboxd-daemon" in start_script
+    assert 'SERVICE_LABEL = "ai.sakura.managed-by=sandboxd"' in runtime
+    assert "sandboxd-daemon" not in runtime
 
 
 def test_state_missing_recovery_uses_exact_name_and_structured_labels():

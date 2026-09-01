@@ -63,6 +63,80 @@ sandbox_container_id_from_name 'sandbox-test1234'
     assert result.stdout.strip() == 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 
+def test_sandbox_stop_reports_retained_container():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_RUNTIME_DIR="$case_dir/run"
+SANDBOX_STATE_DIR="$case_dir/state"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_CONTAINER_NAME='sakura-ai-sandboxd-test'
+mkdir -p "$SANDBOX_RUNTIME_DIR" "$SANDBOX_STATE_DIR"
+sandbox_prepare_directories() { :; }
+sandbox_load_deployment_config() { :; }
+sandbox_instance_id() { printf '%s\n' 'sandbox-test1234'; }
+sandbox_read_container_id() { printf '%064d\n' 0; }
+sandbox_container_owned() { return 0; }
+sandbox_write_identity() { :; }
+sandbox_stop_known_container() { :; }
+sandbox_stop
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "sandboxd 已停止并保留容器" in output
+
+
+def test_down_uses_persisted_image_mode_to_stop_independent_sandboxd():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' \
+  'SAKURA_DB_PASSWORD=0000000000000000000000000000000000000000000000000000000000000000' \
+  > "$DEPLOYMENT_ENV_FILE"
+sandbox_load_deployment_config() { :; }
+ensure_prod_compose_file() { :; }
+sandbox_lifecycle_enabled() {
+    printf 'LIFECYCLE:%s\n' "$1"
+    [[ "$1" == 'true' ]]
+}
+sandbox_require_root() { :; }
+sandbox_stop() { printf 'SANDBOX:STOP\n'; }
+docker() {
+    if [[ "$1 $2" == 'compose version' ]]; then
+        return 0
+    fi
+    printf 'DOCKER:%s\n' "$*"
+}
+do_down false
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "LIFECYCLE:true" in output
+    assert "SANDBOX:STOP" in output
+    assert "DOCKER:compose" in output
+    assert " down" in output
+
+
+def test_down_cli_propagates_incomplete_stop_exit_status():
+    script = (ROOT / "start.sh").read_text(encoding="utf-8")
+    assert 'down)   do_down "$prod"; exit $? ;;' in script
+
+
 def test_image_update_fails_closed_without_updater_and_never_calls_web_only_helper():
     result = _run_bash(
         """
@@ -335,7 +409,7 @@ source ./start.sh
 case_dir=$(mktemp -d)
 trap 'rm -rf "$case_dir"' EXIT
 export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
-touch "$UPDATER_DEPLOYMENT_ENV_FILE"
+printf 'SAKURA_DEPLOY_MODE=image\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
 docker() {
   if [[ "$*" == 'compose version' ]]; then return 0; fi
   printf 'DOCKER:%s\n' "$*"
@@ -442,6 +516,52 @@ compose_pull_with_native_progress
     assert fallback.returncode == 0, fallback.stdout + fallback.stderr
     assert "COMPOSE:pull" in fallback.stdout
     assert "--progress tty" not in fallback.stdout
+
+
+def test_individual_image_pull_uses_compose_progress_without_pty_wrapper():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+sleep() { :; }
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+calls="$case_dir/calls"
+reference='ghcr.io/sakura520222/sakura-ai:v3.2.0'
+    docker() {
+        printf '%s\n' "$*" >> "$calls"
+        case "$*" in
+            'compose --help')
+                printf '%s\n' '--progress'
+                ;;
+            *'compose --ansi always --progress tty'*'pull pull_target')
+                compose_file=''
+                previous=''
+                for arg in "$@"; do
+                    if [[ "$previous" == '--file' ]]; then
+                        compose_file="$arg"
+                    fi
+                    previous="$arg"
+                done
+                [[ -n "$compose_file" ]] || return 1
+                grep -Fq "image: $reference" "$compose_file"
+                ;;
+            pull*)
+                printf 'DIRECT_PULL_USED\n' >> "$calls"
+                return 1
+                ;;
+        esac
+    }
+# 旧方案会命中该函数并得到 143；新方案不得再创建或调用 PTY 包装器。
+script() { printf 'SCRIPT_WRAPPER_USED\n' >> "$calls"; return 143; }
+docker_pull_native_progress "$reference"
+! grep -Fq 'SCRIPT_WRAPPER_USED' "$calls"
+! grep -Fq 'DIRECT_PULL_USED' "$calls"
+grep -Fq -- 'compose --ansi always --progress tty' "$calls"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_production_web_pull_failure_keeps_authoritative_env_unchanged():

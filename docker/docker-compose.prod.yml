@@ -12,7 +12,10 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ../.deploy/deployment.env
+      # Direct production activation uses a pending transaction file until
+      # Web and sandboxd pass health checks.  start.sh supplies its absolute
+      # path here; ordinary post-commit operations use the authoritative file.
+      - ${SAKURA_COMPOSE_SERVICE_ENV_FILE:-../.deploy/deployment.env}
     group_add:
       - "9472"
       # sandboxd owns this independent IPC group.  It is deliberately not

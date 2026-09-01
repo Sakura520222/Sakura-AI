@@ -265,6 +265,9 @@ docker() {{
     fi
     printf 'DOCKER:%s\n' "$*"
 }}
+# This test isolates Compose routing.  Independent sandbox lifecycle behavior
+# is covered by test_start_sh_lifecycle.py.
+sandbox_lifecycle_enabled() {{ return 1; }}
 {action}
 """
     result = subprocess.run(
