@@ -671,6 +671,13 @@ jobs:
           # 依赖与主 README
           cp requirements.txt "$RELEASE_DIR/"
           echo "- requirements.txt" >> packaging_manifest.txt
+          # uv 项目文件与 updater 源码:README 的源码开发路径(uv sync 与
+          # pip install -e './updater[dev]')在 source archive 内必须可执行
+          cp pyproject.toml "$RELEASE_DIR/"
+          echo "- pyproject.toml" >> packaging_manifest.txt
+          [ -f "uv.lock" ] && cp uv.lock "$RELEASE_DIR/" && echo "- uv.lock" >> packaging_manifest.txt || true
+          [ -f ".python-version" ] && cp .python-version "$RELEASE_DIR/" && echo "- .python-version" >> packaging_manifest.txt || true
+          [ -d "updater" ] && cp -r updater "$RELEASE_DIR/" && echo "- updater/" >> packaging_manifest.txt || true
           cp README.md "$RELEASE_DIR/"
           echo "- README.md" >> packaging_manifest.txt
 

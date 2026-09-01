@@ -244,6 +244,24 @@ def test_source_archive_uses_unified_config_section_contract():
     assert 'mkdir -p "$RELEASE_DIR/config"' in package_text
 
 
+def test_source_archive_keeps_uv_and_pip_install_paths_executable():
+    release, _ = _load(RELEASE_PATH)
+    build = release["jobs"]["build-and-upload-assets"]
+    package = next(
+        step for step in build["steps"] if step.get("name") == "创建发布资源包"
+    )
+    package_text = package["run"]
+
+    # The README source-development instructions (uv sync and the classic
+    # pip fallback with `pip install -e './updater[dev]'`) must stay
+    # executable inside the release archive, so the archive has to carry
+    # the uv project files and the updater package source.
+    assert 'cp pyproject.toml "$RELEASE_DIR/"' in package_text
+    assert 'cp uv.lock "$RELEASE_DIR/"' in package_text
+    assert 'cp .python-version "$RELEASE_DIR/"' in package_text
+    assert 'cp -r updater "$RELEASE_DIR/"' in package_text
+
+
 def test_docker_hub_stable_sync_tags_the_copied_docker_hub_image():
     workflow, _ = _load(DOCKER_PUBLISH_PATH)
     sync = workflow["jobs"]["sync-dockerhub"]
