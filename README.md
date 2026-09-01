@@ -215,12 +215,23 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
 
 ### 源码开发
 
+> 源码开发平台：Linux（x86_64/arm64）或 Apple Silicon macOS 14+。Intel Mac 与 macOS ≤13 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
+
+**uv 方式（推荐）**：
+
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
-uv sync                # 推荐:自动创建 .venv 并安装全部依赖(含 updater)
-# 传统 pip 方式:pip install -r requirements.txt
+uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
+```
+
+**传统 pip 方式（无 uv）**：
+
+```bash
+pip install -r requirements.txt
+pip install -e './updater[dev]'
+python -m backend.main
 ```
 
 > 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。

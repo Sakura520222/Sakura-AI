@@ -215,12 +215,23 @@ For persisted DEBUG logs, error filtering, and more see [Deployment Guide · Vie
 
 ### Source Development
 
+> Source-development platforms: Linux (x86_64/arm64) or Apple Silicon macOS 14+. Intel Macs and macOS <=13 cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
+
+**With uv (recommended)**:
+
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
-uv sync                # Recommended: creates .venv and installs all dependencies (incl. updater)
-# Classic pip: pip install -r requirements.txt
+uv sync                # Creates .venv and installs all dependencies (incl. updater)
 uv run python -m backend.main
+```
+
+**Classic pip (without uv)**:
+
+```bash
+pip install -r requirements.txt
+pip install -e './updater[dev]'
+python -m backend.main
 ```
 
 > In local development, changes under `backend/` are hot-reloaded at module level inside the app subprocess (no process restart); changes to process-level modules such as `backend/main.py` or database models log a hint to restart manually. In-app restart requests (Setup completion, admin restart button) still respawn the whole process via the supervision loop.

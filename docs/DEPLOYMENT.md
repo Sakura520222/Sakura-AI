@@ -247,10 +247,21 @@ sandboxd；如果要在源码环境启用 OS 沙箱，请由管理员显式执�
 
 **本地直接运行**：
 
+> 源码开发平台：Linux（x86_64/arm64）或 Apple Silicon macOS 14+；Intel Mac 与 macOS ≤13 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
+
+uv 方式（推荐）：
+
 ```bash
-uv sync                # 推荐:自动创建 .venv 并安装全部依赖(含 updater)
-# 传统 pip 方式:pip install -r requirements.txt
+uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
+```
+
+传统 pip 方式（无 uv）：
+
+```bash
+pip install -r requirements.txt
+pip install -e './updater[dev]'
+python -m backend.main
 ```
 
 > 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。
