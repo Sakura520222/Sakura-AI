@@ -1780,6 +1780,39 @@ if (
 PY
 }
 
+# Uninstall recovery is intentionally a little broader than normal lifecycle
+# ownership: a canonical-directory migration can preserve a controller whose
+# instance id came from the previous install root.  The exact fixed name,
+# daemon-only service label, protocol and a syntactically valid instance label
+# still prove that this is a Sakura sandboxd controller.  Start/stop/health
+# paths continue to require the current instance id via
+# ``sandbox_container_owned``.
+sandbox_container_has_controller_identity() {
+    local id="$1" payload
+    [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || return 1
+    python3 - "$payload" "$SANDBOX_CONTAINER_NAME" "$SANDBOX_PROTOCOL_VERSION" <<'PY'
+import json
+import re
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+    labels = obj["Config"]["Labels"]
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(labels, dict):
+    raise SystemExit(1)
+if (
+    obj.get("Name") != "/" + sys.argv[2]
+    or labels.get("ai.sakura.managed-by") not in {"sandboxd-daemon", "sandboxd"}
+    or labels.get("ai.sakura.protocol-version") != sys.argv[3]
+    or not re.fullmatch(r"sandbox-[a-z0-9-]{8,55}", str(labels.get("ai.sakura.instance-id", "")))
+):
+    raise SystemExit(1)
+PY
+}
+
 sandbox_container_matches_expected() {
     local id="$1" instance="$2" image_ref="$3" runner_ref="$4" payload
     [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
@@ -2582,7 +2615,7 @@ sandbox_stop() {
 }
 
 sandbox_uninstall() {
-    local purge="${1:-false}" id instance target expected
+    local purge="${1:-false}" id="" recorded_id="" instance target expected listing recovered_id=""
     if [[ ! -e "$SANDBOX_RUNTIME_DIR" && ! -e "$SANDBOX_STATE_DIR" \
         && ! -e "$SANDBOX_SOCKET_PATH" ]]; then
         return 0
@@ -2590,12 +2623,48 @@ sandbox_uninstall() {
     sandbox_prepare_directories || return 1
     sandbox_load_deployment_config
     instance=$(sandbox_instance_id) || return 1
-    id=$(sandbox_read_container_id 2>/dev/null || sandbox_container_id_from_name "$instance" 2>/dev/null || true)
-    if [[ -n "$id" ]]; then
-        sandbox_container_owned "$id" "$instance" || {
-            fail "refusing to remove an unowned sandboxd container" >&2
+    recorded_id=$(sandbox_read_container_id 2>/dev/null || true)
+    if [[ -n "$recorded_id" ]]; then
+        if sandbox_container_inspect "$recorded_id" >/dev/null 2>&1; then
+            id="$recorded_id"
+        else
+            # A retained state file can outlive its container after a manual
+            # docker rm, Docker data-root reset, or install-root migration.
+            # Missing is not the same as unowned; continue with exact-name
+            # recovery before clearing the stale state below.
+            warn "sandboxd container.id 已过期（容器不存在），正在按严格标签恢复卸载"
+        fi
+    fi
+    if [[ -z "$id" ]]; then
+        id=$(sandbox_container_id_from_name "$instance" 2>/dev/null || true)
+    fi
+    if [[ -z "$id" ]]; then
+        listing=$(docker ps -aq --no-trunc --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null) || {
+            fail "unable to inspect sandboxd container name during uninstall" >&2
             return 1
         }
+        if [[ -n "$listing" ]]; then
+            while IFS= read -r recovered_id || [[ -n "$recovered_id" ]]; do
+                [[ "$recovered_id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || {
+                    fail "refusing malformed sandboxd container identity during uninstall" >&2
+                    return 1
+                }
+                if [[ -n "$id" ]] || ! sandbox_container_has_controller_identity "$recovered_id"; then
+                    fail "refusing to remove an unowned sandboxd container" >&2
+                    return 1
+                fi
+                id="$recovered_id"
+            done <<< "$listing"
+        fi
+    fi
+    if [[ -n "$id" ]]; then
+        if ! sandbox_container_owned "$id" "$instance"; then
+            sandbox_container_has_controller_identity "$id" || {
+                fail "refusing to remove an unowned sandboxd container" >&2
+                return 1
+            }
+            warn "sandboxd 容器属于 Sakura controller，但 instance 与当前安装目录不一致；按迁移模式清理"
+        fi
         sandbox_write_identity "$id" "$instance" || return 1
         sandbox_stop_known_container "$id" || return 1
         docker rm "$id" >/dev/null || return 1
