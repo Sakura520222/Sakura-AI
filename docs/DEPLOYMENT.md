@@ -247,7 +247,7 @@ sandboxd；如果要在源码环境启用 OS 沙箱，请由管理员显式执�
 
 **本地直接运行**：
 
-> 源码开发平台：Linux（x86_64/arm64）或 Apple Silicon macOS 14+；Intel Mac 与 macOS ≤13 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
+> 源码开发平台：Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+；其余平台因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
 
 uv 方式（推荐）：
 

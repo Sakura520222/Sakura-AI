@@ -96,16 +96,19 @@ dev = [
 # (never built/installed).
 package = false
 
-# 锁文件覆盖的源码开发平台:Linux(x86_64/aarch64)与 Apple Silicon macOS。
+# 锁文件覆盖的源码开发平台:Linux x86_64/aarch64(glibc ≥ 2.28、非 musl,
+# onnxruntime 仅有 manylinux_2_28 wheel)与 Apple Silicon macOS。
 # PyPI 实测:支持 Python 3.14 的 onnxruntime(1.24.1–1.29.0,chromadb 的硬依赖)
-# 在 macOS 上只发布 macosx_14_0_arm64 wheel 且无 sdist,更老版本无 cp314 wheel,
-# 因此 Intel Mac / macOS ≤13 无法安装依赖(pip 同样失败),不在锁文件覆盖范围。
-# The locked source-development platforms: Linux (x86_64/aarch64) and Apple
-# Silicon macOS. Verified against PyPI: every onnxruntime release supporting
-# Python 3.14 (1.24.1–1.29.0, a hard chromadb dependency) ships only a
-# macosx_14_0_arm64 wheel with no sdist, and older releases have no cp314
-# wheels at all — Intel Macs and macOS <=13 cannot install the dependencies
-# (pip fails the same way) and are out of the lockfile's scope.
+# 只发布 macosx_14_0_arm64 与 manylinux_2_28 wheel 且无 sdist,更老版本无 cp314
+# wheel,因此 Intel Mac / macOS ≤13 / musl(Alpine)/ glibc <2.28 无法安装依赖
+# (pip 同样失败),不在锁文件覆盖范围。
+# The locked source-development platforms: Linux x86_64/aarch64 (glibc >= 2.28,
+# non-musl — onnxruntime only ships manylinux_2_28 wheels) and Apple Silicon
+# macOS. Verified against PyPI: every onnxruntime release supporting Python 3.14
+# (1.24.1–1.29.0, a hard chromadb dependency) ships only macosx_14_0_arm64 and
+# manylinux_2_28 wheels with no sdist, and older releases have no cp314 wheels
+# at all — Intel Macs, macOS <=13, musl (Alpine) and glibc <2.28 cannot install
+# the dependencies (pip fails the same way) and are out of the lockfile's scope.
 environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",

@@ -215,7 +215,7 @@ For persisted DEBUG logs, error filtering, and more see [Deployment Guide · Vie
 
 ### Source Development
 
-> Source-development platforms: Linux (x86_64/arm64) or Apple Silicon macOS 14+. Intel Macs and macOS <=13 cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
+> Source-development platforms: Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported) or Apple Silicon macOS 14+. Other platforms cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
 
 **With uv (recommended)**:
 
