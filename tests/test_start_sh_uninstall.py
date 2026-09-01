@@ -55,7 +55,7 @@ def test_main_menu_actions_map_to_reordered_entries():
         "4)  menu_run do_ps ;;",
         "5)  menu_run cmd_sandbox status ;;",
         "6)  menu_run do_start true ;;",
-        "7)  menu_run do_start false true ;;",
+        "7)  menu_run menu_prod_deploy ;;",
         "8)  menu_run cmd_attach ;;",
         "9)  menu_run cmd_stop ;;",
         "10) menu_run cmd_update_image ;;",

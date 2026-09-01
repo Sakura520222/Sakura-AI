@@ -159,18 +159,18 @@ Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for 
 **Linux full deployment** (Web + MySQL + Redis + Host Updater + Agent sandboxd):
 
 ```bash
-sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  --output /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
-  --output /opt/sakura-ai/start.sh
-sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo chmod 0755 /opt/sakura-ai/start.sh
-cd /opt/sakura-ai
-sudo ./start.sh --prod
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
+
+This deploys the **stable channel** by default. To deploy the **development channel** (latest builds from the develop branch) from the very first deployment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
+```
+
+The interactive menu's production deployment also asks for the channel on first setup; switch channels later via the menu's channel switch entry.
+
+`start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file on demand (override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
 
 `sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs the Host Updater. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 

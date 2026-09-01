@@ -159,18 +159,18 @@
 **Linux 全量部署**（Web + MySQL + Redis + Host Updater + Agent sandboxd）：
 
 ```bash
-sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  --output /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
-  --output /opt/sakura-ai/start.sh
-sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo chmod 0755 /opt/sakura-ai/start.sh
-cd /opt/sakura-ai
-sudo ./start.sh --prod
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
+
+默认部署**正式（stable）频道**镜像；如需从首次部署起就使用**开发（development）频道**（develop 分支最新构建）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
+```
+
+首次部署也可以在交互菜单「生产镜像部署」中选择频道；已部署后切换频道用菜单「切换镜像频道」。
+
+`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按需下载生产 compose 文件（可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
 
 `sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装 Host Updater。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
 

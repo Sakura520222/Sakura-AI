@@ -63,6 +63,8 @@ trap 'rm -f "$DEPLOYMENT_ENV_FILE" "$log"' EXIT
 SANDBOX_IMAGE_DIGEST='ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 SANDBOX_RUNNER_DIGEST='ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 log="$(mktemp)"
+# docker pull 现在优先复用 Compose 原生进度 renderer；测试 stub 直接处理
+# Compose 调用，避免访问真实 Docker daemon。
 docker() {
     printf '%s\n' "$*" >> "$log"
     if [[ "$1" == pull ]]; then
@@ -206,6 +208,7 @@ docker() {
     fi
     [[ "$1" == image && "$2" == inspect ]]
 }
+# Compose 拉取测试 stub 直接处理 Compose 调用，避免访问真实 Docker daemon。
 image_digest_of() {
     case "$1" in
         *sakura-ai-sandboxd*)
@@ -358,8 +361,95 @@ docker() {
     return 0
 }
 sandbox_start_container false
+grep -Fq -- '--label ai.sakura.managed-by=sandboxd-daemon' "$log"
 grep -Fq -- '--label ai.sakura.egress-network=sakura-ai-deps' "$log"
 grep -Fq -- '--egress-network sakura-ai-deps' "$log"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sandboxd_health_failure_stops_and_retains_verified_container():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir="$(mktemp -d)"
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_RUNTIME_DIR="$case_dir/runtime"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_STATE_DIR="$case_dir/state"
+SANDBOX_CONTAINER_ID_FILE="$SANDBOX_STATE_DIR/container.id"
+SANDBOX_IDENTITY_FILE="$SANDBOX_STATE_DIR/container.identity"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_WORKSPACE_ROOT="$case_dir/workspace"
+SANDBOX_IMAGE_DIGEST='ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+SANDBOX_RUNNER_IMAGE='ghcr.io/sakura520222/sakura-ai-agent-runner'
+SANDBOX_RUNNER_DIGEST='ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+log="$case_dir/actions.log"
+sandbox_prepare_directories() { mkdir -p "$SANDBOX_STATE_DIR"; }
+sandbox_ensure_egress_network_exists() { :; }
+sandbox_instance_id() { printf 'sandbox-12345678\n'; }
+sandbox_runner_reference() { printf '%s\n' "$SANDBOX_RUNNER_DIGEST"; }
+sandbox_daemon_reference() { printf '%s\n' "$SANDBOX_IMAGE_DIGEST"; }
+sandbox_persist_runtime_identity() { :; }
+sandbox_read_container_id() { return 1; }
+sandbox_container_id_from_name() { return 1; }
+sandbox_remove_stale_socket() { :; }
+sandbox_container_owned() { return 0; }
+sandbox_container_matches_expected() { return 0; }
+sandbox_wait_ready() { return 1; }
+sandbox_stop_known_container() { printf 'STOP:%s\n' "$1" >> "$log"; }
+sandbox_cleanup_known_container() { printf 'REMOVE:%s\n' "$1" >> "$log"; }
+docker() {
+    printf 'DOCKER:%s\n' "$*" >> "$log"
+    if [[ "$1" == inspect && "$*" == *'{{.Id}}'* ]]; then
+        printf '%s\n' "$container_id"
+    fi
+    return 0
+}
+if sandbox_start_container false; then
+    exit 1
+fi
+grep -Fq -- '--runner-image ghcr.io/sakura520222/sakura-ai-agent-runner ' "$log"
+grep -Fq -- '--runner-image-digest ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:' "$log"
+grep -Fq "STOP:$container_id" "$log"
+! grep -Fq 'REMOVE:' "$log"
+[[ -s "$SANDBOX_CONTAINER_ID_FILE" ]]
+[[ -s "$SANDBOX_IDENTITY_FILE" ]]
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sandboxd_stop_disables_restart_during_crash_loop_backoff():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+docker() {
+    case "$1" in
+        inspect)
+            if [[ "$*" == *'--format'* ]]; then
+                printf 'false\n'
+            fi
+            return 0
+            ;;
+        stop)
+            printf 'STOP:%s\n' "$*" >> "$log"
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+sandbox_stop_known_container "$container_id"
+grep -Fq "STOP:stop --time $SANDBOX_STOP_TIMEOUT $container_id" "$log"
 ''',
     )
     assert result.returncode == 0, result.stdout + result.stderr

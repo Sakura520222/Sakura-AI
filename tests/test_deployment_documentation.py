@@ -11,9 +11,9 @@ def test_recommended_readme_deployment_bootstraps_host_updater() -> None:
 
     for text in (readme_zh, readme_en):
         assert "/opt/sakura-ai" in text
-        assert "sudo install -d -o root -g root -m 0755" in text
-        assert "docker/docker-compose.prod.yml" in text
+        assert "bash -s -- --prod" in text
         assert "raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh" in text
+        assert "SAKURA_INSTALL_ROOT" in text
         assert "sudo ./start.sh --prod" in text
 
 
