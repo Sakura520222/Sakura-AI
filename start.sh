@@ -15,7 +15,7 @@
 #   ./start.sh --ps           # 查看服务容器状态
 #   ./start.sh --down         # 停止服务
 #   ./start.sh uninstall      # 卸载服务（默认保留 Docker 数据卷）
-#   ./start.sh uninstall --purge  # 完全卸载：删除数据卷、镜像和 .deploy 状态
+#   ./start.sh uninstall --purge  # 完全卸载：独立目录仅保留 start.sh
 #
 # 一键部署（无需预下载任何文件，脚本自动安置到 /opt/sakura-ai）:
 #   curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
@@ -56,9 +56,17 @@ DOCKERFILE_HASH_FILE="$DEPLOY_DIR/dockerfile.hash"
 HEALTH_TIMEOUT=90
 # 独立部署自举 / Standalone-deployment bootstrap
 # 一键管道安装（curl … | sudo bash -s -- --prod）与任意位置的脚本执行都会
-# 安置到规范安装位置；SAKURA_DIST_BASE_URL 供镜像源覆盖（默认指向 main 分支）。
+# 安置到规范安装位置；SAKURA_DIST_BASE_URL 供镜像源覆盖。未覆盖时 stable
+# 使用 main 分支分发文件，development 使用 develop 分支分发文件。
 SAKURA_INSTALL_ROOT="${SAKURA_INSTALL_ROOT:-/opt/sakura-ai}"
-SAKURA_DIST_BASE_URL="${SAKURA_DIST_BASE_URL:-https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main}"
+SAKURA_STABLE_DIST_BASE_URL="https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main"
+SAKURA_DEVELOPMENT_DIST_BASE_URL="https://raw.githubusercontent.com/Sakura520222/Sakura-AI/develop"
+if [[ -n "${SAKURA_DIST_BASE_URL:-}" ]]; then
+    SAKURA_DIST_BASE_URL_EXPLICIT=true
+else
+    SAKURA_DIST_BASE_URL_EXPLICIT=false
+    SAKURA_DIST_BASE_URL="$SAKURA_STABLE_DIST_BASE_URL"
+fi
 
 # ============================================================
 # 工具函数
@@ -755,6 +763,33 @@ deployment_mysql_volume_exists() {
     [[ "$(deployment_mysql_volume_state)" == "exists" ]]
 }
 
+resolve_new_deployment_db_password() {
+    local mysql_volume_state=""
+    if [[ "${SAKURA_DB_PASSWORD:-}" =~ ^[0-9a-f]{64}$ ]]; then
+        printf '%s\n' "$SAKURA_DB_PASSWORD"
+        return 0
+    fi
+    mysql_volume_state="$(deployment_mysql_volume_state)"
+    case "$mysql_volume_state" in
+        missing)
+            generate_deployment_db_password
+            ;;
+        exists)
+            fail "检测到遗留 MySQL 数据卷 ${DEFAULT_PROD_COMPOSE_PROJECT}_mysql_data，但部署状态/原密码不存在；拒绝生成新密码" >&2
+            fail "恢复：需要旧数据时设置 SAKURA_DB_PASSWORD=<原密码>；不需要旧数据时先执行完全卸载" >&2
+            return 1
+            ;;
+        error)
+            fail "无法确认 MySQL 数据卷状态；Docker 不可用或权限不足，拒绝生成新密码" >&2
+            return 1
+            ;;
+        *)
+            fail "无法识别 MySQL 数据卷探测结果: $mysql_volume_state" >&2
+            return 1
+            ;;
+    esac
+}
+
 # 原子补全 deployment.env 的多个键值（KEY=VALUE 参数），保留其余行与 0600
 # 权限。与 write_deployment_env_image 相同的 durability 顺序；调用方只传解析
 # 后的最终值，未缺失的键写回原值，保证幂等。
@@ -1004,7 +1039,7 @@ init_deployment_env() {
     tmp="$DEPLOY_DIR/.deployment.env.$$"
     local db_password=""
     if [[ "$mode" == "image" ]]; then
-        db_password="$(generate_deployment_db_password)"
+        db_password="$(resolve_new_deployment_db_password)" || return 1
     fi
     {
         echo "# Sakura AI 部署状态（由 start.sh 初始化；updater 接管后以 atomic write 维护）"
@@ -2881,27 +2916,74 @@ select_production_compose_project() {
     COMPOSE_PROJECT="$project"
 }
 
-# 独立部署目录没有随仓库分发的 compose 文件：按需从分发源下载生产 compose。
-# 仓库内文件必在，此函数只在文件意外缺失（或首次独立部署）时触发。
+# Resolve the distribution branch after the deployment channel is known.  A
+# caller-provided mirror remains authoritative for both channels.
+compose_distribution_base_url() {
+    local channel="${SAKURA_DEPLOY_CHANNEL:-}" image=""
+    if [[ "$SAKURA_DIST_BASE_URL_EXPLICIT" == "true" ]]; then
+        printf '%s\n' "${SAKURA_DIST_BASE_URL%/}"
+        return 0
+    fi
+    if [[ -z "$channel" ]]; then
+        image=$(read_deployment_value "SAKURA_AI_IMAGE" "$DEPLOYMENT_ENV_FILE")
+        channel=$(image_channel_of "$image")
+    fi
+    if [[ "$channel" == "development" ]]; then
+        printf '%s\n' "$SAKURA_DEVELOPMENT_DIST_BASE_URL"
+    else
+        printf '%s\n' "$SAKURA_STABLE_DIST_BASE_URL"
+    fi
+}
+
+# 独立部署目录没有随仓库分发的 compose 文件：按当前镜像频道下载生产
+# compose，并记录来源 URL。频道切换后必须刷新文件，不能复用另一分支版本。
+# 源码仓库始终使用当前 checkout 自带的 Compose 文件。
 ensure_prod_compose_file() {
-    local target="$UPDATER_PROJECT_ROOT/$PROD_COMPOSE_FILE"
-    [[ -f "$target" ]] && return 0
+    local target="$UPDATER_PROJECT_ROOT/$PROD_COMPOSE_FILE" source_file source_url
+    local base_url tmp source_tmp recorded_source=""
+    if start_sh_repo_layout "$UPDATER_PROJECT_ROOT" && [[ -f "$target" ]]; then
+        return 0
+    fi
+    base_url=$(compose_distribution_base_url) || return 1
+    source_url="${base_url%/}/$PROD_COMPOSE_FILE"
+    source_file="$target.source"
+    if [[ -f "$target" && -f "$source_file" ]]; then
+        IFS= read -r recorded_source < "$source_file" || recorded_source=""
+        [[ "$recorded_source" == "$source_url" ]] && return 0
+    fi
     mkdir -p "$(dirname "$target")"
-    local tmp="$target.bootstrap.$$"
-    info "生产 compose 文件缺失，正在下载: $SAKURA_DIST_BASE_URL/$PROD_COMPOSE_FILE"
+    tmp="$target.bootstrap.$$"
+    source_tmp="$source_file.bootstrap.$$"
+    info "正在获取当前频道生产 compose: $source_url"
     if ! curl --fail --location --silent --show-error \
-        "$SAKURA_DIST_BASE_URL/$PROD_COMPOSE_FILE" -o "$tmp"; then
-        rm -f "$tmp"
-        fail "下载 docker-compose.prod.yml 失败；可手动放置到 $target 或用 SAKURA_DIST_BASE_URL 指定镜像源"
+        "$source_url" -o "$tmp"; then
+        rm -f -- "$tmp" "$source_tmp"
+        fail "下载 docker-compose.prod.yml 失败；可用 SAKURA_DIST_BASE_URL 指定镜像源"
         return 1
     fi
     if ! grep -q '^services:' "$tmp"; then
-        rm -f "$tmp"
+        rm -f -- "$tmp" "$source_tmp"
         fail "下载的 compose 文件内容异常（缺少 services 段）"
         return 1
     fi
-    mv -f "$tmp" "$target"
-    ok "已获取生产 compose: $target"
+    printf '%s\n' "$source_url" > "$source_tmp" || {
+        rm -f -- "$tmp" "$source_tmp"
+        return 1
+    }
+    chmod 0644 "$tmp" "$source_tmp" || {
+        rm -f -- "$tmp" "$source_tmp"
+        return 1
+    }
+    mv -f -- "$tmp" "$target" || {
+        rm -f -- "$tmp" "$source_tmp"
+        return 1
+    }
+    mv -f -- "$source_tmp" "$source_file" || {
+        rm -f -- "$source_tmp"
+        fail "无法记录生产 compose 来源: $source_file" >&2
+        return 1
+    }
+    ok "已获取生产 compose: $target ($source_url)"
 }
 
 configure_compose_service_env_file() {
@@ -4004,6 +4086,24 @@ cmd_status() {
 # 子命令: --attach
 # ============================================================
 
+tail_build_log_until_runner_exits() {
+    local pid="$1" interrupted=0
+    trap 'interrupted=1' INT
+    if tail --help 2>&1 | grep -q -- '--pid'; then
+        tail --pid="$pid" -f "$BUILD_LOG" || true
+    else
+        # BSD tail 没有 --pid；保留原有的跟随行为，由 Ctrl+C 返回。
+        tail -f "$BUILD_LOG" || true
+    fi
+    trap - INT
+    [[ "$interrupted" -eq 0 ]]
+}
+
+show_setup_token_after_completed_deployment() {
+    [[ "$(get_phase)" == "done" ]] || return 0
+    show_current_setup_token
+}
+
 cmd_attach() {
     if ! is_running; then
         if runner_pid_is_live; then
@@ -4013,10 +4113,12 @@ cmd_attach() {
         fail "没有正在进行的构建进程"
         exit 1
     fi
+    local pid
+    pid=$(runner_read_pid)
     info "附加到构建日志 (Ctrl+C 退出查看，不会中断构建)..."
-    trap 'trap - INT; return 0' INT
-    tail -f "$BUILD_LOG" || true
-    trap - INT
+    if tail_build_log_until_runner_exits "$pid"; then
+        show_setup_token_after_completed_deployment
+    fi
 }
 
 # ============================================================
@@ -4860,8 +4962,10 @@ render_main_menu() {
     ui_line "  ${BOLD}[9]${RESET} 停止正在进行的构建"
     ui_line "  ${BOLD}[10]${RESET} 更新镜像 (当前频道)"
     ui_line "  ${BOLD}[11]${RESET} 切换镜像频道 (正式/开发)"
-    ui_line "  ${BOLD}[12]${RESET} Updater daemon 管理"
-    ui_line "  ${BOLD}[13]${RESET} 卸载 Sakura AI"
+    ui_line "  ${BOLD}[12]${RESET} 查看容器当前日志"
+    ui_line "  ${BOLD}[13]${RESET} 查看往期运行日志"
+    ui_line "  ${BOLD}[14]${RESET} Updater daemon 管理"
+    ui_line "  ${BOLD}[15]${RESET} 卸载 Sakura AI"
     ui_line "  ${BOLD}[0]${RESET} 退出"
     ui_blank
 }
@@ -4891,8 +4995,10 @@ menu_loop() {
             9)  menu_run cmd_stop ;;
             10) menu_run cmd_update_image ;;
             11) menu_run cmd_switch_channel ;;
-            12) updater_menu_loop ;;
-            13) uninstall_menu_loop ;;
+            12) container_logs_menu_loop ;;
+            13) menu_run cmd_historical_logs ;;
+            14) updater_menu_loop ;;
+            15) uninstall_menu_loop ;;
             0)  info "已退出" ; exit 0 ;;
             *)  warn "无效选项: $choice" ; sleep 1 ;;
         esac
@@ -4940,7 +5046,7 @@ render_uninstall_menu() {
     ui_title "卸载 Sakura AI"
     ui_blank
     ui_line "  ${BOLD}[1]${RESET} 标准卸载 (保留数据卷和部署状态，可重新部署)"
-    ui_line "  ${BOLD}[2]${RESET} 完全卸载 (删除数据卷、镜像和部署状态)"
+    ui_line "  ${BOLD}[2]${RESET} 完全卸载 (删除数据、镜像；独立目录仅保留 start.sh)"
     ui_line "  ${BOLD}[0]${RESET} 返回主菜单"
     ui_blank
 }
@@ -4974,6 +5080,251 @@ do_ps() {
     $compose_cmd ps
 }
 
+compose_service_container_id() {
+    local container_name="$1" service="$2" listing="" id="" payload=""
+    listing=$(docker ps -aq --no-trunc --filter "name=^/${container_name}$" 2>/dev/null) || return 1
+    [[ "$listing" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    id="$listing"
+    payload=$(docker inspect --type container --format '{{json .}}' "$id" 2>/dev/null) || return 1
+    python3 - "$payload" "$container_name" "$DEFAULT_PROD_COMPOSE_PROJECT" "$service" <<'PY'
+import json
+import sys
+
+try:
+    obj = json.loads(sys.argv[1])
+    labels = obj["Config"]["Labels"]
+except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if (
+    obj.get("Name") != "/" + sys.argv[2]
+    or not isinstance(labels, dict)
+    or labels.get("com.docker.compose.project") != sys.argv[3]
+    or labels.get("com.docker.compose.service") != sys.argv[4]
+):
+    raise SystemExit(1)
+PY
+    printf '%s\n' "$id"
+}
+
+sandbox_controller_id_for_logs() {
+    local listing="" id=""
+    listing=$(docker ps -aq --no-trunc --filter "name=^/${SANDBOX_CONTAINER_NAME}$" 2>/dev/null) || return 1
+    [[ "$listing" =~ ^[A-Fa-f0-9]{12,128}$ ]] || return 1
+    id="$listing"
+    sandbox_container_has_controller_identity "$id" || return 1
+    printf '%s\n' "$id"
+}
+
+current_setup_token() {
+    local id="" started_at="" token=""
+    id=$(compose_service_container_id "sakura-ai" "web") || return 1
+    started_at=$(docker inspect --type container --format '{{.State.StartedAt}}' "$id" 2>/dev/null) || return 1
+    [[ -n "$started_at" && "$started_at" != "0001-01-01T00:00:00Z" ]] || return 1
+    token=$(docker logs --since "$started_at" "$id" 2>&1 \
+        | sed -nE 's/^.*Token:[[:space:]]*([A-Za-z0-9_-]{43})[[:space:]]*.*$/\1/p' \
+        | tail -n 1)
+    [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]] || return 1
+    printf '%s\n' "$token"
+}
+
+show_current_setup_token() {
+    local token=""
+    if ! token=$(current_setup_token); then
+        info "当前启动未生成 Setup Token（Setup 可能已完成）"
+        return 0
+    fi
+    echo ""
+    echo -e "${BOLD}Setup Wizard${RESET}"
+    echo -e "${YELLOW}[WARN] Setup Token 属于敏感凭据，请勿分享。${RESET}"
+    echo -e "  ${BOLD}Setup Token: ${token}${RESET}"
+    echo "  Setup URL  : http://localhost:8000/setup/verify"
+    echo ""
+}
+
+follow_container_current_logs() {
+    local kind="$1" id="" started_at="" label=""
+    case "$kind" in
+        web)
+            id=$(compose_service_container_id "sakura-ai" "web") || {
+                fail "Web 容器不存在或身份校验失败" >&2
+                return 1
+            }
+            label="Web"
+            ;;
+        mysql)
+            id=$(compose_service_container_id "sakura-ai-mysql" "mysql") || {
+                fail "MySQL 容器不存在或身份校验失败" >&2
+                return 1
+            }
+            label="MySQL"
+            ;;
+        redis)
+            id=$(compose_service_container_id "sakura-ai-redis" "redis") || {
+                fail "Redis 容器不存在或身份校验失败" >&2
+                return 1
+            }
+            label="Redis"
+            ;;
+        sandboxd)
+            id=$(sandbox_controller_id_for_logs) || {
+                fail "sandboxd 容器不存在或身份校验失败" >&2
+                return 1
+            }
+            label="sandboxd"
+            ;;
+        *)
+            fail "未知容器日志类型: $kind" >&2
+            return 1
+            ;;
+    esac
+    started_at=$(docker inspect --type container --format '{{.State.StartedAt}}' "$id" 2>/dev/null) || return 1
+    if [[ -z "$started_at" || "$started_at" == "0001-01-01T00:00:00Z" ]]; then
+        fail "$label 容器尚未启动，没有当前运行日志" >&2
+        return 1
+    fi
+    info "查看 $label 当前启动日志（最近 200 行，Ctrl+C 返回）..."
+    trap 'trap - INT; return 0' INT
+    docker logs --since "$started_at" --tail 200 --follow "$id" || true
+    trap - INT
+}
+
+render_container_logs_menu() {
+    ui_title "容器当前日志"
+    ui_blank
+    ui_line "  ${BOLD}[1]${RESET} Web"
+    ui_line "  ${BOLD}[2]${RESET} MySQL"
+    ui_line "  ${BOLD}[3]${RESET} Redis"
+    ui_line "  ${BOLD}[4]${RESET} Agent sandboxd"
+    ui_line "  ${BOLD}[0]${RESET} 返回主菜单"
+    ui_blank
+}
+
+container_logs_menu_loop() {
+    local choice
+    while true; do
+        render_container_logs_menu
+        ui_render
+        read -rp "  请选择容器: " choice || return 0
+        case "$choice" in
+            1) menu_run follow_container_current_logs web ;;
+            2) menu_run follow_container_current_logs mysql ;;
+            3) menu_run follow_container_current_logs redis ;;
+            4) menu_run follow_container_current_logs sandboxd ;;
+            0) return 0 ;;
+            *) warn "无效选项: $choice"; sleep 1 ;;
+        esac
+    done
+}
+
+sakura_logs_volume_owned() {
+    local owner="" volume=""
+    owner=$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' \
+        "${DEFAULT_PROD_COMPOSE_PROJECT}_logs_data" 2>/dev/null) || return 1
+    volume=$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' \
+        "${DEFAULT_PROD_COMPOSE_PROJECT}_logs_data" 2>/dev/null) || return 1
+    [[ "$owner" == "$DEFAULT_PROD_COMPOSE_PROJECT" && "$volume" == "logs_data" ]]
+}
+
+historical_logs_image_id() {
+    local id="" image_id="" image_ref=""
+    if id=$(compose_service_container_id "sakura-ai" "web" 2>/dev/null); then
+        image_id=$(docker inspect --type container --format '{{.Image}}' "$id" 2>/dev/null) || return 1
+    else
+        image_ref=$(read_deployment_value "SAKURA_AI_IMAGE")
+        [[ -n "$image_ref" ]] || return 1
+        image_id=$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null) || return 1
+    fi
+    [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$image_id"
+}
+
+production_historical_log_files() {
+    local image_id=""
+    sakura_logs_volume_owned || return 1
+    image_id=$(historical_logs_image_id) || return 1
+    docker run --rm --network none --read-only --user 0:0 \
+        --mount "type=volume,src=${DEFAULT_PROD_COMPOSE_PROJECT}_logs_data,dst=/logs,readonly" \
+        --entrypoint sh "$image_id" -c \
+        'for file in $(ls -1t /logs/app_*.log 2>/dev/null); do
+            [ -f "$file" ] && [ ! -L "$file" ] && basename "$file"
+        done'
+}
+
+production_historical_log_tail() {
+    local filename="$1" image_id=""
+    [[ "$filename" =~ ^app_[A-Za-z0-9_.-]+\.log$ ]] || return 1
+    sakura_logs_volume_owned || return 1
+    image_id=$(historical_logs_image_id) || return 1
+    docker run --rm --network none --read-only --user 0:0 \
+        --mount "type=volume,src=${DEFAULT_PROD_COMPOSE_PROJECT}_logs_data,dst=/logs,readonly" \
+        --entrypoint sh "$image_id" -c \
+        'log_file="$1"
+        [ -f "$log_file" ] && [ ! -L "$log_file" ] || exit 1
+        exec tail -n 1000 "$log_file"' sh "/logs/$filename"
+}
+
+source_historical_log_files() {
+    [[ -d "$UPDATER_PROJECT_ROOT/logs" ]] || return 0
+    find "$UPDATER_PROJECT_ROOT/logs" -maxdepth 1 -type f -name 'app_*.log' \
+        -printf '%T@ %f\n' 2>/dev/null | sort -nr | cut -d' ' -f2-
+}
+
+source_historical_log_tail() {
+    local filename="$1"
+    [[ "$filename" =~ ^app_[A-Za-z0-9_.-]+\.log$ ]] || return 1
+    [[ -f "$UPDATER_PROJECT_ROOT/logs/$filename" \
+        && ! -L "$UPDATER_PROJECT_ROOT/logs/$filename" ]] || return 1
+    tail -n 1000 "$UPDATER_PROJECT_ROOT/logs/$filename"
+}
+
+cmd_historical_logs() {
+    local mode backend choice filename listing="" index=1
+    local -a files=()
+    mode=$(read_deployment_mode)
+    if [[ "$mode" == "image" ]] || sakura_logs_volume_owned; then
+        backend="production"
+        if ! listing=$(production_historical_log_files); then
+            fail "无法安全读取生产日志卷；请确认部署镜像和 logs_data 卷仍存在" >&2
+            return 1
+        fi
+    else
+        backend="source"
+        listing=$(source_historical_log_files) || return 1
+    fi
+    [[ -z "$listing" ]] || mapfile -t files <<< "$listing"
+    if [[ "${#files[@]}" -eq 0 ]]; then
+        info "没有可用的历史运行日志"
+        return 0
+    fi
+    echo ""
+    info "历史运行日志（按时间从新到旧，显示所选文件最后 1000 行）:"
+    for filename in "${files[@]}"; do
+        printf '  [%d] %s\n' "$index" "$filename"
+        index=$((index + 1))
+    done
+    echo "  [0] 返回"
+    read -rp "  请选择日志: " choice || return 0
+    [[ "$choice" =~ ^[0-9]+$ ]] || {
+        warn "无效选项: $choice"
+        return 1
+    }
+    [[ "$choice" -ne 0 ]] || return 0
+    if [[ "$choice" -lt 1 || "$choice" -gt "${#files[@]}" ]]; then
+        warn "无效选项: $choice"
+        return 1
+    fi
+    filename="${files[$((choice - 1))]}"
+    echo ""
+    info "查看历史日志: $filename"
+    echo "──────────────────────────"
+    if [[ "$backend" == "production" ]]; then
+        production_historical_log_tail "$filename"
+    else
+        source_historical_log_tail "$filename"
+    fi
+    echo "──────────────────────────"
+}
+
 confirm_sakura_uninstall() {
     local purge="$1" assume_yes="$2" answer
     if [[ "$assume_yes" == "true" ]]; then
@@ -4985,7 +5336,10 @@ confirm_sakura_uninstall() {
     fi
     echo ""
     if [[ "$purge" == "true" ]]; then
-        warn "完全卸载将删除容器、网络、数据卷、全部镜像和 .deploy 部署状态，不可恢复。"
+        warn "完全卸载将删除容器、网络、数据卷、全部镜像和部署文件，不可恢复。"
+        if ! start_sh_repo_layout "$UPDATER_PROJECT_ROOT"; then
+            warn "独立安装目录将只保留 start.sh: $UPDATER_PROJECT_ROOT"
+        fi
     else
         warn "即将停止并删除 Sakura AI 容器、网络和 Host Updater。"
         info "Docker 数据卷和 .deploy/deployment.env 将保留，可供以后重新部署。"
@@ -5063,6 +5417,89 @@ sakura_compose_uninstall() {
     "${compose_cmd[@]}"
 }
 
+# A failed first deployment may create Compose containers, networks and named
+# volumes before deployment.env is committed.  ``compose down`` cannot be
+# reconstructed safely without that authority file, so full uninstall also
+# removes resources carrying the exact fixed Compose project label.  Names are
+# constrained to the project prefix and every object is rechecked by inspect
+# before deletion.
+purge_sakura_compose_resources() {
+    local project="$DEFAULT_PROD_COMPOSE_PROJECT" listing="" id="" name="" owner="" image_ref=""
+    local -a image_refs=()
+    listing=$(docker ps -aq --no-trunc \
+        --filter "label=com.docker.compose.project=$project" 2>/dev/null) || {
+        fail "无法枚举 Sakura AI Compose 容器" >&2
+        return 1
+    }
+    while IFS= read -r id || [[ -n "$id" ]]; do
+        [[ -n "$id" ]] || continue
+        [[ "$id" =~ ^[A-Fa-f0-9]{12,128}$ ]] || {
+            fail "refusing malformed Compose container id during purge" >&2
+            return 1
+        }
+        owner=$(docker inspect --type container \
+            --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null) || return 1
+        [[ "$owner" == "$project" ]] || {
+            fail "refusing Compose container outside project $project: $id" >&2
+            return 1
+        }
+        image_ref=$(docker inspect --type container --format '{{.Config.Image}}' "$id" 2>/dev/null) || return 1
+        case "$image_ref" in
+            ghcr.io/sakura520222/sakura-ai:* | ghcr.io/sakura520222/sakura-ai@sha256:* | \
+            mysql:8.4 | redis:7-alpine)
+                image_refs+=("$image_ref")
+                ;;
+            *)
+                warn "遗留 Compose 容器使用非标准镜像，仅删除容器，保留镜像: $image_ref"
+                ;;
+        esac
+        info "正在删除遗留 Compose 容器: $id"
+        docker rm -f "$id" >/dev/null || return 1
+    done <<< "$listing"
+
+    for image_ref in "${image_refs[@]}"; do
+        info "正在删除遗留 Compose 镜像: $image_ref"
+        docker image rm "$image_ref" >/dev/null 2>&1 \
+            || warn "镜像 $image_ref 删除失败（可能被其他容器使用），已继续"
+    done
+
+    listing=$(docker network ls \
+        --filter "label=com.docker.compose.project=$project" --format '{{.Name}}' 2>/dev/null) || {
+        fail "无法枚举 Sakura AI Compose 网络" >&2
+        return 1
+    }
+    while IFS= read -r name || [[ -n "$name" ]]; do
+        [[ -n "$name" ]] || continue
+        [[ "$name" =~ ^${project}_[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+            fail "refusing unexpected Compose network name during purge: $name" >&2
+            return 1
+        }
+        owner=$(docker network inspect \
+            --format '{{index .Labels "com.docker.compose.project"}}' "$name" 2>/dev/null) || return 1
+        [[ "$owner" == "$project" ]] || return 1
+        info "正在删除遗留 Compose 网络: $name"
+        docker network rm "$name" >/dev/null || return 1
+    done <<< "$listing"
+
+    listing=$(docker volume ls \
+        --filter "label=com.docker.compose.project=$project" --format '{{.Name}}' 2>/dev/null) || {
+        fail "无法枚举 Sakura AI Compose 数据卷" >&2
+        return 1
+    }
+    while IFS= read -r name || [[ -n "$name" ]]; do
+        [[ -n "$name" ]] || continue
+        [[ "$name" =~ ^${project}_[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+            fail "refusing unexpected Compose volume name during purge: $name" >&2
+            return 1
+        }
+        owner=$(docker volume inspect \
+            --format '{{index .Labels "com.docker.compose.project"}}' "$name" 2>/dev/null) || return 1
+        [[ "$owner" == "$project" ]] || return 1
+        info "正在删除遗留 Compose 数据卷: $name"
+        docker volume rm "$name" >/dev/null || return 1
+    done <<< "$listing"
+}
+
 # 完全卸载时删除 Sakura 官方仓库的全部本地镜像 (web/sandboxd/Agent runner)。
 # Remove every local image from the official Sakura repositories during a
 # full uninstall.  ``compose down --rmi all`` and the persisted references
@@ -5105,6 +5542,45 @@ purge_sakura_deployment_state() {
     rm -rf -- "$target"
 }
 
+# A standalone install is a generated deployment directory, not a source
+# checkout.  Full uninstall leaves only the executable bootstrap so the same
+# entry point can be used for a clean redeploy.  Repository layouts are
+# deliberately excluded to prevent a purge from deleting user source code.
+purge_standalone_install_artifacts() {
+    local root="$UPDATER_PROJECT_ROOT" install_root="${SAKURA_INSTALL_ROOT%/}"
+    local keep entry
+    if start_sh_repo_layout "$root"; then
+        info "检测到源码仓库；保留项目源码，仅清理部署状态"
+        return 0
+    fi
+    [[ -n "$install_root" ]] || install_root="/"
+    if [[ "$root" != "$install_root" || "$root" != /* || "$root" == "/" ]]; then
+        fail "refusing unsafe standalone install purge target: $root" >&2
+        return 1
+    fi
+    if [[ ! -d "$root" || -L "$root" ]] || ! sandbox_path_has_no_link_components "$root"; then
+        fail "refusing symlinked or missing standalone install root: $root" >&2
+        return 1
+    fi
+    keep="$root/start.sh"
+    if [[ ! -f "$keep" || -L "$keep" ]]; then
+        fail "refusing standalone purge without a regular start.sh: $keep" >&2
+        return 1
+    fi
+    while IFS= read -r -d '' entry; do
+        [[ "$entry" == "$keep" ]] && continue
+        case "$entry" in
+            "$root"/*) ;;
+            *)
+                fail "standalone purge entry escaped install root: $entry" >&2
+                return 1
+                ;;
+        esac
+        rm -rf -- "$entry" || return 1
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -print0)
+    ok "独立安装目录已清理，仅保留: $keep"
+}
+
 cmd_uninstall() {
     local purge=false assume_yes=false arg
     for arg in "$@"; do
@@ -5131,15 +5607,17 @@ cmd_uninstall() {
     sakura_compose_uninstall "$purge" || return $?
     cmd_updater_uninstall || return $?
     if [[ "$purge" == "true" ]]; then
+        purge_sakura_compose_resources || return $?
         # 按仓库前缀枚举删除全部本地 Sakura 镜像（含历史版本与 digest-pull
         # 镜像），再清除部署状态。
         purge_sakura_images || return $?
         purge_sakura_deployment_state || return $?
-        ok "Sakura AI 已完全卸载；数据卷、镜像和部署状态已删除"
+        purge_standalone_install_artifacts || return $?
+        ok "Sakura AI 已完全卸载；数据卷、镜像和部署文件已删除"
     else
         ok "Sakura AI 已卸载；Docker 数据卷和部署状态已保留"
+        info "项目源码/脚本目录未删除，可手动检查后移除: $UPDATER_PROJECT_ROOT"
     fi
-    info "项目源码/脚本目录未删除，可手动检查后移除: $UPDATER_PROJECT_ROOT"
 }
 
 do_down() {
@@ -5299,9 +5777,9 @@ do_start() {
         echo ""
         info "附加到日志 (Ctrl+C 退出查看，不会中断构建)..."
         echo ""
-        trap 'trap - INT; return 0' INT
-        tail -f "$BUILD_LOG" || true
-        trap - INT
+        if tail_build_log_until_runner_exits "$pid"; then
+            show_setup_token_after_completed_deployment
+        fi
         production_restore_env_transaction 1
         exit 0
     fi
@@ -5371,9 +5849,9 @@ do_start() {
     # Auto-attach to log — trap SIGINT so Ctrl+C only stops tail, not the build
     info "自动附加日志 (Ctrl+C 退出查看，不会中断构建)..."
     echo ""
-    trap 'trap - INT; return 0' INT
-    tail -f "$BUILD_LOG" || true
-    trap - INT
+    if tail_build_log_until_runner_exits "$bg_pid"; then
+        show_setup_token_after_completed_deployment
+    fi
 }
 
 main() {
@@ -5442,7 +5920,7 @@ main() {
                 echo "  --ps        查看服务容器状态"
                 echo "  --down      停止服务"
                 echo "  --help      显示帮助"
-                echo "  uninstall [--purge] [--yes]  卸载服务；默认保留数据，--purge 完全卸载（含数据卷/镜像/部署状态）"
+                echo "  uninstall [--purge] [--yes]  卸载服务；--purge 删除数据/镜像，独立目录仅保留 start.sh"
                 echo "  生产 Agent 沙箱由独立 sandboxd 管理；生产必须配置 runner immutable digest"
                 echo "  updater [action]  管理 host updater daemon（含 reinstall/uninstall；生产操作需 root）"
                 echo "  sandboxd [action] 管理 Agent sandboxd（start/stop/restart/reinstall/uninstall/status）"

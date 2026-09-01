@@ -170,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 首次部署也可以在交互菜单「生产镜像部署」中选择频道；已部署后切换频道用菜单「切换镜像频道」。
 
-`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按需下载生产 compose 文件（可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
+`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
 
 `sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装 Host Updater。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
 
@@ -182,11 +182,11 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 >
 > `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再依次停止、安装、启动并输出新状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁，命令会 fail-closed，并要求管理员先显式停止旧 daemon。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
 
-卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和 `.deploy` 部署状态。两种模式共用同一确认词 `UNINSTALL`：
+卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和部署文件。对于 `/opt/sakura-ai` 等独立安装目录，完全卸载后只保留 `start.sh`，方便干净地重新部署；源码仓库不会删除源码。两种模式共用同一确认词 `UNINSTALL`：
 
 ```bash
 sudo ./start.sh uninstall          # 标准卸载：保留数据，可重新部署
-sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据卷、镜像与部署状态
+sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh
 ```
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
@@ -203,15 +203,15 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）：
+首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）。`start.sh` 在前台等待的部署成功后会直接显示当前 Setup Token；也可在主菜单选择“查看容器当前日志”→“Web”重新查看：
 
 ```bash
-# 在 /opt/sakura-ai 下查看实时日志 / 提取首次部署 Token
+# 也可在 /opt/sakura-ai 下直接跟踪 Web 容器日志
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-落盘 DEBUG 日志、错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+主菜单的“查看往期运行日志”可读取持久化 DEBUG 日志；错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 ### 源码开发
 

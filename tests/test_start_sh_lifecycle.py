@@ -588,9 +588,13 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { printf 'ROOT\n'; }
 stop_deployment_for_uninstall() { printf 'STOP_DEPLOYMENT\n'; }
+sandbox_uninstall() { printf 'SANDBOX_PURGE=%s\n' "$1"; }
 sakura_compose_uninstall() { printf 'COMPOSE_PURGE=%s\n' "$1"; }
 cmd_updater_uninstall() { printf 'REMOVE_UPDATER\n'; }
+purge_sakura_compose_resources() { printf 'PURGE_COMPOSE_RESOURCES\n'; }
+purge_sakura_images() { printf 'PURGE_IMAGES\n'; }
 purge_sakura_deployment_state() { printf 'PURGE_STATE\n'; }
+purge_standalone_install_artifacts() { printf 'PURGE_INSTALL\n'; }
 cmd_uninstall --yes
 printf '%s\n' '---'
 cmd_uninstall --purge --yes
@@ -603,6 +607,125 @@ cmd_uninstall --purge --yes
     assert "PURGE_STATE" not in default
     assert "COMPOSE_PURGE=true" in purge
     assert "PURGE_STATE" in purge
+    assert "PURGE_INSTALL" in purge
+    assert "PURGE_COMPOSE_RESOURCES" in purge
+
+
+def test_full_uninstall_removes_labeled_resources_without_deployment_state():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+log="$T/docker.log"
+docker() {
+    printf '%s\n' "$*" >> "$log"
+    case "$1 $2" in
+        'ps -aq') printf '%s\n' "$container_id" ;;
+        'inspect --type')
+            if [[ "$*" == *'{{.Config.Image}}'* ]]; then
+                printf '%s\n' 'mysql:8.4'
+            else
+                printf '%s\n' 'sakura-ai'
+            fi
+            ;;
+        'network ls') printf '%s\n' 'sakura-ai_default' ;;
+        'network inspect') printf '%s\n' 'sakura-ai' ;;
+        'volume ls') printf '%s\n' 'sakura-ai_mysql_data' 'sakura-ai_redis_data' ;;
+        'volume inspect') printf '%s\n' 'sakura-ai' ;;
+    esac
+}
+purge_sakura_compose_resources
+grep -Fq "rm -f $container_id" "$log"
+grep -Fq 'image rm mysql:8.4' "$log"
+grep -Fq 'network rm sakura-ai_default' "$log"
+grep -Fq 'volume rm sakura-ai_mysql_data' "$log"
+grep -Fq 'volume rm sakura-ai_redis_data' "$log"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_full_uninstall_refuses_unexpected_labeled_volume_name():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+docker() {
+    case "$1 $2" in
+        'ps -aq'|'network ls') return 0 ;;
+        'volume ls') printf '%s\n' 'unrelated_data' ;;
+        'volume rm') printf '%s\n' 'UNEXPECTED_REMOVE' ;;
+    esac
+}
+if purge_sakura_compose_resources; then
+    exit 1
+fi
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "refusing unexpected Compose volume name" in output
+    assert "UNEXPECTED_REMOVE" not in output
+
+
+def test_full_uninstall_standalone_directory_keeps_only_start_script():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+install_root="$T/install"
+outside="$T/outside"
+mkdir -p "$install_root/.deploy/nested" "$install_root/docker" "$install_root/logs" "$outside"
+printf '#!/usr/bin/env bash\n' > "$install_root/start.sh"
+printf 'compose\n' > "$install_root/docker/docker-compose.prod.yml"
+printf 'state\n' > "$install_root/.deploy/nested/state"
+printf 'hidden\n' > "$install_root/.hidden"
+printf 'keep-outside\n' > "$outside/data"
+ln -s "$outside" "$install_root/outside-link"
+UPDATER_PROJECT_ROOT="$install_root"
+SAKURA_INSTALL_ROOT="$install_root"
+purge_standalone_install_artifacts
+[[ -f "$install_root/start.sh" ]]
+[[ "$(find "$install_root" -mindepth 1 -maxdepth 1 -printf '%f\n')" == 'start.sh' ]]
+grep -Fxq 'keep-outside' "$outside/data"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_full_uninstall_never_clears_source_repository_layout():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/backend" "$T/docker"
+printf '#!/usr/bin/env bash\n' > "$T/start.sh"
+printf 'source\n' > "$T/backend/main.py"
+printf 'compose\n' > "$T/docker/docker-compose.yml"
+UPDATER_PROJECT_ROOT="$T"
+SAKURA_INSTALL_ROOT="$T"
+purge_standalone_install_artifacts
+[[ -f "$T/start.sh" ]]
+[[ -f "$T/backend/main.py" ]]
+[[ -f "$T/docker/docker-compose.yml" ]]
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_uninstall_never_assumes_confirmation_from_noninteractive_stdin():
@@ -1038,3 +1161,145 @@ fi
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "UNEXPECTED_MATCH" not in result.stdout
+
+
+def test_current_setup_token_uses_verified_web_container_current_start_only():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+docker_calls="$case_dir/docker-calls"
+expected_token='AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde'
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+docker() {
+    printf '%s\n' "$*" >> "$docker_calls"
+    if [[ "$1 $2" == 'ps -aq' ]]; then
+        printf '%s\n' "$container_id"
+    elif [[ "$*" == *'{{json .}}'* ]]; then
+        printf '%s\n' '{"Name":"/sakura-ai","Config":{"Labels":{"com.docker.compose.project":"sakura-ai","com.docker.compose.service":"web"}}}'
+    elif [[ "$*" == *'{{.State.StartedAt}}'* ]]; then
+        printf '%s\n' '2026-09-01T04:00:00.000000000Z'
+    elif [[ "$1" == logs ]]; then
+        printf '%s\n' 'old Token: invalid' "  Token: $expected_token"
+    else
+        return 1
+    fi
+}
+[[ "$(current_setup_token)" == "$expected_token" ]]
+grep -Fq 'logs --since 2026-09-01T04:00:00.000000000Z' "$docker_calls"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_current_setup_token_rejects_wrong_compose_identity_before_reading_logs():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+container_id='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+docker() {
+    if [[ "$1 $2" == 'ps -aq' ]]; then
+        printf '%s\n' "$container_id"
+    elif [[ "$*" == *'{{json .}}'* ]]; then
+        printf '%s\n' '{"Name":"/sakura-ai","Config":{"Labels":{"com.docker.compose.project":"other","com.docker.compose.service":"web"}}}'
+    elif [[ "$1" == logs ]]; then
+        printf 'UNEXPECTED_LOG_READ\n'
+        return 99
+    else
+        return 1
+    fi
+}
+if current_setup_token; then
+    exit 1
+fi
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "UNEXPECTED_LOG_READ" not in result.stdout
+
+
+def test_current_container_logs_are_scoped_to_current_start_and_followed():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+docker_calls="$case_dir/docker-calls"
+container_id='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+compose_service_container_id() {
+    [[ "$1" == sakura-ai && "$2" == web ]]
+    printf '%s\n' "$container_id"
+}
+docker() {
+    printf '%s\n' "$*" >> "$docker_calls"
+    if [[ "$*" == *'{{.State.StartedAt}}'* ]]; then
+        printf '%s\n' '2026-09-01T05:00:00Z'
+    elif [[ "$1" == logs ]]; then
+        printf 'current log line\n'
+    else
+        return 1
+    fi
+}
+follow_container_current_logs web
+grep -Fq "logs --since 2026-09-01T05:00:00Z --tail 200 --follow $container_id" "$docker_calls"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "current log line" in result.stdout
+
+
+def test_source_historical_log_menu_lists_newest_and_reads_selected_file():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+UPDATER_PROJECT_ROOT="$case_dir"
+mkdir -p "$case_dir/logs"
+printf 'older-content\n' > "$case_dir/logs/app_older.log"
+printf 'newest-content\n' > "$case_dir/logs/app_newest.log"
+touch -t 202608312359 "$case_dir/logs/app_older.log"
+touch -t 202609010001 "$case_dir/logs/app_newest.log"
+read_deployment_mode() { printf 'source\n'; }
+sakura_logs_volume_owned() { return 1; }
+cmd_historical_logs <<< '1'
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.index("app_newest.log") < result.stdout.index("app_older.log")
+    assert "newest-content" in result.stdout
+
+
+def test_source_historical_log_tail_rejects_symlinks():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+UPDATER_PROJECT_ROOT="$case_dir"
+mkdir -p "$case_dir/logs"
+printf 'sensitive\n' > "$case_dir/secret"
+ln -s "$case_dir/secret" "$case_dir/logs/app_link.log"
+if source_historical_log_tail app_link.log; then
+    exit 1
+fi
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "sensitive" not in result.stdout

@@ -30,6 +30,8 @@ MAIN_MENU_ORDER = (
     "停止正在进行的构建",
     "更新镜像 (当前频道)",
     "切换镜像频道 (正式/开发)",
+    "查看容器当前日志",
+    "查看往期运行日志",
     "Updater daemon 管理",
     "卸载 Sakura AI",
 )
@@ -60,8 +62,10 @@ def test_main_menu_actions_map_to_reordered_entries():
         "9)  menu_run cmd_stop ;;",
         "10) menu_run cmd_update_image ;;",
         "11) menu_run cmd_switch_channel ;;",
-        "12) updater_menu_loop ;;",
-        "13) uninstall_menu_loop ;;",
+        "12) container_logs_menu_loop ;;",
+        "13) menu_run cmd_historical_logs ;;",
+        "14) updater_menu_loop ;;",
+        "15) uninstall_menu_loop ;;",
     )
     for entry in expected:
         assert entry in script
@@ -72,7 +76,7 @@ def test_uninstall_submenu_offers_standard_and_full_levels():
     assert "render_uninstall_menu" in script
     assert "uninstall_menu_loop" in script
     assert "标准卸载 (保留数据卷和部署状态，可重新部署)" in script
-    assert "完全卸载 (删除数据卷、镜像和部署状态)" in script
+    assert "完全卸载 (删除数据、镜像；独立目录仅保留 start.sh)" in script
     assert "1) menu_run cmd_uninstall ;;" in script
     assert "2) menu_run cmd_uninstall --purge ;;" in script
     assert "0) return 0 ;;" in script
@@ -102,8 +106,15 @@ def test_full_uninstall_purges_images_by_repository_before_state():
     body = script[cmd_uninstall:]
     # Image removal must still happen before the deployment state is purged.
     assert "purge_sakura_images || return $?" in body
+    assert "purge_sakura_compose_resources || return $?" in body
+    assert body.index("purge_sakura_compose_resources || return $?") < body.index(
+        "purge_sakura_images || return $?"
+    )
     assert body.index("purge_sakura_images || return $?") < body.index(
         "purge_sakura_deployment_state || return $?"
+    )
+    assert body.index("purge_sakura_deployment_state || return $?") < body.index(
+        "purge_standalone_install_artifacts || return $?"
     )
     # The loop enumerates local images by repository prefix: digest pulls
     # leave untagged images only attributable via RepoDigests, and updater
@@ -117,17 +128,17 @@ def test_full_uninstall_purges_images_by_repository_before_state():
 
 def test_uninstall_help_documents_purge_semantics():
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
-    assert "卸载服务；默认保留数据，--purge 完全卸载（含数据卷/镜像/部署状态）" in script
-    assert "完全卸载：删除数据卷、镜像和 .deploy 状态" in script
+    assert "--purge 删除数据/镜像，独立目录仅保留 start.sh" in script
+    assert "完全卸载：独立目录仅保留 start.sh" in script
 
 
 def test_readme_documents_two_uninstall_levels():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
     assert "标准卸载：保留数据，可重新部署" in readme
-    assert "完全卸载：永久删除数据卷、镜像与部署状态" in readme
+    assert "完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh" in readme
     assert "Standard uninstall: preserve data for a later redeployment" in readme_en
-    assert "permanently delete volumes, images, and deployment state" in readme_en
+    assert "delete data/images; keep only start.sh in a standalone install" in readme_en
 
 
 def test_start_script_is_bash_valid_when_bash_is_available():

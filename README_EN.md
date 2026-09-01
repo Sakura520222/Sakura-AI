@@ -170,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 The interactive menu's production deployment also asks for the channel on first setup; switch channels later via the menu's channel switch entry.
 
-`start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file on demand (override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
+`start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file for the selected image channel (stable from `main`, development from `develop`; override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
 
 `sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs the Host Updater. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
@@ -182,11 +182,11 @@ The interactive menu's production deployment also asks for the channel on first 
 >
 > `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops, installs, starts, and reports the new daemon state; if installation fails, it attempts to restore the existing daemon. If an older updater does not support the atomic maintenance gate, the command fails closed and requires the administrator to stop that legacy daemon explicitly first. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
 
-Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and the `.deploy` state. Both modes share the single `UNINSTALL` confirmation word:
+Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and deployment files. In a standalone install such as `/opt/sakura-ai`, full uninstall leaves only `start.sh` for a clean redeployment; source repository files are protected. Both modes share the single `UNINSTALL` confirmation word:
 
 ```bash
 sudo ./start.sh uninstall          # Standard uninstall: preserve data for a later redeployment
-sudo ./start.sh uninstall --purge  # Full uninstall: permanently delete volumes, images, and deployment state
+sudo ./start.sh uninstall --purge  # Full uninstall: delete data/images; keep only start.sh in a standalone install
 ```
 
 **Web image only** (bring your own MySQL/Redis):
@@ -203,15 +203,15 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart):
+After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart). When `start.sh` waits in the foreground, it displays the current Setup Token immediately after a successful deployment. You can also reopen the main menu and choose **View current container logs** → **Web**:
 
 ```bash
-# In /opt/sakura-ai: tail live logs / extract the first-deploy token
+# Alternatively, tail the Web container directly from /opt/sakura-ai
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-For persisted DEBUG logs, error filtering, and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+The main menu's **View previous runtime logs** entry reads persisted DEBUG logs. For error filtering and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 ### Source Development
 

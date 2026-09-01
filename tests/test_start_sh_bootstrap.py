@@ -71,6 +71,8 @@ curl() {
 ensure_prod_compose_file
 test -f "$T/docker/docker-compose.prod.yml"
 grep -q '^services:' "$T/docker/docker-compose.prod.yml"
+grep -Fxq 'https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml' \
+  "$T/docker/docker-compose.prod.yml.source"
 '''
     )
     assert result.returncode == 0, result.stderr
@@ -87,12 +89,53 @@ trap 'rm -rf "$T"' EXIT
 UPDATER_PROJECT_ROOT="$T"
 mkdir -p "$T/docker"
 printf 'services: {}\n' > "$T/docker/docker-compose.prod.yml"
+printf '%s\n' 'https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml' \
+  > "$T/docker/docker-compose.prod.yml.source"
 # 任何 curl 调用都会失败；文件已存在时函数必须不发起下载。
 curl() { return 1; }
 ensure_prod_compose_file
 '''
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_development_channel_downloads_compose_from_develop_and_refreshes_main_file():
+    result = _run_bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+UPDATER_PROJECT_ROOT="$T"
+mkdir -p "$T/docker"
+printf 'services:\n  stable-old: {}\n' > "$T/docker/docker-compose.prod.yml"
+printf '%s\n' 'https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml' \
+  > "$T/docker/docker-compose.prod.yml.source"
+curl_log="$T/curl.log"
+curl() {
+    local out="" arg url=""
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            -o) out="$2"; shift 2 ;;
+            https://*) url="$arg"; shift ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\n' "$url" >> "$curl_log"
+    printf 'services:\n  development-new: {}\n' > "$out"
+}
+SAKURA_DEPLOY_CHANNEL=development ensure_prod_compose_file
+grep -Fxq 'https://raw.githubusercontent.com/Sakura520222/Sakura-AI/develop/docker/docker-compose.prod.yml' "$curl_log"
+grep -Fxq 'https://raw.githubusercontent.com/Sakura520222/Sakura-AI/develop/docker/docker-compose.prod.yml' \
+  "$T/docker/docker-compose.prod.yml.source"
+grep -q 'development-new' "$T/docker/docker-compose.prod.yml"
+! grep -q 'stable-old' "$T/docker/docker-compose.prod.yml"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_bootstrap_relocates_script_to_install_root():
