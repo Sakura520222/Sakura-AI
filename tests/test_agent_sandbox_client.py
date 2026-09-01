@@ -238,14 +238,15 @@ def test_backend_selection_is_fail_closed_for_deployment_mode():
 def test_sandbox_client_rejects_updater_socket_and_invalid_limits(tmp_path: Path):
     with pytest.raises(ValueError):
         SandboxExecutionConfig(socket_path=r"\run\sakura-ai\updater.sock")
+    socket_path = str(tmp_path / "sandboxd.sock")
     with pytest.raises(ValueError):
-        SandboxExecutionConfig(max_output_bytes=0)
+        SandboxExecutionConfig(socket_path=socket_path, max_output_bytes=0)
     with pytest.raises(ValueError):
-        SandboxExecutionConfig(max_output_bytes=65 * 1024 * 1024)
+        SandboxExecutionConfig(socket_path=socket_path, max_output_bytes=65 * 1024 * 1024)
     with pytest.raises(ValueError):
-        SandboxExecutionConfig(timeout_seconds=math.inf)
+        SandboxExecutionConfig(socket_path=socket_path, timeout_seconds=math.inf)
     with pytest.raises(ValueError):
-        SandboxExecutionConfig(request_timeout_seconds=math.nan)
+        SandboxExecutionConfig(socket_path=socket_path, request_timeout_seconds=math.nan)
 
 
 def test_digest_syntax_is_deploy_mode_specific(tmp_path: Path):

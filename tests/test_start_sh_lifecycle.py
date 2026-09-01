@@ -137,6 +137,153 @@ def test_down_cli_propagates_incomplete_stop_exit_status():
     assert 'down)   do_down "$prod"; exit $? ;;' in script
 
 
+def test_sandbox_uninstall_ignores_stale_recorded_container_id():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_RUNTIME_DIR="$case_dir/run"
+SANDBOX_STATE_DIR="$case_dir/state"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_CONTAINER_ID_FILE="$SANDBOX_STATE_DIR/container.id"
+SANDBOX_IDENTITY_FILE="$SANDBOX_STATE_DIR/container.identity"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+mkdir -p "$SANDBOX_RUNTIME_DIR" "$SANDBOX_STATE_DIR"
+printf '%064d\n' 1 > "$SANDBOX_CONTAINER_ID_FILE"
+printf '%s\n' 'sandbox-test1234' > "$SANDBOX_INSTANCE_ID_FILE"
+sandbox_prepare_directories() { :; }
+sandbox_load_deployment_config() { :; }
+sandbox_instance_id() { printf '%s\n' 'sandbox-test1234'; }
+sandbox_container_inspect() { return 1; }
+sandbox_container_id_from_name() { return 1; }
+docker() {
+    if [[ "$1 $2" == 'ps -aq' ]]; then
+        return 0
+    fi
+    printf 'UNEXPECTED_DOCKER:%s\n' "$*"
+    return 1
+}
+sandbox_uninstall false
+[[ ! -e "$SANDBOX_CONTAINER_ID_FILE" ]]
+[[ ! -e "$SANDBOX_INSTANCE_ID_FILE" ]]
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "container.id 已过期" in output
+    assert "UNEXPECTED_DOCKER" not in output
+
+
+def test_sandbox_uninstall_recovers_migrated_controller_instance():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_RUNTIME_DIR="$case_dir/run"
+SANDBOX_STATE_DIR="$case_dir/state"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_CONTAINER_ID_FILE="$SANDBOX_STATE_DIR/container.id"
+SANDBOX_IDENTITY_FILE="$SANDBOX_STATE_DIR/container.identity"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_CONTAINER_NAME='sakura-ai-sandboxd-test'
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+log="$case_dir/docker.log"
+mkdir -p "$SANDBOX_RUNTIME_DIR" "$SANDBOX_STATE_DIR"
+printf '%s\n' "$container_id" > "$SANDBOX_CONTAINER_ID_FILE"
+printf '%s\n' 'sandbox-new12345' > "$SANDBOX_INSTANCE_ID_FILE"
+sandbox_prepare_directories() { :; }
+sandbox_load_deployment_config() { :; }
+sandbox_instance_id() { printf '%s\n' 'sandbox-new12345'; }
+sandbox_container_inspect() { return 0; }
+sandbox_container_owned() { return 1; }
+sandbox_container_has_controller_identity() { return 0; }
+sandbox_write_identity() { :; }
+sandbox_stop_known_container() { printf 'STOP:%s\n' "$1" >> "$log"; }
+docker() { printf 'DOCKER:%s\n' "$*" >> "$log"; }
+sandbox_uninstall false
+grep -Fq "STOP:$container_id" "$log"
+grep -Fq "DOCKER:rm $container_id" "$log"
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "instance 与当前安装目录不一致" in output
+
+
+def test_sandbox_uninstall_still_refuses_unowned_recorded_container():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_RUNTIME_DIR="$case_dir/run"
+SANDBOX_STATE_DIR="$case_dir/state"
+SANDBOX_SOCKET_PATH="$SANDBOX_RUNTIME_DIR/sandboxd.sock"
+SANDBOX_CONTAINER_ID_FILE="$SANDBOX_STATE_DIR/container.id"
+SANDBOX_IDENTITY_FILE="$SANDBOX_STATE_DIR/container.identity"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+mkdir -p "$SANDBOX_RUNTIME_DIR" "$SANDBOX_STATE_DIR"
+printf '%s\n' "$container_id" > "$SANDBOX_CONTAINER_ID_FILE"
+printf '%s\n' 'sandbox-test1234' > "$SANDBOX_INSTANCE_ID_FILE"
+sandbox_prepare_directories() { :; }
+sandbox_load_deployment_config() { :; }
+sandbox_instance_id() { printf '%s\n' 'sandbox-test1234'; }
+sandbox_container_inspect() { return 0; }
+sandbox_container_owned() { return 1; }
+sandbox_container_has_controller_identity() { return 1; }
+sandbox_stop_known_container() { printf 'UNEXPECTED_STOP\n'; }
+docker() { printf 'UNEXPECTED_DOCKER:%s\n' "$*"; }
+if sandbox_uninstall false; then
+    exit 1
+fi
+'''
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "refusing to remove an unowned sandboxd container" in output
+    assert "UNEXPECTED_STOP" not in output
+    assert "UNEXPECTED_DOCKER" not in output
+
+
+def test_migrated_controller_identity_requires_exact_daemon_labels():
+    result = _run_bash(
+        r'''
+set -u
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_CONTAINER_NAME='sakura-ai-sandboxd-test'
+container_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+docker_payload='{"Name":"/sakura-ai-sandboxd-test","Config":{"Labels":{"ai.sakura.managed-by":"sandboxd-daemon","ai.sakura.instance-id":"sandbox-old12345","ai.sakura.protocol-version":"2"}}}'
+docker() { printf '%s\n' "$docker_payload"; }
+sandbox_container_has_controller_identity "$container_id"
+docker_payload='{"Name":"/sakura-ai-sandboxd-test","Config":{"Labels":{"ai.sakura.managed-by":"sandboxd","ai.sakura.instance-id":"sandbox-old12345","ai.sakura.protocol-version":"2"}}}'
+sandbox_container_has_controller_identity "$container_id"
+docker_payload='{"Name":"/sakura-ai-sandboxd-test","Config":{"Labels":{"ai.sakura.managed-by":"sandbox-runner","ai.sakura.instance-id":"sandbox-old12345","ai.sakura.protocol-version":"2"}}}'
+if sandbox_container_has_controller_identity "$container_id"; then
+    exit 1
+fi
+docker_payload='{"Name":"/unrelated","Config":{"Labels":{"ai.sakura.managed-by":"sandboxd-daemon","ai.sakura.instance-id":"sandbox-old12345","ai.sakura.protocol-version":"2"}}}'
+if sandbox_container_has_controller_identity "$container_id"; then
+    exit 1
+fi
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_image_update_fails_closed_without_updater_and_never_calls_web_only_helper():
     result = _run_bash(
         """
