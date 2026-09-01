@@ -282,7 +282,7 @@ Full architecture diagram, data flow, code structure, and interactive knowledge 
 ## Development
 
 ```bash
-uv sync                              # Install dependencies (classic: pip install -r requirements.txt)
+uv sync                              # Install dependencies (uv; classic pip: pip install -r requirements.txt plus pip install -e './updater[dev]')
 uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
 python run_ruff.py                   # Lint + fix + format
 python run_ruff.py --check           # Read-only check
