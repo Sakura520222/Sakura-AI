@@ -45,7 +45,8 @@ fi
 # --- K 组：compose purge 参数 ---
 
 select_compose_from_deployment_mode() { :; }
-UPDATER_DEPLOYMENT_ENV_FILE=/dev/null
+UPDATER_DEPLOYMENT_ENV_FILE="$TMPDIR/deployment.env"
+printf '%s\n' 'SAKURA_DEPLOY_MODE=image' > "$UPDATER_DEPLOYMENT_ENV_FILE"
 COMPOSE_PROJECT=""
 COMPOSE_FILE="$TMPDIR/docker-compose.yml"
 

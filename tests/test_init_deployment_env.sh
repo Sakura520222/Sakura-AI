@@ -48,6 +48,13 @@ assert_not_contains "$W2/deployment.env" 'SAKURA_AI_IMAGE=${' "S2: 不写 shell 
 password_w2=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$W2/deployment.env")
 [[ "$password_w2" =~ ^[0-9a-f]{64}$ ]] && report 0 "S2: image 模式生成 64 位十六进制数据库密码" || report 1 "S2: 数据库密码格式错误"
 
+# 场景 2d：权威部署状态不存在但 MySQL 卷存在时，首次初始化也必须
+# fail-closed，不得生成与卷内用户密码不一致的新 secret。
+W2d=$(mktemp -d)
+FAKE_MYSQL_VOLUME=1 prod=true DEPLOY_DIR="$W2d" DEPLOYMENT_ENV_FILE="$W2d/deployment.env" init_deployment_env >/dev/null 2>&1
+[ "$?" -ne 0 ] && [ ! -e "$W2d/deployment.env" ] \
+    && report 0 "S2d: 无部署状态但卷存在时拒绝生成新密码" || report 1 "S2d"
+
 # 场景 2c：再次初始化保持同一 secret（更新/重启不可轮换）
 prod=true DEPLOY_DIR="$W2" DEPLOYMENT_ENV_FILE="$W2/deployment.env" init_deployment_env >/dev/null
 password_w2_again=$(sed -n 's/^SAKURA_DB_PASSWORD=//p' "$W2/deployment.env")

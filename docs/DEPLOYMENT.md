@@ -300,7 +300,7 @@ Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
 ============================================================
 ```
 
-> Token 在每次应用启动时重新生成，仅当前部署会话有效。
+> Token 在每次应用启动时重新生成，仅当前部署会话有效。`start.sh` 的前台日志跟随会在后台部署进程结束时自动返回；部署成功后，脚本会从经身份校验的 Web 容器“当前启动”日志中提取并直接显示 Setup Token。如果提前按 `Ctrl+C` 退出了日志跟随，可从主菜单的“查看容器当前日志”→“Web”查看。
 
 ### 配置步骤
 
@@ -329,6 +329,11 @@ WebUI：`https://your-domain.com/`
 ## 八、查看运行日志
 
 应用使用 Loguru 输出日志：控制台（stdout）记录 `INFO` 及以上级别，落盘文件记录 `DEBUG` 及以上级别。控制台适合实时排障，文件适合详细回溯。
+
+`start.sh` 主菜单提供两个直接入口：
+
+- **查看容器当前日志**：可选 Web、MySQL、Redis 或 Agent sandboxd，只显示该容器本次启动后的日志，默认回放最近 200 行并持续跟随。
+- **查看往期运行日志**：按时间从新到旧列出 `app_*.log`，选中后显示文件最后 1000 行。生产镜像部署会以只读方式读取 `logs_data` 命名卷，即使 Web 容器已停止也可回溯。
 
 ### 日志文件
 
@@ -500,16 +505,16 @@ sudo ./start.sh uninstall
 
 命令会要求输入 `UNINSTALL`。自动化环境必须显式传入 `--yes`，不会因为 stdin 非交互而默认确认。
 
-完全清理必须显式使用 `--purge` 并输入 `PURGE SAKURA-AI`：
+完全清理必须显式使用 `--purge` 并输入 `UNINSTALL`：
 
 ```bash
 sudo ./start.sh uninstall --purge
 ```
 
-`--purge` 会永久删除 Compose 数据卷（包括 MySQL/Redis 数据）以及 `.deploy` 部署状态，无法由脚本恢复。项目源码、脚本和宿主机 bind-mount 目录不会自动递归删除；脚本会输出项目路径，管理员检查后再自行处理。可审计的非交互清理需要同时提供 `--purge --yes`。
+`--purge` 会永久删除 Compose 数据卷（包括 MySQL/Redis 数据）、全部 Sakura AI 镜像及部署文件，无法由脚本恢复。在 `/opt/sakura-ai` 等独立安装目录中，清理后只保留 `start.sh`，便于重新部署；源码仓库模式会保护项目源码，只清理部署状态。可审计的非交互清理需要同时提供 `--purge --yes`。
 
 生产部署的镜像拉取在后台 runner 中使用 Docker Compose 原生 TTY 进度渲染器。`Ctrl+C` 只退出 `tail` 查看，拉取与启动继续运行；重新连接后可用 `./start.sh --attach` 继续查看，或用 `./start.sh --status` 查看当前 `pull/start/health` 阶段。若宿主 Compose 版本不支持 `--progress`，脚本会明确警告并回退到普通拉取输出。
 
 ---
 
-*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-09-01 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
