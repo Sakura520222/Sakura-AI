@@ -1874,7 +1874,6 @@ async def task_stream_data(
 @router.post("/api/tasks/{task_id}/prompts")
 async def submit_user_prompt(
     task_id: int,
-    request: Request,
     content: str = Form(...),
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
@@ -1901,15 +1900,11 @@ async def submit_user_prompt(
             {"success": False, "error": "Content is empty"}, status_code=400
         )
 
-    username = ""
-    if request and hasattr(request, "state") and hasattr(request.state, "user"):
-        username = getattr(request.state.user, "username", "")
-
     prompt = AgentTeamUserPrompt(
         task_id=task_id,
         content=content,
         status="pending",
-        submitted_by=username or "super_admin",
+        submitted_by=user["sub"],
     )
     db.add(prompt)
 
