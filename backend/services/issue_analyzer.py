@@ -896,6 +896,63 @@ class IssueAnalyzer:
                                 )
                             else:
                                 branch_info = f", 分支={branch_used}"
+                        if tool_call.function.name == "read_file":
+                            line_range = result.get("line_range")
+                            if isinstance(line_range, dict):
+                                range_status = line_range.get("status")
+                                range_truncated = bool(line_range.get("truncated"))
+                                stale_context_suspected = bool(
+                                    line_range.get("stale_context_suspected")
+                                )
+                                requested_range = line_range.get("requested")
+                                returned_range = line_range.get("returned")
+                                start_line_valid = line_range.get(
+                                    "start_line_valid"
+                                )
+                                end_line_valid = line_range.get("end_line_valid")
+                                total_lines = line_range.get("total_lines")
+                            else:
+                                range_status = "error" if result.get("error") else None
+                                range_truncated = False
+                                stale_context_suspected = False
+                                requested_range = None
+                                returned_range = None
+                                start_line_valid = None
+                                end_line_valid = None
+                                total_lines = result.get("total_lines")
+
+                            # 只记录行号/分支定位元数据，不记录工具返回的文件内容、
+                            # hint 或完整错误文本，避免 Issue 内容或凭据进入日志。
+                            if result.get("error") or range_truncated:
+                                recovery = result.get("recovery")
+                                automatic_retry = (
+                                    recovery.get("automatic_retry")
+                                    if isinstance(recovery, dict)
+                                    else None
+                                )
+                                logger.warning(
+                                    "Issue 分析 read_file 行范围追踪: path={}, "
+                                    "status={}, requested={}, returned={}, "
+                                    "total_lines={}, start_line_valid={}, "
+                                    "end_line_valid={}, truncated={}, "
+                                    "stale_context_suspected={}, automatic_retry={}, "
+                                    "branch_requested={}, branch_used={}, ref_used={}, "
+                                    "tried_refs={}",
+                                    result.get("file_path"),
+                                    range_status,
+                                    requested_range,
+                                    returned_range,
+                                    total_lines,
+                                    start_line_valid,
+                                    end_line_valid,
+                                    range_truncated,
+                                    stale_context_suspected,
+                                    automatic_retry,
+                                    result.get("branch_requested"),
+                                    result.get("branch_used"),
+                                    result.get("ref_used"),
+                                    result.get("tried_refs"),
+                                )
                     logger.info(
                         "执行工具 {} (Issue 分析{})",
                         tool_call.function.name,
