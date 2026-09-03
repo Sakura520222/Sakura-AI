@@ -213,6 +213,8 @@ async def test_read_file_non_pr_invalid_branch_falls_back(file_strategy):
     assert result["branch_used"] == "main"
     assert result["branch_requested"] == "feature/missing"
     assert result["tried_branches"] == ["feature/missing", "main"]
+    assert result["ref_used"] == "main"
+    assert result["tried_refs"] == ["feature/missing", "main"]
     assert "main-content" in result["content"]
 
 
@@ -263,7 +265,104 @@ async def test_read_file_pr_ignores_branch_uses_head(file_strategy):
 
     assert result["branch_used"] == "HEAD"
     assert result["branch_requested"] is None
+    assert result["ref_used"] == "headsha"
+    assert result["tried_refs"] == ["headsha"]
     assert "head-content" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_start_line_out_of_range_returns_recovery_metadata(
+    file_strategy,
+):
+    """行号来自旧上下文时，返回可执行的恢复参数且不伪造自动重试。"""
+    repo = _FakeRepo(
+        branches={
+            "main": {
+                "a.py": _FakeContent(
+                    "a.py", "line 1\nline 2\nline 3\nline 4\nline 5"
+                ),
+            }
+        },
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=10,
+        end_line=12,
+        branch="feature/missing",
+    )
+
+    assert result["error"] == "start_line 10 超出文件范围"
+    assert result["total_lines"] == 5
+    assert result["branch_requested"] == "feature/missing"
+    assert result["branch_used"] == "main"
+    assert result["tried_branches"] == ["feature/missing", "main"]
+    assert result["ref_used"] == "main"
+    assert result["tried_refs"] == ["feature/missing", "main"]
+    assert result["line_range"] == {
+        "requested": {"start_line": 10, "end_line": 12},
+        "returned": None,
+        "total_lines": 5,
+        "status": "start_line_out_of_range",
+        "start_line_valid": False,
+        "end_line_valid": False,
+        "truncated": False,
+        "stale_context_suspected": True,
+    }
+    assert result["recovery"] == {
+        "action": "retry_read_file",
+        "automatic_retry": False,
+        "reason": "start_line_out_of_range",
+        "retry_arguments": {
+            "file_path": "a.py",
+            "start_line": 3,
+            "end_line": 5,
+            "branch": "main",
+        },
+    }
+    assert "工具未自动重试" in result["hint"]
+    assert "start_line=3" in result["hint"]
+    assert "end_line=5" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_end_line_truncation_is_visible_without_error(file_strategy):
+    """结束行越界继续返回内容，但明确暴露请求范围与实际范围。"""
+    repo = _FakeRepo(
+        branches={
+            "main": {
+                "a.py": _FakeContent("a.py", "line 1\nline 2\nline 3"),
+            }
+        },
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py", repo, pr=None, start_line=2, end_line=10
+    )
+
+    assert "error" not in result
+    assert result["start_line"] == 2
+    assert result["end_line"] == 3
+    assert result["content"].endswith("line 3")
+    assert result["line_range"] == {
+        "requested": {"start_line": 2, "end_line": 10},
+        "returned": {"start_line": 2, "end_line": 3},
+        "total_lines": 3,
+        "status": "end_line_truncated",
+        "start_line_valid": True,
+        "end_line_valid": False,
+        "truncated": True,
+        "stale_context_suspected": False,
+    }
+    assert "truncation" not in result
+    assert "end_line=10" in result["hint"]
+    assert "end_line=3" in result["hint"]
 
 
 # ── list_directory 非 PR 场景 ────────────────────────────
