@@ -19,7 +19,7 @@ dependencies = [
     "python-multipart>=0.0.32",
 
     # GitHub集成
-    "PyGithub>=2.9.1",
+    "PyGithub>=2.10.0",
     "cryptography>=44.0.2",
 
     # AI集成
@@ -37,7 +37,7 @@ dependencies = [
     "APScheduler>=3.11.3",
 
     # 工具库
-    "typing-extensions>=4.5.0",
+    "typing-extensions>=4.16.0",
     "pyyaml>=6.0.1",
     "pydantic>=2.5.3",
     "pydantic-settings>=2.15.0",
@@ -52,7 +52,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
 
     # RAG 功能
-    "chromadb>=0.4.0",
+    "chromadb>=1.5.9",
     "watchfiles>=0.20.0",
     "python-slugify>=8.0.0",
 
@@ -72,11 +72,11 @@ dependencies = [
     "slowapi>=0.1.10",
 
     # URL 抓取与网络搜索工具
-    "beautifulsoup4>=4.12.0",
+    "beautifulsoup4>=4.15.0",
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.3",
+    "ruff>=0.16.5",
     "pytest>=9.1.1",
 ]
 
