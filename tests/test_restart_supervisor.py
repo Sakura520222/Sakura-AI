@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 from types import SimpleNamespace
 
@@ -52,6 +53,56 @@ class _FakeProc:
     def kill(self) -> None:
         self.killed = True
         self.exit_code = 0
+
+
+def test_spawn_child_defaults_unmarked_checkout_to_source(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.delenv("SAKURA_DEPLOY_MODE", raising=False)
+    monkeypatch.delenv("SAKURA_BUILD_CHANNEL", raising=False)
+
+    def fake_popen(command, *, env):
+        captured["command"] = command
+        captured["env"] = env
+        return _FakeProc(101, exit_code=0)
+
+    monkeypatch.setattr(main_module.subprocess, "Popen", fake_popen)
+
+    main_module._spawn_child(_make_args())
+
+    assert captured["env"]["SAKURA_DEPLOY_MODE"] == "source"
+    assert "SAKURA_DEPLOY_MODE" not in os.environ
+
+
+def test_spawn_child_preserves_explicit_deploy_mode(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("SAKURA_DEPLOY_MODE", "image")
+    monkeypatch.delenv("SAKURA_BUILD_CHANNEL", raising=False)
+
+    def fake_popen(command, *, env):
+        captured["env"] = env
+        return _FakeProc(101, exit_code=0)
+
+    monkeypatch.setattr(main_module.subprocess, "Popen", fake_popen)
+
+    main_module._spawn_child(_make_args())
+
+    assert captured["env"]["SAKURA_DEPLOY_MODE"] == "image"
+
+
+def test_spawn_child_does_not_infer_source_inside_image(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.delenv("SAKURA_DEPLOY_MODE", raising=False)
+    monkeypatch.setenv("SAKURA_BUILD_CHANNEL", "stable")
+
+    def fake_popen(command, *, env):
+        captured["env"] = env
+        return _FakeProc(101, exit_code=0)
+
+    monkeypatch.setattr(main_module.subprocess, "Popen", fake_popen)
+
+    main_module._spawn_child(_make_args())
+
+    assert "SAKURA_DEPLOY_MODE" not in captured["env"]
 
 
 def test_request_restart_without_server_returns_false():

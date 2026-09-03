@@ -328,8 +328,6 @@ agent_team:
   live_prompt_placeholder: "输入指导 Prompt（Ctrl+Enter 发送），将在下次 AI 请求时注入..."
   live_prompt_disabled: "请先选择可操作的任务"
   live_send_guidance: "发送指导"
-  live_initial_input: "初始任务输入"
-  live_user_guidance: "用户输入"
   live_tool_details: "详情"
   live_tool_result: "工具结果"
   live_tool_error: "执行失败"

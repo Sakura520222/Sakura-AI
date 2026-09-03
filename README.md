@@ -226,6 +226,8 @@ uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
 ```
 
+`backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
+
 **传统 pip 方式（无 uv）**：
 
 ```bash

@@ -33,7 +33,8 @@ def test_agent_team_templates_compile_and_page_uses_one_console_surface():
 
     page = _read(PAGE)
     assert "agent-console-shell" in page
-    assert "lg:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)]" in page
+    assert 'id="agent-task-list-panel"' in page
+    assert "lg:w-[22rem]" in page
     assert "agent-task-detail-panel" in page
     assert "agent-task-live" in page
     assert "activeTab" not in page
@@ -69,29 +70,32 @@ def test_agent_console_relies_on_alpine_automatic_init_only():
     assert "document.removeEventListener('click', this._workspaceClickHandler)" in page
 
 
-def test_agent_console_has_no_redundant_page_identity_header():
+def test_agent_console_uses_contextual_headers_without_redundant_page_identity():
     page = _read(PAGE)
 
-    assert "<header class=" not in page
     assert "{{ _('agent_team.description') }}" not in page
-    assert "agent-console-toolbar" in page
+    assert "agent-console-toolbar" not in page
+    assert "openSecondaryPanel('create')" in page
+    assert "openSecondaryPanel('candidates')" in page
+    assert "openSecondaryPanel('workspaces')" in page
 
 
 def test_live_is_primary_and_has_a_viewport_bounded_scroll_chain():
     page = _read(PAGE)
     live = _read(LIVE)
 
-    assert "lg:h-[calc(100dvh-7rem)]" in page
+    assert "height: calc(100dvh - 4rem)" in page
     assert 'id="agent-task-live"' in page
     assert 'id="agent-task-detail-shell"' in page
     assert page.index('id="agent-task-live"') < page.index(
         'id="agent-task-detail-shell"'
     )
     assert 'id="agent-task-live" class="agent-panel flex min-h-0' in page
-    assert 'id="agent-task-detail-shell"' in page and "<details" in page
-    assert 'id="agent-task-detail" class="max-h-' in page
+    assert 'x-show="detailOpen"' in page
+    assert 'id="agent-task-detail-shell"' in page and "<aside" in page
+    assert 'id="agent-task-detail" class="min-h-0' in page
     assert "overflow-y-auto" in page[page.index('id="agent-task-detail"') :]
-    assert "agent-task-detail-shell')?.removeAttribute('open')" in page
+    assert "this.detailOpen = false" in page
     assert (
         'class="agent-live-panel flex h-[70dvh] min-h-[32rem] flex-col lg:h-full lg:min-h-0"'
         in live
@@ -146,9 +150,13 @@ def test_detail_keeps_long_context_collapsed_and_uses_single_agent_language():
     assert "max_iterations" not in template
 
 
-def test_live_view_has_execution_rail_safe_markdown_and_stream_recovery_controls():
+def test_live_view_has_conversation_layout_safe_markdown_and_stream_recovery_controls():
     template = _read(LIVE)
-    assert "agent-rail" in template
+    assert "agent-conversation" in template
+    assert "agent-composer" in template
+    assert 'item.type === \'assistant\'' in template
+    assert 'item.type === \'user_input\'' in template
+    assert "flex justify-end" in template
     assert 'role="log"' in template
     assert 'aria-live="polite"' in template
     assert "<details" in template

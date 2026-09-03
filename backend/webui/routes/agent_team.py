@@ -112,6 +112,32 @@ def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
     return False, "task_inactive"
 
 
+def _message_guidance_ids(message_json: str | None) -> list[int]:
+    """Read stable prompt IDs from a checkpointed guidance message."""
+    try:
+        payload = json.loads(message_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_ids = payload.get("guidance_ids")
+    metadata = payload.get("metadata")
+    if raw_ids is None and isinstance(metadata, dict):
+        raw_ids = metadata.get("guidance_ids")
+    if not isinstance(raw_ids, (list, tuple)):
+        return []
+
+    guidance_ids: list[int] = []
+    for raw_id in raw_ids:
+        try:
+            guidance_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if guidance_id > 0 and guidance_id not in guidance_ids:
+            guidance_ids.append(guidance_id)
+    return guidance_ids
+
+
 def _is_admin(user: dict) -> bool:
     return user.get("role") in ("admin", "super_admin")
 
@@ -1779,6 +1805,7 @@ async def task_stream_data(
                     "seq": m.seq,
                     "role": m.role,
                     "content": m.content,
+                    "guidance_ids": _message_guidance_ids(m.message_json),
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
                     "created_at": format_rfc3339(m.created_at)
