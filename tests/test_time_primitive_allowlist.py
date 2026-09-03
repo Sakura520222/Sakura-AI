@@ -69,19 +69,19 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:74",
+        "position": "backend/main.py:75",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1365",
+        "position": "backend/webui/routes/agent_team.py:1391",
         "category": "filesystem-metadata-boundary",
         "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
     },
     {
         "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1599",
+        "position": "backend/webui/routes/agent_team.py:1625",
         "category": "filesystem-metadata-boundary",
         "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
     },
