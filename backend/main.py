@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import subprocess
 import sys
 import time
@@ -796,7 +797,21 @@ def _spawn_child(args: argparse.Namespace) -> subprocess.Popen:
         command += ["--log-level", args.log_level]
     if args.no_reload:
         command += ["--no-reload"]
-    return subprocess.Popen(command)
+
+    child_env = os.environ.copy()
+    if (
+        "SAKURA_DEPLOY_MODE" not in child_env
+        and "SAKURA_BUILD_CHANNEL" not in child_env
+    ):
+        # ``python -m backend.main`` is the repository's source-development
+        # supervisor.  Its child can therefore identify itself as source when
+        # neither the operator nor an immutable image build has supplied a
+        # deployment identity.  Image builds always carry SAKURA_BUILD_CHANNEL;
+        # retaining ``unknown`` there keeps local Agent execution fail-closed
+        # even if an operator overrides the container's normal uvicorn command.
+        child_env["SAKURA_DEPLOY_MODE"] = "source"
+        logger.info("源码启动器已自动识别部署模式: source")
+    return subprocess.Popen(command, env=child_env)
 
 
 def _run_supervisor(

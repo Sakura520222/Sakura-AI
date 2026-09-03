@@ -6,17 +6,20 @@
 <style>
     .agent-console-shell {
         --agent-accent: #ec4899;
-        --agent-canvas: #f8fafc;
+        --agent-canvas: #ffffff;
+        --agent-subtle: #f7f7f8;
         --agent-ink: #111827;
         --agent-divider: #e5e7eb;
         color: var(--agent-ink);
+        background: var(--agent-canvas);
     }
     .dark .agent-console-shell {
-        --agent-canvas: #111827;
+        --agent-canvas: #111318;
+        --agent-subtle: #191c22;
         --agent-ink: #f3f4f6;
-        --agent-divider: #374151;
+        --agent-divider: #2f333b;
     }
-    .agent-console-shell .agent-panel { background: var(--agent-canvas); border: 1px solid var(--agent-divider); }
+    .agent-console-shell .agent-panel { background: var(--agent-canvas); }
     .agent-console-shell .agent-focus:focus-visible,
     .agent-console-shell button:focus-visible,
     .agent-console-shell a:focus-visible,
@@ -27,13 +30,23 @@
         outline: 3px solid rgba(236, 72, 153, .35);
         outline-offset: 2px;
     }
-    .agent-console-shell .agent-rail { position: relative; }
-    .agent-console-shell .agent-rail::before { content: ""; position: absolute; left: .75rem; top: .75rem; bottom: .75rem; width: 1px; background: var(--agent-divider); }
-    .agent-console-shell .agent-rail-event { position: relative; padding-left: 2.25rem; }
-    .agent-console-shell .agent-rail-node { position: absolute; left: .42rem; top: .72rem; z-index: 1; width: .7rem; height: .7rem; border: 2px solid var(--agent-canvas); border-radius: 999px; background: #9ca3af; box-shadow: 0 0 0 1px var(--agent-divider); }
-    .agent-console-shell .agent-rail-node-current { background: var(--agent-accent); box-shadow: 0 0 0 3px rgba(236, 72, 153, .16); }
     .agent-console-shell .agent-live-messages { scrollbar-gutter: stable; }
+    .agent-console-shell .agent-task-list article.is-selected { background: #f3f4f6; }
+    .dark .agent-console-shell .agent-task-list article.is-selected { background: #252830; }
+    .agent-console-shell .agent-task-list article.is-selected::before { opacity: 1; }
+    .agent-console-shell .agent-task-list article { position: relative; }
+    .agent-console-shell .agent-task-list article::before { content: ""; position: absolute; inset: .45rem auto .45rem 0; width: 3px; border-radius: 0 999px 999px 0; background: var(--agent-accent); opacity: 0; transition: opacity .15s ease; }
+    .agent-console-shell .agent-conversation { width: min(100%, 58rem); margin-inline: auto; }
+    .agent-console-shell .agent-message-prose { font-size: .875rem; line-height: 1.75; }
+    .agent-console-shell .agent-message-prose > :first-child { margin-top: 0; }
+    .agent-console-shell .agent-message-prose > :last-child { margin-bottom: 0; }
+    .agent-console-shell .agent-composer { box-shadow: 0 10px 30px rgba(17, 24, 39, .08), 0 2px 8px rgba(17, 24, 39, .04); }
+    .dark .agent-console-shell .agent-composer { box-shadow: 0 12px 35px rgba(0, 0, 0, .35); }
     .agent-console-shell .agent-mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    body:has(#agent-team-console) > footer { display: none; }
+    @media (min-width: 1024px) {
+        .agent-console-shell { margin: -1.5rem; height: calc(100dvh - 4rem); }
+    }
     @media (prefers-reduced-motion: reduce) {
         .agent-console-shell *, .agent-console-shell *::before, .agent-console-shell *::after {
             animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important;
@@ -41,57 +54,43 @@
     }
 </style>
 
-<div id="agent-team-console" class="agent-console-shell mx-auto flex max-w-[1600px] flex-col gap-4 lg:h-[calc(100dvh-7rem)] lg:min-h-[38rem]" x-data="agentTeamPage()" @keydown.escape.window="closeSecondaryPanel()">
-    <section class="agent-panel flex flex-col overflow-hidden rounded-lg text-xs xl:flex-row" aria-label="{{ _('agent_team.tasks') }}">
-        <dl class="grid min-w-0 flex-1 grid-cols-2 divide-x divide-y divide-gray-200 dark:divide-gray-700 sm:grid-cols-4 sm:divide-y-0 xl:grid-cols-6">
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.stats_total') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ stats.total }}</dd></div>
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.stats_active') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-amber-600 dark:text-amber-400">{{ stats.active }}</dd></div>
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.queue_pressure') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ stats.queued }}</dd></div>
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.waiting_human') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ stats.waiting_human }}</dd></div>
-            {% if is_admin %}
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.stats_completed') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">{{ stats.completed }}</dd></div>
-            <div class="px-3 py-2.5"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.workspace_count') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ workspace_summary.count }}</dd></div>
-            {% elif agent_quota %}
-            <div class="px-3 py-2.5 sm:col-span-2"><dt class="text-gray-500 dark:text-gray-400">{{ _('agent_team.your_agent_quota') }}</dt><dd class="agent-mono mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ agent_quota.daily_used }} / {{ agent_quota.daily_limit }} {{ _('billing.daily') }}</dd></div>
-            {% endif %}
-        </dl>
-        <div class="agent-console-toolbar flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900 xl:max-w-md xl:justify-end xl:border-l xl:border-t-0">
-            <button type="button" @click="refreshAgentTaskList()" class="agent-focus inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:border-sakura-300 hover:text-sakura-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-sakura-700 dark:hover:text-sakura-300">{{ _('agent_team.refresh_tasks') }}</button>
-            <button type="button" @click="openSecondaryPanel('create')" class="agent-focus inline-flex items-center rounded-lg bg-sakura-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-sakura-600">{{ _('agent_team.create_task') }}</button>
-            {% if is_admin %}
-            <button type="button" @click="openSecondaryPanel('candidates')" class="agent-focus inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:border-sakura-300 hover:text-sakura-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-sakura-700 dark:hover:text-sakura-300">{{ _('agent_team.preview_candidates') }}</button>
-            <button type="button" @click="openSecondaryPanel('workspaces'); refreshWorkspaces()" class="agent-focus inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:border-sakura-300 hover:text-sakura-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-sakura-700 dark:hover:text-sakura-300">{{ _('agent_team.manage_workspaces') }}</button>
-            {% endif %}
+<div id="agent-team-console" class="agent-console-shell flex min-h-[calc(100dvh-7rem)] overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 lg:min-h-0 lg:rounded-none lg:border-0" x-data="agentTeamPage()" @keydown.escape.window="closeSecondaryPanel()" @open-agent-detail.window="detailOpen = true">
+    <aside id="agent-task-list-panel" class="min-h-0 w-full shrink-0 flex-col border-r border-gray-200 bg-white dark:border-gray-800 dark:bg-[#111318] lg:w-[22rem]" :class="mobileDetail ? 'hidden lg:flex' : 'flex'" aria-label="{{ _('agent_team.tasks') }}">
+        <header class="shrink-0 border-b border-gray-200 px-4 pb-3 pt-4 dark:border-gray-800">
+            <div class="flex items-center gap-2">
+                <button type="button" @click="openSecondaryPanel('create')" class="agent-focus inline-flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-2 text-left text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-800"><span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sakura-500 text-lg font-light text-white" aria-hidden="true">+</span><span>{{ _('agent_team.create_task') }}</span></button>
+                <button type="button" @click="refreshAgentTaskList()" class="agent-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white" title="{{ _('agent_team.refresh_tasks') }}" aria-label="{{ _('agent_team.refresh_tasks') }}"><span aria-hidden="true">↻</span></button>
+                {% if is_admin %}<button type="button" @click="openSecondaryPanel('workspaces'); refreshWorkspaces()" class="agent-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white" title="{{ _('agent_team.manage_workspaces') }}" aria-label="{{ _('agent_team.manage_workspaces') }}"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/></svg></button>{% endif %}
+            </div>
+            <div class="relative mt-3"><svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="m20 20-4-4"/></svg><label class="sr-only" for="agent-task-search">{{ _('agent_team.filter_keyword') }}</label><input id="agent-task-search" x-model="filters.q" @input.debounce.500ms="loadAgentTaskPage(1)" type="search" placeholder="{{ _('agent_team.search_placeholder') }}" class="agent-focus w-full rounded-xl border-0 bg-gray-100 py-2.5 pl-9 pr-3 text-xs text-gray-800 placeholder:text-gray-400 focus:ring-1 focus:ring-sakura-400 dark:bg-gray-800 dark:text-gray-100"></div>
+            <div class="mt-2 grid grid-cols-2 gap-2">
+                <div><label class="sr-only" for="agent-task-status">{{ _('agent_team.filter_status') }}</label><select id="agent-task-status" x-model="filters.status" @change="loadAgentTaskPage(1)" class="agent-focus w-full rounded-lg border-0 bg-transparent py-1.5 pl-2 pr-7 text-[11px] text-gray-600 focus:ring-1 focus:ring-sakura-400 dark:text-gray-300"><option value="all">{{ _('agent_team.filter_all') }}</option><option value="active">{{ _('agent_team.stats_active') }}</option>{% for opt in status_options %}<option value="{{ opt }}">{{ _('agent_team.status_' ~ opt) }}</option>{% endfor %}</select></div>
+                <div><label class="sr-only" for="agent-task-source">{{ _('agent_team.filter_source') }}</label><select id="agent-task-source" x-model="filters.source_type" @change="loadAgentTaskPage(1)" class="agent-focus w-full rounded-lg border-0 bg-transparent py-1.5 pl-2 pr-7 text-[11px] text-gray-600 focus:ring-1 focus:ring-sakura-400 dark:text-gray-300"><option value="all">{{ _('agent_team.filter_all') }}</option><option value="issue_analysis">{{ _('agent_team.source_issue_analysis') }}</option><option value="scan_finding">{{ _('agent_team.source_scan_finding') }}</option><option value="scan_report_issue">{{ _('agent_team.source_scan_report_issue') }}</option><option value="manual_issue">{{ _('agent_team.source_manual_issue') }}</option></select></div>
+            </div>
+            <div class="mt-2 flex items-center gap-3 overflow-x-auto px-2 text-[10px] text-gray-400">
+                <div class="flex shrink-0 items-center gap-1"><span>{{ _('agent_team.stats_total') }}</span><span class="agent-mono font-semibold text-gray-600 dark:text-gray-300">{{ stats.total }}</span></div>
+                <div class="flex shrink-0 items-center gap-1"><span>{{ _('agent_team.stats_active') }}</span><span class="agent-mono font-semibold text-amber-600 dark:text-amber-400">{{ stats.active }}</span></div>
+                <div class="flex shrink-0 items-center gap-1"><span>{{ _('agent_team.waiting_human') }}</span><span class="agent-mono font-semibold text-gray-600 dark:text-gray-300">{{ stats.waiting_human }}</span></div>
+                {% if is_admin %}<button type="button" @click="openSecondaryPanel('candidates')" class="agent-focus ml-auto shrink-0 font-semibold text-sakura-600 hover:text-sakura-700 dark:text-sakura-300">{{ _('agent_team.preview_candidates') }}</button>{% endif %}
+            </div>
+        </header>
+        <div id="agent-task-list" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2" aria-live="polite"><div class="agent-panel flex min-h-40 items-center justify-center rounded-xl p-6 text-xs text-gray-400">{{ _('common.loading') }}</div></div>
+    </aside>
+
+    <main id="agent-task-detail-panel" class="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-white dark:bg-[#111318]" :class="mobileDetail ? 'flex' : 'hidden lg:flex'" aria-label="{{ _('agent_team.view_detail') }}">
+        <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+            <div class="absolute left-3 top-3 z-20 lg:hidden"><button type="button" @click="clearSelectedTask()" class="agent-focus inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white/90 text-gray-700 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/90 dark:text-gray-200" aria-label="{{ _('common.back') }}"><span aria-hidden="true">←</span></button></div>
+            <div id="agent-task-live" class="agent-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{% include "components/agent_team_live_view_fragment.html" %}</div>
         </div>
-    </section>
-
-    <main class="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)]">
-        <section id="agent-task-list-panel" class="min-h-0 flex-col gap-3 overflow-hidden" :class="mobileDetail ? 'hidden lg:flex' : 'flex'" aria-label="{{ _('agent_team.tasks') }}">
-            <div class="agent-panel rounded-lg p-3">
-                <div class="mb-3 flex items-center justify-between gap-2"><div><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.tasks') }}</h2><p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</p></div><span class="agent-mono text-[11px] text-gray-400 dark:text-gray-500" x-text="selectedTaskId ? '#' + selectedTaskId : '—'"></span></div>
-                <div class="space-y-2">
-                    <label class="sr-only" for="agent-task-search">{{ _('agent_team.filter_keyword') }}</label>
-                    <input id="agent-task-search" x-model="filters.q" @input.debounce.500ms="loadAgentTaskPage(1)" type="search" placeholder="{{ _('agent_team.search_placeholder') }}" class="agent-focus w-full rounded-md border-gray-300 bg-white text-xs dark:border-gray-600 dark:bg-gray-900">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div><label class="sr-only" for="agent-task-status">{{ _('agent_team.filter_status') }}</label><select id="agent-task-status" x-model="filters.status" @change="loadAgentTaskPage(1)" class="agent-focus w-full rounded-md border-gray-300 bg-white text-xs dark:border-gray-600 dark:bg-gray-900"><option value="all">{{ _('agent_team.filter_all') }}</option><option value="active">{{ _('agent_team.stats_active') }}</option>{% for opt in status_options %}<option value="{{ opt }}">{{ _('agent_team.status_' ~ opt) }}</option>{% endfor %}</select></div>
-                        <div><label class="sr-only" for="agent-task-source">{{ _('agent_team.filter_source') }}</label><select id="agent-task-source" x-model="filters.source_type" @change="loadAgentTaskPage(1)" class="agent-focus w-full rounded-md border-gray-300 bg-white text-xs dark:border-gray-600 dark:bg-gray-900"><option value="all">{{ _('agent_team.filter_all') }}</option><option value="issue_analysis">{{ _('agent_team.source_issue_analysis') }}</option><option value="scan_finding">{{ _('agent_team.source_scan_finding') }}</option><option value="scan_report_issue">{{ _('agent_team.source_scan_report_issue') }}</option><option value="manual_issue">{{ _('agent_team.source_manual_issue') }}</option></select></div>
-                    </div>
-                </div>
-            </div>
-            <div id="agent-task-list" class="min-h-0 flex-1 overflow-y-auto overscroll-contain" aria-live="polite"><div class="agent-panel flex min-h-40 items-center justify-center rounded-lg p-6 text-xs text-gray-400">{{ _('common.loading') }}</div></div>
-        </section>
-
-        <section id="agent-task-detail-panel" class="min-h-0 min-w-0 overflow-hidden" :class="mobileDetail ? 'flex' : 'hidden lg:flex'" aria-label="{{ _('agent_team.view_detail') }}">
-            <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3">
-                <div class="flex shrink-0 items-center justify-between gap-2 lg:hidden"><button type="button" @click="clearSelectedTask()" class="agent-focus inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"><span aria-hidden="true">←</span>{{ _('common.back') }}</button><span class="agent-mono text-[11px] text-gray-500 dark:text-gray-400" x-text="selectedTaskId ? '#' + selectedTaskId : '—'"></span></div>
-                <div id="agent-task-live" class="agent-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg p-3">{% include "components/agent_team_live_view_fragment.html" %}</div>
-                <details id="agent-task-detail-shell" class="agent-panel group shrink-0 overflow-hidden rounded-lg">
-                    <summary class="agent-focus flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 text-xs font-semibold text-gray-800 dark:text-gray-200"><span>{{ _('agent_team.view_detail') }}</span><span class="flex items-center gap-2"><span class="agent-mono text-[10px] font-normal text-gray-500 dark:text-gray-400" x-text="selectedTaskId ? '#' + selectedTaskId : '—'"></span><span class="text-gray-400 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span></span></summary>
-                    <div id="agent-task-detail" class="max-h-[min(40dvh,28rem)] min-w-0 overflow-y-auto overscroll-contain border-t border-gray-200 p-4 dark:border-gray-700" tabindex="-1"><div class="flex min-h-32 items-center justify-center text-center text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</div></div>
-                </details>
-            </div>
-        </section>
     </main>
+
+    <div x-show="detailOpen" x-cloak class="fixed inset-x-0 top-16 z-50 h-[calc(100dvh-4rem)]" role="presentation">
+        <button type="button" class="absolute inset-0 h-full w-full cursor-default bg-gray-950/30 backdrop-blur-[1px]" @click="detailOpen = false" aria-label="{{ _('common.cancel') }}"></button>
+        <aside id="agent-task-detail-shell" class="absolute inset-y-0 right-0 flex h-full w-full max-w-xl flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900" role="dialog" aria-modal="true" aria-label="{{ _('agent_team.view_detail') }}">
+            <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-700"><h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.view_detail') }}</h2><button type="button" @click="detailOpen = false" class="agent-focus inline-flex h-8 w-8 items-center justify-center rounded-lg text-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800" aria-label="{{ _('common.cancel') }}">×</button></header>
+            <div id="agent-task-detail" class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5" tabindex="-1"><div class="flex min-h-32 items-center justify-center text-center text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</div></div>
+        </aside>
+    </div>
 
     <div x-show="secondaryPanel" x-cloak class="agent-secondary-drawer-shell fixed inset-x-0 top-16 z-40 h-[calc(100dvh-4rem)]" role="presentation">
         <button type="button" class="absolute inset-0 h-full w-full cursor-default bg-gray-950/40" @click="closeSecondaryPanel()" aria-label="{{ _('common.cancel') }}"></button>
@@ -147,15 +146,16 @@ function branchDialog() {
 function askBranch(repoOwner, repoName) { const element = document.querySelector('[data-branch-dialog]'); if (!element || typeof Alpine === 'undefined') return Promise.resolve(''); return Alpine.$data(element).show(repoOwner, repoName); }
 function agentTeamPage() {
     return {
-        isAdmin: {{ 'true' if is_admin else 'false' }}, mobileDetail: false, selectedTaskId: '', secondaryPanel: '', filters: {status: 'all', source_type: 'all', q: '', sort: 'newest'}, candidateFilterRequirement: '', manualIssueInput: '', issuePreview: {show: false, creating: false, refreshing: false, dirty: false, issueRef: '', draft: null, submissionContext: null, errorMessage: ''}, _listClickHandler: null, _workspaceClickHandler: null, _refreshTimer: null,
+        isAdmin: {{ 'true' if is_admin else 'false' }}, mobileDetail: false, selectedTaskId: '', secondaryPanel: '', detailOpen: false, filters: {status: 'all', source_type: 'all', q: '', sort: 'newest'}, candidateFilterRequirement: '', manualIssueInput: '', issuePreview: {show: false, creating: false, refreshing: false, dirty: false, issueRef: '', draft: null, submissionContext: null, errorMessage: ''}, _listClickHandler: null, _workspaceClickHandler: null, _refreshTimer: null,
         init() { window.agentTeamState = this; this._listClickHandler = (event) => { const list = document.getElementById('agent-task-list'); if (!list || !list.contains(event.target)) return; const pager = event.target.closest('[data-list-page]'); if (pager) { event.preventDefault(); this.loadAgentTaskPage(pager.dataset.listPage); return; } const refresh = event.target.closest('[data-list-refresh]'); if (refresh) { event.preventDefault(); this.refreshAgentTaskList(); return; } const control = event.target.closest('[data-task-action]'); if (!control) return; event.preventDefault(); const taskId = control.dataset.taskId; const action = control.dataset.taskAction; if (action === 'select') this.selectTask(taskId); else if (action === 'resume') resumeTask(taskId); else if (action === 'retry') retryTask(taskId); else if (action === 'cancel') cancelTask(taskId); else if (action === 'delete') deleteTask(taskId); }; this._workspaceClickHandler = (event) => { const control = event.target.closest('[data-agent-workspace-action]'); if (!control) return; event.preventDefault(); const action = control.dataset.agentWorkspaceAction; if (action === 'toggle') toggleWorktrees(control.dataset.repoOwner, control.dataset.repoName, control); else if (action === 'delete-workspace') deleteWorkspace(control.dataset.repoOwner, control.dataset.repoName); else if (action === 'delete-worktree') deleteWorktree(control.dataset.repoOwner, control.dataset.repoName, control.dataset.dirName); else if (action === 'clean-orphans') cleanOrphanWorktrees(control.dataset.repoOwner, control.dataset.repoName); }; document.addEventListener('click', this._listClickHandler); document.addEventListener('click', this._workspaceClickHandler); this.loadAgentTaskPage(1); this._refreshTimer = setInterval(() => { if (!document.hidden) this.refreshAgentTaskList(false); }, 15000); },
         buildTaskUrl(page) { const params = new URLSearchParams({page: page || 1, status: this.filters.status, source_type: this.filters.source_type, q: this.filters.q || '', sort: this.filters.sort}); return '/agent-team/list-fragment?' + params.toString(); },
-        async loadAgentTaskPage(page) { const target = document.getElementById('agent-task-list'); if (!target) return; target.innerHTML = agentLoadingHtml(); try { const response = await fetch(this.buildTaskUrl(page), {headers: {'HX-Request': 'true'}}); if (!response.ok) throw new Error('request'); replaceAgentFragment(target, await response.text()); } catch (error) { target.innerHTML = agentErrorHtml(); } },
+        async loadAgentTaskPage(page) { const target = document.getElementById('agent-task-list'); if (!target) return; target.innerHTML = agentLoadingHtml(); try { const response = await fetch(this.buildTaskUrl(page), {headers: {'HX-Request': 'true'}}); if (!response.ok) throw new Error('request'); replaceAgentFragment(target, await response.text()); this.syncSelectedTask(); } catch (error) { target.innerHTML = agentErrorHtml(); } },
         refreshAgentTaskList(showLoading = true) { return this.loadAgentTaskPage(showLoading ? 1 : (document.getElementById('agent-task-list')?.querySelector('[data-page]')?.dataset.page || 1)); },
-        selectTask(taskId) { if (!taskId) return; this.selectedTaskId = String(taskId); this.mobileDetail = true; document.getElementById('agent-task-detail-shell')?.removeAttribute('open'); loadTaskDetail(taskId); watchLive(taskId); this.$nextTick(() => document.getElementById('agent-task-detail-panel')?.scrollIntoView({block: 'start'})); },
-        clearSelectedTask() { this.selectedTaskId = ''; this.mobileDetail = false; loadTaskDetail(null); watchLive(null); },
+        syncSelectedTask() { document.querySelectorAll('#agent-task-list [data-task-id]').forEach((element) => { const selected = String(element.dataset.taskId || '') === this.selectedTaskId; if (element.matches('article')) element.classList.toggle('is-selected', selected); const button = element.matches('[data-task-action="select"]') ? element : element.querySelector('[data-task-action="select"]'); if (button) button.setAttribute('aria-current', selected ? 'true' : 'false'); }); },
+        selectTask(taskId) { if (!taskId) return; this.selectedTaskId = String(taskId); this.mobileDetail = true; this.detailOpen = false; this.syncSelectedTask(); loadTaskDetail(taskId); watchLive(taskId); },
+        clearSelectedTask() { this.selectedTaskId = ''; this.mobileDetail = false; this.detailOpen = false; this.syncSelectedTask(); loadTaskDetail(null); watchLive(null); },
         openSecondaryPanel(panel) { this.secondaryPanel = panel; this.$nextTick(() => document.querySelector('#agent-team-console [role="dialog"] input, #agent-team-console [role="dialog"] textarea, #agent-team-console [role="dialog"] button')?.focus()); },
-        closeSecondaryPanel() { if (!this.issuePreview.show) this.secondaryPanel = ''; }, refreshWorkspaces() { refreshWorkspaces(); }, previewCandidates() { previewCandidates(); }, closeIssuePreview() { if (this.issuePreview.creating || this.issuePreview.refreshing) return; this.issuePreview = {show: false, creating: false, refreshing: false, dirty: false, issueRef: '', draft: null, submissionContext: null, errorMessage: ''}; }, markIssuePreviewDirty() { this.issuePreview.dirty = true; this.issuePreview.errorMessage = ''; }, buildIssuePreviewAgentContext() { return buildIssuePreviewAgentContext(); }, refreshIssuePreview() { return refreshIssuePreview(); }, submitIssuePreviewTask() { return submitIssuePreviewTask(); },
+        closeSecondaryPanel() { if (!this.issuePreview.show) this.secondaryPanel = ''; this.detailOpen = false; }, refreshWorkspaces() { refreshWorkspaces(); }, previewCandidates() { previewCandidates(); }, closeIssuePreview() { if (this.issuePreview.creating || this.issuePreview.refreshing) return; this.issuePreview = {show: false, creating: false, refreshing: false, dirty: false, issueRef: '', draft: null, submissionContext: null, errorMessage: ''}; }, markIssuePreviewDirty() { this.issuePreview.dirty = true; this.issuePreview.errorMessage = ''; }, buildIssuePreviewAgentContext() { return buildIssuePreviewAgentContext(); }, refreshIssuePreview() { return refreshIssuePreview(); }, submitIssuePreviewTask() { return submitIssuePreviewTask(); },
         destroy() { if (this._listClickHandler) document.removeEventListener('click', this._listClickHandler); if (this._workspaceClickHandler) document.removeEventListener('click', this._workspaceClickHandler); if (this._refreshTimer) clearInterval(this._refreshTimer); if (window.agentTeamState === this) window.agentTeamState = null; }
     };
 }

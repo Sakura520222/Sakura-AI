@@ -226,6 +226,8 @@ uv sync                # Creates .venv and installs all dependencies (incl. upda
 uv run python -m backend.main
 ```
 
+When no deployment mode or image-build marker is present, the `backend.main` launcher automatically identifies its application child as `source`; a local `local` Agent backend does not need a separate `SAKURA_DEPLOY_MODE` setting. An explicit environment value always takes precedence, and image environments are never inferred to be source checkouts.
+
 **Classic pip (without uv)**:
 
 ```bash

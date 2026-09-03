@@ -328,8 +328,6 @@ agent_team:
   live_prompt_placeholder: "Enter guidance prompt (Ctrl+Enter to send). Injected on next AI request..."
   live_prompt_disabled: "Select an actionable task first"
   live_send_guidance: "Send Guidance"
-  live_initial_input: "Initial Task Input"
-  live_user_guidance: "User Input"
   live_tool_details: "Details"
   live_tool_result: "Tool result"
   live_tool_error: "Failed"
