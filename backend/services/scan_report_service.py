@@ -701,24 +701,36 @@ class ScanReportService:
             from backend.core.config import get_settings
 
             s = get_settings()
+            system_chat_ids: list[int] = []
             if s.telegram_default_chat_id:
                 try:
                     default_chat_id = int(s.telegram_default_chat_id)
-                    if default_chat_id not in chat_ids:
-                        chat_ids.append(default_chat_id)
+                    # The configured default may be a group/channel (negative
+                    # Telegram id).  Pass it explicitly so the notification
+                    # sender does not mistake a legacy negative mirror value
+                    # for a user endpoint.
+                    system_chat_ids.append(default_chat_id)
                 except ValueError:
                     pass
 
-            if not chat_ids:
+            if not chat_ids and not system_chat_ids:
                 logger.warning(f"无 Telegram 通知目标: {scan.repo_name}")
                 return
 
             text = self.generate_telegram_message(
                 scan, issue_url=issue_url, language=language
             )
-            await sender.send_to_targets(text, chat_ids)
+            if system_chat_ids:
+                await sender.send_to_targets(
+                    text, chat_ids, system_chat_ids=system_chat_ids
+                )
+            else:
+                await sender.send_to_targets(text, chat_ids)
 
-            logger.info(f"✅ 扫描通知已发送: {scan.repo_name} → {len(chat_ids)} 个目标")
+            logger.info(
+                f"✅ 扫描通知已发送: {scan.repo_name} → "
+                f"{len(chat_ids) + len(system_chat_ids)} 个目标"
+            )
 
         except Exception as e:
             logger.error(f"发送 Telegram 扫描通知失败: {e}")

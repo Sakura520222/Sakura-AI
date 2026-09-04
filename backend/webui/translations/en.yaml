@@ -176,6 +176,7 @@ announcements:
   edit: "Edit announcement"
   save_changes: "Save changes"
   delivery_history: "Publication history"
+  pagination: "Announcement pagination"
   publication_round: "Round {version}"
   delivery_pending: "Pending"
   delivery_sent: "Sent"

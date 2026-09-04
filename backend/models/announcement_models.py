@@ -92,6 +92,12 @@ class NotificationDelivery(Base):
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     publication_version = Column(Integer, default=1, nullable=False, index=True)
+    # Delivery workers claim a row for a bounded period before calling an
+    # external provider.  Both columns are nullable so old rows and old
+    # installations remain immediately readable while the additive migrator
+    # adds them.
+    claim_token = Column(String(128), nullable=True, index=True)
+    claim_until = Column(UTCDateTime, nullable=True, index=True)
 
     announcement = relationship("Announcement", back_populates="deliveries")
     user = relationship("TelegramUser", foreign_keys=[user_id])

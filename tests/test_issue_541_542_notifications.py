@@ -534,6 +534,62 @@ class _NotificationSession:
         self.commits = 0
 
     async def execute(self, query):
+        # The delivery worker uses conditional UPDATE statements for both
+        # claims and terminal writes.  Keep this adapter deliberately small,
+        # but evaluate the same row id/token/version predicates so these
+        # tests do not create a fail-open path in production code.
+        if getattr(query, "is_update", False):
+            values = {
+                getattr(column, "name", str(column)): getattr(value, "value", value)
+                for column, value in query._values.items()
+            }
+            predicates = {}
+
+            def collect(criteria):
+                left = getattr(criteria, "left", None)
+                right = getattr(criteria, "right", None)
+                left_name = getattr(left, "name", None)
+                left_table = getattr(getattr(left, "table", None), "name", None)
+                right_value = getattr(right, "value", None)
+                if left_table == NotificationDelivery.__tablename__ and left_name:
+                    if right_value is not None:
+                        predicates[left_name] = right_value
+                for child in getattr(criteria, "clauses", ()):
+                    collect(child)
+
+            for criteria in query._where_criteria:
+                collect(criteria)
+            row = next(
+                (
+                    item
+                    for item in self.deliveries
+                    if item.id == predicates.get("id", item.id)
+                ),
+                None,
+            )
+            if row is None:
+                return _UpdateResult(0)
+            if row.status not in {
+                DeliveryStatus.PENDING.value,
+                DeliveryStatus.FAILED.value,
+            }:
+                return _UpdateResult(0)
+            if "publication_version" in predicates and getattr(
+                row, "publication_version", 1
+            ) not in (None, predicates["publication_version"]):
+                return _UpdateResult(0)
+            if "claim_token" in predicates and getattr(
+                row, "claim_token", None
+            ) != predicates["claim_token"]:
+                return _UpdateResult(0)
+            if "claim_token" in values and values["claim_token"] is not None:
+                if getattr(row, "claim_token", None) and getattr(
+                    row, "claim_until", None
+                ):
+                    return _UpdateResult(0)
+            for key, value in values.items():
+                setattr(row, key, value)
+            return _UpdateResult(1)
         entity = query.column_descriptions[0]["entity"]
         if entity is NotificationDelivery:
             return _Rows(self.deliveries)
@@ -543,6 +599,14 @@ class _NotificationSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        return None
+
+
+class _UpdateResult:
+    def __init__(self, rowcount):
+        self.rowcount = rowcount
 
 
 class _FailingProvider:
@@ -624,7 +688,9 @@ async def test_notification_provider_failure_isolated_and_retried(monkeypatch):
     assert failed.attempts == 3
     assert "smtp-password-secret" not in failed.error_message
     assert "***" in failed.error_message
-    assert session.commits == 2
+    # A claim and each lease heartbeat are committed independently from the
+    # terminal state; the old fixture counted only the two terminal commits.
+    assert session.commits >= 2
 
 
 @pytest.mark.asyncio

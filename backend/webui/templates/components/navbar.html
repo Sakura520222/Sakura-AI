@@ -116,8 +116,9 @@
         fetch('/api/v1/announcements/unread', { headers: { 'Accept': 'application/json' } })
             .then(function (response) { return response.ok ? response.json() : null; })
             .then(function (data) {
-                if (!data || !data.count) return;
-                badge.textContent = data.count > 99 ? '99+' : String(data.count);
+                var unreadCount = data ? Number(data.unread_count ?? data.count ?? 0) : 0;
+                if (!unreadCount) return;
+                badge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
                 badge.classList.remove('hidden');
                 var announcementUserId = {% if current_user is defined and current_user and current_user.get('user_id') is not none %}{{ current_user.get('user_id') | tojson }}{% else %}"anonymous"{% endif %};
                 var toastKey = 'sakura-announcement-toasts:' + announcementUserId;

@@ -11,15 +11,18 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import secrets
 import smtplib
 import ssl
 import time
+from contextlib import suppress
+from datetime import timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Any, Protocol
 
 import httpx
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram.error import RetryAfter
 
@@ -38,6 +41,13 @@ from backend.services.announcement_service import (
 )
 
 _SMTP_SECURITY_MODES = frozenset({"ssl", "starttls", "none"})
+
+# A delivery row deliberately remains ``pending``/``failed`` while a provider
+# call is in flight.  The token and expiry are the worker's lease, so adding a
+# third status cannot break existing counters, dashboards, or old databases.
+# Keep this conservative enough to cover a normal provider request while the
+# heartbeat below keeps unusually slow calls alive.
+_DELIVERY_LEASE_SECONDS = 120.0
 
 
 def normalize_smtp_security(value: object, default: str = "starttls") -> str:
@@ -429,6 +439,25 @@ class NotificationService:
             return 1
         return max(1, value)
 
+    @staticmethod
+    def _set_local_committed_value(row: object, key: str, value: object) -> None:
+        """Mirror a committed UPDATE without scheduling an ORM flush.
+
+        Broadcast rows are selected in one session and claimed in another.
+        Assigning the claim fields to the selected instance would leave that
+        first session dirty; a later read or commit could then overwrite a
+        newer worker's token.  SQLAlchemy's committed-value helper keeps the
+        local identity map in sync without creating an unguarded write.
+        """
+        try:
+            from sqlalchemy.orm.attributes import set_committed_value
+
+            set_committed_value(row, key, value)
+        except Exception:
+            # Lightweight object fakes have no SQLAlchemy state.  They do not
+            # participate in a later ORM flush, so a plain assignment is safe.
+            setattr(row, key, value)
+
     async def _fresh_row(
         self, db: AsyncSession, model: type, row_id: int
     ) -> object | None:
@@ -502,6 +531,240 @@ class NotificationService:
             True,
         )
 
+    @staticmethod
+    def _delivery_lease_seconds() -> float:
+        """Return the bounded lease duration used by every worker."""
+        return _DELIVERY_LEASE_SECONDS
+
+    async def _run_in_fresh_session(self, fallback: AsyncSession, operation):
+        """Run a short database operation in an independent transaction.
+
+        MySQL's default REPEATABLE READ can keep a long-lived worker session
+        on an old snapshot.  Claims and heartbeats therefore use the
+        application session factory whenever it is available.  Lightweight
+        test adapters (and legacy direct callers) deliberately fall back to
+        their supplied session.
+        """
+        from backend.models import database as db_module
+
+        factory = db_module.async_session
+        if factory is None:
+            return await operation(fallback)
+
+        scoped = factory()
+        if hasattr(scoped, "__aenter__"):
+            async with scoped as session:
+                return await operation(session)
+
+        try:
+            return await operation(scoped)
+        finally:
+            close = getattr(scoped, "close", None)
+            if close is not None:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
+
+    async def _claim_delivery(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        *,
+        expected_version: int | None,
+    ) -> str | None:
+        """Atomically claim one delivery row for this worker.
+
+        The claim is intentionally a conditional UPDATE rather than a
+        read-then-write sequence.  Two retry requests can have selected the
+        same row from their own snapshots, but only one UPDATE can win while
+        the row is pending/failed and its previous lease is absent or expired.
+        No database lock is held while the provider is called.
+        """
+        token = secrets.token_urlsafe(32)
+        claimed_at = now_utc()
+        claim_until = claimed_at + timedelta(
+            seconds=self._delivery_lease_seconds()
+        )
+        conditions = [
+            NotificationDelivery.id == delivery.id,
+            NotificationDelivery.announcement_id == announcement.id,
+            NotificationDelivery.status.in_(
+                [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
+            ),
+            or_(
+                NotificationDelivery.claim_token.is_(None),
+                NotificationDelivery.claim_until.is_(None),
+                NotificationDelivery.claim_until <= claimed_at,
+            ),
+        ]
+        current_announcement = exists(
+            select(Announcement.id).where(
+                Announcement.id == announcement.id,
+                Announcement.status == "published",
+            )
+        )
+        if expected_version is not None:
+            conditions.extend(
+                [
+                    NotificationDelivery.publication_version == expected_version,
+                ]
+            )
+            current_announcement = exists(
+                select(Announcement.id).where(
+                    Announcement.id == announcement.id,
+                    Announcement.status == "published",
+                    Announcement.publication_version == expected_version,
+                )
+            )
+        conditions.append(current_announcement)
+
+        try:
+            result = await db.execute(
+                update(NotificationDelivery)
+                .where(*conditions)
+                .values(claim_token=token, claim_until=claim_until)
+            )
+            if getattr(result, "rowcount", None) != 1:
+                rollback = getattr(db, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                return None
+            await db.commit()
+        except Exception:
+            rollback = getattr(db, "rollback", None)
+            if callable(rollback):
+                with suppress(Exception):
+                    await rollback()
+            # A missing lease column or a database that cannot execute the
+            # conditional update means this process cannot prove ownership.
+            # Failing closed is safer than sending without a claim.
+            return None
+
+        self._set_local_committed_value(delivery, "claim_token", token)
+        self._set_local_committed_value(delivery, "claim_until", claim_until)
+        return token
+
+    async def _heartbeat_delivery(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        *,
+        worker_token: str,
+        expected_version: int | None,
+    ) -> bool:
+        """Extend a worker lease using token/version compare-and-set."""
+        if not worker_token:
+            return False
+        renewed_until = now_utc() + timedelta(
+            seconds=self._delivery_lease_seconds()
+        )
+
+        async def renew(scoped: AsyncSession) -> bool:
+            conditions = [
+                NotificationDelivery.id == delivery.id,
+                NotificationDelivery.claim_token == worker_token,
+                NotificationDelivery.status.in_(
+                    [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
+                ),
+                exists(
+                    select(Announcement.id).where(
+                        Announcement.id == announcement.id,
+                        Announcement.status == "published",
+                    )
+                ),
+            ]
+            if expected_version is not None:
+                conditions.append(
+                    NotificationDelivery.publication_version == expected_version
+                )
+                conditions.append(
+                    exists(
+                        select(Announcement.id).where(
+                            Announcement.id == announcement.id,
+                            Announcement.status == "published",
+                            Announcement.publication_version == expected_version,
+                        )
+                    )
+                )
+            result = await scoped.execute(
+                update(NotificationDelivery)
+                .where(*conditions)
+                .values(claim_until=renewed_until, updated_at=now_utc())
+            )
+            if getattr(result, "rowcount", None) != 1:
+                rollback = getattr(scoped, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                return False
+            await scoped.commit()
+            return True
+
+        try:
+            renewed = await self._run_in_fresh_session(db, renew)
+        except Exception:
+            return False
+        if renewed:
+            self._set_local_committed_value(delivery, "claim_until", renewed_until)
+        return bool(renewed)
+
+    async def _lease_heartbeat_loop(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        *,
+        worker_token: str,
+        expected_version: int | None,
+        stop: asyncio.Event,
+    ) -> None:
+        interval = max(0.01, self._delivery_lease_seconds() / 3.0)
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except TimeoutError:
+                if not await self._heartbeat_delivery(
+                    db,
+                    delivery,
+                    announcement,
+                    worker_token=worker_token,
+                    expected_version=expected_version,
+                ):
+                    return
+            else:
+                return
+
+    async def _with_lease_heartbeat(
+        self,
+        operation,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        *,
+        worker_token: str,
+        expected_version: int | None,
+    ):
+        """Run an awaited operation while periodically extending its lease."""
+        stop = asyncio.Event()
+        heartbeat = asyncio.create_task(
+            self._lease_heartbeat_loop(
+                db,
+                delivery,
+                announcement,
+                worker_token=worker_token,
+                expected_version=expected_version,
+                stop=stop,
+            )
+        )
+        try:
+            return await operation()
+        finally:
+            stop.set()
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+
     async def _publication_is_current(
         self,
         db: AsyncSession,
@@ -544,6 +807,7 @@ class NotificationService:
         lock: asyncio.Lock,
         expected_version: int | None,
         values: dict[str, Any],
+        worker_token: str,
     ) -> bool | None:
         """Write a terminal result only if its publication lease is current.
 
@@ -552,44 +816,58 @@ class NotificationService:
         The broadcast caller reports that as skipped, never as a failure in
         the new round.
         """
+        # A terminal result always belongs to the worker that claimed this
+        # row.  Keep the token out of callers' value dictionaries so a stale
+        # worker cannot accidentally clear a newer worker's lease.
+        persisted_values = dict(values)
+        persisted_values.setdefault("claim_token", None)
+        persisted_values.setdefault("claim_until", None)
         async with lock:
             if not await self._publication_is_current(
                 db, delivery, announcement, expected_version
             ):
                 return None
-            getter = getattr(db, "get", None)
-            if callable(getter) and expected_version is not None:
-                # Use a conditional UPDATE as the final race guard.  A
-                # concurrent reset changes publication_version, making this
-                # statement a no-op even if it happened after the read check.
-                result = await db.execute(
-                    update(NotificationDelivery)
-                    .where(
-                        NotificationDelivery.id == delivery.id,
-                        NotificationDelivery.publication_version
-                        == expected_version,
+            # Use a conditional UPDATE as the final race guard.  A
+            # concurrent reset or claim replacement makes this statement a
+            # no-op even if it happened after the read check.  Every session,
+            # including test adapters, must support this fail-closed path.
+            conditions = [
+                NotificationDelivery.id == delivery.id,
+                NotificationDelivery.claim_token == worker_token,
+                exists(
+                    select(Announcement.id).where(
+                        Announcement.id == NotificationDelivery.announcement_id,
+                        Announcement.id == announcement.id,
+                        Announcement.status == "published",
+                    )
+                ),
+            ]
+            if expected_version is not None:
+                conditions.extend(
+                    [
+                        NotificationDelivery.publication_version == expected_version,
                         exists(
                             select(Announcement.id).where(
-                                Announcement.id
-                                == NotificationDelivery.announcement_id,
                                 Announcement.id == announcement.id,
-                                Announcement.publication_version
-                                == expected_version,
+                                Announcement.publication_version == expected_version,
                                 Announcement.status == "published",
                             )
                         ),
-                    )
-                    .values(**values)
+                    ]
                 )
-                if getattr(result, "rowcount", 1) == 0:
-                    return None
-                await db.commit()
-                for key, value in values.items():
-                    setattr(delivery, key, value)
-                return True
-            for key, value in values.items():
-                setattr(delivery, key, value)
+            result = await db.execute(
+                update(NotificationDelivery)
+                .where(*conditions)
+                .values(**persisted_values)
+            )
+            if getattr(result, "rowcount", None) != 1:
+                rollback = getattr(db, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                return None
             await db.commit()
+            for key, value in persisted_values.items():
+                self._set_local_committed_value(delivery, key, value)
             return True
 
     async def _deliver_one(
@@ -600,9 +878,27 @@ class NotificationService:
         endpoint: NotificationEndpoint | None,
         lock: asyncio.Lock,
         expected_version: int | None = None,
+        worker_token: str | None = None,
     ) -> bool | None:
+        if worker_token is None:
+            worker_token = await self._claim_delivery(
+                db,
+                delivery,
+                announcement,
+                expected_version=expected_version,
+            )
+            if worker_token is None:
+                return None
         if not await self._publication_is_current(
             db, delivery, announcement, expected_version
+        ):
+            return None
+        if not await self._heartbeat_delivery(
+            db,
+            delivery,
+            announcement,
+            worker_token=worker_token,
+            expected_version=expected_version,
         ):
             return None
         provider = self.registry.get(delivery.channel)
@@ -616,6 +912,7 @@ class NotificationService:
                 announcement,
                 lock=lock,
                 expected_version=expected_version,
+                worker_token=worker_token,
                 values={
                     "status": DeliveryStatus.FAILED.value,
                     "error_message": _safe_error_message(error),
@@ -632,6 +929,7 @@ class NotificationService:
                 announcement,
                 lock=lock,
                 expected_version=expected_version,
+                worker_token=worker_token,
                 values={
                     "status": DeliveryStatus.FAILED.value,
                     "error_message": _safe_error_message(error),
@@ -667,24 +965,52 @@ class NotificationService:
                 db, delivery, announcement, expected_version
             ):
                 return None
-            await self._throttle(delivery.channel, rate_limit)
+            if not await self._heartbeat_delivery(
+                db,
+                delivery,
+                announcement,
+                worker_token=worker_token,
+                expected_version=expected_version,
+            ):
+                return None
+            await self._with_lease_heartbeat(
+                lambda: self._throttle(delivery.channel, rate_limit),
+                db,
+                delivery,
+                announcement,
+                worker_token=worker_token,
+                expected_version=expected_version,
+            )
             # Republish can race while a provider-wide rate-limit lock is
             # sleeping; check again immediately before the external call.
-            if not await self._publication_is_current(
+            if not await self._heartbeat_delivery(
+                db,
+                delivery,
+                announcement,
+                worker_token=worker_token,
+                expected_version=expected_version,
+            ) or not await self._publication_is_current(
                 db, delivery, announcement, expected_version
             ):
                 return None
             try:
-                await provider.send(
-                    endpoint=endpoint,
-                    title=announcement.title,
-                    content=announcement.content,
-                    # 公告正文以 Markdown 存储；邮件 HTML 部分用服务端的
-                    # 保守渲染器生成（XSS 安全），不再使用纯转义兜底。
-                    content_html=sanitize_markdown(announcement.content),
-                    announcement_type=str(
-                        getattr(announcement, "announcement_type", "") or ""
+                await self._with_lease_heartbeat(
+                    lambda: provider.send(
+                        endpoint=endpoint,
+                        title=announcement.title,
+                        content=announcement.content,
+                        # 公告正文以 Markdown 存储；邮件 HTML 部分用服务端的
+                        # 保守渲染器生成（XSS 安全），不再使用纯转义兜底。
+                        content_html=sanitize_markdown(announcement.content),
+                        announcement_type=str(
+                            getattr(announcement, "announcement_type", "") or ""
+                        ),
                     ),
+                    db,
+                    delivery,
+                    announcement,
+                    worker_token=worker_token,
+                    expected_version=expected_version,
                 )
             except Exception as exc:  # isolate this endpoint/provider only
                 last_error = exc
@@ -698,7 +1024,14 @@ class NotificationService:
                     )
                     wait_for = max(delay, retry_after)
                     if wait_for:
-                        await asyncio.sleep(wait_for)
+                        await self._with_lease_heartbeat(
+                            lambda wait_for=wait_for: asyncio.sleep(wait_for),
+                            db,
+                            delivery,
+                            announcement,
+                            worker_token=worker_token,
+                            expected_version=expected_version,
+                        )
                     delay *= backoff
                     continue
                 break
@@ -709,6 +1042,7 @@ class NotificationService:
                     announcement,
                     lock=lock,
                     expected_version=expected_version,
+                    worker_token=worker_token,
                     values={
                         "status": DeliveryStatus.SENT.value,
                         "error_message": None,
@@ -726,6 +1060,7 @@ class NotificationService:
             announcement,
             lock=lock,
             expected_version=expected_version,
+            worker_token=worker_token,
             values={
                 "status": DeliveryStatus.FAILED.value,
                 "error_message": _safe_error_message(
@@ -808,16 +1143,27 @@ class NotificationService:
         )
         lock = asyncio.Lock()
 
-        async def run(delivery: NotificationDelivery) -> bool:
+        async def run(delivery: NotificationDelivery) -> bool | None:
             async with semaphore:
                 endpoint = endpoint_by_user_channel.get(
                     (delivery.user_id, str(delivery.channel).lower())
                 )
                 if session_factory is not None:
                     async with session_factory() as delivery_db:
-                        # Re-read the rows in this session.  The status check
-                        # also prevents a queued retry from sending after a
-                        # withdrawal raced with the worker.
+                        # Claim before reading the worker snapshot.  The
+                        # initial broadcast query may have selected a stale
+                        # pending row while another retry already sent it.
+                        worker_token = await self._claim_delivery(
+                            delivery_db,
+                            delivery,
+                            announcement,
+                            expected_version=expected_version,
+                        )
+                        if worker_token is None:
+                            return None
+                        # The claim committed its own transaction.  Reading
+                        # these rows afterwards starts a fresh snapshot, which
+                        # is important under MySQL REPEATABLE READ.
                         fresh_announcement = await delivery_db.get(
                             Announcement, announcement.id
                         )
@@ -858,6 +1204,7 @@ class NotificationService:
                             fresh_endpoint,
                             lock,
                             expected_version,
+                            worker_token,
                         )
                 return await self._deliver_one(
                     db,

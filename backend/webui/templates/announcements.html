@@ -30,6 +30,23 @@
     <div class="rounded-xl border border-dashed p-10 text-center text-sm text-gray-500">{{ _('announcements.empty') }}</div>
     {% endfor %}
   </div>
+  {% if total_pages > 1 %}
+  <nav class="mt-6 flex items-center justify-between gap-4" aria-label="{{ _('announcements.pagination') }}">
+    <span class="text-sm text-gray-500 dark:text-gray-400">
+      {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
+    </span>
+    <div class="flex items-center gap-2">
+      {% if page > 1 %}
+      <a href="/announcements?page={{ page - 1 }}&per_page={{ per_page }}"
+         class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700">{{ _('common.prev_page') }}</a>
+      {% endif %}
+      {% if page < total_pages %}
+      <a href="/announcements?page={{ page + 1 }}&per_page={{ per_page }}"
+         class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700">{{ _('common.next_page') }}</a>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
 </main>
 <script>
 function announcementCenter() {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +15,12 @@ from backend.services.announcement_service import (
     create_announcement,
     delete_announcement,
     delivery_stats,
-    list_announcements,
+    get_announcement,
     mark_all_read,
     mark_read,
+    paginate_announcements,
     publish_announcement,
     schedule_announcement_broadcast,
-    unread_count,
     update_announcement,
     withdraw_announcement,
 )
@@ -68,35 +68,68 @@ async def _user_announcements(
     user_id: int,
     *,
     include_drafts: bool = False,
-) -> list[dict[str, Any]]:
-    rows = await list_announcements(
+    page: int = 1,
+    per_page: int = 100,
+    unread_only: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    result = await paginate_announcements(
         db,
         user_id=user_id,
         include_drafts=include_drafts,
+        page=page,
+        per_page=per_page,
+        unread_only=unread_only,
     )
-    return [announcement_to_dict(item, read=read) for item, read in rows]
+    items = [
+        announcement_to_dict(item, read=read) for item, read in result.items
+    ]
+    metadata = {
+        "page": result.page,
+        "per_page": result.per_page,
+        "total": result.total,
+        "total_pages": result.total_pages,
+    }
+    return items, metadata
 
 
 @router.get("")
 @router.get("/")
 async def get_announcements(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=100),
     user: dict = Depends(require_api_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """List published announcements for the current internal user id."""
-    return {"items": await _user_announcements(db, int(user["user_id"]))}
+    items, metadata = await _user_announcements(
+        db,
+        int(user["user_id"]),
+        page=page,
+        per_page=per_page,
+    )
+    return {"items": items, **metadata}
 
 
 @router.get("/unread")
 async def get_unread_announcements(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=100),
     user: dict = Depends(require_api_auth),
     db: AsyncSession = Depends(get_db),
 ):
     user_id = int(user["user_id"])
-    items = await _user_announcements(db, user_id)
+    items, metadata = await _user_announcements(
+        db,
+        user_id,
+        page=page,
+        per_page=per_page,
+        unread_only=True,
+    )
     return {
-        "count": await unread_count(db, user_id),
-        "items": [item for item in items if not item["read"]],
+        "count": metadata["total"],
+        "unread_count": metadata["total"],
+        "items": items,
+        **metadata,
     }
 
 
@@ -121,17 +154,30 @@ async def read_announcement(
 
 @router.get("/admin")
 async def admin_list_announcements(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=100),
     user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await list_announcements(db, include_drafts=True)
-    result = []
-    for announcement, read in rows:
+    page_result = await paginate_announcements(
+        db,
+        include_drafts=True,
+        page=page,
+        per_page=per_page,
+    )
+    items = []
+    for announcement, read in page_result.items:
         stats = await delivery_stats(db, announcement.id)
-        result.append(
+        items.append(
             announcement_to_dict(announcement, read=read, delivery_stats=stats)
         )
-    return {"items": result}
+    return {
+        "items": items,
+        "page": page_result.page,
+        "per_page": page_result.per_page,
+        "total": page_result.total,
+        "total_pages": page_result.total_pages,
+    }
 
 
 @router.post("/admin")
@@ -235,8 +281,7 @@ async def admin_retry_announcement(
     db: AsyncSession = Depends(get_db),
 ):
     del user
-    rows = await list_announcements(db, include_drafts=True)
-    target = next((item for item, _ in rows if item.id == announcement_id), None)
+    target = await get_announcement(db, announcement_id)
     if target is None:
         raise HTTPException(status_code=404, detail="公告不存在")
     if target.status != "published":

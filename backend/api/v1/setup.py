@@ -163,6 +163,12 @@ async def save_step(body: SaveStepRequest):
     try:
         values = body.values
 
+        # Validate the complete step before testing or initializing the
+        # database.  Step 1 performs initialization below, so relying only on
+        # ``save_configs_to_db`` would allow an invalid notification batch to
+        # trigger setup side effects first.
+        setup_service.validate_config_values(values)
+
         # 如果包含 DATABASE_URL，先初始化数据库
         if "DATABASE_URL" in values:
             db_url = values["DATABASE_URL"]
@@ -176,6 +182,8 @@ async def save_step(body: SaveStepRequest):
             data={"saved_count": saved},
             message=f"已保存 {saved} 项配置",
         )
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
     except Exception:
         logger.exception("Setup 配置保存失败 / setup save failed")
         return error_response("配置保存失败，请稍后重试", status_code=500)

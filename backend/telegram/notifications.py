@@ -17,7 +17,12 @@ class NotificationSender:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def _enabled_telegram_targets(self, chat_ids: list[int]) -> list[int]:
+    async def _enabled_telegram_targets(
+        self,
+        chat_ids: list[int],
+        *,
+        system_chat_ids: list[int] | None = None,
+    ) -> list[int]:
         """Filter legacy mirror ids through the endpoint abstraction.
 
         Older review/scan/MFA code still passes Telegram ids because those
@@ -35,17 +40,58 @@ class NotificationSender:
                 chat_id = int(value)
             except (TypeError, ValueError):
                 continue
+            # A negative Telegram id denotes a group/channel, not a user.
+            # Never infer that meaning from a legacy mirror or a SQLite
+            # placeholder; only the explicit system configuration below may
+            # bypass the per-user endpoint filter.
             if chat_id > 0 and chat_id not in seen:
                 normalized.append(chat_id)
                 seen.add(chat_id)
+
+        from backend.core.config import get_settings
+
+        configured_system_id: int | None = None
+        raw_configured_id = getattr(get_settings(), "telegram_default_chat_id", "")
+        try:
+            if str(raw_configured_id).strip():
+                configured_system_id = int(str(raw_configured_id).strip())
+        except (TypeError, ValueError):
+            configured_system_id = None
+        if configured_system_id == 0:
+            configured_system_id = None
+        # System destinations are accepted only when the caller explicitly
+        # marks them and the value still matches the configured default.  This
+        # prevents an arbitrary negative value from becoming a broadcast
+        # target while preserving configured group/channel notifications.
+        system_targets: list[int] = []
+        for value in system_chat_ids or []:
+            try:
+                chat_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if (
+                configured_system_id is not None
+                and chat_id == configured_system_id
+                and chat_id not in system_targets
+            ):
+                system_targets.append(chat_id)
+                seen.add(chat_id)
+
+        def combine(targets: list[int]) -> list[int]:
+            combined: list[int] = []
+            for chat_id in targets + system_targets:
+                if chat_id not in combined:
+                    combined.append(chat_id)
+            return combined
+
         if not normalized:
-            return []
+            return system_targets
 
         from backend.models import database as db_module
 
         session_factory = db_module.async_session
         if session_factory is None:
-            return normalized
+            return combine(normalized)
         try:
             async with session_factory() as session:
                 result = await session.execute(
@@ -84,15 +130,23 @@ class NotificationSender:
                         seen_resolved.add(current_id)
         except Exception as exc:
             logger.warning("查询 Telegram 通知端点失败，已安全跳过发送: {}", exc)
-            return []
-        return resolved
+            return system_targets
+        return combine(resolved)
 
     async def send_to_targets(
-        self, text: str, chat_ids: list[int], parse_mode: str = "Markdown", **kwargs
+        self,
+        text: str,
+        chat_ids: list[int],
+        parse_mode: str = "Markdown",
+        *,
+        system_chat_ids: list[int] | None = None,
+        **kwargs,
     ):
         """向多个目标发送消息，单个失败不影响其他"""
 
-        chat_ids = await self._enabled_telegram_targets(chat_ids)
+        chat_ids = await self._enabled_telegram_targets(
+            chat_ids, system_chat_ids=system_chat_ids
+        )
 
         async def send_single(chat_id: int):
             try:

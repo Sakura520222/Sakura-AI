@@ -552,7 +552,14 @@ async def migrate_legacy_identity_data(db: AsyncSession | None = None) -> dict[s
                         UserIdentity.user_id == user.id,
                     )
                 )
-                identity = result.scalar_one_or_none()
+                # ``user_id`` is intentionally not unique per provider: a
+                # user may retain more than one valid GitHub identity (for
+                # example, after importing a backup).  This is an existence
+                # check, not a scalar lookup; ``scalar_one_or_none`` would
+                # abort startup with MultipleResultsFound for that valid
+                # state.
+                existing_identities = result.scalars().all()
+                identity = existing_identities[0] if existing_identities else None
                 if identity is None:
                     synthetic_id = _legacy_provider_id(user.github_username)
                     conflict_result = await db.execute(
@@ -593,16 +600,30 @@ async def migrate_legacy_identity_data(db: AsyncSession | None = None) -> dict[s
                 )
                 endpoint = result.scalar_one_or_none()
                 if endpoint is None:
-                    db.add(
-                        NotificationEndpoint(
-                            user_id=user.id,
-                            provider=NotificationProvider.TELEGRAM.value,
-                            address=address,
-                            verified=True,
-                            enabled=True,
+                    # A restored user may deliberately retain the legacy
+                    # ``telegram_id`` mirror while using a different,
+                    # canonical Telegram endpoint.  Do not recreate the old
+                    # mirror on every startup: that would make the stale
+                    # address active again (and can duplicate deliveries).
+                    other_result = await db.execute(
+                        select(NotificationEndpoint).where(
+                            NotificationEndpoint.provider
+                            == NotificationProvider.TELEGRAM.value,
+                            NotificationEndpoint.user_id == user.id,
                         )
                     )
-                    created_endpoints += 1
+                    other_endpoints = other_result.scalars().all()
+                    if not other_endpoints:
+                        db.add(
+                            NotificationEndpoint(
+                                user_id=user.id,
+                                provider=NotificationProvider.TELEGRAM.value,
+                                address=address,
+                                verified=True,
+                                enabled=True,
+                            )
+                        )
+                        created_endpoints += 1
                 elif endpoint.user_id != user.id:
                     conflicts += 1
 

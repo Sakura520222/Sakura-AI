@@ -176,6 +176,7 @@ announcements:
   edit: "编辑公告"
   save_changes: "保存修改"
   delivery_history: "历史发布记录"
+  pagination: "公告分页"
   publication_round: "第 {version} 轮"
   delivery_pending: "待发送"
   delivery_sent: "已发送"

@@ -285,6 +285,22 @@ class AnnouncementDeliveryStats:
         }
 
 
+@dataclass(frozen=True)
+class AnnouncementListPage:
+    """A page of announcements plus stable pagination metadata.
+
+    ``list_announcements`` remains the compatibility-oriented list API used by
+    older callers.  New HTTP endpoints use this value so they can expose the
+    total number of rows and make every older announcement reachable.
+    """
+
+    items: list[tuple[Announcement, bool]]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
 def announcement_to_dict(
     announcement: Announcement,
     *,
@@ -646,6 +662,13 @@ async def _ensure_delivery_rows(
         row.attempts = 0
         row.sent_at = None
         row.next_retry_at = None
+        # A delivery row can be reused by a later publication version.  Any
+        # lease left by a worker from the previous round must never block the
+        # first worker of the new round (or make it look already claimed).
+        if hasattr(row, "claim_token"):
+            row.claim_token = None
+        if hasattr(row, "claim_until"):
+            row.claim_until = None
         row.publication_version = target_version
         row.updated_at = now_utc()
 
@@ -794,13 +817,118 @@ async def list_announcements(
     user_id: int | None = None,
     include_drafts: bool = False,
     limit: int = 100,
+    offset: int = 0,
+    page: int | None = None,
+    per_page: int | None = None,
+    unread_only: bool = False,
 ) -> list[tuple[Announcement, bool]]:
-    query = select(Announcement).order_by(
-        Announcement.published_at.desc(), Announcement.created_at.desc()
+    """Return announcements in deterministic order.
+
+    The original list-shaped return value is intentionally retained.  Passing
+    ``page`` or ``per_page`` opts into offset pagination while preserving that
+    return shape; HTTP callers that need metadata should use
+    :func:`paginate_announcements`.
+    """
+    if page is not None or per_page is not None:
+        current_page = _normalize_page(page)
+        page_size = _normalize_page_size(per_page if per_page is not None else limit)
+        result = await paginate_announcements(
+            db,
+            user_id=user_id,
+            include_drafts=include_drafts,
+            page=current_page,
+            per_page=page_size,
+            unread_only=unread_only,
+        )
+        return result.items
+
+    rows = await _fetch_announcement_rows(
+        db,
+        user_id=user_id,
+        include_drafts=include_drafts,
+        limit=_normalize_legacy_limit(limit),
+        offset=_normalize_offset(offset),
+        unread_only=unread_only,
     )
+    return rows
+
+
+def _normalize_page(value: int | None) -> int:
+    try:
+        return max(1, int(value or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _normalize_page_size(value: int | None) -> int:
+    try:
+        return max(1, min(int(value or 100), 100))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _normalize_legacy_limit(value: int | None) -> int:
+    try:
+        return max(1, min(int(value or 100), 500))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _normalize_offset(value: int | None) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _announcement_filters(
+    *,
+    user_id: int | None,
+    include_drafts: bool,
+    unread_only: bool,
+) -> list[Any]:
+    filters: list[Any] = []
     if not include_drafts:
-        query = query.where(Announcement.status == AnnouncementStatus.PUBLISHED.value)
-    rows = (await db.execute(query.limit(max(1, min(limit, 500))))).scalars().all()
+        filters.append(
+            Announcement.status == AnnouncementStatus.PUBLISHED.value
+        )
+    if unread_only and user_id is not None:
+        read_exists = select(AnnouncementRead.id).where(
+            AnnouncementRead.user_id == user_id,
+            AnnouncementRead.announcement_id == Announcement.id,
+        ).exists()
+        filters.append(~read_exists)
+    return filters
+
+
+def _announcement_ordering() -> tuple[Any, ...]:
+    """Keep equal timestamps deterministic across pages and database engines."""
+    return (
+        Announcement.published_at.desc(),
+        Announcement.created_at.desc(),
+        Announcement.id.desc(),
+    )
+
+
+async def _fetch_announcement_rows(
+    db: AsyncSession,
+    *,
+    user_id: int | None,
+    include_drafts: bool,
+    limit: int,
+    offset: int,
+    unread_only: bool,
+) -> list[tuple[Announcement, bool]]:
+    query = select(Announcement).where(
+        *_announcement_filters(
+            user_id=user_id,
+            include_drafts=include_drafts,
+            unread_only=unread_only,
+        )
+    ).order_by(*_announcement_ordering())
+    rows = (
+        await db.execute(query.offset(offset).limit(limit))
+    ).scalars().all()
     if user_id is None or not rows:
         return [(row, False) for row in rows]
     read_rows = (
@@ -815,14 +943,60 @@ async def list_announcements(
     return [(row, row.id in read_ids) for row in rows]
 
 
-async def unread_count(db: AsyncSession, user_id: int) -> int:
-    read = select(AnnouncementRead.announcement_id).where(
-        AnnouncementRead.user_id == user_id
+async def paginate_announcements(
+    db: AsyncSession,
+    *,
+    user_id: int | None = None,
+    include_drafts: bool = False,
+    page: int = 1,
+    per_page: int = 100,
+    unread_only: bool = False,
+) -> AnnouncementListPage:
+    """Fetch one announcement page after applying all visibility filters.
+
+    In particular, ``unread_only`` is part of the SQL predicate before
+    ``OFFSET``/``LIMIT``.  Filtering a page after fetching it would make an
+    older unread announcement disappear whenever newer rows fill the page.
+    """
+    page_size = _normalize_page_size(per_page)
+    requested_page = _normalize_page(page)
+    filters = _announcement_filters(
+        user_id=user_id,
+        include_drafts=include_drafts,
+        unread_only=unread_only,
     )
+    total_result = await db.execute(
+        select(func.count(Announcement.id)).where(*filters)
+    )
+    total = int(total_result.scalar() or 0)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(requested_page, total_pages)
+    rows = await _fetch_announcement_rows(
+        db,
+        user_id=user_id,
+        include_drafts=include_drafts,
+        limit=page_size,
+        offset=(current_page - 1) * page_size,
+        unread_only=unread_only,
+    )
+    return AnnouncementListPage(
+        items=rows,
+        total=total,
+        page=current_page,
+        per_page=page_size,
+        total_pages=total_pages,
+    )
+
+
+async def unread_count(db: AsyncSession, user_id: int) -> int:
+    read_exists = select(AnnouncementRead.id).where(
+        AnnouncementRead.user_id == user_id,
+        AnnouncementRead.announcement_id == Announcement.id,
+    ).exists()
     result = await db.execute(
         select(func.count(Announcement.id)).where(
             Announcement.status == AnnouncementStatus.PUBLISHED.value,
-            ~Announcement.id.in_(read),
+            ~read_exists,
         )
     )
     return int(result.scalar() or 0)
@@ -886,13 +1060,20 @@ async def delivery_stats(
         )
     ).all()
     counts = {str(status): int(count) for status, count in rows}
+    # A withdrawn announcement may be edited as a draft before it is
+    # republished.  In that state the old snapshot has the same publication
+    # version as the current row and must remain visible; only an active,
+    # still-current publication is intentionally omitted from the archive.
+    history_filter = AnnouncementPublicationHistory.announcement_id == announcement_id
+    history_filter = history_filter & (
+        (AnnouncementPublicationHistory.publication_version != current_version)
+        | AnnouncementPublicationHistory.archived_at.is_not(None)
+    )
     history_rows = (
         await db.execute(
-            select(AnnouncementPublicationHistory).where(
-                AnnouncementPublicationHistory.announcement_id == announcement_id,
-                AnnouncementPublicationHistory.publication_version
-                != current_version,
-            ).order_by(AnnouncementPublicationHistory.publication_version.desc())
+            select(AnnouncementPublicationHistory)
+            .where(history_filter)
+            .order_by(AnnouncementPublicationHistory.publication_version.desc())
         )
     ).scalars().all()
     history_ids = [row.id for row in history_rows]
@@ -927,6 +1108,7 @@ async def delivery_stats(
                 "publication_version": snapshot.publication_version,
                 "title": snapshot.title,
                 "content": snapshot.content,
+                "content_html": sanitize_markdown(snapshot.content),
                 "type": snapshot.announcement_type,
                 "published_at": snapshot.published_at.isoformat()
                 if snapshot.published_at
@@ -984,6 +1166,7 @@ class AnnouncementService:
     withdraw = staticmethod(withdraw_announcement)
     delete = staticmethod(delete_announcement)
     list = staticmethod(list_announcements)
+    paginate = staticmethod(paginate_announcements)
     unread_count = staticmethod(unread_count)
     mark_read = staticmethod(mark_read)
     mark_all_read = staticmethod(mark_all_read)
@@ -992,6 +1175,7 @@ class AnnouncementService:
 
 __all__ = [
     "AnnouncementDeliveryStats",
+    "AnnouncementListPage",
     "AnnouncementService",
     "announcement_to_dict",
     "create_announcement",
@@ -1002,6 +1186,7 @@ __all__ = [
     "list_announcements",
     "mark_all_read",
     "mark_read",
+    "paginate_announcements",
     "publish_announcement",
     "render_markdown_safe",
     "sanitize_markdown",

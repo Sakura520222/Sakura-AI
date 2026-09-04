@@ -60,6 +60,7 @@
           {% for round in item.delivery.history %}
           <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-2">
             <div class="font-medium text-gray-700 dark:text-gray-200">{{ _('announcements.publication_round', version=round.publication_version) }}{% if round.title %} · {{ round.title }}{% endif %}</div>
+            <div class="prose prose-sm dark:prose-invert mt-2 max-w-none text-gray-700 dark:text-gray-300">{{ round.content_html | safe }}</div>
             <div>{{ _('announcements.delivery_pending') }} {{ round.pending }} · {{ _('announcements.delivery_sent') }} {{ round.sent }} · {{ _('announcements.delivery_failed') }} {{ round.failed }}</div>
           </div>
           {% endfor %}
@@ -74,5 +75,22 @@
     </article>
     {% else %}<div class="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">{{ _('announcements.empty') }}</div>{% endfor %}
   </div>
+  {% if total_pages > 1 %}
+  <nav class="mt-6 flex items-center justify-between gap-4" aria-label="{{ _('announcements.pagination') }}">
+    <span class="text-sm text-gray-500 dark:text-gray-400">
+      {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
+    </span>
+    <div class="flex items-center gap-2">
+      {% if page > 1 %}
+      <a href="/announcements/admin?page={{ page - 1 }}&per_page={{ per_page }}"
+         class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700">{{ _('common.prev_page') }}</a>
+      {% endif %}
+      {% if page < total_pages %}
+      <a href="/announcements/admin?page={{ page + 1 }}&per_page={{ per_page }}"
+         class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700">{{ _('common.next_page') }}</a>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
 </div>
 {% endblock %}

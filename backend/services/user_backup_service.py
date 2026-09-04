@@ -1160,6 +1160,12 @@ async def restore_user_backup(
             ): row
             for row in existing_endpoint_rows
         }
+        existing_telegram_endpoints_by_user: dict[int, list[NotificationEndpoint]] = (
+            defaultdict(list)
+        )
+        for row in existing_endpoint_rows:
+            if str(row.provider).casefold() == "telegram":
+                existing_telegram_endpoints_by_user[int(row.user_id)].append(row)
 
         matches: list[tuple[dict[str, Any], TelegramUser | None, str | None]] = []
         seen_existing_ids: set[int] = set()
@@ -1343,9 +1349,17 @@ async def restore_user_backup(
                         _apply_value(target, field, _profile_value(profile, field))
                         or changed
                     )
+                # ``telegram_users.telegram_id`` is a legacy mirror that is
+                # also referenced by user_repo_subscriptions.  A backup may
+                # match an existing user by a stable provider identity while
+                # carrying a newer Telegram address; updating this populated
+                # mirror would violate that foreign key (there is no ON
+                # UPDATE CASCADE).  Keep it intact and restore the new
+                # address through NotificationEndpoint below.  A NULL mirror
+                # is safe to fill for old GitHub-only rows.
                 if (
-                    identity.get("telegram_id") is not None
-                    and match_field != "github_username"
+                    target.telegram_id is None
+                    and identity.get("telegram_id") is not None
                 ):
                     changed = (
                         _apply_value(target, "telegram_id", identity["telegram_id"])
@@ -1633,14 +1647,23 @@ async def restore_user_backup(
 
             if endpoint_tables_available:
                 endpoints = list(raw_user.get("notification_endpoints", []))
+                explicit_telegram_endpoints = [
+                    item
+                    for item in endpoints
+                    if item["provider"].casefold() == "telegram"
+                ]
                 # Legacy Telegram IDs and verified OAuth emails become endpoint
                 # records during restore as well, so notification code can use
                 # one abstraction immediately after importing a v1 backup.
                 telegram_id = raw_user["identity"].get("telegram_id")
-                if telegram_id is not None and not any(
-                    item["provider"] == "telegram"
-                    and item["address"] == str(telegram_id)
-                    for item in endpoints
+                # A legacy identity-only backup has no endpoint state, so
+                # derive one compatibility endpoint from its Telegram mirror.
+                # Once the backup contains any explicit Telegram endpoint,
+                # that list is authoritative (including an explicit disabled
+                # entry) and must not be overridden by this fallback.
+                if (
+                    telegram_id is not None
+                    and not explicit_telegram_endpoints
                 ):
                     endpoints.append(
                         {
@@ -1668,6 +1691,31 @@ async def restore_user_backup(
                             "metadata": {"oauth": True},
                         }
                     )
+
+                # A supplied Telegram endpoint list is authoritative for the
+                # target user's active addresses.  Keep stale endpoint rows for
+                # audit/rollback, but disable an old address that is absent or
+                # explicitly disabled in the backup.  This lets compatibility
+                # callers which still pass ``TelegramUser.telegram_id`` resolve
+                # to the newly restored endpoint without sending to both old
+                # and new chats.  An explicitly enabled old address remains
+                # enabled, so a backup can intentionally retain multiple chats.
+                telegram_endpoints = [
+                    item
+                    for item in endpoints
+                    if item["provider"].casefold() == "telegram"
+                ]
+                if telegram_endpoints:
+                    enabled_addresses = {
+                        item["address"]
+                        for item in telegram_endpoints
+                        if bool(item.get("enabled", True))
+                    }
+                    for existing_endpoint in existing_telegram_endpoints_by_user.get(
+                        int(target.id), []
+                    ):
+                        if existing_endpoint.address not in enabled_addresses:
+                            existing_endpoint.enabled = False
                 for endpoint in endpoints:
                     key = (
                         endpoint["provider"].casefold(),

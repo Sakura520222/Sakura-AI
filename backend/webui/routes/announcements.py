@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.announcement_service import (
     announcement_to_dict,
     delivery_stats,
     get_announcement,
-    list_announcements,
     mark_read,
+    paginate_announcements,
 )
 from backend.webui.deps import (
     get_csrf_serializer,
@@ -44,9 +44,19 @@ async def announcements_page(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
+    page: int = Query(1, ge=1),
+    per_page: int | None = Query(None, ge=1, le=100),
 ):
-    rows = await list_announcements(db, user_id=int(user["user_id"]))
-    items = [announcement_to_dict(item, read=read) for item, read in rows]
+    page_result = await paginate_announcements(
+        db,
+        user_id=int(user["user_id"]),
+        page=page,
+        per_page=per_page or user_prefs.get("items_per_page", 100),
+    )
+    items = [
+        announcement_to_dict(item, read=read)
+        for item, read in page_result.items
+    ]
     return render_template(
         "announcements.html",
         request,
@@ -55,6 +65,10 @@ async def announcements_page(
         active_page="announcements",
         csrf_token=get_csrf_serializer().dumps({}),
         announcements=items,
+        page=page_result.page,
+        per_page=page_result.per_page,
+        total=page_result.total,
+        total_pages=page_result.total_pages,
     )
 
 
@@ -87,10 +101,17 @@ async def announcement_admin_page(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
+    page: int = Query(1, ge=1),
+    per_page: int | None = Query(None, ge=1, le=100),
 ):
-    rows = await list_announcements(db, include_drafts=True)
+    page_result = await paginate_announcements(
+        db,
+        include_drafts=True,
+        page=page,
+        per_page=per_page or user_prefs.get("items_per_page", 100),
+    )
     items = []
-    for item, read in rows:
+    for item, read in page_result.items:
         stats = await delivery_stats(db, item.id)
         items.append(
             announcement_to_dict(item, read=read, delivery_stats=stats)
@@ -103,6 +124,10 @@ async def announcement_admin_page(
         active_page="announcements",
         csrf_token=get_csrf_serializer().dumps({}),
         announcements=items,
+        page=page_result.page,
+        per_page=page_result.per_page,
+        total=page_result.total,
+        total_pages=page_result.total_pages,
     )
 
 

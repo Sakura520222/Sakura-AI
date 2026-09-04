@@ -53,11 +53,14 @@ def _legacy_metadata() -> MetaData:
     AnnouncementRead.__table__.to_metadata(metadata)
     deliveries = NotificationDelivery.__table__.to_metadata(metadata)
 
-    # Reproduce an old schema before publication_version was introduced.  The
-    # model indexes for the removed columns must go with the removed columns.
+    # Reproduce an old schema before publication_version and delivery leases
+    # were introduced.  The model indexes for removed columns must go with
+    # those columns.
     for table, column_name in (
         (announcements, "publication_version"),
         (deliveries, "publication_version"),
+        (deliveries, "claim_token"),
+        (deliveries, "claim_until"),
     ):
         table._columns.remove(table.c[column_name])
         for index in tuple(table.indexes):
@@ -161,6 +164,14 @@ async def _migrate_publication_schema(connection: _AsyncSQLiteConnection) -> Non
             NotificationDelivery.__tablename__,
             NotificationDelivery.__table__.c.publication_version,
         ),
+        (
+            NotificationDelivery.__tablename__,
+            NotificationDelivery.__table__.c.claim_token,
+        ),
+        (
+            NotificationDelivery.__tablename__,
+            NotificationDelivery.__table__.c.claim_until,
+        ),
     ):
         existing_columns = await connection.run_sync(
             lambda sync_connection, table_name=table_name: {
@@ -204,6 +215,15 @@ async def test_publication_schema_upgrade_is_idempotent_and_preserves_legacy_row
         publication_version = columns["publication_version"]
         assert publication_version["nullable"] is False
         assert str(publication_version["default"]) == "1"
+
+    delivery_columns = {
+        column["name"]: column
+        for column in inspect(legacy_sqlite_engine).get_columns(
+            "notification_deliveries"
+        )
+    }
+    assert delivery_columns["claim_token"]["nullable"] is True
+    assert delivery_columns["claim_until"]["nullable"] is True
 
     with legacy_sqlite_engine.connect() as connection:
         assert connection.execute(

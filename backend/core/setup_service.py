@@ -6,6 +6,7 @@
 import os
 import secrets
 import signal
+from collections.abc import Collection, Mapping
 from inspect import isawaitable
 from typing import Any
 
@@ -151,6 +152,78 @@ SETUP_BACKUP_PREFILL_KEYS = frozenset(
 
 class SetupService:
     """Setup Wizard 服务"""
+
+    @staticmethod
+    def _collect_config_items(values: Mapping[str, Any]) -> dict[str, str]:
+        """Normalize Setup payload keys without touching persistence.
+
+        Setup accepts the historical environment-variable spelling as well as
+        lower-case ``Settings`` names.  Keep this phase side-effect free so it
+        can be run before database initialization and before any Settings
+        singleton update.
+        """
+        items: dict[str, str] = {}
+        for env_key, env_value in values.items():
+            settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
+            if settings_key is None:
+                settings_key = env_key if isinstance(env_key, str) and env_key.islower() else None
+            if settings_key in _LEGACY_CONFIG_KEYS:
+                continue
+            if settings_key is None or env_value is None:
+                continue
+            value = str(env_value).strip()
+            if value:
+                items[settings_key] = value
+        return items
+
+    @classmethod
+    def _validate_config_items(
+        cls, values: Mapping[str, Any]
+    ) -> dict[str, str]:
+        """Validate Setup's system/notification values as one pure batch.
+
+        Setup also carries non-system fields (for example embedding settings)
+        which are intentionally not part of the system-config page allowlist.
+        Only the overlapping system keys are sent to
+        ``SystemConfigService.validate_updates``; passing the complete Setup
+        payload there would reject valid legacy/non-system Setup fields.
+        """
+        items = cls._collect_config_items(values)
+        if not items:
+            return items
+
+        from backend.services.system_config_service import (
+            SYSTEM_CONFIG_UPDATE_KEYS,
+            SystemConfigService,
+        )
+
+        system_items = {
+            key: value
+            for key, value in items.items()
+            if key in SYSTEM_CONFIG_UPDATE_KEYS
+        }
+        validated = SystemConfigService.validate_updates(system_items)
+        # Keep the canonical forms returned by the shared validator (e.g.
+        # ``smtp_security`` and boolean values) for the later DB write.
+        items.update(
+            {
+                key: value
+                for key, value in validated.items()
+                if value is not None
+            }
+        )
+        return items
+
+    def validate_config_values(self, values: Mapping[str, Any]) -> dict[str, str]:
+        """Validate a Setup batch before route-level side effects.
+
+        The save-step routes need the same preflight as
+        :meth:`save_configs_to_db`, but Step 1 initializes the database before
+        reaching that method.  Expose the pure validation phase so routes can
+        reject malformed notification values before connection tests or DB
+        initialization run.
+        """
+        return self._validate_config_items(values)
 
     async def test_database_connection(self, database_url: str) -> dict[str, Any]:
         """测试数据库连接"""
@@ -447,7 +520,7 @@ class SetupService:
         except Exception as e:
             return {"success": False, "message": f"验证异常: {e}"}
 
-    async def save_configs_to_db(self, values: dict[str, str]) -> int:
+    async def save_configs_to_db(self, values: Mapping[str, Any]) -> int:
         """将配置项保存到数据库 AppConfig 表
 
         Args:
@@ -456,30 +529,18 @@ class SetupService:
         Returns:
             写入/更新的配置项数量
         """
-        from backend.core.config import update_settings_field
         from backend.models.database import AppConfig, async_session
 
-        # 解析所有有效的配置键值对
-        items: dict[str, str] = {}
-        for env_key, env_value in values.items():
-            # 尝试大写环境变量名映射
-            settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
-            if settings_key is None:
-                # 也接受已经是小写的非遗留 Settings 字段名（动态配置场景）
-                settings_key = env_key if env_key.islower() else None
-            if settings_key in _LEGACY_CONFIG_KEYS:
-                continue
-            if settings_key is None or env_value is None:
-                continue
-            env_value = str(env_value).strip()
-            if not env_value:
-                continue
-            items[settings_key] = env_value
+        # Validate the complete batch before opening a DB session.  In
+        # particular this prevents invalid notification/SMTP values such as
+        # ``inf`` or an out-of-range retry count from reaching AppConfig.
+        items = self._validate_config_items(values)
 
         if not items:
             return 0
 
         saved = 0
+        settings_updates: dict[str, str] = {}
         async with async_session() as session:
             # 批量查询已存在的配置项
             result = await session.execute(
@@ -493,7 +554,7 @@ class SetupService:
                     if existing.key_value != env_value:
                         existing.key_value = env_value
                         saved += 1
-                        update_settings_field(settings_key, env_value)
+                        settings_updates[settings_key] = env_value
                 else:
                     session.add(
                         AppConfig(
@@ -502,9 +563,17 @@ class SetupService:
                         )
                     )
                     saved += 1
-                    update_settings_field(settings_key, env_value)
+                    settings_updates[settings_key] = env_value
 
             await session.commit()
+
+        # Apply runtime values only after the transaction succeeds.  A failed
+        # commit must not leave the Settings singleton ahead of the database.
+        if settings_updates:
+            from backend.core.config import update_settings_field
+
+            for settings_key, env_value in settings_updates.items():
+                update_settings_field(settings_key, env_value)
 
         if saved:
             logger.info(f"已保存 {saved} 项配置到数据库")
@@ -684,8 +753,15 @@ class SetupService:
     async def restore_backup_for_setup(
         self,
         backup_sections: dict[str, list[Any]],
+        protected_keys: Collection[str] | None = None,
     ) -> Any:
-        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。"""
+        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。
+
+        ``protected_keys`` contains deployment-owned connection settings that
+        must not be overwritten by a backup.  It is optional to keep the
+        historical one-argument call compatible with maintenance scripts and
+        tests.
+        """
         from backend.models.database import async_session
         from backend.services.config_backup_service import (
             refresh_imported_runtime_config,
@@ -693,7 +769,14 @@ class SetupService:
         )
 
         async with async_session() as session:
-            result = await restore_config_backup(session, backup_sections)
+            if protected_keys:
+                result = await restore_config_backup(
+                    session,
+                    backup_sections,
+                    protected_keys=protected_keys,
+                )
+            else:
+                result = await restore_config_backup(session, backup_sections)
 
         try:
             refresh_imported_runtime_config(result)
@@ -719,7 +802,67 @@ class SetupService:
         all_config = dict(all_config)
         backup_values = self._flatten_backup_values(backup_sections)
         database_url = ""
+        protected_connection_keys: set[str] = set()
         try:
+            # Resolve deployment-owned connection values before validating the
+            # batch.  The browser normally sends these values, but keeping the
+            # server-side fallback prevents a crafted/old Setup client from
+            # letting a backup replace the connection used by this deployment.
+            explicit_database_url = str(
+                all_config.get("DATABASE_URL", "") or ""
+            ).strip()
+            explicit_redis_url = str(all_config.get("REDIS_URL", "") or "").strip()
+            from backend.core.config import Settings, get_settings
+
+            runtime_settings = get_settings()
+            deployment_database_url = str(
+                getattr(runtime_settings, "database_url", "") or ""
+            ).strip()
+            deployment_redis_url = str(
+                getattr(runtime_settings, "redis_url", "") or ""
+            ).strip()
+            # Settings.redis_url has a local default.  It is not a deployment
+            # override unless REDIS_URL was actually provided (or a caller
+            # explicitly supplied a non-default runtime value).
+            default_redis_url = getattr(
+                Settings.model_fields.get("redis_url"), "default", None
+            )
+            if (
+                not os.environ.get("REDIS_URL")
+                and deployment_redis_url == str(default_redis_url or "")
+            ):
+                deployment_redis_url = ""
+
+            backup_database_url = str(
+                backup_values.get("database_url") or ""
+            ).strip()
+            backup_redis_url = str(backup_values.get("redis_url") or "").strip()
+            if explicit_database_url or deployment_database_url:
+                protected_connection_keys.add("database_url")
+            if explicit_redis_url or deployment_redis_url:
+                protected_connection_keys.add("redis_url")
+
+            database_url = (
+                explicit_database_url
+                or deployment_database_url
+                or backup_database_url
+            )
+            if database_url:
+                all_config["DATABASE_URL"] = database_url
+            effective_redis_url = (
+                explicit_redis_url or deployment_redis_url or backup_redis_url
+            )
+            if effective_redis_url:
+                all_config["REDIS_URL"] = effective_redis_url
+
+            # ``complete_setup`` may be called directly (without the route's
+            # backup parser), so revalidate both explicit Setup values and
+            # imported system values before any DB initialization or backup
+            # restore side effect.
+            self._validate_config_items(all_config)
+            if backup_values:
+                self._validate_config_items(backup_values)
+
             # 1. 先校验管理员和数据库信息，避免无效请求产生部分写入。
             admin_github = str(
                 all_config.get("ADMIN_GITHUB_USERNAME", "") or ""
@@ -780,7 +923,14 @@ class SetupService:
             # 5. 先精确恢复备份，再写入本次 Setup 表单值，使部署时的显式修改优先。
             import_result = None
             if backup_sections is not None:
-                import_result = await self.restore_backup_for_setup(backup_sections)
+                backup_protected_keys = protected_connection_keys & set(backup_values)
+                if backup_protected_keys:
+                    import_result = await self.restore_backup_for_setup(
+                        backup_sections,
+                        backup_protected_keys,
+                    )
+                else:
+                    import_result = await self.restore_backup_for_setup(backup_sections)
                 logger.info(
                     "Setup 配置备份已恢复, sections={}, created={}, updated={}, deleted={}",
                     import_result.sections,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -699,6 +700,7 @@ async def restore_config_backup(
     sections: dict[str, list[BackupRecord]],
     *,
     allow_database_url: bool = True,
+    protected_keys: Collection[str] | None = None,
 ) -> ConfigImportResult:
     """事务式精确恢复所选分类。
 
@@ -765,9 +767,19 @@ async def restore_config_backup(
                 " restore database_url through Setup so connection.json stays in sync"
             )
 
-        # Exact section restore must not delete the live connection anchor when
-        # a normal runtime backup intentionally omits database_url.
-        protected_keys = set() if allow_database_url else {"database_url"}
+        # Exact section restore must not delete live connection anchors when a
+        # normal runtime backup intentionally omits them.  Setup may add
+        # deployment-provided connection keys here so a backup cannot
+        # temporarily overwrite the database/Redis used to initialize this
+        # deployment before the explicit Setup values are persisted.
+        protected_restore_keys = set(protected_keys or ())
+        if not allow_database_url:
+            protected_restore_keys.add("database_url")
+        applied_imported = {
+            key: record
+            for key, record in imported.items()
+            if key not in protected_restore_keys
+        }
 
         created = 0
         updated = 0
@@ -776,12 +788,14 @@ async def restore_config_backup(
         deleted_keys: set[str] = set()
 
         for key, row in existing.items():
-            if key not in imported and key not in protected_keys:
+            if key not in imported and key not in protected_restore_keys:
                 await db.delete(row)
                 deleted += 1
                 deleted_keys.add(key)
 
         for key, record in imported.items():
+            if key in protected_restore_keys:
+                continue
             row = existing.get(key)
             if row is None:
                 db.add(
@@ -810,10 +824,10 @@ async def restore_config_backup(
         updated=updated,
         deleted=deleted,
         unchanged=unchanged,
-        imported_values={key: record.value for key, record in imported.items()},
+        imported_values={key: record.value for key, record in applied_imported.items()},
         deleted_keys=frozenset(deleted_keys),
         requires_restart=bool(
-            (set(imported) | deleted_keys) & set(RESTART_REQUIRED_KEYS)
+            (set(applied_imported) | deleted_keys) & set(RESTART_REQUIRED_KEYS)
         ),
     )
 
