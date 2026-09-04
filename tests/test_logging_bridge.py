@@ -320,3 +320,58 @@ def test_console_format_renders_real_timestamp():
     )
 
     assert line.startswith("2026-08-12 12:34:56.123456+0800")
+
+
+def test_intercept_handler_drops_reentrant_records(monkeypatch):
+    """Bridge 处理期间再入的标准日志必须被丢弃。
+
+    TimeService 初始化经 tzlocal 探测时区会再次写标准日志；若不拦截，
+    emit -> get_time_service() -> tzlocal -> std logging -> emit 形成
+    无限递归直至 RecursionError（启动期 "--- Logging error in Loguru
+    Handler #2 ---" 刷屏的根源）。
+    """
+
+    handler = InterceptHandler()
+    seen = []
+
+    class LoguruLogger:
+        def level(self, name):
+            return type("Level", (), {"name": name})()
+
+        def patch(self, patcher):
+            return self
+
+        def opt(self, **_kwargs):
+            return self
+
+        def log(self, level, message, *args):
+            # 模拟 get_time_service() 初始化：emit 处理中再写标准日志。
+            nested = logging.LogRecord(
+                name="tzlocal",
+                level=logging.DEBUG,
+                pathname=__file__,
+                lineno=1,
+                msg="[tzlocal] /etc/timezone found",
+                args=(),
+                exc_info=None,
+            )
+            handler.emit(nested)
+            seen.append((level, message, args))
+
+    monkeypatch.setattr("backend.core.logging_bridge.logger", LoguruLogger())
+
+    handler.emit(
+        logging.LogRecord(
+            name="tzlocal",
+            level=logging.DEBUG,
+            pathname=__file__,
+            lineno=1,
+            msg="timezone discovery started",
+            args=(),
+            exc_info=None,
+        )
+    )
+
+    # 嵌套再入被丢弃，只有外层记录完成转发。
+    assert len(seen) == 1
+    assert seen[0][2] == ("tzlocal", "timezone discovery started")

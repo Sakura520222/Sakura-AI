@@ -57,6 +57,10 @@ RELOAD_BLOCKED_PREFIXES: frozenset[str] = frozenset(
         "backend.core.config",
         "backend.core.config_sections",
         "backend.core.config_section_defaults",
+        # 持有进程级 contextvars.ContextVar；reload 会重建 ContextVar，
+        # lifespan 启动期签发的 token 将无法 reset（关闭时报
+        # "Token was created by a different ContextVar"）。
+        "backend.services.database_reset_runtime_service",
     }
 )
 
@@ -135,7 +139,13 @@ def _parse_module_deps(module_name: str, module: types.ModuleType) -> frozenset[
     """
 
     file = module.__file__
-    stat = Path(file).stat()
+    try:
+        stat = Path(file).stat()
+    except OSError:
+        # 源文件已被删除/移动（重构中间态）：sys.modules 里的模块仅是
+        # 陈旧引用，依赖无从解析；返回空集避免阻塞整轮热重载。不入缓存，
+        # 文件重新出现后按新文件正常解析。
+        return frozenset()
     cache_key = (stat.st_mtime_ns, stat.st_size)
     cached = _DEP_CACHE.get(file)
     if cached is not None and cached[0] == cache_key:
@@ -345,6 +355,10 @@ def apply_code_changes(
         if _is_blocked(name):
             result.blocked_restart.append(name)
         elif name in sys.modules:
+            if not Path(path).exists():
+                # 变更事件指向已删除文件（重构移动/删除）：陈旧模块没有
+                # 可 reload 的源码，跳过以免 importlib.reload 必然失败。
+                continue
             changed_modules[name] = None
         # 尚未加载的模块无需 reload，首次 import 自然使用新代码。
 

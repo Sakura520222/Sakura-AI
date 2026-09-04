@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -78,7 +79,25 @@ def _create_startup_log_file(
 class InterceptHandler(logging.Handler):
     """把标准 ``logging`` 记录写入配置好的 Loguru sinks。"""
 
+    def __init__(self) -> None:
+        super().__init__()
+        # 重入哨兵（thread-local）：TimeService 初始化经 tzlocal 探测时区
+        # 时会再次写标准日志；不拦截会形成 bridge -> get_time_service() ->
+        # std logging -> bridge 的无限递归（RecursionError，表现为启动期
+        # "--- Logging error in Loguru Handler #2 ---" 刷屏）。处理期间的
+        # 再入记录直接丢弃。
+        self._reentrant = threading.local()
+
     def emit(self, record: logging.LogRecord) -> None:
+        if getattr(self._reentrant, "active", False):
+            return
+        self._reentrant.active = True
+        try:
+            self._forward(record)
+        finally:
+            self._reentrant.active = False
+
+    def _forward(self, record: logging.LogRecord) -> None:
         if _is_noisy_library_record(record):
             return
 
