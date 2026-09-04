@@ -43,7 +43,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/opt/venv/bin:/usr/local/go/bin:/root/.cargo/bin:${PATH}" \
+    PATH="/opt/venv/bin:${PATH}" \
     SAKURA_BUILD_CHANNEL=${SAKURA_BUILD_CHANNEL} \
     SAKURA_BUILD_VERSION=${SAKURA_BUILD_VERSION} \
     SAKURA_BUILD_REVISION=${SAKURA_BUILD_REVISION} \
@@ -56,33 +56,15 @@ LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI
       com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}" \
       com.sakura-ai.component="web"
 
-# 运行期通用编译工具链（Agent Team 编译 C/C++/Rust/CGO Go 项目必需）
+# 运行期仅保留 git（TrustedGitRunner）与 curl（HEALTHCHECK）；Agent 编译
+# 工具链已迁移至独立的 sakura-ai-agent-runner 镜像（docker/Dockerfile.agent-sandbox）
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
-    gcc \
-    g++ \
-    make \
-    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
-
-# ── Agent Team 多语言运行时（2026-05 LTS/最新）──
-
-# Node.js 24 LTS — NodeSource 脚本自动检测架构
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Go 1.26 — 动态检测架构（支持 amd64/arm64）
-RUN ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://go.dev/dl/go1.26.2.linux-${ARCH}.tar.gz" \
-       | tar -C /usr/local -xzf -
-
-# Rust stable — rustup 自动检测架构和平台
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 
 # ── 应用代码（显式 COPY，不用 COPY . .）──
 WORKDIR /app
