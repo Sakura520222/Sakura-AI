@@ -1412,7 +1412,7 @@ def test_runner_image_and_context_are_immutable_and_secret_free():
         encoding="utf-8"
     )
     assert re.search(
-        r"^FROM python:3\.14-slim-bookworm@sha256:[0-9a-f]{64}$",
+        r"^FROM python:3\.14-slim-trixie@sha256:[0-9a-f]{64}$",
         dockerfile,
         flags=re.MULTILINE,
     )
