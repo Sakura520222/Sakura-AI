@@ -145,7 +145,7 @@
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
 - **Optional Notification Channels** — Telegram and Email/SMTP can be enabled independently; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI)
-- **Announcement Center** — Super admins create, edit, publish/withdraw announcements; users can track unread/read/all-read state, with asynchronous broadcast delivery status
+- **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
 - **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
 
 ### Upgrade and Compatibility

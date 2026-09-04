@@ -17,7 +17,10 @@
       <option value="release">{{ _('announcements.type_release') }}</option>
     </select>
     <textarea name="content" required rows="6" placeholder="{{ _('announcements.content_placeholder') }}" class="w-full rounded-lg border px-3 py-2 bg-transparent"></textarea>
-    <button class="rounded-lg bg-pink-500 px-4 py-2 text-sm text-white">{{ _('announcements.save_draft') }}</button>
+    <div class="flex flex-wrap gap-2">
+      <button name="action" value="save_and_publish" class="rounded-lg bg-pink-500 px-4 py-2 text-sm text-white">{{ _('announcements.save_and_publish') }}</button>
+      <button name="action" value="draft" class="rounded-lg border border-gray-300 px-4 py-2 text-sm">{{ _('announcements.save_draft') }}</button>
+    </div>
   </form>
   <div class="space-y-3">
     {% for item in announcements %}
@@ -33,7 +36,6 @@
         <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-1"><dt>{{ _('announcements.delivery_failed') }}</dt><dd class="font-semibold text-red-600">{{ item.delivery.failed }}</dd></div>
       </dl>
       {% endif %}
-      {% if item.status != 'published' %}
       <details class="mt-4 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
         <summary class="cursor-pointer text-sm font-medium">{{ _('announcements.edit') }}</summary>
         <form method="post" action="/announcements/admin/{{ item.id }}/edit" class="mt-3 space-y-3">
@@ -45,8 +47,23 @@
             {% endfor %}
           </select>
           <textarea name="content" required rows="5" class="w-full rounded-lg border px-3 py-2 bg-transparent">{{ item.content }}</textarea>
-          <button class="rounded border px-3 py-1 text-xs">{{ _('announcements.save_changes') }}</button>
+          <div class="flex flex-wrap gap-2">
+            <button name="action" value="save_and_publish" class="rounded bg-pink-500 px-3 py-1 text-xs text-white">{{ _('announcements.save_and_publish') }}</button>
+            {% if item.status != 'published' %}<button name="action" value="draft" class="rounded border px-3 py-1 text-xs">{{ _('announcements.save_changes') }}</button>{% endif %}
+          </div>
         </form>
+      </details>
+      {% if item.delivery and item.delivery.history_count %}
+      <details class="mt-4 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <summary class="cursor-pointer text-sm font-medium">{{ _('announcements.delivery_history') }}</summary>
+        <div class="mt-3 space-y-2 text-xs text-gray-500 dark:text-gray-400">
+          {% for round in item.delivery.history %}
+          <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-2">
+            <div class="font-medium text-gray-700 dark:text-gray-200">{{ _('announcements.publication_round', version=round.publication_version) }}{% if round.title %} · {{ round.title }}{% endif %}</div>
+            <div>{{ _('announcements.delivery_pending') }} {{ round.pending }} · {{ _('announcements.delivery_sent') }} {{ round.sent }} · {{ _('announcements.delivery_failed') }} {{ round.failed }}</div>
+          </div>
+          {% endfor %}
+        </div>
       </details>
       {% endif %}
       <div class="mt-4 flex gap-2">

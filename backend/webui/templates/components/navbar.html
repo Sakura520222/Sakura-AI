@@ -128,7 +128,13 @@
                 } catch (_error) {
                     seen = [];
                 }
-                var fresh = (data.items || []).filter(function (item) { return seen.indexOf(item.id) === -1; });
+                // A republish keeps the announcement id but starts a new
+                // publication round; include the version so its toast is
+                // shown again after the read marker is reset.
+                var fresh = (data.items || []).filter(function (item) {
+                    var identity = String(item.id) + ':' + String(item.publication_version || 1);
+                    return seen.indexOf(identity) === -1;
+                });
                 fresh.slice(0, 1).forEach(function (item) {
                     var rawSummary = String(item.content || '')
                         .replace(/[#*_`>\[\]()]/g, '')
@@ -147,7 +153,7 @@
                             duration: 10000,
                         },
                     }));
-                    seen.push(item.id);
+                    seen.push(String(item.id) + ':' + String(item.publication_version || 1));
                 });
                 localStorage.setItem(toastKey, JSON.stringify(seen.slice(-100)));
             }).catch(function () {});

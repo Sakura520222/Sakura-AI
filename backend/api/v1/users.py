@@ -145,10 +145,23 @@ async def create_user(
     ).scalar_one_or_none():
         return error_response(f"GitHub 用户名 {body.github_username} 已被使用")
 
+    # Keep API-created GitHub-only users compatible with pre-v2 SQLite schemas
+    # whose legacy telegram_id column still enforces NOT NULL.  The sentinel is
+    # only a storage compatibility value; no Telegram endpoint is created for it.
+    telegram_id = body.telegram_id
+    if telegram_id is None:
+        from backend.services.identity_service import (
+            _next_legacy_placeholder,
+            legacy_telegram_id_required,
+        )
+
+        if await legacy_telegram_id_required(db):
+            telegram_id = await _next_legacy_placeholder(db)
+
     role = body.role
 
     new_user = TelegramUser(
-        telegram_id=body.telegram_id,
+        telegram_id=telegram_id,
         github_username=body.github_username,
         role=role,
         daily_quota=body.daily_quota,
@@ -173,7 +186,7 @@ async def create_user(
         return error_response("用户创建失败")
 
     logger.info(
-        f"API 创建用户: telegram_id={body.telegram_id}, github={body.github_username}, role={role}, by={user['sub']}"
+        f"API 创建用户: telegram_id={telegram_id}, github={body.github_username}, role={role}, by={user['sub']}"
     )
     await log_admin_action(
         db,
@@ -182,7 +195,7 @@ async def create_user(
         "user",
         str(new_user.id),
         {
-            "telegram_id": body.telegram_id,
+            "telegram_id": telegram_id,
             "github_username": body.github_username,
             "role": role,
         },

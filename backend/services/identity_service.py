@@ -134,7 +134,6 @@ async def _find_user_by_explicit_github_username(
     result = await db.execute(
         select(TelegramUser).where(
             func.lower(TelegramUser.github_username) == username.lower(),
-            TelegramUser.is_active,
         )
     )
     user = result.scalar_one_or_none()
@@ -271,6 +270,32 @@ async def upsert_github_account(
         user.github_username = username
     else:
         user = await _find_user_by_explicit_github_username(db, username)
+        # An administrator may deliberately disable a legacy username-only
+        # account.  It must remain visible to the lookup so OAuth can reject
+        # it before adding an identity, changing fields, or creating a user.
+        if user is not None and not user.is_active:
+            return None
+        if user is None:
+            # The explicit lookup intentionally returns None when the username
+            # is already bound to a real provider identity.  Distinguish that
+            # conflict from a missing user before attempting a new insert;
+            # otherwise the legacy unique github_username constraint turns a
+            # provider mismatch into an IntegrityError (or invites a future
+            # caller to merge the accounts incorrectly).
+            explicit_result = await db.execute(
+                select(TelegramUser).where(
+                    func.lower(TelegramUser.github_username) == username.lower()
+                )
+            )
+            explicit_user = explicit_result.scalar_one_or_none()
+            if explicit_user is not None:
+                if not explicit_user.is_active:
+                    return None
+                # This is a controlled authentication rejection.  Keep the
+                # existing account untouched and let callers surface their
+                # normal "user disabled/unavailable" response; most
+                # importantly, do not fall through to a duplicate user insert.
+                return None
         if user is None and not create_if_missing:
             return None
         if user is None:

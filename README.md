@@ -145,7 +145,7 @@
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
 - **可选通知渠道** — Telegram 与 Email/SMTP 可独立启停，个人设置支持一次性绑定/解绑 Telegram；公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）
-- **公告中心** — 超级管理员可创建、编辑、发布/撤回公告；用户支持未读、已读和全部已读，发布后异步广播并记录投递状态
+- **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
 - **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
 
 ### 升级与兼容

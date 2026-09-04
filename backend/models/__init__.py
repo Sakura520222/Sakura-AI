@@ -32,6 +32,10 @@ from backend.models.agent_skill_models import AgentSkill
 from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.announcement_models import (
     Announcement,
+    AnnouncementDeliveryArchive,
+    AnnouncementDeliveryHistory,
+    AnnouncementPublication,
+    AnnouncementPublicationHistory,
     AnnouncementRead,
     AnnouncementStatus,
     AnnouncementType,
@@ -122,6 +126,10 @@ __all__ = [
     "AdminActionLog",
     "AgentSkill",
     "Announcement",
+    "AnnouncementDeliveryArchive",
+    "AnnouncementDeliveryHistory",
+    "AnnouncementPublication",
+    "AnnouncementPublicationHistory",
     "AnnouncementRead",
     "AnnouncementStatus",
     "AnnouncementType",

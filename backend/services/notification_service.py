@@ -19,7 +19,7 @@ from email.utils import formataddr
 from typing import Any, Protocol
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram.error import RetryAfter
 
@@ -212,10 +212,16 @@ class EmailNotificationProvider:
             context = ssl.create_default_context()
             # ssl = 隐式 TLS（SMTPS，通常 465 端口）：连接建立即协商 TLS；
             # starttls = 显式升级（通常 587/25 端口）；none = 明文，仅限可信中继。
-            smtp_class: Any = (
-                smtplib.SMTP_SSL if security == "ssl" else smtplib.SMTP
-            )
-            with smtp_class(host, port, timeout=15, context=context) as smtp:
+            if security == "ssl":
+                # SMTP_SSL accepts the TLS context in its constructor.  The
+                # plain SMTP constructor does not on all supported Python
+                # versions, so only pass it for implicit TLS.
+                smtp_context = smtplib.SMTP_SSL(
+                    host, port, timeout=15, context=context
+                )
+            else:
+                smtp_context = smtplib.SMTP(host, port, timeout=15)
+            with smtp_context as smtp:
                 if security == "starttls":
                     smtp.starttls(context=context)
                 if username:
@@ -415,6 +421,177 @@ class NotificationService:
                 await asyncio.sleep(wait_for)
             self._last_rate_limited_at[channel] = time.monotonic()
 
+    @staticmethod
+    def _row_publication_version(row: object) -> int:
+        try:
+            value = int(getattr(row, "publication_version", 1) or 1)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, value)
+
+    async def _fresh_row(
+        self, db: AsyncSession, model: type, row_id: int
+    ) -> object | None:
+        """Reload a row when the supplied session supports ORM ``get``."""
+        getter = getattr(db, "get", None)
+        if not callable(getter):
+            return None
+        try:
+            return await getter(model, row_id, populate_existing=True)
+        except TypeError:
+            # Lightweight test/session adapters may expose only the two
+            # positional arguments accepted by older SQLAlchemy versions.
+            return await getter(model, row_id)
+
+    async def _fresh_publication_rows(
+        self,
+        db: AsyncSession,
+        announcement_id: int,
+        delivery_id: int,
+    ) -> tuple[object | None, object | None, bool]:
+        """Read publication identity from a short-lived independent session.
+
+        A long-lived MySQL transaction under the default REPEATABLE READ
+        isolation can otherwise keep seeing the pre-republish snapshot even
+        when ``populate_existing`` is requested.  The boolean reports whether
+        an independent probe was available; callers fail closed if that probe
+        exists but cannot find either row.
+        """
+        from backend.models import database as db_module
+
+        factory = db_module.async_session
+        if factory is not None:
+            probe = factory()
+            try:
+                if hasattr(probe, "__aenter__"):
+                    async with probe as scoped:
+                        return (
+                            await self._fresh_row(
+                                scoped, Announcement, announcement_id
+                            ),
+                            await self._fresh_row(
+                                scoped, NotificationDelivery, delivery_id
+                            ),
+                            True,
+                        )
+                rows = (
+                    await self._fresh_row(probe, Announcement, announcement_id),
+                    await self._fresh_row(probe, NotificationDelivery, delivery_id),
+                    True,
+                )
+                close = getattr(probe, "close", None)
+                if close is not None:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+                return rows
+            except Exception:
+                close = getattr(probe, "close", None)
+                if close is not None:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+                return None, None, True
+
+        getter = getattr(db, "get", None)
+        if not callable(getter):
+            return None, None, False
+        return (
+            await self._fresh_row(db, Announcement, announcement_id),
+            await self._fresh_row(db, NotificationDelivery, delivery_id),
+            True,
+        )
+
+    async def _publication_is_current(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        expected_version: int | None,
+    ) -> bool:
+        if expected_version is None:
+            return str(getattr(announcement, "status", "")).lower() == "published"
+        if (
+            self._row_publication_version(announcement) != expected_version
+            or self._row_publication_version(delivery) != expected_version
+            or str(getattr(announcement, "status", "")).lower() != "published"
+        ):
+            return False
+        fresh_announcement, fresh_delivery, has_probe = (
+            await self._fresh_publication_rows(
+                db, int(announcement.id), int(delivery.id)
+            )
+        )
+        if not has_probe:
+            # Lightweight adapters used by legacy unit tests do not expose a
+            # getter; the in-memory row checks above still protect them.
+            return True
+        if fresh_announcement is None or fresh_delivery is None:
+            return False
+        return (
+            self._row_publication_version(fresh_announcement) == expected_version
+            and self._row_publication_version(fresh_delivery) == expected_version
+            and str(getattr(fresh_announcement, "status", "")).lower()
+            == "published"
+        )
+
+    async def _mark_terminal_state(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        *,
+        lock: asyncio.Lock,
+        expected_version: int | None,
+        values: dict[str, Any],
+    ) -> bool | None:
+        """Write a terminal result only if its publication lease is current.
+
+        Returning ``None`` means the worker became stale (for example because
+        an administrator republished while a provider call was in flight).
+        The broadcast caller reports that as skipped, never as a failure in
+        the new round.
+        """
+        async with lock:
+            if not await self._publication_is_current(
+                db, delivery, announcement, expected_version
+            ):
+                return None
+            getter = getattr(db, "get", None)
+            if callable(getter) and expected_version is not None:
+                # Use a conditional UPDATE as the final race guard.  A
+                # concurrent reset changes publication_version, making this
+                # statement a no-op even if it happened after the read check.
+                result = await db.execute(
+                    update(NotificationDelivery)
+                    .where(
+                        NotificationDelivery.id == delivery.id,
+                        NotificationDelivery.publication_version
+                        == expected_version,
+                        exists(
+                            select(Announcement.id).where(
+                                Announcement.id
+                                == NotificationDelivery.announcement_id,
+                                Announcement.id == announcement.id,
+                                Announcement.publication_version
+                                == expected_version,
+                                Announcement.status == "published",
+                            )
+                        ),
+                    )
+                    .values(**values)
+                )
+                if getattr(result, "rowcount", 1) == 0:
+                    return None
+                await db.commit()
+                for key, value in values.items():
+                    setattr(delivery, key, value)
+                return True
+            for key, value in values.items():
+                setattr(delivery, key, value)
+            await db.commit()
+            return True
+
     async def _deliver_one(
         self,
         db: AsyncSession,
@@ -422,26 +599,47 @@ class NotificationService:
         announcement: Announcement,
         endpoint: NotificationEndpoint | None,
         lock: asyncio.Lock,
-    ) -> bool:
+        expected_version: int | None = None,
+    ) -> bool | None:
+        if not await self._publication_is_current(
+            db, delivery, announcement, expected_version
+        ):
+            return None
         provider = self.registry.get(delivery.channel)
         if provider is None:
             error = NotificationProviderDisabled(
                 f"未注册通知 Provider: {delivery.channel}"
             )
-            async with lock:
-                delivery.status = DeliveryStatus.FAILED.value
-                delivery.error_message = _safe_error_message(error)
-                delivery.attempts = int(delivery.attempts or 0) + 1
-                await db.commit()
-            return False
+            marked = await self._mark_terminal_state(
+                db,
+                delivery,
+                announcement,
+                lock=lock,
+                expected_version=expected_version,
+                values={
+                    "status": DeliveryStatus.FAILED.value,
+                    "error_message": _safe_error_message(error),
+                    "attempts": int(delivery.attempts or 0) + 1,
+                    "updated_at": now_utc(),
+                },
+            )
+            return None if marked is None else False
         if endpoint is None and delivery.channel != "web":
             error = NotificationProviderError("通知端点不存在或已禁用")
-            async with lock:
-                delivery.status = DeliveryStatus.FAILED.value
-                delivery.error_message = _safe_error_message(error)
-                delivery.attempts = int(delivery.attempts or 0) + 1
-                await db.commit()
-            return False
+            marked = await self._mark_terminal_state(
+                db,
+                delivery,
+                announcement,
+                lock=lock,
+                expected_version=expected_version,
+                values={
+                    "status": DeliveryStatus.FAILED.value,
+                    "error_message": _safe_error_message(error),
+                    "attempts": int(delivery.attempts or 0) + 1,
+                    "updated_at": now_utc(),
+                },
+            )
+            return None if marked is None else False
 
         settings = get_settings()
         max_attempts = max(
@@ -465,7 +663,17 @@ class NotificationService:
         last_error: BaseException | None = None
         initial_attempts = int(delivery.attempts or 0)
         for attempt in range(max_attempts):
+            if not await self._publication_is_current(
+                db, delivery, announcement, expected_version
+            ):
+                return None
             await self._throttle(delivery.channel, rate_limit)
+            # Republish can race while a provider-wide rate-limit lock is
+            # sleeping; check again immediately before the external call.
+            if not await self._publication_is_current(
+                db, delivery, announcement, expected_version
+            ):
+                return None
             try:
                 await provider.send(
                     endpoint=endpoint,
@@ -495,27 +703,47 @@ class NotificationService:
                     continue
                 break
             else:
-                async with lock:
-                    delivery.status = DeliveryStatus.SENT.value
-                    delivery.error_message = None
-                    delivery.attempts = initial_attempts + attempt + 1
-                    delivery.sent_at = now_utc()
-                    delivery.next_retry_at = None
-                    await db.commit()
-                return True
+                marked = await self._mark_terminal_state(
+                    db,
+                    delivery,
+                    announcement,
+                    lock=lock,
+                    expected_version=expected_version,
+                    values={
+                        "status": DeliveryStatus.SENT.value,
+                        "error_message": None,
+                        "attempts": initial_attempts + attempt + 1,
+                        "sent_at": now_utc(),
+                        "next_retry_at": None,
+                        "updated_at": now_utc(),
+                    },
+                )
+                return marked
 
-        async with lock:
-            delivery.status = DeliveryStatus.FAILED.value
-            delivery.error_message = _safe_error_message(last_error or RuntimeError())
-            delivery.attempts = initial_attempts + max_attempts
-            delivery.next_retry_at = None
-            await db.commit()
-        return False
+        marked = await self._mark_terminal_state(
+            db,
+            delivery,
+            announcement,
+            lock=lock,
+            expected_version=expected_version,
+            values={
+                "status": DeliveryStatus.FAILED.value,
+                "error_message": _safe_error_message(
+                    last_error or RuntimeError()
+                ),
+                "attempts": initial_attempts + max_attempts,
+                "next_retry_at": None,
+                "updated_at": now_utc(),
+            },
+        )
+        return None if marked is None else False
 
     async def broadcast_announcement(
         self,
         db: AsyncSession,
         announcement_or_id: Announcement | int,
+        *,
+        expected_version: int | None = None,
     ) -> dict[str, int]:
         """Broadcast one announcement; each provider/user failure is isolated."""
         if isinstance(announcement_or_id, Announcement):
@@ -528,6 +756,13 @@ class NotificationService:
             ).scalar_one_or_none()
         if announcement is None:
             return {"sent": 0, "failed": 0, "skipped": 0}
+        if expected_version is None:
+            try:
+                expected_version = int(
+                    getattr(announcement, "publication_version", 1) or 1
+                )
+            except (TypeError, ValueError):
+                expected_version = 1
         # A publish task may still be queued when an administrator withdraws
         # the announcement.  Re-check the lifecycle state in the worker so a
         # withdrawn item is never delivered merely because it was published
@@ -538,6 +773,7 @@ class NotificationService:
             await db.execute(
                 select(NotificationDelivery).where(
                     NotificationDelivery.announcement_id == announcement.id,
+                    NotificationDelivery.publication_version == expected_version,
                     NotificationDelivery.status.in_(
                         [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
                     ),
@@ -593,6 +829,10 @@ class NotificationService:
                         if (
                             str(getattr(fresh_announcement, "status", "")).lower()
                             != "published"
+                            or self._row_publication_version(fresh_announcement)
+                            != expected_version
+                            or self._row_publication_version(fresh_delivery)
+                            != expected_version
                         ):
                             return False
                         fresh_endpoint = endpoint
@@ -617,14 +857,24 @@ class NotificationService:
                             fresh_announcement,
                             fresh_endpoint,
                             lock,
+                            expected_version,
                         )
-                return await self._deliver_one(db, delivery, announcement, endpoint, lock)
+                return await self._deliver_one(
+                    db,
+                    delivery,
+                    announcement,
+                    endpoint,
+                    lock,
+                    expected_version,
+                )
 
         results = await asyncio.gather(*(run(delivery) for delivery in deliveries))
+        sent = sum(result is True for result in results)
+        skipped = sum(result is None for result in results)
         return {
-            "sent": sum(results),
-            "failed": len(results) - sum(results),
-            "skipped": 0,
+            "sent": sent,
+            "failed": len(results) - sent - skipped,
+            "skipped": skipped,
         }
 
 
@@ -634,9 +884,13 @@ notification_service = NotificationService()
 async def broadcast_announcement(
     db: AsyncSession,
     announcement_or_id: Announcement | int,
+    *,
+    expected_version: int | None = None,
 ) -> dict[str, int]:
     """Compatibility function for workers/tests that do not need the service."""
-    return await notification_service.broadcast_announcement(db, announcement_or_id)
+    return await notification_service.broadcast_announcement(
+        db, announcement_or_id, expected_version=expected_version
+    )
 
 
 __all__ = [

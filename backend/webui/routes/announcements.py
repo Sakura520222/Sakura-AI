@@ -27,6 +27,16 @@ from backend.webui.i18n import resolve_language
 router = APIRouter(prefix="/announcements", tags=["WebUI Announcements"])
 
 
+def _publish_action(action: str | None) -> bool:
+    """Return whether an admin form requested an immediate send round."""
+    return str(action or "publish").strip().lower() in {
+        "publish",
+        "send",
+        "save_and_publish",
+        "save-and-publish",
+    }
+
+
 @router.get("")
 @router.get("/")
 async def announcements_page(
@@ -102,6 +112,7 @@ async def announcement_admin_create(
     title: str = Form(...),
     content: str = Form(...),
     announcement_type: str = Form("general"),
+    action: str = Form("publish"),
     user: dict = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
     _csrf: str = Depends(require_csrf),
@@ -115,12 +126,13 @@ async def announcement_admin_create(
             content=content,
             announcement_type=announcement_type,
             created_by=int(user["user_id"]),
+            publish=_publish_action(action),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return toast_redirect(
         "/announcements/admin",
-        "announcements.created",
+        "announcements.published" if _publish_action(action) else "announcements.created",
         lang=resolve_language(request),
     )
 
@@ -132,6 +144,7 @@ async def announcement_admin_edit(
     title: str = Form(...),
     content: str = Form(...),
     announcement_type: str = Form("general"),
+    action: str = Form("publish"),
     user: dict = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
     _csrf: str = Depends(require_csrf),
@@ -146,6 +159,7 @@ async def announcement_admin_edit(
             title=title,
             content=content,
             announcement_type=announcement_type,
+            publish=_publish_action(action),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -153,7 +167,7 @@ async def announcement_admin_edit(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return toast_redirect(
         "/announcements/admin",
-        "announcements.updated",
+        "announcements.published" if _publish_action(action) else "announcements.updated",
         lang=resolve_language(request),
     )
 

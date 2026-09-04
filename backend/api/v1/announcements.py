@@ -33,12 +33,34 @@ class AnnouncementCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1)
     type: str = Field(default=AnnouncementType.GENERAL.value, max_length=50)
+    # The admin UI uses this to make the primary action a one-step publish;
+    # callers can leave it false to create a draft explicitly.
+    publish: bool = False
+    send: bool | None = None
+    action: str | None = None
 
 
 class AnnouncementUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
     content: str | None = Field(default=None, min_length=1)
     type: str | None = Field(default=None, max_length=50)
+    publish: bool = False
+    send: bool | None = None
+    action: str | None = None
+
+
+def _request_publishes(body: AnnouncementCreateRequest | AnnouncementUpdateRequest) -> bool:
+    """Accept both JSON booleans and UI-style action names."""
+    if body.send is not None:
+        return body.send
+    if body.action is not None:
+        return body.action.strip().lower() in {
+            "publish",
+            "send",
+            "save_and_publish",
+            "save-and-publish",
+        }
+    return body.publish
 
 
 async def _user_announcements(
@@ -125,6 +147,8 @@ async def admin_create_announcement(
             content=body.content,
             announcement_type=body.type,
             created_by=int(user["user_id"]),
+            publish=_request_publishes(body),
+            send=body.send,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -146,6 +170,8 @@ async def admin_update_announcement(
             title=body.title,
             content=body.content,
             announcement_type=body.type,
+            publish=_request_publishes(body),
+            send=body.send,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -215,7 +241,10 @@ async def admin_retry_announcement(
         raise HTTPException(status_code=404, detail="公告不存在")
     if target.status != "published":
         raise HTTPException(status_code=409, detail="仅已发布公告可重试投递")
-    schedule_announcement_broadcast(announcement_id)
+    schedule_announcement_broadcast(
+        announcement_id,
+        expected_version=getattr(target, "publication_version", 1) or 1,
+    )
     return {"ok": True, "scheduled": True}
 
 

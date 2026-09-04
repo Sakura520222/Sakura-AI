@@ -942,11 +942,19 @@ async def test_announcement_lifecycle_rejects_mutation_after_publish(monkeypatch
     session.commit = fake_commit
     session.refresh = fake_refresh
     monkeypatch.setattr(announcement_service, "get_announcement", fake_get)
+    monkeypatch.setattr(
+        announcement_service, "_get_lifecycle_announcement", fake_get
+    )
     monkeypatch.setattr(announcement_service, "_ensure_delivery_rows", fake_flush)
     monkeypatch.setattr(
         announcement_service,
+        "_ensure_publication_snapshot",
+        fake_flush,
+    )
+    monkeypatch.setattr(
+        announcement_service,
         "schedule_announcement_broadcast",
-        lambda announcement_id: scheduled.append(announcement_id),
+        lambda announcement_id, **_kwargs: scheduled.append(announcement_id),
     )
 
     await announcement_service.publish_announcement(session, 1)
@@ -977,7 +985,7 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
     async def fake_refresh(_row):
         return None
 
-    async def fake_flush():
+    async def fake_flush(*_args, **_kwargs):
         return None
 
     session.commit = fake_commit
@@ -989,6 +997,24 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
 
     monkeypatch.setattr(announcement_service, "get_announcement", fake_get)
     monkeypatch.setattr(
+        announcement_service, "_get_lifecycle_announcement", fake_get
+    )
+    monkeypatch.setattr(
+        announcement_service,
+        "_archive_publication",
+        fake_flush,
+    )
+    monkeypatch.setattr(
+        announcement_service,
+        "_archive_and_reset_publication",
+        lambda *_args: fake_flush(),
+    )
+    monkeypatch.setattr(
+        announcement_service,
+        "_ensure_publication_snapshot",
+        fake_flush,
+    )
+    monkeypatch.setattr(
         announcement_service,
         "_ensure_delivery_rows",
         lambda *_args: fake_flush(),
@@ -997,7 +1023,7 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
     monkeypatch.setattr(
         announcement_service,
         "schedule_announcement_broadcast",
-        lambda announcement_id: scheduled.append(announcement_id),
+        lambda announcement_id, **_kwargs: scheduled.append(announcement_id),
     )
 
     await announcement_service.withdraw_announcement(session, 1)
