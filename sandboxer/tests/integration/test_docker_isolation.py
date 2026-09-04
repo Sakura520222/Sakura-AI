@@ -8,6 +8,7 @@ set ``SAKURA_SANDBOX_DOCKER_INTEGRATION=1`` and provide an immutable
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import os
 import re
@@ -202,6 +203,70 @@ async def test_real_docker_is_nonroot_offline_readonly_and_cleans_container(tmp_
         deadline=asyncio.get_running_loop().time() + 25,
     )
     assert result.exit_code == 0, result.stderr
+    assert result.cancelled is False
+    assert result.timed_out is False
+    assert not adapter._active
+
+
+@pytest.mark.asyncio
+async def test_real_docker_go_toolchain_runs_from_home_tmpfs_within_default_limits(
+    tmp_path: Path,
+):
+    """Go's scratch binaries must execute from HOME without polluting /workspace.
+
+    ``go run``/``go test`` compile into ``GOTMPDIR`` and exec the result, so
+    this gate fails unless the daemon mounts the agent HOME as an
+    exec-permitted tmpfs and the runner image redirects ``GOTMPDIR`` there.
+    It runs cold under the default tmpfs/memory limits and additionally
+    asserts that ``/tmp`` stays non-executable and that no ``go-build*``
+    scratch directories leak into the task workspace.
+    """
+
+    config, key = _integration_config(tmp_path)
+    # Cold stdlib compilation takes ~13s on two CPUs; leave generous slack
+    # for slower CI runners (the shared helper pins 30s).
+    config = dataclasses.replace(
+        config, timeout_seconds=90.0, max_timeout_seconds=90.0
+    )
+    adapter = DockerRuntimeAdapter(config)
+    request = ExecutionRequest(
+        request_id="integration-go-toolchain",
+        workspace_key=key,
+        command=(
+            "set -eu; "
+            "printf 'module integration\\n\\ngo 1.27\\n' > go.mod; "
+            "printf 'package main\\n"
+            "import \"fmt\"\\n"
+            "func main() { fmt.Println(\"go-run-ok\") }\\n' > main.go; "
+            "test \"$(go run .)\" = \"go-run-ok\"; "
+            "printf 'package main\\n"
+            "import \"testing\"\\n"
+            "func TestAdd(t *testing.T) { if 1+1 != 2 { t.Fatal(\"bad\") } }\\n"
+            "' > main_test.go; "
+            "go test -count=1 .; "
+            "test \"$(stat -c '%u:%g:%a' \"$HOME\")\" = \"65532:65532:700\"; "
+            "printf 'int main(void) { return 0; }\\n' > nx.c; "
+            "cc -o /tmp/nx nx.c; "
+            "if /tmp/nx 2>/dev/null; then "
+            "echo 'unexpected: /tmp is executable'; exit 1; "
+            "fi; "
+            "if ls /workspace | grep -q '^go-build'; then "
+            "echo 'unexpected: go scratch dirs leaked into workspace'; exit 1; "
+            "fi; "
+            "echo go-toolchain-ok"
+        ),
+        profile=ExecutionProfile.AGENT,
+        network_mode=NetworkMode.NONE,
+        timeout_seconds=85,
+    )
+    result = await _execute_with_docker_diagnostics(
+        adapter,
+        request,
+        tmp_path=tmp_path,
+        deadline=asyncio.get_running_loop().time() + 90,
+    )
+    assert result.exit_code == 0, result.stderr
+    assert "go-toolchain-ok" in result.stdout, result.stderr
     assert result.cancelled is False
     assert result.timed_out is False
     assert not adapter._active

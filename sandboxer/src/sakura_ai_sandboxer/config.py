@@ -30,7 +30,11 @@ DEFAULT_CPUS = 2.0
 DEFAULT_NOFILE_SOFT = 1024
 DEFAULT_NOFILE_HARD = 1024
 DEFAULT_TMPFS_BYTES = 256 * 1024 * 1024
-DEFAULT_HOME_TMPFS_BYTES = 128 * 1024 * 1024
+# Measured floor for one cold `go test` is ~117 MiB (stdlib build cache) on
+# an exec-permitted HOME tmpfs; dependency-heavy projects need several times
+# that, and the 1 GiB cap still leaves room for compiler RSS inside the
+# default 2 GiB container memory limit (tmpfs pages count toward it).
+DEFAULT_HOME_TMPFS_BYTES = 1024 * 1024 * 1024
 DEFAULT_SOCKET_OWNER = 0
 DEFAULT_SOCKET_GROUP = 9473
 DEFAULT_SOCKET_MODE = 0o660
