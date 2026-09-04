@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram.helpers import escape_markdown
 
-from backend.core.config import get_settings
+from backend.models.identity_models import NotificationEndpoint
 from backend.models.payment_models import RefundRequest
 from backend.models.telegram_models import TelegramUser
 from backend.telegram.notifications import get_notification_sender
@@ -38,6 +38,8 @@ def _unique_chat_ids(values: Iterable[int | str | None]) -> list[int]:
             chat_id = int(value)
         except TypeError, ValueError:
             continue
+        if chat_id <= 0:
+            continue
         if chat_id not in seen:
             seen.add(chat_id)
             result.append(chat_id)
@@ -46,19 +48,29 @@ def _unique_chat_ids(values: Iterable[int | str | None]) -> list[int]:
 
 async def _get_user_chat_id(session: AsyncSession, user_id: int) -> int | None:
     result = await session.execute(
-        select(TelegramUser.telegram_id).where(TelegramUser.id == user_id)
+        select(NotificationEndpoint.address).where(
+            NotificationEndpoint.user_id == user_id,
+            NotificationEndpoint.provider == "telegram",
+            NotificationEndpoint.enabled.is_(True),
+        )
     )
-    chat_id = result.scalar_one_or_none()
-    return int(chat_id) if chat_id else None
+    chat_id = _unique_chat_ids([result.scalar_one_or_none()])
+    return chat_id[0] if chat_id else None
 
 
 async def _get_super_admin_chat_ids(session: AsyncSession) -> list[int]:
     result = await session.execute(
-        select(TelegramUser.telegram_id).where(TelegramUser.role == "super_admin")
+        select(NotificationEndpoint.address)
+        .join(TelegramUser, TelegramUser.id == NotificationEndpoint.user_id)
+        .where(
+            TelegramUser.role == "super_admin",
+            TelegramUser.is_active.is_(True),
+            NotificationEndpoint.provider == "telegram",
+            NotificationEndpoint.enabled.is_(True),
+        )
     )
     db_chat_ids = list(result.scalars().all())
-    settings_chat_ids = get_settings().telegram_admin_ids_list
-    return _unique_chat_ids([*db_chat_ids, *settings_chat_ids])
+    return _unique_chat_ids(db_chat_ids)
 
 
 def _request_context(refund_request: RefundRequest) -> dict[str, str]:

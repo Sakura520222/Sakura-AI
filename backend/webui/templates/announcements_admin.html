@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ _('announcements.admin_title') }} - Sakura AI{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('announcements.admin_title') }}</h1>
+    <p class="mt-1 text-sm text-gray-500">{{ _('announcements.admin_description') }}</p>
+  </div>
+  <form method="post" action="/announcements/admin/create" class="rounded-xl border border-gray-200 dark:border-gray-700 p-5 space-y-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input name="title" required maxlength="500" placeholder="{{ _('announcements.title_placeholder') }}" class="w-full rounded-lg border px-3 py-2 bg-transparent">
+    <select name="announcement_type" class="rounded-lg border px-3 py-2 bg-transparent">
+      <option value="general">{{ _('announcements.type_general') }}</option>
+      <option value="important">{{ _('announcements.type_important') }}</option>
+      <option value="feature">{{ _('announcements.type_feature') }}</option>
+      <option value="maintenance">{{ _('announcements.type_maintenance') }}</option>
+      <option value="release">{{ _('announcements.type_release') }}</option>
+    </select>
+    <textarea name="content" required rows="6" placeholder="{{ _('announcements.content_placeholder') }}" class="w-full rounded-lg border px-3 py-2 bg-transparent"></textarea>
+    <button class="rounded-lg bg-pink-500 px-4 py-2 text-sm text-white">{{ _('announcements.save_draft') }}</button>
+  </form>
+  <div class="space-y-3">
+    {% for item in announcements %}
+    <article class="rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="font-semibold">{{ item.title }}</h2><span class="text-xs text-gray-500">{{ item.status }}</span>
+      </div>
+      <div class="prose prose-sm dark:prose-invert mt-3 max-w-none">{{ item.content_html | safe }}</div>
+      {% if item.delivery %}
+      <dl class="mt-4 grid grid-cols-3 gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-1"><dt>{{ _('announcements.delivery_pending') }}</dt><dd class="font-semibold text-gray-700 dark:text-gray-200">{{ item.delivery.pending }}</dd></div>
+        <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-1"><dt>{{ _('announcements.delivery_sent') }}</dt><dd class="font-semibold text-green-600">{{ item.delivery.sent }}</dd></div>
+        <div class="rounded bg-gray-50 dark:bg-gray-900/50 px-2 py-1"><dt>{{ _('announcements.delivery_failed') }}</dt><dd class="font-semibold text-red-600">{{ item.delivery.failed }}</dd></div>
+      </dl>
+      {% endif %}
+      {% if item.status != 'published' %}
+      <details class="mt-4 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <summary class="cursor-pointer text-sm font-medium">{{ _('announcements.edit') }}</summary>
+        <form method="post" action="/announcements/admin/{{ item.id }}/edit" class="mt-3 space-y-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input name="title" required maxlength="500" value="{{ item.title }}" class="w-full rounded-lg border px-3 py-2 bg-transparent">
+          <select name="announcement_type" class="rounded-lg border px-3 py-2 bg-transparent">
+            {% for type_name in ['general', 'important', 'feature', 'maintenance', 'release'] %}
+            <option value="{{ type_name }}" {% if item.type == type_name %}selected{% endif %}>{{ _('announcements.type_' ~ type_name) }}</option>
+            {% endfor %}
+          </select>
+          <textarea name="content" required rows="5" class="w-full rounded-lg border px-3 py-2 bg-transparent">{{ item.content }}</textarea>
+          <button class="rounded border px-3 py-1 text-xs">{{ _('announcements.save_changes') }}</button>
+        </form>
+      </details>
+      {% endif %}
+      <div class="mt-4 flex gap-2">
+        {% if item.status != 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/publish"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs">{{ _('announcements.publish') }}</button></form>{% endif %}
+        {% if item.status == 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/withdraw"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs">{{ _('announcements.withdraw') }}</button></form>{% endif %}
+        {% if item.status != 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs text-red-600">{{ _('announcements.delete') }}</button></form>{% endif %}
+      </div>
+    </article>
+    {% else %}<div class="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">{{ _('announcements.empty') }}</div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 """登录页语言切换与 i18n 渲染测试。"""
 
+import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -91,3 +92,65 @@ def test_login_follows_configured_default_language():
         assert "登录" in resp2.text
     finally:
         settings.default_language = "zh-CN"
+
+
+@pytest.mark.parametrize(
+    ("language", "github_label", "passkey_label"),
+    [
+        ("zh-CN", "使用 GitHub 登录", "使用通行密钥登录"),
+        ("en", "Sign in with GitHub", "Sign in with Passkey"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("telegram_enabled", "telegram_bot_username"),
+    [(True, "example_bot"), (False, "")],
+)
+def test_login_pages_use_github_identity_and_optional_notifications(
+    monkeypatch,
+    language,
+    github_label,
+    passkey_label,
+    telegram_enabled,
+    telegram_bot_username,
+):
+    """Both normal and OAuth-error pages must not expose Telegram registration."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "github_oauth_client_id", "test-client-id")
+    monkeypatch.setattr(settings, "telegram_enabled", telegram_enabled)
+    monkeypatch.setattr(settings, "telegram_bot_username", telegram_bot_username)
+    client = TestClient(_build_app())
+    client.cookies.set("preferred_language", language)
+
+    responses = [
+        client.get(f"/auth/login?lang={language}"),
+        client.get(
+            "/auth/callback?error=access_denied&error_description=cancelled"
+        ),
+    ]
+    for response in responses:
+        assert response.status_code in {200, 400}
+        assert github_label in response.text
+        assert passkey_label in response.text
+        assert "Register via Telegram" not in response.text
+        assert "通过 Telegram 注册" not in response.text
+        assert "First-time users need to register via Telegram Bot" not in response.text
+        assert "首次使用需先通过 Telegram Bot 注册" not in response.text
+        assert "start=sign" not in response.text
+        assert "https://t.me/" not in response.text
+        assert "/sign" not in response.text
+
+
+def test_login_keeps_passkey_when_github_oauth_is_unconfigured(monkeypatch):
+    """Existing Passkeys remain usable when GitHub OAuth is unavailable."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "github_oauth_client_id", "")
+    monkeypatch.setattr(settings, "telegram_enabled", False)
+    monkeypatch.setattr(settings, "telegram_bot_username", "")
+    client = TestClient(_build_app())
+    response = client.get("/auth/login?lang=en")
+    assert response.status_code == 200
+    assert "GitHub OAuth is not configured" in response.text
+    assert "Sign in with Passkey" in response.text
+    assert "Register via Telegram" not in response.text
+    assert "start=sign" not in response.text
+    assert "https://t.me/" not in response.text

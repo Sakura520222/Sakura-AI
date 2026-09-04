@@ -16,6 +16,7 @@ from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import (
@@ -27,6 +28,7 @@ from backend.core.config import (
 )
 from backend.core.time_service import format_rfc3339, now_utc, parse_rfc3339
 from backend.models.database import UserConfig, WebUIConfig
+from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.telegram_models import (
     TelegramUser,
     UserRecoveryCode,
@@ -41,7 +43,9 @@ from backend.services.two_factor_service import (
 from backend.services.webauthn_service import credential_id_hash
 
 USER_BACKUP_FORMAT = "sakura-ai-user-backup"
-USER_BACKUP_VERSION = 1
+USER_BACKUP_VERSION = 2
+LEGACY_USER_BACKUP_VERSION = 1
+SUPPORTED_USER_BACKUP_VERSIONS = frozenset({LEGACY_USER_BACKUP_VERSION, USER_BACKUP_VERSION})
 USER_BACKUP_SCOPE = "users"
 USER_BACKUP_MAX_BYTES = 5 * 1024 * 1024
 USER_BACKUP_MAX_USERS = 5000
@@ -57,6 +61,7 @@ _RECOVERY_HASH_LENGTHS = frozenset({64, 128})
 _BIGINT_MIN = -(2**63)
 _BIGINT_MAX = 2**63 - 1
 _INT_MAX = 2**31 - 1
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 _PROFILE_INT_FIELDS = (
     "daily_quota",
@@ -260,6 +265,47 @@ def _profile_from_user(user: TelegramUser) -> dict[str, Any]:
     return profile
 
 
+def _metadata_from_row(row: Any) -> Any:
+    """Return endpoint/identity metadata without failing an old row export."""
+    raw = getattr(row, "metadata_json", None)
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Metadata is informational.  Preserve opaque legacy values rather
+            # than making an otherwise valid user backup impossible to export.
+            return raw
+    return raw
+
+
+def _normalise_user_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Add the v2 identity/endpoint sections while accepting v1-shaped input."""
+    normalised = dict(record)
+    identity = dict(normalised.get("identity") or {})
+    # Some early development backups put these fields at the user level.
+    for key in ("telegram_id", "github_username", "email", "email_verified"):
+        if key not in identity and key in normalised:
+            identity[key] = normalised[key]
+    normalised["identity"] = identity
+    normalised["identities"] = list(normalised.get("identities") or [])
+    normalised["notification_endpoints"] = list(
+        normalised.get("notification_endpoints") or []
+    )
+    return normalised
+
+
+def _real_telegram_id(value: Any) -> int | None:
+    """Hide non-positive legacy compatibility sentinels from backups."""
+
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else None
+    )
+
+
 def _personal_config_from_rows(
     user_configs: list[UserConfig], webui_config: WebUIConfig | None
 ) -> dict[str, Any]:
@@ -363,7 +409,7 @@ def build_user_backup_document(
     """Build a stable JSON-compatible user backup document from records."""
     timestamp = exported_at or now_utc()
     sorted_users = sorted(
-        users,
+        [_normalise_user_record(user) for user in users],
         key=lambda item: (
             item.get("identity", {}).get("telegram_id") is None,
             item.get("identity", {}).get("telegram_id") or 0,
@@ -404,6 +450,8 @@ async def export_user_backup(db: AsyncSession) -> dict[str, Any]:
     webui_by_user: dict[int, WebUIConfig] = {}
     recovery_by_user: dict[int, list[UserRecoveryCode]] = defaultdict(list)
     passkeys_by_user: dict[int, list[UserWebAuthnCredential]] = defaultdict(list)
+    identities_by_user: dict[int, list[UserIdentity]] = defaultdict(list)
+    endpoints_by_user: dict[int, list[NotificationEndpoint]] = defaultdict(list)
 
     if user_ids:
         config_result = await db.execute(
@@ -438,12 +486,56 @@ async def export_user_backup(db: AsyncSession) -> dict[str, Any]:
         for row in passkey_result.scalars().all():
             passkeys_by_user[row.user_id].append(row)
 
+        # v2 tables are intentionally optional at this boundary so a backup
+        # can still be exported from a process serving a pre-migration schema.
+        try:
+            identity_result = await db.execute(
+                select(UserIdentity)
+                .where(UserIdentity.user_id.in_(user_ids))
+                .order_by(UserIdentity.user_id, UserIdentity.id)
+            )
+            for row in identity_result.scalars().all():
+                identities_by_user[row.user_id].append(row)
+        except (KeyError, AttributeError, SQLAlchemyError):
+            logger.debug("身份表不可用，导出将仅包含旧身份字段")
+        try:
+            endpoint_result = await db.execute(
+                select(NotificationEndpoint)
+                .where(NotificationEndpoint.user_id.in_(user_ids))
+                .order_by(NotificationEndpoint.user_id, NotificationEndpoint.id)
+            )
+            for row in endpoint_result.scalars().all():
+                endpoints_by_user[row.user_id].append(row)
+        except (KeyError, AttributeError, SQLAlchemyError):
+            logger.debug("通知端点表不可用，导出将仅包含用户资料")
+
     records = [
         {
             "identity": {
-                "telegram_id": user.telegram_id,
+                "telegram_id": _real_telegram_id(user.telegram_id),
                 "github_username": user.github_username,
+                "email": getattr(user, "email", None),
+                "email_verified": bool(getattr(user, "email_verified", False)),
             },
+            "identities": [
+                {
+                    "provider": row.provider,
+                    "provider_user_id": row.provider_user_id,
+                    "provider_username": row.provider_username,
+                    "metadata": _metadata_from_row(row),
+                }
+                for row in identities_by_user.get(user.id, [])
+            ],
+            "notification_endpoints": [
+                {
+                    "provider": row.provider,
+                    "address": row.address,
+                    "verified": bool(row.verified),
+                    "enabled": bool(row.enabled),
+                    "metadata": _metadata_from_row(row),
+                }
+                for row in endpoints_by_user.get(user.id, [])
+            ],
             "profile": _profile_from_user(user),
             "personal_config": _personal_config_from_rows(
                 configs_by_user.get(user.id, []), webui_by_user.get(user.id)
@@ -466,7 +558,9 @@ def serialize_user_backup(document: dict[str, Any]) -> bytes:
     return json.dumps(document, ensure_ascii=False, indent=2).encode("utf-8")
 
 
-def _validate_identity(raw: Any, index: int) -> dict[str, Any]:
+def _validate_identity(
+    raw: Any, index: int, *, allow_external_only: bool = False
+) -> dict[str, Any]:
     label = f"用户 {index + 1} 的身份"
     if not isinstance(raw, dict):
         raise UserBackupError(f"{label}结构无效")
@@ -485,12 +579,125 @@ def _validate_identity(raw: Any, index: int) -> dict[str, Any]:
         100,
         allow_none=True,
     )
-    if telegram_id is None and not github_username:
+    email = raw.get("email")
+    _validate_string(email, f"{label} email", 320, allow_none=True, allow_empty=False)
+    if email is not None:
+        email = email.strip().lower()
+        if not _EMAIL_RE.fullmatch(email):
+            raise UserBackupError(f"{label} email 格式无效")
+    email_verified = raw.get("email_verified", False)
+    _validate_bool(email_verified, f"{label} email_verified")
+    if telegram_id is None and not github_username and not allow_external_only:
         raise UserBackupError(f"{label} 至少需要 telegram_id 或 github_username")
+    if telegram_id is not None and telegram_id <= 0:
+        # Old SQLite rows created before nullable migration may contain 0 or
+        # a negative placeholder for a GitHub-only account.  Treat it as an
+        # absent Telegram identity during import instead of binding it.
+        telegram_id = None
     return {
         "telegram_id": telegram_id,
         "github_username": github_username,
+        "email": email,
+        "email_verified": email_verified,
     }
+
+
+def _validate_external_identities(raw: Any, index: int) -> list[dict[str, Any]]:
+    label = f"用户 {index + 1} 的外部身份"
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or len(raw) > USER_BACKUP_MAX_CONFIGS:
+        raise UserBackupError(f"{label}列表无效")
+    identities: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise UserBackupError(f"{label}包含无效记录")
+        provider = item.get("provider")
+        provider_user_id = item.get("provider_user_id")
+        _validate_string(provider, f"{label} provider", 50, allow_empty=False)
+        _validate_string(
+            provider_user_id,
+            f"{label} provider_user_id",
+            255,
+            allow_empty=False,
+        )
+        key = (provider.lower(), provider_user_id)
+        if key in seen:
+            raise UserBackupError(f"{label}身份重复")
+        seen.add(key)
+        provider_username = item.get("provider_username")
+        _validate_string(
+            provider_username,
+            f"{label} provider_username",
+            255,
+            allow_none=True,
+        )
+        metadata = item.get("metadata")
+        if metadata is not None and not isinstance(metadata, (dict, list, str, int, float, bool)):
+            raise UserBackupError(f"{label} metadata 格式无效")
+        identities.append(
+            {
+                "provider": provider.lower(),
+                "provider_user_id": provider_user_id,
+                "provider_username": provider_username,
+                "metadata": metadata,
+            }
+        )
+    return identities
+
+
+def _validate_notification_endpoints(raw: Any, index: int) -> list[dict[str, Any]]:
+    label = f"用户 {index + 1} 的通知端点"
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or len(raw) > USER_BACKUP_MAX_CONFIGS:
+        raise UserBackupError(f"{label}列表无效")
+    endpoints: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise UserBackupError(f"{label}包含无效记录")
+        provider = item.get("provider")
+        address = item.get("address")
+        _validate_string(provider, f"{label} provider", 50, allow_empty=False)
+        _validate_string(address, f"{label} address", 320, allow_empty=False)
+        provider = provider.lower()
+        address = address.strip()
+        if provider == "telegram":
+            try:
+                telegram_id = int(address)
+            except (TypeError, ValueError) as exc:
+                raise UserBackupError(f"{label} Telegram 地址格式无效") from exc
+            if telegram_id <= 0:
+                # Old SQLite compatibility exports may contain 0/-1/-2 in
+                # the legacy mirror.  They are not real chats and must not
+                # become active endpoints when a backup is restored.
+                continue
+            address = str(telegram_id)
+        key = (provider, address.lower() if provider == "email" else address)
+        if key in seen:
+            raise UserBackupError(f"{label}端点重复")
+        seen.add(key)
+        if provider == "email" and not _EMAIL_RE.fullmatch(address.lower()):
+            raise UserBackupError(f"{label} email 地址格式无效")
+        verified = item.get("verified", False)
+        enabled = item.get("enabled", True)
+        _validate_bool(verified, f"{label} verified")
+        _validate_bool(enabled, f"{label} enabled")
+        metadata = item.get("metadata")
+        if metadata is not None and not isinstance(metadata, (dict, list, str, int, float, bool)):
+            raise UserBackupError(f"{label} metadata 格式无效")
+        endpoints.append(
+            {
+                "provider": provider,
+                "address": address.lower() if provider == "email" else address,
+                "verified": verified,
+                "enabled": enabled,
+                "metadata": metadata,
+            }
+        )
+    return endpoints
 
 
 def _validate_profile(raw: Any, index: int) -> dict[str, Any]:
@@ -724,7 +931,8 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
         raise UserBackupError("用户备份文件顶层必须是对象")
     if payload.get("format") != USER_BACKUP_FORMAT:
         raise UserBackupError("用户备份文件格式标识不匹配")
-    if payload.get("version") != USER_BACKUP_VERSION:
+    version = payload.get("version")
+    if version not in SUPPORTED_USER_BACKUP_VERSIONS:
         raise UserBackupError("不支持此用户备份版本")
     if payload.get("scope") != USER_BACKUP_SCOPE:
         raise UserBackupError("用户备份范围无效")
@@ -761,10 +969,33 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
     seen_telegram_ids: set[int] = set()
     seen_github_usernames: set[str] = set()
     seen_passkey_hashes: set[str] = set()
+    seen_external_identities: set[tuple[str, str]] = set()
+    seen_notification_endpoints: set[tuple[str, str]] = set()
     for index, raw_user in enumerate(raw_users):
         if not isinstance(raw_user, dict):
             raise UserBackupError(f"用户 {index + 1} 记录结构无效")
-        identity = _validate_identity(raw_user.get("identity"), index)
+        # v1 exports used a nested identity object.  Accept early migration
+        # snapshots that put those fields directly on each user record.
+        raw_identity = raw_user.get("identity")
+        if raw_identity is None:
+            raw_identity = {
+                key: raw_user.get(key)
+                for key in ("telegram_id", "github_username", "email", "email_verified")
+                if key in raw_user
+            }
+        # v2 users may be represented solely by a stable external identity
+        # (for example a Passkey subject) while the legacy Telegram facade is
+        # empty.  Validate the external records before deciding whether that
+        # legacy identity may be empty.
+        identities = _validate_external_identities(raw_user.get("identities"), index)
+        endpoints = _validate_notification_endpoints(
+            raw_user.get("notification_endpoints"), index
+        )
+        identity = _validate_identity(
+            raw_identity,
+            index,
+            allow_external_only=bool(identities or endpoints),
+        )
         telegram_id = identity["telegram_id"]
         github_username = identity["github_username"]
         if telegram_id is not None:
@@ -772,9 +1003,25 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
                 raise UserBackupError(f"telegram_id {telegram_id} 重复")
             seen_telegram_ids.add(telegram_id)
         if github_username:
-            if github_username in seen_github_usernames:
+            github_key = github_username.casefold()
+            if github_key in seen_github_usernames:
                 raise UserBackupError(f"github_username {github_username} 重复")
-            seen_github_usernames.add(github_username)
+            seen_github_usernames.add(github_key)
+
+        for external in identities:
+            key = (external["provider"], external["provider_user_id"])
+            if key in seen_external_identities:
+                raise UserBackupError(
+                    f"外部身份 {external['provider']}:{external['provider_user_id']} 重复"
+                )
+            seen_external_identities.add(key)
+        for endpoint in endpoints:
+            key = (endpoint["provider"], endpoint["address"])
+            if key in seen_notification_endpoints:
+                raise UserBackupError(
+                    f"通知端点 {endpoint['provider']}:{endpoint['address']} 重复"
+                )
+            seen_notification_endpoints.add(key)
 
         profile = _validate_profile(raw_user.get("profile"), index)
         personal_config = _validate_personal_config(
@@ -790,6 +1037,8 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
         users.append(
             {
                 "identity": identity,
+                "identities": identities,
+                "notification_endpoints": endpoints,
                 "profile": profile,
                 "personal_config": personal_config,
                 "two_factor": two_factor,
@@ -830,6 +1079,25 @@ def _count_query_rows(result: Any) -> list[Any]:
     return list(result.scalars().all())
 
 
+async def _optional_model_rows(db: AsyncSession, model: Any) -> tuple[list[Any], bool]:
+    """Load a v2 model while remaining compatible with tiny v1 test doubles.
+
+    Real startup migration always creates these tables.  The narrow exception
+    handling is only for legacy callers that provide a session facade without
+    the new model in its dispatch map.
+    """
+    try:
+        return _count_query_rows(await db.execute(select(model))), True
+    except (KeyError, AttributeError):
+        return [], False
+    except SQLAlchemyError:
+        # PostgreSQL marks the transaction failed when an optional legacy
+        # table is absent; clear that state before the caller continues with
+        # v1-compatible user rows.
+        await db.rollback()
+        return [], False
+
+
 async def restore_user_backup(
     db: AsyncSession,
     document: dict[str, Any],
@@ -864,9 +1132,33 @@ async def restore_user_backup(
         )
         by_telegram_id = {user.telegram_id: user for user in existing_users}
         by_github_username = {
-            user.github_username: user
+            user.github_username.casefold(): user
             for user in existing_users
             if user.github_username
+        }
+        by_email = {
+            user.email.casefold(): user
+            for user in existing_users
+            if getattr(user, "email", None)
+        }
+        existing_identity_rows, identity_tables_available = await _optional_model_rows(
+            db, UserIdentity
+        )
+        existing_endpoint_rows, endpoint_tables_available = await _optional_model_rows(
+            db, NotificationEndpoint
+        )
+        by_external_identity = {
+            (str(row.provider).casefold(), row.provider_user_id): row
+            for row in existing_identity_rows
+        }
+        by_notification_endpoint = {
+            (
+                str(row.provider).casefold(),
+                row.address.casefold()
+                if str(row.provider).casefold() == "email"
+                else row.address,
+            ): row
+            for row in existing_endpoint_rows
         }
 
         matches: list[tuple[dict[str, Any], TelegramUser | None, str | None]] = []
@@ -875,12 +1167,42 @@ async def restore_user_backup(
             identity = raw_user["identity"]
             telegram_id = identity.get("telegram_id")
             github_username = identity.get("github_username")
+            external_identities = raw_user.get("identities", [])
             by_telegram = (
                 by_telegram_id.get(telegram_id) if telegram_id is not None else None
             )
             by_github = (
-                by_github_username.get(github_username) if github_username else None
+                by_github_username.get(github_username.casefold())
+                if github_username
+                else None
             )
+            by_external = None
+            for external in external_identities:
+                identity_row = by_external_identity.get(
+                    (
+                        external["provider"].casefold(),
+                        external["provider_user_id"],
+                    )
+                )
+                if identity_row is None:
+                    continue
+                external_user = next(
+                    (user for user in existing_users if user.id == identity_row.user_id),
+                    None,
+                )
+                if external_user is None:
+                    raise UserBackupError("外部身份关联的用户不存在")
+                if by_external is not None and by_external.id != external_user.id:
+                    raise UserBackupError("备份中的外部身份指向不同用户")
+                by_external = external_user
+            targets_by_identity = [candidate for candidate in (by_telegram, by_github, by_external) if candidate]
+            if targets_by_identity and any(
+                candidate.id != targets_by_identity[0].id
+                for candidate in targets_by_identity[1:]
+            ):
+                raise UserBackupError(
+                    f"用户身份冲突：{github_username or telegram_id or 'external identity'} 指向不同用户"
+                )
             if (
                 by_telegram is not None
                 and by_github is not None
@@ -889,11 +1211,15 @@ async def restore_user_backup(
                 raise UserBackupError(
                     f"用户身份冲突：telegram_id {telegram_id} 与 github_username {github_username} 指向不同用户"
                 )
-            target = by_telegram or by_github
+            target = by_external or by_telegram or by_github
             match_field = (
-                "telegram_id"
-                if by_telegram is not None
-                else ("github_username" if by_github is not None else None)
+                "provider_user_id"
+                if by_external is not None
+                else (
+                    "telegram_id"
+                    if by_telegram is not None
+                    else ("github_username" if by_github is not None else None)
+                )
             )
             if target is not None:
                 if target.id in seen_existing_ids:
@@ -901,9 +1227,37 @@ async def restore_user_backup(
                         f"备份中的多个用户匹配到同一目标用户 {target.id}"
                     )
                 seen_existing_ids.add(target.id)
-            if target is None and telegram_id is None:
+            email = identity.get("email")
+            if email:
+                email_owner = by_email.get(email.casefold())
+                if email_owner is not None and (
+                    target is None or email_owner.id != target.id
+                ):
+                    raise UserBackupError(
+                        f"用户 email {email} 已属于其他用户，拒绝自动合并"
+                    )
+            for endpoint in raw_user.get("notification_endpoints", []):
+                endpoint_key = (
+                    endpoint["provider"].casefold(),
+                    endpoint["address"].casefold()
+                    if endpoint["provider"].casefold() == "email"
+                    else endpoint["address"],
+                )
+                existing_endpoint = by_notification_endpoint.get(endpoint_key)
+                if existing_endpoint is not None and (
+                    target is None or existing_endpoint.user_id != target.id
+                ):
+                    raise UserBackupError(
+                        f"通知端点 {endpoint['provider']}:{endpoint['address']} 已属于其他用户"
+                    )
+            if (
+                target is None
+                and telegram_id is None
+                and not github_username
+                and not external_identities
+            ):
                 raise UserBackupError(
-                    f"新用户 {github_username or '(unknown)'} 缺少 telegram_id，无法导入"
+                    f"新用户 {github_username or '(unknown)'} 缺少可用身份，无法导入"
                 )
             matches.append((raw_user, target, match_field))
 
@@ -950,8 +1304,20 @@ async def restore_user_backup(
             changed = False
             existing_target = target is not None
             if target is None:
+                telegram_id = identity.get("telegram_id")
+                if telegram_id is None:
+                    # Preserve import compatibility for pre-v2 SQLite tables
+                    # whose legacy facade still enforces NOT NULL.  The
+                    # placeholder is never exported as a Telegram endpoint.
+                    from backend.services.identity_service import (
+                        _next_legacy_placeholder,
+                        legacy_telegram_id_required,
+                    )
+
+                    if await legacy_telegram_id_required(db):
+                        telegram_id = await _next_legacy_placeholder(db)
                 target = TelegramUser(
-                    telegram_id=identity["telegram_id"],
+                    telegram_id=telegram_id,
                     github_username=identity.get("github_username"),
                 )
                 db.add(target)
@@ -960,7 +1326,8 @@ async def restore_user_backup(
                 changed = True
             else:
                 if (
-                    match_field == "telegram_id"
+                    match_field in {"telegram_id", "provider_user_id"}
+                    and identity.get("github_username")
                     and identity.get("github_username") != target.github_username
                 ):
                     changed = (
@@ -984,6 +1351,19 @@ async def restore_user_backup(
                         _apply_value(target, "telegram_id", identity["telegram_id"])
                         or changed
                     )
+
+            if identity.get("email"):
+                changed = (
+                    _apply_value(target, "email", identity["email"]) or changed
+                )
+                changed = (
+                    _apply_value(
+                        target,
+                        "email_verified",
+                        bool(identity.get("email_verified", False)),
+                    )
+                    or changed
+                )
 
             # For new rows SQLAlchemy defaults cover omitted profile fields; explicit backup values win.
             if target.id is None:
@@ -1204,6 +1584,123 @@ async def restore_user_backup(
                         passkey.get("last_used_at"), "passkey last_used_at"
                     )
                     passkeys_updated += 1
+
+            # Restore stable external identities first.  Existing provider IDs
+            # are matched above and never cause a second internal user.
+            if identity_tables_available:
+                external_identities = list(raw_user.get("identities", []))
+                github_username = raw_user["identity"].get("github_username")
+                if github_username and not external_identities:
+                    external_identities.append(
+                        {
+                            "provider": "github",
+                            "provider_user_id": f"legacy:{github_username.casefold()}",
+                            "provider_username": github_username,
+                            "metadata": None,
+                        }
+                    )
+                for external in external_identities:
+                    key = (
+                        external["provider"].casefold(),
+                        external["provider_user_id"],
+                    )
+                    existing_identity = by_external_identity.get(key)
+                    metadata = external.get("metadata")
+                    metadata_value = (
+                        json.dumps(metadata, ensure_ascii=False)
+                        if metadata is not None and not isinstance(metadata, str)
+                        else metadata
+                    )
+                    if existing_identity is None:
+                        db.add(
+                            UserIdentity(
+                                user_id=user_id,
+                                provider=external["provider"].casefold(),
+                                provider_user_id=external["provider_user_id"],
+                                provider_username=external.get("provider_username"),
+                                metadata_json=metadata_value,
+                            )
+                        )
+                    elif existing_identity.user_id != user_id:
+                        raise UserBackupError(
+                            f"外部身份 {external['provider']}:{external['provider_user_id']} 已属于其他用户"
+                        )
+                    else:
+                        existing_identity.provider_username = external.get(
+                            "provider_username"
+                        )
+                        existing_identity.metadata_json = metadata_value
+
+            if endpoint_tables_available:
+                endpoints = list(raw_user.get("notification_endpoints", []))
+                # Legacy Telegram IDs and verified OAuth emails become endpoint
+                # records during restore as well, so notification code can use
+                # one abstraction immediately after importing a v1 backup.
+                telegram_id = raw_user["identity"].get("telegram_id")
+                if telegram_id is not None and not any(
+                    item["provider"] == "telegram"
+                    and item["address"] == str(telegram_id)
+                    for item in endpoints
+                ):
+                    endpoints.append(
+                        {
+                            "provider": "telegram",
+                            "address": str(telegram_id),
+                            "verified": True,
+                            "enabled": True,
+                            "metadata": {"legacy": True},
+                        }
+                    )
+                email = raw_user["identity"].get("email")
+                if email and not any(
+                    item["provider"] == "email"
+                    and item["address"].casefold() == email.casefold()
+                    for item in endpoints
+                ):
+                    endpoints.append(
+                        {
+                            "provider": "email",
+                            "address": email,
+                            "verified": bool(
+                                raw_user["identity"].get("email_verified", False)
+                            ),
+                            "enabled": True,
+                            "metadata": {"oauth": True},
+                        }
+                    )
+                for endpoint in endpoints:
+                    key = (
+                        endpoint["provider"].casefold(),
+                        endpoint["address"].casefold()
+                        if endpoint["provider"].casefold() == "email"
+                        else endpoint["address"],
+                    )
+                    existing_endpoint = by_notification_endpoint.get(key)
+                    metadata = endpoint.get("metadata")
+                    metadata_value = (
+                        json.dumps(metadata, ensure_ascii=False)
+                        if metadata is not None and not isinstance(metadata, str)
+                        else metadata
+                    )
+                    if existing_endpoint is None:
+                        db.add(
+                            NotificationEndpoint(
+                                user_id=user_id,
+                                provider=endpoint["provider"].casefold(),
+                                address=endpoint["address"],
+                                verified=bool(endpoint.get("verified", False)),
+                                enabled=bool(endpoint.get("enabled", True)),
+                                metadata_json=metadata_value,
+                            )
+                        )
+                    elif existing_endpoint.user_id != user_id:
+                        raise UserBackupError(
+                            f"通知端点 {endpoint['provider']}:{endpoint['address']} 已属于其他用户"
+                        )
+                    else:
+                        existing_endpoint.verified = bool(endpoint.get("verified", False))
+                        existing_endpoint.enabled = bool(endpoint.get("enabled", True))
+                        existing_endpoint.metadata_json = metadata_value
 
         await db.commit()
     except UserBackupError:

@@ -7,7 +7,6 @@ from sqlalchemy import String, desc, func, or_, select, type_coerce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_settings
 from backend.core.time_service import now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
@@ -116,7 +115,7 @@ async def add_user(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
-    telegram_id: int = Form(...),
+    telegram_id: int | None = Form(None),
     github_username: str = Form(...),
     role: str = Form("user"),
     daily_quota: int = Form(10),
@@ -136,8 +135,11 @@ async def add_user(
             "/users/", "toast.invalid_role", "error", lang=detect_language()
         )
 
-    # Telegram ID 验证
-    if telegram_id <= 0:
+    # Telegram is an optional notification endpoint.  A blank value creates a
+    # GitHub-only internal user; old SQLite schemas that still enforce NOT
+    # NULL receive the same non-positive compatibility placeholder used by
+    # the OAuth/backup migration and never expose it as a real endpoint.
+    if telegram_id is not None and telegram_id <= 0:
         return toast_redirect(
             "/users/",
             "toast.telegram_id_positive",
@@ -173,17 +175,18 @@ async def add_user(
             )
 
     # 检查 Telegram ID 唯一性
-    existing = await db.execute(
-        select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
-    )
-    if existing.scalar_one_or_none():
-        return toast_redirect(
-            "/users/",
-            "toast.telegram_id_exists",
-            "error",
-            lang=detect_language(),
-            telegram_id=telegram_id,
+    if telegram_id is not None:
+        existing = await db.execute(
+            select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
         )
+        if existing.scalar_one_or_none():
+            return toast_redirect(
+                "/users/",
+                "toast.telegram_id_exists",
+                "error",
+                lang=detect_language(),
+                telegram_id=telegram_id,
+            )
 
     # 检查 GitHub 用户名唯一性
     existing_gh = await db.execute(
@@ -198,12 +201,14 @@ async def add_user(
             github_username=github_username,
         )
 
-    # 超级管理员自动检测
-    auto_super_admin = False
-    settings = get_settings()
-    if telegram_id in settings.telegram_admin_ids_list:
-        role = "super_admin"
-        auto_super_admin = True
+    if telegram_id is None:
+        from backend.services.identity_service import (
+            _next_legacy_placeholder,
+            legacy_telegram_id_required,
+        )
+
+        if await legacy_telegram_id_required(db):
+            telegram_id = await _next_legacy_placeholder(db)
 
     # 创建用户
     new_user = TelegramUser(
@@ -259,15 +264,11 @@ async def add_user(
             "issue_daily_quota": issue_daily_quota,
             "issue_weekly_quota": issue_weekly_quota,
             "issue_monthly_quota": issue_monthly_quota,
-            "auto_super_admin": auto_super_admin,
         },
-    )
-    msg_key = (
-        "toast.user_added_auto_super_admin" if auto_super_admin else "toast.user_added"
     )
     return toast_redirect(
         "/users/",
-        msg_key,
+        "toast.user_added",
         lang=detect_language(),
         github_username=github_username,
     )
@@ -655,11 +656,11 @@ async def update_user_info(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
-    telegram_id: int = Form(...),
+    telegram_id: int | None = Form(None),
     github_username: str = Form(...),
 ) -> RedirectResponse:
     """修改用户基本信息（Telegram ID、GitHub 用户名）"""
-    if telegram_id <= 0:
+    if telegram_id is not None and telegram_id <= 0:
         return toast_redirect(
             f"/users/{user_id}",
             "toast.telegram_id_positive",
@@ -682,19 +683,20 @@ async def update_user_info(
         return error_page(request, message="用户不存在", user=user)
 
     # 检查 Telegram ID 唯一性（排除自身）
-    existing = await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.telegram_id == telegram_id, TelegramUser.id != user_id
+    if telegram_id is not None:
+        existing = await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.telegram_id == telegram_id, TelegramUser.id != user_id
+            )
         )
-    )
-    if existing.scalar_one_or_none():
-        return toast_redirect(
-            f"/users/{user_id}",
-            "toast.telegram_id_used",
-            "error",
-            lang=detect_language(),
-            telegram_id=telegram_id,
-        )
+        if existing.scalar_one_or_none():
+            return toast_redirect(
+                f"/users/{user_id}",
+                "toast.telegram_id_used",
+                "error",
+                lang=detect_language(),
+                telegram_id=telegram_id,
+            )
 
     # 检查 GitHub 用户名唯一性（排除自身）
     existing_gh = await db.execute(
@@ -713,7 +715,10 @@ async def update_user_info(
 
     old_tg_id = target_user.telegram_id
     old_github = target_user.github_username
-    target_user.telegram_id = telegram_id
+    # Blank means keep the legacy mirror untouched.  Changing a populated
+    # parent key to NULL would invalidate old UserRepoSubscription FKs.
+    if telegram_id is not None:
+        target_user.telegram_id = telegram_id
     target_user.github_username = github_username
     await db.commit()
 

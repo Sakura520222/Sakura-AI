@@ -336,14 +336,21 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
 
                 if _should_start_background_tasks(settings):
-                    # 启动 Telegram Bot（后台任务）
-                    try:
-                        telegram_task = create_registered_background_task(
-                            start_telegram_bot(), "telegram_listener"
-                        )
-                        logger.info("✅ Telegram Bot 已启动")
-                    except Exception as e:
-                        logger.error(f"❌ Telegram Bot 启动失败: {e}")
+                    # Telegram is an optional notification provider.  A missing
+                    # token must never prevent GitHub OAuth, Passkey, or the
+                    # WebUI from starting.
+                    if getattr(settings, "telegram_enabled", True) and getattr(
+                        settings, "telegram_bot_token", None
+                    ):
+                        try:
+                            telegram_task = create_registered_background_task(
+                                start_telegram_bot(), "telegram_listener"
+                            )
+                            logger.info("✅ Telegram Bot 已启动")
+                        except Exception as e:
+                            logger.error(f"❌ Telegram Bot 启动失败: {e}")
+                    else:
+                        logger.info("ℹ️ Telegram 通知未配置，跳过 Bot 启动")
 
                     # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
                     try:

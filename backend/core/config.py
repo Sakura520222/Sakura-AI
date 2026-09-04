@@ -395,11 +395,37 @@ class Settings(BaseSettings):
         description="仓库互助 GitHub App user-to-server 授权回调地址",
     )
 
-    # Telegram Bot配置
+    # 通知 Provider 配置。Telegram/SMTP 都是可选能力，不能阻塞 GitHub/Passkey 登录。
+    telegram_enabled: bool = Field(
+        True,
+        description="是否启用 Telegram 通知 Provider（未配置 token 时自动跳过）",
+    )
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None  # 启动时通过 getMe 自动填充
+    telegram_bind_token_expire_seconds: int = Field(
+        300,
+        ge=30,
+        le=3600,
+        description="Telegram 一次性绑定链接有效期（秒）",
+    )
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
+    email_enabled: bool = Field(
+        True,
+        description="是否启用 Email 通知 Provider",
+    )
+    smtp_host: str | None = None
+    smtp_port: int = Field(587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_from_name: str = "Sakura-AI"  # 邮件 From 显示昵称
+    smtp_security: str = "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    notification_max_concurrency: int = Field(5, ge=1, le=100)
+    notification_retry_max_attempts: int = Field(3, ge=1, le=20)
+    notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
+    notification_retry_backoff_factor: float = Field(2.0, ge=1.0)
+    notification_rate_limit_seconds: float = Field(0.05, ge=0)
     register_quota_multiplier: float = Field(
         0.2,
         ge=0.1,
@@ -508,7 +534,6 @@ class Settings(BaseSettings):
             "github_private_key",
             "github_webhook_secret",
             "database_url",
-            "telegram_bot_token",
         ]
         missing = []
         for field_name in required:
@@ -545,6 +570,11 @@ class Settings(BaseSettings):
     def github_oauth_user_url(self) -> str:
         """GitHub OAuth 用户信息 API"""
         return "https://api.github.com/user"
+
+    @property
+    def github_oauth_emails_url(self) -> str:
+        """GitHub OAuth 已授权邮箱 API。"""
+        return "https://api.github.com/user/emails"
 
     @property
     def telegram_admin_ids_list(self) -> list[int]:
@@ -1475,6 +1505,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "webui_secret_key",
         "github_oauth_client_secret",
         "telegram_bot_token",
+        "smtp_password",
         "stripe_api_key",
         "stripe_webhook_secret",
         "paddle_api_key",
@@ -1656,6 +1687,21 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "github_private_key": "GitHub App 私钥",
     "github_webhook_secret": "GitHub Webhook Secret",
     "telegram_bot_token": "Telegram Bot Token",
+    "telegram_enabled": "启用 Telegram 通知",
+    "telegram_bind_token_expire_seconds": "Telegram 绑定链接有效期（秒）",
+    "email_enabled": "启用 Email 通知",
+    "smtp_host": "SMTP 主机",
+    "smtp_port": "SMTP 端口",
+    "smtp_username": "SMTP 用户名",
+    "smtp_password": "SMTP 密码",
+    "smtp_from": "SMTP 发件地址",
+    "smtp_from_name": "SMTP 发件昵称",
+    "smtp_security": "SMTP 安全模式",
+    "notification_max_concurrency": "通知最大并发数",
+    "notification_retry_max_attempts": "通知最大重试次数",
+    "notification_retry_initial_delay_seconds": "通知初始重试延迟（秒）",
+    "notification_retry_backoff_factor": "通知重试退避倍数",
+    "notification_rate_limit_seconds": "通知限流间隔（秒）",
     "webui_secret_key": "WebUI 密钥",
     "app_domain": "应用域名",
     "app_port": "应用端口",
@@ -2157,7 +2203,22 @@ CORE_CONFIG_KEYS = frozenset(
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
+        "telegram_enabled",
         "telegram_bot_token",
+        "telegram_bind_token_expire_seconds",
+        "email_enabled",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "smtp_password",
+        "smtp_from",
+        "smtp_from_name",
+        "smtp_security",
+        "notification_max_concurrency",
+        "notification_retry_max_attempts",
+        "notification_retry_initial_delay_seconds",
+        "notification_retry_backoff_factor",
+        "notification_rate_limit_seconds",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_domain",

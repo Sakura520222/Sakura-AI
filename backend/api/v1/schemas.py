@@ -87,6 +87,8 @@ class UserInfoResponse(BaseModel):
     user_id: int
     github_id: int | None = None
     avatar_url: str | None = None
+    email: str | None = None
+    email_verified: bool = False
 
 
 # ========== 审查模型 ==========
@@ -196,7 +198,10 @@ class UserResponse(BaseModel):
     """用户响应"""
 
     id: int
-    telegram_id: int
+    # Telegram is an optional notification endpoint.  Keep this nullable so
+    # GitHub/Passkey-only accounts can be listed before they opt in to chat
+    # notifications; legacy rows continue to expose their positive id.
+    telegram_id: int | None = None
     github_username: str | None = None
     role: str
     daily_quota: int | None = None
@@ -221,7 +226,7 @@ class UserResponse(BaseModel):
 class UserCreateRequest(BaseModel):
     """创建用户请求"""
 
-    telegram_id: int
+    telegram_id: int | None = None
     github_username: str
     role: str = "user"
     daily_quota: int = 10
@@ -257,7 +262,7 @@ class UserIssueQuotaUpdateRequest(BaseModel):
 class UserInfoUpdateRequest(BaseModel):
     """更新用户基本信息请求"""
 
-    telegram_id: int
+    telegram_id: int | None = None
     github_username: str
 
 

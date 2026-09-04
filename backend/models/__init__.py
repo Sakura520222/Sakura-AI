@@ -30,6 +30,14 @@ from backend.models.activity_observability_models import (
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.agent_skill_models import AgentSkill
 from backend.models.ai_usage_models import AIUsageRecord
+from backend.models.announcement_models import (
+    Announcement,
+    AnnouncementRead,
+    AnnouncementStatus,
+    AnnouncementType,
+    DeliveryStatus,
+    NotificationDelivery,
+)
 from backend.models.database import (
     AppConfig,
     Base,
@@ -43,6 +51,12 @@ from backend.models.database import (
     init_database,
     insert_default_configs_async,
     migrate_schema_async,
+)
+from backend.models.identity_models import (
+    AuthProvider,
+    NotificationEndpoint,
+    NotificationProvider,
+    UserIdentity,
 )
 from backend.models.payment_models import (
     Order,
@@ -73,7 +87,11 @@ from backend.models.star_aid_models import (
     StarAidRepository,
     StarAidRepositoryMetric,
 )
-from backend.models.telegram_models import UserRecoveryCode, UserWebAuthnCredential
+from backend.models.telegram_models import (
+    TelegramUser,
+    UserRecoveryCode,
+    UserWebAuthnCredential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +121,19 @@ __all__ = [
     "ActivityWorkUnitResult",
     "AdminActionLog",
     "AgentSkill",
+    "Announcement",
+    "AnnouncementRead",
+    "AnnouncementStatus",
+    "AnnouncementType",
     "AppConfig",
+    "AuthProvider",
     "Base",
+    "DeliveryStatus",
     "FindingCategory",
     "FindingSeverity",
+    "NotificationDelivery",
+    "NotificationEndpoint",
+    "NotificationProvider",
     "Order",
     "OrderStatus",
     "PRReview",
@@ -130,7 +157,9 @@ __all__ = [
     "StarAidRepository",
     "StarAidRepositoryMetric",
     "SubscriptionStatus",
+    "TelegramUser",
     "UserConfig",
+    "UserIdentity",
     "UserRecoveryCode",
     "UserSubscription",
     "UserWebAuthnCredential",

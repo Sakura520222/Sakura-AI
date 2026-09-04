@@ -27,6 +27,7 @@ SYSTEM_SENSITIVE_KEYS = frozenset(
         "github_webhook_secret",
         "github_oauth_client_secret",
         "telegram_bot_token",
+        "smtp_password",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "star_aid_github_app_client_secret",
@@ -78,7 +79,34 @@ SYSTEM_CONFIG_GROUPS = [
     },
     {
         "id": "telegram",
-        "keys": ["telegram_bot_token"],
+        "keys": [
+            "telegram_enabled",
+            "telegram_bot_token",
+            "telegram_bind_token_expire_seconds",
+        ],
+    },
+    {
+        "id": "email",
+        "keys": [
+            "email_enabled",
+            "smtp_host",
+            "smtp_port",
+            "smtp_username",
+            "smtp_password",
+            "smtp_from",
+            "smtp_from_name",
+            "smtp_security",
+        ],
+    },
+    {
+        "id": "notifications",
+        "keys": [
+            "notification_max_concurrency",
+            "notification_retry_max_attempts",
+            "notification_retry_initial_delay_seconds",
+            "notification_retry_backoff_factor",
+            "notification_rate_limit_seconds",
+        ],
     },
     {
         "id": "application",

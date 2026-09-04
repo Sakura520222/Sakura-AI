@@ -89,6 +89,38 @@ _SYSTEM_BACKUP_SENSITIVE_KEYS = frozenset(SYSTEM_SENSITIVE_KEYS) | {
     "redis_url",
 }
 _ACCOUNT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+# A handful of deployments used the pre-unified names in exported JSON.  Keep
+# these aliases import-only: newly exported backups always use the canonical
+# Settings field names and no legacy row is deleted during restore.
+LEGACY_CONFIG_KEY_ALIASES = {
+    "telegram_token": "telegram_bot_token",
+    "telegram_enabled_flag": "telegram_enabled",
+    "github_client_id": "github_oauth_client_id",
+    "github_client_secret": "github_oauth_client_secret",
+    "github_redirect_uri": "github_oauth_redirect_uri",
+    "oauth_client_id": "github_oauth_client_id",
+    "oauth_client_secret": "github_oauth_client_secret",
+    "oauth_redirect_uri": "github_oauth_redirect_uri",
+    "smtp_server": "smtp_host",
+    "smtp_user": "smtp_username",
+    "smtp_pass": "smtp_password",
+    "smtp_sender": "smtp_from",
+    "smtp_tls": "smtp_security",
+}
+# 旧备份的 smtp_tls 是布尔字符串；导入时映射为 smtp_security 安全模式。
+_SMTP_SECURITY_TRUE = frozenset({"true", "1", "yes"})
+_SMTP_SECURITY_FALSE = frozenset({"false", "0", "no"})
+
+
+def _normalize_imported_smtp_security(value: str) -> str:
+    lowered = value.strip().lower()
+    if lowered in _SMTP_SECURITY_TRUE:
+        return "starttls"
+    if lowered in _SMTP_SECURITY_FALSE:
+        return "none"
+    if lowered in ("ssl", "starttls", "none"):
+        return lowered
+    raise ConfigBackupError("配置项 smtp_security 的值无效")
 _POSITIVE_INTEGER_KEYS = {
     "max_concurrent_reviews",
     "review_timeout_seconds",
@@ -610,21 +642,26 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
         for raw_record in raw_configs:
             if not isinstance(raw_record, dict):
                 raise ConfigBackupError(f"配置分类 {section} 包含无效记录")
-            key = raw_record.get("key")
+            raw_key = raw_record.get("key")
             value = raw_record.get("value")
             description = raw_record.get("description")
-            if not isinstance(key, str) or not key or len(key) > 100:
+            if not isinstance(raw_key, str) or not raw_key or len(raw_key) > 100:
                 raise ConfigBackupError("备份包含无效配置键")
+            key = LEGACY_CONFIG_KEY_ALIASES.get(raw_key, raw_key)
             if value is not None and not isinstance(value, str):
                 raise ConfigBackupError(f"配置项 {key} 的值必须是字符串或 null")
             if value is not None and len(value) > 1024 * 1024:
                 raise ConfigBackupError(f"配置项 {key} 的值过大")
+            if key == "smtp_security" and value is not None:
+                value = _normalize_imported_smtp_security(value)
             if description is not None and (
                 not isinstance(description, str) or len(description) > 255
             ):
                 raise ConfigBackupError(f"配置项 {key} 的描述无效")
             if key in seen_keys:
                 raise ConfigBackupError(f"配置项 {key} 重复")
+            if key != raw_key:
+                logger.info("备份配置键已从旧字段迁移: {} -> {}", raw_key, key)
             # 宽容恢复：未知键（历史版本备份中已移除的配置）跳过并告警，
             # 不阻断整个备份导入；键已知但节归属不符仍视为数据损坏，报错。
             if config_section_for_key(key) is None:

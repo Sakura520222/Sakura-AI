@@ -3,8 +3,12 @@
 import asyncio
 
 from loguru import logger
+from sqlalchemy import select
 from telegram import Bot
 from telegram.helpers import escape_markdown
+
+from backend.models.identity_models import NotificationEndpoint
+from backend.models.telegram_models import TelegramUser
 
 
 class NotificationSender:
@@ -13,10 +17,82 @@ class NotificationSender:
     def __init__(self, bot: Bot):
         self.bot = bot
 
+    async def _enabled_telegram_targets(self, chat_ids: list[int]) -> list[int]:
+        """Filter legacy mirror ids through the endpoint abstraction.
+
+        Older review/scan/MFA code still passes Telegram ids because those
+        values are part of historical business/FK data.  The endpoint table
+        is authoritative for opt-in state, however, so a WebUI unbind must
+        also silence these compatibility paths.  If the application database
+        has not been initialized yet, retain the old behavior for startup and
+        isolated unit callers; once a factory exists, failures fail closed so
+        an unavailable database cannot accidentally bypass an unbind.
+        """
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for value in chat_ids or []:
+            try:
+                chat_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if chat_id > 0 and chat_id not in seen:
+                normalized.append(chat_id)
+                seen.add(chat_id)
+        if not normalized:
+            return []
+
+        from backend.models import database as db_module
+
+        session_factory = db_module.async_session
+        if session_factory is None:
+            return normalized
+        try:
+            async with session_factory() as session:
+                result = await session.execute(
+                    select(NotificationEndpoint.address, TelegramUser.telegram_id)
+                    .join(TelegramUser, TelegramUser.id == NotificationEndpoint.user_id)
+                    .where(
+                        NotificationEndpoint.provider == "telegram",
+                        NotificationEndpoint.enabled.is_(True),
+                        (
+                            NotificationEndpoint.address.in_(
+                                [str(item) for item in normalized]
+                            )
+                            | TelegramUser.telegram_id.in_(normalized)
+                        ),
+                    )
+                    .order_by(NotificationEndpoint.id)
+                )
+                requested = {str(item) for item in normalized}
+                resolved: list[int] = []
+                seen_resolved: set[int] = set()
+                for address, legacy_id in result.all():
+                    try:
+                        current_id = int(address)
+                    except (TypeError, ValueError):
+                        continue
+                    if current_id <= 0:
+                        continue
+                    # A legacy caller may still pass the old mirror id after
+                    # the user re-bound Telegram.  Resolve that id to the
+                    # user's one active endpoint so the new chat receives
+                    # existing review/scan/MFA notifications.
+                    if (
+                        str(current_id) in requested or legacy_id in normalized
+                    ) and current_id not in seen_resolved:
+                        resolved.append(current_id)
+                        seen_resolved.add(current_id)
+        except Exception as exc:
+            logger.warning("查询 Telegram 通知端点失败，已安全跳过发送: {}", exc)
+            return []
+        return resolved
+
     async def send_to_targets(
         self, text: str, chat_ids: list[int], parse_mode: str = "Markdown", **kwargs
     ):
         """向多个目标发送消息，单个失败不影响其他"""
+
+        chat_ids = await self._enabled_telegram_targets(chat_ids)
 
         async def send_single(chat_id: int):
             try:
@@ -144,9 +220,9 @@ class NotificationSender:
             if not target_chat_id:
                 logger.warning("无通知目标 chat_id，跳过配额不足通知发送")
                 return
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
+            await self.send_to_targets(
+                text,
+                [target_chat_id],
                 parse_mode="Markdown",
             )
             logger.info(f"✅ 发送配额不足通知: {repo_name}#{item_type}-{item_number}")
@@ -178,9 +254,9 @@ class NotificationSender:
             if not target_chat_id:
                 logger.warning("无通知目标 chat_id，跳过未注册用户通知发送")
                 return
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
+            await self.send_to_targets(
+                text,
+                [target_chat_id],
                 parse_mode="Markdown",
             )
             logger.warning(

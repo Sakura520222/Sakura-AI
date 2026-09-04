@@ -25,6 +25,11 @@ from backend.core.redis import get_async_redis
 from backend.core.time_service import monotonic
 from backend.models import database as db_module
 from backend.models.telegram_models import TelegramUser
+from backend.services.auth_service import (
+    AuthProviderError,
+    GitHubOAuthProvider,
+    auth_service,
+)
 from backend.services.mfa_lockout_service import (
     AccountLockedError,
     check_mfa_lockout,
@@ -71,14 +76,6 @@ router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
 
 
-def _get_telegram_deep_link() -> str | None:
-    """构建 Telegram Bot 深链接（用于注册引导）"""
-    settings = get_settings()
-    if settings.telegram_bot_username:
-        return f"https://t.me/{settings.telegram_bot_username}?start=sign"
-    return None
-
-
 APP_VERSION = __version__
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
@@ -103,7 +100,6 @@ def _oauth_error(
     error_msg: str,
     has_oauth: bool = True,
     status_code: int = 400,
-    telegram_deep_link: str | None = None,
 ):
     """统一的 OAuth 错误页面响应"""
     lang = resolve_language(request)
@@ -118,7 +114,6 @@ def _oauth_error(
             "error": error_msg,
             "app_version": APP_VERSION,
             "has_oauth": has_oauth,
-            "telegram_deep_link": telegram_deep_link,
             "lang": lang,
             "_": make_translation_func(lang),
             "user_prefs": {"language": lang},
@@ -140,6 +135,8 @@ def _build_login_token_payload(
         "user_id": user.id,
         "github_id": github_id,
         "avatar_url": avatar_url,
+        "email": getattr(user, "email", None),
+        "email_verified": bool(getattr(user, "email_verified", False)),
     }
 
 
@@ -217,7 +214,7 @@ async def _delete_oauth_state(state: str):
 
 @router.get("/login")
 async def login_page(request: Request):
-    """渲染登录页面（GitHub OAuth 按钮）"""
+    """渲染登录页面（GitHub OAuth 和 Passkey 按钮）"""
     # 已登录则跳转仪表盘
     token = request.cookies.get("webui_token")
     if token and decode_access_token(token):
@@ -225,7 +222,6 @@ async def login_page(request: Request):
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
-    telegram_deep_link = _get_telegram_deep_link()
 
     # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
     lang = resolve_language(request)
@@ -242,7 +238,6 @@ async def login_page(request: Request):
         error=None,
         app_version=APP_VERSION,
         has_oauth=has_oauth,
-        telegram_deep_link=telegram_deep_link,
     )
 
 
@@ -276,7 +271,7 @@ async def github_login(request: Request):
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": settings.github_oauth_redirect_uri,
-        "scope": "read:user",
+            "scope": "read:user user:email",
         "state": state,
     }
 
@@ -313,51 +308,26 @@ async def github_callback(
 
     settings = get_settings()
 
-    # 用授权码换取 access_token
+    # 认证传输、邮箱拉取及账号匹配分别由 provider/service 负责；WebUI
+    # callback 与移动端 callback 共用同一实现，避免两条链路产生不同账号。
     try:
-        async with httpx.AsyncClient() as client:
-            token_response = await client.post(
-                settings.github_oauth_token_url,
-                data={
-                    "client_id": settings.github_oauth_client_id,
-                    "client_secret": settings.github_oauth_client_secret,
-                    "code": code,
-                },
-                headers={"Accept": "application/json"},
-                timeout=10,
-            )
-
-        if token_response.status_code != 200:
-            logger.error(
-                f"GitHub OAuth token 交换失败: status={token_response.status_code}"
-            )
-            return _oauth_error(request, "获取访问令牌失败，请重试")
-
-        token_data = token_response.json()
-        access_token = token_data.get("access_token")
-        if not access_token:
-            logger.error("GitHub OAuth token response missing access token")
-            return _oauth_error(request, "获取访问令牌失败，请重试")
-
-        # 用 access_token 获取 GitHub 用户信息
-        async with httpx.AsyncClient() as client:
-            user_response = await client.get(
-                settings.github_oauth_user_url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-                timeout=10,
-            )
-
-        if user_response.status_code != 200:
-            logger.error(
-                f"GitHub OAuth 用户信息获取失败: status={user_response.status_code}"
-            )
+        oauth_result = await GitHubOAuthProvider(settings).exchange_code(code)
+    except AuthProviderError as exc:
+        if exc.status_code is not None and exc.status_code != 200:
+            if "token" in str(exc).lower():
+                logger.error("GitHub OAuth token exchange failed: status={}", exc.status_code)
+                return _oauth_error(request, "获取访问令牌失败，请重试")
+            logger.error("GitHub OAuth user request failed: status={}", exc.status_code)
             return _oauth_error(request, "获取用户信息失败，请重试", status_code=502)
-
-        gh_user = user_response.json()
-
+        if "timed out" in str(exc).lower():
+            logger.error("GitHub OAuth request timed out")
+            return _oauth_error(request, "连接 GitHub 超时，请重试", status_code=502)
+        if "missing login" in str(exc).lower():
+            return _oauth_error(request, "无法获取 GitHub 用户信息")
+        if "missing access token" in str(exc).lower():
+            return _oauth_error(request, "获取访问令牌失败，请重试")
+        logger.error("GitHub OAuth request failed")
+        return _oauth_error(request, "网络连接失败，请重试", status_code=502)
     except httpx.TimeoutException:
         logger.error("GitHub OAuth request timed out")
         return _oauth_error(request, "连接 GitHub 超时，请重试", status_code=502)
@@ -368,36 +338,24 @@ async def github_callback(
         logger.error("GitHub OAuth unexpected error")
         return _oauth_error(request, "登录过程中发生错误，请重试", status_code=502)
 
-    github_username = gh_user.get("login")
-    github_id = gh_user.get("id")
-    avatar_url = gh_user.get("avatar_url", "")
+    account = oauth_result.account
+    github_username = account.username
+    try:
+        github_id = int(account.provider_user_id)
+    except (TypeError, ValueError):
+        github_id = None
+    avatar_url = account.avatar_url or ""
 
-    if not github_username:
-        logger.error("GitHub OAuth user response missing login")
-        return _oauth_error(request, "无法获取 GitHub 用户信息")
-
-    # 通过 github_username 匹配 telegram_users
     async with db_module.async_session() as session:
-        result = await session.execute(
-            select(TelegramUser).where(
-                TelegramUser.github_username == github_username,
-                TelegramUser.is_active,
-            )
+        user = await auth_service.authenticate_github(
+            session,
+            account,
+            create_if_missing=True,
         )
-        user = result.scalar_one_or_none()
         has_mfa_method = await user_has_any_mfa_method(session, user) if user else False
 
     if not user:
-        logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
-        deep_link = _get_telegram_deep_link()
-        return render_template(
-            "register.html",
-            request,
-            github_username=github_username,
-            deep_link=deep_link,
-            app_version=APP_VERSION,
-            status_code=403,
-        )
+        return _oauth_error(request, "用户已停用，请联系管理员", status_code=403)
 
     token_data = _build_login_token_payload(
         user, github_username, github_id, avatar_url
@@ -548,6 +506,8 @@ async def verify_two_factor(
             "user_id": payload.get("user_id"),
             "github_id": payload.get("github_id"),
             "avatar_url": payload.get("avatar_url"),
+            "email": payload.get("email"),
+            "email_verified": payload.get("email_verified", False),
         }
     )
     logger.info("WebUI 二次验证成功: user={}", payload.get("sub"))
@@ -642,6 +602,8 @@ async def two_factor_passkey_verify(
             "user_id": payload.get("user_id"),
             "github_id": payload.get("github_id"),
             "avatar_url": payload.get("avatar_url"),
+            "email": payload.get("email"),
+            "email_verified": payload.get("email_verified", False),
         }
     )
     response = JSONResponse(

@@ -20,7 +20,6 @@ from backend.api.v1.schemas import (
     UserResponse,
     UserRoleUpdateRequest,
 )
-from backend.core.config import get_settings
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
@@ -53,9 +52,9 @@ def _serialize_quota_usage_log(log: QuotaUsageLog) -> dict:
     }
 
 
-def _validate_user_input(telegram_id: int, github_username: str) -> str | None:
+def _validate_user_input(telegram_id: int | None, github_username: str) -> str | None:
     """校验用户输入（不修改原值），返回错误信息或 None"""
-    if telegram_id <= 0:
+    if telegram_id is not None and telegram_id <= 0:
         return "Telegram ID 必须为正整数"
     if not github_username.strip():
         return "GitHub 用户名不能为空"
@@ -130,7 +129,7 @@ async def create_user(
             return error_response("配额值不能为负数")
 
     # 唯一性检查
-    if (
+    if body.telegram_id is not None and (
         await db.execute(
             select(TelegramUser).where(TelegramUser.telegram_id == body.telegram_id)
         )
@@ -146,13 +145,7 @@ async def create_user(
     ).scalar_one_or_none():
         return error_response(f"GitHub 用户名 {body.github_username} 已被使用")
 
-    # 超级管理员自动检测
-    auto_super_admin = False
-    settings = get_settings()
     role = body.role
-    if body.telegram_id in settings.telegram_admin_ids_list:
-        role = "super_admin"
-        auto_super_admin = True
 
     new_user = TelegramUser(
         telegram_id=body.telegram_id,
@@ -196,9 +189,6 @@ async def create_user(
     )
 
     msg = f"用户 {body.github_username} 已成功添加"
-    if auto_super_admin:
-        msg += "（已自动提升为超级管理员）"
-
     data = UserResponse.model_validate(new_user, from_attributes=True).model_dump(
         mode="json"
     )
@@ -442,7 +432,7 @@ async def update_user_info(
         return error_response("用户不存在", status_code=404)
 
     # 唯一性检查（排除自身）
-    if (
+    if body.telegram_id is not None and (
         await db.execute(
             select(TelegramUser).where(
                 TelegramUser.telegram_id == body.telegram_id, TelegramUser.id != user_id
@@ -463,7 +453,11 @@ async def update_user_info(
 
     old_github = target.github_username
     old_tg = target.telegram_id
-    target.telegram_id = body.telegram_id
+    # An omitted Telegram id means "leave the existing compatibility value as
+    # is".  This preserves legacy child rows whose foreign keys still point
+    # at telegram_users.telegram_id while allowing GitHub-only accounts.
+    if body.telegram_id is not None:
+        target.telegram_id = body.telegram_id
     target.github_username = body.github_username
     await db.commit()
 

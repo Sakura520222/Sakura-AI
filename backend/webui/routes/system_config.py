@@ -153,6 +153,17 @@ async def save_system_config(
                         lang=detect_language(),
                     )
 
+            # SMTP 安全模式验证（ssl=隐式 TLS / starttls / none=明文）
+            if key == "smtp_security":
+                val = val.lower()
+                if val not in ("ssl", "starttls", "none"):
+                    return toast_redirect(
+                        "/system-config/",
+                        "system_config.invalid_smtp_security",
+                        "error",
+                        lang=detect_language(),
+                    )
+
             # 日志级别验证
             if key == "log_level":
                 valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

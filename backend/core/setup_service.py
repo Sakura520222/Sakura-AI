@@ -6,11 +6,12 @@
 import os
 import secrets
 import signal
+from inspect import isawaitable
 from typing import Any
 
 import httpx
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -31,7 +32,22 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
+    "TELEGRAM_ENABLED": "telegram_enabled",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
+    "TELEGRAM_BIND_TOKEN_EXPIRE_SECONDS": "telegram_bind_token_expire_seconds",
+    "EMAIL_ENABLED": "email_enabled",
+    "SMTP_HOST": "smtp_host",
+    "SMTP_PORT": "smtp_port",
+    "SMTP_USERNAME": "smtp_username",
+    "SMTP_PASSWORD": "smtp_password",
+    "SMTP_FROM": "smtp_from",
+    "SMTP_FROM_NAME": "smtp_from_name",
+    "SMTP_SECURITY": "smtp_security",
+    "NOTIFICATION_MAX_CONCURRENCY": "notification_max_concurrency",
+    "NOTIFICATION_RETRY_MAX_ATTEMPTS": "notification_retry_max_attempts",
+    "NOTIFICATION_RETRY_INITIAL_DELAY_SECONDS": "notification_retry_initial_delay_seconds",
+    "NOTIFICATION_RETRY_BACKOFF_FACTOR": "notification_retry_backoff_factor",
+    "NOTIFICATION_RATE_LIMIT_SECONDS": "notification_rate_limit_seconds",
     "WEBUI_SECRET_KEY": "webui_secret_key",
     "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
@@ -81,6 +97,9 @@ _GITHUB_APP_JWT_LIFETIME_SECONDS = 9 * 60
 ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
+    # Telegram/Email are optional notification providers.  Keeping the group
+    # allows old Setup payloads to import their values without making a token a
+    # prerequisite for GitHub OAuth or Passkey authentication.
     "ai": ["TELEGRAM_BOT_TOKEN"],
     # RAG 配置是可选项，不参与 Setup readiness 判定。
     "rag": [],
@@ -100,6 +119,20 @@ SETUP_BACKUP_PREFILL_KEYS = frozenset(
         "github_private_key",
         "github_webhook_secret",
         "telegram_bot_token",
+        "telegram_enabled",
+        "telegram_bind_token_expire_seconds",
+        "email_enabled",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "smtp_from",
+        "smtp_from_name",
+        "smtp_security",
+        "notification_max_concurrency",
+        "notification_retry_max_attempts",
+        "notification_retry_initial_delay_seconds",
+        "notification_retry_backoff_factor",
+        "notification_rate_limit_seconds",
         "app_domain",
         "bot_username",
         "github_oauth_client_id",
@@ -498,15 +531,26 @@ class SetupService:
         await insert_default_configs_async()
 
     async def create_admin_user(
-        self, github_username: str, telegram_id: int, database_url: str
+        self,
+        github_username: str,
+        telegram_id: int | None = None,
+        database_url: str | None = None,
     ) -> None:
         """创建初始超级管理员
 
         Args:
             github_username: 管理员的 GitHub 用户名
-            telegram_id: 管理员的 Telegram 用户 ID
+            telegram_id: 可选的管理员 Telegram 用户 ID（旧 Setup 兼容字段）
             database_url: 数据库连接字符串
         """
+        # Keep the old two-argument convenience form usable by deployments that
+        # already called ``create_admin_user(username, database_url)`` while the
+        # new setup flow no longer requires a Telegram ID.
+        if database_url is None and isinstance(telegram_id, str):
+            database_url, telegram_id = telegram_id, None
+        if not database_url:
+            raise ValueError("数据库连接字符串为必填项")
+
         # 初始化数据库引擎（可能已经初始化过）
         from backend.models import database as db_module
         from backend.models.database import (
@@ -515,7 +559,12 @@ class SetupService:
             insert_default_configs_async,
             migrate_schema_async,
         )
+        from backend.models.identity_models import AuthProvider, UserIdentity
         from backend.models.telegram_models import TelegramUser
+        from backend.services.identity_service import (
+            _next_legacy_placeholder,
+            legacy_telegram_id_required,
+        )
 
         if db_module.async_engine is None:
             init_async_db(database_url)
@@ -527,23 +576,35 @@ class SetupService:
         from backend.models.database import async_session
 
         async with async_session() as session:
-            # 检查是否已存在（按 github_username、telegram_id 或 telegram_id=0 的占位记录）
+            # 身份匹配优先使用显式 GitHub 用户名；Telegram ID 只在没有
+            # 该用户名时作为旧 Setup 的显式兼容匹配。不能把两个独立
+            # 条件拼成 AND，否则用户名已存在但 Telegram ID 变化时会
+            # 创建重复账号。
             result = await session.execute(
                 select(TelegramUser).where(
-                    (TelegramUser.github_username == github_username)
-                    | (TelegramUser.telegram_id == telegram_id)
-                    | (
-                        (TelegramUser.telegram_id == 0)
-                        & (TelegramUser.github_username.is_(None))
-                    )
+                    func.lower(TelegramUser.github_username)
+                    == github_username.lower()
                 )
             )
             existing = result.scalars().first()
+            if existing is None and telegram_id is not None:
+                result = await session.execute(
+                    select(TelegramUser).where(
+                        (TelegramUser.telegram_id == telegram_id)
+                        | (
+                            (TelegramUser.telegram_id == 0)
+                            & (TelegramUser.github_username.is_(None))
+                        )
+                    )
+                )
+                existing = result.scalars().first()
             if existing:
                 existing.role = "super_admin"
                 existing.github_username = github_username
-                existing.telegram_id = telegram_id
+                if telegram_id is not None:
+                    existing.telegram_id = telegram_id
                 existing.is_active = True
+                admin = existing
                 logger.info(f"已将用户 {github_username} 提升为超级管理员")
             else:
                 from backend.core.config import get_settings  # 延迟导入避免循环引用
@@ -565,8 +626,34 @@ class SetupService:
                     agent_weekly_quota=settings.init_admin_agent_weekly_quota,
                     agent_monthly_quota=settings.init_admin_agent_monthly_quota,
                 )
+                if admin.telegram_id is None and await legacy_telegram_id_required(session):
+                    admin.telegram_id = await _next_legacy_placeholder(session)
                 session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")
+            # AsyncSession.flush is awaitable.  Keep maintenance/test session
+            # facades that expose a synchronous no-op flush compatible too.
+            flush_result = session.flush()
+            if isawaitable(flush_result):
+                await flush_result
+            # Setup only knows the configured username, so retain a synthetic
+            # legacy identity until the first OAuth callback supplies the stable
+            # GitHub provider_user_id.  This prevents duplicate accounts while
+            # avoiding unsafe username-based merges with Telegram-only users.
+            identity_result = await session.execute(
+                select(UserIdentity).where(
+                    UserIdentity.user_id == admin.id,
+                    UserIdentity.provider == AuthProvider.GITHUB,
+                )
+            )
+            if identity_result.scalars().first() is None:
+                session.add(
+                    UserIdentity(
+                        user_id=admin.id,
+                        provider=AuthProvider.GITHUB,
+                        provider_user_id=f"legacy:{github_username.lower()}",
+                        provider_username=github_username,
+                    )
+                )
             await session.commit()
 
     @staticmethod
@@ -640,18 +727,20 @@ class SetupService:
             admin_telegram_id = str(
                 all_config.get("ADMIN_TELEGRAM_ID", "") or ""
             ).strip()
-            if not admin_github or not admin_telegram_id:
+            if not admin_github:
                 return {
                     "success": False,
-                    "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
+                    "message": "管理员 GitHub 用户名为必填项",
                 }
-            try:
-                telegram_id_int = int(admin_telegram_id)
-            except ValueError, TypeError:
-                return {
-                    "success": False,
-                    "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
-                }
+            telegram_id_int: int | None = None
+            if admin_telegram_id:
+                try:
+                    telegram_id_int = int(admin_telegram_id)
+                except (ValueError, TypeError):
+                    return {
+                        "success": False,
+                        "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
+                    }
 
             database_url = str(all_config.get("DATABASE_URL", "") or "").strip()
             if not database_url:

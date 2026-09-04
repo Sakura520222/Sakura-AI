@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ _('announcements.title') }} - Sakura AI{% endblock %}
+{% block content %}
+<main class="max-w-5xl mx-auto px-4 py-8" x-data="announcementCenter()">
+  <div class="flex items-center justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('announcements.title') }}</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('announcements.description') }}</p>
+    </div>
+    <button type="button" @click="markAllRead()" class="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50 dark:hover:bg-gray-700">
+      {{ _('announcements.mark_all_read') }}
+    </button>
+    {% if current_user.role == 'super_admin' %}
+    <a href="/announcements/admin" class="px-3 py-2 rounded-lg bg-pink-500 text-white text-sm">{{ _('announcements.admin_title') }}</a>
+    {% endif %}
+  </div>
+  <div class="space-y-4">
+    {% for item in announcements %}
+    <article class="rounded-xl border p-5 {% if not item.read %}border-pink-300 bg-pink-50/40 dark:bg-pink-900/10{% else %}border-gray-200 dark:border-gray-700{% endif %}">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+          <a href="/announcements/{{ item.id }}" class="hover:text-pink-600">{{ item.title }}</a>
+        </h2>
+        {% if not item.read %}<span class="rounded-full bg-pink-500 px-2 py-1 text-xs text-white">{{ _('announcements.unread') }}</span>{% endif %}
+      </div>
+      <div class="prose prose-sm dark:prose-invert max-w-none mt-3 text-gray-700 dark:text-gray-300">{{ item.content_html | safe }}</div>
+      <div class="mt-3 text-xs text-gray-500" data-time="{{ item.published_at or item.created_at }}">{{ item.published_at or item.created_at }}</div>
+    </article>
+    {% else %}
+    <div class="rounded-xl border border-dashed p-10 text-center text-sm text-gray-500">{{ _('announcements.empty') }}</div>
+    {% endfor %}
+  </div>
+</main>
+<script>
+function announcementCenter() {
+  return {
+    async markAllRead() {
+      const body = new URLSearchParams({csrf_token: {{ csrf_token | tojson }}});
+      const response = await fetch('/announcements/read-all', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body,
+      });
+      if (response.ok) window.location.reload();
+    }
+  };
+}
+</script>
+{% endblock %}

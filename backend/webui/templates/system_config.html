@@ -118,6 +118,13 @@
                                    placeholder="system / Area/City"
                                    autocomplete="off"
                                    class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
+                            {% elif item.key == 'smtp_security' %}
+                            <select name="{{ item.key }}"
+                                    class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <option value="ssl" {% if item.value == 'ssl' %}selected{% endif %}>{{ _('system_config.smtp_security_ssl') }}</option>
+                                <option value="starttls" {% if item.value == 'starttls' %}selected{% endif %}>{{ _('system_config.smtp_security_starttls') }}</option>
+                                <option value="none" {% if item.value == 'none' %}selected{% endif %}>{{ _('system_config.smtp_security_none') }}</option>
+                            </select>
                             {% elif item.key == 'log_level' %}
                             <select name="{{ item.key }}"
                                     class="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
