@@ -137,7 +137,7 @@ async def test_docker_lifecycle_uses_only_fixed_server_owned_argv(tmp_path: Path
     assert tmpfs == [
         f"/tmp:rw,noexec,nosuid,nodev,size={adapter.config.tmpfs_bytes}",
         (
-            f"/home/agent:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700,"
+            f"/home/agent:rw,exec,nosuid,nodev,uid=65532,gid=65532,mode=0700,"
             f"size={adapter.config.home_tmpfs_bytes}"
         ),
     ]

@@ -33,8 +33,11 @@ LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI
 
 # CARGO_HOME stays inside the agent home so runtime cargo caches live on the
 # writable tmpfs; the toolchain itself is installed system-wide (see below).
+# GOTMPDIR redirects Go's build/test scratch binaries into HOME, which the
+# daemon mounts as an exec-permitted tmpfs; /tmp is noexec.
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/agent \
+    GOTMPDIR=/home/agent \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     CI=true \

@@ -483,8 +483,14 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                 f"nofile={self.config.nofile_soft}:{self.config.nofile_hard}",
                 "--tmpfs",
                 f"{CONTAINER_TMP}:rw,noexec,nosuid,nodev,size={self.config.tmpfs_bytes}",
+                # ``exec`` must be explicit: Docker injects ``noexec`` on
+                # --tmpfs mounts unless it is listed, and the runner image
+                # points GOTMPDIR at HOME so `go test`/`go run` binaries can
+                # execute.  The relaxation is limited to the task-private
+                # 0700 home tmpfs; /tmp stays noexec and the container
+                # boundary itself is unchanged.
                 "--tmpfs",
-                f"{CONTAINER_HOME}:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700,size={self.config.home_tmpfs_bytes}",
+                f"{CONTAINER_HOME}:rw,exec,nosuid,nodev,uid=65532,gid=65532,mode=0700,size={self.config.home_tmpfs_bytes}",
                 "--mount",
                 # A bind mount is writable by default.  ``rw`` is not a
                 # standalone long-syntax field on all supported Docker
