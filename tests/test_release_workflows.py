@@ -370,6 +370,12 @@ def test_release_notes_contract_collects_facts_and_deterministic_fallback():
     assert "### 注意事项 / Important Notes" in ai_text
     for alert in ("[!NOTE]", "[!IMPORTANT]", "[!WARNING]"):
         assert alert in ai_text
+    # 浏览器伪装头：网关按浏览器请求放行，默认 urllib UA/缺 Origin/Referer 会 403
+    assert '"User-Agent"' in ai_text
+    assert '"Origin"' in ai_text
+    assert '"Referer"' in ai_text
+    # HTTP 错误须读取响应体，让 4xx 的真实拒绝原因可从日志定位
+    assert "e.read()" in ai_text
 
     fallback = next(
         step
