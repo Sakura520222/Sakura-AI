@@ -24,6 +24,7 @@ from backend.models.announcement_models import (
     DeliveryStatus,
     NotificationDelivery,
 )
+from backend.models.telegram_models import TelegramUser
 from backend.services import notification_service
 
 
@@ -97,7 +98,13 @@ async def _seed_delivery(session: _AsyncSQLiteSession, *, claim_until=None):
         claim_token="expired-worker" if claim_until is not None else None,
         claim_until=claim_until,
     )
-    session._session.add_all([announcement, delivery])
+    session._session.add_all(
+        [
+            TelegramUser(id=1, is_active=True),
+            announcement,
+            delivery,
+        ]
+    )
     await session.commit()
     return announcement, delivery
 
@@ -113,7 +120,9 @@ def _settings(monkeypatch, **overrides):
         "notification_max_concurrency": 4,
     }
     values.update(overrides)
-    monkeypatch.setattr(notification_service, "get_settings", lambda: SimpleNamespace(**values))
+    monkeypatch.setattr(
+        notification_service, "get_settings", lambda: SimpleNamespace(**values)
+    )
 
 
 class _CountingProvider:
@@ -151,9 +160,7 @@ async def test_two_concurrent_broadcasts_claim_one_row(delivery_database, monkey
         assert provider.calls == 1
         assert sorted(result["sent"] for result in results) == [0, 1]
         assert sorted(result["skipped"] for result in results) == [0, 1]
-        current = await session.get(
-            NotificationDelivery, 1, populate_existing=True
-        )
+        current = await session.get(NotificationDelivery, 1, populate_existing=True)
         assert current.status == DeliveryStatus.SENT.value
         assert current.claim_token is None
         assert current.claim_until is None
@@ -180,7 +187,9 @@ async def test_sent_row_cannot_be_claimed_again(delivery_database, monkeypatch):
         await worker.execute(
             update(NotificationDelivery)
             .where(NotificationDelivery.id == delivery.id)
-            .values(status=DeliveryStatus.SENT.value, claim_token=None, claim_until=None)
+            .values(
+                status=DeliveryStatus.SENT.value, claim_token=None, claim_until=None
+            )
         )
         await worker.commit()
         assert (
@@ -259,9 +268,7 @@ async def test_stale_worker_token_cannot_write_terminal_state(
             values={"status": DeliveryStatus.SENT.value},
         )
         assert marked is None
-        current = await session.get(
-            NotificationDelivery, 1, populate_existing=True
-        )
+        current = await session.get(NotificationDelivery, 1, populate_existing=True)
         assert current.status == DeliveryStatus.PENDING.value
         assert current.claim_token == new_token
     finally:

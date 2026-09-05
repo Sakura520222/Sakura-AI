@@ -22,6 +22,10 @@ from backend.api.v1.schemas import (
 )
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
+from backend.services.identity_service import (
+    GitHubUsernameConflictError,
+    rename_github_username,
+)
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
@@ -454,25 +458,31 @@ async def update_user_info(
     ).scalar_one_or_none():
         return error_response(f"Telegram ID {body.telegram_id} 已被其他用户使用")
 
-    if (
-        await db.execute(
-            select(TelegramUser).where(
-                TelegramUser.github_username == body.github_username,
-                TelegramUser.id != user_id,
-            )
-        )
-    ).scalar_one_or_none():
-        return error_response(f"GitHub 用户名 {body.github_username} 已被其他用户使用")
-
     old_github = target.github_username
     old_tg = target.telegram_id
+    try:
+        # This shared pre-commit helper also retires any matching synthetic
+        # ``legacy:*`` identities.  It performs every conflict check before
+        # mutating the target so an alias collision cannot partially rename it.
+        await rename_github_username(db, target, body.github_username)
+    except GitHubUsernameConflictError as exc:
+        return error_response(str(exc))
     # An omitted Telegram id means "leave the existing compatibility value as
     # is".  This preserves legacy child rows whose foreign keys still point
     # at telegram_users.telegram_id while allowing GitHub-only accounts.
     if body.telegram_id is not None:
         target.telegram_id = body.telegram_id
     target.github_username = body.github_username
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        logger.error(f"用户基本信息更新失败（数据库冲突）: {exc}")
+        await db.rollback()
+        return error_response("用户基本信息更新失败（可能存在关联数据冲突）")
+    except Exception as exc:
+        logger.error(f"用户基本信息更新失败: {exc}")
+        await db.rollback()
+        return error_response("用户基本信息更新失败")
 
     logger.info(
         f"API 用户信息变更: id={user_id}, {old_github}->{body.github_username}, by={user['sub']}"

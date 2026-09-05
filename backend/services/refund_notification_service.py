@@ -36,7 +36,7 @@ def _unique_chat_ids(values: Iterable[int | str | None]) -> list[int]:
             continue
         try:
             chat_id = int(value)
-        except TypeError, ValueError:
+        except TypeError, ValueError, OverflowError:
             continue
         if chat_id <= 0:
             continue
@@ -46,16 +46,26 @@ def _unique_chat_ids(values: Iterable[int | str | None]) -> list[int]:
     return result
 
 
-async def _get_user_chat_id(session: AsyncSession, user_id: int) -> int | None:
+async def _get_user_chat_ids(session: AsyncSession, user_id: int) -> list[int]:
+    """Return every enabled, valid Telegram endpoint for one active user."""
     result = await session.execute(
-        select(NotificationEndpoint.address).where(
+        select(NotificationEndpoint.address)
+        .join(TelegramUser, TelegramUser.id == NotificationEndpoint.user_id)
+        .where(
             NotificationEndpoint.user_id == user_id,
+            TelegramUser.is_active.is_(True),
             NotificationEndpoint.provider == "telegram",
             NotificationEndpoint.enabled.is_(True),
         )
+        .order_by(NotificationEndpoint.id)
     )
-    chat_id = _unique_chat_ids([result.scalar_one_or_none()])
-    return chat_id[0] if chat_id else None
+    return _unique_chat_ids(result.scalars().all())
+
+
+async def _get_user_chat_id(session: AsyncSession, user_id: int) -> int | None:
+    """Backward-compatible first-target helper for legacy callers."""
+    chat_ids = await _get_user_chat_ids(session, user_id)
+    return chat_ids[0] if chat_ids else None
 
 
 async def _get_super_admin_chat_ids(session: AsyncSession) -> list[int]:
@@ -127,10 +137,10 @@ async def notify_refund_request_approved(
 ) -> None:
     """Notify the requester that their refund request was approved."""
     try:
-        chat_id = await _get_user_chat_id(session, refund_request.user_id)
+        chat_ids = await _get_user_chat_ids(session, refund_request.user_id)
         ctx = _request_context(refund_request)
         text = _message("telegram_refund.approved", "zh-CN", **ctx)
-        await _send_to_targets(text, [chat_id] if chat_id else [])
+        await _send_to_targets(text, chat_ids)
     except Exception as exc:
         logger.warning(
             "Failed to send refund approval notification: request_id={}, error={}",
@@ -145,10 +155,10 @@ async def notify_refund_request_rejected(
 ) -> None:
     """Notify the requester that their refund request was rejected."""
     try:
-        chat_id = await _get_user_chat_id(session, refund_request.user_id)
+        chat_ids = await _get_user_chat_ids(session, refund_request.user_id)
         ctx = _request_context(refund_request)
         text = _message("telegram_refund.rejected", "zh-CN", **ctx)
-        await _send_to_targets(text, [chat_id] if chat_id else [])
+        await _send_to_targets(text, chat_ids)
     except Exception as exc:
         logger.warning(
             "Failed to send refund rejection notification: request_id={}, error={}",

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import math
 import re
 import secrets
 import smtplib
@@ -34,6 +35,7 @@ from backend.models.announcement_models import (
     NotificationDelivery,
 )
 from backend.models.identity_models import NotificationEndpoint
+from backend.models.telegram_models import TelegramUser
 from backend.services.announcement_service import (
     announcement_type_label,
     markdown_to_telegram_html,
@@ -67,9 +69,29 @@ class NotificationProviderDisabled(NotificationProviderError):
 class NotificationProviderRetryAfter(NotificationProviderError):
     """Provider throttled a request and supplied a retry delay."""
 
-    def __init__(self, message: str, retry_after: float):
+    def __init__(self, message: str, retry_after: object):
         super().__init__(message)
-        self.retry_after = max(0.0, float(retry_after))
+        self.retry_after = normalize_retry_after(retry_after)
+
+
+def normalize_retry_after(value: object) -> float:
+    """Return a safe, finite, non-negative retry delay in seconds.
+
+    python-telegram-bot can expose ``RetryAfter.retry_after`` as either a
+    number or a :class:`datetime.timedelta`, depending on the PTB time-period
+    compatibility setting.  Provider adapters and the worker should consume
+    one representation so both modes follow the same retry path.
+    """
+    if isinstance(value, timedelta):
+        seconds = value.total_seconds()
+    else:
+        try:
+            seconds = float(value) if value is not None else 0.0
+        except TypeError, ValueError, OverflowError:
+            seconds = 0.0
+    if not math.isfinite(seconds):
+        return 0.0
+    return max(0.0, seconds)
 
 
 class NotificationProvider(Protocol):
@@ -226,9 +248,7 @@ class EmailNotificationProvider:
                 # SMTP_SSL accepts the TLS context in its constructor.  The
                 # plain SMTP constructor does not on all supported Python
                 # versions, so only pass it for implicit TLS.
-                smtp_context = smtplib.SMTP_SSL(
-                    host, port, timeout=15, context=context
-                )
+                smtp_context = smtplib.SMTP_SSL(host, port, timeout=15, context=context)
             else:
                 smtp_context = smtplib.SMTP(host, port, timeout=15)
             with smtp_context as smtp:
@@ -300,10 +320,7 @@ async def _send_telegram_rich(
         return True
     if payload.get("error_code") == 429:
         parameters = payload.get("parameters") or {}
-        try:
-            retry_after = max(0.0, float(parameters.get("retry_after", 0)))
-        except (TypeError, ValueError):
-            retry_after = 0.0
+        retry_after = normalize_retry_after(parameters.get("retry_after", 0))
         raise NotificationProviderRetryAfter(
             f"Telegram Rich 发送被限流（retry_after={retry_after:g}s）",
             retry_after,
@@ -320,9 +337,7 @@ def _legacy_telegram_text(header_html: str, content: str) -> str:
         return text
     budget = max(200, _TELEGRAM_LEGACY_TEXT_LIMIT - len(header_html) - 8)
     while budget >= 200:
-        text = (
-            f"{header_html}\n\n{markdown_to_telegram_html(content[:budget])}…"
-        )
+        text = f"{header_html}\n\n{markdown_to_telegram_html(content[:budget])}…"
         if len(text) <= _TELEGRAM_LEGACY_TEXT_LIMIT:
             return text
         budget -= 256
@@ -374,9 +389,10 @@ class TelegramNotificationProvider:
         try:
             await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
         except RetryAfter as exc:
+            retry_after = normalize_retry_after(exc.retry_after)
             raise NotificationProviderRetryAfter(
-                f"Telegram 发送被限流（retry_after={exc.retry_after:g}s）",
-                exc.retry_after,
+                f"Telegram 发送被限流（retry_after={retry_after:g}s）",
+                retry_after,
             ) from exc
         except Exception as exc:
             raise NotificationProviderError(
@@ -435,7 +451,7 @@ class NotificationService:
     def _row_publication_version(row: object) -> int:
         try:
             value = int(getattr(row, "publication_version", 1) or 1)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return 1
         return max(1, value)
 
@@ -490,7 +506,10 @@ class NotificationService:
 
         factory = db_module.async_session
         if factory is not None:
-            probe = factory()
+            try:
+                probe = factory()
+            except Exception:
+                return False
             try:
                 if hasattr(probe, "__aenter__"):
                     async with probe as scoped:
@@ -530,6 +549,119 @@ class NotificationService:
             await self._fresh_row(db, NotificationDelivery, delivery_id),
             True,
         )
+
+    async def _eligibility_snapshot(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        endpoint: NotificationEndpoint | None,
+    ) -> bool:
+        """Read user and endpoint eligibility in one fresh transaction.
+
+        Candidate endpoint rows are selected before a worker starts.  This
+        snapshot is the final authorization immediately adjacent to the
+        provider call: it sees the current ``TelegramUser.is_active`` value
+        and, for external channels, the current endpoint ownership, provider,
+        enabled flag, and Email verification flag together.
+        """
+        channel = str(getattr(delivery, "channel", "")).lower()
+        user_id = getattr(delivery, "user_id", None)
+        endpoint_id = getattr(endpoint, "id", None)
+
+        def eligible(user: object | None, fresh_endpoint: object | None) -> bool:
+            if user is None or not bool(getattr(user, "is_active", False)):
+                return False
+            if channel == "web":
+                return True
+            if fresh_endpoint is None:
+                return False
+            if getattr(fresh_endpoint, "user_id", None) != user_id:
+                return False
+            if str(getattr(fresh_endpoint, "provider", "")).lower() != channel:
+                return False
+            if not bool(getattr(fresh_endpoint, "enabled", False)):
+                return False
+            return channel != "email" or bool(
+                getattr(fresh_endpoint, "verified", False)
+            )
+
+        async def read(scoped: AsyncSession) -> bool:
+            user = await self._fresh_row(scoped, TelegramUser, int(user_id))
+            fresh_endpoint = None
+            if channel != "web":
+                if endpoint_id is None:
+                    return False
+                fresh_endpoint = await self._fresh_row(
+                    scoped, NotificationEndpoint, int(endpoint_id)
+                )
+            return eligible(user, fresh_endpoint)
+
+        from backend.models import database as db_module
+
+        factory = db_module.async_session
+        if factory is not None:
+            try:
+                # _run_in_fresh_session creates exactly one short-lived
+                # transaction for both reads.  A configured but broken probe
+                # fails closed instead of falling back to stale objects.
+                return bool(await self._run_in_fresh_session(db, read))
+            except Exception:
+                return False
+
+        getter = getattr(db, "get", None)
+        if callable(getter):
+            try:
+                return await read(db)
+            except Exception:
+                return False
+
+        # Compatibility for old in-memory fakes that have no user table.  Do
+        # not allow explicit negative eligibility values to bypass checks;
+        # only an entirely absent user object is treated as unknown in this
+        # non-production adapter path.
+        user = getattr(delivery, "user", None)
+        if user is not None and not bool(getattr(user, "is_active", False)):
+            return False
+        if channel == "web":
+            return True
+        if endpoint is None:
+            return False
+        if getattr(endpoint, "user_id", user_id) != user_id:
+            return False
+        if str(getattr(endpoint, "provider", "")).lower() != channel:
+            return False
+        if not bool(getattr(endpoint, "enabled", True)):
+            return False
+        return channel != "email" or getattr(endpoint, "verified", None) is not False
+
+    async def _finish_inactive_delivery(
+        self,
+        db: AsyncSession,
+        delivery: NotificationDelivery,
+        announcement: Announcement,
+        lock: asyncio.Lock,
+        expected_version: int | None,
+        worker_token: str,
+        reason: str = "用户不存在或已停用，跳过通知",
+    ) -> bool | None:
+        """Release an owned row as a terminal, non-sending outcome."""
+        error = NotificationProviderError(reason)
+        marked = await self._mark_terminal_state(
+            db,
+            delivery,
+            announcement,
+            lock=lock,
+            expected_version=expected_version,
+            worker_token=worker_token,
+            values={
+                "status": DeliveryStatus.FAILED.value,
+                "error_message": _safe_error_message(error),
+                "attempts": int(delivery.attempts or 0) + 1,
+                "next_retry_at": None,
+                "updated_at": now_utc(),
+            },
+        )
+        return None if marked is None else False
 
     @staticmethod
     def _delivery_lease_seconds() -> float:
@@ -583,9 +715,7 @@ class NotificationService:
         """
         token = secrets.token_urlsafe(32)
         claimed_at = now_utc()
-        claim_until = claimed_at + timedelta(
-            seconds=self._delivery_lease_seconds()
-        )
+        claim_until = claimed_at + timedelta(seconds=self._delivery_lease_seconds())
         conditions = [
             NotificationDelivery.id == delivery.id,
             NotificationDelivery.announcement_id == announcement.id,
@@ -657,9 +787,7 @@ class NotificationService:
         """Extend a worker lease using token/version compare-and-set."""
         if not worker_token:
             return False
-        renewed_until = now_utc() + timedelta(
-            seconds=self._delivery_lease_seconds()
-        )
+        renewed_until = now_utc() + timedelta(seconds=self._delivery_lease_seconds())
 
         async def renew(scoped: AsyncSession) -> bool:
             conditions = [
@@ -780,10 +908,12 @@ class NotificationService:
             or str(getattr(announcement, "status", "")).lower() != "published"
         ):
             return False
-        fresh_announcement, fresh_delivery, has_probe = (
-            await self._fresh_publication_rows(
-                db, int(announcement.id), int(delivery.id)
-            )
+        (
+            fresh_announcement,
+            fresh_delivery,
+            has_probe,
+        ) = await self._fresh_publication_rows(
+            db, int(announcement.id), int(delivery.id)
         )
         if not has_probe:
             # Lightweight adapters used by legacy unit tests do not expose a
@@ -794,8 +924,7 @@ class NotificationService:
         return (
             self._row_publication_version(fresh_announcement) == expected_version
             and self._row_publication_version(fresh_delivery) == expected_version
-            and str(getattr(fresh_announcement, "status", "")).lower()
-            == "published"
+            and str(getattr(fresh_announcement, "status", "")).lower() == "published"
         )
 
     async def _mark_terminal_state(
@@ -993,6 +1122,20 @@ class NotificationService:
                 db, delivery, announcement, expected_version
             ):
                 return None
+            # The account or endpoint can change between the rate-limit check
+            # and this attempt.  Keep the combined eligibility snapshot
+            # directly adjacent to the provider invocation so no newly
+            # disabled, unverified, or re-bound recipient is contacted.
+            if not await self._eligibility_snapshot(db, delivery, endpoint):
+                return await self._finish_inactive_delivery(
+                    db,
+                    delivery,
+                    announcement,
+                    lock,
+                    expected_version,
+                    worker_token,
+                    reason="用户或通知端点不符合当前资格，跳过通知",
+                )
             try:
                 await self._with_lease_heartbeat(
                     lambda: provider.send(
@@ -1063,9 +1206,7 @@ class NotificationService:
             worker_token=worker_token,
             values={
                 "status": DeliveryStatus.FAILED.value,
-                "error_message": _safe_error_message(
-                    last_error or RuntimeError()
-                ),
+                "error_message": _safe_error_message(last_error or RuntimeError()),
                 "attempts": initial_attempts + max_attempts,
                 "next_retry_at": None,
                 "updated_at": now_utc(),
@@ -1096,7 +1237,7 @@ class NotificationService:
                 expected_version = int(
                     getattr(announcement, "publication_version", 1) or 1
                 )
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 expected_version = 1
         # A publish task may still be queued when an administrator withdraws
         # the announcement.  Re-check the lifecycle state in the worker so a
@@ -1105,23 +1246,33 @@ class NotificationService:
         if str(getattr(announcement, "status", "")).lower() != "published":
             return {"sent": 0, "failed": 0, "skipped": 0}
         deliveries = (
-            await db.execute(
-                select(NotificationDelivery).where(
-                    NotificationDelivery.announcement_id == announcement.id,
-                    NotificationDelivery.publication_version == expected_version,
-                    NotificationDelivery.status.in_(
-                        [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
-                    ),
+            (
+                await db.execute(
+                    select(NotificationDelivery).where(
+                        NotificationDelivery.announcement_id == announcement.id,
+                        NotificationDelivery.publication_version == expected_version,
+                        NotificationDelivery.status.in_(
+                            [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
+                        ),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         endpoint_rows = (
-            await db.execute(
-                select(NotificationEndpoint)
-                .where(NotificationEndpoint.enabled.is_(True))
-                .order_by(NotificationEndpoint.id)
+            (
+                await db.execute(
+                    select(NotificationEndpoint)
+                    .join(TelegramUser, TelegramUser.id == NotificationEndpoint.user_id)
+                    .where(NotificationEndpoint.enabled.is_(True))
+                    .where(TelegramUser.is_active.is_(True))
+                    .order_by(NotificationEndpoint.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         # Delivery rows are unique by (user, channel).  Binding a new
         # Telegram endpoint disables the previous one, but setdefault also
         # makes old databases with duplicate enabled rows deterministic.

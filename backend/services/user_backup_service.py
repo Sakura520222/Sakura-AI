@@ -693,11 +693,36 @@ def _validate_notification_endpoints(raw: Any, index: int) -> list[dict[str, Any
                 "provider": provider,
                 "address": address.lower() if provider == "email" else address,
                 "verified": verified,
-                "enabled": enabled,
+                # Normalize legacy unsafe combinations as early as parsing;
+                # restore applies the same rule again for programmatic callers
+                # that bypass this parser.
+                "enabled": (
+                    False
+                    if provider == "email" and not bool(verified)
+                    else bool(enabled)
+                ),
                 "metadata": metadata,
             }
         )
     return endpoints
+
+
+def _restored_endpoint_enabled(endpoint: dict[str, Any]) -> bool:
+    """Apply notification safety rules at the backup restore boundary.
+
+    Historical backups may contain an enabled email row without proving that
+    GitHub verified the address.  Keep that row for compatibility/audit, but
+    never restore it as an active delivery target.  Other providers retain
+    their original enabled state, and a verified email still honors an
+    explicit user-disabled state from the backup.
+    """
+
+    if (
+        str(endpoint.get("provider", "")).casefold() == "email"
+        and not bool(endpoint.get("verified", False))
+    ):
+        return False
+    return bool(endpoint.get("enabled", True))
 
 
 def _validate_profile(raw: Any, index: int) -> dict[str, Any]:
@@ -1687,6 +1712,8 @@ async def restore_user_backup(
                             "verified": bool(
                                 raw_user["identity"].get("email_verified", False)
                             ),
+                            # The restore boundary below normalizes this to
+                            # disabled when the legacy mirror was unverified.
                             "enabled": True,
                             "metadata": {"oauth": True},
                         }
@@ -1737,7 +1764,7 @@ async def restore_user_backup(
                                 provider=endpoint["provider"].casefold(),
                                 address=endpoint["address"],
                                 verified=bool(endpoint.get("verified", False)),
-                                enabled=bool(endpoint.get("enabled", True)),
+                                enabled=_restored_endpoint_enabled(endpoint),
                                 metadata_json=metadata_value,
                             )
                         )
@@ -1747,7 +1774,7 @@ async def restore_user_backup(
                         )
                     else:
                         existing_endpoint.verified = bool(endpoint.get("verified", False))
-                        existing_endpoint.enabled = bool(endpoint.get("enabled", True))
+                        existing_endpoint.enabled = _restored_endpoint_enabled(endpoint)
                         existing_endpoint.metadata_json = metadata_value
 
         await db.commit()

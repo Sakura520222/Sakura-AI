@@ -1949,6 +1949,7 @@ api:
   agent_skill_delete_failed: "Failed to delete Skill: {error}"
   github_username_conflict: "GitHub username {github_username} is already used by another user"
   user_info_updated: "User info updated"
+  user_info_update_failed: "Failed to update user info"
   quota_reset: "Quota usage reset for user {username}"
   permission_denied_role: "Insufficient permissions to modify user role"
   permission_denied_super_admin: "Insufficient permissions to set super admin"

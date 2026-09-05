@@ -56,6 +56,23 @@ class _AsyncSQLiteSession:
     async def delete(self, value):
         self._session.delete(value)
 
+    def begin_nested(self):
+        return _AsyncNestedTransaction(self._session.begin_nested())
+
+
+class _AsyncNestedTransaction:
+    """Adapt synchronous SQLAlchemy savepoints to the async-shaped fixture."""
+
+    def __init__(self, transaction):
+        self._transaction = transaction
+
+    async def __aenter__(self):
+        self._transaction.__enter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        return self._transaction.__exit__(exc_type, exc_value, traceback)
+
 
 @pytest.fixture
 def sqlite_sessions():

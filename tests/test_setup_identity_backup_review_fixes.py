@@ -98,7 +98,19 @@ def sqlite_db():
         engine.dispose()
 
 
-def _backup_document(*, telegram_id: int, endpoints: list[dict] | None):
+def _backup_document(
+    *,
+    telegram_id: int,
+    endpoints: list[dict] | None,
+    email: str | None = None,
+    email_verified: bool = False,
+):
+    identity = {
+        "telegram_id": telegram_id,
+        "github_username": "alice",
+    }
+    if email is not None:
+        identity.update(email=email, email_verified=email_verified)
     return parse_user_backup(
         json.dumps(
             {
@@ -108,10 +120,7 @@ def _backup_document(*, telegram_id: int, endpoints: list[dict] | None):
                 "user_count": 1,
                 "users": [
                     {
-                        "identity": {
-                            "telegram_id": telegram_id,
-                            "github_username": "alice",
-                        },
+                        "identity": identity,
                         "identities": [
                             {
                                 "provider": "github",
@@ -137,8 +146,90 @@ def _backup_document(*, telegram_id: int, endpoints: list[dict] | None):
                     }
                 ],
             }
-        ).encode()
+    ).encode()
     )
+
+
+@pytest.mark.asyncio
+async def test_restore_legacy_unverified_email_mirror_is_kept_disabled(sqlite_db):
+    document = _backup_document(
+        telegram_id=1201,
+        endpoints=None,
+        email="legacy@example.com",
+        email_verified=False,
+    )
+
+    await restore_user_backup(sqlite_db, document)
+
+    endpoint = (
+        await sqlite_db.execute(
+            select(NotificationEndpoint).where(
+                NotificationEndpoint.provider == "email"
+            )
+        )
+    ).scalars().one()
+    assert endpoint.address == "legacy@example.com"
+    assert endpoint.verified is False
+    assert endpoint.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_restore_explicit_unverified_enabled_email_is_normalized_disabled(
+    sqlite_db,
+):
+    document = _backup_document(
+        telegram_id=1202,
+        endpoints=[
+            {
+                "provider": "email",
+                "address": "unverified@example.com",
+                "verified": False,
+                "enabled": True,
+            }
+        ],
+    )
+    # Exercise the restore boundary independently of the parser normalization;
+    # this mirrors callers that construct a validated backup document in code.
+    document["users"][0]["notification_endpoints"][0]["enabled"] = True
+
+    await restore_user_backup(sqlite_db, document)
+
+    endpoint = (
+        await sqlite_db.execute(
+            select(NotificationEndpoint).where(
+                NotificationEndpoint.provider == "email"
+            )
+        )
+    ).scalars().one()
+    assert endpoint.verified is False
+    assert endpoint.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_restore_verified_disabled_email_preserves_user_choice(sqlite_db):
+    document = _backup_document(
+        telegram_id=1203,
+        endpoints=[
+            {
+                "provider": "email",
+                "address": "verified@example.com",
+                "verified": True,
+                "enabled": False,
+            }
+        ],
+    )
+
+    await restore_user_backup(sqlite_db, document)
+
+    endpoint = (
+        await sqlite_db.execute(
+            select(NotificationEndpoint).where(
+                NotificationEndpoint.provider == "email"
+            )
+        )
+    ).scalars().one()
+    assert endpoint.verified is True
+    assert endpoint.enabled is False
 
 
 @pytest.mark.asyncio

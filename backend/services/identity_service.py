@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 
 from loguru import logger
-from sqlalchemy import func, inspect, select
+from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +34,10 @@ class GitHubAccount:
     avatar_url: str | None = None
     email: str | None = None
     email_verified: bool = False
+
+
+class GitHubUsernameConflictError(ValueError):
+    """Raised before a username rename would leave identities ambiguous."""
 
 
 def registration_quota_values() -> dict[str, int]:
@@ -87,6 +91,199 @@ def _legacy_provider_id(username: str) -> str:
     return f"legacy:{username.strip().lower()}"
 
 
+def _is_legacy_github_identity(identity: UserIdentity) -> bool:
+    """Return whether an identity is a synthetic legacy GitHub binding."""
+
+    return (
+        str(getattr(identity, "provider", "")).casefold()
+        == AuthProvider.GITHUB.value
+        and str(getattr(identity, "provider_user_id", "")).casefold().startswith(
+            "legacy:"
+        )
+    )
+
+
+def _legacy_identity_matches_username(
+    identity: UserIdentity, username: str
+) -> bool:
+    """Validate both fields of a synthetic identity against the user mirror.
+
+    ``provider_username`` alone is not an identity.  Requiring the synthetic
+    id and username to agree with the current ``telegram_users`` mirror keeps
+    an abandoned pre-migration username from claiming an administratively
+    renamed account.
+    """
+
+    if not _is_legacy_github_identity(identity):
+        return False
+    normalized = username.strip().casefold()
+    provider_id = str(getattr(identity, "provider_user_id", "")).casefold()
+    provider_username = str(
+        getattr(identity, "provider_username", "") or ""
+    ).strip().casefold()
+    return provider_id == f"legacy:{normalized}" and provider_username == normalized
+
+
+async def rename_github_username(
+    db: AsyncSession,
+    user: TelegramUser,
+    new_username: str,
+) -> TelegramUser:
+    """Rename a legacy user and retire matching synthetic GitHub aliases.
+
+    This is deliberately a pre-commit helper used by both admin surfaces.
+    Every conflict is checked before changing ``user`` or deleting duplicate
+    synthetic rows.  Real provider identities are never rewritten or deleted;
+    GitHub OAuth remains authoritative for those rows.
+    """
+
+    if not isinstance(new_username, str):
+        raise GitHubUsernameConflictError("GitHub 用户名无效")
+    new_username = new_username.strip()
+    if not new_username or len(new_username) > 100:
+        raise GitHubUsernameConflictError("GitHub 用户名无效")
+
+    old_username = str(getattr(user, "github_username", "") or "").strip()
+    old_key = old_username.casefold()
+    new_key = new_username.casefold()
+
+    # Check the legacy mirror case-insensitively even on databases whose
+    # collation treats GitHub usernames as case-sensitive.
+    result = await db.execute(
+        select(TelegramUser).where(
+            TelegramUser.id != user.id,
+            func.lower(TelegramUser.github_username) == new_key,
+        )
+    )
+    if result.scalars().first() is not None:
+        raise GitHubUsernameConflictError(
+            f"GitHub 用户名 {new_username} 已被其他用户使用"
+        )
+
+    identity_result = await db.execute(
+        select(UserIdentity)
+        .where(
+            UserIdentity.provider == AuthProvider.GITHUB.value,
+            UserIdentity.user_id == user.id,
+        )
+        .order_by(UserIdentity.id)
+    )
+    identities = list(identity_result.scalars().all())
+
+    # A stale real provider row can retain a username that now belongs to a
+    # different GitHub account.  Do not let an admin mirror rename create an
+    # ambiguous username binding; importantly, this check never rewrites the
+    # other user's real identity.
+    provider_name_result = await db.execute(
+        select(UserIdentity).where(
+            UserIdentity.provider == AuthProvider.GITHUB.value,
+            UserIdentity.user_id != user.id,
+            func.lower(UserIdentity.provider_username) == new_key,
+        )
+    )
+    if provider_name_result.scalars().first() is not None:
+        raise GitHubUsernameConflictError(
+            f"GitHub 用户名 {new_username} 已绑定到其他身份"
+        )
+
+    provider_alias_result = await db.execute(
+        select(UserIdentity).where(
+            UserIdentity.provider == AuthProvider.GITHUB.value,
+            UserIdentity.user_id != user.id,
+            func.lower(UserIdentity.provider_user_id)
+            == _legacy_provider_id(new_username),
+        )
+    )
+    if provider_alias_result.scalars().first() is not None:
+        raise GitHubUsernameConflictError(
+            f"GitHub 用户名 {new_username} 已绑定到其他身份"
+        )
+
+    # A synthetic alias must not already be owned by another internal user.
+    # Check both the deterministic id and the display-name field because old
+    # interrupted migrations can have one field populated without the other.
+    alias_conflict_query = select(UserIdentity).where(
+        UserIdentity.provider == AuthProvider.GITHUB.value,
+        UserIdentity.user_id != user.id,
+    )
+    if old_key:
+        alias_conflict_query = alias_conflict_query.where(
+            func.lower(UserIdentity.provider_username).in_({old_key, new_key})
+            | func.lower(UserIdentity.provider_user_id).in_(
+                {_legacy_provider_id(old_username), _legacy_provider_id(new_username)}
+            )
+        )
+    else:
+        alias_conflict_query = alias_conflict_query.where(
+            (func.lower(UserIdentity.provider_username) == new_key)
+            | (
+                func.lower(UserIdentity.provider_user_id)
+                == _legacy_provider_id(new_username)
+            )
+        )
+    conflict_result = await db.execute(alias_conflict_query)
+    conflicting_aliases = [
+        identity
+        for identity in conflict_result.scalars().all()
+        if _is_legacy_github_identity(identity)
+        and (
+            str(getattr(identity, "provider_username", "") or "")
+            .strip()
+            .casefold()
+            in {old_key, new_key}
+            or str(getattr(identity, "provider_user_id", "")).casefold()
+            in {
+                _legacy_provider_id(old_username).casefold(),
+                _legacy_provider_id(new_username).casefold(),
+            }
+        )
+    ]
+    if conflicting_aliases:
+        raise GitHubUsernameConflictError(
+            f"GitHub 用户名 {new_username} 已绑定到其他身份"
+        )
+
+    # Only synthetic rows matching the old mirror (plus an already-created new
+    # canonical row) are candidates.  Real provider identities are intentionally
+    # excluded, even when their provider_username happens to match the rename.
+    synthetic_rows = [
+        identity
+        for identity in identities
+        if _is_legacy_github_identity(identity)
+        and (
+            _legacy_identity_matches_username(identity, old_username)
+            or _legacy_identity_matches_username(identity, new_username)
+            or str(getattr(identity, "provider_username", "") or "")
+            .strip()
+            .casefold()
+            == old_key
+        )
+    ]
+    if synthetic_rows:
+        canonical = next(
+            (
+                identity
+                for identity in synthetic_rows
+                if _legacy_identity_matches_username(identity, new_username)
+            ),
+            synthetic_rows[0],
+        )
+        duplicates = [identity for identity in synthetic_rows if identity is not canonical]
+        duplicate_ids = [identity.id for identity in duplicates if identity.id is not None]
+        if duplicate_ids:
+            # Remove only duplicate synthetic rows.  In particular, an imported
+            # real GitHub identity must remain untouched for audit/auth safety.
+            await db.execute(
+                delete(UserIdentity).where(UserIdentity.id.in_(duplicate_ids))
+            )
+            await db.flush()
+        canonical.provider_user_id = _legacy_provider_id(new_username)
+        canonical.provider_username = new_username
+
+    user.github_username = new_username
+    return user
+
+
 async def _find_github_identity(
     db: AsyncSession, account: GitHubAccount
 ) -> UserIdentity | None:
@@ -113,18 +310,18 @@ async def _find_github_identity(
     # rows left by an interrupted early migration and choose one deterministic
     # row rather than raising MultipleResultsFound during OAuth.
     identities = result.scalars().all()
-    identity = next(
-        (
-            item
-            for item in identities
-            if str(item.provider_user_id).startswith("legacy:")
-        ),
-        None,
-    )
-    # Username matching is only a migration bridge.  Once an account has a
-    # real provider id, a different id must never be allowed to claim it.
-    if identity is not None and str(identity.provider_user_id).startswith("legacy:"):
-        return identity
+    # Username matching is only a migration bridge.  Require the synthetic id,
+    # synthetic username, and current legacy mirror to agree; an old alias
+    # retained after an admin rename must never be able to claim that account.
+    for candidate in identities:
+        if not _is_legacy_github_identity(candidate):
+            continue
+        owner = await db.get(TelegramUser, candidate.user_id)
+        if owner is not None and _legacy_identity_matches_username(
+            candidate, account.username
+        ) and owner.github_username is not None:
+            if owner.github_username.strip().casefold() == account.username.casefold():
+                return candidate
     return None
 
 
@@ -150,8 +347,11 @@ async def _find_user_by_explicit_github_username(
         )
     )
     identities = identity_result.scalars().all()
+    if any(not _is_legacy_github_identity(item) for item in identities):
+        return None
     if any(
-        not str(item.provider_user_id).startswith("legacy:") for item in identities
+        not _legacy_identity_matches_username(item, user.github_username or username)
+        for item in identities
     ):
         return None
     return user
@@ -201,19 +401,28 @@ async def _upsert_email_endpoint(
             legacy_owner.id,
         )
         return
+    incoming_verified = bool(verified)
     if endpoint is None:
         endpoint = NotificationEndpoint(
             user_id=user.id,
             provider=NotificationProvider.EMAIL.value,
             address=email,
-            verified=bool(verified),
-            enabled=True,
+            verified=incoming_verified,
+            # GitHub profile/email data is not a notification authorization
+            # until GitHub explicitly marks the address verified.
+            enabled=incoming_verified,
         )
         db.add(endpoint)
     else:
-        endpoint.verified = bool(endpoint.verified or verified)
-        if reactivate:
+        was_verified = bool(endpoint.verified)
+        endpoint.verified = bool(was_verified or incoming_verified)
+        if incoming_verified and reactivate:
             endpoint.enabled = True
+        elif not was_verified:
+            # Correct rows created by older versions that enabled an unverified
+            # OAuth address, while preserving an already-verified endpoint's
+            # active state when a later GitHub response is inconclusive.
+            endpoint.enabled = False
 
     # A user has one active email destination.  Preserve old addresses for
     # audit/backup purposes, but disable them whenever OAuth rotates the
@@ -225,14 +434,35 @@ async def _upsert_email_endpoint(
             func.lower(NotificationEndpoint.address) != email,
         )
     )
-    for old_endpoint in other_results.scalars().all():
-        old_endpoint.enabled = False
+    # An unverified replacement must never turn off a previously verified,
+    # active address.  Once the new address is verified it becomes primary and
+    # older addresses are retired as before.
+    if incoming_verified:
+        for old_endpoint in other_results.scalars().all():
+            old_endpoint.enabled = False
 
     # Keep legacy mirror fields available for old UI and services.  The
     # endpoint table remains authoritative for notification delivery.
     user.email = email
     user.email_verified = bool(endpoint.verified)
     user.email_updated_at = now_utc()
+
+
+async def _disable_unverified_email_endpoints(
+    db: AsyncSession, user_id: int
+) -> None:
+    """Repair legacy rows that enabled an email before verification existed."""
+
+    result = await db.execute(
+        select(NotificationEndpoint).where(
+            NotificationEndpoint.user_id == user_id,
+            NotificationEndpoint.provider == NotificationProvider.EMAIL.value,
+            NotificationEndpoint.verified.is_(False),
+            NotificationEndpoint.enabled.is_(True),
+        )
+    )
+    for endpoint in result.scalars().all():
+        endpoint.enabled = False
 
 
 async def upsert_github_account(
@@ -329,7 +559,7 @@ async def upsert_github_account(
             (
                 item
                 for item in existing_identities
-                if str(item.provider_user_id).startswith("legacy:")
+                if _legacy_identity_matches_username(item, username)
             ),
             None,
         )
@@ -349,6 +579,9 @@ async def upsert_github_account(
             )
             db.add(identity)
 
+    # Even when GitHub omits the email scope/value, repair any legacy enabled
+    # unverified rows before the next announcement query can use them.
+    await _disable_unverified_email_endpoints(db, user.id)
     await _upsert_email_endpoint(db, user, account.email, account.email_verified)
     await db.commit()
     await db.refresh(user)

@@ -38,7 +38,7 @@ class NotificationSender:
         for value in chat_ids or []:
             try:
                 chat_id = int(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             # A negative Telegram id denotes a group/channel, not a user.
             # Never infer that meaning from a legacy mirror or a SQLite
@@ -55,7 +55,7 @@ class NotificationSender:
         try:
             if str(raw_configured_id).strip():
                 configured_system_id = int(str(raw_configured_id).strip())
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             configured_system_id = None
         if configured_system_id == 0:
             configured_system_id = None
@@ -67,7 +67,7 @@ class NotificationSender:
         for value in system_chat_ids or []:
             try:
                 chat_id = int(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             if (
                 configured_system_id is not None
@@ -100,6 +100,7 @@ class NotificationSender:
                     .where(
                         NotificationEndpoint.provider == "telegram",
                         NotificationEndpoint.enabled.is_(True),
+                        TelegramUser.is_active.is_(True),
                         (
                             NotificationEndpoint.address.in_(
                                 [str(item) for item in normalized]
@@ -115,7 +116,7 @@ class NotificationSender:
                 for address, legacy_id in result.all():
                     try:
                         current_id = int(address)
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         continue
                     if current_id <= 0:
                         continue

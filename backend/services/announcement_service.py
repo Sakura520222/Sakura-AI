@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.time_service import now_utc
@@ -800,12 +801,45 @@ async def withdraw_announcement(
 
 
 async def delete_announcement(db: AsyncSession, announcement_id: int) -> bool:
-    """Delete a draft; published history is retained and must be withdrawn."""
-    announcement = await get_announcement(db, announcement_id)
+    """Delete only a never-published draft.
+
+    Publication snapshots are the audit record for an announcement.  A
+    physical delete must therefore be refused as soon as the row has ever
+    entered a publication lifecycle, even if a legacy database has an
+    inconsistent ``status`` value (for example ``draft`` with a non-null
+    ``published_at`` or a leftover snapshot).  Callers translate this
+    ``ValueError`` to the existing HTTP 409 response.
+    """
+    announcement = await _get_lifecycle_announcement(db, announcement_id)
     if announcement is None:
         return False
+
     if announcement.status == AnnouncementStatus.PUBLISHED.value:
         raise ValueError("已发布公告不可删除，请先撤回")
+    if announcement.status == AnnouncementStatus.WITHDRAWN.value:
+        raise ValueError("已撤回公告不可删除，发布历史必须保留")
+    if announcement.status != AnnouncementStatus.DRAFT.value:
+        raise ValueError("公告状态不允许删除")
+    if announcement.published_at is not None:
+        raise ValueError("存在发布历史的公告不可删除")
+
+    # Do not infer safety from status alone.  Old installations may have
+    # partially migrated rows, and a snapshot is authoritative evidence that
+    # this announcement was published at least once.
+    has_publication_history = (
+        await db.execute(
+            select(AnnouncementPublicationHistory.id)
+            .where(
+                AnnouncementPublicationHistory.announcement_id
+                == announcement.id
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
+
+    if has_publication_history:
+        raise ValueError("存在发布历史的公告不可删除")
+
     await db.delete(announcement)
     await db.commit()
     return True
@@ -1002,20 +1036,99 @@ async def unread_count(db: AsyncSession, user_id: int) -> int:
     return int(result.scalar() or 0)
 
 
+def _is_announcement_read_conflict(error: IntegrityError) -> bool:
+    """Return whether an integrity error is the read-marker unique race.
+
+    ``begin_nested()`` below rolls back only the marker insert savepoint.  It
+    is safe to turn the one expected duplicate into an idempotent result, but
+    foreign-key, NOT NULL, and every unrelated constraint error must still be
+    raised.  The checks cover the native error metadata used by PostgreSQL and
+    MySQL as well as the diagnostic text emitted by SQLite.
+    """
+    original = getattr(error, "orig", None)
+    sqlstate = getattr(original, "sqlstate", None) or getattr(
+        original, "pgcode", None
+    )
+    diagnostic = getattr(original, "diag", None)
+    constraint_name = getattr(diagnostic, "constraint_name", None)
+    if str(constraint_name).lower() == "uq_announcement_read":
+        return True
+
+    errno = getattr(original, "errno", None)
+    if errno is None:
+        args = getattr(original, "args", ())
+        if args and isinstance(args[0], int):
+            errno = args[0]
+    text = " ".join(
+        part.lower()
+        for part in (str(error), str(original))
+        if part
+    )
+    # PostgreSQL's async drivers do not all expose ``diag`` consistently;
+    # MySQL commonly reports only ``for key`` in the text.  Require either
+    # our exact constraint name or both columns of the known unique key.  A
+    # bare SQLSTATE/errno is deliberately insufficient because the savepoint
+    # can also flush unrelated pending objects from the caller's session.
+    if "uq_announcement_read" in text:
+        return True
+    if str(sqlstate) == "23505" or errno == 1062:
+        return (
+            "announcement_reads" in text
+            and "announcement_id" in text
+            and "user_id" in text
+        )
+    return (
+        "announcement_reads" in text
+        and "announcement_id" in text
+        and "user_id" in text
+        and any(
+            marker in text
+            for marker in ("unique", "duplicate", "already exists")
+        )
+    )
+
+
+async def _insert_announcement_read(
+    db: AsyncSession, user_id: int, announcement_id: int
+) -> bool:
+    """Insert one read marker and report whether this call created it.
+
+    The unique key is the concurrency primitive.  The savepoint is important:
+    a losing concurrent insert must not put the caller's outer session into a
+    failed-transaction state, and it must not roll back unrelated work in that
+    transaction.  Only the expected unique-key race is absorbed.
+    """
+    try:
+        async with db.begin_nested():
+            db.add(
+                AnnouncementRead(
+                    user_id=user_id,
+                    announcement_id=announcement_id,
+                )
+            )
+            await db.flush()
+    except IntegrityError as exc:
+        if not _is_announcement_read_conflict(exc):
+            raise
+        return False
+    return True
+
+
 async def mark_read(db: AsyncSession, user_id: int, announcement_id: int) -> bool:
     announcement = await get_announcement(db, announcement_id)
     if announcement is None or announcement.status != AnnouncementStatus.PUBLISHED.value:
         return False
     existing = (
         await db.execute(
-            select(AnnouncementRead).where(
+            select(AnnouncementRead.id).where(
                 AnnouncementRead.user_id == user_id,
                 AnnouncementRead.announcement_id == announcement_id,
             )
         )
     ).scalar_one_or_none()
-    if existing is None:
-        db.add(AnnouncementRead(user_id=user_id, announcement_id=announcement_id))
+    if existing is None and await _insert_announcement_read(
+        db, user_id, announcement_id
+    ):
         await db.commit()
     return True
 
@@ -1038,8 +1151,9 @@ async def mark_all_read(db: AsyncSession, user_id: int) -> int:
     existing_ids = {item[0] for item in existing}
     new_count = 0
     for (announcement_id,) in announcements:
-        if announcement_id not in existing_ids:
-            db.add(AnnouncementRead(user_id=user_id, announcement_id=announcement_id))
+        if announcement_id not in existing_ids and await _insert_announcement_read(
+            db, user_id, announcement_id
+        ):
             new_count += 1
     if new_count:
         await db.commit()

@@ -1950,6 +1950,7 @@ api:
   agent_skill_delete_failed: "Skill 删除失败: {error}"
   github_username_conflict: "GitHub 用户名 {github_username} 已被其他用户使用"
   user_info_updated: "用户基本信息已更新"
+  user_info_update_failed: "用户基本信息更新失败"
   quota_reset: "用户 {username} 的配额使用量已重置"
   permission_denied_role: "权限不足，无法修改此用户的角色"
   permission_denied_super_admin: "权限不足，无法设置为超级管理员"

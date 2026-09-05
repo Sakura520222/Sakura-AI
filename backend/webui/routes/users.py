@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.time_service import now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
+from backend.services.identity_service import (
+    GitHubUsernameConflictError,
+    rename_github_username,
+)
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
@@ -698,13 +702,13 @@ async def update_user_info(
                 telegram_id=telegram_id,
             )
 
-    # 检查 GitHub 用户名唯一性（排除自身）
-    existing_gh = await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.github_username == github_username, TelegramUser.id != user_id
-        )
-    )
-    if existing_gh.scalar_one_or_none():
+    old_tg_id = target_user.telegram_id
+    old_github = target_user.github_username
+    try:
+        # Keep the WebUI and API on the same pre-commit rename path.  The
+        # helper validates all alias conflicts before changing this user.
+        await rename_github_username(db, target_user, github_username)
+    except GitHubUsernameConflictError:
         return toast_redirect(
             f"/users/{user_id}",
             "toast.github_username_conflict",
@@ -712,15 +716,31 @@ async def update_user_info(
             lang=detect_language(),
             github_username=github_username,
         )
-
-    old_tg_id = target_user.telegram_id
-    old_github = target_user.github_username
     # Blank means keep the legacy mirror untouched.  Changing a populated
     # parent key to NULL would invalidate old UserRepoSubscription FKs.
     if telegram_id is not None:
         target_user.telegram_id = telegram_id
     target_user.github_username = github_username
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        logger.error(f"用户信息更新失败（数据库冲突）: {exc}")
+        await db.rollback()
+        return toast_redirect(
+            f"/users/{user_id}",
+            "toast.user_info_update_failed",
+            "error",
+            lang=detect_language(),
+        )
+    except Exception as exc:
+        logger.error(f"用户信息更新失败: {exc}")
+        await db.rollback()
+        return toast_redirect(
+            f"/users/{user_id}",
+            "toast.user_info_update_failed",
+            "error",
+            lang=detect_language(),
+        )
 
     logger.info(
         f"用户信息已变更: id={user_id}, {old_github}->{github_username}, {old_tg_id}->{telegram_id}, by={user['sub']}"
