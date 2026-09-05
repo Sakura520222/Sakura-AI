@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.announcement_service import (
     announcement_to_dict,
-    delivery_stats,
+    delivery_stats_many,
     get_announcement,
     mark_read,
     paginate_announcements,
@@ -110,9 +110,12 @@ async def announcement_admin_page(
         page=page,
         per_page=per_page or user_prefs.get("items_per_page", 100),
     )
+    stats_by_id = await delivery_stats_many(
+        db, [announcement for announcement, _read in page_result.items]
+    )
     items = []
     for item, read in page_result.items:
-        stats = await delivery_stats(db, item.id)
+        stats = stats_by_id.get(item.id)
         items.append(
             announcement_to_dict(item, read=read, delivery_stats=stats)
         )
@@ -128,6 +131,7 @@ async def announcement_admin_page(
         per_page=page_result.per_page,
         total=page_result.total,
         total_pages=page_result.total_pages,
+        deletable_ids=getattr(stats_by_id, "deletable_ids", frozenset()),
     )
 
 

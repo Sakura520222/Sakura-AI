@@ -14,7 +14,7 @@ from backend.services.announcement_service import (
     announcement_to_dict,
     create_announcement,
     delete_announcement,
-    delivery_stats,
+    delivery_stats_many,
     get_announcement,
     mark_all_read,
     mark_read,
@@ -165,9 +165,12 @@ async def admin_list_announcements(
         page=page,
         per_page=per_page,
     )
+    stats_by_id = await delivery_stats_many(
+        db, [announcement for announcement, _read in page_result.items]
+    )
     items = []
     for announcement, read in page_result.items:
-        stats = await delivery_stats(db, announcement.id)
+        stats = stats_by_id.get(announcement.id)
         items.append(
             announcement_to_dict(announcement, read=read, delivery_stats=stats)
         )

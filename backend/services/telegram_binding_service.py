@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from backend.core.config import get_settings
-from backend.core.redis import get_async_redis
+from backend.core.redis import atomic_getdel, get_async_redis
 from backend.core.time_service import now_utc
 
 _TOKEN_PREFIX = "tg_bind_"
@@ -124,7 +124,7 @@ async def consume_telegram_binding_token(token: str) -> int | None:
     key = f"{_REDIS_KEY_PREFIX}{digest}"
     try:
         redis = await get_async_redis()
-        raw = await redis.execute_command("GETDEL", key)
+        raw = await atomic_getdel(redis, key)
         if raw is not None:
             return _parse_payload(raw)
     except Exception as exc:

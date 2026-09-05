@@ -215,6 +215,7 @@ async def lifespan(app: FastAPI):
 
         telegram_task = None
         redis_listener_task = None
+        app.state.announcement_recovery_task = None
         outbox_dispatcher = None
         scan_scheduler = None
         quota_reset_scheduler = None
@@ -351,6 +352,29 @@ async def lifespan(app: FastAPI):
                             logger.error(f"❌ Telegram Bot 启动失败: {e}")
                     else:
                         logger.info("ℹ️ Telegram 通知未配置，跳过 Bot 启动")
+
+                    # Published announcement rows are durable, but the
+                    # in-memory task created by the publishing request is not.
+                    # Recover only current pending rows after a process restart;
+                    # the recovery worker uses the same claim/CAS path as a
+                    # normal broadcast and is registered before yielding so
+                    # shutdown/reset can cancel and await it safely.  Register
+                    # it after the optional Telegram task so its first event-loop
+                    # turn observes the provider registry and Bot setup.
+                    try:
+                        from backend.services.announcement_service import (
+                            recover_pending_announcement_deliveries,
+                        )
+
+                        app.state.announcement_recovery_task = (
+                            create_registered_background_task(
+                                recover_pending_announcement_deliveries(),
+                                "announcement.recovery",
+                            )
+                        )
+                        logger.info("✅ 公告待投递恢复任务已启动")
+                    except Exception as e:
+                        logger.error(f"❌ 公告待投递恢复任务启动失败: {e}")
 
                     # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
                     try:

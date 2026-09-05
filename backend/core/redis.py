@@ -6,12 +6,23 @@ import contextvars
 import redis
 import redis.asyncio as aioredis
 from loguru import logger
+from redis.exceptions import ResponseError
 
 from backend.core.config import get_settings
 
 _client_context = contextvars.ContextVar("redis_client", default=None)
 _MIN_REDIS_GETDEL_VERSION = (6, 2, 0)
 _getdel_version_warning_logged = False
+
+# Redis 6.0 and earlier do not provide GETDEL.  Keep the fallback script
+# deliberately single-key so Redis executes GET+DEL atomically on the server.
+_ATOMIC_GETDEL_LUA = """
+local value = redis.call('GET', KEYS[1])
+if value then
+    redis.call('DEL', KEYS[1])
+end
+return value
+"""
 
 
 def _parse_redis_version(version: str) -> tuple[int, int, int] | None:
@@ -32,7 +43,7 @@ def _redis_version_supports_getdel(version: str) -> bool:
 
 
 def _warn_if_getdel_unsupported(version: str | None) -> None:
-    """Warn once when Redis Server is too old for atomic GETDEL."""
+    """Warn once when Redis Server is too old for native atomic GETDEL."""
     global _getdel_version_warning_logged
     if not version or _redis_version_supports_getdel(version):
         return
@@ -40,11 +51,56 @@ def _warn_if_getdel_unsupported(version: str | None) -> None:
         return
     _getdel_version_warning_logged = True
     logger.warning(
-        "Redis Server 6.2+ is required for atomic GETDEL challenge consumption; "
-        "current Redis Server version is {}. One-time TOTP/Passkey secrets may "
-        "fall back to in-memory storage if GETDEL is unsupported.",
+        "Redis Server 6.2+ provides native atomic GETDEL; current Redis Server "
+        "version is {}. Telegram binding token consumption will use an atomic "
+        "Lua GET+DEL compatibility path on older servers (EVAL must be enabled). "
+        "TOTP/Passkey challenge paths may still fall back to in-memory storage "
+        "if native GETDEL is unavailable.",
         version,
     )
+
+
+def _is_unknown_getdel_command(error: ResponseError) -> bool:
+    """Return whether a Redis error specifically rejects the GETDEL command.
+
+    Redis reports disabled commands, ACL denials, and scripting failures using
+    response errors too.  Only the server's *unknown command GETDEL* response
+    authorizes the Lua compatibility path; all other response errors must be
+    propagated to the caller.
+    """
+
+    message = str(error)
+    marker = message.lower().find("unknown command")
+    if marker < 0:
+        return False
+    command_text = message[marker + len("unknown command") :].lstrip()
+    if not command_text:
+        return False
+    if command_text[0] in "'\"":
+        quote = command_text[0]
+        command_text = command_text[1:]
+        command = command_text.split(quote, 1)[0]
+    else:
+        command = command_text.split(None, 1)[0].rstrip(",;")
+    return command.upper() == "GETDEL"
+
+
+async def atomic_getdel(client: aioredis.Redis, key: str) -> object:
+    """Atomically get and delete one Redis key.
+
+    Native ``GETDEL`` is preferred.  Redis versions before 6.2 use a server
+    side Lua transaction instead of an unsafe client-side GET followed by DEL.
+    The fallback is intentionally gated on the precise unknown-command error
+    for GETDEL, so ACL, connection, timeout, and scripting errors remain
+    visible to callers.
+    """
+
+    try:
+        return await client.execute_command("GETDEL", key)
+    except ResponseError as error:
+        if not _is_unknown_getdel_command(error):
+            raise
+        return await client.eval(_ATOMIC_GETDEL_LUA, 1, key)
 
 
 def _check_getdel_support(client) -> None:

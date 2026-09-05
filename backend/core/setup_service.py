@@ -630,10 +630,7 @@ class SetupService:
         )
         from backend.models.identity_models import AuthProvider, UserIdentity
         from backend.models.telegram_models import TelegramUser
-        from backend.services.identity_service import (
-            _next_legacy_placeholder,
-            legacy_telegram_id_required,
-        )
+        from backend.services.identity_service import create_user_and_flush
 
         if db_module.async_engine is None:
             init_async_db(database_url)
@@ -679,25 +676,26 @@ class SetupService:
                 from backend.core.config import get_settings  # 延迟导入避免循环引用
 
                 settings = get_settings()
-                admin = TelegramUser(
+                admin = await create_user_and_flush(
+                    session,
+                    lambda resolved_telegram_id: TelegramUser(
+                        telegram_id=resolved_telegram_id,
+                        github_username=github_username,
+                        role="super_admin",
+                        is_active=True,
+                        daily_quota=settings.init_admin_daily_quota,
+                        weekly_quota=settings.init_admin_weekly_quota,
+                        monthly_quota=settings.init_admin_monthly_quota,
+                        # 管理员 Issue 配额复用管理员 PR 初始配额
+                        issue_daily_quota=settings.init_admin_daily_quota,
+                        issue_weekly_quota=settings.init_admin_weekly_quota,
+                        issue_monthly_quota=settings.init_admin_daily_quota,
+                        agent_daily_quota=settings.init_admin_agent_daily_quota,
+                        agent_weekly_quota=settings.init_admin_agent_weekly_quota,
+                        agent_monthly_quota=settings.init_admin_agent_monthly_quota,
+                    ),
                     telegram_id=telegram_id,
-                    github_username=github_username,
-                    role="super_admin",
-                    is_active=True,
-                    daily_quota=settings.init_admin_daily_quota,
-                    weekly_quota=settings.init_admin_weekly_quota,
-                    monthly_quota=settings.init_admin_monthly_quota,
-                    # 管理员 Issue 配额复用管理员 PR 初始配额
-                    issue_daily_quota=settings.init_admin_daily_quota,
-                    issue_weekly_quota=settings.init_admin_weekly_quota,
-                    issue_monthly_quota=settings.init_admin_monthly_quota,
-                    agent_daily_quota=settings.init_admin_agent_daily_quota,
-                    agent_weekly_quota=settings.init_admin_agent_weekly_quota,
-                    agent_monthly_quota=settings.init_admin_agent_monthly_quota,
                 )
-                if admin.telegram_id is None and await legacy_telegram_id_required(session):
-                    admin.telegram_id = await _next_legacy_placeholder(session)
-                session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")
             # AsyncSession.flush is awaitable.  Keep maintenance/test session
             # facades that expose a synchronous no-op flush compatible too.

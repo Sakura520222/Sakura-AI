@@ -70,7 +70,7 @@
       <div class="mt-4 flex gap-2">
         {% if item.status != 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/publish"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs">{{ _('announcements.publish') }}</button></form>{% endif %}
         {% if item.status == 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/withdraw"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs">{{ _('announcements.withdraw') }}</button></form>{% endif %}
-        {% if item.status != 'published' %}<form method="post" action="/announcements/admin/{{ item.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs text-red-600">{{ _('announcements.delete') }}</button></form>{% endif %}
+        {% if item.id in (deletable_ids | default([])) %}<form method="post" action="/announcements/admin/{{ item.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="rounded border px-3 py-1 text-xs text-red-600">{{ _('announcements.delete') }}</button></form>{% endif %}
       </div>
     </article>
     {% else %}<div class="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">{{ _('announcements.empty') }}</div>{% endfor %}

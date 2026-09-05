@@ -35,6 +35,7 @@ from backend.models.telegram_models import (
     UserRole,
     UserWebAuthnCredential,
 )
+from backend.services.identity_service import create_user_and_flush
 from backend.services.two_factor_service import (
     TwoFactorNotConfiguredError,
     decrypt_totp_secret,
@@ -1336,23 +1337,16 @@ async def restore_user_backup(
             existing_target = target is not None
             if target is None:
                 telegram_id = identity.get("telegram_id")
-                if telegram_id is None:
-                    # Preserve import compatibility for pre-v2 SQLite tables
-                    # whose legacy facade still enforces NOT NULL.  The
-                    # placeholder is never exported as a Telegram endpoint.
-                    from backend.services.identity_service import (
-                        _next_legacy_placeholder,
-                        legacy_telegram_id_required,
-                    )
-
-                    if await legacy_telegram_id_required(db):
-                        telegram_id = await _next_legacy_placeholder(db)
-                target = TelegramUser(
+                target = await create_user_and_flush(
+                    db,
+                    lambda resolved_telegram_id, github_username=identity.get(
+                        "github_username"
+                    ): TelegramUser(
+                        telegram_id=resolved_telegram_id,
+                        github_username=github_username,
+                    ),
                     telegram_id=telegram_id,
-                    github_username=identity.get("github_username"),
                 )
-                db.add(target)
-                await db.flush()
                 users_created += 1
                 changed = True
             else:

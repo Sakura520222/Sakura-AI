@@ -6,6 +6,7 @@ import asyncio
 import html
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -284,6 +285,26 @@ class AnnouncementDeliveryStats:
             "history": list(self.history),
             "history_count": len(self.history),
         }
+
+
+class AnnouncementDeliveryStatsBatch(dict[int, AnnouncementDeliveryStats]):
+    """Bulk delivery statistics with the admin deletion safety projection.
+
+    The mapping behaves exactly like a normal ``dict`` for compatibility with
+    callers that only need per-announcement statistics.  ``deletable_ids`` is
+    derived from the same publication-history query used to build the
+    statistics, so admin pages do not need an additional per-row query (or a
+    second, potentially inconsistent history snapshot).
+    """
+
+    def __init__(
+        self,
+        values: dict[int, AnnouncementDeliveryStats] | None = None,
+        *,
+        deletable_ids: Iterable[int] = (),
+    ) -> None:
+        super().__init__(values or {})
+        self.deletable_ids = frozenset(int(value) for value in deletable_ids)
 
 
 @dataclass(frozen=True)
@@ -731,6 +752,248 @@ async def _broadcast_in_background(
         logger.exception("公告异步广播失败: announcement_id={}", announcement_id)
 
 
+_ANNOUNCEMENT_RECOVERY_POLL_SECONDS = 0.25
+_ANNOUNCEMENT_RECOVERY_WORKERS = 4
+
+
+def _active_delivery_claim_until(
+    claim_token: object, claim_until: object, *, now: object
+) -> object | None:
+    """Return an unexpired claim timestamp, if the row is still leased.
+
+    ``claim_token`` is the ownership proof used by ``NotificationService``.
+    A stray timestamp without a token is not a claim and is intentionally left
+    available for the normal CAS claim path.  Legacy databases can also expose
+    naive values in test adapters; those values are treated conservatively as
+    active rather than allowing a recovery worker to steal the row.
+    """
+
+    if not claim_token or claim_until is None:
+        return None
+    try:
+        return claim_until if claim_until > now else None
+    except TypeError:
+        # A mixed aware/naive value cannot be compared safely.  Waiting for a
+        # short re-query is safer than sending while another worker may own it.
+        return claim_until
+
+
+async def _pending_announcement_recovery_candidates(
+    db: AsyncSession,
+) -> dict[int, tuple[int, object | None]]:
+    """Return current published rounds with durable pending deliveries.
+
+    The announcement/delivery version comparison is done in SQL, ensuring an
+    old round left behind by a republish is never reactivated after restart.
+    The value for each announcement is its current version and the earliest
+    active claim expiry, if any.
+    """
+
+    result = await db.execute(
+        select(
+            Announcement.id,
+            Announcement.publication_version,
+            NotificationDelivery.claim_token,
+            NotificationDelivery.claim_until,
+        )
+        .join(
+            NotificationDelivery,
+            NotificationDelivery.announcement_id == Announcement.id,
+        )
+        .where(
+            Announcement.status == AnnouncementStatus.PUBLISHED.value,
+            NotificationDelivery.status == DeliveryStatus.PENDING.value,
+            NotificationDelivery.publication_version
+            == Announcement.publication_version,
+        )
+    )
+    now = now_utc()
+    candidates: dict[int, tuple[int, object | None]] = {}
+    for announcement_id, publication_version, claim_token, claim_until in result:
+        normalized_id = int(announcement_id)
+        try:
+            normalized_version = max(1, int(publication_version or 1))
+        except (TypeError, ValueError):
+            normalized_version = 1
+        active_until = _active_delivery_claim_until(
+            claim_token, claim_until, now=now
+        )
+        current = candidates.get(normalized_id)
+        if current is None:
+            candidates[normalized_id] = (normalized_version, active_until)
+        elif active_until is not None and (
+            current[1] is None or active_until < current[1]
+        ):
+            candidates[normalized_id] = (current[0], active_until)
+    return candidates
+
+
+async def _recover_one_announcement(
+    announcement_id: int,
+    expected_version: int,
+    session_factory: Any,
+) -> None:
+    """Drain only current pending rows for one publication round.
+
+    The worker waits for an existing, unexpired lease instead of attempting to
+    clear or replace it.  Every iteration re-reads the announcement and its
+    pending rows, so a withdrawal or republish stops recovery before a provider
+    call.  ``broadcast_announcement(..., pending_only=True)`` performs the
+    final row-level claim/CAS guard in the delivery service.
+    """
+
+    from backend.services.notification_service import notification_service
+
+    while True:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(
+                    Announcement.status,
+                    Announcement.publication_version,
+                    NotificationDelivery.status,
+                    NotificationDelivery.claim_token,
+                    NotificationDelivery.claim_until,
+                )
+                .join(
+                    NotificationDelivery,
+                    NotificationDelivery.announcement_id == Announcement.id,
+                )
+                .where(
+                    Announcement.id == announcement_id,
+                    Announcement.status == AnnouncementStatus.PUBLISHED.value,
+                    Announcement.publication_version == expected_version,
+                    NotificationDelivery.publication_version == expected_version,
+                    NotificationDelivery.status == DeliveryStatus.PENDING.value,
+                )
+            )
+            rows = result.all()
+            now = now_utc()
+            active_claims = [
+                active_until
+                for _status, _version, _delivery_status, token, claim_until in rows
+                if (
+                    active_until := _active_delivery_claim_until(
+                        token, claim_until, now=now
+                    )
+                )
+                is not None
+            ]
+            if not rows:
+                return
+
+        # A publication can contain both leased and immediately recoverable
+        # rows.  Only wait when every remaining pending row is leased; in the
+        # mixed case the broadcaster's row-level CAS skips the leased rows and
+        # drains the unclaimed rows without head-of-line blocking.
+        if active_claims and len(active_claims) == len(rows):
+            earliest = min(active_claims)
+            try:
+                delay = max(0.0, (earliest - now).total_seconds())
+            except (AttributeError, TypeError, ValueError):
+                delay = _ANNOUNCEMENT_RECOVERY_POLL_SECONDS
+            await asyncio.sleep(
+                min(max(delay, _ANNOUNCEMENT_RECOVERY_POLL_SECONDS), 30.0)
+            )
+            continue
+
+        async with session_factory() as session:
+            await notification_service.broadcast_announcement(
+                session,
+                announcement_id,
+                expected_version=expected_version,
+                pending_only=True,
+            )
+        # A competing recovery may have won the claim while this iteration
+        # was between its read and broadcast calls.  Yield before re-querying
+        # so the winner can commit its terminal state.
+        await asyncio.sleep(0)
+
+
+async def _announcement_recovery_worker(
+    queue: asyncio.Queue[tuple[int, int]],
+    session_factory: Any,
+) -> None:
+    """Drain recovery work from a bounded queue until it is empty."""
+
+    while True:
+        announcement_id, expected_version = await queue.get()
+        try:
+            await _recover_one_announcement(
+                announcement_id,
+                expected_version,
+                session_factory,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # One broken database row or provider must not strand unrelated
+            # recovery work in the queue.  The next regular retry still has
+            # the persisted row available for an administrator.
+            logger.exception(
+                "公告待投递恢复失败: announcement_id={}, version={}",
+                announcement_id,
+                expected_version,
+            )
+        finally:
+            queue.task_done()
+
+
+async def recover_pending_announcement_deliveries() -> None:
+    """Recover durable current pending announcement deliveries after startup.
+
+    This task is deliberately a no-op when the database factory is absent and
+    never includes FAILED rows.  It is registered by the application lifespan
+    only when regular background tasks are enabled; cancellation therefore
+    follows the existing runtime supervisor shutdown path.
+    """
+
+    from backend.models import database as db_module
+
+    session_factory = db_module.async_session
+    if session_factory is None:
+        logger.info("公告投递恢复跳过：数据库会话尚未初始化")
+        return
+    try:
+        async with session_factory() as session:
+            candidates = await _pending_announcement_recovery_candidates(session)
+        # Keep startup recovery bounded.  The row-level claim is already the
+        # cross-process concurrency primitive; a fixed worker pool prevents a
+        # large backlog from creating an unbounded task fan-out.  Rounds with
+        # no active lease go first so one long-lived worker lease cannot cause
+        # head-of-line blocking for immediately recoverable announcements.
+        if not candidates:
+            return
+        ordered_candidates = sorted(
+            candidates.items(),
+            key=lambda item: item[1][1] is not None,
+        )
+        queue: asyncio.Queue[tuple[int, int]] = asyncio.Queue(
+            maxsize=max(1, int(_ANNOUNCEMENT_RECOVERY_WORKERS))
+        )
+        worker_count = min(
+            max(1, int(_ANNOUNCEMENT_RECOVERY_WORKERS)),
+            len(ordered_candidates),
+        )
+        workers = [
+            asyncio.create_task(
+                _announcement_recovery_worker(queue, session_factory)
+            )
+            for _ in range(worker_count)
+        ]
+        try:
+            for announcement_id, (version, _claim_until) in ordered_candidates:
+                await queue.put((announcement_id, version))
+            await queue.join()
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("公告投递恢复失败")
+
+
 def schedule_announcement_broadcast(
     announcement_id: int, *, expected_version: int | None = None
 ) -> asyncio.Task | None:
@@ -1164,33 +1427,105 @@ async def delivery_stats(
     db: AsyncSession, announcement_id: int
 ) -> AnnouncementDeliveryStats:
     announcement = await get_announcement(db, announcement_id)
-    current_version = _publication_version(announcement) if announcement else 1
-    rows = (
+    if announcement is None:
+        return AnnouncementDeliveryStats(pending=0, sent=0, failed=0)
+    return (await delivery_stats_many(db, [announcement])).get(
+        announcement_id,
+        AnnouncementDeliveryStats(pending=0, sent=0, failed=0),
+    )
+
+
+async def delivery_stats_many(
+    db: AsyncSession,
+    announcements: Iterable[Announcement],
+) -> AnnouncementDeliveryStatsBatch:
+    """Aggregate delivery statistics for loaded announcements in three queries.
+
+    The current page's ORM objects supply each publication version, avoiding a
+    ``get_announcement`` query per row.  Current delivery counts, publication
+    snapshots, and archived delivery counts are fetched in bulk; all
+    per-announcement filtering and serialization then happens in memory.  The
+    returned mapping also carries ``deletable_ids`` for the admin template,
+    based on the exact same complete snapshot result.
+    """
+
+    loaded = list(announcements)
+    by_id: dict[int, Announcement] = {}
+    for announcement in loaded:
+        announcement_id = getattr(announcement, "id", None)
+        if announcement_id is None:
+            continue
+        by_id[int(announcement_id)] = announcement
+    if not by_id:
+        return AnnouncementDeliveryStatsBatch()
+
+    ids = tuple(by_id)
+    current_versions = {
+        announcement_id: _publication_version(announcement)
+        for announcement_id, announcement in by_id.items()
+    }
+
+    current_grouped = (
         await db.execute(
-            select(NotificationDelivery.status, func.count(NotificationDelivery.id))
-            .where(NotificationDelivery.announcement_id == announcement_id)
-            .where(NotificationDelivery.publication_version == current_version)
-            .group_by(NotificationDelivery.status)
+            select(
+                NotificationDelivery.announcement_id,
+                NotificationDelivery.publication_version,
+                NotificationDelivery.status,
+                func.count(NotificationDelivery.id),
+            )
+            .where(NotificationDelivery.announcement_id.in_(ids))
+            .group_by(
+                NotificationDelivery.announcement_id,
+                NotificationDelivery.publication_version,
+                NotificationDelivery.status,
+            )
         )
     ).all()
-    counts = {str(status): int(count) for status, count in rows}
-    # A withdrawn announcement may be edited as a draft before it is
-    # republished.  In that state the old snapshot has the same publication
-    # version as the current row and must remain visible; only an active,
-    # still-current publication is intentionally omitted from the archive.
-    history_filter = AnnouncementPublicationHistory.announcement_id == announcement_id
-    history_filter = history_filter & (
-        (AnnouncementPublicationHistory.publication_version != current_version)
-        | AnnouncementPublicationHistory.archived_at.is_not(None)
-    )
-    history_rows = (
+    counts_by_announcement: dict[int, dict[str, int]] = {
+        announcement_id: {}
+        for announcement_id in by_id
+    }
+    for announcement_id, version, status, count in current_grouped:
+        normalized_id = int(announcement_id)
+        try:
+            is_current_version = version is not None and int(version) == current_versions[normalized_id]
+        except (KeyError, TypeError, ValueError):
+            is_current_version = False
+        if normalized_id in current_versions and is_current_version:
+            counts_by_announcement[normalized_id][str(status)] = int(count)
+
+    # Fetch every snapshot for this page, including an unarchived current
+    # snapshot.  The latter is excluded from visible history for a still-active
+    # publication, but its existence makes a legacy/inconsistent row unsafe to
+    # delete and is therefore needed for ``deletable_ids``.
+    all_snapshots = (
         await db.execute(
             select(AnnouncementPublicationHistory)
-            .where(history_filter)
-            .order_by(AnnouncementPublicationHistory.publication_version.desc())
+            .where(AnnouncementPublicationHistory.announcement_id.in_(ids))
+            .order_by(
+                AnnouncementPublicationHistory.announcement_id,
+                AnnouncementPublicationHistory.publication_version.desc(),
+            )
         )
     ).scalars().all()
-    history_ids = [row.id for row in history_rows]
+    snapshots_by_announcement: dict[int, list[AnnouncementPublicationHistory]] = {
+        announcement_id: []
+        for announcement_id in by_id
+    }
+    all_snapshot_announcement_ids: set[int] = set()
+    history_ids: list[int] = []
+    for snapshot in all_snapshots:
+        announcement_id = int(snapshot.announcement_id)
+        if announcement_id not in current_versions:
+            continue
+        all_snapshot_announcement_ids.add(announcement_id)
+        if (
+            snapshot.publication_version != current_versions[announcement_id]
+            or snapshot.archived_at is not None
+        ):
+            snapshots_by_announcement[announcement_id].append(snapshot)
+            history_ids.append(int(snapshot.id))
+
     history_counts: dict[tuple[int, str], int] = {}
     if history_ids:
         grouped = (
@@ -1200,9 +1535,7 @@ async def delivery_stats(
                     AnnouncementDeliveryHistory.status,
                     func.count(AnnouncementDeliveryHistory.id),
                 )
-                .where(
-                    AnnouncementDeliveryHistory.publication_id.in_(history_ids)
-                )
+                .where(AnnouncementDeliveryHistory.publication_id.in_(history_ids))
                 .group_by(
                     AnnouncementDeliveryHistory.publication_id,
                     AnnouncementDeliveryHistory.status,
@@ -1214,39 +1547,54 @@ async def delivery_stats(
             for publication_id, status, count in grouped
         }
 
-    history: list[dict[str, Any]] = []
-    for snapshot in history_rows:
-        history.append(
-            {
-                "id": snapshot.id,
-                "publication_version": snapshot.publication_version,
-                "title": snapshot.title,
-                "content": snapshot.content,
-                "content_html": sanitize_markdown(snapshot.content),
-                "type": snapshot.announcement_type,
-                "published_at": snapshot.published_at.isoformat()
-                if snapshot.published_at
-                else None,
-                "archived_at": snapshot.archived_at.isoformat()
-                if snapshot.archived_at
-                else None,
-                "pending": history_counts.get(
-                    (snapshot.id, DeliveryStatus.PENDING.value), 0
-                ),
-                "sent": history_counts.get(
-                    (snapshot.id, DeliveryStatus.SENT.value), 0
-                ),
-                "failed": history_counts.get(
-                    (snapshot.id, DeliveryStatus.FAILED.value), 0
-                ),
-            }
+    def serialize_history(
+        snapshot: AnnouncementPublicationHistory,
+    ) -> dict[str, Any]:
+        return {
+            "id": snapshot.id,
+            "publication_version": snapshot.publication_version,
+            "title": snapshot.title,
+            "content": snapshot.content,
+            "content_html": sanitize_markdown(snapshot.content),
+            "type": snapshot.announcement_type,
+            "published_at": snapshot.published_at.isoformat()
+            if snapshot.published_at
+            else None,
+            "archived_at": snapshot.archived_at.isoformat()
+            if snapshot.archived_at
+            else None,
+            "pending": history_counts.get(
+                (snapshot.id, DeliveryStatus.PENDING.value), 0
+            ),
+            "sent": history_counts.get((snapshot.id, DeliveryStatus.SENT.value), 0),
+            "failed": history_counts.get(
+                (snapshot.id, DeliveryStatus.FAILED.value), 0
+            ),
+        }
+
+    values: dict[int, AnnouncementDeliveryStats] = {}
+    for announcement_id in by_id:
+        counts = counts_by_announcement[announcement_id]
+        values[announcement_id] = AnnouncementDeliveryStats(
+            pending=counts.get(DeliveryStatus.PENDING.value, 0),
+            sent=counts.get(DeliveryStatus.SENT.value, 0),
+            failed=counts.get(DeliveryStatus.FAILED.value, 0),
+            history=tuple(
+                serialize_history(snapshot)
+                for snapshot in snapshots_by_announcement[announcement_id]
+            ),
         )
-    return AnnouncementDeliveryStats(
-        pending=counts.get(DeliveryStatus.PENDING.value, 0),
-        sent=counts.get(DeliveryStatus.SENT.value, 0),
-        failed=counts.get(DeliveryStatus.FAILED.value, 0),
-        history=tuple(history),
-    )
+
+    deletable_ids = {
+        announcement_id
+        for announcement_id, announcement in by_id.items()
+        if (
+            getattr(announcement, "status", None) == AnnouncementStatus.DRAFT.value
+            and getattr(announcement, "published_at", None) is None
+            and announcement_id not in all_snapshot_announcement_ids
+        )
+    }
+    return AnnouncementDeliveryStatsBatch(values, deletable_ids=deletable_ids)
 
 
 async def create_release_announcement(
@@ -1285,10 +1633,12 @@ class AnnouncementService:
     mark_read = staticmethod(mark_read)
     mark_all_read = staticmethod(mark_all_read)
     delivery_stats = staticmethod(delivery_stats)
+    delivery_stats_many = staticmethod(delivery_stats_many)
 
 
 __all__ = [
     "AnnouncementDeliveryStats",
+    "AnnouncementDeliveryStatsBatch",
     "AnnouncementListPage",
     "AnnouncementService",
     "announcement_to_dict",
@@ -1296,12 +1646,14 @@ __all__ = [
     "create_release_announcement",
     "delete_announcement",
     "delivery_stats",
+    "delivery_stats_many",
     "get_announcement",
     "list_announcements",
     "mark_all_read",
     "mark_read",
     "paginate_announcements",
     "publish_announcement",
+    "recover_pending_announcement_deliveries",
     "render_markdown_safe",
     "sanitize_markdown",
     "schedule_announcement_broadcast",

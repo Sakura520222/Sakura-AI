@@ -11,6 +11,7 @@ from backend.core.time_service import now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.identity_service import (
     GitHubUsernameConflictError,
+    create_user_and_flush,
     rename_github_username,
 )
 from backend.services.quota_service import QuotaService
@@ -139,10 +140,6 @@ async def add_user(
             "/users/", "toast.invalid_role", "error", lang=detect_language()
         )
 
-    # Telegram is an optional notification endpoint.  A blank value creates a
-    # GitHub-only internal user; old SQLite schemas that still enforce NOT
-    # NULL receive the same non-positive compatibility placeholder used by
-    # the OAuth/backup migration and never expose it as a real endpoint.
     if telegram_id is not None and telegram_id <= 0:
         return toast_redirect(
             "/users/",
@@ -205,33 +202,29 @@ async def add_user(
             github_username=github_username,
         )
 
-    if telegram_id is None:
-        from backend.services.identity_service import (
-            _next_legacy_placeholder,
-            legacy_telegram_id_required,
-        )
-
-        if await legacy_telegram_id_required(db):
-            telegram_id = await _next_legacy_placeholder(db)
-
-    # 创建用户
-    new_user = TelegramUser(
-        telegram_id=telegram_id,
-        github_username=github_username,
-        role=role,
-        daily_quota=daily_quota,
-        weekly_quota=weekly_quota,
-        monthly_quota=monthly_quota,
-        issue_daily_quota=issue_daily_quota,
-        issue_weekly_quota=issue_weekly_quota,
-        issue_monthly_quota=issue_monthly_quota,
-        agent_daily_quota=agent_daily_quota,
-        agent_weekly_quota=agent_weekly_quota,
-        agent_monthly_quota=agent_monthly_quota,
-        is_active=True,
-    )
     try:
-        db.add(new_user)
+        # Keep GitHub-only users compatible with old SQLite schemas through
+        # the shared savepoint/retry boundary.  No Telegram endpoint is
+        # created for the non-positive storage sentinel.
+        new_user = await create_user_and_flush(
+            db,
+            lambda resolved_telegram_id: TelegramUser(
+                telegram_id=resolved_telegram_id,
+                github_username=github_username,
+                role=role,
+                daily_quota=daily_quota,
+                weekly_quota=weekly_quota,
+                monthly_quota=monthly_quota,
+                issue_daily_quota=issue_daily_quota,
+                issue_weekly_quota=issue_weekly_quota,
+                issue_monthly_quota=issue_monthly_quota,
+                agent_daily_quota=agent_daily_quota,
+                agent_weekly_quota=agent_weekly_quota,
+                agent_monthly_quota=agent_monthly_quota,
+                is_active=True,
+            ),
+            telegram_id=telegram_id,
+        )
         await db.commit()
     except IntegrityError as e:
         logger.error(f"用户创建失败（数据库冲突）: {e}")
@@ -250,7 +243,7 @@ async def add_user(
         )
 
     logger.info(
-        f"用户已通过 WebUI 添加: telegram_id={telegram_id}, github={github_username}, role={role}, by={user['sub']}"
+        f"用户已通过 WebUI 添加: telegram_id={new_user.telegram_id}, github={github_username}, role={role}, by={user['sub']}"
     )
     await log_admin_action(
         db,
@@ -259,7 +252,7 @@ async def add_user(
         "user",
         str(new_user.id),
         {
-            "telegram_id": telegram_id,
+            "telegram_id": new_user.telegram_id,
             "github_username": github_username,
             "role": role,
             "daily_quota": daily_quota,

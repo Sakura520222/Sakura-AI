@@ -704,6 +704,7 @@ class NotificationService:
         announcement: Announcement,
         *,
         expected_version: int | None,
+        allowed_statuses: tuple[str, ...] | None = None,
     ) -> str | None:
         """Atomically claim one delivery row for this worker.
 
@@ -716,12 +717,14 @@ class NotificationService:
         token = secrets.token_urlsafe(32)
         claimed_at = now_utc()
         claim_until = claimed_at + timedelta(seconds=self._delivery_lease_seconds())
+        claim_statuses = allowed_statuses or (
+            DeliveryStatus.PENDING.value,
+            DeliveryStatus.FAILED.value,
+        )
         conditions = [
             NotificationDelivery.id == delivery.id,
             NotificationDelivery.announcement_id == announcement.id,
-            NotificationDelivery.status.in_(
-                [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
-            ),
+            NotificationDelivery.status.in_(claim_statuses),
             or_(
                 NotificationDelivery.claim_token.is_(None),
                 NotificationDelivery.claim_until.is_(None),
@@ -1008,14 +1011,27 @@ class NotificationService:
         lock: asyncio.Lock,
         expected_version: int | None = None,
         worker_token: str | None = None,
+        allowed_statuses: tuple[str, ...] | None = None,
     ) -> bool | None:
         if worker_token is None:
-            worker_token = await self._claim_delivery(
-                db,
-                delivery,
-                announcement,
-                expected_version=expected_version,
-            )
+            if allowed_statuses is None:
+                # Keep the legacy helper call shape for manual/direct callers
+                # that replace _claim_delivery with a small test double.  The
+                # default helper semantics already claim PENDING + FAILED.
+                worker_token = await self._claim_delivery(
+                    db,
+                    delivery,
+                    announcement,
+                    expected_version=expected_version,
+                )
+            else:
+                worker_token = await self._claim_delivery(
+                    db,
+                    delivery,
+                    announcement,
+                    expected_version=expected_version,
+                    allowed_statuses=allowed_statuses,
+                )
             if worker_token is None:
                 return None
         if not await self._publication_is_current(
@@ -1220,8 +1236,16 @@ class NotificationService:
         announcement_or_id: Announcement | int,
         *,
         expected_version: int | None = None,
+        pending_only: bool = False,
     ) -> dict[str, int]:
-        """Broadcast one announcement; each provider/user failure is isolated."""
+        """Broadcast one announcement; each provider/user failure is isolated.
+
+        ``pending_only`` is used exclusively by startup recovery.  A recovery
+        pass must drain rows that were durable when the previous process
+        stopped, but it must never turn an already terminal ``failed`` row into
+        a new automatic retry.  The admin retry endpoint keeps the default
+        ``pending`` + ``failed`` selection.
+        """
         if isinstance(announcement_or_id, Announcement):
             announcement = announcement_or_id
         else:
@@ -1245,21 +1269,27 @@ class NotificationService:
         # when the task was scheduled.
         if str(getattr(announcement, "status", "")).lower() != "published":
             return {"sent": 0, "failed": 0, "skipped": 0}
+        delivery_statuses = [DeliveryStatus.PENDING.value]
+        if not pending_only:
+            delivery_statuses.append(DeliveryStatus.FAILED.value)
         deliveries = (
             (
                 await db.execute(
                     select(NotificationDelivery).where(
                         NotificationDelivery.announcement_id == announcement.id,
                         NotificationDelivery.publication_version == expected_version,
-                        NotificationDelivery.status.in_(
-                            [DeliveryStatus.PENDING.value, DeliveryStatus.FAILED.value]
-                        ),
+                        NotificationDelivery.status.in_(delivery_statuses),
                     )
                 )
             )
             .scalars()
             .all()
         )
+        # Avoid creating endpoint work or worker tasks when this publication
+        # round has no eligible delivery rows.  In particular, a zero-sized
+        # worker pool would leave a bounded queue waiting forever.
+        if not deliveries:
+            return {"sent": 0, "failed": 0, "skipped": 0}
         endpoint_rows = (
             (
                 await db.execute(
@@ -1289,65 +1319,87 @@ class NotificationService:
         from backend.models import database as db_module
 
         session_factory = db_module.async_session
-        semaphore = asyncio.Semaphore(
-            max(1, int(getattr(get_settings(), "notification_max_concurrency", 5) or 5))
+        configured_workers = max(
+            1,
+            int(getattr(get_settings(), "notification_max_concurrency", 5) or 5),
+        )
+        worker_count = min(configured_workers, len(deliveries))
+        # Startup recovery passes this marker so its row-level CAS cannot
+        # accidentally turn a stale PENDING snapshot into a retry of FAILED.
+        # The regular/manual path keeps the historical PENDING + FAILED claim
+        # behavior by leaving ``allowed_statuses`` as ``None``.
+        allowed_statuses = (
+            (DeliveryStatus.PENDING.value,) if pending_only else None
         )
         lock = asyncio.Lock()
 
         async def run(delivery: NotificationDelivery) -> bool | None:
-            async with semaphore:
-                endpoint = endpoint_by_user_channel.get(
-                    (delivery.user_id, str(delivery.channel).lower())
-                )
-                if session_factory is not None:
-                    async with session_factory() as delivery_db:
-                        # Claim before reading the worker snapshot.  The
-                        # initial broadcast query may have selected a stale
-                        # pending row while another retry already sent it.
+            endpoint = endpoint_by_user_channel.get(
+                (delivery.user_id, str(delivery.channel).lower())
+            )
+            if session_factory is not None:
+                async with session_factory() as delivery_db:
+                    # Claim before reading the worker snapshot.  The
+                    # initial broadcast query may have selected a stale
+                    # pending row while another retry already sent it.
+                    if pending_only:
+                        worker_token = await self._claim_delivery(
+                            delivery_db,
+                            delivery,
+                            announcement,
+                            expected_version=expected_version,
+                            allowed_statuses=allowed_statuses,
+                        )
+                    else:
+                        # Preserve the default/manual retry call shape for
+                        # integrations that provide a small test double for
+                        # the legacy claim helper.  ``None`` already means
+                        # PENDING + FAILED inside _claim_delivery.
                         worker_token = await self._claim_delivery(
                             delivery_db,
                             delivery,
                             announcement,
                             expected_version=expected_version,
                         )
-                        if worker_token is None:
-                            return None
-                        # The claim committed its own transaction.  Reading
-                        # these rows afterwards starts a fresh snapshot, which
-                        # is important under MySQL REPEATABLE READ.
-                        fresh_announcement = await delivery_db.get(
-                            Announcement, announcement.id
+                    if worker_token is None:
+                        return None
+                    # The claim committed its own transaction.  Reading
+                    # these rows afterwards starts a fresh snapshot, which
+                    # is important under MySQL REPEATABLE READ.
+                    fresh_announcement = await delivery_db.get(
+                        Announcement, announcement.id
+                    )
+                    fresh_delivery = await delivery_db.get(
+                        NotificationDelivery, delivery.id
+                    )
+                    if fresh_announcement is None or fresh_delivery is None:
+                        return False
+                    if (
+                        str(getattr(fresh_announcement, "status", "")).lower()
+                        != "published"
+                        or self._row_publication_version(fresh_announcement)
+                        != expected_version
+                        or self._row_publication_version(fresh_delivery)
+                        != expected_version
+                    ):
+                        return False
+                    fresh_endpoint = endpoint
+                    if endpoint is not None:
+                        fresh_endpoint = await delivery_db.get(
+                            NotificationEndpoint, endpoint.id
                         )
-                        fresh_delivery = await delivery_db.get(
-                            NotificationDelivery, delivery.id
-                        )
-                        if fresh_announcement is None or fresh_delivery is None:
-                            return False
                         if (
-                            str(getattr(fresh_announcement, "status", "")).lower()
-                            != "published"
-                            or self._row_publication_version(fresh_announcement)
-                            != expected_version
-                            or self._row_publication_version(fresh_delivery)
-                            != expected_version
+                            fresh_endpoint is None
+                            or not bool(fresh_endpoint.enabled)
+                            or str(fresh_endpoint.provider).lower()
+                            != str(delivery.channel).lower()
                         ):
+                            # Keep the row pending.  If the user binds a
+                            # new endpoint, a later retry can deliver it;
+                            # most importantly, an unbind racing with a
+                            # queued task cannot send to the old address.
                             return False
-                        fresh_endpoint = endpoint
-                        if endpoint is not None:
-                            fresh_endpoint = await delivery_db.get(
-                                NotificationEndpoint, endpoint.id
-                            )
-                            if (
-                                fresh_endpoint is None
-                                or not bool(fresh_endpoint.enabled)
-                                or str(fresh_endpoint.provider).lower()
-                                != str(delivery.channel).lower()
-                            ):
-                                # Keep the row pending.  If the user binds a
-                                # new endpoint, a later retry can deliver it;
-                                # most importantly, an unbind racing with a
-                                # queued task cannot send to the old address.
-                                return False
+                    if pending_only:
                         return await self._deliver_one(
                             delivery_db,
                             fresh_delivery,
@@ -1356,7 +1408,18 @@ class NotificationService:
                             lock,
                             expected_version,
                             worker_token,
+                            allowed_statuses,
                         )
+                    return await self._deliver_one(
+                        delivery_db,
+                        fresh_delivery,
+                        fresh_announcement,
+                        fresh_endpoint,
+                        lock,
+                        expected_version,
+                        worker_token,
+                    )
+            if pending_only:
                 return await self._deliver_one(
                     db,
                     delivery,
@@ -1364,9 +1427,47 @@ class NotificationService:
                     endpoint,
                     lock,
                     expected_version,
+                    allowed_statuses=allowed_statuses,
                 )
+            return await self._deliver_one(
+                db,
+                delivery,
+                announcement,
+                endpoint,
+                lock,
+                expected_version,
+            )
 
-        results = await asyncio.gather(*(run(delivery) for delivery in deliveries))
+        result_queue: asyncio.Queue[NotificationDelivery] = asyncio.Queue(
+            maxsize=worker_count
+        )
+        results: list[bool | None] = []
+        worker_errors: list[BaseException] = []
+
+        async def worker() -> None:
+            while True:
+                delivery = await result_queue.get()
+                try:
+                    results.append(await run(delivery))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    worker_errors.append(exc)
+                finally:
+                    result_queue.task_done()
+
+        workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+        try:
+            for delivery in deliveries:
+                await result_queue.put(delivery)
+            await result_queue.join()
+        finally:
+            for worker_task in workers:
+                worker_task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+        if worker_errors:
+            raise worker_errors[0]
+
         sent = sum(result is True for result in results)
         skipped = sum(result is None for result in results)
         return {
@@ -1384,10 +1485,14 @@ async def broadcast_announcement(
     announcement_or_id: Announcement | int,
     *,
     expected_version: int | None = None,
+    pending_only: bool = False,
 ) -> dict[str, int]:
     """Compatibility function for workers/tests that do not need the service."""
     return await notification_service.broadcast_announcement(
-        db, announcement_or_id, expected_version=expected_version
+        db,
+        announcement_or_id,
+        expected_version=expected_version,
+        pending_only=pending_only,
     )
 
 

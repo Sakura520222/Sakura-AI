@@ -8,7 +8,9 @@ this module instead of matching Telegram ids or GitHub usernames directly.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
+from inspect import isawaitable
 
 from loguru import logger
 from sqlalchemy import delete, func, inspect, select
@@ -38,6 +40,23 @@ class GitHubAccount:
 
 class GitHubUsernameConflictError(ValueError):
     """Raised before a username rename would leave identities ambiguous."""
+
+
+_LEGACY_PLACEHOLDER_MAX_ATTEMPTS = 8
+
+
+def _is_sqlite_telegram_id_unique_conflict(exc: IntegrityError) -> bool:
+    """Return whether ``exc`` is the legacy Telegram-id unique conflict.
+
+    SQLite exposes unique violations through one generic exception type.  Do
+    not retry based only on that type (or on SQLite's numeric error code): the
+    same insert can also fail because ``github_username``/``email`` is
+    duplicated.  The column-qualified SQLite diagnostic is the narrow
+    discriminator that lets the caller retry only a compatibility sentinel.
+    """
+
+    message = str(getattr(exc, "orig", exc)).casefold()
+    return "unique constraint failed: telegram_users.telegram_id" in message
 
 
 def registration_quota_values() -> dict[str, int]:
@@ -529,21 +548,22 @@ async def upsert_github_account(
         if user is None and not create_if_missing:
             return None
         if user is None:
-            user = TelegramUser(
+            quotas = registration_quota_values()
+            # GitHub-only OAuth registrations use the same compatibility
+            # boundary as administrator/setup/backup creation.  The factory
+            # is replayed for each savepoint retry, so a failed sentinel
+            # candidate never leaks a half-persistent ORM object.
+            user = await create_user_and_flush(
+                db,
+                lambda resolved_telegram_id: TelegramUser(
+                    telegram_id=resolved_telegram_id,
+                    github_username=username,
+                    is_active=True,
+                    role="user",
+                    **quotas,
+                ),
                 telegram_id=None,
-                github_username=username,
-                is_active=True,
-                role="user",
-                **registration_quota_values(),
             )
-            if await legacy_telegram_id_required(db):
-                # SQLite installations created before this feature cannot alter
-                # a NOT NULL column in place.  Keep a non-null compatibility
-                # sentinel in that legacy facade; the real identity is the
-                # UserIdentity row and no Telegram endpoint is created for it.
-                user.telegram_id = await _next_legacy_placeholder(db)
-            db.add(user)
-            await db.flush()
         else:
             # Existing explicit legacy username binding is safe to retain.
             user.github_username = username
@@ -731,12 +751,20 @@ async def unbind_notification_endpoint(
 
 
 async def legacy_telegram_id_required(db: AsyncSession) -> bool:
-    """Detect old SQLite/MySQL schemas whose legacy column is still NOT NULL."""
+    """Detect an old physical SQLite column that still requires a value.
+
+    MySQL/PostgreSQL installations are made nullable by the startup schema
+    migration.  A sentinel is therefore never a portable fallback value and
+    must not be introduced on those dialects (or on the current SQLite
+    schema).
+    """
 
     try:
         def _required(sync_session) -> bool:
             bind = sync_session.get_bind()
             if bind is None:
+                return False
+            if getattr(getattr(bind, "dialect", None), "name", None) != "sqlite":
                 return False
             columns = inspect(bind).get_columns("telegram_users")
             telegram_column = next(
@@ -760,6 +788,101 @@ async def _next_legacy_placeholder(db: AsyncSession) -> int:
     while candidate in used:
         candidate -= 1
     return candidate
+
+
+async def _flush_session(db: AsyncSession) -> None:
+    """Flush both real async sessions and the small sync-backed test facades."""
+
+    result = db.flush()
+    if isawaitable(result):
+        await result
+
+
+async def create_user_and_flush(
+    db: AsyncSession,
+    user_factory: Callable[[int | None], TelegramUser],
+    *,
+    telegram_id: int | None = None,
+    max_attempts: int = _LEGACY_PLACEHOLDER_MAX_ATTEMPTS,
+) -> TelegramUser:
+    """Create a legacy-compatible user and flush it into the current transaction.
+
+    ``telegram_id`` is passed to ``user_factory`` unchanged on current schemas
+    and whenever the caller supplied an explicit value.  Only an old physical
+    SQLite ``telegram_users.telegram_id NOT NULL`` column receives a synthetic
+    non-positive value.  Each sentinel attempt creates a fresh object inside a
+    savepoint, so a unique conflict can be rolled back and retried without
+    invalidating unrelated pending work in the outer transaction.
+
+    The savepoint is entered only after pending caller changes have been
+    flushed.  SQLAlchemy flushes pending state while entering
+    ``begin_nested()``, before the savepoint exists; flushing first is what
+    guarantees that the candidate INSERT and its failure are actually scoped
+    by the savepoint.  A few legacy maintenance/test facades do not expose
+    savepoints; they still use the same factory and strict error classifier,
+    while production ``AsyncSession`` always takes the savepoint path.
+    """
+
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    legacy_required = telegram_id is None and await legacy_telegram_id_required(db)
+    if not legacy_required:
+        user = user_factory(telegram_id)
+        db.add(user)
+        await _flush_session(db)
+        return user
+
+    # Make sure begin_nested() has no unrelated pending objects to flush before
+    # its savepoint is established.  If this flush fails, propagate that exact
+    # error instead of treating it as a sentinel collision.
+    await _flush_session(db)
+    begin_nested = getattr(db, "begin_nested", None)
+
+    for attempt in range(max_attempts):
+        candidate = await _next_legacy_placeholder(db)
+        if begin_nested is None:
+            # Compatibility with old synchronous test/maintenance facades.  A
+            # real AsyncSession always provides begin_nested; keeping this
+            # fallback avoids making legacy callers implement an otherwise
+            # unused transaction adapter.
+            user = user_factory(candidate)
+            db.add(user)
+            try:
+                await _flush_session(db)
+            except IntegrityError as exc:
+                if not _is_sqlite_telegram_id_unique_conflict(exc):
+                    raise
+                if attempt + 1 >= max_attempts:
+                    raise
+                rollback = db.rollback()
+                if isawaitable(rollback):
+                    await rollback
+                continue
+            return user
+
+        nested = begin_nested()
+        if isawaitable(nested):
+            nested = await nested
+        try:
+            # The object is deliberately instantiated after entering the
+            # savepoint.  See the method docstring about begin_nested's entry
+            # flush behavior.
+            async with nested:
+                user = user_factory(candidate)
+                db.add(user)
+                await _flush_session(db)
+        except IntegrityError as exc:
+            if not _is_sqlite_telegram_id_unique_conflict(exc):
+                raise
+            if attempt + 1 >= max_attempts:
+                raise
+            continue
+        return user
+
+    # The loop always returns or raises.  Keep a defensive error for static
+    # analyzers if max_attempts is changed in the future.
+    raise RuntimeError("legacy Telegram placeholder allocation exhausted")
 
 
 async def migrate_legacy_identity_data(db: AsyncSession | None = None) -> dict[str, int]:

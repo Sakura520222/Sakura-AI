@@ -24,6 +24,7 @@ from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.identity_service import (
     GitHubUsernameConflictError,
+    create_user_and_flush,
     rename_github_username,
 )
 from backend.services.quota_service import QuotaService
@@ -149,35 +150,28 @@ async def create_user(
     ).scalar_one_or_none():
         return error_response(f"GitHub 用户名 {body.github_username} 已被使用")
 
-    # Keep API-created GitHub-only users compatible with pre-v2 SQLite schemas
-    # whose legacy telegram_id column still enforces NOT NULL.  The sentinel is
-    # only a storage compatibility value; no Telegram endpoint is created for it.
-    telegram_id = body.telegram_id
-    if telegram_id is None:
-        from backend.services.identity_service import (
-            _next_legacy_placeholder,
-            legacy_telegram_id_required,
-        )
-
-        if await legacy_telegram_id_required(db):
-            telegram_id = await _next_legacy_placeholder(db)
-
     role = body.role
-
-    new_user = TelegramUser(
-        telegram_id=telegram_id,
-        github_username=body.github_username,
-        role=role,
-        daily_quota=body.daily_quota,
-        weekly_quota=body.weekly_quota,
-        monthly_quota=body.monthly_quota,
-        issue_daily_quota=body.issue_daily_quota,
-        issue_weekly_quota=body.issue_weekly_quota,
-        issue_monthly_quota=body.issue_monthly_quota,
-        is_active=True,
-    )
     try:
-        db.add(new_user)
+        # The shared identity boundary allocates a compatibility sentinel only
+        # for a physical old SQLite NOT NULL column.  It flushes the INSERT
+        # inside a savepoint and retries only a confirmed telegram_id unique
+        # conflict; username/email conflicts retain the normal error path.
+        new_user = await create_user_and_flush(
+            db,
+            lambda resolved_telegram_id: TelegramUser(
+                telegram_id=resolved_telegram_id,
+                github_username=body.github_username,
+                role=role,
+                daily_quota=body.daily_quota,
+                weekly_quota=body.weekly_quota,
+                monthly_quota=body.monthly_quota,
+                issue_daily_quota=body.issue_daily_quota,
+                issue_weekly_quota=body.issue_weekly_quota,
+                issue_monthly_quota=body.issue_monthly_quota,
+                is_active=True,
+            ),
+            telegram_id=body.telegram_id,
+        )
         await db.commit()
         await db.refresh(new_user)
     except IntegrityError as e:
@@ -190,7 +184,7 @@ async def create_user(
         return error_response("用户创建失败")
 
     logger.info(
-        f"API 创建用户: telegram_id={telegram_id}, github={body.github_username}, role={role}, by={user['sub']}"
+        f"API 创建用户: telegram_id={new_user.telegram_id}, github={body.github_username}, role={role}, by={user['sub']}"
     )
     await log_admin_action(
         db,
@@ -199,7 +193,7 @@ async def create_user(
         "user",
         str(new_user.id),
         {
-            "telegram_id": telegram_id,
+            "telegram_id": new_user.telegram_id,
             "github_username": body.github_username,
             "role": role,
         },
