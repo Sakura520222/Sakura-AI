@@ -143,8 +143,16 @@
 - **WebUI 管理界面** — 仪表盘、PR、用户、配置、队列、扫描、Agent、记忆、仓库互助、向量库管理
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
-- **Telegram Bot** — 实时通知、按钮菜单、三级权限体系
-- **GitHub OAuth 登录** — 与 Telegram 用户体系打通，明暗主题切换
+- **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
+- **可选通知渠道** — Telegram 与 Email/SMTP 可独立启停，个人设置支持一次性绑定/解绑 Telegram；公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）
+- **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
+- **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
+
+### 升级与兼容
+
+- **从 3.1.3 升级到 3.2.0**：升级后首次启动会自动迁移旧数据，全程幂等、无需手工操作——公告、通知投递、通知端点与外部身份等新表自动创建；旧 `telegram_users` 的 Telegram ID、GitHub 用户名与邮箱按下一条规则回填；原有用户 ID、角色、配额、业务数据和外键保持不变。Email/SMTP 通知为 3.2.0 新增（3.1.3 没有邮件配置项），如需启用请在「系统核心配置」页填写 SMTP 参数：465 端口选择「SSL/TLS（隐式 TLS）」，587 端口选择「STARTTLS」，发件昵称默认 Sakura-AI；导入旧配置备份时，旧字段名会自动映射到新键（如布尔 `smtp_tls` 映射为安全模式）。
+- 首次启动会自动、幂等迁移旧 `telegram_users` 身份数据：保留原始用户 ID、角色、配额、业务数据和外键，将旧 Telegram ID/ GitHub 用户名回填为通知端点/外部身份。Telegram-only 账号如需绑定 GitHub，请先由管理员在用户页面指定 GitHub 用户名，再使用 OAuth 登录认领原账号。
+- 用户备份兼容 v1/v2，旧字段会自动映射；新备份包含 identities、notification endpoints 和 email。配置恢复不会覆盖部署连接设置，SMTP 密码等敏感字段继续脱敏。
 
 ---
 
@@ -309,7 +317,7 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 | [部署指南](docs/DEPLOYMENT.md) | Docker / 源码部署、GitHub App、Setup Wizard、Host Updater |
 | [配置参考](docs/CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
 | [技术架构](docs/ARCHITECTURE.md) | 架构图、技术栈、代码结构 |
-| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | Bot 设置、权限体系、命令参考 |
+| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | 可选通知 Provider、绑定握手与命令参考 |
 | [审查协议规范](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 协议、字段校验、修复降级 |
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys、安全中心 |
 | [API v1 参考文档](docs/api-v1-reference.md) | RESTful API v1（移动端 OAuth、MFA、SSE、Billing） |

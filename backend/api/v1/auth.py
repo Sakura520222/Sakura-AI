@@ -21,6 +21,11 @@ from backend.api.v1.schemas import (
 from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.telegram_models import TelegramUser
+from backend.services.auth_service import (
+    AuthProviderError,
+    GitHubOAuthProvider,
+    auth_service,
+)
 from backend.services.mfa_lockout_service import (
     AccountLockedError,
     check_mfa_lockout,
@@ -64,6 +69,8 @@ def _build_user_info_response(
     user_id: int,
     github_id: int | None,
     avatar_url: str | None,
+    email: str | None = None,
+    email_verified: bool = False,
 ) -> UserInfoResponse:
     return UserInfoResponse(
         sub=github_username,
@@ -71,6 +78,8 @@ def _build_user_info_response(
         user_id=user_id,
         github_id=github_id,
         avatar_url=avatar_url,
+        email=email,
+        email_verified=email_verified,
     )
 
 
@@ -92,7 +101,7 @@ async def github_authorize(request: Request):
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": settings.github_oauth_redirect_uri,
-        "scope": "read:user",
+        "scope": "read:user user:email",
         "state": state,
     }
     authorization_url = f"{settings.github_oauth_auth_url}?{urlencode(params)}"
@@ -138,7 +147,7 @@ async def github_mobile_authorize(
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": uri,
-        "scope": "read:user",
+        "scope": "read:user user:email",
         "state": state,
     }
     authorization_url = f"{settings.github_oauth_auth_url}?{urlencode(params)}"
@@ -162,46 +171,23 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
 
     settings = get_settings()
 
-    # 用授权码换取 access_token
+    # 与 WebUI callback 共用 provider transport、邮箱选择及账户 upsert 逻辑。
     try:
-        async with httpx.AsyncClient() as client:
-            token_resp = await client.post(
-                settings.github_oauth_token_url,
-                data={
-                    "client_id": settings.github_oauth_client_id,
-                    "client_secret": settings.github_oauth_client_secret,
-                    "code": body.code,
-                },
-                headers={"Accept": "application/json"},
-                timeout=10,
-            )
-
-        if token_resp.status_code != 200:
-            logger.error(f"API OAuth token 交换失败: status={token_resp.status_code}")
-            logger.debug("API OAuth token response received with failure status")
-            return error_response("获取访问令牌失败", status_code=502)
-
-        token_data = token_resp.json()
-        github_access_token = token_data.get("access_token")
-        if not github_access_token:
-            return error_response("获取访问令牌失败", status_code=502)
-
-        # 获取 GitHub 用户信息
-        async with httpx.AsyncClient() as client:
-            user_resp = await client.get(
-                settings.github_oauth_user_url,
-                headers={
-                    "Authorization": f"Bearer {github_access_token}",
-                    "Accept": "application/json",
-                },
-                timeout=10,
-            )
-
-        if user_resp.status_code != 200:
+        oauth_result = await GitHubOAuthProvider(settings).exchange_code(body.code)
+    except AuthProviderError as exc:
+        if exc.status_code is not None and exc.status_code != 200:
+            if "token" in str(exc).lower():
+                logger.error("API OAuth token exchange failed: status={}", exc.status_code)
+                logger.debug("API OAuth token response received with failure status")
+                return error_response("获取访问令牌失败", status_code=502)
             return error_response("获取用户信息失败", status_code=502)
-
-        gh_user = user_resp.json()
-
+        if "timed out" in str(exc).lower():
+            return error_response("连接 GitHub 超时", status_code=504)
+        if "missing login" in str(exc).lower():
+            return error_response("无法获取 GitHub 用户信息", status_code=502)
+        if "missing access token" in str(exc).lower():
+            return error_response("获取访问令牌失败", status_code=502)
+        return error_response("网络连接失败", status_code=504)
     except httpx.TimeoutException:
         return error_response("连接 GitHub 超时", status_code=504)
     except httpx.RequestError:
@@ -210,30 +196,25 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
         logger.error("API OAuth unexpected error")
         return error_response("登录过程中发生错误", status_code=500)
 
-    github_username = gh_user.get("login")
-    github_id = gh_user.get("id")
-    avatar_url = gh_user.get("avatar_url", "")
+    account = oauth_result.account
+    github_username = account.username
+    try:
+        github_id = int(account.provider_user_id)
+    except (TypeError, ValueError):
+        github_id = None
+    avatar_url = account.avatar_url or ""
 
-    if not github_username:
-        return error_response("无法获取 GitHub 用户信息", status_code=502)
-
-    # 匹配系统用户
     async with db_module.async_session() as session:
-        result = await session.execute(
-            select(TelegramUser).where(
-                TelegramUser.github_username == github_username,
-                TelegramUser.is_active,
-            )
+        user = await auth_service.authenticate_github(
+            session,
+            account,
+            create_if_missing=True,
         )
-        user = result.scalar_one_or_none()
         has_mfa_method = await user_has_any_mfa_method(session, user) if user else False
 
     if not user:
         await _delete_oauth_state(body.state)
-        return error_response(
-            f"用户 {github_username} 未在系统中注册，请先通过 Telegram Bot 注册",
-            status_code=403,
-        )
+        return error_response("用户已停用，请联系管理员", status_code=403)
 
     token_payload = {
         "sub": github_username,
@@ -241,10 +222,18 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
         "user_id": user.id,
         "github_id": github_id,
         "avatar_url": avatar_url,
+        "email": getattr(user, "email", None),
+        "email_verified": bool(getattr(user, "email_verified", False)),
     }
 
     user_info = _build_user_info_response(
-        github_username, user.role, user.id, github_id, avatar_url
+        github_username,
+        user.role,
+        user.id,
+        github_id,
+        avatar_url,
+        user.email,
+        bool(user.email_verified),
     )
 
     if has_mfa_method:
@@ -333,6 +322,8 @@ async def verify_two_factor(request: Request, body: MfaVerifyRequest):
         "user_id": payload.get("user_id"),
         "github_id": payload.get("github_id"),
         "avatar_url": payload.get("avatar_url"),
+        "email": payload.get("email"),
+        "email_verified": payload.get("email_verified", False),
     }
     jwt_token = create_access_token(token_payload)
     logger.info("API 二次验证成功: user={}", payload.get("sub"))
@@ -346,6 +337,8 @@ async def verify_two_factor(request: Request, body: MfaVerifyRequest):
                 int(payload.get("user_id")),
                 payload.get("github_id"),
                 payload.get("avatar_url"),
+                payload.get("email"),
+                bool(payload.get("email_verified", False)),
             ),
         ).model_dump(mode="json")
     )
@@ -432,6 +425,8 @@ async def api_passkey_verify(request: Request, body: dict):
         "user_id": user_id,
         "github_id": payload.get("github_id"),
         "avatar_url": payload.get("avatar_url"),
+        "email": payload.get("email"),
+        "email_verified": payload.get("email_verified", False),
     }
     jwt_token = create_access_token(token_payload)
     logger.info("API Passkey 二次验证成功: user={}", payload.get("sub"))
@@ -442,6 +437,8 @@ async def api_passkey_verify(request: Request, body: dict):
         user_id,
         payload.get("github_id"),
         payload.get("avatar_url"),
+        payload.get("email"),
+        bool(payload.get("email_verified", False)),
     )
     return success_response(
         data=TokenResponse(
@@ -461,5 +458,7 @@ async def get_current_user_info(user: dict = Depends(require_api_auth)):
             user_id=user["user_id"],
             github_id=user.get("github_id"),
             avatar_url=user.get("avatar_url"),
+            email=user.get("email"),
+            email_verified=bool(user.get("email_verified", False)),
         ).model_dump(mode="json")
     )

@@ -32,6 +32,16 @@
             </template>
         </div>
 
+        <!-- 公告中心：未读数由内部 user_id API 返回，不依赖 GitHub 用户名。 -->
+        <a href="/announcements" id="announcement-nav-link"
+           class="relative p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
+           title="{{ _('announcements.title') }}" aria-label="{{ _('announcements.title') }}">
+            <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4.5-5.8V4a1.5 1.5 0 00-3 0v1.2A6 6 0 006 11v3.2a2 2 0 01-.6 1.4L4 17h5m2 0v1a2 2 0 004 0v-1m-4 0h4"/>
+            </svg>
+            <span id="announcement-unread-badge" class="hidden absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-pink-500 text-[10px] leading-4 text-center text-white"></span>
+        </a>
+
         <!-- 主题切换按钮：toggleTheme 始终以本按钮中心为圆心做圆形扩散过渡 -->
         <button data-theme-toggle @click="toggleTheme()"
                 class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
@@ -98,6 +108,58 @@
         </form>
     </div>
 </nav>
+
+<script>
+    (function () {
+        var badge = document.getElementById('announcement-unread-badge');
+        if (!badge) return;
+        fetch('/api/v1/announcements/unread', { headers: { 'Accept': 'application/json' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                var unreadCount = data ? Number(data.unread_count ?? data.count ?? 0) : 0;
+                if (!unreadCount) return;
+                badge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+                badge.classList.remove('hidden');
+                var announcementUserId = {% if current_user is defined and current_user and current_user.get('user_id') is not none %}{{ current_user.get('user_id') | tojson }}{% else %}"anonymous"{% endif %};
+                var toastKey = 'sakura-announcement-toasts:' + announcementUserId;
+                var seen;
+                try {
+                    seen = JSON.parse(localStorage.getItem(toastKey) || '[]');
+                    if (!Array.isArray(seen)) seen = [];
+                } catch (_error) {
+                    seen = [];
+                }
+                // A republish keeps the announcement id but starts a new
+                // publication round; include the version so its toast is
+                // shown again after the read marker is reset.
+                var fresh = (data.items || []).filter(function (item) {
+                    var identity = String(item.id) + ':' + String(item.publication_version || 1);
+                    return seen.indexOf(identity) === -1;
+                });
+                fresh.slice(0, 1).forEach(function (item) {
+                    var rawSummary = String(item.content || '')
+                        .replace(/[#*_`>\[\]()]/g, '')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    var summary = rawSummary.length > 140 ? rawSummary.slice(0, 140) + '…' : rawSummary;
+                    var published = item.published_at || item.created_at;
+                    var time = window.sakuraFormatTime ? window.sakuraFormatTime(published) : published;
+                    window.dispatchEvent(new CustomEvent('show-toast', {
+                        detail: {
+                            message: item.title,
+                            summary: summary,
+                            time: time,
+                            actionUrl: '/announcements/' + encodeURIComponent(item.id),
+                            type: 'info',
+                            duration: 10000,
+                        },
+                    }));
+                    seen.push(String(item.id) + ':' + String(item.publication_version || 1));
+                });
+                localStorage.setItem(toastKey, JSON.stringify(seen.slice(-100)));
+            }).catch(function () {});
+    })();
+</script>
 
 {% if current_user.get('role') == 'super_admin' %}
 <script>

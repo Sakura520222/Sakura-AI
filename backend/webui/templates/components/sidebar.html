@@ -47,6 +47,15 @@
             {{ _('nav.review_logs') }}
         </a>
 
+        <a href="/announcements"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'announcements' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4.5-5.8V4a1.5 1.5 0 00-3 0v1.2A6 6 0 006 11v3.2a2 2 0 01-.6 1.4L4 17h5m2 0v1a2 2 0 004 0v-1m-4 0h4"/>
+            </svg>
+            {{ _('announcements.title') }}
+        </a>
+
         {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
         <a href="/scans/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200

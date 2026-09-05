@@ -6,11 +6,13 @@
 import os
 import secrets
 import signal
+from collections.abc import Collection, Mapping
+from inspect import isawaitable
 from typing import Any
 
 import httpx
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -31,7 +33,22 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
+    "TELEGRAM_ENABLED": "telegram_enabled",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
+    "TELEGRAM_BIND_TOKEN_EXPIRE_SECONDS": "telegram_bind_token_expire_seconds",
+    "EMAIL_ENABLED": "email_enabled",
+    "SMTP_HOST": "smtp_host",
+    "SMTP_PORT": "smtp_port",
+    "SMTP_USERNAME": "smtp_username",
+    "SMTP_PASSWORD": "smtp_password",
+    "SMTP_FROM": "smtp_from",
+    "SMTP_FROM_NAME": "smtp_from_name",
+    "SMTP_SECURITY": "smtp_security",
+    "NOTIFICATION_MAX_CONCURRENCY": "notification_max_concurrency",
+    "NOTIFICATION_RETRY_MAX_ATTEMPTS": "notification_retry_max_attempts",
+    "NOTIFICATION_RETRY_INITIAL_DELAY_SECONDS": "notification_retry_initial_delay_seconds",
+    "NOTIFICATION_RETRY_BACKOFF_FACTOR": "notification_retry_backoff_factor",
+    "NOTIFICATION_RATE_LIMIT_SECONDS": "notification_rate_limit_seconds",
     "WEBUI_SECRET_KEY": "webui_secret_key",
     "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
@@ -81,6 +98,9 @@ _GITHUB_APP_JWT_LIFETIME_SECONDS = 9 * 60
 ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
+    # Telegram/Email are optional notification providers.  Keeping the group
+    # allows old Setup payloads to import their values without making a token a
+    # prerequisite for GitHub OAuth or Passkey authentication.
     "ai": ["TELEGRAM_BOT_TOKEN"],
     # RAG 配置是可选项，不参与 Setup readiness 判定。
     "rag": [],
@@ -100,6 +120,20 @@ SETUP_BACKUP_PREFILL_KEYS = frozenset(
         "github_private_key",
         "github_webhook_secret",
         "telegram_bot_token",
+        "telegram_enabled",
+        "telegram_bind_token_expire_seconds",
+        "email_enabled",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "smtp_from",
+        "smtp_from_name",
+        "smtp_security",
+        "notification_max_concurrency",
+        "notification_retry_max_attempts",
+        "notification_retry_initial_delay_seconds",
+        "notification_retry_backoff_factor",
+        "notification_rate_limit_seconds",
         "app_domain",
         "bot_username",
         "github_oauth_client_id",
@@ -118,6 +152,78 @@ SETUP_BACKUP_PREFILL_KEYS = frozenset(
 
 class SetupService:
     """Setup Wizard 服务"""
+
+    @staticmethod
+    def _collect_config_items(values: Mapping[str, Any]) -> dict[str, str]:
+        """Normalize Setup payload keys without touching persistence.
+
+        Setup accepts the historical environment-variable spelling as well as
+        lower-case ``Settings`` names.  Keep this phase side-effect free so it
+        can be run before database initialization and before any Settings
+        singleton update.
+        """
+        items: dict[str, str] = {}
+        for env_key, env_value in values.items():
+            settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
+            if settings_key is None:
+                settings_key = env_key if isinstance(env_key, str) and env_key.islower() else None
+            if settings_key in _LEGACY_CONFIG_KEYS:
+                continue
+            if settings_key is None or env_value is None:
+                continue
+            value = str(env_value).strip()
+            if value:
+                items[settings_key] = value
+        return items
+
+    @classmethod
+    def _validate_config_items(
+        cls, values: Mapping[str, Any]
+    ) -> dict[str, str]:
+        """Validate Setup's system/notification values as one pure batch.
+
+        Setup also carries non-system fields (for example embedding settings)
+        which are intentionally not part of the system-config page allowlist.
+        Only the overlapping system keys are sent to
+        ``SystemConfigService.validate_updates``; passing the complete Setup
+        payload there would reject valid legacy/non-system Setup fields.
+        """
+        items = cls._collect_config_items(values)
+        if not items:
+            return items
+
+        from backend.services.system_config_service import (
+            SYSTEM_CONFIG_UPDATE_KEYS,
+            SystemConfigService,
+        )
+
+        system_items = {
+            key: value
+            for key, value in items.items()
+            if key in SYSTEM_CONFIG_UPDATE_KEYS
+        }
+        validated = SystemConfigService.validate_updates(system_items)
+        # Keep the canonical forms returned by the shared validator (e.g.
+        # ``smtp_security`` and boolean values) for the later DB write.
+        items.update(
+            {
+                key: value
+                for key, value in validated.items()
+                if value is not None
+            }
+        )
+        return items
+
+    def validate_config_values(self, values: Mapping[str, Any]) -> dict[str, str]:
+        """Validate a Setup batch before route-level side effects.
+
+        The save-step routes need the same preflight as
+        :meth:`save_configs_to_db`, but Step 1 initializes the database before
+        reaching that method.  Expose the pure validation phase so routes can
+        reject malformed notification values before connection tests or DB
+        initialization run.
+        """
+        return self._validate_config_items(values)
 
     async def test_database_connection(self, database_url: str) -> dict[str, Any]:
         """测试数据库连接"""
@@ -414,7 +520,7 @@ class SetupService:
         except Exception as e:
             return {"success": False, "message": f"验证异常: {e}"}
 
-    async def save_configs_to_db(self, values: dict[str, str]) -> int:
+    async def save_configs_to_db(self, values: Mapping[str, Any]) -> int:
         """将配置项保存到数据库 AppConfig 表
 
         Args:
@@ -423,30 +529,18 @@ class SetupService:
         Returns:
             写入/更新的配置项数量
         """
-        from backend.core.config import update_settings_field
         from backend.models.database import AppConfig, async_session
 
-        # 解析所有有效的配置键值对
-        items: dict[str, str] = {}
-        for env_key, env_value in values.items():
-            # 尝试大写环境变量名映射
-            settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
-            if settings_key is None:
-                # 也接受已经是小写的非遗留 Settings 字段名（动态配置场景）
-                settings_key = env_key if env_key.islower() else None
-            if settings_key in _LEGACY_CONFIG_KEYS:
-                continue
-            if settings_key is None or env_value is None:
-                continue
-            env_value = str(env_value).strip()
-            if not env_value:
-                continue
-            items[settings_key] = env_value
+        # Validate the complete batch before opening a DB session.  In
+        # particular this prevents invalid notification/SMTP values such as
+        # ``inf`` or an out-of-range retry count from reaching AppConfig.
+        items = self._validate_config_items(values)
 
         if not items:
             return 0
 
         saved = 0
+        settings_updates: dict[str, str] = {}
         async with async_session() as session:
             # 批量查询已存在的配置项
             result = await session.execute(
@@ -460,7 +554,7 @@ class SetupService:
                     if existing.key_value != env_value:
                         existing.key_value = env_value
                         saved += 1
-                        update_settings_field(settings_key, env_value)
+                        settings_updates[settings_key] = env_value
                 else:
                     session.add(
                         AppConfig(
@@ -469,9 +563,17 @@ class SetupService:
                         )
                     )
                     saved += 1
-                    update_settings_field(settings_key, env_value)
+                    settings_updates[settings_key] = env_value
 
             await session.commit()
+
+        # Apply runtime values only after the transaction succeeds.  A failed
+        # commit must not leave the Settings singleton ahead of the database.
+        if settings_updates:
+            from backend.core.config import update_settings_field
+
+            for settings_key, env_value in settings_updates.items():
+                update_settings_field(settings_key, env_value)
 
         if saved:
             logger.info(f"已保存 {saved} 项配置到数据库")
@@ -498,15 +600,26 @@ class SetupService:
         await insert_default_configs_async()
 
     async def create_admin_user(
-        self, github_username: str, telegram_id: int, database_url: str
+        self,
+        github_username: str,
+        telegram_id: int | None = None,
+        database_url: str | None = None,
     ) -> None:
         """创建初始超级管理员
 
         Args:
             github_username: 管理员的 GitHub 用户名
-            telegram_id: 管理员的 Telegram 用户 ID
+            telegram_id: 可选的管理员 Telegram 用户 ID（旧 Setup 兼容字段）
             database_url: 数据库连接字符串
         """
+        # Keep the old two-argument convenience form usable by deployments that
+        # already called ``create_admin_user(username, database_url)`` while the
+        # new setup flow no longer requires a Telegram ID.
+        if database_url is None and isinstance(telegram_id, str):
+            database_url, telegram_id = telegram_id, None
+        if not database_url:
+            raise ValueError("数据库连接字符串为必填项")
+
         # 初始化数据库引擎（可能已经初始化过）
         from backend.models import database as db_module
         from backend.models.database import (
@@ -515,7 +628,9 @@ class SetupService:
             insert_default_configs_async,
             migrate_schema_async,
         )
+        from backend.models.identity_models import AuthProvider, UserIdentity
         from backend.models.telegram_models import TelegramUser
+        from backend.services.identity_service import create_user_and_flush
 
         if db_module.async_engine is None:
             init_async_db(database_url)
@@ -527,46 +642,85 @@ class SetupService:
         from backend.models.database import async_session
 
         async with async_session() as session:
-            # 检查是否已存在（按 github_username、telegram_id 或 telegram_id=0 的占位记录）
+            # 身份匹配优先使用显式 GitHub 用户名；Telegram ID 只在没有
+            # 该用户名时作为旧 Setup 的显式兼容匹配。不能把两个独立
+            # 条件拼成 AND，否则用户名已存在但 Telegram ID 变化时会
+            # 创建重复账号。
             result = await session.execute(
                 select(TelegramUser).where(
-                    (TelegramUser.github_username == github_username)
-                    | (TelegramUser.telegram_id == telegram_id)
-                    | (
-                        (TelegramUser.telegram_id == 0)
-                        & (TelegramUser.github_username.is_(None))
-                    )
+                    func.lower(TelegramUser.github_username)
+                    == github_username.lower()
                 )
             )
             existing = result.scalars().first()
+            if existing is None and telegram_id is not None:
+                result = await session.execute(
+                    select(TelegramUser).where(
+                        (TelegramUser.telegram_id == telegram_id)
+                        | (
+                            (TelegramUser.telegram_id == 0)
+                            & (TelegramUser.github_username.is_(None))
+                        )
+                    )
+                )
+                existing = result.scalars().first()
             if existing:
                 existing.role = "super_admin"
                 existing.github_username = github_username
-                existing.telegram_id = telegram_id
+                if telegram_id is not None:
+                    existing.telegram_id = telegram_id
                 existing.is_active = True
+                admin = existing
                 logger.info(f"已将用户 {github_username} 提升为超级管理员")
             else:
                 from backend.core.config import get_settings  # 延迟导入避免循环引用
 
                 settings = get_settings()
-                admin = TelegramUser(
+                admin = await create_user_and_flush(
+                    session,
+                    lambda resolved_telegram_id: TelegramUser(
+                        telegram_id=resolved_telegram_id,
+                        github_username=github_username,
+                        role="super_admin",
+                        is_active=True,
+                        daily_quota=settings.init_admin_daily_quota,
+                        weekly_quota=settings.init_admin_weekly_quota,
+                        monthly_quota=settings.init_admin_monthly_quota,
+                        # 管理员 Issue 配额复用管理员 PR 初始配额
+                        issue_daily_quota=settings.init_admin_daily_quota,
+                        issue_weekly_quota=settings.init_admin_weekly_quota,
+                        issue_monthly_quota=settings.init_admin_daily_quota,
+                        agent_daily_quota=settings.init_admin_agent_daily_quota,
+                        agent_weekly_quota=settings.init_admin_agent_weekly_quota,
+                        agent_monthly_quota=settings.init_admin_agent_monthly_quota,
+                    ),
                     telegram_id=telegram_id,
-                    github_username=github_username,
-                    role="super_admin",
-                    is_active=True,
-                    daily_quota=settings.init_admin_daily_quota,
-                    weekly_quota=settings.init_admin_weekly_quota,
-                    monthly_quota=settings.init_admin_monthly_quota,
-                    # 管理员 Issue 配额复用管理员 PR 初始配额
-                    issue_daily_quota=settings.init_admin_daily_quota,
-                    issue_weekly_quota=settings.init_admin_weekly_quota,
-                    issue_monthly_quota=settings.init_admin_monthly_quota,
-                    agent_daily_quota=settings.init_admin_agent_daily_quota,
-                    agent_weekly_quota=settings.init_admin_agent_weekly_quota,
-                    agent_monthly_quota=settings.init_admin_agent_monthly_quota,
                 )
-                session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")
+            # AsyncSession.flush is awaitable.  Keep maintenance/test session
+            # facades that expose a synchronous no-op flush compatible too.
+            flush_result = session.flush()
+            if isawaitable(flush_result):
+                await flush_result
+            # Setup only knows the configured username, so retain a synthetic
+            # legacy identity until the first OAuth callback supplies the stable
+            # GitHub provider_user_id.  This prevents duplicate accounts while
+            # avoiding unsafe username-based merges with Telegram-only users.
+            identity_result = await session.execute(
+                select(UserIdentity).where(
+                    UserIdentity.user_id == admin.id,
+                    UserIdentity.provider == AuthProvider.GITHUB,
+                )
+            )
+            if identity_result.scalars().first() is None:
+                session.add(
+                    UserIdentity(
+                        user_id=admin.id,
+                        provider=AuthProvider.GITHUB,
+                        provider_user_id=f"legacy:{github_username.lower()}",
+                        provider_username=github_username,
+                    )
+                )
             await session.commit()
 
     @staticmethod
@@ -597,8 +751,15 @@ class SetupService:
     async def restore_backup_for_setup(
         self,
         backup_sections: dict[str, list[Any]],
+        protected_keys: Collection[str] | None = None,
     ) -> Any:
-        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。"""
+        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。
+
+        ``protected_keys`` contains deployment-owned connection settings that
+        must not be overwritten by a backup.  It is optional to keep the
+        historical one-argument call compatible with maintenance scripts and
+        tests.
+        """
         from backend.models.database import async_session
         from backend.services.config_backup_service import (
             refresh_imported_runtime_config,
@@ -606,7 +767,14 @@ class SetupService:
         )
 
         async with async_session() as session:
-            result = await restore_config_backup(session, backup_sections)
+            if protected_keys:
+                result = await restore_config_backup(
+                    session,
+                    backup_sections,
+                    protected_keys=protected_keys,
+                )
+            else:
+                result = await restore_config_backup(session, backup_sections)
 
         try:
             refresh_imported_runtime_config(result)
@@ -632,7 +800,67 @@ class SetupService:
         all_config = dict(all_config)
         backup_values = self._flatten_backup_values(backup_sections)
         database_url = ""
+        protected_connection_keys: set[str] = set()
         try:
+            # Resolve deployment-owned connection values before validating the
+            # batch.  The browser normally sends these values, but keeping the
+            # server-side fallback prevents a crafted/old Setup client from
+            # letting a backup replace the connection used by this deployment.
+            explicit_database_url = str(
+                all_config.get("DATABASE_URL", "") or ""
+            ).strip()
+            explicit_redis_url = str(all_config.get("REDIS_URL", "") or "").strip()
+            from backend.core.config import Settings, get_settings
+
+            runtime_settings = get_settings()
+            deployment_database_url = str(
+                getattr(runtime_settings, "database_url", "") or ""
+            ).strip()
+            deployment_redis_url = str(
+                getattr(runtime_settings, "redis_url", "") or ""
+            ).strip()
+            # Settings.redis_url has a local default.  It is not a deployment
+            # override unless REDIS_URL was actually provided (or a caller
+            # explicitly supplied a non-default runtime value).
+            default_redis_url = getattr(
+                Settings.model_fields.get("redis_url"), "default", None
+            )
+            if (
+                not os.environ.get("REDIS_URL")
+                and deployment_redis_url == str(default_redis_url or "")
+            ):
+                deployment_redis_url = ""
+
+            backup_database_url = str(
+                backup_values.get("database_url") or ""
+            ).strip()
+            backup_redis_url = str(backup_values.get("redis_url") or "").strip()
+            if explicit_database_url or deployment_database_url:
+                protected_connection_keys.add("database_url")
+            if explicit_redis_url or deployment_redis_url:
+                protected_connection_keys.add("redis_url")
+
+            database_url = (
+                explicit_database_url
+                or deployment_database_url
+                or backup_database_url
+            )
+            if database_url:
+                all_config["DATABASE_URL"] = database_url
+            effective_redis_url = (
+                explicit_redis_url or deployment_redis_url or backup_redis_url
+            )
+            if effective_redis_url:
+                all_config["REDIS_URL"] = effective_redis_url
+
+            # ``complete_setup`` may be called directly (without the route's
+            # backup parser), so revalidate both explicit Setup values and
+            # imported system values before any DB initialization or backup
+            # restore side effect.
+            self._validate_config_items(all_config)
+            if backup_values:
+                self._validate_config_items(backup_values)
+
             # 1. 先校验管理员和数据库信息，避免无效请求产生部分写入。
             admin_github = str(
                 all_config.get("ADMIN_GITHUB_USERNAME", "") or ""
@@ -640,18 +868,20 @@ class SetupService:
             admin_telegram_id = str(
                 all_config.get("ADMIN_TELEGRAM_ID", "") or ""
             ).strip()
-            if not admin_github or not admin_telegram_id:
+            if not admin_github:
                 return {
                     "success": False,
-                    "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
+                    "message": "管理员 GitHub 用户名为必填项",
                 }
-            try:
-                telegram_id_int = int(admin_telegram_id)
-            except ValueError, TypeError:
-                return {
-                    "success": False,
-                    "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
-                }
+            telegram_id_int: int | None = None
+            if admin_telegram_id:
+                try:
+                    telegram_id_int = int(admin_telegram_id)
+                except (ValueError, TypeError):
+                    return {
+                        "success": False,
+                        "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
+                    }
 
             database_url = str(all_config.get("DATABASE_URL", "") or "").strip()
             if not database_url:
@@ -691,7 +921,14 @@ class SetupService:
             # 5. 先精确恢复备份，再写入本次 Setup 表单值，使部署时的显式修改优先。
             import_result = None
             if backup_sections is not None:
-                import_result = await self.restore_backup_for_setup(backup_sections)
+                backup_protected_keys = protected_connection_keys & set(backup_values)
+                if backup_protected_keys:
+                    import_result = await self.restore_backup_for_setup(
+                        backup_sections,
+                        backup_protected_keys,
+                    )
+                else:
+                    import_result = await self.restore_backup_for_setup(backup_sections)
                 logger.info(
                     "Setup 配置备份已恢复, sections={}, created={}, updated={}, deleted={}",
                     import_result.sections,

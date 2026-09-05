@@ -13,6 +13,7 @@ from backend.models.telegram_models import (
     UserRepoSubscription,
     UserRole,
 )
+from backend.services.identity_service import registration_quota_values
 from backend.services.payment_service import PaymentService, is_payment_enabled
 from backend.services.quota_service import QuotaService
 
@@ -26,8 +27,9 @@ class TelegramService:
         self.session = session
 
     async def is_super_admin(self, telegram_id: int) -> bool:
-        """检查是否为超级管理员"""
-        return telegram_id in settings.telegram_admin_ids_list
+        """Check the persisted role for a bound Telegram endpoint."""
+        user = await self.get_user_by_telegram_id(telegram_id)
+        return bool(user and user.is_active and user.role == UserRole.SUPER_ADMIN.value)
 
     async def get_user_by_telegram_id(self, telegram_id: int) -> TelegramUser | None:
         """通过 Telegram ID 获取用户"""
@@ -314,10 +316,6 @@ class TelegramService:
         if existing:
             return False, "用户已存在"
 
-        # 如果是超级管理员，自动设置角色为 super_admin
-        if await self.is_super_admin(telegram_id):
-            role = UserRole.SUPER_ADMIN
-
         # 将枚举转换为字符串值
         role_value = role.value if hasattr(role, "value") else role
 
@@ -517,55 +515,17 @@ class TelegramService:
         if existing_by_github:
             return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
 
-        # 如果是超级管理员，自动设置角色为 super_admin，使用管理员配额
-        if await self.is_super_admin(telegram_id):
-            role = UserRole.SUPER_ADMIN
-            user = TelegramUser(
-                telegram_id=telegram_id,
-                github_username=github_username,
-                role=role.value,
-                daily_quota=settings.init_admin_daily_quota,
-                weekly_quota=settings.init_admin_weekly_quota,
-                monthly_quota=settings.init_admin_monthly_quota,
-                # 管理员 Issue/Agent 配额复用管理员 PR 初始配额
-                issue_daily_quota=settings.init_admin_daily_quota,
-                issue_weekly_quota=settings.init_admin_weekly_quota,
-                issue_monthly_quota=settings.init_admin_monthly_quota,
-                agent_daily_quota=settings.init_admin_agent_daily_quota,
-                agent_weekly_quota=settings.init_admin_agent_weekly_quota,
-                agent_monthly_quota=settings.init_admin_agent_monthly_quota,
-            )
-        else:
-            role = UserRole.USER
-            multiplier = settings.register_quota_multiplier
-            user = TelegramUser(
-                telegram_id=telegram_id,
-                github_username=github_username,
-                role=role.value,
-                daily_quota=max(1, int(settings.init_user_daily_quota * multiplier)),
-                weekly_quota=max(1, int(settings.init_user_weekly_quota * multiplier)),
-                monthly_quota=max(
-                    1, int(settings.init_user_monthly_quota * multiplier)
-                ),
-                issue_daily_quota=max(
-                    1, int(settings.init_user_issue_daily_quota * multiplier)
-                ),
-                issue_weekly_quota=max(
-                    1, int(settings.init_user_issue_weekly_quota * multiplier)
-                ),
-                issue_monthly_quota=max(
-                    1, int(settings.init_user_issue_monthly_quota * multiplier)
-                ),
-                agent_daily_quota=max(
-                    1, int(settings.init_user_agent_daily_quota * multiplier)
-                ),
-                agent_weekly_quota=max(
-                    1, int(settings.init_user_agent_weekly_quota * multiplier)
-                ),
-                agent_monthly_quota=max(
-                    1, int(settings.init_user_agent_monthly_quota * multiplier)
-                ),
-            )
+        # Telegram no longer grants roles.  Registration is retained only as
+        # a compatibility service for old callers and always creates a normal
+        # user with the configured self-registration quotas.
+        role = UserRole.USER
+        multiplier = settings.register_quota_multiplier
+        user = TelegramUser(
+            telegram_id=telegram_id,
+            github_username=github_username,
+            role=role.value,
+            **registration_quota_values(),
+        )
         try:
             self.session.add(user)
             await self.session.commit()
@@ -574,20 +534,12 @@ class TelegramService:
             logger.error(f"用户注册失败: {e}", exc_info=True)
             return False, f"注册失败: {e!s}"
 
-        if role == UserRole.SUPER_ADMIN:
-            quota_info = (
-                f"\n📊 管理员配额:\n"
-                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
-                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
-            )
-        else:
-            quota_info = (
-                f"\n📊 配额（×{multiplier}）:\n"
-                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
-                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
-            )
+        quota_info = (
+            f"\n📊 配额（×{multiplier}）:\n"
+            f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
+            f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
+            f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
+        )
         return True, f"注册成功{quota_info}"
 
     async def subscribe_repo(

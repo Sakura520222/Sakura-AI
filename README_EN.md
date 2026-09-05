@@ -143,8 +143,16 @@
 - **WebUI Dashboard** — Dashboard, PR, user, config, queue, scan, Agent, memory, Repository Aid, vector storage management
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
-- **Telegram Bot** — Real-time notifications, button menus, three-tier permission system
-- **GitHub OAuth Login** — Integrated with Telegram user system, light/dark theme switching
+- **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
+- **Optional Notification Channels** — Telegram and Email/SMTP can be enabled independently; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI)
+- **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
+- **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
+
+### Upgrade and Compatibility
+
+- **Upgrading from 3.1.3 to 3.2.0**: Old data is migrated automatically and idempotently on the first startup after the upgrade — no manual steps. New tables (announcements, notification deliveries, notification endpoints, external identities) are created automatically; legacy `telegram_users` Telegram IDs, GitHub usernames, and emails are backfilled as described in the next bullet; existing user IDs, roles, quotas, business data, and foreign keys are untouched. Email/SMTP notifications are new in 3.2.0 (3.1.3 has no mail settings): to enable them, fill in the SMTP fields on the System Core Config page — choose "SSL/TLS (implicit TLS)" for port 465 or "STARTTLS" for port 587; the sender display name defaults to Sakura-AI. Legacy field names in imported config backups are mapped automatically (e.g. the boolean `smtp_tls` becomes a security mode).
+- On first startup, legacy `telegram_users` identity data is migrated idempotently: original user IDs, roles, quotas, business data, and foreign keys are preserved while Telegram IDs and GitHub usernames are backfilled as notification endpoints and external identities. For a Telegram-only account, an administrator should assign its GitHub username in the user page before the user signs in with OAuth to claim the existing account.
+- User backups v1/v2 are accepted with automatic legacy-field mapping; new backups include identities, notification endpoints, and email. Config restore never overwrites deployment connection settings, and SMTP passwords remain redacted as sensitive values.
 
 ---
 
@@ -309,7 +317,7 @@ Full documentation index at [docs/README.md](docs/README.md). Common entries:
 | [Deployment Guide](docs/DEPLOYMENT.md) | Docker / source deployment, GitHub App, Setup Wizard, Host Updater (Chinese) |
 | [Configuration Reference](docs/CONFIGURATION.md) | All config options: location, key, description (Chinese) |
 | [Architecture Guide](docs/ARCHITECTURE.md) | Architecture diagram, tech stack, code structure (Chinese) |
-| [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Bot setup, permission system, command reference (Chinese) |
+| [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Optional notification Provider, binding handshake and command reference (Chinese) |
 | [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` protocol, validation, repair (Chinese) |
 | [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md) | TOTP, recovery codes, Passkeys, Security Center (Chinese) |
 | [API v1 Reference](docs/api-v1-reference.md) | RESTful API v1 (mobile OAuth, MFA, SSE, Billing) (Chinese) |

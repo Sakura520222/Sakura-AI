@@ -496,6 +496,8 @@ async def get_current_user(request: Request) -> dict:
         "user_id": user_id,
         "github_id": payload.get("github_id"),
         "avatar_url": payload.get("avatar_url"),
+        "email": payload.get("email"),
+        "email_verified": bool(payload.get("email_verified", False)),
     }
 
 

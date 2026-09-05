@@ -61,6 +61,53 @@
         </form>
     </div>
 
+    <!-- Notification endpoints -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h3 class="text-base font-medium">{{ _('settings.notification_endpoints') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.notification_endpoints_desc') }}</p>
+        <div class="mt-4 space-y-2">
+            {% for endpoint in notification_endpoints %}
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3">
+                <div>
+                    <p class="text-sm font-medium">
+                        {% if endpoint.provider == 'email' %}{{ _('settings.endpoint_email') }}{% elif endpoint.provider == 'telegram' %}{{ _('settings.endpoint_telegram') }}{% else %}{{ endpoint.provider }}{% endif %}
+                    </p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 break-all">{{ endpoint.address }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    {% if endpoint.enabled %}
+                    <span class="text-xs text-green-600 dark:text-green-400">{{ _('common.enabled') }}</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">{{ _('common.disabled') }}</span>
+                    {% endif %}
+                    {% if endpoint.provider == 'telegram' and endpoint.enabled %}
+                    <form method="POST" action="/settings/telegram/unbind/{{ endpoint.id }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="px-3 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">{{ _('settings.telegram_unbind') }}</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('settings.no_notification_endpoints') }}</p>
+            {% endfor %}
+        </div>
+        <form method="POST" action="/settings/telegram/bind" class="mt-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">{{ _('settings.generate_telegram_binding') }}</button>
+        </form>
+        {% if telegram_binding %}
+        <div class="mt-4 rounded-lg border border-pink-200 dark:border-pink-800 bg-pink-50 dark:bg-pink-900/20 p-4">
+            <p class="text-sm font-medium">{{ _('settings.telegram_binding_ready') }}</p>
+            {% if telegram_binding.deep_link %}
+            <a href="{{ telegram_binding.deep_link }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block text-sm text-pink-600 hover:underline">{{ _('settings.open_telegram_binding') }}</a>
+            {% endif %}
+            <p class="mt-2 text-xs text-gray-600 dark:text-gray-300 break-all">{{ telegram_binding.deep_link or telegram_binding.token }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('settings.telegram_binding_expiry') }}</p>
+        </div>
+        {% endif %}
+    </div>
+
     <!-- 安全设置 / Security Settings -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
         <h3 class="text-base font-medium">{{ _('settings.security') }}</h3>
