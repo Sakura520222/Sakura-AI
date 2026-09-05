@@ -1526,6 +1526,7 @@ version_manager:
   registry_select: "Update/switch to this build"
   registry_not_selectable: "Not selectable"
   registry_stale: "Showing cached data; updates are disabled"
+  registry_stale_reason: "Showing cached data; updates are disabled ({reason})"
   registry_unavailable: "GHCR catalog is unavailable"
   channel_head_unavailable: "The current channel does not have an available head image"
   registry_selected: "Target selected; run preflight before updating"

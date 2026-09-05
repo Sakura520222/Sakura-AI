@@ -88,6 +88,61 @@ grep -Fq "$SANDBOX_RUNNER_DIGEST" "$log"
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_sandbox_pull_image_verifies_digest_against_full_immutable_reference():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+ref='ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+docker_pull_native_progress() { return 0; }
+docker() {
+    printf '%s\n' "$*" >> "$log"
+    # Real Docker resolves a bare repository as the implicit :latest tag; an
+    # image that only exists as a digest-pinned pull is invisible to that
+    # lookup ("No such image: repo:latest").
+    if [[ "$1 $2" == "image inspect" ]]; then
+        if [[ "$*" == *" $ref" ]]; then
+            printf '%s\n' "$ref"
+            return 0
+        fi
+        return 1
+    fi
+    return 0
+}
+sandbox_pull_image sandboxd "$ref"
+grep -Fq -- "--format={{range .RepoDigests}}{{println .}}{{end}} $ref" "$log"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sandbox_pull_image_rejects_mismatched_repo_digest():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+ref='ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+docker_pull_native_progress() { return 0; }
+docker() {
+    if [[ "$1 $2" == "image inspect" ]]; then
+        printf '%s\n' 'ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+        return 0
+    fi
+    return 0
+}
+if sandbox_pull_image sandboxd "$ref"; then
+    echo 'digest mismatch was not rejected' >&2
+    exit 1
+fi
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_production_without_both_digests_fails_closed_before_pull():
     result = _bash(
         r'''

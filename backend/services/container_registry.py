@@ -16,6 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
+from loguru import logger
+
 from backend.core.time_service import format_rfc3339, monotonic, now_utc
 
 REPOSITORY = "ghcr.io/sakura520222/sakura-ai"
@@ -205,7 +207,8 @@ class ContainerRegistryClient:
                 }
         except HTTPError as exc:
             raise ContainerRegistryError(
-                "registry request failed", status_code=int(exc.code)
+                f"registry request failed: HTTP {exc.code}",
+                status_code=int(exc.code),
             ) from exc
         except (
             URLError,
@@ -214,7 +217,11 @@ class ContainerRegistryClient:
             ValueError,
             json.JSONDecodeError,
         ) as exc:
-            raise ContainerRegistryError("registry request failed") from exc
+            # 失败原因（超时/限流/DNS/解析）必须可区分：消息会进入日志与版本页
+            # stale_reason，否则缓存回退无法诊断。
+            raise ContainerRegistryError(
+                f"registry request failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
     async def _token(self) -> str:
         registry, path = self.repository.split("/", 1)
@@ -318,11 +325,15 @@ class ContainerRegistryClient:
             self._cache = payload
             self._cache_at = now
             return payload
-        except ContainerRegistryError:
+        except ContainerRegistryError as exc:
             if self._cache is None:
                 raise
+            logger.warning("GHCR 目录刷新失败，回退缓存: {}", exc)
             stale = dict(self._cache)
             stale["stale"] = True
+            # 展示层诊断信息（截断防异常文本过长）；成功刷新整体重建 payload，
+            # 该键随之消失。
+            stale["stale_reason"] = str(exc)[:200]
             # Persist the trust downgrade. Otherwise a forced refresh failure
             # inside the TTL window is followed by a normal cache hit that
             # presents the same old channel heads as fresh/selectable.

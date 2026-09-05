@@ -1524,7 +1524,9 @@ sandbox_pull_image() {
         return 1
     fi
     if sandbox_registry_digest_is_safe "$reference"; then
-        actual_digest=$(image_digest_of "${reference%@*}" 2>/dev/null || true)
+        # RepoDigests 校验必须查完整 digest 引用：裸 repository 会被 Docker 解析为
+        # 隐式 :latest tag，按 digest 拉取的镜像在该 tag 下不可见（No such image）。
+        actual_digest=$(image_digest_of "$reference" 2>/dev/null || true)
         if [[ "$actual_digest" != "${reference##*@}" ]]; then
             fail "拉取后的 ${component} RepoDigests 与请求的 immutable ref 不一致: $reference" >&2
             return 1
