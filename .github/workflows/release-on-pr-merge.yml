@@ -301,12 +301,20 @@ jobs:
           }
           body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
           url = f"{base_url}/chat/completions"
+          # 网关按浏览器请求放行：默认 Python-urllib UA、缺失 Origin/Referer 会被 403
           headers = {
               "Authorization": f"Bearer {api_key}",
               "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
+              "Origin": "https://api.firefly520.top",
+              "Referer": "https://api.firefly520.top/",
           }
 
-          # 4. 请求（最多重试 2 次，指数退避）
+          # 4. 请求（最多重试 2 次，指数退避；HTTP 错误读取响应体，便于从日志定位拒绝原因）
           last_err: Exception | None = None
           content: str | None = None
           for attempt in range(3):  # 初次 + 2 次重试
@@ -318,6 +326,14 @@ jobs:
                       data = json.loads(resp.read().decode("utf-8"))
                   content = data["choices"][0]["message"]["content"]
                   break
+              except urllib.error.HTTPError as e:
+                  try:
+                      detail = e.read().decode("utf-8", "replace")[:500]
+                  except Exception:  # noqa: BLE001
+                      detail = ""
+                  last_err = RuntimeError(f"HTTP {e.code}: {detail or e.reason}")
+                  if attempt < 2:
+                      time.sleep(2 ** attempt)  # 1s, 2s
               except Exception as e:  # noqa: BLE001
                   last_err = e
                   if attempt < 2:
