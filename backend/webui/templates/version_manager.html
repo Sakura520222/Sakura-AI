@@ -326,7 +326,11 @@ function selectRegistryTab(channel) {
 async function loadRegistryCatalog() {
   try {
     registryCatalog = await requestJson('/version/images', {headers: {'Accept': 'application/json'}});
-    registryStatus.textContent = registryCatalog.stale ? VM_I18N.registryStale : '';
+    registryStatus.textContent = registryCatalog.stale
+      ? (registryCatalog.stale_reason
+          ? vmFormat(VM_I18N.registryStaleReason, {reason: registryCatalog.stale_reason})
+          : VM_I18N.registryStale)
+      : '';
     renderRegistryPanel('stable');
     renderRegistryPanel('development');
     renderRegistryPanel('other');
@@ -381,6 +385,7 @@ const VM_I18N = {
   registrySelect: {{ _("version_manager.registry_select") | tojson }},
   registryNotSelectable: {{ _("version_manager.registry_not_selectable") | tojson }},
   registryStale: {{ _("version_manager.registry_stale") | tojson }},
+  registryStaleReason: {{ _("version_manager.registry_stale_reason") | tojson }},
   registryUnavailable: {{ _("version_manager.registry_unavailable") | tojson }},
   registrySelected: {{ _("version_manager.registry_selected") | tojson }},
   registryDetails: {{ _("version_manager.registry_details") | tojson }},
