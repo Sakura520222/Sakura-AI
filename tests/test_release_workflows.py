@@ -327,6 +327,68 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert "--platform linux/amd64" in smoke_text
 
 
+def test_release_notes_contract_collects_facts_and_deterministic_fallback():
+    """Release Notes 生成契约：事实信号单一来源 + 新章节 + 降级路径确定性规则。"""
+    release, _ = _load(RELEASE_PATH)
+    job = release["jobs"]["generate-release"]
+
+    # 事实信号收集步骤是两条路径的单一输入源：排除 merge commit、按标题去重
+    # （main↔develop 回流会产生同名不同 SHA 的提交，曾导致 v3.1.3 降级输出重复）。
+    facts = next(
+        step for step in job["steps"] if step.get("name") == "收集变更事实信号"
+    )
+    facts_text = facts["run"]
+    assert "--no-merges" in facts_text
+    assert "!seen[$0]++" in facts_text
+    for artifact in (
+        "subjects.txt",
+        "changed_paths.txt",
+        "changed_areas.txt",
+        "sensitive_stat.txt",
+        "sensitive_diffs.txt",
+    ):
+        assert artifact in facts_text
+    # 敏感路径有限 diff 必须有预算上限，防止把全量 diff 塞给模型
+    assert "PER_FILE_CAP" in facts_text
+    assert "TOTAL_CAP" in facts_text
+
+    ai_step = next(
+        step for step in job["steps"] if step.get("name") == "AI 生成 Release 说明"
+    )
+    ai_text = ai_step["run"]
+    # AI 只消费收集好的事实信号，不得自行 git log
+    assert "git log" not in ai_text
+    # 版本定位并入 summary 两段结构，不引入独立 version_note 字段
+    assert "version_note" not in ai_text
+    assert "版本定位" in ai_text
+    assert '"upgrade_notes"' in ai_text
+    assert '"important_notes"' in ai_text
+    for level in ('"note"', '"important"', '"warning"'):
+        assert level in ai_text
+    # 新章节与 GitHub Alert 映射（WebUI marked 端降级为引用块仍可读）
+    assert "### 升级提示 / Upgrade Notes" in ai_text
+    assert "### 注意事项 / Important Notes" in ai_text
+    for alert in ("[!NOTE]", "[!IMPORTANT]", "[!WARNING]"):
+        assert alert in ai_text
+
+    fallback = next(
+        step
+        for step in job["steps"]
+        if step.get("name", "").startswith("生成 Release 描述")
+    )
+    fallback_text = fallback["run"]
+    # 降级路径复用去重后的提交列表与变更清单，只输出确定性规则，绝不让 bash 推测
+    assert "git log" not in fallback_text
+    assert "subjects.txt" in fallback_text
+    assert "changed_paths.txt" in fallback_text
+    assert "BREAKING" in fallback_text
+    # 路径规则覆盖依赖 / Docker / 数据库结构三类事实
+    assert "requirements" in fallback_text
+    assert "docker-compose" in fallback_text
+    assert "backend/models" in fallback_text
+    assert "### 升级提示 / Upgrade Notes" in fallback_text
+
+
 def test_ci_keeps_main_job_and_adds_independent_updater_quality():
     ci, _ = _load(CI_PATH)
     jobs = ci["jobs"]

@@ -72,6 +72,84 @@ jobs:
             echo "notes 范围: 首个 commit 起（无上一版本 tag）"
           fi
 
+      - name: 收集变更事实信号
+        id: collect_facts
+        env:
+          BASE: ${{ steps.compute_base.outputs.base }}
+        run: |
+          set -euo pipefail
+          BASE="${BASE}"
+          RANGE="${BASE:+$BASE..}HEAD"
+          # 首个 Release（无上一版本 tag）时与空树比较，diff 类命令统一用 BASE_REF
+          BASE_REF="${BASE:-$(git hash-object -t tree /dev/null)}"
+          FACTS_DIR="${RUNNER_TEMP}/release_facts"
+          mkdir -p "$FACTS_DIR"
+
+          # 提交标题：排除 merge commit；按标题去重——同一 chore 提交会被分别推到
+          # main 与 develop，回合后在范围内以不同 SHA 重复出现。
+          git log --no-merges --pretty=format:"%s" "$RANGE" \
+            | awk 'NF && !seen[$0]++' > "$FACTS_DIR/subjects.txt"
+          echo "去重后提交数: $(awk 'END {print NR}' "$FACTS_DIR/subjects.txt")"
+
+          # 变更文件全量清单（降级路径确定性路径规则 + 变更区域汇总的原始输入）
+          git diff --name-only --no-color "$BASE_REF" HEAD > "$FACTS_DIR/changed_paths.txt"
+
+          # 变更区域汇总：按前两级目录聚合计数，根级文件逐个列出
+          {
+            echo "Changed areas:"
+            awk -F/ 'NF >= 2 {print $1 "/" $2}' "$FACTS_DIR/changed_paths.txt" \
+              | sort | uniq -c | sort -rn | awk '{print "- " $2 ": " $1 " files"}'
+            echo ""
+            echo "Changed root files:"
+            awk -F/ 'NF == 1 {print "- " $1}' "$FACTS_DIR/changed_paths.txt" | sort -u
+          } > "$FACTS_DIR/changed_areas.txt"
+
+          # release-sensitive 路径：只有这些位置的变更才可能支撑升级提示/注意事项
+          SENSITIVE_GLOBS=(
+            "docker-compose*.yml" "docker-compose*.yaml" "**/Dockerfile*"
+            ".env.example" "requirements*.txt" "**/pyproject.toml" "**/uv.lock"
+            "alembic/**" "migrations/**" "backend/models/**" "backend/database/**"
+            "updater/**" "scripts/deploy/**" ".github/workflows/**"
+          )
+          SENSITIVE_SPEC=()
+          for g in "${SENSITIVE_GLOBS[@]}"; do
+            SENSITIVE_SPEC+=(":(glob)$g")
+          done
+
+          {
+            echo "整体变更规模:"
+            git diff --shortstat --no-color "$BASE_REF" HEAD
+            echo ""
+            echo "敏感路径变更统计:"
+            git diff --stat --no-color "$BASE_REF" HEAD -- "${SENSITIVE_SPEC[@]}"
+          } > "$FACTS_DIR/sensitive_stat.txt"
+
+          # 敏感文件有限 diff：单文件与总量各设预算，超出截断并标注，避免噪声与成本
+          PER_FILE_CAP=2500
+          TOTAL_CAP=15000
+          : > "$FACTS_DIR/sensitive_diffs.txt"
+          total=0
+          mapfile -t sensitive_files < <(
+            git diff --name-only --no-color "$BASE_REF" HEAD -- "${SENSITIVE_SPEC[@]}" | sort -u
+          )
+          for f in "${sensitive_files[@]}"; do
+            if [ "$total" -ge "$TOTAL_CAP" ]; then
+              echo "... (diff 总预算已用尽，其余敏感文件省略)" >> "$FACTS_DIR/sensitive_diffs.txt"
+              break
+            fi
+            full=$(git diff -U1 --no-color "$BASE_REF" HEAD -- "$f")
+            len=${#full}
+            if [ "$len" -gt "$PER_FILE_CAP" ]; then
+              body="${full:0:$PER_FILE_CAP}"$'\n... (truncated)'
+            else
+              body="$full"
+            fi
+            printf '\n===== %s (%s chars) =====\n%s\n' "$f" "$len" "$body" \
+              >> "$FACTS_DIR/sensitive_diffs.txt"
+            total=$((total + len))
+          done
+          echo "敏感文件数: ${#sensitive_files[@]}，实际输出约 ${total} 字符"
+
       - name: 检查 Release 是否存在
         id: check_release
         run: |
@@ -120,12 +198,10 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           VERSION: ${{ steps.read_version.outputs.current_version }}
           DATE: ${{ steps.read_version.outputs.today }}
-          BASE: ${{ steps.compute_base.outputs.base }}
         run: |
           python3 - <<'PY'
           import json
           import os
-          import subprocess
           import sys
           import time
           import urllib.error
@@ -150,42 +226,66 @@ jobs:
           if not base_url or not api_key or not model:
               fail_fallback("LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 任一未配置")
 
-          # 2. 读取版本、日期、提交标题列表
+          # 2. 读取版本、日期与收集好的事实信号（facts 步骤产出，两条路径同源）
           version = os.environ["VERSION"]
           date = os.environ["DATE"]
-          base = os.environ.get("BASE", "").strip()
-          rev_range = f"{base}..HEAD" if base else "HEAD"
-          result = subprocess.run(
-              ["git", "log", "--pretty=format:%s", rev_range],
-              check=True,
-              capture_output=True,
-              text=True,
-          )
-          commits = [c for c in result.stdout.splitlines() if c.strip()]
+          facts_dir = os.path.join(os.environ["RUNNER_TEMP"], "release_facts")
+
+          def read_fact(name: str) -> str:
+              path = os.path.join(facts_dir, name)
+              if not os.path.exists(path):
+                  return ""
+              with open(path, encoding="utf-8") as f:
+                  return f.read()
+
+          commits = [c for c in read_fact("subjects.txt").splitlines() if c.strip()]
           if not commits:
               fail_fallback("提交列表为空")
+          changed_areas = read_fact("changed_areas.txt").strip()
+          sensitive_stat = read_fact("sensitive_stat.txt").strip()
+          sensitive_diffs = read_fact("sensitive_diffs.txt").strip()
 
           commit_block = "\n".join(commits)
 
-          # 3. 构造 prompt（固定类型枚举顺序、禁 emoji、要求严格 JSON）
+          # 3. 构造 prompt（summary 两段结构 + 事实信号驱动的升级提示/注意事项 + 严格 JSON）
           system_prompt = (
-              "你是一个发布说明撰写助手。只依据用户给出的 Conventional Commits 提交标题列表，"
-              "撰写中英双语发布说明。禁止捏造未出现的变更。全程不得使用 emoji。"
+              "你是一个发布说明撰写助手。只依据用户给出的 Conventional Commits 提交标题、"
+              "变更区域汇总、变更统计与敏感文件有限 diff 这些事实信号，撰写中英双语发布说明。"
+              "禁止捏造信号中不存在的信息。全程不得使用 emoji。"
               "输出严格 JSON（不要 markdown 代码围栏），结构为："
               '{"summary_zh": string, "summary_en": string, '
-              '"groups": [{"title_zh": string, "title_en": string, '
+              '"upgrade_notes": [{"zh": string, "en": string}], '
+              '"important_notes": [{"level": "note"|"important"|"warning", '
+              '"zh": string, "en": string}], '
+              '"groups": [{"type": string, "title_zh": string, "title_en": string, '
               '"items": [{"zh": string, "en": string}]}]}。'
+              "要求：\n"
+              "- summary_zh 与 summary_en 各为两段：第一段用一句话说明版本定位"
+              "（功能版本/维护版本/修复版本/安全修复等），第二段概述核心变化；"
+              "迁移风险与兼容性要求不要写进 summary，放入 upgrade_notes。\n"
+              "- upgrade_notes：升级前用户需要执行或知晓的动作（备份数据库、重新同步依赖、"
+              "重新拉取部署配置、检查新增配置字段、重新构建容器等）。"
+              "每条都必须能从提交标题或事实信号推导得出，没有确定内容时返回空数组，"
+              "禁止输出泛泛建议。\n"
+              "- important_notes：行为变化、默认值变化、兼容性影响或已知问题。"
+              "level 取 note（一般提示）/important（需要关注）/"
+              "warning（可能造成破坏或影响数据）。同样必须有事实依据，可为空数组。\n"
               "类型分组使用固定枚举并按此顺序：feat(新增功能/New Features)、"
               "fix(问题修复/Bug Fixes)、perf(性能优化/Performance)、"
               "refactor(重构/Refactor)、docs(文档更新/Documentation)、"
               "test(测试/Tests)、i18n(国际化/Internationalization)、"
               "build/ci/chore/style 归入「其他变更/Other Changes」。"
-              "无内容的类型省略。每个条目必须同时给出中文与英文。"
+              "无内容的类型省略。groups 的 type 填组枚举值"
+              "（feat/fix/perf/refactor/docs/test/i18n/chore）。"
+              "每个条目必须同时给出中文与英文。"
               "合并语义重复或琐碎的 chore/ci 条目，保留具体描述，不要泛化为「若干维护任务」。"
           )
           user_prompt = (
               f"版本号: {version}\n日期: {date}\n\n"
-              f"提交标题列表（每行一条）：\n{commit_block}"
+              f"提交标题列表（每行一条，已按标题去重）：\n{commit_block}\n\n"
+              f"变更区域汇总：\n{changed_areas or '（无）'}\n\n"
+              f"变更统计：\n{sensitive_stat or '（无）'}\n\n"
+              f"敏感文件有限 diff（可能截断）：\n{sensitive_diffs or '（无）'}"
           )
 
           payload = {
@@ -253,10 +353,41 @@ jobs:
           if not summary_zh or not summary_en or not raw_groups:
               fail_fallback("summary_zh / summary_en / groups 字段缺失")
 
+          # 升级提示 / 注意事项：缺字段按空处理；条目缺中英即丢弃
+          raw_upgrade = obj.get("upgrade_notes")
+          if not isinstance(raw_upgrade, list):
+              raw_upgrade = []
+          upgrade_items: list[tuple[str, str]] = []
+          for it in raw_upgrade:
+              if not isinstance(it, dict):
+                  continue
+              uz = (it.get("zh") or "").strip()
+              ue = (it.get("en") or "").strip()
+              if uz and ue:
+                  upgrade_items.append((uz, ue))
+
+          valid_levels = ("note", "important", "warning")
+          raw_notes = obj.get("important_notes")
+          if not isinstance(raw_notes, list):
+              raw_notes = []
+          note_items: list[tuple[str, str, str]] = []
+          for it in raw_notes:
+              if not isinstance(it, dict):
+                  continue
+              nz = (it.get("zh") or "").strip()
+              ne = (it.get("en") or "").strip()
+              if not nz or not ne:
+                  continue
+              level = (it.get("level") or "").strip().lower()
+              if level not in valid_levels:
+                  level = "important"  # 非法 level 容错映射，避免整条丢失
+              note_items.append((level, nz, ne))
+
           norm_groups: list[dict] = []
           for g in raw_groups:
               tz = (g.get("title_zh") or "").strip()
               te = (g.get("title_en") or "").strip()
+              gt = (g.get("type") or "").strip().lower()
               raw_items = g.get("items") or []
               if not tz or not te or not raw_items:
                   continue
@@ -268,12 +399,27 @@ jobs:
                       norm_items.append((iz, ie))
               if norm_items:
                   norm_groups.append(
-                      {"title_zh": tz, "title_en": te, "items": norm_items}
+                      {
+                          "type": gt,
+                          "title_zh": tz,
+                          "title_en": te,
+                          "items": norm_items,
+                      }
                   )
           if not norm_groups:
               fail_fallback("解析后无有效分组")
 
-          # 7. 按固定枚举顺序重排（稳定排序，未匹配项放最后）
+          # 7. 按固定枚举顺序重排（type 优先，缺失回退 title_en 匹配；未匹配项放最后）
+          group_order = [
+              "feat",
+              "fix",
+              "perf",
+              "refactor",
+              "docs",
+              "test",
+              "i18n",
+              "chore",
+          ]
           order_en = [
               "New Features",
               "Bug Fixes",
@@ -285,15 +431,22 @@ jobs:
               "Other Changes",
           ]
 
-          def rank(title_en: str) -> int:
+          def rank(g: dict) -> int:
+              if g["type"] in group_order:
+                  return group_order.index(g["type"])
               try:
-                  return order_en.index(title_en)
+                  return order_en.index(g["title_en"])
               except ValueError:
-                  return len(order_en)
+                  return len(group_order)
 
-          norm_groups.sort(key=lambda g: rank(g["title_en"]))
+          norm_groups.sort(key=rank)
 
-          # 8. 拼装最终 Markdown（§3.4：两个折叠块，全程无 emoji）
+          # 8. 拼装最终 Markdown（总结两段 → 升级提示 → 注意事项(GitHub Alert) → 两个折叠块，全程无 emoji）
+          alert_of = {
+              "note": "[!NOTE]",
+              "important": "[!IMPORTANT]",
+              "warning": "[!WARNING]",
+          }
           lines: list[str] = []
           lines.append(f"## v{version} ({date})")
           lines.append("")
@@ -303,6 +456,24 @@ jobs:
           lines.append("")
           lines.append(summary_en)
           lines.append("")
+          if upgrade_items:
+              lines.append("### 升级提示 / Upgrade Notes")
+              lines.append("")
+              for uz, _ue in upgrade_items:
+                  lines.append(f"- {uz}")
+              lines.append("")
+              for _uz, ue in upgrade_items:
+                  lines.append(f"- {ue}")
+              lines.append("")
+          if note_items:
+              lines.append("### 注意事项 / Important Notes")
+              lines.append("")
+              for level, nz, ne in note_items:
+                  lines.append(f"> {alert_of[level]}")
+                  lines.append(f"> {nz}")
+                  lines.append(">")
+                  lines.append(f"> {ne}")
+                  lines.append("")
           lines.append("<details>")
           lines.append("<summary>中文更新日志</summary>")
           lines.append("")
@@ -340,11 +511,14 @@ jobs:
         env:
           VERSION: ${{ steps.read_version.outputs.current_version }}
           TODAY: ${{ steps.read_version.outputs.today }}
-          BASE: ${{ steps.compute_base.outputs.base }}
         run: |
           set -e
 
-          # 类型→组 key 映射（style 归入其他变更，与 §3.3 一致）
+          FACTS_DIR="${RUNNER_TEMP}/release_facts"
+          SUBJECTS_FILE="${FACTS_DIR}/subjects.txt"
+          CHANGED_FILE="${FACTS_DIR}/changed_paths.txt"
+
+          # 类型→组 key 映射（style 归入其他变更，与 AI 路径一致）
           declare -A PREFIX_GROUP=(
             ["feat"]="feat" ["fix"]="fix" ["perf"]="perf"
             ["refactor"]="refactor" ["docs"]="docs" ["test"]="test"
@@ -364,27 +538,57 @@ jobs:
           # 固定枚举顺序
           GROUP_ORDER=("feat" "fix" "perf" "refactor" "docs" "test" "i18n" "chore")
 
-          # 取 BASE..HEAD 提交标题（BASE 为空则全部）
-          COMMITS_FILE="${RUNNER_TEMP}/commit_subjects.txt"
-          git log --pretty=format:"%s" ${BASE:+$BASE..}HEAD > "$COMMITS_FILE"
-
-          # 解析提交，按组归类
+          # 解析提交，按组归类（subjects.txt 已在收集步骤做过 --no-merges + 按标题去重）
           declare -A NEW_COMMITS
           TOTAL=0
+          BREAKING=0
+          BREAKING_RE='^[[:alnum:]_]+(\([^)]*\))?!:'
           while IFS= read -r commit; do
             [ -z "$commit" ] && continue
+            # Conventional Commits 破坏性标记：type!:/type(scope)!:/BREAKING CHANGE
+            if [[ "$commit" =~ $BREAKING_RE ]] || [[ "${commit^^}" == *"BREAKING CHANGE"* ]]; then
+              BREAKING=1
+            fi
             # 提取 Conventional Commits 前缀（小写）
             prefix=$(echo "$commit" | sed -E 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/' | tr '[:upper:]' '[:lower:]')
             group="${PREFIX_GROUP[$prefix]:-chore}"
             NEW_COMMITS[$group]="${NEW_COMMITS[$group]}- ${commit}"$'\n'
             TOTAL=$((TOTAL + 1))
-          done < "$COMMITS_FILE"
+          done < "$SUBJECTS_FILE"
+
+          # 确定性升级提示：只输出能由 BREAKING 标记或路径规则确定判断的内容，绝不让 bash 推测
+          UPGRADE_ZH=""
+          UPGRADE_EN=""
+          add_upgrade_note() {
+            UPGRADE_ZH="${UPGRADE_ZH}- $1"$'\n'
+            UPGRADE_EN="${UPGRADE_EN}- $2"$'\n'
+          }
+          if [ "$BREAKING" -eq 1 ]; then
+            add_upgrade_note \
+              "此版本包含破坏性变更，升级前请仔细阅读更新日志。" \
+              "This release contains breaking changes. Review the changelog carefully before upgrading."
+          fi
+          if grep -Eq '(^|/)(requirements[^/]*\.txt|pyproject\.toml|uv\.lock)$' "$CHANGED_FILE"; then
+            add_upgrade_note \
+              "项目依赖已发生变化，源码部署用户升级后应重新同步依赖。" \
+              "Project dependencies changed; source deployments should re-sync dependencies after upgrading."
+          fi
+          if grep -Eq '^docker/|(^|/)(docker-compose[^/]*\.ya?ml|Dockerfile[^/]*)$' "$CHANGED_FILE"; then
+            add_upgrade_note \
+              "Docker 部署相关文件发生变化，使用 Docker 部署的用户建议重新拉取配置并重建服务。" \
+              "Docker deployment files changed; Docker deployments should re-fetch the configuration and rebuild."
+          fi
+          if grep -Eq '^(migrations|alembic|backend/models|backend/database)/' "$CHANGED_FILE"; then
+            add_upgrade_note \
+              "本版本包含数据库结构变更（启动时自动迁移），请在升级前备份数据库。" \
+              "This release includes database schema changes (auto-migrated on startup). Back up the database before upgrading."
+          fi
 
           # 收集涉及的类型（中文顿号 / 英文逗号）
           ZH_TITLES=""
           EN_TITLES=""
           for g in "${GROUP_ORDER[@]}"; do
-            if [ -n "${NEW_COMMITS[$g]}" ]; then
+            if [ -n "${NEW_COMMITS[$g]:-}" ]; then
               if [ -n "$ZH_TITLES" ]; then
                 ZH_TITLES="${ZH_TITLES}、${GROUP_ZH[$g]}"
                 EN_TITLES="${EN_TITLES}, ${GROUP_EN[$g]}"
@@ -400,7 +604,7 @@ jobs:
             EN_TITLES="none"
           fi
 
-          # 拼装 Markdown（无折叠、双语并排标题、条目为 commit 原文、无 emoji）
+          # 拼装 Markdown（双语并排标题、确定性升级提示、条目为 commit 原文、无 emoji）
           {
             echo "## v${VERSION} (${TODAY})"
             echo ""
@@ -410,9 +614,17 @@ jobs:
             echo ""
             echo "This release includes ${TOTAL} commits across: ${EN_TITLES}."
             echo ""
+            if [ -n "$UPGRADE_ZH" ]; then
+              echo "### 升级提示 / Upgrade Notes"
+              echo ""
+              printf '%s\n' "$UPGRADE_ZH"
+              echo ""
+              printf '%s\n' "$UPGRADE_EN"
+              echo ""
+            fi
 
             for g in "${GROUP_ORDER[@]}"; do
-              commits="${NEW_COMMITS[$g]}"
+              commits="${NEW_COMMITS[$g]:-}"
               if [ -n "$commits" ]; then
                 echo "### ${GROUP_ZH[$g]} / ${GROUP_EN[$g]}"
                 echo ""
@@ -481,7 +693,7 @@ jobs:
         if: always()
         run: |
           rm -f release_notes.txt 2>/dev/null || true
-          rm -f "${RUNNER_TEMP}/commit_subjects.txt" 2>/dev/null || true
+          rm -rf "${RUNNER_TEMP}/release_facts" 2>/dev/null || true
           echo "✅ 临时文件已清理"
 
   build-and-upload-assets:
