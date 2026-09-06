@@ -20,6 +20,7 @@ from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import AgentTeamSourceType
 from backend.services.agent_team.execution import TrustedGitRunner
 from backend.services.agent_team.git_workspace_service import _strip_git_credentials
+from backend.services.agent_team.tools.file_utils import write_workspace_bytes
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -409,7 +410,9 @@ class AgentTeamPRService:
                 + "\n".join(missing)
                 + "\n"
             )
-            gitignore_path.write_text(existing + append_block, encoding="utf-8")
+            write_workspace_bytes(
+                gitignore_path, (existing + append_block).encode("utf-8")
+            )
             logger.info("已追加 {} 条 .gitignore 规则", len(missing))
 
     async def create_pull_request(

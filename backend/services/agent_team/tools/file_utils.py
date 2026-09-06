@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import difflib
+import errno
+import os
 from pathlib import Path
+
+from backend.services.agent_team.tools.errors import (
+    WORKSPACE_WRITE_PERMISSION_DENIED,
+    ToolExecutionError,
+)
 
 # ── 编码与行尾 ────────────────────────────────────────
 
@@ -33,6 +40,36 @@ def read_text_with_metadata(path: str | Path) -> tuple[str, str, str]:
     return text, encoding, line_ending
 
 
+def write_workspace_bytes(path: str | Path, data: bytes) -> None:
+    """以安全 open 语义写入工作区文件字节 / Write workspace bytes safely.
+
+    既有文件不带 ``O_CREAT`` 打开：宿主 ``fs.protected_regular=2`` 会对
+    sticky 目录中"O_CREAT 打开异属主文件"无条件返回 EACCES，即使调用方是
+    root（sandboxd handoff 后文件属主为 runner uid 65532，web 后端 root
+    也会被拒）。文件不存在时才以 ``O_CREAT | O_EXCL`` 创建。
+    / Existing files are opened without ``O_CREAT``; creation happens only
+    when the file is missing.
+    """
+    try:
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_TRUNC)
+        except FileNotFoundError:
+            descriptor = os.open(
+                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644
+            )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EROFS):
+            raise ToolExecutionError(
+                WORKSPACE_WRITE_PERMISSION_DENIED,
+                f"文件系统拒绝写入 {path}（errno={exc.errno}）。"
+                "该文件可能由沙箱运行时持有属主：可改用 run_command 在工作区内完成此写入，"
+                "或终止任务并报告该限制。",
+            ) from exc
+        raise
+
+
 def write_text_preserving(
     path: str | Path, content_lf: str, encoding: str, line_ending: str
 ) -> None:
@@ -40,7 +77,7 @@ def write_text_preserving(
     final = (
         content_lf.replace("\n", line_ending) if line_ending == "\r\n" else content_lf
     )
-    Path(path).write_bytes(final.encode(encoding))
+    write_workspace_bytes(path, final.encode(encoding))
 
 
 # ── 差异生成 ──────────────────────────────────────────

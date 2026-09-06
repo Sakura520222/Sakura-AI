@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.services.agent_team.tools.file_utils import write_workspace_bytes
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
@@ -102,7 +103,7 @@ class AgentTeamFileTools:
         self._check_blocked(relative_path)
         created = not resolved.exists()
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
+        write_workspace_bytes(resolved, content.encode("utf-8"))
         return FileWriteResult(path=relative_path, size=len(content), created=created)
 
     def list_files(
@@ -235,7 +236,7 @@ class AgentTeamFileTools:
                 "或者使用 replace_all=true 替换所有匹配。"
             )
         content = content.replace(old_text, new_text, -1 if replace_all else 1)
-        resolved.write_text(content, encoding="utf-8")
+        write_workspace_bytes(resolved, content.encode("utf-8"))
         return FileEditResult(
             path=relative_path,
             replacements=count if replace_all else 1,
@@ -280,7 +281,7 @@ class AgentTeamFileTools:
         # 替换 [start_line-1 : safe_end] 为 new_lines
         result_lines = lines[: start_line - 1] + new_lines + lines[safe_end:]
         result_content = "\n".join(result_lines)
-        resolved.write_text(result_content, encoding="utf-8")
+        write_workspace_bytes(resolved, result_content.encode("utf-8"))
 
         replaced_count = safe_end - start_line + 1
         return FileEditResult(
@@ -319,7 +320,7 @@ class AgentTeamFileTools:
         insert_lines = content.split("\n")
         result_lines = lines[:after_line] + insert_lines + lines[after_line:]
         result_content = "\n".join(result_lines)
-        resolved.write_text(result_content, encoding="utf-8")
+        write_workspace_bytes(resolved, result_content.encode("utf-8"))
 
         return FileEditResult(
             path=relative_path,

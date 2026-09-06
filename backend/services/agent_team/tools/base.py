@@ -16,6 +16,7 @@ from loguru import logger
 
 from backend.core.time_service import monotonic
 from backend.services.agent_team.execution import ExecutionRunner
+from backend.services.agent_team.tools.errors import ToolExecutionError
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
 )
@@ -30,6 +31,8 @@ class ToolResult:
     success: bool
     output: dict[str, Any] = field(default_factory=dict)
     error: str = ""
+    # 稳定错误码（如 WORKSPACE_WRITE_PERMISSION_DENIED）；空串表示无结构化分类
+    error_code: str = ""
 
     @property
     def is_terminal(self) -> bool:
@@ -182,6 +185,13 @@ class ToolExecutor:
         # 4. 执行
         try:
             result = await tool.execute(arguments, ctx)
+        except ToolExecutionError as exc:
+            logger.error("工具 {} 执行失败[{}]: {}", function_name, exc.error_code, exc)
+            result = ToolResult(
+                success=False,
+                error=str(exc),
+                error_code=exc.error_code,
+            )
         except Exception as exc:
             logger.error("工具 {} 执行异常: {}", function_name, exc)
             result = ToolResult(
@@ -216,6 +226,12 @@ class ToolExecutor:
 
         try:
             return await tool.execute(arguments, ctx)
+        except ToolExecutionError as exc:
+            return ToolResult(
+                success=False,
+                error=str(exc),
+                error_code=exc.error_code,
+            )
         except Exception as exc:
             return ToolResult(
                 success=False,
