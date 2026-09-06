@@ -19,7 +19,12 @@ from backend.core.redis import get_async_redis
 from backend.core.time_service import get_time_service, now_utc
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
+from backend.services.identity_service import (
+    list_notification_endpoints,
+    unbind_notification_endpoint,
+)
 from backend.services.mfa_notification_service import notify_mfa_event
+from backend.services.telegram_binding_service import create_telegram_binding_token
 from backend.services.two_factor_service import (
     TwoFactorError,
     TwoFactorReplayError,
@@ -150,6 +155,16 @@ async def _render_settings_page(
         )
     if "passkeys" not in overrides:
         context["passkeys"] = await _get_user_passkeys(db, user_id)
+    if "notification_endpoints" not in overrides:
+        context["notification_endpoints"] = (
+            await list_notification_endpoints(
+                db, user_id, enabled_only=False
+            )
+            if db_user
+            else []
+        )
+    if "telegram_binding" not in overrides:
+        context["telegram_binding"] = None
     if "mfa_enrollment_required" not in overrides:
         context["mfa_enrollment_required"] = (
             await user_requires_mfa_enrollment(user_id, db) if db_user else False
@@ -167,6 +182,47 @@ async def settings_page(
 ):
     """渲染个人设置页面"""
     return await _render_settings_page(request, db, user, user_prefs)
+
+
+@router.post("/telegram/bind")
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
+async def create_telegram_binding(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    _csrf: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """Generate a short-lived one-time Telegram notification binding link."""
+
+    binding = await create_telegram_binding_token(int(user["user_id"]))
+    return await _render_settings_page(
+        request,
+        db,
+        user,
+        user_prefs,
+        telegram_binding=binding,
+    )
+
+
+@router.post("/telegram/unbind/{endpoint_id}")
+@router.post("/telegram/{endpoint_id}/unbind")
+async def unbind_telegram_endpoint(
+    endpoint_id: int,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+    _csrf: str = Depends(require_csrf),
+):
+    """Disable only the current user's Telegram notification endpoint."""
+
+    if not await unbind_notification_endpoint(
+        db,
+        int(user["user_id"]),
+        endpoint_id,
+        provider="telegram",
+    ):
+        raise HTTPException(status_code=404, detail="通知端点不存在")
+    return toast_redirect("/settings/", "settings.telegram_unbound")
 
 
 async def _get_user_passkeys(

@@ -250,6 +250,15 @@ async def test_complete_setup_restores_backup_before_explicit_setup_values(monke
                 "backup-cursor-secret",
                 None,
             ),
+            BackupRecord("github_oauth_client_id", "backup-client-id", None),
+            BackupRecord(
+                "github_oauth_client_secret", "backup-client-secret", None
+            ),
+            BackupRecord(
+                "github_oauth_redirect_uri",
+                "https://backup.example.test/auth/callback",
+                None,
+            ),
         ],
     }
     import_result = ConfigImportResult(
@@ -313,6 +322,11 @@ async def test_complete_setup_restores_backup_before_explicit_setup_values(monke
     assert saved["REDIS_URL"] == "redis://override:6379/0"
     assert saved["WEBUI_SECRET_KEY"] == "backup-session-secret"
     assert saved["ACTIVITY_CURSOR_SIGNING_SECRET"] == "backup-cursor-secret"
+    assert saved["GITHUB_OAUTH_CLIENT_ID"] == "backup-client-id"
+    assert saved["GITHUB_OAUTH_CLIENT_SECRET"] == "backup-client-secret"
+    assert saved["GITHUB_OAUTH_REDIRECT_URI"] == (
+        "https://backup.example.test/auth/callback"
+    )
     assert "ENABLE_RAG" not in saved
     assert result["backup_import"]["created"] == 4
 
@@ -327,6 +341,9 @@ async def test_legacy_backup_without_database_url_requires_manual_database(monke
         {
             "ADMIN_GITHUB_USERNAME": "admin",
             "ADMIN_TELEGRAM_ID": "123",
+            "GITHUB_OAUTH_CLIENT_ID": "client-id",
+            "GITHUB_OAUTH_CLIENT_SECRET": "client-secret",
+            "GITHUB_OAUTH_REDIRECT_URI": "https://example.test/auth/callback",
         },
         backup_sections={GLOBAL_SECTION: [], AI_SECTION: []},
     )
@@ -361,6 +378,9 @@ async def test_restore_failure_does_not_mark_setup_completed(monkeypatch):
             "DATABASE_URL": "mysql+asyncmy://user:secret@db/sakura",
             "ADMIN_GITHUB_USERNAME": "admin",
             "ADMIN_TELEGRAM_ID": "123",
+            "GITHUB_OAUTH_CLIENT_ID": "client-id",
+            "GITHUB_OAUTH_CLIENT_SECRET": "client-secret",
+            "GITHUB_OAUTH_REDIRECT_URI": "https://example.test/auth/callback",
         },
         backup_sections={GLOBAL_SECTION: []},
     )
@@ -381,3 +401,86 @@ def test_setup_template_submits_backup_only_with_final_completion():
     assert "/setup/api/backup/inspect" in source
     assert "map.CONFIG_BACKUP = this.backupContent" in source
     assert "map.EMBEDDING_API_KEY = this.form.embedding_api_key" in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "oauth_values",
+    [
+        {},
+        {"GITHUB_OAUTH_CLIENT_ID": "client-id"},
+        {
+            "GITHUB_OAUTH_CLIENT_ID": "client-id",
+            "GITHUB_OAUTH_CLIENT_SECRET": "client-secret",
+        },
+    ],
+)
+async def test_complete_setup_requires_usable_github_oauth_before_side_effects(
+    monkeypatch, oauth_values
+):
+    service = SetupService()
+    init_database = AsyncMock()
+    restore_backup = AsyncMock()
+    save_configs = AsyncMock()
+    create_admin = AsyncMock()
+    mark_completed = AsyncMock()
+    monkeypatch.setattr(service, "init_database", init_database)
+    monkeypatch.setattr(service, "restore_backup_for_setup", restore_backup)
+    monkeypatch.setattr(service, "save_configs_to_db", save_configs)
+    monkeypatch.setattr(service, "create_admin_user", create_admin)
+    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", mark_completed)
+
+    result = await service.complete_setup(
+        {
+            "DATABASE_URL": "mysql+asyncmy://user:pass@db/sakura",
+            "ADMIN_GITHUB_USERNAME": "admin",
+            **oauth_values,
+        }
+    )
+
+    assert result["success"] is False
+    assert "GitHub OAuth" in result["message"]
+    init_database.assert_not_awaited()
+    restore_backup.assert_not_awaited()
+    save_configs.assert_not_awaited()
+    create_admin.assert_not_awaited()
+    mark_completed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_complete_setup_accepts_persisted_runtime_oauth_values(monkeypatch):
+    service = SetupService()
+    saved: dict[str, str] = {}
+
+    async def save_configs(values):
+        saved.update(values)
+        return len(values)
+
+    monkeypatch.setattr(
+        "backend.core.config.get_settings",
+        lambda: SimpleNamespace(
+            database_url="",
+            redis_url="redis://127.0.0.1:6379/0",
+            github_oauth_client_id="runtime-client-id",
+            github_oauth_client_secret="runtime-client-secret",
+            github_oauth_redirect_uri="https://runtime.example.test/auth/callback",
+        ),
+    )
+    monkeypatch.setattr(service, "init_database", AsyncMock())
+    monkeypatch.setattr(service, "save_configs_to_db", save_configs)
+    monkeypatch.setattr(service, "create_admin_user", AsyncMock())
+    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", lambda *_: None)
+
+    result = await service.complete_setup(
+        {
+            "DATABASE_URL": "mysql+asyncmy://user:pass@db/sakura",
+            "ADMIN_GITHUB_USERNAME": "admin",
+        }
+    )
+
+    assert result["success"] is True, result["message"]
+    assert saved["GITHUB_OAUTH_CLIENT_ID"] == "runtime-client-id"
+    assert saved["GITHUB_OAUTH_CLIENT_SECRET"] == "runtime-client-secret"
+    assert saved["GITHUB_OAUTH_REDIRECT_URI"] == (
+        "https://runtime.example.test/auth/callback"
+    )

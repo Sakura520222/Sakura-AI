@@ -179,7 +179,12 @@
             init() {
                 var self = this;
                 window.addEventListener('show-toast', function(e) {
-                    self.show(e.detail.message, e.detail.type, e.detail.duration);
+                    self.show(
+                        e.detail.message,
+                        e.detail.type,
+                        e.detail.duration,
+                        e.detail,
+                    );
                 });
                 // 从 URL 参数自动显示 toast（绕过 DOMContentLoaded 时序问题）
                 var params = new URLSearchParams(window.location.search);
@@ -214,7 +219,7 @@
                     history.replaceState(null, '', window.location.pathname + (remaining ? '?' + remaining : ''));
                 }
             },
-            show(message, type = 'success', duration = 4000) {
+            show(message, type = 'success', duration = 4000, options = {}) {
                 const id = this._nextId++;
                 const icons = {
                     success: '<svg class="w-5 h-5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
@@ -232,6 +237,9 @@
                     id, message, type,
                     icon: icons[type] || icons.info,
                     borderClass: borders[type] || borders.info,
+                    summary: options.summary || '',
+                    time: options.time || '',
+                    actionUrl: options.actionUrl || '',
                 });
                 if (duration > 0) {
                     setTimeout(() => this.dismiss(id), duration);
@@ -499,7 +507,18 @@
                  :class="toast.borderClass"
                  class="pointer-events-auto max-w-sm w-full rounded-xl shadow-lg border glass text-sm flex items-start gap-3 p-4">
                 <div x-html="toast.icon"></div>
-                <p class="flex-1 text-gray-800 dark:text-gray-200" x-text="toast.message"></p>
+                <div class="flex-1 min-w-0">
+                    <template x-if="toast.actionUrl">
+                        <a :href="toast.actionUrl" class="block hover:underline focus:outline-none focus:ring-2 focus:ring-pink-500 rounded">
+                            <p class="font-medium text-gray-800 dark:text-gray-200" x-text="toast.message"></p>
+                            <p x-show="toast.summary" class="mt-1 text-xs text-gray-600 dark:text-gray-300 line-clamp-2" x-text="toast.summary"></p>
+                            <time x-show="toast.time" class="mt-1 block text-[11px] text-gray-500 dark:text-gray-400" x-text="toast.time"></time>
+                        </a>
+                    </template>
+                    <template x-if="!toast.actionUrl">
+                        <p class="text-gray-800 dark:text-gray-200" x-text="toast.message"></p>
+                    </template>
+                </div>
                 <button @click="dismiss(toast.id)" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>

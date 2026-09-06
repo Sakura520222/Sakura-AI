@@ -7,9 +7,15 @@ from sqlalchemy import String, desc, func, or_, select, type_coerce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_settings
 from backend.core.time_service import now_utc
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
+from backend.services.identity_service import (
+    GitHubUsernameConflictError,
+    NotificationEndpointConflictError,
+    create_user_and_flush,
+    rename_github_username,
+    stage_notification_endpoint,
+)
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
@@ -116,7 +122,7 @@ async def add_user(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
-    telegram_id: int = Form(...),
+    telegram_id: int | None = Form(None),
     github_username: str = Form(...),
     role: str = Form("user"),
     daily_quota: int = Form(10),
@@ -136,8 +142,7 @@ async def add_user(
             "/users/", "toast.invalid_role", "error", lang=detect_language()
         )
 
-    # Telegram ID 验证
-    if telegram_id <= 0:
+    if telegram_id is not None and telegram_id <= 0:
         return toast_redirect(
             "/users/",
             "toast.telegram_id_positive",
@@ -146,7 +151,10 @@ async def add_user(
         )
 
     # GitHub 用户名验证
-    github_username = github_username.strip()
+    # Persist new legacy mirror rows in GitHub's case-insensitive canonical
+    # form.  This makes the historical exact-value UNIQUE constraint an
+    # atomic guard for concurrent ``Alice``/``alice`` creations.
+    github_username = github_username.strip().casefold()
     if not github_username:
         return toast_redirect(
             "/users/",
@@ -173,23 +181,28 @@ async def add_user(
             )
 
     # 检查 Telegram ID 唯一性
-    existing = await db.execute(
-        select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
-    )
-    if existing.scalar_one_or_none():
-        return toast_redirect(
-            "/users/",
-            "toast.telegram_id_exists",
-            "error",
-            lang=detect_language(),
-            telegram_id=telegram_id,
+    if telegram_id is not None:
+        existing = await db.execute(
+            select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
         )
+        if existing.scalars().all():
+            return toast_redirect(
+                "/users/",
+                "toast.telegram_id_exists",
+                "error",
+                lang=detect_language(),
+                telegram_id=telegram_id,
+            )
 
     # 检查 GitHub 用户名唯一性
-    existing_gh = await db.execute(
-        select(TelegramUser).where(TelegramUser.github_username == github_username)
-    )
-    if existing_gh.scalar_one_or_none():
+    existing_gh = await db.execute(select(TelegramUser))
+    if any(
+        str(getattr(candidate, "github_username", "") or "")
+        .strip()
+        .casefold()
+        == github_username.casefold()
+        for candidate in existing_gh.scalars().all()
+    ):
         return toast_redirect(
             "/users/",
             "toast.github_username_used",
@@ -198,32 +211,50 @@ async def add_user(
             github_username=github_username,
         )
 
-    # 超级管理员自动检测
-    auto_super_admin = False
-    settings = get_settings()
-    if telegram_id in settings.telegram_admin_ids_list:
-        role = "super_admin"
-        auto_super_admin = True
-
-    # 创建用户
-    new_user = TelegramUser(
-        telegram_id=telegram_id,
-        github_username=github_username,
-        role=role,
-        daily_quota=daily_quota,
-        weekly_quota=weekly_quota,
-        monthly_quota=monthly_quota,
-        issue_daily_quota=issue_daily_quota,
-        issue_weekly_quota=issue_weekly_quota,
-        issue_monthly_quota=issue_monthly_quota,
-        agent_daily_quota=agent_daily_quota,
-        agent_weekly_quota=agent_weekly_quota,
-        agent_monthly_quota=agent_monthly_quota,
-        is_active=True,
-    )
     try:
-        db.add(new_user)
+        # Keep GitHub-only users compatible with old SQLite schemas through
+        # the shared savepoint/retry boundary.  No Telegram endpoint is
+        # created for the non-positive storage sentinel.
+        new_user = await create_user_and_flush(
+            db,
+            lambda resolved_telegram_id: TelegramUser(
+                telegram_id=resolved_telegram_id,
+                github_username=github_username,
+                role=role,
+                daily_quota=daily_quota,
+                weekly_quota=weekly_quota,
+                monthly_quota=monthly_quota,
+                issue_daily_quota=issue_daily_quota,
+                issue_weekly_quota=issue_weekly_quota,
+                issue_monthly_quota=issue_monthly_quota,
+                agent_daily_quota=agent_daily_quota,
+                agent_weekly_quota=agent_weekly_quota,
+                agent_monthly_quota=agent_monthly_quota,
+                is_active=True,
+            ),
+            telegram_id=telegram_id,
+        )
+        if telegram_id is not None and telegram_id > 0:
+            # Keep user creation and the authoritative Telegram endpoint in
+            # one transaction; bind_notification_endpoint commits internally.
+            await stage_notification_endpoint(
+                db,
+                new_user.id,
+                "telegram",
+                str(telegram_id),
+                verified=True,
+            )
         await db.commit()
+    except NotificationEndpointConflictError as e:
+        logger.warning("用户创建失败（Telegram 端点已被占用）: {}", e)
+        await db.rollback()
+        return toast_redirect(
+            "/users/",
+            "toast.telegram_id_exists",
+            "error",
+            lang=detect_language(),
+            telegram_id=telegram_id,
+        )
     except IntegrityError as e:
         logger.error(f"用户创建失败（数据库冲突）: {e}")
         await db.rollback()
@@ -241,7 +272,7 @@ async def add_user(
         )
 
     logger.info(
-        f"用户已通过 WebUI 添加: telegram_id={telegram_id}, github={github_username}, role={role}, by={user['sub']}"
+        f"用户已通过 WebUI 添加: telegram_id={new_user.telegram_id}, github={github_username}, role={role}, by={user['sub']}"
     )
     await log_admin_action(
         db,
@@ -250,7 +281,7 @@ async def add_user(
         "user",
         str(new_user.id),
         {
-            "telegram_id": telegram_id,
+            "telegram_id": new_user.telegram_id,
             "github_username": github_username,
             "role": role,
             "daily_quota": daily_quota,
@@ -259,15 +290,11 @@ async def add_user(
             "issue_daily_quota": issue_daily_quota,
             "issue_weekly_quota": issue_weekly_quota,
             "issue_monthly_quota": issue_monthly_quota,
-            "auto_super_admin": auto_super_admin,
         },
-    )
-    msg_key = (
-        "toast.user_added_auto_super_admin" if auto_super_admin else "toast.user_added"
     )
     return toast_redirect(
         "/users/",
-        msg_key,
+        "toast.user_added",
         lang=detect_language(),
         github_username=github_username,
     )
@@ -655,11 +682,11 @@ async def update_user_info(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
-    telegram_id: int = Form(...),
+    telegram_id: int | None = Form(None),
     github_username: str = Form(...),
 ) -> RedirectResponse:
     """修改用户基本信息（Telegram ID、GitHub 用户名）"""
-    if telegram_id <= 0:
+    if telegram_id is not None and telegram_id <= 0:
         return toast_redirect(
             f"/users/{user_id}",
             "toast.telegram_id_positive",
@@ -682,27 +709,28 @@ async def update_user_info(
         return error_page(request, message="用户不存在", user=user)
 
     # 检查 Telegram ID 唯一性（排除自身）
-    existing = await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.telegram_id == telegram_id, TelegramUser.id != user_id
+    if telegram_id is not None:
+        existing = await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.telegram_id == telegram_id, TelegramUser.id != user_id
+            )
         )
-    )
-    if existing.scalar_one_or_none():
-        return toast_redirect(
-            f"/users/{user_id}",
-            "toast.telegram_id_used",
-            "error",
-            lang=detect_language(),
-            telegram_id=telegram_id,
-        )
+        if existing.scalar_one_or_none():
+            return toast_redirect(
+                f"/users/{user_id}",
+                "toast.telegram_id_used",
+                "error",
+                lang=detect_language(),
+                telegram_id=telegram_id,
+            )
 
-    # 检查 GitHub 用户名唯一性（排除自身）
-    existing_gh = await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.github_username == github_username, TelegramUser.id != user_id
-        )
-    )
-    if existing_gh.scalar_one_or_none():
+    old_tg_id = target_user.telegram_id
+    old_github = target_user.github_username
+    try:
+        # Keep the WebUI and API on the same pre-commit rename path.  The
+        # helper validates all alias conflicts before changing this user.
+        await rename_github_username(db, target_user, github_username)
+    except GitHubUsernameConflictError:
         return toast_redirect(
             f"/users/{user_id}",
             "toast.github_username_conflict",
@@ -710,12 +738,51 @@ async def update_user_info(
             lang=detect_language(),
             github_username=github_username,
         )
-
-    old_tg_id = target_user.telegram_id
-    old_github = target_user.github_username
-    target_user.telegram_id = telegram_id
+    # Blank means keep the legacy mirror untouched.  Changing a populated
+    # parent key to NULL would invalidate old UserRepoSubscription FKs.
+    if telegram_id is not None:
+        target_user.telegram_id = telegram_id
+        # Stage the authoritative endpoint even while the user is disabled:
+        # re-enabling the account later must not resume delivery to the
+        # previous chat address the administrator just replaced.
+        try:
+            await stage_notification_endpoint(
+                db,
+                user_id,
+                "telegram",
+                str(telegram_id),
+                allow_inactive_user=True,
+            )
+        except NotificationEndpointConflictError:
+            await db.rollback()
+            return toast_redirect(
+                f"/users/{user_id}",
+                "toast.telegram_id_used",
+                "error",
+                lang=detect_language(),
+                telegram_id=telegram_id,
+            )
     target_user.github_username = github_username
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        logger.error(f"用户信息更新失败（数据库冲突）: {exc}")
+        await db.rollback()
+        return toast_redirect(
+            f"/users/{user_id}",
+            "toast.user_info_update_failed",
+            "error",
+            lang=detect_language(),
+        )
+    except Exception as exc:
+        logger.error(f"用户信息更新失败: {exc}")
+        await db.rollback()
+        return toast_redirect(
+            f"/users/{user_id}",
+            "toast.user_info_update_failed",
+            "error",
+            lang=detect_language(),
+        )
 
     logger.info(
         f"用户信息已变更: id={user_id}, {old_github}->{github_username}, {old_tg_id}->{telegram_id}, by={user['sub']}"

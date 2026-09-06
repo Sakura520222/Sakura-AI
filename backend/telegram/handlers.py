@@ -11,7 +11,9 @@ from backend.core.config import get_settings
 from backend.core.time_service import get_time_service
 from backend.models.database import init_async_db
 from backend.models.telegram_models import UserRole
+from backend.services.identity_service import bind_notification_endpoint
 from backend.services.payment_service import is_payment_enabled
+from backend.services.telegram_binding_service import consume_telegram_binding_token
 from backend.services.telegram_service import TelegramService
 
 settings = get_settings()
@@ -89,10 +91,6 @@ async def check_permission(
     telegram_id: int, required_role: UserRole = UserRole.USER
 ) -> bool:
     """检查用户权限"""
-    # 超级管理员拥有所有权限
-    if telegram_id in settings.telegram_admin_ids_list:
-        return True
-
     async with get_async_session() as session:
         service = TelegramService(session)
         user = await service.get_user_by_telegram_id(telegram_id)
@@ -118,63 +116,63 @@ async def check_permission(
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """开始命令，支持深链接参数，默认显示按钮主菜单"""
-    telegram_id = update.effective_user.id
+    """Start the optional binding handshake; it never authenticates users."""
 
-    # 深链接注册引导（/start sign）
-    if context.args and context.args[0].strip().lower() == "sign":
-        async with get_async_session() as session:
-            service = TelegramService(session)
-            user = await service.get_user_by_telegram_id(telegram_id)
+    if context.args:
+        await cmd_bind(update, context)
+        return
+    await update.message.reply_text(
+        "Sakura AI Telegram 通知助手。请先在 WebUI 的个人设置中生成一次性绑定链接，"
+        "再打开链接完成绑定。"
+    )
 
-            if user:
-                await update.message.reply_text(
-                    f"你已经注册了（GitHub: @{user.github_username}）。\n\n"
-                    f"可以直接通过 GitHub 登录 WebUI。"
-                )
-                return
 
-        await update.message.reply_text(
-            "🌸 欢迎注册 Sakura AI！\n\n"
-            "请输入你的 GitHub 用户名完成注册：\n"
-            "/sign <github_username>\n\n"
-            "示例: /sign mygithub\n\n"
-            "⚠️ 注册后将绑定此 Telegram 账号与 GitHub 用户名。"
-        )
+async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Consume a browser-issued token and bind this Telegram chat."""
+
+    chat = getattr(update, "effective_chat", None)
+    telegram_user = getattr(update, "effective_user", None)
+    chat_id = getattr(chat, "id", None)
+    telegram_id = getattr(telegram_user, "id", None)
+    if (
+        getattr(chat, "type", None) != "private"
+        or not isinstance(chat_id, int)
+        or isinstance(chat_id, bool)
+        or chat_id <= 0
+        or not isinstance(telegram_id, int)
+        or isinstance(telegram_id, bool)
+        or telegram_id <= 0
+        or chat_id != telegram_id
+    ):
+        await update.message.reply_text("请在与 Bot 的私聊中打开绑定链接。")
         return
 
-    # 默认行为：显示带按钮的主菜单
-    from backend.telegram.menu import _get_user_role, build_main_menu
+    token = context.args[0].strip() if context.args else ""
+    internal_user_id = await consume_telegram_binding_token(token)
+    if internal_user_id is None:
+        await update.message.reply_text("绑定链接无效、已过期或已使用，请回到 WebUI 重新生成。")
+        return
 
-    role = await _get_user_role(telegram_id)
-
-    # 构建角色显示文本
-    async with get_async_session() as session:
-        service = TelegramService(session)
-        is_super_admin = await service.is_super_admin(telegram_id)
-
-    if is_super_admin:
-        role_text = "👑 超级管理员"
-    elif role:
-        role_display = {
-            "user": "普通用户",
-            "admin": "管理员",
-            "super_admin": "超级管理员",
-        }.get(role, role)
-        role_text = f"👤 {role_display}"
-    else:
-        role_text = "❌ 未注册"
-
-    text = (
-        f"🌸 *Sakura AI Bot*\n\n"
-        f"👤 你的ID: `{telegram_id}`\n"
-        f"🏷️ 角色: {role_text}\n\n"
-        f"请选择功能："
-    )
-
-    await update.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=build_main_menu(role)
-    )
+    try:
+        async with get_async_session() as session:
+            await bind_notification_endpoint(
+                session,
+                internal_user_id,
+                "telegram",
+                str(telegram_id),
+                verified=True,
+                metadata={"bound_via": "telegram_handshake"},
+            )
+    except ValueError as exc:
+        logger.warning(
+            "Telegram notification binding rejected: user_id={}, chat_id={}, error={}",
+            internal_user_id,
+            telegram_id,
+            exc,
+        )
+        await update.message.reply_text("该 Telegram 已绑定到其他用户，或绑定信息发生冲突。")
+        return
+    await update.message.reply_text("✅ Telegram 通知绑定成功。你可以回到 WebUI 管理或解绑。")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):

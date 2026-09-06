@@ -34,7 +34,7 @@
 ## 权限要求
 
 - **仅超级管理员可用** (SUPER_ADMIN)
-- 超级管理员由环境变量 `TELEGRAM_ADMIN_USER_IDS` 定义（启动默认值；该键不是 WebUI 动态配置键）
+- 超级管理员由数据库用户角色（`super_admin`）决定，通过 Setup Wizard 或 WebUI 用户管理分配
 - 超级管理员可以审查任何仓库，不受仓库白名单限制
 - 超级管理员不受配额限制
 
@@ -251,7 +251,7 @@ task_id = await submit_review_task(pr_info)
 
 2. **超级管理员配置**
 
-   在 `.env` 中设置 `TELEGRAM_ADMIN_USER_IDS=123456789,987654321`（逗号分隔多个 Telegram ID，启动默认值；该键不是 WebUI 动态配置键）。
+   超级管理员由数据库角色（`super_admin`）决定，通过 Setup Wizard 或 WebUI 用户管理分配；如需通过 Bot 触发手动审查，管理员还需在 Bot 中完成 Telegram 绑定（`/start` 后按指南 `/bind`）。
 
 3. **Telegram Bot 配置**
    - Bot Token 已配置

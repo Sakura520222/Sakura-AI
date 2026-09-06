@@ -256,7 +256,6 @@ async def get_missing_fields() -> list[str]:
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
-        "telegram_bot_token",
     ]
 
     try:
@@ -325,7 +324,6 @@ async def get_current_step() -> int:
                             "github_app_id",
                             "github_private_key",
                             "github_webhook_secret",
-                            "telegram_bot_token",
                         ]
                     )
                 )

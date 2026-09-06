@@ -8,6 +8,7 @@ from backend.webui.routes import (
     activity_observability,
     agent_skills,
     agent_team,
+    announcements,
     assetlinks,
     auth,
     billing,
@@ -48,6 +49,7 @@ webui_router.include_router(settings.router)
 webui_router.include_router(config.router)
 webui_router.include_router(queue.router)
 webui_router.include_router(action_logs.router)
+webui_router.include_router(announcements.router)
 webui_router.include_router(issues.router)
 webui_router.include_router(sse.router)
 webui_router.include_router(scans.router)

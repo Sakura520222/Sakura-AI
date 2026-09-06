@@ -53,9 +53,9 @@
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Telegram ID <span class="text-red-500">*</span>
+                            Telegram ID <span class="text-xs text-gray-400">({{ _('common.optional') }})</span>
                         </label>
-                        <input type="number" name="telegram_id" required min="1"
+                        <input type="number" name="telegram_id" min="1"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
                                placeholder="{{ _('user.telegram_id') }}">
                     </div>

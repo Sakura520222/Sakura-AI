@@ -32,7 +32,7 @@
 
 ## 已移除的配置项
 
-以下键在第二阶段已从 Settings、动态配置注册与消费点中删除；**DB 旧行惰性保留、种子自动消失，无迁移**。旧备份（v1/v2）中仍含这些键时导入会被宽容跳过（见「配置备份」）。
+以下键已分批从 Settings、动态配置注册与消费点中删除；**DB 旧行惰性保留、种子自动消失，无迁移**。旧备份（v1/v2）中仍含这些键时导入会被宽容跳过（见「配置备份」）。
 
 ### 删除检查/循环上限 → 真·无限制
 
@@ -76,6 +76,12 @@
 ### Sakura 平铺键 → 合并入 `strategy.context_enhancement.sakura_memory` 嵌套节
 
 `sakura_memory_enabled`、`sakura_reflection_enabled`、`sakura_issue_reflection_enabled`、`sakura_consolidation_interval`、`sakura_max_memory_chars`、`sakura_max_sakura_chars`、`sakura_auto_init`、`sakura_auto_create_subdirs`、`sakura_consolidation_partial_commit`、`sakura_knowledge_extraction_enabled`、`sakura_extraction_min_reflections` 共 11 键——单一事实源改为节存储嵌套节（见「项目记忆系统」节，全局配置页「上下文增强」卡片内编辑）；`sakura_extraction_max_iterations` / `sakura_consolidation_max_iterations` 2 键删除轮次上限（依赖模型自然停止，不设时长上限）。
+
+### Telegram 管理员 ID → 数据库超管角色 + 绑定通知端点
+
+| 键 | 移除后行为 |
+|---|---|
+| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；管理员 Telegram 通知与 Bot 命令权限以数据库 `super_admin` 用户的已绑定通知端点为准（Setup Wizard 绑定、Bot `/start` 绑定，或管理员在用户管理中填写 Telegram ID 时自动落库）。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
 
 ## 配置备份
 
@@ -333,10 +339,9 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 位置 | 键名 | 说明 |
 |---|---|---|
 | Setup Wizard 第 3 步 / WebUI「系统核心配置」 | `telegram_bot_token` | Bot Token；**修改后需重启服务生效**（Bot 实例在服务启动时构造） |
-| 环境变量（启动默认值） | `TELEGRAM_ADMIN_USER_IDS` | 超级管理员 Telegram ID（逗号分隔多个） |
 | 环境变量（启动默认值） | `TELEGRAM_DEFAULT_CHAT_ID` | 默认通知聊天 ID |
 
-> 注意：`telegram_admin_user_ids` / `telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
+> 注意：`telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
 
 ## 国际化
 

@@ -685,6 +685,12 @@ async def migrate_schema_async() -> None:
     if async_engine is None:
         raise RuntimeError("异步数据库引擎未初始化,请先调用 init_async_db()")
     await _auto_migrate()
+    # The physical legacy user table is retained for FK compatibility, while
+    # identities/endpoints are backfilled through the new abstraction layer.
+    # Keep this after DDL so fresh and upgraded installations share one path.
+    from backend.services.identity_service import migrate_legacy_identity_data
+
+    await migrate_legacy_identity_data()
 
 
 _LEGACY_ACTIVITY_TABLES = (
@@ -741,8 +747,11 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.agent_skill_models
     import backend.models.agent_team_models
     import backend.models.ai_usage_models
+    import backend.models.announcement_models
+    import backend.models.identity_models
     import backend.models.payment_models
-    import backend.models.star_aid_models  # noqa: F401
+    import backend.models.star_aid_models
+    import backend.models.telegram_models  # noqa: F401
 
 
 # app_config 默认行的单一来源说明：
@@ -1291,6 +1300,52 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
             )
 
 
+async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
+    """Allow GitHub-only users on old MySQL schemas.
+
+    New SQLite schemas are created with a nullable column.  SQLite cannot
+    change nullability without rebuilding the table; rebuilding would risk
+    legacy foreign keys, so old SQLite installations retain the physical
+    constraint and continue to use the new identity tables for migrated data.
+    MySQL and PostgreSQL support an in-place nullability change and preserve
+    the table, rows, primary key, and all legacy foreign keys.
+    """
+
+    dialect_name = conn.dialect.name
+    if dialect_name not in {"mysql", "mariadb", "postgresql"}:
+        return
+    from sqlalchemy import inspect
+
+    def _column(sync_conn):
+        inspector = inspect(sync_conn)
+        if not inspector.has_table("telegram_users"):
+            return None
+        return next(
+            (
+                column
+                for column in inspector.get_columns("telegram_users")
+                if column["name"] == "telegram_id"
+            ),
+            None,
+        )
+
+    column = await conn.run_sync(_column)
+    if column is None or column.get("nullable", True):
+        return
+    if dialect_name in {"mysql", "mariadb"}:
+        statement = (
+            "ALTER TABLE `telegram_users` "
+            "MODIFY COLUMN `telegram_id` BIGINT NULL"
+        )
+    else:
+        statement = (
+            'ALTER TABLE "telegram_users" '
+            'ALTER COLUMN "telegram_id" DROP NOT NULL'
+        )
+    await conn.execute(text(statement))
+    logger.info("[auto-migrate] telegram_users.telegram_id 已改为可为空")
+
+
 async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
@@ -1349,6 +1404,8 @@ async def _auto_migrate():
             sql = _build_add_column_sql(conn.dialect, table_name, col)
             await conn.execute(text(sql))
             _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
+
+        await _ensure_legacy_telegram_id_nullable(conn, _logger)
 
         unique_index_created = await _ensure_observability_trigger_unique_index(
             conn, _logger
