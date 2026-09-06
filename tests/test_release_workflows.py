@@ -348,9 +348,13 @@ def test_release_notes_contract_collects_facts_and_deterministic_fallback():
         "sensitive_diffs.txt",
     ):
         assert artifact in facts_text
-    # 敏感路径有限 diff 必须有预算上限，防止把全量 diff 塞给模型
-    assert "PER_FILE_CAP" in facts_text
-    assert "TOTAL_CAP" in facts_text
+    # 敏感文件 diff 不做预算截断（模型上下文 1M）
+    assert "PER_FILE_CAP" not in facts_text
+    assert "TOTAL_CAP" not in facts_text
+    # 文档信号：只传中文 README（不含 README_EN）与 docs 下的 Markdown
+    assert '"README.md"' in facts_text
+    assert "docs/**/*.md" in facts_text
+    assert "README*.md" not in facts_text
 
     ai_step = next(
         step for step in job["steps"] if step.get("name") == "AI 生成 Release 说明"

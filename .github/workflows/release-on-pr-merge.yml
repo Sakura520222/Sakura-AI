@@ -104,12 +104,14 @@ jobs:
             awk -F/ 'NF == 1 {print "- " $1}' "$FACTS_DIR/changed_paths.txt" | sort -u
           } > "$FACTS_DIR/changed_areas.txt"
 
-          # release-sensitive 路径：只有这些位置的变更才可能支撑升级提示/注意事项
+          # release-sensitive 路径：只有这些位置的变更才可能支撑升级提示/注意事项；
+          # 文档（中文 README + docs Markdown）作为补充信号一并纳入
           SENSITIVE_GLOBS=(
             "docker-compose*.yml" "docker-compose*.yaml" "**/Dockerfile*"
             ".env.example" "requirements*.txt" "**/pyproject.toml" "**/uv.lock"
             "alembic/**" "migrations/**" "backend/models/**" "backend/database/**"
             "updater/**" "scripts/deploy/**" ".github/workflows/**"
+            "README.md" "docs/**/*.md"
           )
           SENSITIVE_SPEC=()
           for g in "${SENSITIVE_GLOBS[@]}"; do
@@ -124,31 +126,18 @@ jobs:
             git diff --stat --no-color "$BASE_REF" HEAD -- "${SENSITIVE_SPEC[@]}"
           } > "$FACTS_DIR/sensitive_stat.txt"
 
-          # 敏感文件有限 diff：单文件与总量各设预算，超出截断并标注，避免噪声与成本
-          PER_FILE_CAP=2500
-          TOTAL_CAP=15000
+          # 敏感文件完整 diff（模型上下文 1M，不做预算截断），逐文件带标题
           : > "$FACTS_DIR/sensitive_diffs.txt"
-          total=0
           mapfile -t sensitive_files < <(
             git diff --name-only --no-color "$BASE_REF" HEAD -- "${SENSITIVE_SPEC[@]}" | sort -u
           )
           for f in "${sensitive_files[@]}"; do
-            if [ "$total" -ge "$TOTAL_CAP" ]; then
-              echo "... (diff 总预算已用尽，其余敏感文件省略)" >> "$FACTS_DIR/sensitive_diffs.txt"
-              break
-            fi
-            full=$(git diff -U1 --no-color "$BASE_REF" HEAD -- "$f")
-            len=${#full}
-            if [ "$len" -gt "$PER_FILE_CAP" ]; then
-              body="${full:0:$PER_FILE_CAP}"$'\n... (truncated)'
-            else
-              body="$full"
-            fi
-            printf '\n===== %s (%s chars) =====\n%s\n' "$f" "$len" "$body" \
-              >> "$FACTS_DIR/sensitive_diffs.txt"
-            total=$((total + len))
+            {
+              printf '\n===== %s =====\n' "$f"
+              git diff -U1 --no-color "$BASE_REF" HEAD -- "$f"
+            } >> "$FACTS_DIR/sensitive_diffs.txt"
           done
-          echo "敏感文件数: ${#sensitive_files[@]}，实际输出约 ${total} 字符"
+          echo "敏感文件 diff 数量: ${#sensitive_files[@]}，共 $(wc -c < "$FACTS_DIR/sensitive_diffs.txt") 字节"
 
       - name: 检查 Release 是否存在
         id: check_release
@@ -250,7 +239,7 @@ jobs:
           # 3. 构造 prompt（summary 两段结构 + 事实信号驱动的升级提示/注意事项 + 严格 JSON）
           system_prompt = (
               "你是一个发布说明撰写助手。只依据用户给出的 Conventional Commits 提交标题、"
-              "变更区域汇总、变更统计与敏感文件有限 diff 这些事实信号，撰写中英双语发布说明。"
+              "变更区域汇总、变更统计与敏感文件 diff 这些事实信号，撰写中英双语发布说明。"
               "禁止捏造信号中不存在的信息。全程不得使用 emoji。"
               "输出严格 JSON（不要 markdown 代码围栏），结构为："
               '{"summary_zh": string, "summary_en": string, '
@@ -285,7 +274,7 @@ jobs:
               f"提交标题列表（每行一条，已按标题去重）：\n{commit_block}\n\n"
               f"变更区域汇总：\n{changed_areas or '（无）'}\n\n"
               f"变更统计：\n{sensitive_stat or '（无）'}\n\n"
-              f"敏感文件有限 diff（可能截断）：\n{sensitive_diffs or '（无）'}"
+              f"敏感文件 diff：\n{sensitive_diffs or '（无）'}"
           )
 
           payload = {
