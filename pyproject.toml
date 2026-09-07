@@ -76,7 +76,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.5",
+    "ruff>=0.16.6",
     "pytest>=9.1.1",
 ]
 
