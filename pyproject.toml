@@ -57,7 +57,7 @@ dependencies = [
     "python-slugify>=8.0.0",
 
     # 支付网关
-    "stripe>=15.5.1",
+    "stripe>=15.6.1",
     "paddle-python-sdk>=1.15.0",
 
     # WebUI
