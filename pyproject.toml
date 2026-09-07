@@ -33,7 +33,7 @@ dependencies = [
     "alembic>=1.18.5",
 
     # 任务队列
-    "redis>=5.0.1",
+    "redis>=8.1.0",
     "APScheduler>=3.11.3",
 
     # 工具库
