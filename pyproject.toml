@@ -49,7 +49,7 @@ dependencies = [
     "loguru>=0.7.3",
 
     # Telegram Bot
-    "python-telegram-bot>=21.0",
+    "python-telegram-bot>=22.8",
 
     # RAG 功能
     "chromadb>=1.5.9",
