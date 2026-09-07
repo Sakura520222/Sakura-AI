@@ -23,7 +23,7 @@ dependencies = [
     "cryptography>=44.0.2",
 
     # AI集成
-    "openai>=1.10.0",
+    "openai>=3.8.0",
     "httpx>=0.28.1",
 
     # 数据库
