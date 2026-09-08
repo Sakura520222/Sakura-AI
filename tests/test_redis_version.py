@@ -1,5 +1,6 @@
 """Redis compatibility checks."""
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -191,3 +192,89 @@ async def test_binding_token_invalid_payload_is_consumed_once(monkeypatch):
 
     assert await telegram_binding_service.consume_telegram_binding_token(token) is None
     assert await telegram_binding_service.consume_telegram_binding_token(token) is None
+
+
+@pytest.mark.asyncio
+async def test_binding_token_redis_response_removes_fallback_even_for_invalid_payload(
+    monkeypatch,
+):
+    settings = SimpleNamespace(
+        telegram_bind_token_expire_seconds=300,
+        telegram_bot_username="sakura_test_bot",
+    )
+    redis_available = False
+
+    async def fake_get_redis():
+        if not redis_available:
+            raise RuntimeError("redis unavailable")
+        return object()
+
+    responses = iter([b"not-json", None])
+
+    async def fake_atomic_getdel(_redis, _key):
+        return next(responses)
+
+    monkeypatch.setattr(telegram_binding_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_binding_service, "get_async_redis", fake_get_redis)
+    monkeypatch.setattr(telegram_binding_service, "atomic_getdel", fake_atomic_getdel)
+    telegram_binding_service._binding_fallback.clear()
+
+    binding = await telegram_binding_service.create_telegram_binding_token(42)
+    digest = telegram_binding_service._token_digest(binding.token)
+    assert digest in telegram_binding_service._binding_fallback
+
+    redis_available = True
+    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) is None
+    assert digest not in telegram_binding_service._binding_fallback
+    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) is None
+    telegram_binding_service._binding_fallback.clear()
+
+
+@pytest.mark.asyncio
+async def test_binding_fallback_expiry_is_not_extended_by_later_config_change(monkeypatch):
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    clock = [created_at]
+    settings = SimpleNamespace(
+        telegram_bind_token_expire_seconds=60,
+        telegram_bot_username="sakura_test_bot",
+    )
+
+    async def unavailable_redis():
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(telegram_binding_service, "now_utc", lambda: clock[0])
+    monkeypatch.setattr(telegram_binding_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_binding_service, "get_async_redis", unavailable_redis)
+    telegram_binding_service._binding_fallback.clear()
+
+    binding = await telegram_binding_service.create_telegram_binding_token(42)
+    assert binding.expires_at == created_at + timedelta(seconds=60)
+
+    settings.telegram_bind_token_expire_seconds = 3600
+    clock[0] = created_at + timedelta(seconds=61)
+    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) is None
+    telegram_binding_service._binding_fallback.clear()
+
+
+@pytest.mark.asyncio
+async def test_binding_fallback_expiry_is_not_shortened_by_later_config_change(monkeypatch):
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    clock = [created_at]
+    settings = SimpleNamespace(
+        telegram_bind_token_expire_seconds=3600,
+        telegram_bot_username="sakura_test_bot",
+    )
+
+    async def unavailable_redis():
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(telegram_binding_service, "now_utc", lambda: clock[0])
+    monkeypatch.setattr(telegram_binding_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_binding_service, "get_async_redis", unavailable_redis)
+    telegram_binding_service._binding_fallback.clear()
+
+    binding = await telegram_binding_service.create_telegram_binding_token(42)
+    settings.telegram_bind_token_expire_seconds = 30
+    clock[0] = created_at + timedelta(seconds=60)
+    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) == 42
+    telegram_binding_service._binding_fallback.clear()
