@@ -436,6 +436,43 @@ def test_extract_image_references_supports_commonmark_destination_forms():
     ]
 
 
+def test_extract_image_references_matches_html_attribute_quote():
+    text = (
+        '<img src="https://host.example.test/o\'clock.png">\n'
+        '<img src=\'https://host.example.test/a"b.png\'>'
+    )
+    assert extract_image_references(text) == [
+        "https://host.example.test/o'clock.png",
+        'https://host.example.test/a"b.png',
+    ]
+
+
+def test_extract_image_references_handles_pathological_unclosed_markdown():
+    """Malformed repeated prefixes cannot make extraction restart quadratically."""
+    text = "![broken" * 20_000 + '<IMG SRC="https://host.example.test/ok.png">'
+    assert extract_image_references(text) == [
+        "https://host.example.test/ok.png"
+    ]
+
+
+def test_extract_image_references_handles_pathological_unclosed_html():
+    """Malformed repeated tags cannot make extraction restart quadratically."""
+    text = "<img " * 20_000 + "broken"
+    assert extract_image_references(text) == []
+
+
+def test_extract_image_references_handles_unclosed_html_before_valid_image():
+    """Repeated unclosed tags must not hide a later valid image reference."""
+    text = (
+        "<img " * 20_000
+        + "broken"
+        + '<img src="https://host.example.test/ok.png">'
+    )
+    assert extract_image_references(text) == [
+        "https://host.example.test/ok.png"
+    ]
+
+
 def test_validate_image_url_domain_allowlist():
     entries = ["user-images.githubusercontent.com", "github.com/user-attachments"]
     validate = issue_image_service_module._validate_image_url
