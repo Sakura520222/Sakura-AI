@@ -2171,13 +2171,13 @@ image_label_of() {
 # - 已 pin（deployment.env 有完整 dev 引用）：按 digest 重拉，绝不移动。
 # - 未 pin（首次部署）：从 GHCR 解析最新 dev primary tag，三镜像拉同一
 #   tag 名（CI 对三仓库使用字节级一致的 primary tag，命名本身即对齐坐标），
-#   再以 sandboxd/runner 镜像 label 复核频道与 revision，最后按 RepoDigests pin。
+#   再以三镜像 label 复核频道与 revision（Web 另校验 component），最后按 RepoDigests pin。
 production_pull_dev_channel_images() {
     local web_repo="ghcr.io/sakura520222/sakura-ai"
     local sandboxd_repo="ghcr.io/sakura520222/sakura-ai-sandboxd"
     local runner_repo="ghcr.io/sakura520222/sakura-ai-agent-runner"
     local persisted_web persisted_daemon persisted_runner
-    local dev_tag tag_rev web_ref sandboxd_ref runner_ref channel digest rev
+    local dev_tag tag_rev web_ref sandboxd_ref runner_ref channel digest rev component
 
     persisted_web=$(read_deployment_value "SAKURA_AI_IMAGE" "$DEPLOYMENT_ENV_FILE")
     persisted_daemon=$(read_deployment_value "SAKURA_SANDBOXD_IMAGE_DIGEST" "$DEPLOYMENT_ENV_FILE")
@@ -2209,10 +2209,10 @@ production_pull_dev_channel_images() {
     sandbox_pull_image "sandboxd" "$sandboxd_ref" || return 1
     sandbox_pull_image "Agent runner" "$runner_ref" || return 1
 
-    # tag 内嵌 revision；sandboxd/runner 镜像 label 必须与之一致（防错标）。
-    # Web 镜像不带 OCI label，由三仓库同 tag 命名保证对齐，无需 label 校验。
+    # tag 内嵌 revision；三镜像 label 必须与之一致（防错标：tag 可变，命名
+    # 对齐不构成身份证明）。Web 镜像另校验 component，防与 sandbox 镜像串标。
     local ref
-    for ref in "$sandboxd_ref" "$runner_ref"; do
+    for ref in "$web_ref" "$sandboxd_ref" "$runner_ref"; do
         channel=$(image_label_of "$ref" "com.sakura-ai.build.channel") || {
             fail "dev 镜像缺少 com.sakura-ai.build.channel label: $ref" >&2
             return 1
@@ -2230,6 +2230,14 @@ production_pull_dev_channel_images() {
             return 1
         }
     done
+    component=$(image_label_of "$web_ref" "com.sakura-ai.component") || {
+        fail "dev Web 镜像缺少 com.sakura-ai.component label: $web_ref" >&2
+        return 1
+    }
+    [[ "$component" == "web" ]] || {
+        fail "dev Web 镜像的 component label 为 '$component'（应为 web）: $web_ref" >&2
+        return 1
+    }
 
     digest=$(image_digest_of "$web_ref") || {
         fail "无法解析 dev Web 镜像 digest" >&2
