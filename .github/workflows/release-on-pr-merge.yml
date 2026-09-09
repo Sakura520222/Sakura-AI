@@ -895,6 +895,10 @@ jobs:
           [ -f "uv.lock" ] && cp uv.lock "$RELEASE_DIR/" && echo "- uv.lock" >> packaging_manifest.txt || true
           [ -f ".python-version" ] && cp .python-version "$RELEASE_DIR/" && echo "- .python-version" >> packaging_manifest.txt || true
           [ -d "updater" ] && cp -r updater "$RELEASE_DIR/" && echo "- updater/" >> packaging_manifest.txt || true
+          # The source sandboxd build copies sandboxer/ into its image; keep
+          # this source tree required so an incomplete archive fails here.
+          cp -r sandboxer "$RELEASE_DIR/"
+          echo "- sandboxer/ (sandboxd source)" >> packaging_manifest.txt
           cp README.md "$RELEASE_DIR/"
           echo "- README.md" >> packaging_manifest.txt
 

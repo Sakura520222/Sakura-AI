@@ -27,8 +27,18 @@ _REDIS_KEY_PREFIX = "telegram:bind:"
 _MAX_FALLBACK = 1000
 _TOKEN_RE = re.compile(r"^tg_bind_[A-Za-z0-9_-]{32,100}$")
 
-# token digest -> (internal user id, created at)
-_binding_fallback: dict[str, tuple[int, datetime]] = {}
+
+@dataclass(frozen=True, slots=True)
+class _FallbackBinding:
+    """One fallback entry with an expiry fixed when its token was issued."""
+
+    user_id: int
+    created_at: datetime
+    expires_at: datetime
+
+
+# token digest -> fallback entry
+_binding_fallback: dict[str, _FallbackBinding] = {}
 
 
 @dataclass(frozen=True)
@@ -52,11 +62,10 @@ def _ttl_seconds() -> int:
 
 def _cleanup_fallback(now: datetime | None = None) -> None:
     now = now or now_utc()
-    ttl = _ttl_seconds()
     expired = [
         digest
-        for digest, (_, created_at) in _binding_fallback.items()
-        if (now - created_at).total_seconds() >= ttl
+        for digest, entry in _binding_fallback.items()
+        if entry.expires_at <= now
     ]
     for digest in expired:
         _binding_fallback.pop(digest, None)
@@ -64,7 +73,7 @@ def _cleanup_fallback(now: datetime | None = None) -> None:
     if overflow > 0:
         oldest = sorted(
             _binding_fallback,
-            key=lambda digest: _binding_fallback[digest][1],
+            key=lambda digest: _binding_fallback[digest].created_at,
         )[:overflow]
         for digest in oldest:
             _binding_fallback.pop(digest, None)
@@ -89,7 +98,12 @@ async def create_telegram_binding_token(user_id: int) -> TelegramBindingToken:
     except Exception as exc:
         logger.warning("Redis 存储 Telegram 绑定 token 失败，使用内存回退: {}", exc)
         _cleanup_fallback(created_at)
-        _binding_fallback[digest] = (int(user_id), created_at)
+        expires_at = created_at + timedelta(seconds=ttl)
+        _binding_fallback[digest] = _FallbackBinding(
+            user_id=int(user_id),
+            created_at=created_at,
+            expires_at=expires_at,
+        )
 
     settings = get_settings()
     bot_username = (getattr(settings, "telegram_bot_username", None) or "").strip()
@@ -126,6 +140,11 @@ async def consume_telegram_binding_token(token: str) -> int | None:
         redis = await get_async_redis()
         raw = await atomic_getdel(redis, key)
         if raw is not None:
+            # A Redis write may have succeeded even when the original client
+            # observed a timeout and populated the local fallback.  Any Redis
+            # response is authoritative, including malformed payloads, so
+            # consume and remove the same-digest fallback before returning.
+            _binding_fallback.pop(digest, None)
             return _parse_payload(raw)
     except Exception as exc:
         logger.warning("Redis 消费 Telegram 绑定 token 失败，尝试内存回退: {}", exc)
@@ -134,10 +153,9 @@ async def consume_telegram_binding_token(token: str) -> int | None:
     fallback = _binding_fallback.pop(digest, None)
     if fallback is None:
         return None
-    user_id, created_at = fallback
-    if (now_utc() - created_at).total_seconds() >= _ttl_seconds():
+    if fallback.expires_at <= now_utc():
         return None
-    return user_id
+    return fallback.user_id
 
 
 __all__ = [
