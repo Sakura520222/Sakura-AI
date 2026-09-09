@@ -110,6 +110,65 @@
                                    name="{{ item.key }}"
                                    value="{{ item.value }}"
                                    min="1" max="65535"
+                                   step="1"
+                                   inputmode="numeric"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'telegram_bind_token_expire_seconds' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="30" max="3600" step="1"
+                                   inputmode="numeric"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'smtp_port' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="1" max="65535" step="1"
+                                   inputmode="numeric"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'notification_max_concurrency' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="1" max="100" step="1"
+                                   inputmode="numeric"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'notification_retry_max_attempts' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="1" max="20" step="1"
+                                   inputmode="numeric"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'notification_retry_initial_delay_seconds' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="0" step="any"
+                                   inputmode="decimal"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'notification_retry_backoff_factor' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="1" step="any"
+                                   inputmode="decimal"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% elif item.key == 'notification_rate_limit_seconds' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="0" step="any"
+                                   inputmode="decimal"
+                                   required
                                    class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             {% elif item.key == 'app_timezone' %}
                             <input type="text"
@@ -118,6 +177,13 @@
                                    placeholder="system / Area/City"
                                    autocomplete="off"
                                    class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
+                            {% elif item.key == 'smtp_security' %}
+                            <select name="{{ item.key }}"
+                                    class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <option value="ssl" {% if item.value == 'ssl' %}selected{% endif %}>{{ _('system_config.smtp_security_ssl') }}</option>
+                                <option value="starttls" {% if item.value == 'starttls' %}selected{% endif %}>{{ _('system_config.smtp_security_starttls') }}</option>
+                                <option value="none" {% if item.value == 'none' %}selected{% endif %}>{{ _('system_config.smtp_security_none') }}</option>
+                            </select>
                             {% elif item.key == 'log_level' %}
                             <select name="{{ item.key }}"
                                     class="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">

@@ -395,11 +395,36 @@ class Settings(BaseSettings):
         description="仓库互助 GitHub App user-to-server 授权回调地址",
     )
 
-    # Telegram Bot配置
+    # 通知 Provider 配置。Telegram/SMTP 都是可选能力，不能阻塞 GitHub/Passkey 登录。
+    telegram_enabled: bool = Field(
+        True,
+        description="是否启用 Telegram 通知 Provider（未配置 token 时自动跳过）",
+    )
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None  # 启动时通过 getMe 自动填充
-    telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
+    telegram_bind_token_expire_seconds: int = Field(
+        300,
+        ge=30,
+        le=3600,
+        description="Telegram 一次性绑定链接有效期（秒）",
+    )
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
+    email_enabled: bool = Field(
+        True,
+        description="是否启用 Email 通知 Provider",
+    )
+    smtp_host: str | None = None
+    smtp_port: int = Field(587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_from_name: str = "Sakura-AI"  # 邮件 From 显示昵称
+    smtp_security: str = "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    notification_max_concurrency: int = Field(5, ge=1, le=100)
+    notification_retry_max_attempts: int = Field(3, ge=1, le=20)
+    notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
+    notification_retry_backoff_factor: float = Field(2.0, ge=1.0)
+    notification_rate_limit_seconds: float = Field(0.05, ge=0)
     register_quota_multiplier: float = Field(
         0.2,
         ge=0.1,
@@ -508,7 +533,6 @@ class Settings(BaseSettings):
             "github_private_key",
             "github_webhook_secret",
             "database_url",
-            "telegram_bot_token",
         ]
         missing = []
         for field_name in required:
@@ -547,15 +571,9 @@ class Settings(BaseSettings):
         return "https://api.github.com/user"
 
     @property
-    def telegram_admin_ids_list(self) -> list[int]:
-        """获取超级管理员ID列表"""
-        if not self.telegram_admin_user_ids:
-            return []
-        return [
-            int(id.strip())
-            for id in self.telegram_admin_user_ids.split(",")
-            if id.strip()
-        ]
+    def github_oauth_emails_url(self) -> str:
+        """GitHub OAuth 已授权邮箱 API。"""
+        return "https://api.github.com/user/emails"
 
     # ========== RAG 配置 ==========
     enable_rag: bool = True
@@ -610,6 +628,22 @@ class Settings(BaseSettings):
     issue_vector_store_rich_metadata: bool = True
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
+    # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
+    issue_vision_enabled: bool = True  # 总开关；模型能力仍需勾选"支持图片多模态"
+    issue_vision_max_image_size_bytes: int = 10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    issue_vision_allowed_image_domains: str = (
+        # 允许下载的图片域名（逗号分隔，段内支持 ``*`` 通配）；仅 GitHub
+        # 资产域，私有仓库经 installation 凭据下载，避免向任意外链发起请求
+        "user-images.githubusercontent.com,"
+        "private-user-images.githubusercontent.com,"
+        "github.com/user-attachments,"
+        "objects.githubusercontent.com,"
+        "media.githubusercontent.com,"
+        "avatars.githubusercontent.com,"
+        "camo.githubusercontent.com,"
+        # GitHub 用户资产 302 跳转目标：S3 签名桶
+        "github-production-user-asset-*.s3.amazonaws.com"
+    )
 
     # ========== PR 审查价格配置 ==========
     review_price_per_1k_prompt: float = 0.0
@@ -744,6 +778,30 @@ class Settings(BaseSettings):
     # ========== Agent 模式配置 ==========
     agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
+    # Agent command execution backend.  ``sandbox`` is the production-safe
+    # value; ``local`` is source-development-only and is rejected for image
+    # deployments by the sandbox runner selector.
+    agent_team_execution_backend: Literal["sandbox", "local"] = "sandbox"
+    # Agent network policy is deliberately independent from the server-owned
+    # Docker egress network.  ``web_tools`` keeps shell/build/test runners
+    # offline while allowing the controlled Web adapters by default.
+    agent_team_network_policy: Literal["offline", "web_tools", "full_access"] = (
+        "web_tools"
+    )
+    agent_team_sandbox_socket: str = "/run/sakura-ai-sandbox/sandboxd.sock"
+    agent_team_sandbox_timeout_seconds: float = Field(900.0, gt=0, le=3600)
+    agent_team_sandbox_max_output_bytes: int = Field(
+        8 * 1024 * 1024,
+        gt=0,
+        le=64 * 1024 * 1024,
+    )
+    # Deployment-owned sandbox identity.  These values are read from the
+    # process environment only; they are intentionally not dynamic app_config
+    # fields that an Agent or WebUI request can change at runtime.
+    agent_team_sandbox_runtime: str | None = None
+    agent_team_sandbox_runner_image_digest: str | None = None
+    agent_team_sandbox_expected_instance_id: str | None = None
+    agent_team_sandbox_expected_workspace_root: str | None = None
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
@@ -756,7 +814,6 @@ class Settings(BaseSettings):
     agent_team_pr_review_blocking_severities: str = "critical,major"
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
-    agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = True
     agent_team_skills_root: str = "./Skills"
     # Module G: 候选池缓存
@@ -1179,6 +1236,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
+                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -1193,6 +1251,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "max_concurrent_issues",
                     "issue_vector_store_rich_metadata",
                     "issue_include_comments",
+                    "issue_vision_enabled",
                 ],
             },
         ),
@@ -1225,13 +1284,17 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "descriptions": {
                     "agent_team_enabled": "启用后，超级管理员可手动创建和执行 Agent 任务；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
+                    "agent_team_execution_backend": "Agent 命令执行后端；sandbox 通过独立 sandboxd 隔离，local 仅限源码开发且镜像部署拒绝",
+                    "agent_team_network_policy": (
+                        "Agent 网络策略：offline 完全隔离；web_tools（默认）仅允许受控 Web 工具；"
+                        "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
+                    ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_run_tests": "提交前自动运行验证命令检查代码",
-                    "agent_team_test_command_blocklist": "Shell 命令黑名单（逗号分隔），在默认黑名单基础上额外拦截的命令。默认黑名单已包含 curl、wget、ssh、sudo 等高危命令。",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
                     "agent_team_candidate_cache_ttl": "候选池内存缓存有效期（秒），0 表示每次实时查询",
@@ -1239,6 +1302,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "keys": [
                     "agent_team_enabled",
                     "agent_team_workspace_root",
+                    "agent_team_execution_backend",
+                    "agent_team_network_policy",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
@@ -1249,7 +1314,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_pr_review_blocking_severities",
                     "agent_team_run_tests",
                     "agent_team_auto_install_deps",
-                    "agent_team_test_command_blocklist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
                     "agent_team_candidate_cache_ttl",
@@ -1429,6 +1493,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "webui_secret_key",
         "github_oauth_client_secret",
         "telegram_bot_token",
+        "smtp_password",
         "stripe_api_key",
         "stripe_webhook_secret",
         "paddle_api_key",
@@ -1472,6 +1537,15 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "high", "label": "High"},
         {"value": "medium", "label": "Medium"},
         {"value": "low", "label": "Low"},
+    ],
+    "agent_team_execution_backend": [
+        {"value": "sandbox", "label": "Sandbox（推荐）"},
+        {"value": "local", "label": "Local（仅源码开发）"},
+    ],
+    "agent_team_network_policy": [
+        {"value": "offline", "label": "隔离（Offline）"},
+        {"value": "web_tools", "label": "仅受控 Web 工具（推荐）"},
+        {"value": "full_access", "label": "完全访问（Full access）"},
     ],
     "star_aid_summary_language": [
         {"value": "", "label": "跟随界面语言"},
@@ -1601,6 +1675,21 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "github_private_key": "GitHub App 私钥",
     "github_webhook_secret": "GitHub Webhook Secret",
     "telegram_bot_token": "Telegram Bot Token",
+    "telegram_enabled": "启用 Telegram 通知",
+    "telegram_bind_token_expire_seconds": "Telegram 绑定链接有效期（秒）",
+    "email_enabled": "启用 Email 通知",
+    "smtp_host": "SMTP 主机",
+    "smtp_port": "SMTP 端口",
+    "smtp_username": "SMTP 用户名",
+    "smtp_password": "SMTP 密码",
+    "smtp_from": "SMTP 发件地址",
+    "smtp_from_name": "SMTP 发件昵称",
+    "smtp_security": "SMTP 安全模式",
+    "notification_max_concurrency": "通知最大并发数",
+    "notification_retry_max_attempts": "通知最大重试次数",
+    "notification_retry_initial_delay_seconds": "通知初始重试延迟（秒）",
+    "notification_retry_backoff_factor": "通知重试退避倍数",
+    "notification_rate_limit_seconds": "通知限流间隔（秒）",
     "webui_secret_key": "WebUI 密钥",
     "app_domain": "应用域名",
     "app_port": "应用端口",
@@ -1643,9 +1732,12 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_include_comments": "分析时包含评论对话",
+    "issue_vision_enabled": "Issue 分析读取图片（需模型支持图片多模态）",
     # Agent
     "agent_team_enabled": "启用 Agent",
     "agent_team_workspace_root": "工作区根目录",
+    "agent_team_execution_backend": "Agent 执行后端",
+    "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
@@ -1655,7 +1747,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",
     "agent_team_pr_review_blocking_severities": "Agent PR 阻塞严重级别",
     "agent_team_run_tests": "自动运行验证命令",
-    "agent_team_test_command_blocklist": "Shell 命令黑名单",
     "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
@@ -1734,7 +1825,7 @@ def get_dynamic_config_input_type(key: str) -> str:
     return "text"
 
 
-async def get_dynamic_config(key: str) -> Any:
+async def get_dynamic_config(key: str, *, fresh: bool = False) -> Any:
     """从数据库读取配置值，回退到 Settings 默认值
 
     Args:
@@ -1743,6 +1834,9 @@ async def get_dynamic_config(key: str) -> Any:
     Returns:
         配置值（已转换类型）
     """
+    if fresh:
+        return await get_dynamic_config_fresh(key)
+
     if key in (
         "ai_provider",
         "openai_api_base",
@@ -1793,6 +1887,107 @@ async def get_dynamic_config(key: str) -> Any:
     # 3. 回退到 Settings 默认值
     settings = get_settings()
     return getattr(settings, key, None)
+
+
+async def get_dynamic_config_fresh(key: str) -> Any:
+    """Read one dynamic setting without the process-level cache.
+
+    Long-lived Agent workers and tool adapters must use this path at the
+    admission point of every operation.  A WebUI save may happen in another
+    worker, so invalidating this process's cache is not a sufficient
+    freshness guarantee.
+    """
+    if key in (
+        "ai_provider",
+        "openai_api_base",
+        "openai_api_key",
+        "openai_model",
+        "openai_temperature",
+        "openai_max_tokens",
+        "summary_provider",
+        "summary_api_base",
+        "summary_api_key",
+        "summary_model",
+        "agent_team_model_provider",
+        "agent_team_api_base",
+        "agent_team_api_key",
+        "agent_team_model",
+        "agent_team_review_model",
+        "agent_team_summary_model",
+        "scan_model",
+        "sakura_reflection_model",
+        "sakura_issue_reflection_model",
+        "sakura_consolidation_model",
+        "sakura_use_summary_model",
+        "sakura_extraction_provider",
+        "sakura_extraction_api_base",
+        "sakura_extraction_api_key",
+        "sakura_extraction_model",
+    ):
+        return None
+
+    expected_type = _get_field_type(key)
+    # Security-sensitive admission settings must not silently fall back to a
+    # process-local Settings snapshot when the database is configured but
+    # unreadable.  ``_read_config_from_db`` still treats an uninitialised
+    # session (source/unit-test mode) as an intentional absence, so source
+    # development retains its documented defaults without weakening a live
+    # database failure into stale policy.
+    db_value = await _read_config_from_db(key, fail_closed=True)
+    if db_value is not None:
+        return _cast_config_type(db_value, expected_type)
+
+    settings = get_settings()
+    return getattr(settings, key, None)
+
+
+async def get_dynamic_config_fresh_with_revision(
+    key: str,
+) -> tuple[Any, str]:
+    """Read a dynamic value and its durable AppConfig revision.
+
+    The revision is intentionally metadata only (row ``updated_at`` with the
+    primary-key fallback); callers must still parse and authorize the value.
+    Database failures use the same fail-closed behavior as
+    :func:`get_dynamic_config_fresh` and never return a stale Settings value.
+    """
+
+    if key in (
+        "ai_provider",
+        "openai_api_base",
+        "openai_api_key",
+        "openai_model",
+        "openai_temperature",
+        "openai_max_tokens",
+        "summary_provider",
+        "summary_api_base",
+        "summary_api_key",
+        "summary_model",
+        "agent_team_model_provider",
+        "agent_team_api_base",
+        "agent_team_api_key",
+        "agent_team_model",
+        "agent_team_review_model",
+        "agent_team_summary_model",
+        "scan_model",
+        "sakura_reflection_model",
+        "sakura_issue_reflection_model",
+        "sakura_consolidation_model",
+        "sakura_use_summary_model",
+        "sakura_extraction_provider",
+        "sakura_extraction_api_base",
+        "sakura_extraction_api_key",
+        "sakura_extraction_model",
+    ):
+        return None, "legacy"
+
+    expected_type = _get_field_type(key)
+    db_value, revision = await _read_config_row_from_db(key, fail_closed=True)
+    if db_value is not None:
+        return _cast_config_type(db_value, expected_type), revision or "database"
+
+    settings = get_settings()
+    return getattr(settings, key, None), "settings-default"
 
 
 def validate_user_dynamic_config_value(key: str, value: Any) -> str:
@@ -1915,24 +2110,55 @@ def invalidate_user_dynamic_config_cache(
         _user_dynamic_config_cache.pop((int(user_id), key), None)
 
 
-async def _read_config_from_db(key: str) -> str | None:
-    """从 AppConfig 表读取配置值"""
+async def _read_config_row_from_db(
+    key: str,
+    *,
+    fail_closed: bool = False,
+) -> tuple[str | None, str | None]:
+    """Read a config row plus an audit-safe revision marker."""
+
     try:
         from sqlalchemy import select
 
         from backend.models.database import AppConfig, async_session
 
+        # The application has not initialised its database in source-only
+        # unit/test contexts.  That is a deliberate "no override" state,
+        # unlike an exception from an active session/engine.
+        if async_session is None:
+            return None, None
         async with async_session() as session:
             result = await session.execute(
-                select(AppConfig.key_value).where(AppConfig.key_name == key)
+                select(AppConfig.key_value, AppConfig.id, AppConfig.updated_at).where(
+                    AppConfig.key_name == key
+                )
             )
-            row = result.scalar_one_or_none()
-            if row is not None:
-                return str(row)
-            return None
-    except Exception as e:
-        logger.debug(f"从数据库读取配置 [{key}] 失败: {e}")
-        return None
+            row = result.one_or_none()
+            if row is None or row[0] is None:
+                return None, None
+            # updated_at is the meaningful cross-worker revision.  Include the
+            # row id as a deterministic fallback for old database rows where
+            # the timestamp may be absent in test fixtures.
+            revision = str(row[2] or row[1])
+            return str(row[0]), revision
+    except Exception:
+        if fail_closed:
+            raise
+        logger.debug(f"从数据库读取配置 [{key}] 失败")
+        return None, None
+
+
+async def _read_config_from_db(
+    key: str,
+    *,
+    fail_closed: bool = False,
+) -> str | None:
+    """从 AppConfig 表读取配置值"""
+    value, _revision = await _read_config_row_from_db(
+        key,
+        fail_closed=fail_closed,
+    )
+    return value
 
 
 def invalidate_dynamic_config_cache(keys: list[str] | None = None):
@@ -1965,7 +2191,22 @@ CORE_CONFIG_KEYS = frozenset(
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
+        "telegram_enabled",
         "telegram_bot_token",
+        "telegram_bind_token_expire_seconds",
+        "email_enabled",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "smtp_password",
+        "smtp_from",
+        "smtp_from_name",
+        "smtp_security",
+        "notification_max_concurrency",
+        "notification_retry_max_attempts",
+        "notification_retry_initial_delay_seconds",
+        "notification_retry_backoff_factor",
+        "notification_rate_limit_seconds",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_domain",

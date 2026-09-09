@@ -467,6 +467,7 @@ class UnifiedContextCompressor:
             tool_call_id=message.tool_call_id,
             reasoning_content=message.reasoning_content,
             name=message.name,
+            images=message.images,
         )
 
     def _truncate_text(self, text: str, budget: int) -> str:
@@ -562,7 +563,8 @@ class UnifiedContextCompressor:
     def _last_user_message(body: list[UnifiedMessage]) -> UnifiedMessage | None:
         for msg in reversed(body):
             if msg.role == "user" and msg.content:
-                return UnifiedMessage(role="user", content=msg.content)
+                # 保留图片附件：压缩后当前任务轮的图片仍需随消息下发
+                return UnifiedMessage(role="user", content=msg.content, images=msg.images)
         return None
 
     @staticmethod
@@ -578,6 +580,9 @@ class UnifiedContextCompressor:
                     lines.append(f"- args: {tc.arguments}")
             else:
                 lines.append(f"## {role}\n{content}")
+            for image in msg.images or ():
+                label = image.url or "inline image"
+                lines.append(f"- [image attachment: {label}]")
         return "\n".join(lines)
 
     @staticmethod

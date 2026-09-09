@@ -7,6 +7,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
     get_settings,
@@ -30,6 +31,11 @@ from backend.services.ai_reviewer.tools import (
     ToolManager,
 )
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.issue_image_service import (
+    collect_issue_images,
+    extract_image_references,
+    strip_image_payloads_for_display,
+)
 from backend.services.issue_protocol import (
     IssueProtocolError,
     TaggedIssueAnalysisParser,
@@ -92,6 +98,11 @@ class IssueAnalyzer:
     """Issue AI 分析引擎"""
 
     REPAIR_INSTRUCTION = ISSUE_ANALYSIS_REPAIR_INSTRUCTION
+
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: Any) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ReviewCancelledError("Issue 分析已被取消")
 
     def __init__(self):
         settings = get_settings()
@@ -226,11 +237,14 @@ class IssueAnalyzer:
         collaborators: list[str],
         comments: list[dict[str, Any]] | None = None,
         project_knowledge: str = "",
+        image_count: int = 0,
     ) -> str:
         """构建用户消息
 
         project_knowledge（.sakura/ 项目知识）放在 END 标记之前，作为不可信证据的
         一部分，避免仓库侧可写文档在标记外注入指令覆盖分析协议或语言规则。
+        image_count > 0 时提示模型正文与评论中的图片已按出现顺序作为多模态
+        附件附加在本消息上。
         """
         parts = [
             "=== BEGIN UNTRUSTED ISSUE EVIDENCE ===",
@@ -270,6 +284,11 @@ class IssueAnalyzer:
         # so writable repo docs can't inject instructions outside the marked evidence.
         if project_knowledge:
             parts.append(project_knowledge)
+        if image_count:
+            parts.append(
+                f"\n**附带图片**: {image_count} 张来自正文与评论的图片"
+                "（按出现顺序）已作为附件附在本条消息上，请结合图片内容分析。"
+            )
         parts.append("=== END UNTRUSTED ISSUE EVIDENCE ===")
         return "\n".join(parts)
 
@@ -292,6 +311,8 @@ class IssueAnalyzer:
                 repo_name,
                 issue_number,
             )
+        except ReviewCancelledError:
+            raise
         except Exception as e:
             logger.warning("GitHub API 获取评论失败: {}", e)
             return None
@@ -338,12 +359,16 @@ class IssueAnalyzer:
         deadline: AITaskDeadline | None = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
+        self._raise_if_cancelled(cancel_event)
+
         # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
         if event_callback is not None:
             try:
                 await event_callback(
                     "message", {"role": "assistant", "content": response_text}
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as exc:
                 logger.warning("event_callback failed: {}", exc)
 
@@ -354,7 +379,7 @@ class IssueAnalyzer:
         except ValueError, TypeError:
             max_attempts = 3
 
-        return await run_protocol_repair_loop(
+        result = await run_protocol_repair_loop(
             parse_fn=self._parse_analysis_result,
             error_type=IssueProtocolError,
             base_messages=messages,
@@ -372,6 +397,8 @@ class IssueAnalyzer:
             cancel_event=cancel_event,
             deadline=deadline,
         )
+        self._raise_if_cancelled(cancel_event)
+        return result
 
     @staticmethod
     def _resolve_safe_context(response: Any, current_safe_context: int) -> int:
@@ -440,6 +467,8 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        self._raise_if_cancelled(cancel_event)
+
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
@@ -489,6 +518,8 @@ class IssueAnalyzer:
                 comments = await self._fetch_issue_comments(
                     github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as e:
                 logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
 
@@ -519,8 +550,56 @@ class IssueAnalyzer:
                         sakura_section += f"\n### 项目概述\n{sakura_md}"
                     if memory_md:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
+        except ReviewCancelledError:
+            raise
         except Exception as e:
             logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
+
+        # 解析角色候选链：vision 判定须看整条链（fallback 候选也可能支持
+        # vision），上下文窗口预算沿用 primary 候选 / Resolve the role chain
+        # once; vision gating considers every candidate while the
+        # context-window budget below keeps using the primary candidate.
+        role_candidates = await self.api_client.resolve_role_candidates("main")
+        primary_candidate = role_candidates[0] if role_candidates else None
+        role_model = primary_candidate.model.model_id if primary_candidate else None
+        role_context_window = (
+            primary_candidate.model.context_window_tokens
+            if primary_candidate
+            else None
+        )
+        supports_vision = any(
+            candidate.model.capabilities.vision for candidate in role_candidates
+        )
+
+        # 图片多模态（Issue #538）：正文与评论中的图片经白名单下载为 base64
+        # 附件；能力不含 vision 的候选由 UnifiedAIClient 在构建请求时剔除
+        # / Download images from body/comments as base64 attachments; non-vision
+        # candidates strip them when building the request.
+        images_payload: list[dict[str, Any]] = []
+        vision_enabled = await get_dynamic_config(
+            "issue_vision_enabled",
+            fresh=True,
+        )
+        if vision_enabled and supports_vision:
+            image_urls = extract_image_references(issue_info.get("body", ""))
+            for comment in comments or ():
+                image_urls.extend(extract_image_references(comment.get("body", "")))
+            image_urls = list(dict.fromkeys(image_urls))
+            if image_urls:
+                self._raise_if_cancelled(cancel_event)
+                try:
+                    images_payload = await collect_issue_images(
+                        image_urls,
+                        github_app=github_app,
+                        installation_id=issue_info.get("installation_id"),
+                        repo_owner=repo_owner,
+                        repo_name=repo_name,
+                        cancel_event=cancel_event,
+                    )
+                except ReviewCancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("Issue 图片下载失败（不影响分析）: {}", e)
 
         # 构建提示词
         system_prompt = self._build_system_prompt(
@@ -535,17 +614,24 @@ class IssueAnalyzer:
             collaborators,
             comments,
             project_knowledge=sakura_section,
+            image_count=len(images_payload),
         )
 
-        # 初始化消息列表
+        # 初始化消息列表（含多模态图片附件）
+        user_entry: dict[str, Any] = {"role": "user", "content": user_message}
+        if images_payload:
+            user_entry["images"] = images_payload
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            user_entry,
         ]
         if event_callback:
-            for initial_message in messages:
+            # 推送边界脱敏：base64 载荷不进入 SSE 与 Canonical Transcript
+            for initial_message in strip_image_payloads_for_display(messages):
                 try:
                     await event_callback("message", initial_message)
+                except ReviewCancelledError:
+                    raise
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
@@ -557,10 +643,6 @@ class IssueAnalyzer:
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
-        (
-            role_model,
-            role_context_window,
-        ) = await self.api_client.resolve_role_model_context("main")
         context_model = role_model
         safe_context = (
             int(role_context_window * 0.8)
@@ -580,6 +662,7 @@ class IssueAnalyzer:
                 cancel_event=cancel_event,
                 deadline=task_deadline,
             )
+            self._raise_if_cancelled(cancel_event)
 
             result["prompt_tokens"] = tracker.prompt_tokens
             result["completion_tokens"] = tracker.completion_tokens
@@ -598,6 +681,7 @@ class IssueAnalyzer:
                     result=result,
                     context=invocation_context,
                 )
+            self._raise_if_cancelled(cancel_event)
 
             logger.info(
                 "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
@@ -610,6 +694,7 @@ class IssueAnalyzer:
 
         while True:
             iteration += 1
+            self._raise_if_cancelled(cancel_event)
 
             try:
                 prompt_was_sent = task_deadline.timeout_prompt_sent
@@ -632,13 +717,18 @@ class IssueAnalyzer:
                 ):
                     try:
                         await event_callback("message", messages[-1])
+                    except ReviewCancelledError:
+                        raise
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
 
                 response = await self.api_client.call_with_retry(**call_kwargs)
+            except ReviewCancelledError:
+                raise
             except Exception as e:
+                self._raise_if_cancelled(cancel_event)
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
-                return {
+                api_error_result = {
                     "category": "other",
                     "priority": "medium",
                     "summary": f"AI 分析失败: {e!s}",
@@ -654,11 +744,16 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                self._raise_if_cancelled(cancel_event)
+                return api_error_result
+
+            self._raise_if_cancelled(cancel_event)
 
             # 验证响应有效性
             if not response.choices:
+                self._raise_if_cancelled(cancel_event)
                 logger.error("AI API 返回空响应")
-                return {
+                empty_response_result = {
                     "category": "other",
                     "priority": "medium",
                     "summary": "AI 分析失败：API 返回空响应",
@@ -674,6 +769,8 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                self._raise_if_cancelled(cancel_event)
+                return empty_response_result
 
             # 累积 token 使用
             tracker.accumulate(response)
@@ -733,6 +830,8 @@ class IssueAnalyzer:
             if event_callback:
                 try:
                     await event_callback("message", assistant_msg_dict)
+                except ReviewCancelledError:
+                    raise
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
 
@@ -758,6 +857,7 @@ class IssueAnalyzer:
 
             # 执行工具调用
             for tool_index, tool_call in enumerate(tool_calls):
+                self._raise_if_cancelled(cancel_event)
                 if task_deadline.is_expired():
                     await append_skipped_tool_results(
                         messages,
@@ -769,11 +869,14 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("tool_running", tool_call.id)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
                     result = await self.tool_handler.handle_tool_call(
                         tool_call, repo, None
                     )
+                    self._raise_if_cancelled(cancel_event)
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -793,6 +896,63 @@ class IssueAnalyzer:
                                 )
                             else:
                                 branch_info = f", 分支={branch_used}"
+                        if tool_call.function.name == "read_file":
+                            line_range = result.get("line_range")
+                            if isinstance(line_range, dict):
+                                range_status = line_range.get("status")
+                                range_truncated = bool(line_range.get("truncated"))
+                                stale_context_suspected = bool(
+                                    line_range.get("stale_context_suspected")
+                                )
+                                requested_range = line_range.get("requested")
+                                returned_range = line_range.get("returned")
+                                start_line_valid = line_range.get(
+                                    "start_line_valid"
+                                )
+                                end_line_valid = line_range.get("end_line_valid")
+                                total_lines = line_range.get("total_lines")
+                            else:
+                                range_status = "error" if result.get("error") else None
+                                range_truncated = False
+                                stale_context_suspected = False
+                                requested_range = None
+                                returned_range = None
+                                start_line_valid = None
+                                end_line_valid = None
+                                total_lines = result.get("total_lines")
+
+                            # 只记录行号/分支定位元数据，不记录工具返回的文件内容、
+                            # hint 或完整错误文本，避免 Issue 内容或凭据进入日志。
+                            if result.get("error") or range_truncated:
+                                recovery = result.get("recovery")
+                                automatic_retry = (
+                                    recovery.get("automatic_retry")
+                                    if isinstance(recovery, dict)
+                                    else None
+                                )
+                                logger.warning(
+                                    "Issue 分析 read_file 行范围追踪: path={}, "
+                                    "status={}, requested={}, returned={}, "
+                                    "total_lines={}, start_line_valid={}, "
+                                    "end_line_valid={}, truncated={}, "
+                                    "stale_context_suspected={}, automatic_retry={}, "
+                                    "branch_requested={}, branch_used={}, ref_used={}, "
+                                    "tried_refs={}",
+                                    result.get("file_path"),
+                                    range_status,
+                                    requested_range,
+                                    returned_range,
+                                    total_lines,
+                                    start_line_valid,
+                                    end_line_valid,
+                                    range_truncated,
+                                    stale_context_suspected,
+                                    automatic_retry,
+                                    result.get("branch_requested"),
+                                    result.get("branch_used"),
+                                    result.get("ref_used"),
+                                    result.get("tried_refs"),
+                                )
                     logger.info(
                         "执行工具 {} (Issue 分析{})",
                         tool_call.function.name,
@@ -801,8 +961,12 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("message", tool_msg)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
+                except ReviewCancelledError:
+                    raise
                 except Exception as e:
                     logger.error("工具调用失败: {}", e)
                     error_tool_msg = {
@@ -814,5 +978,7 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("message", error_tool_msg)
+                        except ReviewCancelledError:
+                            raise
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)

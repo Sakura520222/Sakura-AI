@@ -386,7 +386,7 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            {{ _("setup.telegram_label") }} <span class="text-red-500">*</span>
+                                    {{ _("setup.telegram_label") }} <span class="text-xs font-normal text-gray-500">({{ _("setup.optional") }})</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
                             {{ _("setup.telegram_help_1") }} <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> {{ _("setup.telegram_help_2") }}
@@ -430,7 +430,7 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            {{ _("setup.admin_tg_label") }} <span class="text-red-500">*</span>
+                            {{ _("setup.admin_tg_label") }} <span class="text-xs font-normal text-gray-500">({{ _("setup.optional") }})</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
                             {{ _("setup.admin_tg_help_1") }} <a href="https://t.me/userinfobot" target="_blank" class="underline text-pink-500">@userinfobot</a> {{ _("setup.admin_tg_help_2") }}
@@ -649,13 +649,15 @@ function setupWizard() {
                 case 0: return true;
                 case 1: return this.form.database_url.trim() !== '' && this.testResults.database?.success && this.form.redis_url.trim() !== '' && this.testResults.redis?.success;
                 case 2: return this.form.github_app_id.trim() !== '' && this.form.github_private_key.trim() !== '' && this.form.github_webhook_secret.trim() !== '' && this.testResults.github?.success;
-                case 3: return this.form.telegram_bot_token.trim() !== '';
+                // Notification providers are optional.  The wizard may finish
+                // with neither Telegram nor SMTP configured.
+                case 3: return true;
                 default: return false;
             }
         },
 
         get canComplete() {
-            return this.form.admin_github_username.trim() !== '' && this.form.admin_telegram_id.trim() !== '' && this.form.app_domain.trim() !== '' && this.form.github_oauth_client_id.trim() !== '' && this.form.github_oauth_client_secret.trim() !== '' && this.form.github_oauth_redirect_uri.trim() !== '';
+            return this.form.admin_github_username.trim() !== '' && this.form.app_domain.trim() !== '' && this.form.github_oauth_client_id.trim() !== '' && this.form.github_oauth_client_secret.trim() !== '' && this.form.github_oauth_redirect_uri.trim() !== '';
         },
 
         get backupSummaryText() {

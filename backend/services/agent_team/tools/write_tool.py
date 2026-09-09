@@ -90,7 +90,10 @@ class WriteTool(BaseTool):
             )
         else:
             encoding = "utf-8"
-            line_ending = "\n"
+            line_ending = await asyncio.to_thread(
+                _new_file_line_ending,
+                ctx.workspace_service.resolve_inside_workspace(ctx.workspace),
+            )
 
         # 创建父目录
         await asyncio.to_thread(resolved.parent.mkdir, parents=True, exist_ok=True)
@@ -142,3 +145,22 @@ class WriteTool(BaseTool):
             )
         except WorkspaceSecurityError, Exception:
             return None
+
+
+def _new_file_line_ending(workspace_root: Path) -> str:
+    """新文件行尾策略：.gitattributes 声明 eol=crlf 时用 CRLF / New-file EOL.
+
+    仅做行级启发式（任何非注释行含 eol=crlf 即生效）；无声明默认 LF。
+    / Line-level heuristic only; LF stays the default.
+    """
+    try:
+        attributes = (workspace_root / ".gitattributes").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return "\n"
+    for line in attributes.splitlines():
+        normalized = line.replace(" ", "").replace("\t", "")
+        if normalized and not normalized.startswith("#") and "eol=crlf" in normalized:
+            return "\r\n"
+    return "\n"

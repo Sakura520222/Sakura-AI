@@ -30,11 +30,12 @@ from backend.services.agent_team.context_compressor import compress_agent_team_m
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.registry import (
     create_executor,
-    get_tool_definitions,
+    get_tool_definitions_fresh,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -160,6 +161,7 @@ class ProfessionalReviewAgent:
         checkpoint: ConversationCheckpointService | None = None,
         session_id: int | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
+        execution_runner: ExecutionRunner | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
@@ -168,6 +170,7 @@ class ProfessionalReviewAgent:
         self.checkpoint = checkpoint
         self.session_id = session_id
         self.restored_messages = initial_messages is not None
+        self.execution_runner = execution_runner
         self.messages: list[dict[str, Any]] = initial_messages or [
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT}
         ]
@@ -200,6 +203,7 @@ class ProfessionalReviewAgent:
         return ToolContext(
             workspace=str(self.workspace),
             workspace_service=self.workspace_service,
+            execution_runner=self.execution_runner,
             read_file_state={},
             extra=extra,
         )
@@ -234,7 +238,7 @@ class ProfessionalReviewAgent:
             github_repo=github_repo,
             sakura_ref=sakura_ref,
         )
-        tool_schemas = get_tool_definitions("reviewer")
+        tool_schemas = await get_tool_definitions_fresh("reviewer")
         # 工具循环不设轮次与时长上限：依赖模型自然停止（submit_review / 纯文本
         # 完成）与手动取消（cancel_check / cancel_event）。agent_team_timeout_seconds
         # 仅约束单次 AI 请求的 HTTP 超时，不约束整体轮数与时长。

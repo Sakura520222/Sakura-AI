@@ -68,6 +68,9 @@ _BASE_COMPLETE_SETUP_CONFIG = {
     "DATABASE_URL": "mysql+asyncmy://u:p@host/db",
     "ADMIN_GITHUB_USERNAME": "admin",
     "ADMIN_TELEGRAM_ID": "123",
+    "GITHUB_OAUTH_CLIENT_ID": "client-id",
+    "GITHUB_OAUTH_CLIENT_SECRET": "client-secret",
+    "GITHUB_OAUTH_REDIRECT_URI": "https://example.test/auth/callback",
 }
 
 

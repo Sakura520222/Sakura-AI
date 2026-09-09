@@ -18,7 +18,9 @@ from loguru import logger
 from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import AgentTeamSourceType
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.execution import TrustedGitRunner
+from backend.services.agent_team.git_workspace_service import _strip_git_credentials
+from backend.services.agent_team.tools.file_utils import write_workspace_bytes
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -85,37 +87,73 @@ class AgentTeamPRService:
         repo_owner: str,
         repo_name: str,
         max_push_retries: int = 2,
+        *,
+        target_repo_owner: str | None = None,
+        target_repo_name: str | None = None,
+        target_branch_name: str | None = None,
+        expected_head_sha: str | None = None,
     ) -> str:
         """将工作区变更通过 GitHub API 提交到远端分支，返回 commit SHA。
 
         通过 GitHub App installation token 创建提交，保持与记忆系统一致的 bot 身份。
+        ``target_repo_*`` 用于 PR_REVIEW 任务直接续写原 PR head（尤其是 fork PR）；
+        ``target_branch_name`` 将本地 worktree 分支与远端 PR 分支解耦；
+        ``expected_head_sha`` 防止 Agent 工作期间原分支被其他提交推进后覆盖其变更。
         """
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        executor = TrustedGitRunner(workspace, self.workspace_service)
+
+        push_repo_owner = target_repo_owner or repo_owner
+        push_repo_name = target_repo_name or repo_name
+        push_branch_name = target_branch_name or branch_name
+        if (target_repo_owner is None) != (target_repo_name is None):
+            raise ValueError("提交目标仓库必须同时提供 owner 和 name")
+        if not push_branch_name:
+            raise ValueError("提交目标分支不能为空")
 
         # 确保 .gitignore 排除 Agent 工作区不应提交的路径
         await self._ensure_gitignore(executor)
 
+        # expected_head_sha 是 direct PR 的 CAS 基线。必须在任何 no-op early
+        # return 之前验证本地 HEAD，否则 stale workspace 会被误认为成功。
+        base_sha_result = await executor.run_args(["git", "rev-parse", "HEAD"])
+        base_sha = base_sha_result.stdout.strip()
+        if expected_head_sha and base_sha.lower() != expected_head_sha.lower():
+            raise RuntimeError(
+                "PR head 在 Agent 工作区中已不是触发时版本，请重新触发 /agent"
+            )
+
         # 检查是否有变更
-        status_result = await executor.run("git status --porcelain")
+        status_result = await executor.run_args(["git", "status", "--porcelain"])
         if not status_result.stdout.strip():
             logger.info("工作区没有变更，跳过 commit")
-            head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
-            return head_result.stdout.strip()
+            if expected_head_sha:
+                await self._verify_expected_remote_head(
+                    push_repo_owner,
+                    push_repo_name,
+                    push_branch_name,
+                    expected_head_sha,
+                )
+            return base_sha
 
         changes = await self._collect_changes_for_api_commit(executor)
         if not changes:
             logger.info("工作区没有可通过 API 提交的文件，跳过 commit")
-            head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
-            return head_result.stdout.strip()
-
-        base_sha_result = await executor.run_args(["git", "rev-parse", "HEAD"])
-        base_sha = base_sha_result.stdout.strip()
+            if expected_head_sha:
+                await self._verify_expected_remote_head(
+                    push_repo_owner,
+                    push_repo_name,
+                    push_branch_name,
+                    expected_head_sha,
+                )
+            return base_sha
 
         github_app = GitHubAppClient()
-        client = github_app.get_repo_client(repo_owner, repo_name)
+        client = github_app.get_repo_client(push_repo_owner, push_repo_name)
         if not client:
-            raise RuntimeError(f"无法获取 GitHub 客户端: {repo_owner}/{repo_name}")
-        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            raise RuntimeError(
+                f"无法获取 GitHub 客户端: {push_repo_owner}/{push_repo_name}"
+            )
+        repo = client.get_repo(f"{push_repo_owner}/{push_repo_name}")
 
         last_error: str | None = None
         for attempt in range(max_push_retries):
@@ -123,9 +161,10 @@ class AgentTeamPRService:
                 sha = await self._commit_changes_via_api(
                     repo,
                     changes,
-                    branch_name,
+                    push_branch_name,
                     commit_message,
                     base_sha,
+                    expected_head_sha=expected_head_sha,
                 )
                 break
             except Exception as exc:
@@ -143,21 +182,59 @@ class AgentTeamPRService:
                     ) from exc
                 await asyncio.sleep(1)
 
-        await self._sync_local_branch_to_commit(executor, branch_name, sha)
+        await self._sync_local_branch_to_commit(
+            executor,
+            push_branch_name,
+            sha,
+            credential_token=self._get_installation_token(
+                github_app, push_repo_owner, push_repo_name
+            ),
+            trusted_expected_remote=_strip_git_credentials(repo.clone_url),
+        )
         logger.info(
             "Agent API 提交成功: {}:{} @ {}",
-            repo_owner + "/" + repo_name,
-            branch_name,
+            push_repo_owner + "/" + push_repo_name,
+            push_branch_name,
             sha[:8],
         )
         return sha
 
+    async def _verify_expected_remote_head(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        branch_name: str,
+        expected_head_sha: str,
+    ) -> None:
+        """在 direct PR no-op 路径上执行与提交路径相同的远端 CAS 检查。"""
+        from github import GithubException
+
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            raise RuntimeError(f"无法获取 GitHub 客户端: {repo_owner}/{repo_name}")
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+
+        def _verify() -> None:
+            try:
+                ref = repo.get_git_ref(f"heads/{branch_name}")
+            except GithubException as exc:
+                if exc.status == 404:
+                    raise RuntimeError("PR head 分支不存在，无法确认 no-op 状态") from exc
+                raise
+            if ref.object.sha.lower() != expected_head_sha.lower():
+                raise RuntimeError(
+                    "PR head 分支已在 Agent 执行期间发生变化，拒绝确认 no-op 状态"
+                )
+
+        await asyncio.to_thread(_verify)
+
     async def _collect_changes_for_api_commit(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
     ) -> list[_ApiCommitChange]:
         """收集工作区中可通过 GitHub API 提交的文件变更。"""
-        status_result = await executor.run("git status --porcelain")
+        status_result = await executor.run_args(["git", "status", "--porcelain"])
         changes: list[_ApiCommitChange] = []
         for line in status_result.stdout.splitlines():
             if len(line) < 4:
@@ -195,7 +272,7 @@ class AgentTeamPRService:
 
     async def _get_git_file_mode(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         file_path: str,
     ) -> str:
         """读取 Git 索引中的文件模式，新增文件默认按普通文件处理。"""
@@ -211,6 +288,7 @@ class AgentTeamPRService:
         branch_name: str,
         commit_message: str,
         base_sha: str,
+        expected_head_sha: str | None = None,
     ) -> str:
         """使用 GitHub Git Data API 创建提交，身份由 installation token 决定。"""
         from github import GithubException
@@ -222,9 +300,16 @@ class AgentTeamPRService:
             except GithubException as exc:
                 if exc.status != 404:
                     raise
+                if expected_head_sha:
+                    raise RuntimeError("PR head 分支不存在，拒绝创建新的替代分支")
                 ref = repo.create_git_ref(
                     ref=f"refs/heads/{branch_name}",
                     sha=base_sha,
+                )
+
+            if expected_head_sha and ref.object.sha.lower() != expected_head_sha.lower():
+                raise RuntimeError(
+                    "PR head 分支已在 Agent 执行期间发生变化，拒绝覆盖其他提交"
                 )
 
             parent = repo.get_git_commit(ref.object.sha)
@@ -262,12 +347,18 @@ class AgentTeamPRService:
 
     async def _sync_local_branch_to_commit(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
         branch_name: str,
         commit_sha: str,
+        credential_token: str | None = None,
+        trusted_expected_remote: str | None = None,
     ) -> None:
         """同步本地工作区到 API 创建的远端提交。"""
-        fetch_result = await executor.run_args(["git", "fetch", "origin", branch_name])
+        fetch_result = await executor.run_args(
+            ["git", "fetch", "origin", branch_name],
+            credential_token=credential_token,
+            trusted_expected_remote=trusted_expected_remote,
+        )
         if fetch_result.returncode != 0:
             logger.warning("同步 Agent 远端分支失败: {}", fetch_result.stderr)
             return
@@ -275,9 +366,26 @@ class AgentTeamPRService:
         if reset_result.returncode != 0:
             logger.warning("重置 Agent 工作区到 API 提交失败: {}", reset_result.stderr)
 
+    @staticmethod
+    def _get_installation_token(
+        github_app: GitHubAppClient,
+        repo_owner: str,
+        repo_name: str,
+    ) -> str:
+        """读取单次 Git 操作所需 token；不把它写入 remote URL。"""
+        try:
+            installation = github_app.integration.get_installation(
+                owner=repo_owner,
+                repo=repo_name,
+            )
+            access_token = github_app.integration.get_access_token(installation.id)
+            return access_token.token
+        except Exception:
+            return ""
+
     async def _ensure_gitignore(
         self,
-        executor: AgentTeamShellExecutor,
+        executor: TrustedGitRunner,
     ) -> None:
         """确保 .gitignore 包含 Agent 工作区不应提交的路径。"""
         excludes = [
@@ -302,7 +410,9 @@ class AgentTeamPRService:
                 + "\n".join(missing)
                 + "\n"
             )
-            gitignore_path.write_text(existing + append_block, encoding="utf-8")
+            write_workspace_bytes(
+                gitignore_path, (existing + append_block).encode("utf-8")
+            )
             logger.info("已追加 {} 条 .gitignore 规则", len(missing))
 
     async def create_pull_request(

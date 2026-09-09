@@ -1,0 +1,97 @@
+name: Agent sandbox quality
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main, 'feature/**', 'fix/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sandboxer-quality:
+    name: sandboxer unit and runner isolation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: sandboxer/pyproject.toml
+
+      - name: Install sandboxer test dependencies
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/sandboxer-quality-venv"
+          python -m venv "$venv"
+          "$venv/bin/python" -m pip install --upgrade pip
+          "$venv/bin/python" -m pip install -e './sandboxer[dev]' ruff
+          echo "SANDBOXER_QUALITY_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
+          echo "SANDBOXER_QUALITY_RUFF=$venv/bin/ruff" >> "$GITHUB_ENV"
+
+      - name: Ruff sandboxer
+        run: |
+          "$SANDBOXER_QUALITY_RUFF" check sandboxer
+
+      - name: Run sandboxer unit tests
+        run: |
+          "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests -q
+
+      - name: Build untrusted runner image
+        run: |
+          docker build --file docker/Dockerfile.agent-sandbox \
+            --tag sakura-ai-agent-runner:ci \
+            .
+
+      - name: Build independent sandboxd image
+        run: |
+          docker build --file docker/Dockerfile.sandboxd \
+            --tag sakura-ai-sandboxd:ci \
+            .
+
+      - name: Real runner isolation smoke
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm --network none --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            sakura-ai-agent-runner:ci \
+            id -u)" = 65532
+          ! docker run --rm --network none \
+            sakura-ai-agent-runner:ci \
+            test -e /var/run/docker.sock
+
+      - name: Resolve immutable runner image ID
+        id: runner-image
+        run: |
+          set -euo pipefail
+          digest="$(docker image inspect --format '{{.Id}}' sakura-ai-agent-runner:ci)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Real Docker adapter integration
+        env:
+          SAKURA_SANDBOX_DOCKER_INTEGRATION: '1'
+          SAKURA_AGENT_RUNNER_IMAGE_DIGEST: ${{ steps.runner-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # The daemon's ownership contract requires a root-owned sandboxd;
+          # run this host-level gate as root so the real non-root runner can
+          # use the bind-mounted task worktree.  No test may be silently
+          # skipped when this mandatory CI gate is enabled.
+          output_file="$(mktemp)"
+          trap 'rm -f "$output_file"' EXIT
+          sudo --preserve-env=SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST \
+            "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests/integration/test_docker_isolation.py -q \
+            | tee "$output_file"
+          if grep -Eq '[0-9]+ skipped' "$output_file"; then
+            echo 'Docker sandbox integration unexpectedly skipped a test' >&2
+            exit 1
+          fi

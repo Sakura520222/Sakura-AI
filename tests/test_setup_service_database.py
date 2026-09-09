@@ -132,9 +132,14 @@ async def test_setup_create_admin_user_runs_migration_when_engine_exists():
         patch(
             "backend.models.database.migrate_schema_async", new_callable=AsyncMock
         ) as migrate,
+        patch(
+            "backend.services.identity_service.stage_notification_endpoint",
+            new_callable=AsyncMock,
+        ) as stage_endpoint,
     ):
         await service.create_admin_user("admin", 1, "mysql+asyncmy://u:p@host/db")
     migrate.assert_awaited_once()
+    stage_endpoint.assert_awaited_once()
 
 
 @pytest.mark.asyncio

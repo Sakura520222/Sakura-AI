@@ -302,6 +302,10 @@ def test_blocked_modules_report_restart_required(hot_env):
             "backend/core/config_section_defaults.py",
             "backend.core.config_section_defaults",
         ),
+        (
+            "backend/services/database_reset_runtime_service.py",
+            "backend.services.database_reset_runtime_service",
+        ),
     ],
 )
 def test_runtime_config_modules_report_restart_required(hot_env, rel, module_name):
@@ -337,3 +341,45 @@ def test_unloaded_module_is_ignored(hot_env):
     assert result.reloaded == []
     assert result.blocked_restart == []
     assert result.failed == []
+
+
+def test_missing_source_module_parses_to_empty_deps(hot_env):
+    """源文件已删除的陈旧模块：依赖解析返回空集而非抛 FileNotFoundError。"""
+
+    path = hot_env.write_module("backend/_hot_doomed.py", "VALUE = 1\n")
+    module = hot_env.load_module("backend._hot_doomed", path)
+    path.unlink()
+
+    assert hot_reload._parse_module_deps("backend._hot_doomed", module) == frozenset()
+
+
+def test_stale_module_does_not_abort_other_reloads(hot_env):
+    """重构删除文件后，sys.modules 里的陈旧模块不得让整轮热重载中止。"""
+
+    stale_path = hot_env.write_module("backend/_hot_stale.py", "VALUE = 1\n")
+    hot_env.load_module("backend._hot_stale", stale_path)
+    stale_path.unlink()
+
+    survivor_path = hot_env.write_module("backend/_hot_survivor.py", "VALUE = 1\n")
+    survivor = hot_env.load_module("backend._hot_survivor", survivor_path)
+    hot_env.write_module("backend/_hot_survivor.py", "VALUE = 2\n")
+
+    result = hot_reload.apply_code_changes([survivor_path], root=hot_env.root)
+
+    assert result.reloaded == ["backend._hot_survivor"]
+    assert result.failed == []
+    assert survivor.VALUE == 2
+
+
+def test_deleted_change_event_is_skipped(hot_env):
+    """变更事件指向已删除文件时跳过 reload，不产生 failed 记录。"""
+
+    path = hot_env.write_module("backend/_hot_removed.py", "VALUE = 1\n")
+    hot_env.load_module("backend._hot_removed", path)
+    path.unlink()
+
+    result = hot_reload.apply_code_changes([path], root=hot_env.root)
+
+    assert result.reloaded == []
+    assert result.failed == []
+    assert result.blocked_restart == []

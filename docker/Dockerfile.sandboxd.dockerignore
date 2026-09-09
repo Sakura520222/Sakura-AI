@@ -1,0 +1,20 @@
+# The sandboxd image only needs its independent Python package.  Keep Web
+# source, Agent workspaces, deployment state and credentials out of its build
+# context even if the image is rebuilt manually from the repository root.
+*
+!sandboxer/
+!sandboxer/pyproject.toml
+!sandboxer/src/
+!sandboxer/src/**
+
+.deploy/
+config/
+workplace/
+Skills/
+logs/
+**/.env
+**/.env.*
+**/*secret*
+**/*secrets*
+**/*token*
+**/*key*

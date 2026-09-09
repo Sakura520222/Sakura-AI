@@ -249,6 +249,25 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     args = {"raw": tc.arguments}
                 parts.append({"functionCall": {"name": tc.name, "args": args}})
             return {"role": role, "parts": parts}
+        # 多模态消息：text parts + inlineData parts / multimodal parts
+        if message.images and message.role != "tool":
+            parts: list[dict[str, Any]] = []
+            if message.content:
+                parts.append({"text": message.content})
+            for image in message.images:
+                if image.data:
+                    parts.append(
+                        {
+                            "inlineData": {
+                                "mimeType": image.media_type or "image/png",
+                                "data": image.data,
+                            }
+                        }
+                    )
+                elif image.url:
+                    parts.append({"fileData": {"fileUri": image.url}})
+            if parts:
+                return {"role": role, "parts": parts}
         return {
             "role": role,
             "parts": [{"text": message.content or ""}],

@@ -126,6 +126,20 @@ class DeploymentStateProvider:
 
         return self._env().get("SAKURA_AI_IMAGE") or None
 
+    def sandbox_image_refs(self) -> dict[str, str | None]:
+        """Return the persisted immutable sandbox pair, if configured.
+
+        The updater uses this pair as the current rollback identity. A
+        development target resolves a new pair independently from GHCR using
+        its full revision; it must never borrow this pair as the target.
+        """
+
+        values = self._env()
+        return {
+            "sandboxd_image": values.get("SAKURA_SANDBOXD_IMAGE_DIGEST") or None,
+            "runner_image": values.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST") or None,
+        }
+
     def read_deploy_mode(self) -> str | None:
         """Read deployment mode from deployment.env, then process environment."""
 
@@ -348,8 +362,16 @@ class DeploymentStateProvider:
         )
         return running_digest
 
-    async def materialize_current_anchor(self) -> str:
+    async def materialize_current_anchor(self, *, persist: bool = True) -> str:
         """Pin a mutable ``:latest`` deployment to its running tag and digest.
+
+        ``persist=False`` is used by the update transaction while it is still
+        preparing its rollback snapshot.  It resolves the same immutable
+        anchor but leaves the authoritative file untouched; the adapter then
+        records the anchor in its durable transaction snapshot before the
+        first authoritative write.  The default remains ``True`` for the
+        explicit compatibility/helper API and for callers that intentionally
+        materialize outside an update transaction.
 
         This method is intentionally not called by read-only check/preflight
         paths.  The orchestrator invokes it only after a destructive preflight
@@ -378,7 +400,8 @@ class DeploymentStateProvider:
             raise DeploymentError("cannot materialize :latest without /health.version")
         digest = await self.capture_from_digest()
         concrete = f"{repository}:v{current_version}@{digest}"
-        await asyncio.to_thread(write_deployment_env, self.deployment_env, concrete)
+        if persist:
+            await asyncio.to_thread(write_deployment_env, self.deployment_env, concrete)
         return concrete
 
     async def disk_space_sufficient(self, threshold: int) -> tuple[bool, int | None]:
@@ -408,4 +431,5 @@ class DeploymentStateProvider:
             "from_digest": running_digest,
             "deployment_mode": self.read_deploy_mode(),
             "running_container_digest": running_digest,
+            **self.sandbox_image_refs(),
         }

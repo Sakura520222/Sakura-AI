@@ -26,6 +26,7 @@ from backend.services.agent_team.conversation_checkpoint import (
 from backend.services.agent_team.conversation_context import (
     AgentTeamConversationContextService,
 )
+from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
     FullStackResult,
@@ -73,6 +74,7 @@ class IterationLoopService:
         checkpoint: ConversationCheckpointService | None = None,
         resume_cursor: ResumeCursor | None = None,
         resume_index: int = 0,
+        execution_runner: ExecutionRunner | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
@@ -83,6 +85,7 @@ class IterationLoopService:
         self.checkpoint = checkpoint
         self.resume_cursor = resume_cursor
         self.resume_index = resume_index
+        self.execution_runner = execution_runner
         self.conversation_context = AgentTeamConversationContextService(task_id)
         self._active_agent: FullStackExpertAgent | None = None
 
@@ -317,13 +320,24 @@ class IterationLoopService:
         if not self.checkpoint:
             # Keep the simple two-argument constructor used by local fakes and
             # by integrations that run without persistence.
-            return agent_class(self.workspace, self.workspace_service)
+            if self.execution_runner is None:
+                return agent_class(self.workspace, self.workspace_service)
+            return agent_class(
+                self.workspace,
+                self.workspace_service,
+                execution_runner=self.execution_runner,
+            )
+        agent_kwargs: dict[str, Any] = {
+            "checkpoint": self.checkpoint,
+            "session_id": session_id,
+            "initial_messages": initial_messages,
+        }
+        if self.execution_runner is not None:
+            agent_kwargs["execution_runner"] = self.execution_runner
         return agent_class(
             self.workspace,
             self.workspace_service,
-            checkpoint=self.checkpoint,
-            session_id=session_id,
-            initial_messages=initial_messages,
+            **agent_kwargs,
         )
 
     async def _complete_session(

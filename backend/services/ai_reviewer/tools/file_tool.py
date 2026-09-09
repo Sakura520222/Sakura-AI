@@ -55,6 +55,9 @@ class _ContentsFetchResult:
         branch_used: 实际读取成功的分支标识（PR 场景为 "HEAD"/"base"，
             非 PR 场景为真实分支名）；全部失败时为 None。
         tried_branches: 已尝试的所有分支标识列表，按尝试顺序记录。
+        ref_used: 实际传给 GitHub API 的 ref（非 PR 场景为分支名，PR
+            场景为 commit SHA）；全部失败时为 None。
+        tried_refs: 已传给 GitHub API 的 ref 列表，按尝试顺序记录。
         error: 失败时的简短错误描述（不含最终返回结构）；成功时为 None。
     """
 
@@ -63,7 +66,9 @@ class _ContentsFetchResult:
         "branch_used",
         "contents",
         "error",
+        "ref_used",
         "tried_branches",
+        "tried_refs",
     )
 
     def __init__(self) -> None:
@@ -71,6 +76,8 @@ class _ContentsFetchResult:
         self.branch_requested: str | None = None
         self.branch_used: str | None = None
         self.tried_branches: list[str] = []
+        self.ref_used: str | None = None
+        self.tried_refs: list[str] = []
         self.error: str | None = None
 
     @property
@@ -129,10 +136,13 @@ class FileToolHandler:
 
         if pr is not None:
             # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
+            head_sha = pr.head.sha
+            result.tried_refs.append(head_sha)
             try:
-                result.contents = repo.get_contents(path, pr.head.sha)
+                result.contents = repo.get_contents(path, head_sha)
                 result.tried_branches.append("HEAD")
                 result.branch_used = "HEAD"
+                result.ref_used = head_sha
                 logger.debug(f"从PR的HEAD分支读取{path_kind}成功: {path}")
                 return result
             except Exception as head_error:
@@ -142,9 +152,12 @@ class FileToolHandler:
                 result.tried_branches.append("HEAD")
 
             try:
-                result.contents = repo.get_contents(path, pr.base.sha)
+                base_sha = pr.base.sha
+                result.tried_refs.append(base_sha)
+                result.contents = repo.get_contents(path, base_sha)
                 result.tried_branches.append("base")
                 result.branch_used = "base"
+                result.ref_used = base_sha
                 logger.debug(f"从PR的base分支读取{path_kind}成功: {path}")
                 return result
             except Exception as base_error:
@@ -169,9 +182,11 @@ class FileToolHandler:
         last_error: str | None = None
         for ref in candidate_refs:
             result.tried_branches.append(ref)
+            result.tried_refs.append(ref)
             try:
                 result.contents = repo.get_contents(path, ref)
                 result.branch_used = ref
+                result.ref_used = ref
                 logger.debug(f"从分支 {ref} 读取{path_kind}成功: {path}")
                 return result
             except Exception as e:
@@ -291,6 +306,8 @@ class FileToolHandler:
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
                 }
 
             # GitHub API returns a list when the path is a directory
@@ -302,6 +319,8 @@ class FileToolHandler:
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
                 }
 
             if content_file.size > MAX_FILE_SIZE_BYTES:
@@ -313,6 +332,8 @@ class FileToolHandler:
                     "tried_branches": tried_branches,
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
                     "hint": "请基于PR diff中的patch进行审查，避免读取完整文件",
                 }
 
@@ -330,6 +351,18 @@ class FileToolHandler:
                 end_idx = min(len(lines), end_line)
 
                 if start_idx >= len(lines):
+                    retry_end_line = total_lines
+                    retry_start_line = max(1, total_lines - (end_line - start_line))
+                    retry_arguments: dict[str, Any] = {
+                        "file_path": file_path,
+                        "start_line": retry_start_line,
+                        "end_line": retry_end_line,
+                    }
+                    # 非 PR 场景可以把实际成功读取的回退分支直接用于重试；
+                    # PR 场景的 branch 参数会被忽略，因此改由 ref_used 记录 SHA。
+                    if pr is None and branch_used:
+                        retry_arguments["branch"] = branch_used
+
                     return {
                         "file_path": file_path,
                         "error": f"start_line {start_line} 超出文件范围",
@@ -338,20 +371,69 @@ class FileToolHandler:
                         "branch_requested": branch_requested,
                         "branch_used": branch_used,
                         "tried_branches": tried_branches,
+                        "ref_used": fetch.ref_used,
+                        "tried_refs": fetch.tried_refs,
+                        "line_range": {
+                            "requested": {
+                                "start_line": start_line,
+                                "end_line": end_line,
+                            },
+                            "returned": None,
+                            "total_lines": total_lines,
+                            "status": "start_line_out_of_range",
+                            "start_line_valid": False,
+                            "end_line_valid": end_line <= total_lines,
+                            "truncated": False,
+                            "stale_context_suspected": True,
+                        },
+                        "recovery": {
+                            "action": "retry_read_file",
+                            "automatic_retry": False,
+                            "reason": "start_line_out_of_range",
+                            "retry_arguments": retry_arguments,
+                        },
+                        "hint": (
+                            f"请求范围 start_line={start_line}, end_line={end_line} 超出当前"
+                            f"文件总行数 {total_lines}。行号可能来自已更新的分支或提交，"
+                            "当前行号上下文可能已陈旧。工具未自动重试；请先根据当前文件"
+                            f"重新定位，再重试 read_file（例如 start_line={retry_start_line}, "
+                            f"end_line={retry_end_line}）。"
+                        ),
                     }
 
                 selected_lines = lines[start_idx:end_idx]
+                actual_end_line = min(end_line, total_lines)
+                end_line_truncated = end_line > total_lines
+                range_status = (
+                    "end_line_truncated" if end_line_truncated else "ok"
+                )
+                line_range = {
+                    "requested": {
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    },
+                    "returned": {
+                        "start_line": start_line,
+                        "end_line": actual_end_line,
+                    },
+                    "total_lines": total_lines,
+                    "status": range_status,
+                    "start_line_valid": True,
+                    "end_line_valid": not end_line_truncated,
+                    "truncated": end_line_truncated,
+                    "stale_context_suspected": False,
+                }
                 # 为每行添加行号前缀
                 numbered_content = "\n".join(
                     f"{start_idx + i + 1:>6}\t{line}"
                     for i, line in enumerate(selected_lines)
                 )
-                return {
+                result = {
                     "file_path": file_path,
                     "content": numbered_content,
                     "mode": "line_range",
                     "start_line": start_line,
-                    "end_line": min(end_line, total_lines),
+                    "end_line": actual_end_line,
                     "total_lines": total_lines,
                     "returned_lines": len(selected_lines),
                     "size": content_file.size,
@@ -359,7 +441,18 @@ class FileToolHandler:
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
+                    "line_range": line_range,
                 }
+                if end_line_truncated:
+                    result["hint"] = (
+                        f"请求 end_line={end_line} 超出当前文件总行数 {total_lines}，"
+                        f"已返回当前可用范围 start_line={start_line}, "
+                        f"end_line={actual_end_line}。这是可用结果而非错误；"
+                        "如需读取其他位置，请依据当前文件行号重新请求。"
+                    )
+                return result
 
             # 模式2: 内容搜索
             if search_pattern is not None:
@@ -382,6 +475,8 @@ class FileToolHandler:
                         "branch_requested": branch_requested,
                         "branch_used": branch_used,
                         "tried_branches": tried_branches,
+                        "ref_used": fetch.ref_used,
+                        "tried_refs": fetch.tried_refs,
                     }
 
                 numbered_content = format_search_results(
@@ -402,6 +497,8 @@ class FileToolHandler:
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
                     "hint": (
                         f"共找到 {len(matches)} 处匹配。"
                         f"如需查看更多上下文，可增大 context_lines 参数（当前 {effective_context_lines}）。"
@@ -436,6 +533,8 @@ class FileToolHandler:
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
+                    "ref_used": fetch.ref_used,
+                    "tried_refs": fetch.tried_refs,
                 }
 
             # 正常大小文件 - 也添加行号
@@ -453,6 +552,8 @@ class FileToolHandler:
                 "branch_requested": branch_requested,
                 "branch_used": branch_used,
                 "tried_branches": tried_branches,
+                "ref_used": fetch.ref_used,
+                "tried_refs": fetch.tried_refs,
             }
 
         except Exception as e:

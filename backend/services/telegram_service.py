@@ -1,7 +1,10 @@
 """Telegram Bot 服务层"""
 
+from inspect import isawaitable
+
 from loguru import logger
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
@@ -13,10 +16,31 @@ from backend.models.telegram_models import (
     UserRepoSubscription,
     UserRole,
 )
+from backend.services.identity_service import (
+    GitHubUsernameConflictError,
+    registration_quota_values,
+)
 from backend.services.payment_service import PaymentService, is_payment_enabled
 from backend.services.quota_service import QuotaService
 
 settings = get_settings()
+
+
+def _is_github_username_unique_error(exc: IntegrityError) -> bool:
+    """Classify only the legacy GitHub mirror uniqueness violation."""
+
+    original = getattr(exc, "orig", exc)
+    constraint_name = str(
+        getattr(getattr(original, "diag", None), "constraint_name", "") or ""
+    ).casefold()
+    if "telegram" in constraint_name and "github_username" in constraint_name:
+        return True
+    message = str(original).casefold()
+    return (
+        "telegram_users" in message
+        and "github_username" in message
+        and ("unique" in message or "duplicate" in message)
+    )
 
 
 class TelegramService:
@@ -26,8 +50,9 @@ class TelegramService:
         self.session = session
 
     async def is_super_admin(self, telegram_id: int) -> bool:
-        """检查是否为超级管理员"""
-        return telegram_id in settings.telegram_admin_ids_list
+        """Check the persisted role for a bound Telegram endpoint."""
+        user = await self.get_user_by_telegram_id(telegram_id)
+        return bool(user and user.is_active and user.role == UserRole.SUPER_ADMIN.value)
 
     async def get_user_by_telegram_id(self, telegram_id: int) -> TelegramUser | None:
         """通过 Telegram ID 获取用户"""
@@ -36,27 +61,47 @@ class TelegramService:
         )
         return result.scalar_one_or_none()
 
+    async def _casefold_github_matches(
+        self, github_username: str, *, active_only: bool = False
+    ) -> list[TelegramUser]:
+        """Return all mirror rows matching a GitHub username case-insensitively.
+
+        ``telegram_users.github_username`` is an exact-value legacy unique
+        column on some installations, so its database collation cannot be
+        trusted to reject ``Alice``/``alice``.  Load the mirror rows and apply
+        Python ``casefold`` before choosing a user; this also fails closed for
+        dirty databases with more than one owner instead of using
+        ``scalar_one_or_none`` on an ambiguous result.
+        """
+
+        normalized = str(github_username or "").strip().casefold()
+        statement = select(TelegramUser)
+        if active_only:
+            statement = statement.where(TelegramUser.is_active)
+        result = await self.session.execute(statement)
+        return [
+            user
+            for user in result.scalars().all()
+            if str(getattr(user, "github_username", "") or "")
+            .strip()
+            .casefold()
+            == normalized
+        ]
+
     async def get_user_by_github_username(
         self, github_username: str
     ) -> TelegramUser | None:
         """通过 GitHub 用户名获取用户"""
-        # 先从数据库中查找
-        result = await self.session.execute(
-            select(TelegramUser).where(
-                and_(
-                    TelegramUser.github_username == github_username,
-                    TelegramUser.is_active,
-                )
-            )
+        matches = await self._casefold_github_matches(
+            github_username, active_only=True
         )
-        user = result.scalar_one_or_none()
-
-        # 如果找到用户，直接返回
-        if user:
-            return user
-
-        # 如果没有找到，返回 None
-        return None
+        if len(matches) > 1:
+            logger.warning(
+                "Ambiguous case-insensitive GitHub mirror lookup: username={}",
+                github_username,
+            )
+            return None
+        return matches[0] if matches else None
 
     async def is_authorized_repo(self, repo_name: str) -> bool:
         """检查仓库是否已授权"""
@@ -309,28 +354,56 @@ class TelegramService:
         monthly_quota: int = 200,
     ) -> tuple[bool, str]:
         """添加用户"""
+        github_username = str(github_username or "").strip()
+        if not github_username:
+            return False, "GitHub 用户名不能为空"
+
         # 检查是否已存在
         existing = await self.get_user_by_telegram_id(telegram_id)
         if existing:
             return False, "用户已存在"
 
-        # 如果是超级管理员，自动设置角色为 super_admin
-        if await self.is_super_admin(telegram_id):
-            role = UserRole.SUPER_ADMIN
+        # Do not rely on the legacy exact-value unique index: its collation can
+        # permit ``Alice`` and ``alice`` as distinct rows.
+        if await self._casefold_github_matches(github_username):
+            return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
 
         # 将枚举转换为字符串值
         role_value = role.value if hasattr(role, "value") else role
 
         user = TelegramUser(
             telegram_id=telegram_id,
-            github_username=github_username,
+            github_username=github_username.casefold(),
             role=role_value,  # 使用字符串值
             daily_quota=daily_quota,
             weekly_quota=weekly_quota,
             monthly_quota=monthly_quota,
         )
-        self.session.add(user)
-        await self.session.commit()
+        try:
+            self.session.add(user)
+            flush = getattr(self.session, "flush", None)
+            if flush is not None:
+                result = flush()
+                if isawaitable(result):
+                    await result
+            staged_matches = await self._casefold_github_matches(github_username)
+            if any(
+                match is not user
+                and (match.id is None or user.id is None or match.id != user.id)
+                for match in staged_matches
+            ):
+                raise GitHubUsernameConflictError(
+                    f"GitHub 用户名 {github_username} 已被其他账号绑定"
+                )
+            await self.session.commit()
+        except GitHubUsernameConflictError:
+            await self.session.rollback()
+            return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
+        except IntegrityError as exc:
+            await self.session.rollback()
+            if _is_github_username_unique_error(exc):
+                return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
+            raise
         return True, "用户添加成功"
 
     async def remove_user(self, github_username: str) -> tuple[bool, str]:
@@ -504,6 +577,10 @@ class TelegramService:
         self, telegram_id: int, github_username: str
     ) -> tuple[bool, str]:
         """用户自注册（配额为默认值的 register_quota_multiplier 倍）"""
+        github_username = str(github_username or "").strip()
+        if not github_username:
+            return False, "GitHub 用户名不能为空"
+
         # 检查 telegram_id 是否已存在
         existing_by_id = await self.get_user_by_telegram_id(telegram_id)
         if existing_by_id:
@@ -512,82 +589,69 @@ class TelegramService:
                 f"该 Telegram 账号已注册（GitHub: {existing_by_id.github_username}）",
             )
 
-        # 检查 github_username 是否已被占用
-        existing_by_github = await self.get_user_by_github_username(github_username)
+        # The legacy unique constraint is case-sensitive on some databases;
+        # reject every case-insensitive mirror, including an inactive row,
+        # before staging the new user.
+        existing_by_github = await self._casefold_github_matches(github_username)
         if existing_by_github:
             return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
 
-        # 如果是超级管理员，自动设置角色为 super_admin，使用管理员配额
-        if await self.is_super_admin(telegram_id):
-            role = UserRole.SUPER_ADMIN
-            user = TelegramUser(
-                telegram_id=telegram_id,
-                github_username=github_username,
-                role=role.value,
-                daily_quota=settings.init_admin_daily_quota,
-                weekly_quota=settings.init_admin_weekly_quota,
-                monthly_quota=settings.init_admin_monthly_quota,
-                # 管理员 Issue/Agent 配额复用管理员 PR 初始配额
-                issue_daily_quota=settings.init_admin_daily_quota,
-                issue_weekly_quota=settings.init_admin_weekly_quota,
-                issue_monthly_quota=settings.init_admin_monthly_quota,
-                agent_daily_quota=settings.init_admin_agent_daily_quota,
-                agent_weekly_quota=settings.init_admin_agent_weekly_quota,
-                agent_monthly_quota=settings.init_admin_agent_monthly_quota,
-            )
-        else:
-            role = UserRole.USER
-            multiplier = settings.register_quota_multiplier
-            user = TelegramUser(
-                telegram_id=telegram_id,
-                github_username=github_username,
-                role=role.value,
-                daily_quota=max(1, int(settings.init_user_daily_quota * multiplier)),
-                weekly_quota=max(1, int(settings.init_user_weekly_quota * multiplier)),
-                monthly_quota=max(
-                    1, int(settings.init_user_monthly_quota * multiplier)
-                ),
-                issue_daily_quota=max(
-                    1, int(settings.init_user_issue_daily_quota * multiplier)
-                ),
-                issue_weekly_quota=max(
-                    1, int(settings.init_user_issue_weekly_quota * multiplier)
-                ),
-                issue_monthly_quota=max(
-                    1, int(settings.init_user_issue_monthly_quota * multiplier)
-                ),
-                agent_daily_quota=max(
-                    1, int(settings.init_user_agent_daily_quota * multiplier)
-                ),
-                agent_weekly_quota=max(
-                    1, int(settings.init_user_agent_weekly_quota * multiplier)
-                ),
-                agent_monthly_quota=max(
-                    1, int(settings.init_user_agent_monthly_quota * multiplier)
-                ),
-            )
+        # Telegram no longer grants roles.  Registration is retained only as
+        # a compatibility service for old callers and always creates a normal
+        # user with the configured self-registration quotas.  New mirror rows
+        # use GitHub's canonical case-folded spelling so the existing exact
+        # unique key is also an atomic guard for concurrent ``Alice``/``alice``
+        # registrations on every supported database.
+        role = UserRole.USER
+        multiplier = settings.register_quota_multiplier
+        user = TelegramUser(
+            telegram_id=telegram_id,
+            github_username=github_username.casefold(),
+            role=role.value,
+            **registration_quota_values(),
+        )
         try:
             self.session.add(user)
+            flush = getattr(self.session, "flush", None)
+            if flush is not None:
+                result = flush()
+                if isawaitable(result):
+                    await result
+
+            # Re-check after the INSERT is staged.  This closes the normal
+            # application-writer TOCTOU window while preserving the original
+            # display casing in the legacy/backup row.
+            staged_matches = await self._casefold_github_matches(github_username)
+            if any(
+                match is not user
+                and (match.id is None or user.id is None or match.id != user.id)
+                for match in staged_matches
+            ):
+                raise GitHubUsernameConflictError(
+                    f"GitHub 用户名 {github_username} 已被其他账号绑定"
+                )
             await self.session.commit()
+        except GitHubUsernameConflictError as e:
+            await self.session.rollback()
+            logger.warning("用户注册用户名冲突: {}", e)
+            return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
+        except IntegrityError as e:
+            await self.session.rollback()
+            if _is_github_username_unique_error(e):
+                return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
+            logger.error(f"用户注册失败: {e}", exc_info=True)
+            return False, f"注册失败: {e!s}"
         except Exception as e:
             await self.session.rollback()
             logger.error(f"用户注册失败: {e}", exc_info=True)
             return False, f"注册失败: {e!s}"
 
-        if role == UserRole.SUPER_ADMIN:
-            quota_info = (
-                f"\n📊 管理员配额:\n"
-                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
-                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
-            )
-        else:
-            quota_info = (
-                f"\n📊 配额（×{multiplier}）:\n"
-                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
-                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
-            )
+        quota_info = (
+            f"\n📊 配额（×{multiplier}）:\n"
+            f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
+            f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
+            f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
+        )
         return True, f"注册成功{quota_info}"
 
     async def subscribe_repo(

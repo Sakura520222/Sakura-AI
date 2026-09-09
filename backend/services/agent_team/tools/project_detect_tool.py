@@ -107,12 +107,27 @@ def _detect_test_command(
     return ""
 
 
+# 依赖 venv 中 ruff 启动器的固定相对路径 / fixed launcher paths in dependency venvs
+_PYTHON_LINT_LAUNCHERS = (
+    ".venv/sandbox/bin/ruff",
+    ".venv/local/bin/ruff",
+    ".venv/local/Scripts/ruff.exe",
+)
+
+
+def _workspace_tool_exists(workspace: Path, launchers: tuple[str, ...]) -> bool:
+    """探测依赖 venv 中是否真实存在工具 / Probe dependency venvs for a launcher."""
+    return any((workspace / rel).is_file() for rel in launchers)
+
+
 def _detect_lint_command(
     workspace: Path, language: str, package_json: dict | None
 ) -> str:
-    """推断代码检查命令。"""
+    """推断代码检查命令（只声明真实存在的能力 / advertise only existing tools)."""
     if language == "python":
-        return "ruff check"
+        if _workspace_tool_exists(workspace, _PYTHON_LINT_LAUNCHERS):
+            return "ruff check"
+        return ""
     if language == "javascript" and package_json:
         deps = {
             **package_json.get("dependencies", {}),

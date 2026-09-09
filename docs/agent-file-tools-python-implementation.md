@@ -1578,4 +1578,21 @@ print(
 
 ---
 
-*最后更新：2026-8-10 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+## 写入语义与宿主机权限（2026-09）
+
+`write_workspace_bytes`（`tools/file_utils.py`）是所有后端直写工作区文件的唯一入口：
+
+- 既有文件以不带 `O_CREAT` 的 `open` 打开。宿主机 `fs.protected_regular=2`
+  会对 sticky 目录中"O_CREAT 打开异属主文件"无条件返回 EACCES（root 也不
+  豁免）；sandboxd handoff 后工作区文件属主为 uid 65532，带 O_CREAT 的整
+  文件覆写在 worktree 根目录必然被拒。
+- 文件不存在时以 `O_CREAT | O_EXCL` 创建。
+- `EACCES`/`EROFS` 会被包装为 `ToolExecutionError`
+  （`error_code=WORKSPACE_WRITE_PERMISSION_DENIED`）返回给模型。
+
+新增任何"后端进程直接写 worktree 文件"的代码，必须复用该助手，禁止
+`Path.write_text` / `write_bytes` 直写。
+
+---
+
+*最后更新：2026-09-07 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

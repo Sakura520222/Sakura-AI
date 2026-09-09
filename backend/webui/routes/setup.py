@@ -325,6 +325,10 @@ async def save_step(request: Request):
         return JSONResponse({"success": False, "message": "没有配置需要保存"})
 
     try:
+        # Step 1 initializes the database below, so run the pure shared
+        # validation before connection tests or any initialization side
+        # effect.  This also covers notification/SMTP numeric boundaries.
+        setup_service.validate_config_values(values)
         database_url = values.get("DATABASE_URL", "").strip()
 
         if database_url:
@@ -354,6 +358,10 @@ async def save_step(request: Request):
 
         clear_bootstrap_cache()
         return JSONResponse({"success": True, "message": "配置已保存"})
+    except ValueError as exc:
+        return JSONResponse(
+            {"success": False, "message": str(exc)}, status_code=400
+        )
     except Exception:
         logger.exception("保存配置失败")
         return JSONResponse(

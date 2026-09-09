@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -85,6 +85,7 @@
 ### Issue 分析
 
 - **Issue 智能分析** — 自动分类、优先级、标签推荐、重复检测、关联 PR 发现
+- **图片多模态分析** — Issue 正文与评论中的截图经 GitHub 凭据安全下载，超过 5 MiB 时优先压缩至 500 KiB，再作为多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"，并在统一配置页开启）
 - **严格 Issue 输出契约** — `<SAKURA_ISSUE_ANALYSIS>` 协议 + 多轮修复 + 安全降级
 - **Issue 自动打标** — 高置信度标签自动应用
 - **Issue 自动指派** — 指派给合适的仓库协作者
@@ -99,8 +100,8 @@
 - **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
 - **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
 - **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **受控工具执行** — 文件 / 搜索 / shell 限制在工作区，黑名单阻止危险命令
-- **自动依赖与验证** — 检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行白名单测试
+- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
 - **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
 - **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
 - **实时管理员干预** — WebUI Live View 注入指导意见
@@ -142,8 +143,16 @@
 - **WebUI 管理界面** — 仪表盘、PR、用户、配置、队列、扫描、Agent、记忆、仓库互助、向量库管理
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
-- **Telegram Bot** — 实时通知、按钮菜单、三级权限体系
-- **GitHub OAuth 登录** — 与 Telegram 用户体系打通，明暗主题切换
+- **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
+- **可选通知渠道** — Telegram 与 Email/SMTP 可独立启停，个人设置支持一次性绑定/解绑 Telegram；公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）
+- **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
+- **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
+
+### 升级与兼容
+
+- **从 3.1.3 升级到 3.2.0**：升级后首次启动会自动迁移旧数据，全程幂等、无需手工操作——公告、通知投递、通知端点与外部身份等新表自动创建；旧 `telegram_users` 的 Telegram ID、GitHub 用户名与邮箱按下一条规则回填；原有用户 ID、角色、配额、业务数据和外键保持不变。Email/SMTP 通知为 3.2.0 新增（3.1.3 没有邮件配置项），如需启用请在「系统核心配置」页填写 SMTP 参数：465 端口选择「SSL/TLS（隐式 TLS）」，587 端口选择「STARTTLS」，发件昵称默认 Sakura-AI；导入旧配置备份时，旧字段名会自动映射到新键（如布尔 `smtp_tls` 映射为安全模式）。
+- 首次启动会自动、幂等迁移旧 `telegram_users` 身份数据：保留原始用户 ID、角色、配额、业务数据和外键，将旧 Telegram ID/ GitHub 用户名回填为通知端点/外部身份。Telegram-only 账号如需绑定 GitHub，请先由管理员在用户页面指定 GitHub 用户名，再使用 OAuth 登录认领原账号。
+- 用户备份兼容 v1/v2，旧字段会自动映射；新备份包含 identities、notification endpoints 和 email。配置恢复不会覆盖部署连接设置，SMTP 密码等敏感字段继续脱敏。
 
 ---
 
@@ -155,25 +164,25 @@
 
 ### Docker 一键部署（推荐自建）
 
-**Linux 全量部署**（Web + MySQL + Redis + Host Updater）：
+**Linux 全量部署**（Web + MySQL + Redis + Host Updater + Agent sandboxd）：
 
 ```bash
-sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  --output /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
-  --output /opt/sakura-ai/start.sh
-sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo chmod 0755 /opt/sakura-ai/start.sh
-cd /opt/sakura-ai
-sudo ./start.sh --prod
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-`sudo ./start.sh --prod` 会自动生成部署状态、通过 Docker 原生动态进度条拉取镜像、启动全部容器，并为当前版本下载、校验和启动 Host Updater。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但更新需超级管理员在 WebUI 版本管理器中手动确认，不会无人值守安装；也可以直接运行 `sudo ./start.sh` 进入交互式管理菜单，在 WebUI 之外完成更新当前频道镜像、切换 stable/development 频道等操作（stable 频道优先复用 Host Updater 的更新流水线，development 频道或 daemon 未运行时回退为 Compose 直接拉取频道别名镜像）。macOS、Windows 和仅容器部署不支持 Host Updater；部署目录、Compose 项目名与安全校验等细节详见[部署指南](docs/DEPLOYMENT.md)。
+默认部署**正式（stable）频道**镜像；如需从首次部署起就使用**开发（development）频道**（develop 分支最新构建）：
 
-> **WebUI 更新后的 Updater 同步：** WebUI 当前只更新 Sakura AI 应用镜像，不会替换宿主机上的 Host Updater；就绪项“Updater 文件可用”仅表示目标 Release 包含对应二进制与校验文件。应用更新完成并确认 `/health` 已返回新版本后，在 `/opt/sakura-ai` 执行以下命令，使 Updater 与当前应用 Release 保持一致：
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
+```
+
+首次部署也可以在交互菜单「生产镜像部署」中选择频道；已部署后切换频道用菜单「切换镜像频道」。
+
+`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
+
+`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装 Host Updater。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+
+> **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：
 >
 > ```bash
 > sudo ./start.sh updater reinstall
@@ -181,11 +190,11 @@ sudo ./start.sh --prod
 >
 > `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再依次停止、安装、启动并输出新状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁，命令会 fail-closed，并要求管理员先显式停止旧 daemon。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
 
-卸载默认保留数据库等 Docker 数据卷；只有显式 `--purge` 才会删除数据卷和 `.deploy` 部署状态：
+卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和部署文件。对于 `/opt/sakura-ai` 等独立安装目录，完全卸载后只保留 `start.sh`，方便干净地重新部署；源码仓库不会删除源码。两种模式共用同一确认词 `UNINSTALL`：
 
 ```bash
-sudo ./start.sh uninstall          # 保留数据，可重新部署
-sudo ./start.sh uninstall --purge  # 永久删除数据库/缓存卷与部署状态
+sudo ./start.sh uninstall          # 标准卸载：保留数据，可重新部署
+sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh
 ```
 
 **仅 Web 镜像**（MySQL/Redis 自备）：
@@ -202,22 +211,36 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）：
+首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）。`start.sh` 在前台等待的部署成功后会直接显示当前 Setup Token；也可在主菜单选择“查看容器当前日志”→“Web”重新查看：
 
 ```bash
-# 在 /opt/sakura-ai 下查看实时日志 / 提取首次部署 Token
+# 也可在 /opt/sakura-ai 下直接跟踪 Web 容器日志
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-落盘 DEBUG 日志、错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+主菜单的“查看往期运行日志”可读取持久化 DEBUG 日志；错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 ### 源码开发
+
+> 源码开发平台：Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。其余平台因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
+
+**uv 方式（推荐）**：
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
+uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
+uv run python -m backend.main
+```
+
+`backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
+
+**传统 pip 方式（无 uv）**：
+
+```bash
 pip install -r requirements.txt
+pip install -e './updater[dev]'
 python -m backend.main
 ```
 
@@ -269,11 +292,11 @@ AI 审查引擎 ── read_file · list_dir · search_files · git_info · comm
 ## 开发指南
 
 ```bash
-pip install -r requirements.txt      # 安装依赖
-python -m backend.main               # 启动应用
+uv sync                              # 安装依赖(uv;传统 pip 方式:pip install -r requirements.txt 且 pip install -e './updater[dev]')
+uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查
-python -m pytest -q                  # 运行测试
+uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
 ```
 
@@ -294,7 +317,7 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 | [部署指南](docs/DEPLOYMENT.md) | Docker / 源码部署、GitHub App、Setup Wizard、Host Updater |
 | [配置参考](docs/CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
 | [技术架构](docs/ARCHITECTURE.md) | 架构图、技术栈、代码结构 |
-| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | Bot 设置、权限体系、命令参考 |
+| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | 可选通知 Provider、绑定握手与命令参考 |
 | [审查协议规范](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 协议、字段校验、修复降级 |
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys、安全中心 |
 | [API v1 参考文档](docs/api-v1-reference.md) | RESTful API v1（移动端 OAuth、MFA、SSE、Billing） |

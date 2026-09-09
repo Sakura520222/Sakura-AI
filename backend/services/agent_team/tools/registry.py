@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.services.agent_team.network_policy import (
+    AgentTeamNetworkPolicy,
+    get_agent_team_network_policy,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolExecutor
 from backend.services.agent_team.tools.edit_tool import EditTool
 from backend.services.agent_team.tools.fetch_url_tool import FetchUrlTool
@@ -129,6 +133,30 @@ def get_tool_definitions(
     if (provider or "").lower() in ("glm", "zai"):
         return [_glm_compatible_schema(t.get_schema()) for t in tools]
     return [_sanitize_schema(t.get_schema()) for t in tools]
+
+
+async def get_tool_definitions_fresh(
+    role: str = "agent",
+    provider: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build model schemas after a fresh network-policy read.
+
+    ``offline`` keeps the Web adapters registered for execution-time defense
+    in depth, but does not advertise them to the model.  The synchronous
+    compatibility helper above remains static for schema-inspection callers;
+    Agent loops use this asynchronous admission path.
+    """
+
+    policy = await get_agent_team_network_policy()
+    definitions = get_tool_definitions(role=role, provider=provider)
+    if policy is AgentTeamNetworkPolicy.OFFLINE:
+        return [
+            schema
+            for schema in definitions
+            if schema.get("function", {}).get("name")
+            not in {"search_web", "fetch_url"}
+        ]
+    return definitions
 
 
 def create_executor(role: str = "agent") -> ToolExecutor:

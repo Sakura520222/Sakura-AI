@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import pytest
+from urllib.error import HTTPError, URLError
 
+import pytest
+from loguru import logger
+
+from backend.services import container_registry
 from backend.services.container_registry import (
     ContainerRegistryClient,
     ContainerRegistryError,
@@ -225,3 +229,50 @@ async def test_failed_force_refresh_persists_stale_cache_until_success():
     assert recovered["stale"] is False
     assert client._cache is recovered
     assert attempts == ["token", "recovered"]
+
+
+def test_request_json_reports_discriminating_failure_cause(monkeypatch):
+    client = ContainerRegistryClient()
+
+    def rate_limited(request, timeout=None):
+        raise HTTPError(request.full_url, 429, "Too Many Requests", None, None)
+
+    monkeypatch.setattr(container_registry, "urlopen", rate_limited)
+    with pytest.raises(ContainerRegistryError, match="HTTP 429") as caught:
+        client._request_json("https://ghcr.io/token")
+    assert caught.value.status_code == 429
+
+    def dns_failure(request, timeout=None):
+        raise URLError("<urlopen error [Errno -2] Name or service not known>")
+
+    monkeypatch.setattr(container_registry, "urlopen", dns_failure)
+    with pytest.raises(ContainerRegistryError, match="Name or service not known"):
+        client._request_json("https://ghcr.io/token")
+
+
+@pytest.mark.asyncio
+async def test_stale_fallback_surfaces_failure_reason():
+    client = ContainerRegistryClient(ttl=0)
+    client._cache = {
+        "repository": client.repository,
+        "fetched_at": "2026-08-13T00:00:00Z",
+        "stale": False,
+        "images": [{"channel": "stable", "version": "3.0.1"}],
+    }
+    client._cache_at = 0
+
+    async def fail(*args):
+        raise ContainerRegistryError(
+            "registry request failed: HTTP 429", status_code=429
+        )
+
+    client._token = fail
+    warnings: list[str] = []
+    handler = logger.add(lambda message: warnings.append(str(message)))
+    try:
+        payload = await client.list_images()
+    finally:
+        logger.remove(handler)
+    assert payload["stale"] is True
+    assert "HTTP 429" in payload["stale_reason"]
+    assert any("HTTP 429" in entry for entry in warnings)

@@ -43,6 +43,37 @@ from backend.services.activity_observability.reasoning import (
 )
 
 
+def fold_image_payloads(node: Any) -> Any:
+    """折叠序列化请求中的图片 base64 载荷 / Fold image payloads in place.
+
+    多模态请求的单张图片 base64 可达数 MB。观测性的 token 估算与加密
+    artifact 只需要请求结构，载荷在捕获边界折叠为占位标记（保留长度，
+    使估算仍能感知图片量级），不进入快照或数据库。
+    """
+
+    def _fold(value: Any) -> Any:
+        if isinstance(value, dict):
+            has_media = "media_type" in value or "mimeType" in value
+            folded: dict[str, Any] = {}
+            for key, item in value.items():
+                if key == "url" and isinstance(item, str) and item.startswith(
+                    "data:image/"
+                ):
+                    folded[key] = (
+                        f"<folded image data-url: {len(item)} chars>"
+                    )
+                elif key == "data" and has_media and isinstance(item, str):
+                    folded[key] = f"<folded image data: {len(item)} chars>"
+                else:
+                    folded[key] = _fold(item)
+            return folded
+        if isinstance(value, list):
+            return [_fold(item) for item in value]
+        return value
+
+    return _fold(node)
+
+
 class ObservedModelSender:
     """Wrap adapter.chat/stream so each invocation maps to one Attempt row."""
 
@@ -454,7 +485,7 @@ class ObservedModelSender:
         ):
             return
         try:
-            serialized = adapter.serialize_request(request)
+            serialized = fold_image_payloads(adapter.serialize_request(request))
             encoded = json.dumps(
                 serialized,
                 ensure_ascii=False,
@@ -709,7 +740,7 @@ class ObservedModelSender:
                 attempt=attempt,
                 candidate=candidate,
                 reasoning_snapshot=reasoning_snapshot,
-                payload=adapter.serialize_request(request),
+                payload=fold_image_payloads(adapter.serialize_request(request)),
             ),
         )
         try:
@@ -981,7 +1012,7 @@ class ObservedModelSender:
                 attempt=attempt,
                 candidate=candidate,
                 reasoning_snapshot=reasoning_snapshot,
-                payload=adapter.serialize_request(request),
+                payload=fold_image_payloads(adapter.serialize_request(request)),
             ),
         )
         first = False

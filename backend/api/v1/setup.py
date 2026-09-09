@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.api.v1.deps import limiter
 from backend.api.v1.responses import error_response, success_response
-from backend.core.bootstrap import is_bootstrap_mode
+from backend.core.bootstrap import (
+    get_current_step,
+    get_missing_fields,
+    is_bootstrap_mode,
+)
 from backend.core.setup_service import setup_service
 
 router = APIRouter(prefix="/setup", tags=["Setup"])
@@ -45,7 +49,21 @@ class CompleteSetupRequest(BaseModel):
     GITHUB_APP_ID: str | None = None
     GITHUB_PRIVATE_KEY: str | None = None
     GITHUB_WEBHOOK_SECRET: str | None = None
+    TELEGRAM_ENABLED: str | None = None
     TELEGRAM_BOT_TOKEN: str | None = None
+    EMAIL_ENABLED: str | None = None
+    SMTP_HOST: str | None = None
+    SMTP_PORT: str | None = None
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_FROM: str | None = None
+    SMTP_FROM_NAME: str | None = None
+    SMTP_SECURITY: str | None = None
+    NOTIFICATION_MAX_CONCURRENCY: str | None = None
+    NOTIFICATION_RETRY_MAX_ATTEMPTS: str | None = None
+    NOTIFICATION_RETRY_INITIAL_DELAY_SECONDS: str | None = None
+    NOTIFICATION_RETRY_BACKOFF_FACTOR: str | None = None
+    NOTIFICATION_RATE_LIMIT_SECONDS: str | None = None
     APP_DOMAIN: str | None = None
     APP_PORT: str | None = None
     LOG_LEVEL: str | None = None
@@ -86,27 +104,11 @@ async def get_setup_state():
             }
         )
 
-    # 获取缺失字段
-    from backend.core.config import get_settings
-
-    settings = get_settings()
-    missing = []
-    for fields in ENV_FIELD_GROUPS.values():
-        for field in fields:
-            val = getattr(settings, field.lower(), None)
-            if not val:
-                missing.append(field)
-
-    # 确定当前步骤
-    step_order = ["database", "github", "ai", "rag", "admin"]
-    current_step = 0
-    for i, step in enumerate(step_order):
-        step_fields = ENV_FIELD_GROUPS.get(step, [])
-        if any(f in missing for f in step_fields):
-            current_step = i
-            break
-    else:
-        current_step = len(step_order) - 1
+    # Readiness is defined by the shared bootstrap helpers.  Optional
+    # notification fields remain visible in ``field_groups`` for old clients,
+    # but an absent Telegram token/admin ID must not block Setup completion.
+    missing = await get_missing_fields()
+    current_step = await get_current_step()
 
     return success_response(
         data={
@@ -161,6 +163,12 @@ async def save_step(body: SaveStepRequest):
     try:
         values = body.values
 
+        # Validate the complete step before testing or initializing the
+        # database.  Step 1 performs initialization below, so relying only on
+        # ``save_configs_to_db`` would allow an invalid notification batch to
+        # trigger setup side effects first.
+        setup_service.validate_config_values(values)
+
         # 如果包含 DATABASE_URL，先初始化数据库
         if "DATABASE_URL" in values:
             db_url = values["DATABASE_URL"]
@@ -174,6 +182,8 @@ async def save_step(body: SaveStepRequest):
             data={"saved_count": saved},
             message=f"已保存 {saved} 项配置",
         )
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
     except Exception:
         logger.exception("Setup 配置保存失败 / setup save failed")
         return error_response("配置保存失败，请稍后重试", status_code=500)

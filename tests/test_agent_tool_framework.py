@@ -12,6 +12,8 @@ import json
 
 import pytest
 
+from backend.services.agent_team.execution import ExecutionResult, LocalExecutionRunner
+from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
 from backend.services.agent_team.tool_executor import AgentToolExecutor
 from backend.services.agent_team.tools.base import ToolContext, ToolExecutor, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -19,6 +21,7 @@ from backend.services.agent_team.tools.file_utils import (
     find_actual_string,
     make_unified_diff,
 )
+from backend.services.agent_team.tools.git_diff_tool import GitDiffTool
 from backend.services.agent_team.tools.grep_tool import MAX_GREP_KEYWORD_LENGTH
 from backend.services.agent_team.tools.registry import (
     create_executor,
@@ -55,6 +58,7 @@ def _setup_workspace(tmp_path):
     ctx = ToolContext(
         workspace=workspace,
         workspace_service=service,
+        execution_runner=LocalExecutionRunner(workspace, service),
         extra={"file_state": ReadFileState()},
     )
     return workspace, ctx
@@ -186,6 +190,29 @@ def test_unified_diff():
     diff = make_unified_diff("test.py", "a\nb\nc\n", "a\nx\nc\n")
     assert "--- a/test.py" in diff
     assert "+++ b/test.py" in diff
+
+
+@pytest.mark.asyncio
+async def test_git_diff_places_file_paths_after_option_terminator(tmp_path):
+    workspace, ctx = _setup_workspace(tmp_path)
+    captured: dict[str, tuple[str, ...]] = {}
+
+    async def fake_run_git(_ctx, args):
+        captured["args"] = args
+        return ExecutionResult(
+            command="git diff",
+            cwd=workspace,
+            exit_code=0,
+            stdout="diff --git --stat --stat\n",
+        )
+
+    tool = GitDiffTool()
+    tool._run_git = fake_run_git
+
+    result = await tool._run_full(["--stat"], ctx)
+
+    assert result.success
+    assert captured["args"] == ("git", "diff", "--", "--stat")
 
 
 # ── Registry ──────────────────────────────────────────
@@ -458,8 +485,18 @@ async def test_search_in_files_rejects_long_keyword(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_search_in_files_invalid_regex_case_insensitive_fallback(tmp_path):
+async def test_search_in_files_invalid_regex_case_insensitive_fallback(
+    tmp_path,
+    monkeypatch,
+):
     workspace, ctx = _setup_workspace(tmp_path)
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
     (ctx.workspace_service.resolve_inside_workspace(workspace) / "demo.py").write_text(
         "FOO[BAR\n",
         encoding="utf-8",
@@ -479,7 +516,11 @@ async def test_search_in_files_invalid_regex_case_insensitive_fallback(tmp_path)
 @pytest.mark.asyncio
 async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
     workspace, ctx = _setup_workspace(tmp_path)
-    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+    executor = AgentToolExecutor(
+        workspace,
+        ctx.workspace_service,
+        ctx.execution_runner,
+    )
 
     result = await executor._handle_search_in_files(
         {"keyword": "x" * (MAX_GREP_KEYWORD_LENGTH + 1)}
@@ -489,13 +530,24 @@ async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_search_in_files_reuses_grep_tool(tmp_path):
+async def test_legacy_search_in_files_reuses_grep_tool(tmp_path, monkeypatch):
     workspace, ctx = _setup_workspace(tmp_path)
+    async def full_access_policy():
+        return AgentTeamNetworkPolicy.FULL_ACCESS
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.execution.get_agent_team_network_policy",
+        full_access_policy,
+    )
     (ctx.workspace_service.resolve_inside_workspace(workspace) / "demo.py").write_text(
         "needle = 1\n",
         encoding="utf-8",
     )
-    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+    executor = AgentToolExecutor(
+        workspace,
+        ctx.workspace_service,
+        ctx.execution_runner,
+    )
 
     result = await executor._handle_search_in_files(
         {"keyword": "needle", "file_extension": ".py"}

@@ -7,6 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 from backend.models.agent_team_models import AgentTeamTaskStatus
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionResult,
+)
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationOutcome
 from backend.workers import agent_team_worker as worker_module
@@ -19,6 +23,10 @@ async def _fake_skills_context():
 
 async def _fake_sakura_memory(repo_owner, repo_name):
     return {"text": "sakura memory", "github_repo": None, "sakura_ref": None}
+
+
+async def _async_empty_context():
+    return ""
 
 
 async def _fake_expire_pending_prompts(self, task_id):
@@ -113,6 +121,8 @@ def _make_task(**overrides):
         "pr_number": None,
         "pr_url": None,
         "pr_head_sha": None,
+        "pr_head_branch": None,
+        "pr_head_repo_full_name": None,
         "iteration_count": 0,
         "max_iterations": 3,
         "prompt_tokens": 0,
@@ -138,9 +148,43 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     pushed = []
     created_prs = []
     submitted_reviews = []
+    admission_events = []
+
+    class FakeExecutionRunner:
+        def supports_profile(self, profile):
+            return profile in {
+                ExecutionProfile.AGENT,
+                ExecutionProfile.DEPENDENCY,
+            }
+
+        async def execute(self, request):
+            admission_events.append(("dependency", request.profile))
+            return ExecutionResult(exit_code=0)
+
+    execution_runner = FakeExecutionRunner()
 
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
+
+        async def prepare_workspace_for_execution_backend(
+            self, workspace, backend
+        ):
+            del workspace, backend
+
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
+            assert runner is execution_runner
+            assert cancel_event is not None
+            from backend.services.agent_team.execution import ExecutionRequest
+
+            await runner.execute(
+                ExecutionRequest(
+                    workspace_key="fake-workspace",
+                        command="python -m venv --copies /workspace/.venv/sandbox",
+                    profile=ExecutionProfile.DEPENDENCY,
+                )
+            )
 
         async def prepare_workspace(
             self,
@@ -165,7 +209,8 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
 
     class FakeLoopService:
         def __init__(self, *args, **kwargs):
-            pass
+            assert kwargs["execution_runner"] is execution_runner
+            admission_events.append(("iteration", kwargs["execution_runner"]))
 
         async def run(self, **kwargs):
             return _passing_outcome()
@@ -223,6 +268,15 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+    async def fake_create_runner(self, workspace, workspace_service):
+        admission_events.append(("factory", workspace))
+        return execution_runner
+
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_create_agent_execution_runner",
+        fake_create_runner,
+    )
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_task", fake_load_task)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_update_task", fake_update_task)
     monkeypatch.setattr(
@@ -251,6 +305,11 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     assert pushed and pushed[0]["branch_name"] == "feature/agent-101"
     assert created_prs and created_prs[0]["draft"] is True
     assert submitted_reviews == []
+    assert [item[0] for item in admission_events] == [
+        "factory",
+        "dependency",
+        "iteration",
+    ]
 
     final_update = updates[-1]
     assert final_update["status"] == AgentTeamTaskStatus.PR_OPENED.value
@@ -264,6 +323,160 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     assert final_update["failed_role"] is None
     assert final_update["rate_limit_reset_at"] is None
     assert "completed_at" not in final_update
+
+
+@pytest.mark.parametrize(
+    ("pushed_sha", "expected_status"),
+    [
+        ("c" * 40, AgentTeamTaskStatus.PR_OPENED.value),
+        ("a" * 40, AgentTeamTaskStatus.WAITING_HUMAN.value),
+    ],
+)
+@pytest.mark.asyncio
+async def test_agent_worker_updates_original_pr_head_without_creating_replacement_pr(
+    monkeypatch, tmp_path, pushed_sha, expected_status
+):
+    task = _make_task(
+        source_type="pr_review",
+        source_id=500,
+        source_issue_number=42,
+        base_branch="develop",
+        pr_number=42,
+        pr_url="https://github.example/owner/repo/pull/42",
+        pr_head_sha="a" * 40,
+        pr_head_branch="feature/original",
+        pr_head_repo_full_name="alice/repo-fork",
+    )
+    updates = []
+    prepared = []
+    pushed = []
+
+    class FakeGitWorkspaceService:
+        workspace_service = SimpleNamespace()
+
+        async def prepare_workspace(self, *args, **kwargs):
+            prepared.append((args, kwargs))
+            return SimpleNamespace(
+                branch_name="sakura-agent/local-task-101",
+                default_branch="feature/original",
+                commit_sha="a" * 40,
+                workspace=tmp_path,
+            )
+
+    class FakeLoopService:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def run(self, **kwargs):
+            return _passing_outcome(modified_files=["backend/example.py"])
+
+    class FakePRService:
+        async def generate_commit_message(self, **kwargs):
+            return kwargs.get("fallback_message") or "fix: original PR"
+
+        async def commit_and_push(self, **kwargs):
+            pushed.append(kwargs)
+            return pushed_sha
+
+        async def create_pull_request(self, **kwargs):
+            raise AssertionError("direct PR task must not create a replacement PR")
+
+    async def fake_load_task(self, task_id):
+        return task
+
+    async def fake_update_task(self, task_id, **kwargs):
+        updates.append(kwargs)
+        for key, value in kwargs.items():
+            setattr(task, key, value)
+
+    async def fake_save_iteration(self, **kwargs):
+        return None
+
+    async def fake_admit(self, git_service, workspace, *, cancel_event=None):
+        return object()
+
+    async def fake_resolve_bool_config(self, key, fallback):
+        return True
+
+    monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
+    monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
+    monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
+    monkeypatch.setattr(
+        worker_module, "AgentTeamGitWorkspaceService", FakeGitWorkspaceService
+    )
+    monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
+    monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+    monkeypatch.setattr(AgentTeamWorker, "_load_task", fake_load_task)
+    monkeypatch.setattr(AgentTeamWorker, "_update_task", fake_update_task)
+    monkeypatch.setattr(AgentTeamWorker, "_save_iteration", fake_save_iteration)
+    monkeypatch.setattr(
+        AgentTeamWorker,
+        "_load_task_reference_context",
+        lambda self, task: _async_empty_context(),
+    )
+    monkeypatch.setattr(AgentTeamWorker, "_admit_workspace_runner", fake_admit)
+    monkeypatch.setattr(AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config)
+
+    worker = AgentTeamWorker()
+    await worker.process_task(task.id)
+
+    assert prepared and prepared[0][0][:2] == ("owner", "repo")
+    assert prepared[0][1] == {
+        "workspace_repo_owner": "alice",
+        "workspace_repo_name": "repo-fork",
+        "source_branch": "feature/original",
+        "source_commit_sha": "a" * 40,
+    }
+    assert pushed and pushed[0]["branch_name"] == "sakura-agent/local-task-101"
+    assert pushed[0]["repo_owner"] == "owner"
+    assert pushed[0]["repo_name"] == "repo"
+    assert pushed[0]["target_repo_owner"] == "alice"
+    assert pushed[0]["target_repo_name"] == "repo-fork"
+    assert pushed[0]["target_branch_name"] == "feature/original"
+    assert pushed[0]["expected_head_sha"] == "a" * 40
+    assert updates[-1]["status"] == expected_status
+    if expected_status == AgentTeamTaskStatus.PR_OPENED.value:
+        assert updates[-1]["pr_number"] == 42
+        assert updates[-1]["pr_url"] == "https://github.example/owner/repo/pull/42"
+        assert updates[-1]["pr_head_sha"] == pushed_sha
+    else:
+        assert updates[-1]["current_phase"] == "waiting_human"
+        assert "未产生新的 Git 提交" in updates[-1]["error_message"]
+        assert "通过 Agent Team follow-up" in updates[-1]["error_message"]
+        assert "先取消当前任务" in updates[-1]["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_stale_original_pr_workspace_becomes_retryable_failure(monkeypatch):
+    updates = []
+
+    async def fake_update_task(self, task_id, **kwargs):
+        updates.append((task_id, kwargs))
+
+    monkeypatch.setattr(AgentTeamWorker, "_update_task", fake_update_task)
+
+    worker = AgentTeamWorker()
+    is_stale = await worker._stop_if_stale_original_pr_workspace(
+        101,
+        SimpleNamespace(commit_sha="c" * 40),
+        "a" * 40,
+    )
+
+    assert is_stale is True
+    assert updates == [
+        (
+            101,
+            {
+                "status": AgentTeamTaskStatus.FAILED.value,
+                "current_phase": "workspace_stale",
+                "error_message": (
+                    "原 PR head 已在 Agent 执行期间被其他提交推进，当前工作区已过期；"
+                    "旧 Agent 任务已终止，请重新触发 /agent"
+                ),
+                "failed_phase": "workspace_stale",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -293,9 +506,45 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     created_prs = []
     submitted_reviews = []
     run_kwargs = []
+    admission_events = []
+
+    class FakeExecutionRunner:
+        def supports_profile(self, profile):
+            return profile in {
+                ExecutionProfile.AGENT,
+                ExecutionProfile.DEPENDENCY,
+            }
+
+        async def execute(self, request):
+            admission_events.append(("dependency", request.profile))
+            return ExecutionResult(exit_code=0)
+
+    execution_runner = FakeExecutionRunner()
 
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
+
+        async def prepare_workspace_for_execution_backend(
+            self, workspace, backend
+        ):
+            del workspace, backend
+
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
+            assert runner is execution_runner
+            assert cancel_event is not None
+            from backend.services.agent_team.execution import ExecutionRequest
+
+            await runner.execute(
+                ExecutionRequest(
+                    workspace_key="fake-workspace",
+                    command=(
+                            "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
+                    ),
+                    profile=ExecutionProfile.DEPENDENCY,
+                )
+            )
 
         async def resume_workspace(
             self,
@@ -326,6 +575,8 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     class FakeLoopService:
         def __init__(self, workspace, *args, **kwargs):
             self.workspace = workspace
+            assert kwargs["execution_runner"] is execution_runner
+            admission_events.append(("iteration", kwargs["execution_runner"]))
 
         async def run(self, **kwargs):
             run_kwargs.append(kwargs)
@@ -378,6 +629,15 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+    async def fake_create_runner(self, workspace, workspace_service):
+        admission_events.append(("factory", workspace))
+        return execution_runner
+
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_create_agent_execution_runner",
+        fake_create_runner,
+    )
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_task", fake_load_task)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_update_task", fake_update_task)
     monkeypatch.setattr(
@@ -416,6 +676,11 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     assert updated_bodies and updated_bodies[0]["pr_number"] == 42
     assert created_prs == []
     assert submitted_reviews == []
+    assert [item[0] for item in admission_events] == [
+        "factory",
+        "dependency",
+        "iteration",
+    ]
 
     final_update = updates[-1]
     assert final_update["status"] == AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
@@ -427,3 +692,166 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     assert final_update["failed_phase"] is None
     assert final_update["failed_role"] is None
     assert final_update["rate_limit_reset_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
+    monkeypatch,
+    tmp_path,
+):
+    task = _make_task(
+        source_type="pr_review",
+        status=AgentTeamTaskStatus.ITERATING.value,
+        current_phase=AgentTeamTaskStatus.ITERATING.value,
+        workspace_path=str(tmp_path),
+        branch_name="sakura-agent/local-task-101",
+        base_branch="develop",
+        base_commit_sha="old-sha",
+        pr_number=42,
+        pr_url="https://github.example/owner/repo/pull/42",
+        pr_head_sha="old-sha",
+        pr_head_branch="feature/original",
+        pr_head_repo_full_name="alice/repo-fork",
+        iteration_count=1,
+    )
+    updates = []
+    admission_events = []
+    pushed = []
+
+    class FakeExecutionRunner:
+        def supports_profile(self, profile):
+            return profile in {
+                ExecutionProfile.AGENT,
+                ExecutionProfile.DEPENDENCY,
+            }
+
+        async def execute(self, request):
+            admission_events.append(("dependency", request.profile))
+            return ExecutionResult(exit_code=0)
+
+    execution_runner = FakeExecutionRunner()
+
+    class FakeGitWorkspaceService:
+        workspace_service = SimpleNamespace()
+
+        async def prepare_workspace_for_execution_backend(
+            self, workspace, backend
+        ):
+            del workspace, backend
+
+        async def resume_workspace(
+            self,
+            repo_owner,
+            repo_name,
+            workspace_path,
+            branch_name,
+            base_branch,
+            base_commit_sha,
+            *,
+            expected_remote_branch=None,
+            expected_remote_sha=None,
+        ):
+            assert (expected_remote_branch, expected_remote_sha) == (
+                "feature/original",
+                "old-sha",
+            )
+            return SimpleNamespace(
+                branch_name=branch_name,
+                default_branch=base_branch,
+                commit_sha=base_commit_sha,
+                workspace=tmp_path,
+            )
+
+        async def install_workspace_dependencies(
+            self, workspace, runner, *, cancel_event=None
+        ):
+            assert runner is execution_runner
+            assert cancel_event is not None
+            from backend.services.agent_team.execution import ExecutionRequest
+
+            await runner.execute(
+                ExecutionRequest(
+                    workspace_key="fake-workspace",
+                        command="python -m venv --copies /workspace/.venv/sandbox",
+                    profile=ExecutionProfile.DEPENDENCY,
+                )
+            )
+
+    class FakeLoopService:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["execution_runner"] is execution_runner
+            admission_events.append(("iteration", kwargs["execution_runner"]))
+
+        async def run(self, **kwargs):
+            return _passing_outcome()
+
+    class FakePRService:
+        def build_pr_body(self, **kwargs):
+            return "updated body"
+
+        async def generate_pr_body(self, **kwargs):
+            return kwargs["fallback_body"]
+
+        async def generate_commit_message(self, **kwargs):
+            return "feat(agent): follow up"
+
+        async def commit_and_push(self, **kwargs):
+            pushed.append(kwargs)
+            return "new-sha"
+
+        async def update_pull_request_body(self, **kwargs):
+            return None
+
+    async def fake_load_task(self, task_id):
+        return task
+
+    async def fake_update_task(self, task_id, **kwargs):
+        updates.append(kwargs)
+        for key, value in kwargs.items():
+            setattr(task, key, value)
+
+    async def fake_save_iteration(self, **kwargs):
+        return None
+
+    async def fake_create_runner(self, workspace, workspace_service):
+        admission_events.append(("factory", workspace))
+        return execution_runner
+
+    monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
+    monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
+    monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
+    monkeypatch.setattr(
+        worker_module,
+        "AgentTeamGitWorkspaceService",
+        FakeGitWorkspaceService,
+    )
+    monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
+    monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_create_agent_execution_runner",
+        fake_create_runner,
+    )
+    monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_task", fake_load_task)
+    monkeypatch.setattr(worker_module.AgentTeamWorker, "_update_task", fake_update_task)
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_save_iteration",
+        fake_save_iteration,
+    )
+
+    worker = AgentTeamWorker()
+    await worker.process_human_followup_iteration(task.id)
+
+    assert [item[0] for item in admission_events] == [
+        "factory",
+        "dependency",
+        "iteration",
+    ]
+    assert updates[-1]["status"] == AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
+    assert updates[-1]["pr_head_sha"] == "new-sha"
+    assert pushed and pushed[0]["branch_name"] == "sakura-agent/local-task-101"
+    assert pushed[0]["target_repo_owner"] == "alice"
+    assert pushed[0]["target_repo_name"] == "repo-fork"
+    assert pushed[0]["target_branch_name"] == "feature/original"
+    assert pushed[0]["expected_head_sha"] == "old-sha"

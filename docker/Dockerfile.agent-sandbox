@@ -1,0 +1,111 @@
+# Dedicated, non-root runner for the host-side sandboxd.
+#
+# This image is deliberately separate from the Web image.  It contains no
+# Sakura source/configuration, deployment state, Docker client, or credentials.
+# The daemon supplies the task workspace and bounded tmpfs mounts at runtime.
+# It carries the full multi-language Agent toolchain (C/C++, OpenJDK 25 LTS,
+# Node.js 24 LTS, Go 1.27, Rust stable) so the Web image stays lean.
+#
+# Runtime contract (sandboxer DockerRuntimeAdapter): commands run as
+# `bash --noprofile --norc -lc` under a server-owned fixed PATH, with a
+# read-only root filesystem and an empty tmpfs over /home/agent.  Every
+# toolchain binary must therefore live on the fixed PATH (or be linked into
+# /usr/local/bin) and must not depend on /home/agent or profile scripts.
+
+ARG SAKURA_BUILD_CHANNEL=unknown
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
+FROM python:3.14-slim-trixie@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
+
+ARG SAKURA_BUILD_CHANNEL=unknown
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
+
+LABEL org.opencontainers.image.source="https://github.com/Sakura520222/Sakura-AI" \
+      org.opencontainers.image.revision="${SAKURA_BUILD_REVISION}" \
+      org.opencontainers.image.version="${SAKURA_BUILD_VERSION}" \
+      org.opencontainers.image.created="${SAKURA_BUILD_CREATED}" \
+      com.sakura-ai.build.channel="${SAKURA_BUILD_CHANNEL}" \
+      com.sakura-ai.component="agent-runner"
+
+# CARGO_HOME stays inside the agent home so runtime cargo caches live on the
+# writable tmpfs; the toolchain itself is installed system-wide (see below).
+# GOTMPDIR redirects Go's build/test scratch binaries into HOME, which the
+# daemon mounts as an exec-permitted tmpfs; /tmp is noexec.
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/agent \
+    GOTMPDIR=/home/agent \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CI=true \
+    TERM=dumb \
+    NPM_CONFIG_PREFIX=/opt/npm-global \
+    CARGO_HOME=/home/agent/.cargo \
+    PATH=/opt/npm-global/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# C/C++ toolchain and utilities from trixie, plus OpenJDK 25 LTS.  Node.js 24
+# LTS comes from NodeSource (its "nodistro" suite serves every Debian release;
+# the setup script auto-detects the architecture).
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        bash \
+        build-essential \
+        ca-certificates \
+        coreutils \
+        curl \
+        git \
+        grep \
+        gzip \
+        jq \
+        libffi-dev \
+        openjdk-25-jdk-headless \
+        pkg-config \
+        tar \
+        unzip \
+        xz-utils \
+        zip \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install --no-install-recommends -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Go 1.27 — official tarball; the architecture is detected for amd64/arm64.
+# The binaries are linked into /usr/local/bin so the daemon's fixed PATH
+# finds them without any profile script.
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://go.dev/dl/go1.27.1.linux-${ARCH}.tar.gz" \
+       | tar -C /usr/local -xzf - \
+    && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+# Rust stable via rustup (minimal profile = rustc + std + cargo).  The
+# toolchain lives in system directories because /home/agent is an ephemeral
+# tmpfs at runtime; the real toolchain binaries (not the rustup shims) are
+# linked onto the fixed PATH, so RUSTUP_HOME is never needed at runtime.
+# The env prefix must sit on the piped sh: in a pipeline it binds only to
+# the command it precedes, so prefixing the curl would leave rustup's
+# homes at their defaults under /home/agent.
+RUN curl -fsSL https://sh.rustup.rs \
+    | CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup \
+      sh -s -- -y --profile minimal --default-toolchain stable \
+    && ln -s /usr/local/rustup/toolchains/stable-*/bin/cargo /usr/local/bin/cargo \
+    && ln -s /usr/local/rustup/toolchains/stable-*/bin/rustc /usr/local/bin/rustc \
+    && ln -s /usr/local/rustup/toolchains/stable-*/bin/rustdoc /usr/local/bin/rustdoc
+
+# Python QA tools and the non-root account.
+RUN python -m pip install --no-cache-dir --disable-pip-version-check \
+        pytest \
+        ruff \
+    && groupadd --gid 65532 agent \
+    && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/agent \
+        --shell /bin/bash agent \
+    && mkdir -p /opt/npm-global /home/agent/.cargo /workspace \
+    && chown -R 65532:65532 /opt/npm-global /home/agent /workspace \
+    && chmod 0700 /home/agent
+
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT []
+CMD []

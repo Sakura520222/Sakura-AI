@@ -5,8 +5,14 @@
         <span class="px-2.5 py-1 rounded-full text-xs font-medium
             {% if analysis.status == 'completed' %}bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400
             {% elif analysis.status == 'failed' %}bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400
+            {% elif analysis.status == 'cancelled' %}bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400
             {% else %}bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400{% endif %}">
-            {{ analysis.status }}
+            {% if analysis.status == 'completed' %}{{ _('issue.completed_status') }}
+            {% elif analysis.status == 'failed' %}{{ _('issue.failed_status') }}
+            {% elif analysis.status == 'cancelled' %}{{ _('issue.cancelled_status') }}
+            {% elif analysis.status == 'analyzing' %}{{ _('issue.analyzing_status') }}
+            {% elif analysis.status == 'pending' %}{{ _('issue.pending_status') }}
+            {% else %}{{ analysis.status or _('activity.unknown') }}{% endif %}
         </span>
     </div>
 

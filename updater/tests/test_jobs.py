@@ -9,7 +9,25 @@ from sakura_ai_updater.jobs import (
     UpdateInProgressError,
     UpdaterMaintenanceError,
 )
+from sakura_ai_updater.registry import RegistryClient, RegistryTargetError
 from sakura_ai_updater.state import load_state, reconcile_interrupted_job
+
+
+@pytest.fixture(autouse=True)
+def _stub_stable_registry(monkeypatch):
+    """Model the production tag/latest equality check without network I/O."""
+
+    digest = "sha256:" + "c" * 64
+
+    monkeypatch.setattr(RegistryClient, "_token_sync", lambda self, repository: "test-token")
+
+    def manifest(self, tag, token):
+        assert token == "test-token"
+        if tag == "latest" or tag.startswith("v"):
+            return digest
+        raise AssertionError(f"unexpected stable registry reference: {tag}")
+
+    monkeypatch.setattr(RegistryClient, "_manifest_sync", manifest)
 
 
 class _Release:
@@ -19,12 +37,34 @@ class _Release:
             "version": version,
             "channel": "stable",
             "min_upgrade_from": "0.0.0",
-            "image": f"ghcr.io/example/app:v{version}",
+            "image": f"ghcr.io/sakura520222/sakura-ai:v{version}",
             "updater": {"protocol_version": 1},
         }
 
     async def fetch_manifest(self, version=None):
         return self.manifest
+
+    async def resolve_stable_target(self, version=None, *, expected_digest=None):
+        version = version or self.manifest["version"]
+        digest = expected_digest or ("sha256:" + "c" * 64)
+        return {
+            "channel": "stable",
+            "version": version,
+            "tag": f"v{version}",
+            "digest": digest,
+        }
+
+    async def fetch_sandbox_manifest(self, version):
+        return {
+            "schema_version": 1,
+            "manifest": "agent-sandbox",
+            "version": version,
+            "channel": "stable",
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+            + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+            + "b" * 64,
+        }
 
     async def has_required_assets(self, manifest, version=None):
         return True
@@ -43,6 +83,12 @@ class _Deployment:
 
     def read_deploy_mode(self):
         return self.mode
+
+    async def current_state(self):
+        return {
+            "current_channel": "stable",
+            "running_container_digest": "sha256:" + "d" * 64,
+        }
 
     async def disk_space_sufficient(self, threshold):
         return True, threshold * 2
@@ -117,10 +163,97 @@ async def test_preflight_records_status_readiness_snapshot(tmp_path):
         },
         "target": {
             "version": "3.1.0",
-            "image": "ghcr.io/example/app:v3.1.0",
+            "tag": "v3.1.0",
+            "digest": "sha256:" + "c" * 64,
+            "image": "ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:" + "c" * 64,
             "channel": "stable",
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+            + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+            + "b" * 64,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_check_and_empty_body_update_use_the_same_digest_pinned_stable_target(
+    tmp_path,
+):
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+
+    checked = await orchestrator.check()
+    target = checked["target"]
+    assert target == {
+        "channel": "stable",
+        "version": "3.1.0",
+        "tag": "v3.1.0",
+        "digest": "sha256:" + "c" * 64,
+        "image": "ghcr.io/sakura520222/sakura-ai:v3.1.0@sha256:" + "c" * 64,
+        "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+        + "a" * 64,
+        "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+        + "b" * 64,
+    }
+
+    # ``None`` is the representation of an empty /v1/update body.  It must
+    # resolve through check() to the structured StableTarget instead of
+    # turning the release version into a mutable tag reference.
+    job_id = await orchestrator.submit_update(None)
+    await orchestrator.wait_for_job(job_id)
+    job = orchestrator.get_job(job_id)
+    assert job is not None
+    assert job.target_channel == "stable"
+    assert job.target_tag == "v3.1.0"
+    assert job.target_digest == "sha256:" + "c" * 64
+    assert job.target_image == target["image"]
+
+
+@pytest.mark.asyncio
+async def test_stable_preflight_rejects_partial_target_without_tag_and_digest(tmp_path):
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+
+    with pytest.raises(RegistryTargetError):
+        await orchestrator.preflight(
+            {"channel": "stable", "version": "3.1.0"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_preflight_rejects_partial_persisted_sandbox_pair(tmp_path):
+    class _PartialDeployment(_Deployment):
+        def sandbox_image_refs(self):
+            return {
+                "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+                + "a" * 64,
+                "runner_image": None,
+            }
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        _Adapter(),
+        _Release(),
+        _PartialDeployment(),
+        disk_space_threshold=1,
+    )
+    result = await orchestrator.preflight("3.1.0")
+    checks = {item["name"]: item for item in result["checks"]}
+    assert result["can_update"] is False
+    assert checks["current_sandbox_pair_complete"]["passed"] is False
+    assert "only one sandbox image digest" in checks[
+        "current_sandbox_pair_complete"
+    ]["detail"]
 
 
 @pytest.mark.asyncio
@@ -136,11 +269,23 @@ async def test_update_success_clears_active_gate(tmp_path):
     store = load_state(path)
     assert store.active_job_id is None
     assert store.current_job and store.current_job.state == "success"
+    assert store.current_job.target_sandboxd_image == (
+        "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    )
+    assert store.current_job.target_runner_image == (
+        "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    )
     assert store.current_job.started_at and store.current_job.started_at.endswith("Z")
     assert store.current_job.updated_at and store.current_job.updated_at.endswith("Z")
     assert [call[0] for call in adapter.calls] == [
         "preflight",
         "preflight",
+        "preflight",
+        "preflight",
+        "preflight",
+        "preflight",
+        "pull",
+        "pull",
         "pull",
         "activate",
         "health",
@@ -226,7 +371,7 @@ async def test_update_retries_one_timed_out_pull_and_records_retry(tmp_path):
     assert job is not None
     assert job.state == "success"
     assert job.retry_count == 1
-    assert [call[0] for call in adapter.calls].count("pull") == 2
+    assert [call[0] for call in adapter.calls].count("pull") == 4
     assert [call[0] for call in adapter.calls][-2:] == ["activate", "health"]
 
 
@@ -323,3 +468,49 @@ def test_get_job_logs_returns_endpoint_snapshot_payload(tmp_path):
     )
     payload = orchestrator.get_job_logs("missing")
     assert payload == {"job_id": "missing", "logs": [], "truncated": False}
+
+
+@pytest.mark.asyncio
+async def test_health_failure_rolls_back_web_and_sandbox_transaction(tmp_path):
+    class _TransactionalAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.rollback_calls = []
+            self.health_calls = []
+
+        async def capture_snapshot(self):
+            return {"old": "deployment"}
+
+        async def activate(self, image, sandboxd_image, runner_image):
+            self.calls.append(("activate", image, sandboxd_image, runner_image))
+
+        async def rollback(self, snapshot):
+            self.rollback_calls.append(snapshot)
+
+        async def health_check(self, version):
+            self.health_calls.append(version)
+            if version == "3.1.0" or (
+                isinstance(version, dict) and version.get("version") == "3.1.0"
+            ):
+                raise RuntimeError("new Web health failed")
+
+    adapter = _TransactionalAdapter()
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"),
+        adapter,
+        _Release(),
+        _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(str(tmp_path / "state.json")).current_job
+    assert job is not None
+    assert job.state == "failed"
+    assert job.rollback_attempted is True
+    assert adapter.rollback_calls == [{"old": "deployment"}]
+    assert adapter.health_calls == [
+        {"version": "3.1.0", "channel": "stable"},
+        "3.0.0",
+    ]

@@ -4,10 +4,11 @@ import asyncio
 import json
 import math
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import and_, delete, desc, func, select
+from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import (
@@ -31,6 +32,56 @@ def _apply_scope_filter(query, scope_filter):
     if scope_filter is not None:
         return query.where(scope_filter)
     return query
+
+
+def _repo_name_candidates(*repo_names: str | None) -> tuple[str, ...]:
+    """Return the short/full repository spellings used by Issue records.
+
+    Webhook payloads use the short repository name while older records and
+    related tables may use ``owner/repository``.  Keep this compatibility
+    local to the Issue lifecycle queries instead of changing the persisted
+    representation globally.
+    """
+    candidates: set[str] = set()
+    for value in repo_names:
+        if not value:
+            continue
+        normalized = str(value).strip()
+        if not normalized:
+            continue
+        candidates.add(normalized)
+        if "/" in normalized:
+            candidates.add(normalized.rsplit("/", 1)[-1])
+    return tuple(candidates)
+
+
+def _issue_analysis_identity(
+    repo_owner: str | None,
+    repo_name: str | None,
+    issue_number: int,
+) -> list[Any]:
+    """Build an owner-scoped identity for IssueAnalysis lifecycle updates.
+
+    Issue records exist in both the historical short ``repo_name`` spelling
+    and the newer ``owner/repo`` spelling.  The owner predicate is mandatory
+    here: a short name alone must never allow one owner's Issue to mutate
+    another owner's same-named repository.
+    """
+    owner = str(repo_owner or "").strip()
+    name = str(repo_name or "").strip()
+    if not owner or not name:
+        return []
+
+    short_name = name.rsplit("/", 1)[-1].strip()
+    if not short_name:
+        return []
+
+    repo_names = _repo_name_candidates(short_name, f"{owner}/{short_name}")
+    return [
+        IssueAnalysis.repo_name.in_(repo_names),
+        IssueAnalysis.repo_owner == owner,
+        IssueAnalysis.issue_number == issue_number,
+    ]
 
 
 class IssueService:
@@ -69,24 +120,65 @@ class IssueService:
         analysis_data: dict[str, Any],
         issue_info: dict[str, Any],
         db: AsyncSession,
+        *,
+        analysis_id: int | None = None,
     ) -> IssueAnalysis | None:
-        """保存分析结果到数据库（更新已有的 PENDING 记录，而非创建新记录）"""
+        """保存分析结果到数据库（更新已有的 PENDING 记录，而非创建新记录）
 
-        # 查找已有的 PENDING/ANALYZING 记录
-        conditions = [
-            IssueAnalysis.repo_name == issue_info["repo_name"],
-            IssueAnalysis.issue_number == issue_info["issue_number"],
-            IssueAnalysis.status.in_(
-                [
-                    IssueAnalysisStatus.PENDING.value,
-                    IssueAnalysisStatus.ANALYZING.value,
-                ]
-            ),
-        ]
-        if "analysis_version" in issue_info:
-            conditions.append(
-                IssueAnalysis.analysis_version == issue_info["analysis_version"]
+        The final write is conditional on the record still being active.  A
+        close webhook can therefore win the race and mark the record
+        ``cancelled`` without a stale worker changing it back to
+        ``completed``.
+
+        ``analysis_id`` is supplied by the worker that created the row.  It is
+        intentionally preferred over an issue/version lookup because concurrent
+        analyses for one Issue must never update each other's result.
+        """
+
+        # Prefer the immutable task-bound id.  The fallback keeps direct legacy
+        # callers working, but remains owner-scoped whenever a webhook supplies
+        # the repository owner.
+        if analysis_id is not None:
+            conditions = [IssueAnalysis.id == analysis_id]
+        else:
+            repo_names = _repo_name_candidates(
+                issue_info.get("repo_name"),
+                issue_info.get("repo_full_name"),
+                (
+                    f"{issue_info.get('repo_owner', '')}/{issue_info.get('repo_name', '')}"
+                    if issue_info.get("repo_owner") and issue_info.get("repo_name")
+                    else None
+                ),
             )
+            if not repo_names:
+                return None
+            conditions = [
+                IssueAnalysis.repo_name.in_(repo_names),
+                IssueAnalysis.issue_number == issue_info["issue_number"],
+            ]
+            if issue_info.get("repo_owner"):
+                conditions.append(
+                    IssueAnalysis.repo_owner == issue_info["repo_owner"]
+                )
+            if "analysis_version" in issue_info:
+                conditions.append(
+                    IssueAnalysis.analysis_version == issue_info["analysis_version"]
+                )
+
+        conditions.extend(
+            [
+                IssueAnalysis.status.in_(
+                    [
+                        IssueAnalysisStatus.PENDING.value,
+                        IssueAnalysisStatus.ANALYZING.value,
+                    ]
+                ),
+                or_(
+                    IssueAnalysis.issue_state.is_(None),
+                    IssueAnalysis.issue_state != "closed",
+                ),
+            ]
+        )
         result = await db.execute(
             select(IssueAnalysis)
             .where(and_(*conditions))
@@ -98,31 +190,63 @@ class IssueService:
         if not record:
             return None
 
-        # 更新已有记录
-        record.category = analysis_data.get("category")
-        record.priority = analysis_data.get("priority")
-        record.summary = analysis_data.get("summary")
-        record.feasibility = analysis_data.get("feasibility")
-        record.suggested_title = analysis_data.get("suggested_title")
-        record.suggested_assignees = json.dumps(
-            analysis_data.get("suggested_assignees", []), ensure_ascii=False
+        # Update only while the selected row is still active.  This second
+        # conditional boundary is intentional: the close webhook may commit
+        # between the select above and this write.
+        update_result = await db.execute(
+            update(IssueAnalysis)
+            .where(
+                and_(
+                    IssueAnalysis.id == record.id,
+                    (
+                        IssueAnalysis.repo_owner == issue_info["repo_owner"]
+                        if issue_info.get("repo_owner")
+                        else True
+                    ),
+                    IssueAnalysis.status.in_(
+                        [
+                            IssueAnalysisStatus.PENDING.value,
+                            IssueAnalysisStatus.ANALYZING.value,
+                        ]
+                    ),
+                    or_(
+                        IssueAnalysis.issue_state.is_(None),
+                        IssueAnalysis.issue_state != "closed",
+                    ),
+                )
+            )
+            .values(
+                category=analysis_data.get("category"),
+                priority=analysis_data.get("priority"),
+                summary=analysis_data.get("summary"),
+                feasibility=analysis_data.get("feasibility"),
+                suggested_title=analysis_data.get("suggested_title"),
+                suggested_assignees=json.dumps(
+                    analysis_data.get("suggested_assignees", []), ensure_ascii=False
+                ),
+                suggested_labels=json.dumps(
+                    analysis_data.get("suggested_labels", []), ensure_ascii=False
+                ),
+                suggested_milestone=analysis_data.get("suggested_milestone"),
+                duplicate_of=analysis_data.get("duplicate_of"),
+                related_prs=json.dumps(
+                    analysis_data.get("related_prs", []), ensure_ascii=False
+                ),
+                analysis_detail=json.dumps(analysis_data, ensure_ascii=False),
+                status=IssueAnalysisStatus.COMPLETED.value,
+                prompt_tokens=analysis_data.get("prompt_tokens", 0),
+                completion_tokens=analysis_data.get("completion_tokens", 0),
+                estimated_cost=analysis_data.get("estimated_cost", 0),
+                completed_at=now_utc(),
+            )
         )
-        record.suggested_labels = json.dumps(
-            analysis_data.get("suggested_labels", []), ensure_ascii=False
-        )
-        record.suggested_milestone = analysis_data.get("suggested_milestone")
-        record.duplicate_of = analysis_data.get("duplicate_of")
-        record.related_prs = json.dumps(
-            analysis_data.get("related_prs", []), ensure_ascii=False
-        )
-        record.analysis_detail = json.dumps(analysis_data, ensure_ascii=False)
-        record.status = IssueAnalysisStatus.COMPLETED.value
-        record.prompt_tokens = analysis_data.get("prompt_tokens", 0)
-        record.completion_tokens = analysis_data.get("completion_tokens", 0)
-        record.estimated_cost = analysis_data.get("estimated_cost", 0)
-        record.completed_at = now_utc()
 
         await db.commit()
+        if getattr(update_result, "rowcount", None) == 0:
+            # The row was cancelled/closed by another transaction after the
+            # lookup.  Treat that as a normal stale-worker outcome.
+            return None
+
         await db.refresh(record)
         return record
 
@@ -130,11 +254,12 @@ class IssueService:
         self, repo_name: str, issue_number: int, db: AsyncSession
     ) -> IssueAnalysis | None:
         """获取 Issue 的最新分析记录"""
+        repo_names = _repo_name_candidates(repo_name)
         result = await db.execute(
             select(IssueAnalysis)
             .where(
                 and_(
-                    IssueAnalysis.repo_name == repo_name,
+                    IssueAnalysis.repo_name.in_(repo_names),
                     IssueAnalysis.issue_number == issue_number,
                     IssueAnalysis.status != "archived",
                 )
@@ -148,11 +273,12 @@ class IssueService:
         self, repo_name: str, issue_number: int, db: AsyncSession
     ) -> list[IssueAnalysis]:
         """获取 Issue 的所有分析版本历史"""
+        repo_names = _repo_name_candidates(repo_name)
         result = await db.execute(
             select(IssueAnalysis)
             .where(
                 and_(
-                    IssueAnalysis.repo_name == repo_name,
+                    IssueAnalysis.repo_name.in_(repo_names),
                     IssueAnalysis.issue_number == issue_number,
                 )
             )
@@ -175,8 +301,9 @@ class IssueService:
         count_query = select(func.count(IssueAnalysis.id))
 
         if repo_name:
-            query = query.where(IssueAnalysis.repo_name == repo_name)
-            count_query = count_query.where(IssueAnalysis.repo_name == repo_name)
+            repo_names = _repo_name_candidates(repo_name)
+            query = query.where(IssueAnalysis.repo_name.in_(repo_names))
+            count_query = count_query.where(IssueAnalysis.repo_name.in_(repo_names))
         if category:
             query = query.where(IssueAnalysis.category == category)
             count_query = count_query.where(IssueAnalysis.category == category)
@@ -196,6 +323,82 @@ class IssueService:
         items = result.scalars().all()
 
         return list(items), total
+
+    async def mark_issue_closed(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        db: AsyncSession,
+    ) -> dict[str, int]:
+        """Persist a GitHub Issue close without reviving completed results.
+
+        Active analysis rows are transitioned to ``cancelled``.  Completed
+        rows retain their terminal analysis status, while every matching row
+        receives the GitHub lifecycle state ``closed``.  The two updates run
+        in one transaction so a result save cannot observe a half-applied
+        close.
+        """
+        identity = _issue_analysis_identity(repo_owner, repo_name, issue_number)
+        if not identity:
+            return {"cancelled": 0, "state_updated": 0}
+
+        cancelled_result = await db.execute(
+            update(IssueAnalysis)
+            .where(
+                and_(
+                    *identity,
+                    IssueAnalysis.status.in_(
+                        [
+                            IssueAnalysisStatus.PENDING.value,
+                            IssueAnalysisStatus.ANALYZING.value,
+                        ]
+                    ),
+                )
+            )
+            .values(
+                status=IssueAnalysisStatus.CANCELLED.value,
+                issue_state="closed",
+            )
+        )
+        state_result = await db.execute(
+            update(IssueAnalysis).where(and_(*identity)).values(issue_state="closed")
+        )
+        await db.commit()
+
+        return {
+            "cancelled": int(getattr(cancelled_result, "rowcount", 0) or 0),
+            "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
+        }
+
+    async def mark_issue_reopened(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        db: AsyncSession,
+    ) -> dict[str, int]:
+        """Restore the GitHub lifecycle state for one owner's Issue.
+
+        ``IssueAnalysis.status`` represents the analysis outcome and is left
+        untouched.  Only the independent GitHub lifecycle field is restored,
+        and both short and full repository spellings are matched under the
+        supplied owner.
+        """
+        identity = _issue_analysis_identity(repo_owner, repo_name, issue_number)
+        if not identity:
+            return {"state_updated": 0}
+
+        state_result = await db.execute(
+            update(IssueAnalysis)
+            .where(and_(*identity))
+            .values(issue_state="open")
+        )
+        await db.commit()
+
+        return {
+            "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
+        }
 
     async def post_analysis_comment(
         self,
@@ -310,6 +513,8 @@ class IssueService:
         issue_number: int,
         suggested_labels: list,
         db: AsyncSession,
+        *,
+        cancellation_checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """应用建议标签到 Issue（集成 LabelService，支持自动创建和置信度过滤）
 
@@ -324,6 +529,10 @@ class IssueService:
             应用结果字典
         """
         result = {"applied": [], "suggested": [], "created": [], "failed": []}
+
+        def checkpoint() -> None:
+            if cancellation_checkpoint is not None:
+                cancellation_checkpoint()
 
         if not suggested_labels:
             return result
@@ -342,6 +551,9 @@ class IssueService:
 
         existing_labels = await label_service.get_repo_labels(repo_owner, repo_name)
         existing_labels_lower = {k.lower(): k for k in existing_labels}
+        # A read-only label fetch may complete after cancellation was
+        # requested.  Re-check before entering the mutation loop.
+        checkpoint()
 
         for label in suggested_labels:
             label_name = label.get("name", "")
@@ -366,6 +578,10 @@ class IssueService:
                 default_info = label_service.DEFAULT_LABELS.get(
                     label_name, {"color": "0366d6", "description": ""}
                 )
+                # ``to_thread`` cannot be cancelled once GitHub has received
+                # the request.  Check immediately before each mutation so a
+                # later suggested label is never started after cancellation.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.create_label,
                     repo_owner,
@@ -386,6 +602,9 @@ class IssueService:
 
             # 根据置信度决定是否自动应用
             if confidence >= threshold:
+                # Creation above and applying the label are independent
+                # mutations; cancellation must be checked between them too.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.add_labels_to_issue,
                     repo_owner,
@@ -421,6 +640,8 @@ class IssueService:
         repo_name: str,
         issue_number: int,
         suggested_assignees: list[dict[str, Any]],
+        *,
+        cancellation_checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """应用建议指派人到 Issue（支持置信度过滤）
 
@@ -431,6 +652,10 @@ class IssueService:
         Returns:
             {"applied": [], "suggested": [], "failed": []}
         """
+        def checkpoint() -> None:
+            if cancellation_checkpoint is not None:
+                cancellation_checkpoint()
+
         threshold = await get_dynamic_config("issue_assignee_confidence_threshold")
         max_assign = await get_dynamic_config("issue_auto_assign_max")
         result: dict[str, Any] = {"applied": [], "suggested": [], "failed": []}
@@ -442,6 +667,10 @@ class IssueService:
         collaborators = await asyncio.to_thread(
             self.github_app.get_repo_collaborators, repo_owner, repo_name
         )
+        # Collaborator discovery is read-only; after it returns, do not begin
+        # an assignment mutation if the lifecycle cancellation arrived while
+        # the lookup was in flight.
+        checkpoint()
         if not collaborators:
             logger.warning(
                 f"Issue #{issue_number} 协作者列表为空，可能是权限不足，自动指派将降级为仅建议"
@@ -480,6 +709,9 @@ class IssueService:
 
             # 根据置信度决定是否自动指派
             if confidence >= threshold and len(result["applied"]) < max_assign:
+                # Check immediately before every add_assignees mutation in the
+                # loop, including after any previous mutation has completed.
+                checkpoint()
                 success = await asyncio.to_thread(
                     self.github_app.add_assignees_to_issue,
                     repo_owner,
@@ -799,6 +1031,7 @@ class IssueService:
 
         # Full repo name for DB queries / 数据库查询用的完整仓库名
         full_repo_name = f"{repo_owner}/{repo_name}"
+        repo_names = _repo_name_candidates(full_repo_name, repo_name)
         issue_label = f"{full_repo_name}#{issue_number}"
 
         # 1. Remove from ChromaDB vector index / 从 ChromaDB 向量索引中删除
@@ -814,7 +1047,8 @@ class IssueService:
             (
                 IssueAnalysis,
                 [
-                    IssueAnalysis.repo_name == full_repo_name,
+                    IssueAnalysis.repo_name.in_(repo_names),
+                    IssueAnalysis.repo_owner == repo_owner,
                     IssueAnalysis.issue_number == issue_number,
                 ],
                 "IssueAnalysis",
@@ -822,6 +1056,8 @@ class IssueService:
             (
                 PRIssueLink,
                 [
+                    # These legacy tables have no owner column; only the full
+                    # owner/name spelling is safe for destructive cleanup.
                     PRIssueLink.repo_name == full_repo_name,
                     PRIssueLink.issue_number == issue_number,
                 ],
@@ -830,6 +1066,8 @@ class IssueService:
             (
                 IssueAnalysisQueue,
                 [
+                    # See PRIssueLink above: never delete another owner's
+                    # short-name queue row.
                     IssueAnalysisQueue.repo_name == full_repo_name,
                     IssueAnalysisQueue.issue_number == issue_number,
                 ],

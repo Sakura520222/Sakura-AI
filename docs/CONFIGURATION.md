@@ -32,7 +32,7 @@
 
 ## 已移除的配置项
 
-以下键在第二阶段已从 Settings、动态配置注册与消费点中删除；**DB 旧行惰性保留、种子自动消失，无迁移**。旧备份（v1/v2）中仍含这些键时导入会被宽容跳过（见「配置备份」）。
+以下键已分批从 Settings、动态配置注册与消费点中删除；**DB 旧行惰性保留、种子自动消失，无迁移**。旧备份（v1/v2）中仍含这些键时导入会被宽容跳过（见「配置备份」）。
 
 ### 删除检查/循环上限 → 真·无限制
 
@@ -76,6 +76,12 @@
 ### Sakura 平铺键 → 合并入 `strategy.context_enhancement.sakura_memory` 嵌套节
 
 `sakura_memory_enabled`、`sakura_reflection_enabled`、`sakura_issue_reflection_enabled`、`sakura_consolidation_interval`、`sakura_max_memory_chars`、`sakura_max_sakura_chars`、`sakura_auto_init`、`sakura_auto_create_subdirs`、`sakura_consolidation_partial_commit`、`sakura_knowledge_extraction_enabled`、`sakura_extraction_min_reflections` 共 11 键——单一事实源改为节存储嵌套节（见「项目记忆系统」节，全局配置页「上下文增强」卡片内编辑）；`sakura_extraction_max_iterations` / `sakura_consolidation_max_iterations` 2 键删除轮次上限（依赖模型自然停止，不设时长上限）。
+
+### Telegram 管理员 ID → 数据库超管角色 + 绑定通知端点
+
+| 键 | 移除后行为 |
+|---|---|
+| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；管理员 Telegram 通知与 Bot 命令权限以数据库 `super_admin` 用户的已绑定通知端点为准（Setup Wizard 绑定、Bot `/start` 绑定，或管理员在用户管理中填写 Telegram ID 时自动落库）。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
 
 ## 配置备份
 
@@ -220,14 +226,40 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止与手动取消 |
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
-| 全局配置页「Agent 专家团队」组 | 验证命令黑名单 | 控制可执行的验证命令 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
+| 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 完全隔离；`web_tools`（默认）仅授权受控 Web 工具；`full_access` 允许 Agent/Dependency runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_max_iterations_per_task` | 单任务最大自动迭代次数 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
 | 全局配置页「Agent Skills」组 | `agent_team_skills_enabled` | Agent 是否可加载技能 |
 | 全局配置页「Agent Skills」组 | `agent_team_skills_root` | 技能本地存储根目录 |
 
-> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。
+> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、grep 和依赖 hook 使用 `AGENT` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+
+下列设置属于部署安全边界，不通过 WebUI 或数据库动态修改：
+
+| 环境变量 / Settings | 默认 / 来源 | 说明 |
+|---|---|---|
+| `AGENT_TEAM_SANDBOX_SOCKET` / `agent_team_sandbox_socket` | `/run/sakura-ai-sandbox/sandboxd.sock` | 独立 sandboxd UDS；不得与 updater socket 共用 |
+| `AGENT_TEAM_SANDBOX_RUNTIME` | `docker` | Backend health admission 期望的运行时 |
+| `AGENT_TEAM_SANDBOX_RUNNER_IMAGE_DIGEST` | Release 的 `agent-sandbox-manifest.json` | runner 的不可变镜像引用；生产必须是 `name@sha256:...` |
+| `AGENT_TEAM_SANDBOX_EXPECTED_INSTANCE_ID` | `start.sh` 持久化并注入 | 绑定当前受管 sandboxd 实例，缺失或不匹配即拒绝 Agent 执行 |
+| `AGENT_TEAM_SANDBOX_EXPECTED_WORKSPACE_ROOT` | `start.sh` 计算的宿主绝对路径 | 仅作为 daemon 身份；Web 实际访问路径仍是 `/app/workplace` |
+| `SAKURA_SANDBOX_EGRESS_NETWORK` | `bridge`；部署管理员固定 | sandboxd 服务端把 wire 上的 `egress` 能力映射到该 Docker 网络；允许内置 `bridge` 或安全的 named network，拒绝 `host`、`container:*`、`ns:*` 和任意参数 |
+| `SAKURA_SANDBOX_DEPENDENCY_NETWORK` | 旧部署兼容键 | 仅用于迁移旧 deployment.env；新生命周期使用 `SAKURA_SANDBOX_EGRESS_NETWORK`，WebUI 和执行请求都不接触 Docker 网络名 |
+| `AGENT_TEAM_SANDBOX_TIMEOUT_SECONDS` | 900 | Backend 请求上限；daemon 仍使用更严格的服务端 clamp |
+| `AGENT_TEAM_SANDBOX_MAX_OUTPUT_BYTES` | 1 MiB | stdout + stderr 合计字节上限 |
+
+`agent_team_network_policy` 每次 Agent 工具或 sandbox 调用都会从数据库 fresh 读取，保存后
+下一次调用立即生效：`offline` 禁止受控 Web 工具且 runner 为 `network none`；`web_tools`
+（默认）只允许 `search_web`/`fetch_url`（仍受既有开关和 SSRF/域名策略约束），runner 仍为
+`network none`；`full_access` 同时把 Agent 与 Dependency runner 映射为 UDS `network_mode=egress`。
+请求只携带 `none|egress` 能力，不携带 Docker 网络名。sandboxd 服务端固定使用
+`SAKURA_SANDBOX_EGRESS_NETWORK`（默认 Docker `bridge`），因此全权限模式在全新 Docker
+环境无需额外创建网络即可出网；若配置 named network，该网络必须由部署管理员预先管理。
+`local` backend 无法兑现 `offline` 的 OS 隔离要求，会明确拒绝执行，不会静默降级。
+
+生产 sandboxd 的镜像、runner 镜像、Docker 参数、网络、mount、UID/GID、capabilities、资源限制和宿主 workspace root 均由部署侧控制，不能由模型请求或 Web 动态配置覆盖。Web 与 runner 不挂载 Docker socket；只有独立 sandboxd 容器持有该 socket。
 
 详见 [Agent Skills 实现](agent-skills-python-implementation.md)、[Agent 文件工具实现](agent-file-tools-python-implementation.md)。
 
@@ -307,10 +339,9 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 位置 | 键名 | 说明 |
 |---|---|---|
 | Setup Wizard 第 3 步 / WebUI「系统核心配置」 | `telegram_bot_token` | Bot Token；**修改后需重启服务生效**（Bot 实例在服务启动时构造） |
-| 环境变量（启动默认值） | `TELEGRAM_ADMIN_USER_IDS` | 超级管理员 Telegram ID（逗号分隔多个） |
 | 环境变量（启动默认值） | `TELEGRAM_DEFAULT_CHAT_ID` | 默认通知聊天 ID |
 
-> 注意：`telegram_admin_user_ids` / `telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
+> 注意：`telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
 
 ## 国际化
 
@@ -335,4 +366,4 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 ---
 
-*最后更新：2026-8-22 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

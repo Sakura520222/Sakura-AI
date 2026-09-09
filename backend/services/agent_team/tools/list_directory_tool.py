@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +19,21 @@ class ListDirectoryTool(BaseTool):
 
     name = "list_directory"
 
-    # 不允许列出这些目录的内容
-    BLOCKED_DIRS = {".git", ".ssh", "__pycache__", "node_modules"}
+    # 整树剪枝的目录（递归前剪掉，避免 .venv 等子孙条目涌入结果）
+    # / Dirs pruned entirely before descending (keeps .venv descendants out)
+    PRUNED_DIR_NAMES = {
+        ".git",
+        ".venv",
+        "venv",
+        ".sakura",
+        "node_modules",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+    }
 
     _schema = {
         "type": "function",
@@ -68,22 +82,30 @@ class ListDirectoryTool(BaseTool):
         workspace_root = Path(ctx.workspace).resolve()
         entries: list[dict[str, Any]] = []
 
+        def _entry(child: Path) -> dict[str, Any]:
+            rel = child.relative_to(workspace_root).as_posix()
+            return {
+                "name": child.name,
+                "path": rel,
+                "is_dir": child.is_dir(),
+                "size": child.stat().st_size if child.is_file() else 0,
+            }
+
         try:
-            children = resolved.rglob("*") if recursive else resolved.iterdir()
-            for child in children:
-                rel = child.relative_to(workspace_root).as_posix()
-                if any(blocked in rel.split("/") for blocked in self.BLOCKED_DIRS):
-                    continue
-                if child.name.startswith("."):
-                    continue
-                entries.append(
-                    {
-                        "name": child.name,
-                        "path": rel,
-                        "is_dir": child.is_dir(),
-                        "size": child.stat().st_size if child.is_file() else 0,
-                    }
-                )
+            if recursive:
+                for current, dir_names, file_names in os.walk(resolved):
+                    dir_names[:] = [
+                        name
+                        for name in dir_names
+                        if name not in self.PRUNED_DIR_NAMES
+                    ]
+                    for name in list(dir_names) + file_names:
+                        entries.append(_entry(Path(current) / name))
+            else:
+                for child in resolved.iterdir():
+                    if child.is_dir() and child.name in self.PRUNED_DIR_NAMES:
+                        continue
+                    entries.append(_entry(child))
         except PermissionError:
             return ToolResult(success=False, error=f"没有权限访问目录: {directory}")
 

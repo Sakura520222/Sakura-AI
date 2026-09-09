@@ -298,6 +298,84 @@ class UnifiedToolCall:
 
 
 @dataclass
+class UnifiedImagePart:
+    """归一化图片附件 / Normalized image attachment.
+
+    ``data``（base64）与 ``url`` 二选一：服务器代下载场景恒为 base64，
+    保证 Anthropic/Gemini 等仅可靠支持内联图片的协议可直接渲染；
+    ``url`` 供 OpenAI image_url 等直接引用远程图片。
+    """
+
+    url: str | None = None
+    media_type: str | None = None  # image/png 等 / e.g. image/png
+    data: str | None = None  # base64（无 padding 前缀） / base64 payload
+    detail: str | None = None  # OpenAI detail 提示 / OpenAI detail hint
+
+    def to_dict(self) -> dict[str, Any]:
+        """轻量序列化（含 base64 载荷）/ Lightweight serialization."""
+        result: dict[str, Any] = {}
+        if self.url:
+            result["url"] = self.url
+        if self.media_type:
+            result["media_type"] = self.media_type
+        if self.data:
+            result["data"] = self.data
+        if self.detail:
+            result["detail"] = self.detail
+        return result
+
+
+def images_from_mapping(raw: Any) -> list[UnifiedImagePart] | None:
+    """宽容解析旧版 dict 图片列表 / Tolerantly parse legacy dict image lists."""
+    if not isinstance(raw, list):
+        return None
+    parts: list[UnifiedImagePart] = []
+    for item in raw:
+        if isinstance(item, UnifiedImagePart):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        data = item.get("data")
+        if not url and not data:
+            continue
+        parts.append(
+            UnifiedImagePart(
+                url=str(url) if url else None,
+                media_type=str(item.get("media_type")) if item.get("media_type") else None,
+                data=str(data) if data else None,
+                detail=str(item.get("detail")) if item.get("detail") else None,
+            )
+        )
+    return parts or None
+
+
+def strip_message_images(messages: list[UnifiedMessage]) -> list[UnifiedMessage]:
+    """剥离消息中的图片附件 / Strip image attachments from messages.
+
+    模型能力不含 vision 时按既有语义在构建请求前剔除不支持的字段；
+    无图片时原样返回，避免逐轮工具循环产生额外拷贝。
+    """
+    if not any(message.images for message in messages):
+        return messages
+    stripped: list[UnifiedMessage] = []
+    for message in messages:
+        if message.images:
+            message = UnifiedMessage(
+                role=message.role,
+                content=message.content,
+                tool_calls=message.tool_calls,
+                tool_call_id=message.tool_call_id,
+                reasoning_content=message.reasoning_content,
+                name=message.name,
+                images=None,
+            )
+        stripped.append(message)
+    return stripped
+
+
+@dataclass
 class UnifiedMessage:
     """归一化消息 / Normalized message.
 
@@ -307,6 +385,7 @@ class UnifiedMessage:
     tool_call_id: role=tool 时对应的工具调用 id
     reasoning_content: DeepSeek-R1 / Qwen 等的推理过程（可选）
     name: role=tool 时的工具名（部分协议需要）
+    images: 多模态图片附件（仅模型能力含 vision 时渲染进请求）
     """
 
     role: str
@@ -315,6 +394,7 @@ class UnifiedMessage:
     tool_call_id: str | None = None
     reasoning_content: str | None = None
     name: str | None = None
+    images: list[UnifiedImagePart] | None = None
 
 
 @dataclass

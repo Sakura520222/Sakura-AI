@@ -236,7 +236,27 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
     @staticmethod
     def _serialize_message(message: UnifiedMessage) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": message.role}
-        if message.content is not None:
+        if message.images and message.role != "tool":
+            # 多模态消息：content 渲染为 text + image_url parts / multimodal body
+            # role=tool 的 content 是工具结果 JSON 字符串，不参与多模态渲染
+            content_parts: list[dict[str, Any]] = []
+            if message.content:
+                content_parts.append({"type": "text", "text": message.content})
+            for image in message.images:
+                if image.data:
+                    url = f"data:{image.media_type or 'image/png'};base64,{image.data}"
+                elif image.url:
+                    url = image.url
+                else:
+                    continue
+                image_entry: dict[str, Any] = {"url": url}
+                if image.detail:
+                    image_entry["detail"] = image.detail
+                content_parts.append(
+                    {"type": "image_url", "image_url": image_entry}
+                )
+            msg["content"] = content_parts
+        elif message.content is not None:
             msg["content"] = message.content
         elif message.role == "assistant":
             msg["content"] = None  # 工具调用但无文本 / tool-only assistant turn

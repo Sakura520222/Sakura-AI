@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request
 
 from backend.api.v1 import (
+    announcements,
     auth,
     billing,
     config,
@@ -28,6 +29,7 @@ api_v1_router.include_router(setup.router)
 
 # 需认证模块
 api_v1_router.include_router(auth.router)
+api_v1_router.include_router(announcements.router)
 api_v1_router.include_router(dashboard.router)
 api_v1_router.include_router(reviews.router)
 api_v1_router.include_router(issues.router)

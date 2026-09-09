@@ -1,11 +1,11 @@
 # Web框架
 fastapi>=0.141.1,<1.0.0
-starlette>=0.40.0,<1.0.0
+starlette>=1.6.0,<2.0.0
 uvicorn[standard]>=0.52.1
 python-multipart>=0.0.32
 
 # GitHub集成
-PyGithub>=2.9.1
+PyGithub>=2.10.0
 cryptography>=44.0.2
 
 # AI集成
@@ -14,7 +14,7 @@ httpx>=0.28.1
 
 # 数据库
 sqlalchemy>=2.0.52,<2.1
-asyncmy>=0.2.11
+asyncmy>=0.2.14
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.18.5
 
@@ -23,10 +23,11 @@ redis>=5.0.1
 APScheduler>=3.11.3
 
 # 工具库
-typing-extensions>=4.5.0
+typing-extensions>=4.16.0
 pyyaml>=6.0.1
 pydantic>=2.5.3
 pydantic-settings>=2.15.0
+Pillow>=12.3.0
 tzlocal==5.4.4
 tzdata==2026.3
 
@@ -37,17 +38,17 @@ loguru>=0.7.3
 python-telegram-bot>=21.0
 
 # RAG 功能
-chromadb>=0.4.0
+chromadb>=1.5.9
 watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
 # 支付网关
-stripe>=9.0.0
-paddle-python-sdk>=1.0.0
+stripe>=15.5.1
+paddle-python-sdk>=1.15.0
 
 # WebUI
 jinja2>=3.1.6
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 itsdangerous>=2.2.0
 pyotp>=2.10.0
 qrcode[pil]>=8.2
@@ -59,9 +60,9 @@ webauthn>=3.0.0
 slowapi>=0.1.10
 
 # URL 抓取与网络搜索工具
-beautifulsoup4>=4.12.0
+beautifulsoup4>=4.15.0
 duckduckgo-search>=8.1.1
 
 # Agent 专家团队常用验证工具
-ruff>=0.16.3
+ruff>=0.16.5
 pytest>=9.1.1

@@ -16,10 +16,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
-from backend.core.config import BASIC_CONFIG_KEYS
+from backend.core.config import (
+    BASIC_CONFIG_KEYS,
+    get_dynamic_config_fresh,
+    get_settings,
+)
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import filename_timestamp
 from backend.models.database import AppConfig, _settings_default_to_str
+from backend.services.agent_team.network_policy import (
+    AgentTeamNetworkPolicy,
+    get_agent_team_network_policy_state,
+)
+from backend.services.agent_team.sandbox_client import (
+    read_sandbox_capability_status,
+    validate_execution_backend,
+)
 from backend.services.config_backup_service import (
     BACKUP_MAX_BYTES,
     ConfigBackupError,
@@ -1271,6 +1283,86 @@ async def unified_config_page(
         labels=label_data.get("labels", {}),
         recommendation=label_data.get("recommendation", {}),
         conflict_rules=label_data.get("conflict_rules", {}),
+    )
+
+
+@router.get("/agent-network-status", response_class=JSONResponse)
+async def agent_network_status(
+    user: dict = Depends(require_super_admin),
+):
+    """Return a safe readiness/capability projection for the Agent policy UI.
+
+    This endpoint deliberately omits the deployment-owned Docker network name.
+    Policy and backend are read from the database on every request so a save in
+    another Web worker is visible immediately.
+    """
+
+    del user
+    try:
+        policy_state = await get_agent_team_network_policy_state()
+        backend_value = await get_dynamic_config_fresh(
+            "agent_team_execution_backend"
+        )
+        backend = validate_execution_backend(
+            str(backend_value or ""),
+            deploy_mode=str(getattr(get_settings(), "sakura_deploy_mode", "unknown")),
+        )
+    except Exception as exc:
+        logger.bind(error_type=type(exc).__name__).warning(
+            "agent network status is unavailable"
+        )
+        return JSONResponse(
+            {
+                "backend": "unavailable",
+                "backend_ready": False,
+                "sandbox_ready": False,
+                "egress_capability": "unavailable",
+                "egress_available": False,
+                "policy": "unavailable",
+                "policy_revision": "unavailable",
+                "full_access_risk": False,
+                "local_host_network": False,
+            },
+            status_code=503,
+        )
+
+    policy = policy_state.policy
+    sandbox_ready = False
+    local_host_network = backend == "local"
+    # A local runner has no sandbox egress capability: its network boundary
+    # is the host process itself.  Keep that distinction explicit so the UI
+    # does not report a missing sandbox capability as a local readiness
+    # failure.
+    egress_capability = "not_applicable" if local_host_network else "unavailable"
+    egress_available: bool | None = None if local_host_network else False
+    if backend == "sandbox":
+        sandbox_status = await read_sandbox_capability_status()
+        sandbox_ready = bool(sandbox_status.get("available"))
+        egress_capability = str(
+            sandbox_status.get("egress_capability", "unavailable")
+        )
+        egress_available = egress_capability == "egress"
+
+    if backend == "local":
+        # Local execution is deliberately source-only and host-unrestricted;
+        # it is ready only for the policy that explicitly permits that risk.
+        backend_ready = policy is AgentTeamNetworkPolicy.FULL_ACCESS
+    else:
+        backend_ready = sandbox_ready and (
+            policy is not AgentTeamNetworkPolicy.FULL_ACCESS or egress_available
+        )
+    return JSONResponse(
+        {
+            "backend": backend,
+            "backend_ready": backend_ready,
+            "sandbox_ready": sandbox_ready,
+            "egress_capability": egress_capability,
+            "egress_available": egress_available,
+            "policy": policy.value,
+            "policy_revision": policy_state.revision,
+            "full_access_risk": policy is AgentTeamNetworkPolicy.FULL_ACCESS,
+            "local_host_network": local_host_network,
+        }
     )
 
 

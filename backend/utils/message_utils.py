@@ -72,4 +72,7 @@ def serialize_tool_result(result: ToolResult) -> str:
     """Serialize a ToolResult to JSON string for message content."""
     if result.success:
         return json.dumps(result.output, ensure_ascii=False, default=str)
-    return json.dumps({"error": result.error}, ensure_ascii=False)
+    payload = {"error": result.error}
+    if result.error_code:
+        payload["error_code"] = result.error_code
+    return json.dumps(payload, ensure_ascii=False)

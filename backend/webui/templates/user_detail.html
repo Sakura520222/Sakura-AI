@@ -84,7 +84,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div>
                     <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ _('user.telegram_id') }}</label>
-                    <input type="number" name="telegram_id" value="{{ target_user.telegram_id }}" min="1" required
+                    <input type="number" name="telegram_id" value="{{ target_user.telegram_id or '' }}" min="1"
                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                 </div>
                 <div>

@@ -767,6 +767,92 @@ class ActivityIntegrationService:
             return await self._role_snapshot_resolver(str(work_unit.purpose))
         return await self._resolve_snapshot(str(work_unit.purpose))
 
+    async def _cleanup_started_execution(
+        self,
+        started: ReviewStartResult,
+        status: str,
+        *,
+        error_message: str | None = None,
+    ) -> None:
+        """Converge a committed, not-yet-bound execution after admission fails.
+
+        ``start_or_merge_review`` commits the invocation, work unit, and lease
+        before the execution bundle is built.  Keep this fallback keyed by the
+        durable work-unit id from ``started`` rather than by an ORM relationship
+        or a newly manufactured execution object.  A merged result is owned by
+        another worker and must never be finished by this caller.
+        """
+        if started.merged:
+            return
+
+        observability = ActivityObservabilityService(db=self._db)
+        context_service = self._lease_context or ContextService(db=self._db)
+        finish_succeeded = False
+        try:
+            await observability.finish_work_unit(
+                int(started.work_unit.id),
+                status,
+                error_message=error_message,
+            )
+            finish_succeeded = True
+        except BaseException as exc:
+            logger.warning(
+                "observability admission cleanup failed to finish work unit "
+                "(invocation_id={}, work_unit_id={}, status={}): {}",
+                started.invocation_id,
+                int(started.work_unit.id),
+                status,
+                exc,
+            )
+
+        if started.lease is None:
+            return
+        try:
+            await context_service.release_lease(started.lease)
+        except StaleThreadLeaseError as exc:
+            if finish_succeeded:
+                # The terminal work unit is durable; an expired/fenced token is
+                # no longer safe to release because it may belong to a newer
+                # owner.  This is the same convergence rule as bundle.finish.
+                logger.debug(
+                    "observability admission cleanup lease already stale "
+                    "(invocation_id={}, work_unit_id={}): {}",
+                    started.invocation_id,
+                    int(started.work_unit.id),
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "observability admission cleanup failed to release stale "
+                    "lease (invocation_id={}, work_unit_id={}): {}",
+                    started.invocation_id,
+                    int(started.work_unit.id),
+                    exc,
+                )
+        except BaseException as exc:
+            logger.warning(
+                "observability admission cleanup failed to release lease "
+                "(invocation_id={}, work_unit_id={}): {}",
+                started.invocation_id,
+                int(started.work_unit.id),
+                exc,
+            )
+
+    async def _await_admission_cleanup(
+        self, cleanup: Awaitable[None]
+    ) -> None:
+        """Drain cleanup even if another cancellation reaches this task."""
+        cleanup_task = asyncio.create_task(cleanup)
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                # Admission cleanup is the last chance to release a durable
+                # lease.  Continue draining and let the caller re-raise the
+                # original admission exception afterwards.
+                continue
+        cleanup_task.result()
+
     async def start_execution(
         self,
         resource: Mapping[str, Any] | None = None,
@@ -791,13 +877,51 @@ class ActivityIntegrationService:
             task_id=task_id,
             lease_ttl=lease_ttl,
         )
-        bundle = await self.build_execution_bundle(
-            started,
-            publication_coordinator=publication_coordinator,
-            role_snapshot=role_snapshot,
-        )
-        bundle.start_lease_heartbeat()
-        return bundle
+        bundle: ObservedExecutionBundle | None = None
+        try:
+            bundle = await self.build_execution_bundle(
+                started,
+                publication_coordinator=publication_coordinator,
+                role_snapshot=role_snapshot,
+            )
+            bundle.start_lease_heartbeat()
+            return bundle
+        except BaseException as admission_exc:
+            if not started.merged:
+                status = (
+                    "cancelled"
+                    if isinstance(admission_exc, asyncio.CancelledError)
+                    else "failed"
+                )
+                error_message = (
+                    None
+                    if status == "cancelled"
+                    else str(admission_exc) or admission_exc.__class__.__name__
+                )
+                cleanup = (
+                    bundle.finish(status, error_message=error_message)
+                    if bundle is not None
+                    else self._cleanup_started_execution(
+                        started,
+                        status,
+                        error_message=error_message,
+                    )
+                )
+                try:
+                    await self._await_admission_cleanup(cleanup)
+                except BaseException as cleanup_exc:
+                    # Preserve the admission exception.  The cleanup helper
+                    # records operation failures itself; this catches only an
+                    # unexpected orchestration/task failure.
+                    logger.warning(
+                        "observability admission cleanup orchestration failed "
+                        "(invocation_id={}, work_unit_id={}, status={}): {}",
+                        started.invocation_id,
+                        int(started.work_unit.id),
+                        status,
+                        cleanup_exc,
+                    )
+            raise
 
     async def start_auxiliary_execution(
         self,

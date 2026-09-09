@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -110,6 +110,32 @@ def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
     if task.status in _RESUMABLE_TERMINAL_STATUSES:
         return False, "missing_workspace_or_pr"
     return False, "task_inactive"
+
+
+def _message_guidance_ids(message_json: str | None) -> list[int]:
+    """Read stable prompt IDs from a checkpointed guidance message."""
+    try:
+        payload = json.loads(message_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_ids = payload.get("guidance_ids")
+    metadata = payload.get("metadata")
+    if raw_ids is None and isinstance(metadata, dict):
+        raw_ids = metadata.get("guidance_ids")
+    if not isinstance(raw_ids, (list, tuple)):
+        return []
+
+    guidance_ids: list[int] = []
+    for raw_id in raw_ids:
+        try:
+            guidance_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if guidance_id > 0 and guidance_id not in guidance_ids:
+            guidance_ids.append(guidance_id)
+    return guidance_ids
 
 
 def _is_admin(user: dict) -> bool:
@@ -252,6 +278,21 @@ def _parse_task_overrides(
 
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
+
+
+def _workspace_repo_task_condition(repo_owner: str, repo_name: str):
+    """匹配占用指定物理仓库工作区的普通或 direct-PR 任务。"""
+    repo_full_name = f"{repo_owner}/{repo_name}"
+    return or_(
+        and_(
+            AgentTeamTask.repo_owner == repo_owner,
+            AgentTeamTask.repo_name == repo_name,
+        ),
+        and_(
+            AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+            AgentTeamTask.pr_head_repo_full_name == repo_full_name,
+        ),
+    )
 
 
 def _compact_json(value) -> str:
@@ -1269,8 +1310,7 @@ async def delete_workspace(
     """删除 Agent 仓库工作区目录。"""
     active_count = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
-            AgentTeamTask.repo_owner == repo_owner,
-            AgentTeamTask.repo_name == repo_name,
+            _workspace_repo_task_condition(repo_owner, repo_name),
             AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES),
         )
     )
@@ -1765,6 +1805,7 @@ async def task_stream_data(
                     "seq": m.seq,
                     "role": m.role,
                     "content": m.content,
+                    "guidance_ids": _message_guidance_ids(m.message_json),
                     "tool_call_id": m.tool_call_id,
                     "finish_reason": m.finish_reason,
                     "created_at": format_rfc3339(m.created_at)
@@ -1833,7 +1874,6 @@ async def task_stream_data(
 @router.post("/api/tasks/{task_id}/prompts")
 async def submit_user_prompt(
     task_id: int,
-    request: Request,
     content: str = Form(...),
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
@@ -1860,15 +1900,11 @@ async def submit_user_prompt(
             {"success": False, "error": "Content is empty"}, status_code=400
         )
 
-    username = ""
-    if request and hasattr(request, "state") and hasattr(request.state, "user"):
-        username = getattr(request.state.user, "username", "")
-
     prompt = AgentTeamUserPrompt(
         task_id=task_id,
         content=content,
         status="pending",
-        submitted_by=username or "super_admin",
+        submitted_by=user["sub"],
     )
     db.add(prompt)
 

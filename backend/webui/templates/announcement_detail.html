@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ announcement.title }} - Sakura AI{% endblock %}
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <a href="/announcements" class="text-sm text-pink-600 hover:underline">← {{ _('announcements.back') }}</a>
+  <article class="mt-5 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ announcement.title }}</h1>
+    <div class="mt-5 prose dark:prose-invert max-w-none">{{ announcement.content_html | safe }}</div>
+  </article>
+</main>
+{% endblock %}

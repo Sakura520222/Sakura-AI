@@ -6,7 +6,10 @@ from urllib.error import URLError
 import pytest
 from sakura_ai_updater.release_client import (
     ReleaseClient,
+    ReleaseNotFoundError,
     ReleaseUnavailableError,
+    SandboxManifestInvalidError,
+    SandboxManifestNotFoundError,
     _request_failure_detail,
 )
 
@@ -102,6 +105,39 @@ async def test_release_client_latest_uses_max_strict_stable_semver_not_timestamp
 
 
 @pytest.mark.asyncio
+async def test_resolve_stable_target_rejects_draft_or_prerelease_and_uses_registry_pin(
+    monkeypatch,
+):
+    client = ReleaseClient()
+    stable = {
+        "tag_name": "v3.2.0",
+        "draft": False,
+        "prerelease": False,
+    }
+    monkeypatch.setattr(client, "get_release", lambda version: stable)
+    from sakura_ai_updater.registry import StableTarget
+
+    digest = "sha256:" + "a" * 64
+    async def resolve(self, version, *, expected_digest=None):
+        del self
+        assert version == "3.2.0"
+        assert expected_digest is None
+        return StableTarget("stable", version, f"v{version}", digest)
+
+    monkeypatch.setattr(
+        "sakura_ai_updater.registry.RegistryClient.resolve_stable_target", resolve
+    )
+    target = await client.resolve_stable_target("3.2.0")
+    assert target.image.endswith("v3.2.0@" + digest)
+
+    for flags in ((True, False), (False, True)):
+        release = {"tag_name": "v3.2.0", "draft": flags[0], "prerelease": flags[1]}
+        monkeypatch.setattr(client, "get_release", lambda version, release=release: release)
+        with pytest.raises(ReleaseNotFoundError):
+            await client.resolve_stable_target("3.2.0")
+
+
+@pytest.mark.asyncio
 async def test_release_client_uses_previous_result_when_github_is_unavailable(
     monkeypatch,
 ):
@@ -139,3 +175,73 @@ async def test_required_assets_include_updater_binary_and_sha256sums(monkeypatch
     # CI on arm64 should ask for its own asset; this test only verifies the
     # method shape and SHA256SUMS gate on whichever host executes it.
     assert isinstance(await client.has_required_assets(manifest, "3.1.0"), bool)
+
+
+def _sandbox_asset_payload(version: str = "3.1.0") -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "manifest": "agent-sandbox",
+        "version": version,
+        "channel": "stable",
+        "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:"
+        + "a" * 64,
+        "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:"
+        + "b" * 64,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_sandbox_manifest_requires_same_release_and_official_digests(
+    monkeypatch,
+):
+    client = ReleaseClient()
+    release = {
+        "tag_name": "v3.1.0",
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {
+                "name": "agent-sandbox-manifest.json",
+                "browser_download_url": (
+                    "https://github.com/sakura520222/Sakura-AI/releases/download/"
+                    "v3.1.0/agent-sandbox-manifest.json"
+                ),
+            }
+        ],
+    }
+    monkeypatch.setattr(client, "get_release", lambda version: release)
+    monkeypatch.setattr(client, "_fetch_json", lambda url: _sandbox_asset_payload())
+
+    parsed = await client.fetch_sandbox_manifest("3.1.0")
+    assert parsed.version == "3.1.0"
+    assert parsed.sandboxd_ref.endswith("@sha256:" + "a" * 64)
+    assert parsed.runner_ref.endswith("@sha256:" + "b" * 64)
+
+    monkeypatch.setattr(
+        client, "_fetch_json", lambda url: {**_sandbox_asset_payload(), "version": "3.0.0"}
+    )
+    with pytest.raises(SandboxManifestInvalidError):
+        await client.fetch_sandbox_manifest("3.1.0")
+
+
+@pytest.mark.asyncio
+async def test_fetch_sandbox_manifest_missing_or_untrusted_asset_fails_closed(monkeypatch):
+    client = ReleaseClient()
+    release = {
+        "tag_name": "v3.1.0",
+        "draft": False,
+        "prerelease": False,
+        "assets": [],
+    }
+    monkeypatch.setattr(client, "get_release", lambda version: release)
+    with pytest.raises(SandboxManifestNotFoundError):
+        await client.fetch_sandbox_manifest("3.1.0")
+
+    release["assets"] = [
+        {
+            "name": "agent-sandbox-manifest.json",
+            "browser_download_url": "https://evil.example/manifest.json",
+        }
+    ]
+    with pytest.raises(SandboxManifestInvalidError):
+        await client.fetch_sandbox_manifest("3.1.0")

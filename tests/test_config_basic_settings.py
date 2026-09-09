@@ -43,6 +43,19 @@ def test_basic_config_keys_are_loaded_from_database_config_keys():
     assert BASIC_CONFIG_KEYS.issubset(set(get_all_db_config_keys()))
 
 
+def test_agent_network_policy_is_dynamic_super_admin_select_with_safe_default():
+    from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS
+
+    assert Settings.model_fields["agent_team_network_policy"]
+    assert get_settings().agent_team_network_policy == "web_tools"
+    assert "agent_team_network_policy" in DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"]
+    assert [
+        option["value"]
+        for option in DYNAMIC_CONFIG_SELECT_OPTIONS["agent_team_network_policy"]
+    ] == ["offline", "web_tools", "full_access"]
+    assert DYNAMIC_CONFIG_LABELS["agent_team_network_policy"]
+
+
 def test_activity_outbox_shutdown_timeout_is_database_configurable():
     required_key = "activity_outbox_shutdown_timeout_seconds"
 

@@ -32,6 +32,7 @@ from backend.services.database_reset_service import (
 from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
     SYSTEM_SENSITIVE_KEYS,
+    SystemConfigValidationError,
     system_config_service,
 )
 from backend.webui.deps import (
@@ -48,6 +49,28 @@ from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language, make_translation_func
 
 router = APIRouter(prefix="/system-config", tags=["WebUI System Config"])
+
+# Empty optional text/secret fields retain the existing "leave unchanged"
+# form semantics.  Typed controls, however, must send an empty value through
+# the backend validator so a cleared number/boolean cannot silently bypass
+# validation and appear to save successfully.
+_SYSTEM_TYPED_VALUE_KEYS = frozenset(
+    {
+        "telegram_enabled",
+        "telegram_bind_token_expire_seconds",
+        "email_enabled",
+        "smtp_port",
+        "notification_max_concurrency",
+        "notification_retry_max_attempts",
+        "notification_retry_initial_delay_seconds",
+        "notification_retry_backoff_factor",
+        "notification_rate_limit_seconds",
+        "app_port",
+        "app_timezone",
+        "smtp_security",
+        "log_level",
+    }
+)
 
 
 @router.get("/")
@@ -117,7 +140,7 @@ async def save_system_config(
                 continue
 
             val = str(raw).strip()
-            if not val:
+            if not val and key not in _SYSTEM_TYPED_VALUE_KEYS:
                 continue
 
             # 数据库连接字符串验证（接受所有可规范化的异步驱动格式）
@@ -153,6 +176,17 @@ async def save_system_config(
                         lang=detect_language(),
                     )
 
+            # SMTP 安全模式验证（ssl=隐式 TLS / starttls / none=明文）
+            if key == "smtp_security":
+                val = val.lower()
+                if val not in ("ssl", "starttls", "none"):
+                    return toast_redirect(
+                        "/system-config/",
+                        "system_config.invalid_smtp_security",
+                        "error",
+                        lang=detect_language(),
+                    )
+
             # 日志级别验证
             if key == "log_level":
                 valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -177,6 +211,12 @@ async def save_system_config(
                     )
 
             updates[key] = val
+
+        # Keep the service as the single source of truth for Settings field
+        # types and bounds.  This is a pure pass: no DB query, ORM mutation,
+        # cache invalidation, or Settings hot-update happens until the whole
+        # form has passed validation.
+        updates = system_config_service.validate_updates(updates)
 
         if not updates:
             return toast_redirect(
@@ -220,6 +260,16 @@ async def save_system_config(
             lang=detect_language(),
         )
 
+    except SystemConfigValidationError as exc:
+        context = dict(exc.context)
+        context.setdefault("error", str(exc))
+        return toast_redirect(
+            "/system-config/",
+            exc.toast_key,
+            "error",
+            lang=detect_language(),
+            **context,
+        )
     except ValueError:
         return toast_redirect(
             "/system-config/",

@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.1.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -85,6 +85,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis** — Auto-classification, priority, label recommendation, duplicate detection, linked PR discovery
+- **Image Multimodal Analysis** — Screenshots in Issue bodies and comments are downloaded safely with GitHub credentials; images over 5 MiB are compressed toward 500 KiB before being fed to the AI as multimodal input (requires the per-model "supports image input" capability and the unified config toggle)
 - **Strict Issue Output Contract** — `<SAKURA_ISSUE_ANALYSIS>` envelope + multi-round repair + safe degradation
 - **Auto-labeling** — High-confidence labels applied automatically
 - **Auto-assignment** — Assigns to appropriate repository collaborators
@@ -99,8 +100,8 @@
 - **Multi-branch Parallel Workspaces** — Each task uses an isolated Git worktree, supporting parallel execution
 - **Two-agent Collaboration** — Full-stack expert plans and edits; professional reviewer does pre-push quality review
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
-- **Controlled Tool Execution** — File / search / shell scoped to workspace; blacklist blocks dangerous commands
-- **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` deps and runs allowlisted tests
+- **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with no network, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
+- **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
@@ -142,8 +143,16 @@
 - **WebUI Dashboard** — Dashboard, PR, user, config, queue, scan, Agent, memory, Repository Aid, vector storage management
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
-- **Telegram Bot** — Real-time notifications, button menus, three-tier permission system
-- **GitHub OAuth Login** — Integrated with Telegram user system, light/dark theme switching
+- **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
+- **Optional Notification Channels** — Telegram and Email/SMTP can be enabled independently; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI)
+- **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
+- **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
+
+### Upgrade and Compatibility
+
+- **Upgrading from 3.1.3 to 3.2.0**: Old data is migrated automatically and idempotently on the first startup after the upgrade — no manual steps. New tables (announcements, notification deliveries, notification endpoints, external identities) are created automatically; legacy `telegram_users` Telegram IDs, GitHub usernames, and emails are backfilled as described in the next bullet; existing user IDs, roles, quotas, business data, and foreign keys are untouched. Email/SMTP notifications are new in 3.2.0 (3.1.3 has no mail settings): to enable them, fill in the SMTP fields on the System Core Config page — choose "SSL/TLS (implicit TLS)" for port 465 or "STARTTLS" for port 587; the sender display name defaults to Sakura-AI. Legacy field names in imported config backups are mapped automatically (e.g. the boolean `smtp_tls` becomes a security mode).
+- On first startup, legacy `telegram_users` identity data is migrated idempotently: original user IDs, roles, quotas, business data, and foreign keys are preserved while Telegram IDs and GitHub usernames are backfilled as notification endpoints and external identities. For a Telegram-only account, an administrator should assign its GitHub username in the user page before the user signs in with OAuth to claim the existing account.
+- User backups v1/v2 are accepted with automatic legacy-field mapping; new backups include identities, notification endpoints, and email. Config restore never overwrites deployment connection settings, and SMTP passwords remain redacted as sensitive values.
 
 ---
 
@@ -155,25 +164,25 @@ Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for 
 
 ### Docker One-Click Deployment (Recommended for Self-hosting)
 
-**Linux full deployment** (Web + MySQL + Redis + Host Updater):
+**Linux full deployment** (Web + MySQL + Redis + Host Updater + Agent sandboxd):
 
 ```bash
-sudo install -d -o root -g root -m 0755 /opt/sakura-ai/docker
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml \
-  --output /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo curl --fail --location \
-  https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh \
-  --output /opt/sakura-ai/start.sh
-sudo chmod 0644 /opt/sakura-ai/docker/docker-compose.prod.yml
-sudo chmod 0755 /opt/sakura-ai/start.sh
-cd /opt/sakura-ai
-sudo ./start.sh --prod
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-`sudo ./start.sh --prod` generates the deployment state, pulls images with Docker's native dynamic progress renderer, starts all containers, and downloads, verifies, and starts the Host Updater for the running version. Pressing `Ctrl+C` only detaches the progress view; deployment continues in the background. New releases are checked automatically, but installation requires manual confirmation by a super administrator in the WebUI Version Manager; running `sudo ./start.sh` without arguments opens an interactive management menu that can also update the current channel image or switch between the stable/development channels outside the WebUI (the stable channel reuses the Host Updater update pipeline when the daemon is running; the development channel or an unavailable daemon falls back to a direct Compose pull of the channel alias image). macOS, Windows, and container-only deployments do not support the Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md) for deployment directory, Compose project name, and security checks.
+This deploys the **stable channel** by default. To deploy the **development channel** (latest builds from the develop branch) from the very first deployment:
 
-> **Synchronizing Host Updater after a WebUI update:** The WebUI currently updates only the Sakura AI application image; it does not replace the Host Updater binary on the host. The readiness item “Updater asset available” only confirms that the target Release contains the architecture-specific binary and checksum file. After the application update succeeds and `/health` reports the new version, run the following commands in `/opt/sakura-ai` to align Host Updater with the running application Release:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
+```
+
+The interactive menu's production deployment also asks for the channel on first setup; switch channels later via the menu's channel switch entry.
+
+`start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file for the selected image channel (stable from `main`, development from `develop`; override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
+
+`sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs the Host Updater. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+
+> **Synchronizing Host Updater after a WebUI update:** A stable WebUI update transaction updates Web, sandboxd, and the Agent runner together, but it does not replace the currently running Host Updater binary. After the update succeeds and `/health` reports the new version, run the following command in `/opt/sakura-ai` to align the Updater binary with that Release:
 >
 > ```bash
 > sudo ./start.sh updater reinstall
@@ -181,11 +190,11 @@ sudo ./start.sh --prod
 >
 > `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops, installs, starts, and reports the new daemon state; if installation fails, it attempts to restore the existing daemon. If an older updater does not support the atomic maintenance gate, the command fails closed and requires the administrator to stop that legacy daemon explicitly first. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
 
-Uninstall preserves Docker data volumes by default. Only explicit `--purge` removes the volumes and `.deploy` state:
+Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and deployment files. In a standalone install such as `/opt/sakura-ai`, full uninstall leaves only `start.sh` for a clean redeployment; source repository files are protected. Both modes share the single `UNINSTALL` confirmation word:
 
 ```bash
-sudo ./start.sh uninstall          # Preserve data for a later redeployment
-sudo ./start.sh uninstall --purge  # Permanently delete database/cache volumes and deployment state
+sudo ./start.sh uninstall          # Standard uninstall: preserve data for a later redeployment
+sudo ./start.sh uninstall --purge  # Full uninstall: delete data/images; keep only start.sh in a standalone install
 ```
 
 **Web image only** (bring your own MySQL/Redis):
@@ -202,22 +211,36 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart):
+After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart). When `start.sh` waits in the foreground, it displays the current Setup Token immediately after a successful deployment. You can also reopen the main menu and choose **View current container logs** → **Web**:
 
 ```bash
-# In /opt/sakura-ai: tail live logs / extract the first-deploy token
+# Alternatively, tail the Web container directly from /opt/sakura-ai
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-For persisted DEBUG logs, error filtering, and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+The main menu's **View previous runtime logs** entry reads persisted DEBUG logs. For error filtering and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 ### Source Development
+
+> Source-development platforms: Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported) or Apple Silicon macOS 14+. Other platforms cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
+
+**With uv (recommended)**:
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI
+uv sync                # Creates .venv and installs all dependencies (incl. updater)
+uv run python -m backend.main
+```
+
+When no deployment mode or image-build marker is present, the `backend.main` launcher automatically identifies its application child as `source`; a local `local` Agent backend does not need a separate `SAKURA_DEPLOY_MODE` setting. An explicit environment value always takes precedence, and image environments are never inferred to be source checkouts.
+
+**Classic pip (without uv)**:
+
+```bash
 pip install -r requirements.txt
+pip install -e './updater[dev]'
 python -m backend.main
 ```
 
@@ -269,11 +292,11 @@ Full architecture diagram, data flow, code structure, and interactive knowledge 
 ## Development
 
 ```bash
-pip install -r requirements.txt      # Install dependencies
-python -m backend.main               # Start the app
+uv sync                              # Install dependencies (uv; classic pip: pip install -r requirements.txt plus pip install -e './updater[dev]')
+uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
 python run_ruff.py                   # Lint + fix + format
 python run_ruff.py --check           # Read-only check
-python -m pytest -q                  # Run tests
+uv run python -m pytest -q           # Run tests (pip envs: python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 ```
 
@@ -294,7 +317,7 @@ Full documentation index at [docs/README.md](docs/README.md). Common entries:
 | [Deployment Guide](docs/DEPLOYMENT.md) | Docker / source deployment, GitHub App, Setup Wizard, Host Updater (Chinese) |
 | [Configuration Reference](docs/CONFIGURATION.md) | All config options: location, key, description (Chinese) |
 | [Architecture Guide](docs/ARCHITECTURE.md) | Architecture diagram, tech stack, code structure (Chinese) |
-| [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Bot setup, permission system, command reference (Chinese) |
+| [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Optional notification Provider, binding handshake and command reference (Chinese) |
 | [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` protocol, validation, repair (Chinese) |
 | [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md) | TOTP, recovery codes, Passkeys, Security Center (Chinese) |
 | [API v1 Reference](docs/api-v1-reference.md) | RESTful API v1 (mobile OAuth, MFA, SSE, Billing) (Chinese) |

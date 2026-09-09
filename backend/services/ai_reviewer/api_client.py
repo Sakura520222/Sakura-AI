@@ -301,6 +301,20 @@ class AIApiClient:
             captured_at=now_utc(),
         )
 
+    async def resolve_role_candidates(self, role: str) -> list[Any]:
+        """返回角色完整候选链（含 fallback），解析失败返回空列表。
+
+        vision 等链级能力判定须看全部候选，而非仅 primary——primary 为
+        纯文本模型而 fallback 支持 vision 时图片仍应收集。
+        """
+        try:
+            chain = await self._resolve_role_chain(role)
+        except Exception as exc:
+            logger.warning("解析角色候选失败: role={} err={}", role, exc)
+            return []
+        candidates = getattr(chain, "candidates", None) if chain is not None else None
+        return list(candidates) if candidates else []
+
     async def resolve_role_primary_candidate(self, role: str) -> Any:
         """返回角色 primary 候选的 ResolvedModel，解析失败返回 None。"""
         try:

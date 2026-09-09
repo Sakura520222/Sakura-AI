@@ -35,13 +35,25 @@ class QuotaType(str, enum.Enum):
 
 
 class TelegramUser(Base):
-    """Telegram 用户表"""
+    """兼容用户表。
+
+    ``telegram_users`` is intentionally kept as the physical table name so
+    existing installations retain their primary keys and foreign keys.  The
+    application now treats ``id`` as the internal user id; Telegram is an
+    optional notification endpoint and therefore ``telegram_id`` is nullable.
+    """
 
     __tablename__ = "telegram_users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
     github_username = Column(String(100), unique=True, nullable=True, index=True)
+    # GitHub's primary verified email is mirrored here for backwards
+    # compatible callers.  The canonical notification address is also stored
+    # in notification_endpoints and kept in sync by AuthService.
+    email = Column(String(320), unique=True, nullable=True, index=True)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    email_updated_at = Column(UTCDateTime, nullable=True)
     role = Column(
         String(50), default=UserRole.USER.value, nullable=False
     )  # 改为 String 类型
