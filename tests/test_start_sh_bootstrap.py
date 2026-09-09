@@ -252,6 +252,7 @@ docker() {
     case "$*" in
         *com.sakura-ai.build.channel*) echo development ;;
         *org.opencontainers.image.revision*) echo "$DEVREV" ;;
+        *com.sakura-ai.component*) echo web ;;
         *RepoDigests*)
             echo "ghcr.io/sakura520222/sakura-ai@sha256:$HEXW"
             echo "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:$HEXS"
