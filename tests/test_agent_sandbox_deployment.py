@@ -358,6 +358,8 @@ def test_sandboxd_base_python_is_digest_pinned_and_release_manifest_carries_both
     assert "agent-sandbox-manifest.json" in release
     assert '"manifest":"agent-sandbox"' in release
     assert '"sandbox":{"sandboxd_image"' not in release
+    assert 'cp -r sandboxer "$RELEASE_DIR/"' in release
+    assert 'echo "- sandboxer/ (sandboxd source)"' in release
 
 
 def test_start_script_is_bash_valid_when_bash_is_available():

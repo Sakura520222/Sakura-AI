@@ -41,6 +41,12 @@ _IMAGE_OUTPUT_FALLBACK_MAX_BYTES = 5 * 1024 * 1024
 _IMAGE_MAX_DIMENSION = 7680
 _MAX_IMAGE_COUNT = 20
 _MAX_TOTAL_ENCODED_IMAGE_BYTES = 15 * 1024 * 1024
+# 完整解码一张超大图的估算内存预算（宽×高×通道字节）。7680 尺寸上限内
+# 最大的 RGBA 图约 236 MiB，恒在预算内；预算只拦截无法解码级降采样
+# （PNG/WebP 无 draft 档位）且估算超限的低熵巨图，避免 decode/convert/
+# resize 多份数百 MB 缓冲叠加 / full-decode memory budget, only rejects
+# oversize images that cannot be reduced at decoder level.
+_OVERSIZED_DECODE_BUDGET_BYTES = 256 * 1024 * 1024
 _SUPPORTED_IMAGE_MEDIA_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/webp"}
 )
@@ -50,17 +56,175 @@ _IMAGE_FORMAT_MEDIA_TYPES = {
     "WEBP": "image/webp",
 }
 
-# CommonMark 图片目的地：支持可选 title（"x" / 'x' / (x)）、尖括号
-# destination 与一层平衡圆括号 / CommonMark image destinations with
-# optional titles, angle-bracket destinations and one level of parens.
-_MARKDOWN_IMAGE_RE = re.compile(
-    r"!\[[^\]]*\]\(\s*"
-    r"(?:<(?P<angle>https?://[^>]+)>"
-    r"|(?P<plain>https?://(?:\([^()\s]*\)|[^\s()])+))"
-    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?"
-    r"\s*\)"
-)
-_HTML_IMAGE_RE = re.compile(r"<img[^>]+src=[\"'](https?://[^\"']+)[\"']", re.IGNORECASE)
+# These patterns only locate the two fixed image markers.  The rest of each
+# syntax is parsed below with bounded, forward-only scanners.  Keeping the
+# marker expressions small is important: the old full-syntax expressions
+# could restart a long match at every ``![``/``<img`` prefix in untrusted issue
+# text and consume quadratic CPU.
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[")
+_HTML_IMAGE_RE = re.compile(r"<img", re.IGNORECASE)
+
+
+def _skip_whitespace(text: str, position: int) -> int:
+    while position < len(text) and text[position].isspace():
+        position += 1
+    return position
+
+
+def _starts_http_url(text: str, position: int, *, case_sensitive: bool) -> bool:
+    prefix = text[position : position + 8]
+    if not case_sensitive:
+        prefix = prefix.lower()
+    return prefix.startswith(("http://", "https://"))
+
+
+def _parse_markdown_image_at(text: str, start: int) -> tuple[str | None, int]:
+    """Parse one CommonMark-like image beginning at ``start``.
+
+    The returned position is always past the portion inspected by this
+    attempt.  Callers can therefore continue from it without re-scanning a
+    malformed candidate, which keeps extraction linear even for hostile input.
+    """
+
+    length = len(text)
+    alt_end = text.find("]", start + 2)
+    if alt_end < 0:
+        return None, length
+
+    position = alt_end + 1
+    if position >= length or text[position] != "(":
+        return None, position
+    position = _skip_whitespace(text, position + 1)
+    if position >= length:
+        return None, length
+
+    if text[position] == "<":
+        destination_start = position + 1
+        destination_end = text.find(">", destination_start)
+        if destination_end < 0:
+            return None, length
+        if (
+            destination_end <= destination_start
+            or not _starts_http_url(
+                text, destination_start, case_sensitive=True
+            )
+        ):
+            return None, destination_end + 1
+        url = text[destination_start:destination_end]
+        position = destination_end + 1
+    else:
+        destination_start = position
+        if not _starts_http_url(text, position, case_sensitive=True):
+            return None, position + 1
+
+        # A plain destination permits non-nested, balanced parenthesis groups
+        # (for example ``wiki/Foo_(bar)``), but never whitespace or a nested
+        # parenthesis.  Scan it once from left to right.
+        while position < length:
+            character = text[position]
+            if character.isspace() or character == ")":
+                break
+            if character == "(":
+                group_position = position + 1
+                while group_position < length:
+                    group_character = text[group_position]
+                    if group_character.isspace() or group_character in "()":
+                        break
+                    group_position += 1
+                if (
+                    group_position >= length
+                    or text[group_position] != ")"
+                ):
+                    return None, min(length, group_position)
+                position = group_position + 1
+                continue
+            position += 1
+
+        if position <= destination_start:
+            return None, position + 1
+        url = text[destination_start:position]
+
+    # Whitespace before a title or the closing delimiter is optional.  A
+    # quoted/parenthesized title is accepted only when it is complete, matching
+    # the forms supported by the previous expression.
+    had_whitespace = position < length and text[position].isspace()
+    position = _skip_whitespace(text, position)
+    if had_whitespace and position < length and text[position] in "\"'(":
+        opener = text[position]
+        closer = ")" if opener == "(" else opener
+        title_end = text.find(closer, position + 1)
+        if title_end < 0:
+            return None, length
+        position = title_end + 1
+        position = _skip_whitespace(text, position)
+
+    if position >= length or text[position] != ")":
+        return None, position + 1 if position < length else length
+    return url, position + 1
+
+
+def _parse_html_image_at(text: str, start: int) -> tuple[str | None, int]:
+    """Parse an HTML ``img`` tag beginning at ``start`` in one forward scan."""
+
+    tag_end = text.find(">", start + 4)
+    if tag_end < 0:
+        return None, len(text)
+
+    tag = text[start + 4 : tag_end]
+    lowered_tag = tag.lower()
+    position = 0
+    while position < len(tag):
+        if not lowered_tag.startswith("src=", position):
+            position += 1
+            continue
+
+        value_start = position + len("src=")
+        if value_start >= len(tag) or tag[value_start] not in "\"'":
+            position += 1
+            continue
+
+        quote = tag[value_start]
+        value_end = tag.find(quote, value_start + 1)
+        if value_end < 0:
+            return None, tag_end + 1
+        url = tag[value_start + 1 : value_end]
+        lowered_url = url.lower()
+        if any(
+            lowered_url.startswith(prefix) and len(url) > len(prefix)
+            for prefix in ("http://", "https://")
+        ):
+            return url, tag_end + 1
+        # A well-formed but unsupported src value cannot contain another
+        # attribute outside its quotes.  Continue after its closing quote so
+        # multiple src attributes are handled in one linear scan.
+        position = value_end + 1
+    return None, tag_end + 1
+
+
+def _iter_markdown_image_references(text: str):
+    position = 0
+    while True:
+        match = _MARKDOWN_IMAGE_RE.search(text, position)
+        if match is None:
+            return
+        start = match.start()
+        url, next_position = _parse_markdown_image_at(text, start)
+        position = max(start + 1, next_position)
+        if url is not None:
+            yield start, url
+
+
+def _iter_html_image_references(text: str):
+    position = 0
+    while True:
+        match = _HTML_IMAGE_RE.search(text, position)
+        if match is None:
+            return
+        start = match.start()
+        url, next_position = _parse_html_image_at(text, start)
+        position = max(start + 1, next_position)
+        if url is not None:
+            yield start, url
 
 
 def extract_image_references(text: str | None) -> list[str]:
@@ -72,17 +236,22 @@ def extract_image_references(text: str | None) -> list[str]:
         return []
     seen: set[str] = set()
     urls: list[str] = []
-    matches = sorted(
-        (*_MARKDOWN_IMAGE_RE.finditer(text), *_HTML_IMAGE_RE.finditer(text)),
-        key=lambda match: match.start(),
-    )
-    for match in matches:
-        if match.re is _MARKDOWN_IMAGE_RE:
-            # 尖括号目的地按 CommonMark 语义保留原文（含空格），由 URL
-            # 校验与下载层决定去留 / angle destinations keep raw form.
-            url = (match.group("angle") or match.group("plain") or "").strip()
+    markdown_references = iter(_iter_markdown_image_references(text))
+    html_references = iter(_iter_html_image_references(text))
+    markdown_item = next(markdown_references, None)
+    html_item = next(html_references, None)
+    while markdown_item is not None or html_item is not None:
+        if html_item is None or (
+            markdown_item is not None and markdown_item[0] <= html_item[0]
+        ):
+            _, url = markdown_item
+            markdown_item = next(markdown_references, None)
         else:
-            url = match.group(1).strip()
+            _, url = html_item
+            html_item = next(html_references, None)
+        # Angle destinations keep their source text (including spaces); URL
+        # validation and downloading decide whether such a reference is usable.
+        url = url.strip()
         if url and url not in seen:
             seen.add(url)
             urls.append(url)
@@ -209,10 +378,106 @@ def _inspect_image_payload(payload: bytes) -> tuple[str, tuple[int, int]] | None
         return None
 
 
+def _open_image_for_vision(payload: bytes) -> Image.Image | None:
+    """打开图片字节流；Pillow bomb 警告区仅对 JPEG 放行。
+
+    严格模式下 1×–2× ``MAX_IMAGE_PIXELS`` 触发 DecompressionBombWarning（外
+    层升级为 error）。唯一例外：JPEG 可在解码层降档（draft），放行后必须
+    先经 ``_downscale_before_full_decode`` 降档并复核解码预算，才会展开像
+    素；>2× 上限的 DecompressionBombError 对任何格式都保持硬失败。
+
+    / Strict open; only JPEG in the bomb *warning* zone (1x-2x
+    MAX_IMAGE_PIXELS) is admitted, and solely to be reduced at decoder level
+    before any pixel access.
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            return Image.open(io.BytesIO(payload))
+    except Image.DecompressionBombWarning:
+        pass
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        image = Image.open(io.BytesIO(payload))
+    if (image.format or "") != "JPEG":
+        image.close()
+        return None
+    return image
+
+
+def _inspect_bomb_zone_jpeg(payload: bytes) -> tuple[str, tuple[int, int]] | None:
+    """bomb 警告区 JPEG 的放行校验；verify 只重读压缩流，不展开像素。"""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format != "JPEG":
+                    return None
+                size = image.size
+                image.verify()
+        return "image/jpeg", size
+    except (
+        Image.DecompressionBombError,
+        OSError,
+        UnidentifiedImageError,
+        ValueError,
+    ):
+        return None
+
+
 def _encode_webp(image: Image.Image, quality: int) -> bytes:
     output = io.BytesIO()
     image.save(output, format="WEBP", quality=quality, method=6)
     return output.getvalue()
+
+
+def _estimated_decode_bytes(mode: str, pixels: int) -> int:
+    """估算解码后像素缓冲大小（通道数 × 每通道字节数）/ Estimate buffer size."""
+    bytes_per_band = 2 if "16" in mode else 1
+    return pixels * Image.getmodebands(mode) * bytes_per_band
+
+
+def _downscale_before_full_decode(
+    source: Image.Image, *, max_dimension: int | None
+) -> bool:
+    """在高内存操作前把超大图降到安全规模；返回 False 表示无法安全处理。
+
+    优先解码器级降采样：JPEG draft（1/2、1/4、1/8 档位）解码时不保留原
+    始分辨率；draft 目标取最终尺寸上限的一半，落点每边不超过上限，即解
+    码规模不超过约 59MP。非 JPEG（PNG/WebP 等）draft 为 no-op，只能完整
+    解码后缩放，故按宽×高×通道数估算内存，超出预算才跳过该单张图片。
+
+    Downsample oversized images before any full-buffer operation (load /
+    convert / resize / encode). JPEG draft reduces at decode level first;
+    images that cannot be reduced and exceed the decode memory budget are
+    skipped individually.
+    """
+    width, height = source.size
+    if max_dimension:
+        source.draft(None, (max_dimension // 2, max_dimension // 2))
+    if source.size != (width, height):
+        logger.info(
+            "Oversized issue image detected, downsampling before vision "
+            "processing: original={}x{}, processed={}x{}",
+            width,
+            height,
+            source.size[0],
+            source.size[1],
+        )
+    decoded_pixels = source.size[0] * source.size[1]
+    if (
+        _estimated_decode_bytes(source.mode, decoded_pixels)
+        > _OVERSIZED_DECODE_BUDGET_BYTES
+    ):
+        logger.warning(
+            "Skipping issue image because it cannot be safely decoded/"
+            "downsampled: size={}x{}, pixels={}",
+            width,
+            height,
+            width * height,
+        )
+        return False
+    return True
 
 
 def _compress_image_payload(
@@ -220,22 +485,32 @@ def _compress_image_payload(
 ) -> bytes | None:
     """Downscale and encode as WebP, preferring 500 KiB but allowing 5 MiB.
 
+    超大图先在解码层降采样（JPEG draft），无法降采样且估算解码内存超预
+    算时跳过单张，而不是展开数百 MB 像素缓冲后才失败。
+
     ``max_dimension`` 同时约束输出尺寸：字节达标但尺寸超限时继续缩放，
     避免 vision provider 按尺寸拒绝整个请求。
     """
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(payload)) as source:
+            source = _open_image_for_vision(payload)
+            if source is None:
+                return None
+            with source:
                 if (source.format or "") not in _IMAGE_FORMAT_MEDIA_TYPES:
                     return None
+                if not _downscale_before_full_decode(
+                    source, max_dimension=max_dimension
+                ):
+                    return None
                 source.seek(0)
-                oriented = ImageOps.exif_transpose(source)
-                oriented.load()
-                has_alpha = oriented.mode in {"RGBA", "LA"} or (
-                    "transparency" in oriented.info
+                # in_place：无 EXIF 方向时不复制整幅像素缓冲
+                ImageOps.exif_transpose(source, in_place=True)
+                has_alpha = source.mode in {"RGBA", "LA"} or (
+                    "transparency" in source.info
                 )
-                current = oriented.convert("RGBA" if has_alpha else "RGB")
+                current = source.convert("RGBA" if has_alpha else "RGB")
 
         best: bytes | None = None
         best_size: tuple[int, int] | None = None
@@ -285,6 +560,9 @@ def _prepare_image_payload(
     if declared is None:
         return None
     inspected = _inspect_image_payload(payload)
+    if inspected is None:
+        # bomb 警告区的 JPEG 放行到压缩阶段做解码级降采样，其余维持拒绝
+        inspected = _inspect_bomb_zone_jpeg(payload)
     if inspected is None:
         return None
     media_type, size = inspected

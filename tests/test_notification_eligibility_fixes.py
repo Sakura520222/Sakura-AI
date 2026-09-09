@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from telegram.error import RetryAfter
+from telegram.warnings import PTBDeprecationWarning
 
 from backend.models import Base
 from backend.models import database as database_module
@@ -608,3 +610,14 @@ async def test_ptb_retry_after_timedelta_is_normalized(monkeypatch):
 
     assert exc_info.value.retry_after == 7
     assert "retry_after=7s" in str(exc_info.value)
+
+
+def test_ptb_timedelta_semantics_enabled_without_deprecation_warning():
+    """backend/__init__ 启用 PTB_TIMEDELTA 后：retry_after 即 timedelta 且无弃用警告。"""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        value = RetryAfter(timedelta(seconds=7)).retry_after
+    assert isinstance(value, timedelta)
+    assert not [
+        item for item in caught if issubclass(item.category, PTBDeprecationWarning)
+    ]
