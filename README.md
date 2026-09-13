@@ -180,7 +180,17 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 `start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
 
-`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装 Host Updater。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装并启用 Host Updater 的 systemd unit。生产 binary 要求宿主机 PID 1 为可用的 systemd；不满足时脚本会明确失败，不会声称已配置重启自启。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+
+安装完成后可验证宿主机重启自启状态：
+
+```bash
+sudo systemctl is-enabled sakura-ai-updater.service
+sudo systemctl is-active sakura-ai-updater.service
+sudo systemctl status sakura-ai-updater.service --no-pager
+```
+
+显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式仍由手动 daemon 管理，不提供 systemd 重启自启保证。
 
 > **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：
 >
@@ -188,7 +198,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 > sudo ./start.sh updater reinstall
 > ```
 >
-> `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再依次停止、安装、启动并输出新状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁，命令会 fail-closed，并要求管理员先显式停止旧 daemon。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
+> `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再在维护门禁后停止 systemd service、安装对应 Release 的 binary、重新启用并启动 unit，最后输出状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁或 `service-install`，命令会 fail-closed，不会删除当前磁盘上的 binary，并明确报错，要求管理员先升级匹配的 updater release。单独执行 `install` 时仍保留 restart-required 语义：已运行 daemon 不会被 raw stop，需用 `reinstall` 完成安全迁移。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
 
 卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和部署文件。对于 `/opt/sakura-ai` 等独立安装目录，完全卸载后只保留 `start.sh`，方便干净地重新部署；源码仓库不会删除源码。两种模式共用同一确认词 `UNINSTALL`：
 
