@@ -13,6 +13,7 @@ systemctl 调用经模块级 ``_systemctl`` 间接，测试可整体 monkeypatch
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -31,11 +32,16 @@ UNIT_INSTALL_DIR = "/etc/systemd/system"
 _UNIT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service\Z")
 _UNIT_PATH_UNSAFE_CHARS = frozenset("%$'\\\";")
 
-# 超时契约：必须大于 backend 内部相应门（readiness gate / SIGTERM 等待窗口，均默认
-# DEFAULT_STARTUP_TIMEOUT=5s），否则 systemd 会先杀 Exec 命令、打断 CLI 自己的清理
-# 阶梯。由 test_systemd_unit.py 的契约测试固化。
-# / Must exceed the backend's internal gates; contract-tested.
+# 超时契约：TimeoutStartSec 必须大于 backend readiness gate（--startup-timeout
+# 渲染值，默认 DEFAULT_STARTUP_TIMEOUT=5s），否则 systemd 会先杀 Exec 命令、打断
+# CLI 自己的清理阶梯。实际值按 max(TIMEOUT_START_SEC, ceil(N)+余量) 派生，由
+# test_systemd_unit.py 的契约测试固化。
+# / Must exceed the backend's internal gates; derived per unit; contract-tested.
 TIMEOUT_START_SEC = 120
+# 派生余量：覆盖 ExecStartPre/ExecStart 两次 onefile 解压与 install 的目录工作
+# （readiness gate 的 N 秒不含 CLI 自身解压时间）。
+# / Margin over the rendered startup gate covering two onefile extractions.
+TIMEOUT_START_MARGIN_SEC = 30
 TIMEOUT_STOP_SEC = 60
 RESTART_SEC = 5
 START_LIMIT_INTERVAL_SEC = 60
@@ -98,17 +104,28 @@ def _systemctl_is_active(unit_name: str) -> bool:
 
 
 def _systemctl_is_enabled(unit_name: str) -> bool:
-    """Return whether systemd has an enablement link for ``unit_name``."""
+    """Return whether systemd has an enablement link for ``unit_name``.
+
+    状态→rc 组合依据 man systemctl 的 is-enabled 表与本机实测：enabled /
+    enabled-runtime / alias / static 为 rc=0；linked / linked-runtime /
+    masked / masked-runtime / disabled 为 rc>0。linked* 表示存在可用性链接，
+    视为已启用，卸载时 ``disable`` 才会移除它们。
+    """
     proc = _run_systemctl("is-enabled", unit_name)
     state = " ".join(str(getattr(proc, "stdout", "") or "").split())
+    # linked/linked-runtime 的 rc 在版本间不保证（实测 1，man 表 >0），先按状态
+    # 判定，不依赖 rc 分级。
+    if state in {"linked", "linked-runtime"}:
+        return True
     if proc.returncode == 0:
-        return state in {"enabled", "linked", "generated", "alias"}
+        return state in {"enabled", "enabled-runtime", "generated", "alias"}
     if proc.returncode in (1, 3, 4) and state in {
         "",
         "disabled",
         "indirect",
         "static",
         "masked",
+        "masked-runtime",
         "not-found",
         "unknown",
     }:
@@ -187,6 +204,13 @@ def render_unit(backend: DaemonBackend) -> str:
         backend.binary_path,
         backend.compose_file,
         backend.deployment_env,
+        backend.startup_timeout,
+    )
+    # TimeoutStartSec 派生而非固定：操作员抬高的 --startup-timeout 门必须仍被
+    # systemd 超时覆盖，否则启动即被杀；默认 5s 时维持 120s 地板。
+    timeout_start_sec = max(
+        TIMEOUT_START_SEC,
+        math.ceil(backend.startup_timeout) + TIMEOUT_START_MARGIN_SEC,
     )
     return "\n".join(
         [
@@ -205,7 +229,7 @@ def render_unit(backend: DaemonBackend) -> str:
             f"PIDFile={pid_file_path(backend.socket_path)}",
             "Restart=on-failure",
             f"RestartSec={RESTART_SEC}s",
-            f"TimeoutStartSec={TIMEOUT_START_SEC}s",
+            f"TimeoutStartSec={timeout_start_sec}s",
             f"TimeoutStopSec={TIMEOUT_STOP_SEC}s",
             "",
             "[Install]",
@@ -232,6 +256,21 @@ def _read_existing_unit(path: str) -> str | None:
             return unit_file.read()
     except OSError as exc:
         raise ServiceError(f"cannot read existing systemd unit {path!r}: {exc}") from exc
+
+
+def _fsync_directory(path: str) -> None:
+    """fsync 目录本身，使 ``os.replace`` 的 rename 在断电后仍可恢复。
+
+    只 fsync 临时文件不保证目录项落盘：断电后 enablement 链接可能指向丢失或
+    旧的 unit 文件。模块级 seam，测试 monkeypatch 用。
+
+    / fsync the directory entry so the atomic rename survives power loss.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def install_service(
@@ -285,6 +324,15 @@ def install_service(
         except OSError:
             pass
         raise
+    # rename 已生效但目录项未持久化前，不得向调用方报告安装成功（断电会让
+    # enablement 链接指向丢失的 unit）。
+    # / Persist the directory entry before reporting installation success.
+    try:
+        _fsync_directory(unit_dir)
+    except OSError as exc:
+        raise ServiceError(
+            f"cannot fsync unit directory {unit_dir!r}: {exc}"
+        ) from exc
     _systemctl("daemon-reload")
     _systemctl("enable", unit_name)
     _systemctl("start", unit_name)
