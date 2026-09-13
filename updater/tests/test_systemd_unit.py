@@ -141,6 +141,41 @@ def test_render_unit_exec_lines_share_single_source(tmp_path, monkeypatch):
     ]
 
 
+def test_render_unit_preserves_configured_startup_timeout(tmp_path, monkeypatch):
+    """service-install 的 --startup-timeout 必须进入 Exec* 三行并抬高 TimeoutStartSec。"""
+    backend = _make_production_backend(tmp_path, monkeypatch, startup_timeout=300.0)
+    text = render_unit(backend)
+    flags = backend_cli_flags(
+        backend.state_dir,
+        backend.socket_path,
+        backend.binary_path,
+        backend.compose_file,
+        backend.deployment_env,
+        backend.startup_timeout,
+    )
+    assert _directive(text, "ExecStart").split() == [
+        backend.binary_path,
+        "backend",
+        "start",
+        *flags,
+    ]
+    assert "--startup-timeout" in _directive(text, "ExecStartPre").split()
+    assert "--startup-timeout" in _directive(text, "ExecStop").split()
+    # TimeoutStartSec 派生：max(默认地板, ceil(N)+余量)，否则 systemd 会先杀 Exec。
+    assert _directive(text, "TimeoutStartSec") == (
+        f"{300 + systemd_mod.TIMEOUT_START_MARGIN_SEC}s"
+    )
+
+
+def test_render_unit_default_startup_timeout_keeps_timeout_floor(tmp_path, monkeypatch):
+    """默认 5s：flag 仍显式渲染进 unit，TimeoutStartSec 维持 120s 地板。"""
+    backend = _make_production_backend(tmp_path, monkeypatch)
+    text = render_unit(backend)
+    assert "--startup-timeout" in _directive(text, "ExecStart").split()
+    assert str(DEFAULT_STARTUP_TIMEOUT) in _directive(text, "ExecStart").split()
+    assert _directive(text, "TimeoutStartSec") == f"{TIMEOUT_START_SEC}s"
+
+
 def test_render_unit_pidfile_matches_daemon_derivation(tmp_path, monkeypatch):
     """PIDFile= 与 daemon.pid_file_path / 模块级派生三处同源。"""
     backend = _make_production_backend(tmp_path, monkeypatch)
@@ -232,6 +267,43 @@ def test_install_service_writes_enables_starts_idempotently(
         ["enable", UNIT_NAME],
         ["start", UNIT_NAME],
     ]
+
+
+def test_install_service_fsyncs_unit_directory(tmp_path, monkeypatch):
+    """os.replace 后必须 fsync unit 目录，断电后 rename 才可恢复。"""
+    fsynced: list[str] = []
+    monkeypatch.setattr(systemd_mod, "_fsync_directory", fsynced.append)
+    backend = _make_production_backend(tmp_path, monkeypatch)
+    commands: list[list[str]] = []
+    _patch_systemctl(monkeypatch, commands)
+    monkeypatch.setattr(daemon_mod.os, "geteuid", lambda: 0, raising=False)
+    unit_dir = str(tmp_path / "units")
+
+    install_service(backend, unit_dir=unit_dir)
+
+    assert fsynced == [unit_dir]
+
+
+def test_install_service_fsync_failure_is_service_error(tmp_path, monkeypatch):
+    """目录 fsync 失败必须 fail-closed：不得带着未持久化的 rename 报告安装成功。"""
+
+    def _boom(path):
+        raise OSError("directory fsync unsupported")
+
+    monkeypatch.setattr(systemd_mod, "_fsync_directory", _boom)
+    backend = _make_production_backend(tmp_path, monkeypatch)
+    commands: list[list[str]] = []
+    _patch_systemctl(monkeypatch, commands)
+    monkeypatch.setattr(daemon_mod.os, "geteuid", lambda: 0, raising=False)
+
+    with pytest.raises(ServiceError, match="fsync"):
+        install_service(backend, unit_dir=str(tmp_path / "units"))
+    assert commands == []
+
+
+def test_fsync_directory_flushes_real_directory(tmp_path):
+    """真实目录 fsync 冒烟：Linux 上正常文件系统不抛错。"""
+    systemd_mod._fsync_directory(str(tmp_path))
 
 
 def test_install_service_requires_root(tmp_path, monkeypatch):
@@ -362,6 +434,44 @@ def test_systemctl_transient_active_state_fails_closed(monkeypatch):
     monkeypatch.setattr(systemd_mod, "_run_systemctl", lambda *a: completed)
     with pytest.raises(ServiceError, match="is-active"):
         systemd_mod._systemctl_is_active(UNIT_NAME)
+
+
+# (returncode, state) 组合来自 man systemctl 的 is-enabled 表与本机实测：
+# enabled-runtime rc=0；linked/linked-runtime/masked-runtime rc=1。
+@pytest.mark.parametrize(
+    ("returncode", "state", "expected"),
+    [
+        (0, "enabled", True),
+        # ``systemctl enable --runtime`` 的产物；rc=0 但曾被误判为未启用。
+        (0, "enabled-runtime", True),
+        (0, "alias", True),
+        (0, "generated", True),
+        # linked = 通过符号链接可用的 unit（文件在搜索路径之外）；链接存在即
+        # 视为已启用，卸载时 disable 才会移除这些链接。
+        (1, "linked", True),
+        (1, "linked-runtime", True),
+        (0, "static", False),
+        (1, "disabled", False),
+        (1, "masked", False),
+        (1, "masked-runtime", False),
+        (4, "not-found", False),
+    ],
+)
+def test_systemctl_is_enabled_states(returncode, state, expected, monkeypatch):
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=f"{state}\n", stderr=""
+    )
+    monkeypatch.setattr(systemd_mod, "_run_systemctl", lambda *a: completed)
+    assert systemd_mod._systemctl_is_enabled(UNIT_NAME) is expected
+
+
+def test_systemctl_is_enabled_unknown_state_fails_closed(monkeypatch):
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="brand-new-state\n", stderr=""
+    )
+    monkeypatch.setattr(systemd_mod, "_run_systemctl", lambda *a: completed)
+    with pytest.raises(ServiceError, match="is-enabled"):
+        systemd_mod._systemctl_is_enabled(UNIT_NAME)
 
 
 # =============================================================================
