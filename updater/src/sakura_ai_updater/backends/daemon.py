@@ -35,6 +35,8 @@ _DEFAULT_STATE_DIR = ".deploy/updater"
 
 _PID_META_FILENAME = "daemon-meta.json"
 _LOG_FILENAME = "updater.log"
+_PID_FILE_NAME = "updater.pid"
+_RUNTIME_TMP_DIR_NAME = "tmp"
 
 # Windows 无 SIGKILL（updater 生产只跑 Linux）；None 时 stop 不发送 SIGKILL。
 _SIGTERM = getattr(signal, "SIGTERM", 15)
@@ -159,6 +161,76 @@ def _is_same_process(pid: int, starttime: str, identity: str) -> bool:
     )
 
 
+def pid_file_path(socket_path: str) -> str:
+    """systemd ``PIDFile=`` 使用的 pidfile 路径（socket 同目录派生）。
+
+    / Single source of the pidfile derivation: next to the daemon socket, i.e.
+    ``/run/sakura-ai/updater.pid`` in production.  DaemonBackend and the systemd
+    unit renderer must never derive it independently.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(socket_path)), _PID_FILE_NAME)
+
+
+def serve_argv(
+    socket_path: str,
+    state_dir: str,
+    socket_uid: int,
+    socket_gid: int,
+    compose_file: str | None,
+    deployment_env: str | None,
+) -> list[str]:
+    """``--serve`` child argv 单一来源（``_spawn`` Popen 与测试共用）。
+
+    Existing argument order/meaning is stable; compose/deployment paths are
+    appended only after the legacy socket/lock arguments.
+    """
+    args = [
+        "--serve",
+        "--socket-path",
+        socket_path,
+        "--state-dir",
+        state_dir,
+        "--lock-path",
+        os.path.join(state_dir, "updater.lock"),
+        "--socket-uid",
+        str(socket_uid),
+        "--socket-gid",
+        str(socket_gid),
+    ]
+    if compose_file is not None:
+        args.extend(["--compose-file", compose_file])
+    if deployment_env is not None:
+        args.extend(["--deployment-env", deployment_env])
+    return args
+
+
+def backend_cli_flags(
+    state_dir: str,
+    socket_path: str,
+    binary_path: str,
+    compose_file: str | None,
+    deployment_env: str | None,
+) -> list[str]:
+    """backend CLI flag 单一来源（systemd unit Exec* 渲染与手工命令共用）。
+
+    / Single source of the ``backend <action>`` flag list so the rendered
+    systemd Exec lines can never drift from the deployed daemon contract.
+    """
+    flags = [
+        "--state-dir",
+        state_dir,
+        "--socket-path",
+        socket_path,
+        "--binary-path",
+        binary_path,
+    ]
+    if compose_file is not None:
+        flags.extend(["--compose-file", compose_file])
+    if deployment_env is not None:
+        flags.extend(["--deployment-env", deployment_env])
+    return flags
+
+
 class DaemonBackend:
     """daemon 生命周期后端：start / stop / status / is-running + host bootstrap。
 
@@ -225,6 +297,16 @@ class DaemonBackend:
     def _log_path(self) -> str:
         return os.path.join(self.state_dir, _LOG_FILENAME)
 
+    @property
+    def runtime_tmp_path(self) -> str:
+        """Persistent private ``TMPDIR`` used by the production onefile binary."""
+        return os.path.join(self.state_dir, _RUNTIME_TMP_DIR_NAME)
+
+    @property
+    def pid_file_path(self) -> str:
+        """systemd ``PIDFile=`` 读取的 pidfile（委托模块级单一来源派生）。"""
+        return pid_file_path(self.socket_path)
+
     # ------------------------------------------------------------------ meta
 
     def _write_pid_meta(self, pid: int, starttime: str, identity: str) -> None:
@@ -289,6 +371,166 @@ class DaemonBackend:
         except OSError:
             pass  # 清理尽力而为；不因清理失败掩盖 stop 结果
 
+    def _write_pid_file(self, pid: int) -> None:
+        """原子写 systemd 可读 pidfile（temp + fsync + os.replace，产物 0600）。
+
+        写入点与 PID meta 相同：readiness 确认后（以及 ``start()`` 幂等早退时的
+        补写）。run dir 是 0770 group-writable 且无 sticky 位的共享目录——直接
+        ``open`` 目标路径会跟随组成员预置的 symlink 造成 root 任意文件覆写；
+        同目录 ``mkstemp`` + 原子替换不跟随已存在的目录项。组成员仍可 unlink/
+        替换 pidfile 目录项，残余风险仅为本地 DoS（systemd start 失败/重启退避），
+        无任意文件覆写或提权面，本阶段接受（P1 可结合 RuntimeDirectory 收紧）。
+
+        / Atomic pidfile publish for systemd ``PIDFile=``: mkstemp + replace in
+        the same directory never follows a pre-planted symlink in the
+        group-writable run dir; residual group-unlink risk is local-DoS only.
+        """
+        directory = os.path.dirname(self.pid_file_path)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=directory, prefix=".updater-pid.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as f:
+                f.write(f"{pid}\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.pid_file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def _clear_pid_file(self) -> None:
+        try:
+            os.remove(self.pid_file_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass  # 清理尽力而为（systemd 停机后亦会自删 pidfile）
+
+    def _clear_pid_records(self) -> None:
+        """meta 与 pidfile 同生命周期：一处清理，两份记录一起忘。"""
+        self._clear_pid_meta()
+        self._clear_pid_file()
+
+    # --------------------------------------------------------- runtime paths
+
+    @staticmethod
+    def _check_trusted_directory_chain(
+        path: str, label: str, *, exact_mode: int | None = None
+    ) -> str:
+        """Validate a directory and every ancestor without following symlinks.
+
+        Production updater state must not live below a path that a non-root user
+        can replace.  ``lstat`` is used for every component so a symlink is
+        rejected before any chmod or file creation is attempted.
+        """
+        absolute = os.path.abspath(path)
+        current = absolute
+        while True:
+            try:
+                directory_stat = os.lstat(current)
+            except OSError as exc:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: cannot lstat directory {current!r}: {exc}"
+                ) from exc
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {current!r} must be a directory, not a symlink"
+                )
+            if getattr(directory_stat, "st_uid", 0) != 0:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {current!r} must be owned by root"
+                )
+            mode = stat.S_IMODE(directory_stat.st_mode)
+            if mode & 0o022:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {current!r} must not be group/other writable"
+                )
+            if current == absolute and exact_mode is not None and mode != exact_mode:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {absolute!r} must have mode {exact_mode:04o}"
+                )
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        return absolute
+
+    def _ensure_private_directory(self, path: str, label: str) -> str:
+        """Create and harden a root-owned 0700 directory and its missing parents."""
+        absolute = os.path.abspath(path)
+        if absolute == os.path.abspath(os.sep):
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: refusing to use the filesystem root"
+            )
+
+        missing: list[str] = []
+        current = absolute
+        while True:
+            try:
+                directory_stat = os.lstat(current)
+            except FileNotFoundError:
+                missing.append(current)
+                parent = os.path.dirname(current)
+                if parent == current:
+                    raise UnsafeDeploymentPathError(
+                        f"unsafe {label}: no trusted parent for {absolute!r}"
+                    )
+                current = parent
+                continue
+            except OSError as exc:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: cannot lstat directory {current!r}: {exc}"
+                ) from exc
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {current!r} must be a directory, not a symlink"
+                )
+            break
+
+        # Validate the nearest existing ancestor before creating anything below
+        # it.  Missing components are created from the top down with 0700.
+        self._check_trusted_directory_chain(current, label)
+        for directory in reversed(missing):
+            try:
+                os.mkdir(directory, 0o700)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: cannot create directory {directory!r}: {exc}"
+                ) from exc
+
+        # Existing state directories may be 0755 from an older install.  They
+        # are safe to harden because ownership and the full parent chain were
+        # checked above; shared-writable directories fail closed instead.
+        self._check_trusted_directory_chain(absolute, label)
+        try:
+            directory_stat = os.lstat(absolute)
+            if getattr(directory_stat, "st_uid", 0) != 0:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe {label}: {absolute!r} must be owned by root"
+                )
+            if stat.S_IMODE(directory_stat.st_mode) != 0o700:
+                os.chmod(absolute, 0o700)
+        except UnsafeDeploymentPathError:
+            raise
+        except OSError as exc:
+            raise UnsafeDeploymentPathError(
+                f"unsafe {label}: cannot harden directory {absolute!r}: {exc}"
+            ) from exc
+        self._check_trusted_directory_chain(absolute, label, exact_mode=0o700)
+        return absolute
+
+    def ensure_runtime_tmp(self) -> str:
+        """Prepare the persistent private ``TMPDIR`` required by systemd boots."""
+        self._ensure_private_directory(self.state_dir, "updater state directory")
+        return self._ensure_private_directory(self.runtime_tmp_path, "updater TMPDIR")
+
     # ------------------------------------------------------------- executable
 
     def _resolve_executable(self) -> tuple[list[str], str]:
@@ -309,29 +551,15 @@ class DaemonBackend:
         )
 
     def _serve_args(self) -> list[str]:
-        """返回 child 进程所需的 ``--serve`` 参数。
-
-        Existing argument order/meaning is stable; compose/deployment paths are
-        appended only after the legacy socket/lock arguments.
-        """
-        args = [
-            "--serve",
-            "--socket-path",
+        """返回 child 进程所需的 ``--serve`` 参数（委托模块级单一来源）。"""
+        return serve_argv(
             self.socket_path,
-            "--state-dir",
             self.state_dir,
-            "--lock-path",
-            os.path.join(self.state_dir, "updater.lock"),
-            "--socket-uid",
-            str(self._socket_uid),
-            "--socket-gid",
-            str(self._socket_gid),
-        ]
-        if self.compose_file is not None:
-            args.extend(["--compose-file", self.compose_file])
-        if self.deployment_env is not None:
-            args.extend(["--deployment-env", self.deployment_env])
-        return args
+            self._socket_uid,
+            self._socket_gid,
+            self.compose_file,
+            self.deployment_env,
+        )
 
     # ------------------------------------------------------------ privileges
 
@@ -562,7 +790,17 @@ class DaemonBackend:
                     f"updater process identity mismatch (pid={child.pid}); log: {log_path}"
                 )
             if self._health_ready(self.socket_path):
-                self._write_pid_meta(child.pid, starttime, identity)
+                try:
+                    self._write_pid_meta(child.pid, starttime, identity)
+                    self._write_pid_file(child.pid)
+                except OSError as exc:
+                    # PID meta is written immediately before the systemd
+                    # pidfile.  If publishing either record fails, leave no
+                    # stale identity behind for a later start/stop to trust.
+                    self._clear_pid_records()
+                    raise UpdaterStartError(
+                        f"cannot publish updater PID records: {exc}; log: {log_path}"
+                    ) from exc
                 return
             time.sleep(self.poll_interval)
         raise UpdaterStartError(
@@ -599,7 +837,17 @@ class DaemonBackend:
         顺序：is_running 幂等 → 解析 executable/identity → 生产 root gate →
         Popen(start_new_session, log redirect) → readiness gate → 原子写 PID meta。
         """
-        if self.is_running():
+        running_meta = self._running_meta()
+        if running_meta is not None:
+            # 幂等早退也补写 pidfile：daemon 活着但 pidfile 被清时，
+            # systemd Type=forking 的 start 仍能读到 main PID。
+            # / Republish on the idempotent path so a missing pidfile heals.
+            try:
+                self._write_pid_file(running_meta["pid"])
+            except OSError as exc:
+                raise UpdaterStartError(
+                    f"cannot publish updater pidfile: {exc}; log: {self._log_path}"
+                ) from exc
             return
         argv_exe, identity = self._resolve_executable()
         if identity == IDENTITY_BINARY:
@@ -652,26 +900,27 @@ class DaemonBackend:
         """
         meta = self._read_pid_meta()
         if meta is None:
-            if os.path.exists(self._pid_meta_path):
-                self._clear_pid_meta()  # 坏 meta：无法安全指导信号，幂等清理
+            # A stale pidfile is not enough to identify a process, but it must
+            # still be removed so systemd cannot adopt an unrelated old PID.
+            self._clear_pid_records()  # 坏/缺 meta：无法安全指导信号，幂等清理
             return
         pid, starttime, identity = meta["pid"], meta["starttime"], meta["identity"]
         if not _is_same_process(pid, starttime, identity):
-            self._clear_pid_meta()
+            self._clear_pid_records()
             return
         try:
             os.kill(pid, _SIGTERM)
         except ProcessLookupError:
-            self._clear_pid_meta()
+            self._clear_pid_records()
             return
         except OSError as e:
             # PermissionError 等：无法向进程发信号 → 清 meta 后转抛清晰错误
-            self._clear_pid_meta()
+            self._clear_pid_records()
             raise UpdaterStartError(f"cannot stop updater (pid={pid}): {e}") from e
         deadline = time.monotonic() + self.stop_timeout
         while time.monotonic() < deadline:
             if not _is_same_process(pid, starttime, identity):
-                self._clear_pid_meta()
+                self._clear_pid_records()
                 return
             time.sleep(self.poll_interval)
         # 超时：最终检查仍为同一进程才 SIGKILL（PID 被复用绝不打到新进程上）
@@ -682,23 +931,27 @@ class DaemonBackend:
                 pass  # 进程在最终检查与发信号之间退出——视为已停止
             except OSError:
                 pass  # SIGKILL 失败属尽力而为；meta 照常清理，不掩盖已发出的 SIGTERM
-        self._clear_pid_meta()
+        self._clear_pid_records()
 
     # ---------------------------------------------------------------- status
 
-    def is_running(self) -> bool:
-        """只信完整 meta + 三重 identity 校验；无 meta / 坏 meta → False。"""
+    def _running_meta(self) -> dict | None:
+        """meta 完整且三重校验通过时返回该 meta，否则 None（is_running/start 共用）。"""
         meta = self._read_pid_meta()
         if meta is None:
-            return False
-        return _is_same_process(meta["pid"], meta["starttime"], meta["identity"])
+            return None
+        if not _is_same_process(meta["pid"], meta["starttime"], meta["identity"]):
+            return None
+        return meta
+
+    def is_running(self) -> bool:
+        """只信完整 meta + 三重 identity 校验；无 meta / 坏 meta → False。"""
+        return self._running_meta() is not None
 
     def status(self) -> dict:
         """backend status 输出（JSON 字段契约）。"""
-        meta = self._read_pid_meta()
-        running = meta is not None and _is_same_process(
-            meta["pid"], meta["starttime"], meta["identity"]
-        )
+        meta = self._running_meta()
+        running = meta is not None
         return {
             "running": running,
             "pid": meta["pid"] if running else None,
@@ -710,7 +963,7 @@ class DaemonBackend:
     # ------------------------------------------------------------------ misc
 
     def install(self) -> None:
-        """host bootstrap 安装：root gate → group 双向校验/创建 → run dir → state dir。
+        """host bootstrap 安装：root gate → group/run/state/runtime tmp。
 
         **不下载 binary**（Slice 3c 负责 binary acquisition / PyInstaller / release
         asset 校验）。state_dir 供 PID meta 与 updater.log 使用（.deploy/updater）。
@@ -718,4 +971,10 @@ class DaemonBackend:
         self._require_root("install")
         self.ensure_group()
         self.ensure_run_dir()
-        os.makedirs(self.state_dir, exist_ok=True)
+        if os.environ.get("SAKURA_UPDATER_DEV") == "1":
+            # Source-mode bootstrap is intentionally allowed to run from a
+            # user-owned checkout.  The production onefile path below is the
+            # one that requires a root-owned private TMPDIR.
+            os.makedirs(self.state_dir, exist_ok=True)
+        else:
+            self.ensure_runtime_tmp()
