@@ -1,6 +1,7 @@
 """Regression tests for dashboard application-calendar aggregation."""
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,18 @@ import pytest
 from backend.api.v1 import dashboard as api_dashboard
 from backend.core.time_service import TimeService
 from backend.webui.routes import dashboard as web_dashboard
+
+
+class _FrozenClock:
+    """2026-08-12 让硬编码的 ``08-10`` 恒落在 31 天窗口（07-13~08-12）内。"""
+
+    instant = datetime(2026, 8, 12, 13, 45, 30, tzinfo=UTC)
+
+    def now_utc(self) -> datetime:
+        return self.instant
+
+    def monotonic(self) -> float:
+        return 42.5
 
 
 class _Rows:
@@ -31,7 +44,7 @@ class _ChartDb:
 
 @pytest.fixture
 def frozen_dashboard(monkeypatch):
-    service = TimeService("UTC")
+    service = TimeService("UTC", clock=_FrozenClock())
     monkeypatch.setattr(api_dashboard, "get_time_service", lambda: service)
     monkeypatch.setattr(web_dashboard, "get_time_service", lambda: service)
     monkeypatch.setattr(
