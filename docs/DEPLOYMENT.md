@@ -402,7 +402,7 @@ Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检�
 
 **运行环境要求**：自 2026-08-21 起，updater 发布二进制在 Python 3.14 Bookworm（glibc 2.36）环境中构建，宿主机需要 glibc ≥ 2.36（Debian 12+、Ubuntu 24.04+）。更早版本基于 Bullseye（glibc 2.31）构建，可运行于更老的发行版；宿主机仍为 Ubuntu 20.04/22.04 或 Debian 11 等旧系统时，请勿升级到新二进制（自动更新确认前请先确认发行版满足要求），或改为仅容器部署并手动更新镜像。
 
-通过本指南推荐的 `sudo ./start.sh --prod` 首次部署时，updater 会随应用自动完成安装和启动，无需再单独执行下面的管理命令。
+通过本指南推荐的 `sudo ./start.sh --prod` 首次部署时，updater 会随应用自动完成 binary 安装，并渲染、启用和启动 `sakura-ai-updater.service`；无需再单独执行下面的管理命令。生产 binary 要求 Linux 宿主机的 PID 1 是可用的 systemd；容器、LXC/NAS 或其他不满足该条件的环境会明确失败，不会声称已配置重启自启。
 
 ### 管理命令
 
@@ -414,9 +414,29 @@ Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检�
 
 action 默认为 `status`，即 `./start.sh updater` 等价于 `./start.sh updater status`。
 
-- `reinstall` 是推荐的同步命令：先确认没有后台部署，再通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，然后停止已验证的 daemon、原子安装对应 Release 的 binary、重新启动并输出状态。安装或校验失败时会尝试用保留的安全 binary 恢复原 daemon。这样既避免检查任务与停止 daemon 之间的竞态，也避免后台 `start.sh --prod` 在手工 `stop/install/start` 之间重新拉起 daemon。
-- 不支持 `/v1/lifecycle/prepare-stop` 的旧 daemon 无法提供原子任务门禁，`reinstall` 会 fail-closed。升级这类旧版本时，应先在 WebUI 确认没有活动任务，再显式执行 `sudo ./start.sh updater stop`，随后执行 `install` 和 `start`；新 daemon 启动后即可使用一体化 `reinstall`。
-- `uninstall` 只删除已验证 updater 的 binary、daemon metadata、日志、锁和任务状态；若 socket 仍由无法验证身份的监听者占用，会 fail-closed 并要求管理员先检查监听进程，不会盲目 kill。
+- `reinstall` 是推荐的同步命令：先确认没有后台部署，再通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，然后在维护门禁后停止 systemd service、原子安装对应 Release 的 binary、重新启用并启动 unit，最后输出状态。安装或校验失败时会尝试用保留的安全 binary 恢复原 daemon。这样既避免检查任务与停止 daemon 之间的竞态，也避免后台 `start.sh --prod` 在手工 `stop/install/start` 之间重新拉起 daemon。
+- 不支持 `/v1/lifecycle/prepare-stop` 的旧 daemon 无法提供原子任务门禁，`reinstall` 会 fail-closed。升级这类旧版本时，应先在 WebUI 确认没有活动任务，再显式执行 `sudo ./start.sh updater stop`，随后更新到支持 `service-install` 的 release；旧 binary 不认识该子命令时不会删除当前磁盘上的 binary，会明确报错并给出升级指引，不会假装已完成自启动迁移。
+- `install` 在 daemon 已运行时保留 restart-required 语义：它会完成 binary 校验并报告“需要重启”，不会先 raw stop 正在处理任务的 daemon。需要切换正在运行的 inode 时使用 `reinstall`，让维护门禁和 systemd stop 保持同一安全顺序。
+- `uninstall` 在存在已安装/已加载 unit 或残留 enable link 时，会先执行 `service-uninstall`（systemd stop、backend 兜底 stop、disable、删除 unit 和 daemon-reload），确认 socket 已停止后才删除 binary；同一操作重复执行幂等。若 socket 仍由无法验证身份的监听者占用，会 fail-closed 并要求管理员先检查监听进程，不会盲目 kill。
+
+### systemd 自启动、验证与迁移
+
+生产 binary 的 unit 固定为 `/etc/systemd/system/sakura-ai-updater.service`，由当前 updater binary 生成并使用同一份 `--binary-path`、`--socket-path`、`--state-dir`、Compose 和 `deployment.env` 参数。`service-install` 的顺序是写入 unit、`daemon-reload`、`enable`、`start`；因此宿主机重启后 systemd 会按 PIDFile 恢复 daemon。安装或部署完成后验证：
+
+```bash
+sudo systemctl is-enabled sakura-ai-updater.service
+sudo systemctl is-active sakura-ai-updater.service
+sudo systemctl status sakura-ai-updater.service --no-pager
+```
+
+现有手动 daemon 迁移使用维护门禁后的单条命令：
+
+```bash
+cd /opt/sakura-ai
+sudo ./start.sh updater reinstall
+```
+
+如果 systemd 不可用，生产 `install`、`reinstall` 和生产启动都会明确失败；不会回退到手动 daemon 后宣称下次重启能够自启。显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式继续使用手动 daemon，重启后需要管理员再次执行 `sudo env SAKURA_UPDATER_DEV=1 ./start.sh updater start`。卸载使用 `sudo ./start.sh updater uninstall`，会在删除 binary 前清理 service；没有 unit 的旧手动安装仍可安全重复卸载。若 unit 残留但 binary 已缺失，脚本会保守失败，需恢复匹配 release 后再清理。
 
 ### WebUI 更新后同步 Host Updater
 
@@ -443,11 +463,11 @@ sudo curl --fail --silent --show-error \
 
 ### 生产首次安装
 
-生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`。首次执行 `install` 时，即使宿主机没有 Python 且该 binary 尚不存在，也会由 `start.sh` 完成 binary acquisition；生产路径不依赖宿主机 Python。install 和 start 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组和 `/run/sakura-ai` 运行时目录：
+生产环境的 updater 二进制路径为 `.deploy/updater/sakura-ai-updater`。首次执行 `install` 时，即使宿主机没有 Python 且该 binary 尚不存在，也会由 `start.sh` 完成 binary acquisition，并交给 systemd 渲染、启用和启动 unit；生产路径不依赖宿主机 Python。install、start 和 service lifecycle 操作需要 root 权限，因为需要创建固定 GID 9472 的系统组、`/run/sakura-ai` 运行时目录和 `/etc/systemd/system` 下的 unit：
 
 ```bash
-sudo ./start.sh updater install  # 获取并校验当前版本 binary，创建组和目录
-sudo ./start.sh updater start     # 启动守护进程
+sudo ./start.sh updater install  # 获取并校验当前版本 binary，安装并启用 systemd unit
+sudo ./start.sh updater start     # 确认/启动 systemd service
 ```
 
 安装严格绑定当前部署的 Sakura AI 版本，不下载 `latest` updater。版本解析是 **deployment-mode-aware** 的：
@@ -465,17 +485,17 @@ sudo ./start.sh updater start     # 启动守护进程
 - 下载、checksum、chmod、临时文件 fsync 或临时文件安全检查等 pre-commit 失败时，旧 binary 保持 byte-for-byte unchanged。
 - atomic rename 之后，如果目录 metadata fsync 或 final safety confirmation 失败，则不得声称旧 binary 未变，必须提示新 inode 可能已经安装，且不会继续调用 backend install。只有 post-commit 检查成功后才完成 backend bootstrap。
 
-Linux 原子替换 binary 后，已经运行的 daemon 会继续使用旧 inode，不会自动切换到新版本。重复安装时推荐使用带竞态门禁的一体化命令：
+Linux 原子替换 binary 后，已经运行的 daemon 会继续使用旧 inode，不会自动切换到新版本。单独 `install` 会保留 restart-required 语义，不会为了替换正在运行的 inode 而 raw stop；重复安装时推荐使用带竞态门禁的一体化命令：
 
 ```bash
 sudo ./start.sh updater reinstall
 ```
 
-如果已经在 daemon 运行期间执行了 `install`，则至少需要显式重启：
+如果已经在 daemon 运行期间执行了 `install`，请改用 `reinstall` 完成安全迁移。只有显式源码/dev 模式才需要手动 stop/start；未设置该环境变量时，命令按生产 systemd 生命周期运行：
 
 ```bash
-sudo ./start.sh updater stop
-sudo ./start.sh updater start
+sudo env SAKURA_UPDATER_DEV=1 ./start.sh updater stop
+sudo env SAKURA_UPDATER_DEV=1 ./start.sh updater start
 ```
 
 ### 源码开发模式
@@ -483,7 +503,7 @@ sudo ./start.sh updater start
 开发环境可使用显式 Python override 运行 updater；这不是生产 fallback：
 
 ```bash
-SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
+sudo env SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater start
 ```
 
 ### 安全边界
@@ -492,7 +512,7 @@ SAKURA_UPDATER_DEV=1 SAKURA_UPDATER_PYTHON=/path/to/python ./start.sh updater st
 - Web 容器通过另一个只读目录 `/run/sakura-ai-sandbox` 与 sandboxd 通信；两个 UDS、GID、状态目录、协议与生命周期完全独立
 - 只有 sandboxd 专用容器持有 Docker socket；sandboxd 请求协议不接受任意镜像、宿主路径、network、runtime 或 Docker argv
 - 生产部署必须位于 root-owned、group/other 不可写的目录链中；推荐固定使用 `/opt/sakura-ai`。updater 启动时会对 binary、Compose 和 `deployment.env` 逐级 `lstat` 并 fail-closed，拒绝 symlink、非 root owner、共享写权限或非 `0600` 的部署状态
-- updater 不依赖 systemd 或 cron 自启；宿主机重启后，在 `/opt/sakura-ai` 运行 `sudo ./start.sh updater start`，或再次执行 `sudo ./start.sh --prod`。`start` 会重新创建 tmpfs 中消失的 `/run/sakura-ai` 后再拉起 daemon；这只恢复更新服务，不会自动安装应用更新
+- 生产 updater 由 `/etc/systemd/system/sakura-ai-updater.service` 自启，不依赖 cron；宿主机重启后由 systemd 恢复 daemon。若 PID 1 不是可用 systemd，生产启动会明确失败，不会声称已配置自启。显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式保持手动 daemon 生命周期，重启后需要运行 `sudo env SAKURA_UPDATER_DEV=1 ./start.sh updater start`；这只恢复更新服务，不会自动安装应用更新
 
 ## 十、卸载
 
@@ -517,4 +537,4 @@ sudo ./start.sh uninstall --purge
 
 ---
 
-*最后更新：2026-09-01 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-9-13 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
