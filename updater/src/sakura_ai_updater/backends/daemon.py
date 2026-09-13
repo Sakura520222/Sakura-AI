@@ -210,8 +210,12 @@ def backend_cli_flags(
     binary_path: str,
     compose_file: str | None,
     deployment_env: str | None,
+    startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
 ) -> list[str]:
     """backend CLI flag 单一来源（systemd unit Exec* 渲染与手工命令共用）。
+
+    ``startup_timeout`` 显式渲染（含默认值）：``service-install --startup-timeout N``
+    传入的窗口必须随 unit 持久化，重启/开机后的 ExecStart 不能静默回退默认值。
 
     / Single source of the ``backend <action>`` flag list so the rendered
     systemd Exec lines can never drift from the deployed daemon contract.
@@ -228,6 +232,7 @@ def backend_cli_flags(
         flags.extend(["--compose-file", compose_file])
     if deployment_env is not None:
         flags.extend(["--deployment-env", deployment_env])
+    flags.extend(["--startup-timeout", str(startup_timeout)])
     return flags
 
 
