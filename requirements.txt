@@ -39,7 +39,7 @@ python-telegram-bot>=22.8
 
 # RAG 功能
 chromadb>=1.5.9
-watchfiles>=0.20.0  # 文件监控
+watchfiles>=1.2.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
 # 支付网关
