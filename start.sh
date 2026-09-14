@@ -3953,8 +3953,9 @@ cmd_updater_install() {
         return 0
     fi
     # 安装完成后自动拉起 daemon（daemon 未运行时；与 ensure_updater_running
-    # 的引导语义一致，避免"已安装但未运行"的中间状态）。
-    if updater_start_daemon; then
+    # 的引导语义一致，避免"已安装但未运行"的中间状态）。用户参数（如
+    # --startup-timeout）必须随拉起路径透传到 service-install / 手动 start。
+    if updater_start_daemon "$@"; then
         :
     else
         warn "updater 已安装但 daemon 启动失败" >&2
@@ -4140,12 +4141,35 @@ updater_start_daemon() {
         --socket-path "$UPDATER_SOCKET_PATH" \
         --binary-path "$binary" \
         --compose-file "$COMPOSE_FILE" \
-        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE"; then
+        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE" "$@"; then
         fail "updater 启动失败" >&2
         fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式" >&2
         return 1
     fi
     ok "updater daemon 已运行"
+}
+
+# 生产 + unit 已加载时必须经 systemctl stop：裸 backend stop 在 daemon 超过
+# SIGTERM 窗口后自行升格 SIGKILL，Restart=on-failure 会把该信号死亡视为失败并
+# 拉回 daemon——stop 报成功但服务数秒后复活。stop job 期间 ExecStop 的完整
+# 清理阶梯（SIGTERM→SIGKILL）不会触发重启。dev 模式与未加载 unit（手动
+# daemon / 残留清理）保留裸 backend stop。
+# / Route production stops through systemd's stop job; the raw backend stop is
+# reserved for dev mode and fallback cleanup of daemons outside systemd.
+updater_stop_daemon() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    if updater_uses_systemd && updater_systemd_unit_is_loaded; then
+        if systemctl stop "$UPDATER_SYSTEMD_UNIT_NAME"; then
+            ok "updater systemd service 已停止"
+            return 0
+        fi
+        fail "无法停止 updater systemd service（systemctl stop 失败）" >&2
+        return 1
+    fi
+    updater_backend stop \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" "$@"
 }
 
 ensure_updater_running() {
@@ -4219,7 +4243,7 @@ ensure_updater_running() {
         fi
     fi
 
-    updater_start_daemon
+    updater_start_daemon "$@"
 }
 
 cmd_updater() {
@@ -4239,7 +4263,10 @@ cmd_updater() {
         start)
             ensure_updater_running "$@"
             ;;
-        stop|status|is-running)
+        stop)
+            updater_stop_daemon "$@"
+            ;;
+        status|is-running)
             updater_backend "$action" \
                 --state-dir "$UPDATER_STATE_DIR" \
                 --socket-path "$UPDATER_SOCKET_PATH" \
