@@ -4156,17 +4156,30 @@ updater_start_daemon() {
 # 拉回 daemon——stop 报成功但服务数秒后复活。stop job 期间 ExecStop 的完整
 # 清理阶梯（SIGTERM→SIGKILL）不会触发重启。dev 模式与未加载 unit（手动
 # daemon / 残留清理）保留裸 backend stop。
+# LoadState=loaded 不证明 systemd 拥有 daemon：unit loaded 但 inactive 时，
+# unit 外手动拉起的 daemon 不受 stop job 影响。stop job 完成后探测 socket，
+# 仍有监听即回落裸 backend stop——此时 unit 已 inactive，SIGKILL 升格不可能
+# 被 Restart=on-failure 复活。
 # / Route production stops through systemd's stop job; the raw backend stop is
-# reserved for dev mode and fallback cleanup of daemons outside systemd.
+# reserved for dev mode and fallback cleanup of daemons outside systemd.  A
+# loaded unit is not proof of daemon ownership: probe the socket after the
+# stop job and fall back to the raw backend stop while a listener survives,
+# safe because the unit is inactive by then and cannot revive the daemon.
 updater_stop_daemon() {
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     if updater_uses_systemd && updater_systemd_unit_is_loaded; then
         if systemctl stop "$UPDATER_SYSTEMD_UNIT_NAME"; then
+            :
+        else
+            fail "无法停止 updater systemd service（systemctl stop 失败）" >&2
+            return 1
+        fi
+        if updater_socket_listener_responds; then
+            warn "updater socket 仍在监听（unit 外手动 daemon）；执行裸 backend stop 兜底" >&2
+        else
             ok "updater systemd service 已停止"
             return 0
         fi
-        fail "无法停止 updater systemd service（systemctl stop 失败）" >&2
-        return 1
     fi
     updater_backend stop \
         --state-dir "$UPDATER_STATE_DIR" \
