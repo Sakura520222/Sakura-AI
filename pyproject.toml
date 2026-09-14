@@ -39,7 +39,7 @@ dependencies = [
     # 工具库
     "typing-extensions>=4.16.0",
     "pyyaml>=6.0.3",
-    "pydantic>=2.5.3",
+    "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "Pillow>=12.3.0",
     "tzlocal==5.4.4",
