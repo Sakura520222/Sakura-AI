@@ -1,6 +1,6 @@
 # 项目记忆
 
-累计反思 21 次
+累计反思 22 次
 
 ## 核心审查原则
 
@@ -16,6 +16,7 @@
 - **CI 与发布链路一致**：pip install -r vs uv.lock 会"CI 过、发布挂"；统一 uv sync --locked
 - **双清单镜像自动校验**：已有自动化测试逐行比对；手动维护成本高，可单一来源+CI 自动导出
 - **死依赖检测**：全库零调用≠可删（CI/Dockerfile/迁移脚本间接消费）；手写实现（正则 slug 替代 slugify）致库冗余时可移除
+- **单点封装易评估**：库集中单点消费（如 watchfiles 仅 hot_reload 用）升级风险低，核对该点 API 即可；README 安装示例须与 pyproject 约束 CI 比对一致
 - **升级必附 Release Notes**：核对 Breaking Changes；查库的 Supported Python Versions（如 watchfiles 1.2.0 删 3.9），CI 加版本矩阵
 - **默认行为回归**：升级后加 snapshot test 对比关键输入输出；热重载等平台相关行为多 OS 验证
 - **工具限制**：大文件（uv.lock）超搜索上限时改分块读取，勿跳过验证
