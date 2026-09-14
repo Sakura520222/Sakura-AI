@@ -6,7 +6,7 @@
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
 - 语言统计: Python: 8277389, HTML: 1112221, Shell: 324499, Dockerfile: 3061
-- 累计反思 16 次
+- 累计反思 21 次
 
 ## 3. 核心审查原则
 - 完整性验证：PR描述/提交/文件/diff一致核对；功能逐项勾选，差异>10%标minor
@@ -28,7 +28,7 @@
 - Shell一等公民：fail-closed、ERR_前缀统一错误码、日志脱敏、幂等与回退路径
 - 跨平台抽象/环形依赖检测/安全改动强制major或error；性能解析改动须微基准
 - 三镜像部署原子更新：capability协商、版本漂移检测、manifest一致性、幂等回滚
-- 依赖管理：pyproject/requirements逐行镜像+uv.lock同PR强制同步；升级须附Release Notes、全库消费点核对与回归验证
+- 依赖管理：pyproject/requirements逐行镜像+uv.lock同PR强制同步；CI强制uv lock --check；升级须附Release Notes、全库消费点核对与回归验证
 
 ## 5. Agent/Worker/Webhook
 - Shell白名单≠安全：检查$()反引号;&&|&；输出双层限额
@@ -41,15 +41,15 @@
 - 单一真值源：URL/版本常量集中；监控关键状态
 - 配置集中backend/core/config.py，新配置env+文件双入口并CI校验
 
-## 7. 最新反思要点（累计16次）
-- PR577：零调用依赖应移除或文档注明保留意图；锁文件漂移升error级；CI与发布链路统一uv sync --locked消除双轨解析
-- PR576：依赖声明改动须同PR更新锁文件，CI强制uv lock --check；单点消费API兼容逐一核对；统一update_deps脚本闭环
-- PR575：pydantic等核心库升版须跑完整回归测试；sandboxer/updater子项目版本下限与根项目一致防漂移；约束建议加上限
-- PR574：面向Python 3.14的升级须验证cp314 wheel可用性；审查结论须附CI run链接作证据；文档硬编码版本号同步检查
-- PR573：零导入点≠可删（alembic），须检索CI/脚本/镜像等非代码消费点；升级关注默认行为变化并附行为对比
-- 历史要点：PR572 Python2语法全库编译防线；ISSUE571 通知链路清理审计与灰度；PR567 全局env全库引用审查；ISSUE570 三镜像原子更新
+## 7. 最新反思要点（累计21次）
+- PR577 incr3：多库同升风险累积，quick不足须升medium/full；升级默认行为变化（slugify）须snapshot回归
+- PR577 incr2：锁文件缺失须列入报告阻断项，仅评论提及易被忽视；daemon/systemd补故障注入测试（PIDFile残留、启动失败）；start.sh新增env须镜像声明；增量审查后跑全库静态分析
+- PR576 incr2：32+提交PR按“变更树”回溯各阶段关键文件防增量盲区；升级核对库的Supported Python Versions；超大PR自动切full策略
+- PR576：锁文件一致性检查前置到审查摘要；R-001~005规则（锁同PR同步/CI uv lock --check/单点消费核对/发布产物锁校验/升级附Release Notes）；update_deps脚本闭环
+- PR577：零调用依赖移除或文档注明保留意图；CI与发布链路统一uv sync --locked消除双轨解析
+- 历史要点：PR575 核心库升版完整回归+子项目版本下限防漂移；PR574 cp314 wheel验证+审查附CI链接；PR573 alembic零导入≠可删须查非代码消费点；PR572 全库编译防线；ISSUE570 三镜像原子更新
 
 ## 8. 技术栈
 FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议AI（OpenAI/Anthropic/Gemini） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
 
-*最后更新：基于 PR #573-#577 依赖管理系列反思（锁文件同步/死依赖清理/子项目防漂移/CI证据），累计反思 16 次*
+*最后更新：基于 PR576/577 依赖管理与systemd系列反思（锁文件阻断级前置/变更树回溯/策略升档/故障注入测试），累计反思 21 次*
