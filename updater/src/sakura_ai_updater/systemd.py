@@ -369,4 +369,13 @@ def uninstall_service(
                 os.remove(path)
             except OSError as exc:
                 raise ServiceError(f"cannot remove systemd unit {path!r}: {exc}") from exc
+            # 删除同样要持久化：卸载方随后会删除 updater binary，断电复活一个
+            # 指向已删 Exec 的 enabled unit 会在每次开机留下失败重启循环。
+            # / Persist the removal before reporting uninstall success.
+            try:
+                _fsync_directory(unit_dir)
+            except OSError as exc:
+                raise ServiceError(
+                    f"cannot fsync unit directory {unit_dir!r}: {exc}"
+                ) from exc
     _systemctl("daemon-reload")
