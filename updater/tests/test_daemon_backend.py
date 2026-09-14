@@ -1269,6 +1269,7 @@ def test_ensure_group_propagates_groupadd_failure(tmp_path, monkeypatch):
 def test_ensure_run_dir_uses_os_chown_root_and_expected_gid(tmp_path, monkeypatch):
     """ensure_run_dir 用 os.chown(path, 0, 9472) + os.chmod(0770)，不调 subprocess。"""
     backend = _make_backend(tmp_path, run_dir=str(tmp_path / "run"))
+    _patch_root_owned_lstat(monkeypatch)  # 信任链：临时目录模拟 root-owned
     chown_calls, chmod_calls = [], []
     monkeypatch.setattr(
         daemon_mod.os,
@@ -1293,6 +1294,103 @@ def test_ensure_run_dir_uses_os_chown_root_and_expected_gid(tmp_path, monkeypatc
     assert chmod_calls == [(backend.run_dir, 0o770)]
     assert subprocess_calls == []  # 不调 subprocess chown
     assert os.path.isdir(backend.run_dir)  # makedirs 已创建
+
+
+def test_ensure_run_dir_refuses_existing_shared_directory(tmp_path, monkeypatch):
+    """已存在的非受管目录（如自定义 --socket-path 派生出的 /run）→ 拒绝接管。
+
+    绝不 chown/chmod 未知目录：把 /run 或 /tmp 收敛成 root:<gid> 0770 会立刻
+    破坏整个共享目录。
+    """
+    shared = tmp_path / "run"
+    shared.mkdir(mode=0o755)  # 模拟 root:root 0755 的共享系统目录
+    backend = _make_backend(tmp_path, run_dir=str(shared))
+    _patch_root_owned_lstat(monkeypatch)
+    chown_calls, chmod_calls = [], []
+    monkeypatch.setattr(
+        daemon_mod.os, "chown", lambda *a: chown_calls.append(a), raising=False
+    )
+    monkeypatch.setattr(
+        daemon_mod.os, "chmod", lambda *a: chmod_calls.append(a), raising=False
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError, match="refusing to manage"):
+        backend.ensure_run_dir()
+
+    assert chown_calls == []
+    assert chmod_calls == []
+
+
+def test_ensure_run_dir_accepts_previously_managed_directory(tmp_path, monkeypatch):
+    """已是先前安装产出的受管形态（root:<gid>、0770 掩码）→ 幂等放行不重设。"""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    backend = _make_backend(tmp_path, run_dir=str(run_dir))
+    real_lstat = daemon_mod.os.lstat
+    normalized = os.path.abspath(run_dir)
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if os.fspath(path) == normalized:
+            # 受管形态：root:9472，group-rwx、other 无权限（sticky/setgid 容忍）
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o770, st_uid=0, st_gid=DEFAULT_GID
+            )
+        if stat.S_ISDIR(result.st_mode):
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0
+            )
+        return result
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+    chown_calls, chmod_calls = [], []
+    monkeypatch.setattr(
+        daemon_mod.os, "chown", lambda *a: chown_calls.append(a), raising=False
+    )
+    monkeypatch.setattr(
+        daemon_mod.os, "chmod", lambda *a: chmod_calls.append(a), raising=False
+    )
+
+    backend.ensure_run_dir()  # 不抛错
+
+    assert chown_calls == []
+    assert chmod_calls == []
+
+
+def test_ensure_run_dir_refuses_symlinked_entry(tmp_path, monkeypatch):
+    """run_dir 路径上是 symlink → 拒绝（不跟随、不接管）。"""
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link = tmp_path / "run"
+    link.symlink_to(real_dir, target_is_directory=True)
+    backend = _make_backend(tmp_path, run_dir=str(link))
+    real_lstat = daemon_mod.os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if stat.S_ISDIR(result.st_mode):
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_gid=0)
+        return result
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+
+    with pytest.raises(UnsafeDeploymentPathError, match="not a symlink"):
+        backend.ensure_run_dir()
+
+
+def test_ensure_run_dir_refuses_group_writable_ancestor(tmp_path, monkeypatch):
+    """最近的已存在祖先 group-writable（如 /tmp）→ 拒绝在之下创建 run dir。"""
+    writable = tmp_path / "shared"
+    writable.mkdir()
+    backend = _make_backend(tmp_path, run_dir=str(writable / "run"))
+    _patch_trusted_path_tree(
+        monkeypatch, file_modes={}, overrides={writable: (stat.S_IFDIR | 0o770, 0)}
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError):
+        backend.ensure_run_dir()
+
+    assert not Path(str(writable / "run")).exists()
 
 
 def test_install_runs_bootstrap_sequence(tmp_path, monkeypatch):
@@ -1340,6 +1438,7 @@ def test_install_recreates_custom_socket_parent_directory(tmp_path, monkeypatch)
         run_dir=str(tmp_path / "runtime" / "sakura-ai"),
     )
     _patch_euid(monkeypatch, uid=0)
+    _patch_root_owned_lstat(monkeypatch)  # 重建走信任链校验：临时目录模拟 root
     monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
     monkeypatch.setattr(backend, "ensure_group", lambda: None)
     monkeypatch.setattr(daemon_mod.os, "chown", lambda *args: None, raising=False)
