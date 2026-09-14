@@ -396,6 +396,25 @@ def test_uninstall_service_stops_disables_removes_idempotently(
     assert commands == [["daemon-reload"]]
 
 
+def test_uninstall_service_fsyncs_unit_directory_after_removal(tmp_path, monkeypatch):
+    """删除 unit 后必须 fsync 目录：卸载方随后删除 binary，断电不得复活悬空 unit。"""
+    fsynced: list[str] = []
+    monkeypatch.setattr(systemd_mod, "_fsync_directory", fsynced.append)
+    backend = _make_production_backend(tmp_path, monkeypatch)
+    commands: list[list[str]] = []
+    _patch_systemctl(monkeypatch, commands)
+    monkeypatch.setattr(daemon_mod.os, "geteuid", lambda: 0, raising=False)
+    unit_dir = str(tmp_path / "units")
+    install_service(backend, unit_dir=unit_dir)
+
+    fsynced.clear()
+    commands.clear()
+    uninstall_service(backend, unit_dir=unit_dir)
+
+    assert not Path(unit_install_path(unit_dir)).exists()
+    assert fsynced == [unit_dir]
+
+
 def test_systemctl_failure_raises_service_error(monkeypatch):
     completed = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr="Unit not found"

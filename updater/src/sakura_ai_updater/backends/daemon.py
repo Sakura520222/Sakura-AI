@@ -728,15 +728,108 @@ class DaemonBackend:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"groupadd failed: {e}") from e
 
-    def ensure_run_dir(self) -> None:
-        """创建 run dir 并设 0770 root:<gid>（Web 容器经补充 GID 读 socket）。
+    def _lstat_run_dir_entry(self, path: str) -> os.stat_result | None:
+        """lstat 单个 run dir 路径组件；不存在返回 None，其余 OSError 转拒绝。"""
+        try:
+            return os.lstat(path)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise UnsafeDeploymentPathError(
+                f"unsafe updater run dir: cannot lstat {path!r}: {exc}"
+            ) from exc
 
-        用 ``os.chown``/``os.chmod`` 直接完成（root 身份下原子生效），**不调
-        subprocess chown**——避免 shell-out 语义漂移与测试复杂性。
+    def _require_managed_run_dir(self, path: str, directory_stat) -> None:
+        """已存在目录必须已是先前安装的受管形态，否则拒绝接管。"""
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            raise UnsafeDeploymentPathError(
+                f"unsafe updater run dir: {path!r} must be a directory, "
+                "not a symlink"
+            )
+        if (
+            getattr(directory_stat, "st_uid", 0) != 0
+            or getattr(directory_stat, "st_gid", -1) != self.gid
+        ):
+            raise UnsafeDeploymentPathError(
+                f"refusing to manage existing run directory {path!r}: expected "
+                f"root:{self.gid} ownership; use a dedicated subdirectory "
+                f"(e.g. {DEFAULT_RUN_DIR}) via --socket-path"
+            )
+        if stat.S_IMODE(directory_stat.st_mode) & 0o777 != 0o770:
+            raise UnsafeDeploymentPathError(
+                f"refusing to manage existing run directory {path!r}: expected "
+                "mode 0770 (group-rwx, no other access)"
+            )
+
+    def ensure_run_dir(self) -> None:
+        """确保专用 run dir 为 root:<gid> 0770（Web 容器经补充 GID 读 socket）。
+
+        fail-closed 契约：绝不接管/变更任何非本工具先前管理的目录。自定义
+        ``--socket-path /run/updater.sock`` 会派生出 ``run_dir=/run``，无条件
+        chown/chmod 会立即破坏整个共享目录。已存在的目录必须已是受管形态
+        （root-owned、group=<gid>、0770 掩码——sticky/setgid 容忍），否则拒绝；
+        不存在时校验最近已存在祖先的信任链后自顶向下创建（中间组件 0700），
+        叶子目录建出后设 root:<gid> 0770。用 ``os.chown``/``os.chmod`` 直接
+        完成（root 身份下原子生效），**不调 subprocess chown**。
+
+        / Dedicated run dir only: an existing directory is accepted solely in
+        the exact shape a previous install produced (root:<gid>, group-rwx
+        mask 0770); anything else — shared dirs like /run or /tmp included —
+        is refused instead of re-owned.
         """
-        os.makedirs(self.run_dir, exist_ok=True)
-        os.chown(self.run_dir, 0, self.gid)
-        os.chmod(self.run_dir, 0o770)
+        absolute = os.path.abspath(self.run_dir)
+        if absolute == os.path.abspath(os.sep):
+            raise UnsafeDeploymentPathError(
+                "unsafe updater run dir: refusing to use the filesystem root"
+            )
+        directory_stat = self._lstat_run_dir_entry(absolute)
+        if directory_stat is not None:
+            self._require_managed_run_dir(absolute, directory_stat)
+            return
+        missing: list[str] = []
+        current = absolute
+        while True:
+            current_stat = self._lstat_run_dir_entry(current)
+            if current_stat is None:
+                missing.append(current)
+                parent = os.path.dirname(current)
+                if parent == current:
+                    raise UnsafeDeploymentPathError(
+                        f"unsafe updater run dir: no trusted parent for {absolute!r}"
+                    )
+                current = parent
+                continue
+            break
+        # 最近已存在祖先（含其全部上级）必须通过信任链校验。
+        self._check_trusted_directory_chain(current, "updater run dir parent")
+        created_leaf = False
+        for directory in reversed(missing):
+            try:
+                os.mkdir(directory, 0o700)
+                if directory == absolute:
+                    created_leaf = True
+            except FileExistsError:
+                pass  # 竞态下已被创建；叶目录形态由下方统一收敛校验
+            except OSError as exc:
+                raise UnsafeDeploymentPathError(
+                    f"cannot create updater run dir {directory!r}: {exc}"
+                ) from exc
+        if not created_leaf:
+            # 竞态窗口内出现的目录按"已存在"契约处理：非受管形态立即拒绝。
+            race_stat = self._lstat_run_dir_entry(absolute)
+            if race_stat is None:
+                raise UnsafeDeploymentPathError(
+                    f"unsafe updater run dir: {absolute!r} disappeared "
+                    "while preparing it"
+                )
+            self._require_managed_run_dir(absolute, race_stat)
+        try:
+            os.chown(absolute, 0, self.gid)
+            os.chmod(absolute, 0o770)
+        except OSError as exc:
+            raise UnsafeDeploymentPathError(
+                f"cannot prepare updater run dir {absolute!r}: {exc}"
+            ) from exc
 
     # ------------------------------------------------------------- readiness
 

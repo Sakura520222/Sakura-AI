@@ -24,7 +24,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sakura_ai_updater.backends.daemon import DaemonBackend
+from sakura_ai_updater.backends.daemon import DEFAULT_GID, DaemonBackend
 from sakura_ai_updater.systemd import (
     RESTART_SEC,
     install_service,
@@ -100,7 +100,11 @@ def harness():
     state_dir = root / "state"
     run_dir = root / "run"
     state_dir.mkdir(mode=0o700)
-    run_dir.mkdir(mode=0o700)
+    # 受管 run dir 形态（root:<gid> 0770）：install() 的 ensure_run_dir 契约
+    # 只接受该形态的已存在目录，或在自己创建的信任链下新建。
+    # / Pre-shape the run dir in the managed form ensure_run_dir accepts.
+    run_dir.mkdir(mode=0o770)
+    os.chown(run_dir, 0, DEFAULT_GID)
     binary = root / "sakura-ai-updater"
     argv0 = Path(sys.executable).with_name("sakura-ai-updater")
     binary.write_text(
