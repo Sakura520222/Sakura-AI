@@ -3,7 +3,9 @@
 覆盖两类回归：
 - 用户参数（如 ``--startup-timeout``）必须一路透传到 service-install / 手动 start；
 - 生产 stop 必须经 systemctl stop job（裸 backend stop 的 SIGKILL 升格会被
-  ``Restart=on-failure`` 视为失败并拉回 daemon），dev/未加载 unit 保留裸 stop。
+  ``Restart=on-failure`` 视为失败并拉回 daemon），dev/未加载 unit 保留裸 stop；
+- LoadState=loaded 不证明 systemd 拥有 daemon：stop job 后 socket 仍存活
+  （unit 外手动 daemon）时，必须回落裸 backend stop 兜底。
 
 / Execution-level contracts for the updater lifecycle dispatch in start.sh,
 sourced into a bash subprocess with stubbed seams.
@@ -87,12 +89,72 @@ LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 updater_uses_systemd() { return 0; }
 updater_systemd_unit_is_loaded() { return 0; }
+updater_socket_listener_responds() { return 1; }
 systemctl() { echo "SYSTEMCTL:$*" >> "$LOG"; return 0; }
 updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
 cmd_updater stop
 grep -q '^SYSTEMCTL:stop ' "$LOG"
 # 裸 backend stop 的 SIGKILL 升格会被 Restart=on-failure 拉回，绝不能出现
 if grep -q '^BACKEND:stop' "$LOG"; then exit 1; fi
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cmd_updater_stop_falls_back_when_socket_survives_systemd_stop():
+    """socket 在 systemctl stop 后仍存活（unit 外手动 daemon）：必须回落裸 backend stop。
+
+    LoadState=loaded 不证明 systemd 拥有 daemon：unit loaded 但 inactive 时，
+    手动拉起的 daemon 不受 stop job 影响，只跑 systemctl stop 会误报成功。
+    回落时机在 stop job 完成之后（unit 已 inactive），裸 stop 的 SIGKILL
+    不会被 Restart=on-failure 视为失败复活 daemon。
+    / A socket that survives the stop job is a daemon started outside the
+    unit; the raw backend stop must run, and only after systemctl stop.
+    """
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+LOG="$(mktemp)"
+trap 'rm -f "$LOG"' EXIT
+updater_uses_systemd() { return 0; }
+updater_systemd_unit_is_loaded() { return 0; }
+updater_socket_listener_responds() { return 0; }
+systemctl() { echo "SYSTEMCTL:$*" >> "$LOG"; return 0; }
+updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
+cmd_updater stop
+grep -q '^SYSTEMCTL:stop ' "$LOG"
+grep -q '^BACKEND:stop ' "$LOG"
+# 顺序必须先 systemctl stop 再裸 backend stop：反序时 unit 仍 active，
+# 裸 stop 的 SIGKILL 死亡会被 Restart=on-failure 拉回 daemon。
+sys_line="$(grep -n '^SYSTEMCTL:stop ' "$LOG" | head -1 | cut -d: -f1)"
+backend_line="$(grep -n '^BACKEND:stop ' "$LOG" | head -1 | cut -d: -f1)"
+[[ -n "$sys_line" && -n "$backend_line" && "$sys_line" -lt "$backend_line" ]]
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cmd_updater_stop_fails_closed_when_systemctl_stop_fails():
+    """systemctl stop 失败：直接报错返回，不得回落裸 backend stop。"""
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+LOG="$(mktemp)"
+trap 'rm -f "$LOG"' EXIT
+updater_uses_systemd() { return 0; }
+updater_systemd_unit_is_loaded() { return 0; }
+updater_socket_listener_responds() { return 0; }
+systemctl() { echo "SYSTEMCTL:$*" >> "$LOG"; return 1; }
+updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
+rc=0
+cmd_updater stop || rc=$?
+[[ "$rc" -eq 1 ]]
+grep -q '^SYSTEMCTL:stop ' "$LOG"
+if grep -q '^BACKEND:' "$LOG"; then exit 1; fi
 ''',
     )
     assert result.returncode == 0, result.stdout + result.stderr
