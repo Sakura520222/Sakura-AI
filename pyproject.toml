@@ -54,7 +54,7 @@ dependencies = [
     # RAG 功能
     "chromadb>=1.5.9",
     "watchfiles>=1.2.0",
-    "python-slugify>=8.0.0",
+    "python-slugify>=9.0.0",
 
     # 支付网关
     "stripe>=15.6.1",
