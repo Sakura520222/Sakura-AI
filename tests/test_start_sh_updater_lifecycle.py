@@ -116,3 +116,87 @@ if grep -q '^SYSTEMCTL:' "$LOG"; then exit 1; fi
 ''',
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cmd_updater_reinstall_forwards_options():
+    """`updater reinstall --startup-timeout N`：安装与拉起两阶段都须收到参数。"""
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+LOG="$(mktemp)"
+trap 'rm -f "$LOG"' EXIT
+updater_require_root() { return 0; }
+updater_require_idle_deployment() { return 0; }
+updater_uses_systemd() { return 0; }
+updater_require_systemd() { return 0; }
+updater_systemd_unit_needs_cleanup() { return 1; }
+updater_socket_listener_responds() { return 1; }
+updater_prepare_stop() { return 0; }
+stop_verified_updater() { return 0; }
+cmd_updater_install() { echo "INSTALL:$*" >> "$LOG"; return 0; }
+ensure_updater_running() { echo "ENSURE:$*" >> "$LOG"; return 0; }
+updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
+cmd_updater_reinstall --startup-timeout 300
+grep -q '^INSTALL:--startup-timeout 300' "$LOG"
+grep -q '^ENSURE:--startup-timeout 300' "$LOG"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cmd_updater_reinstall_recovery_forwards_options():
+    """reinstall 安装失败且 daemon 原先在运行：恢复拉起同样收到参数。"""
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+LOG="$(mktemp)"
+trap 'rm -f "$LOG"' EXIT
+updater_require_root() { return 0; }
+updater_require_idle_deployment() { return 0; }
+updater_uses_systemd() { return 0; }
+updater_require_systemd() { return 0; }
+updater_systemd_unit_needs_cleanup() { return 1; }
+updater_socket_listener_responds() { return 0; }
+updater_prepare_stop() { return 0; }
+stop_verified_updater() { return 0; }
+cmd_updater_install() { echo "INSTALL:$*" >> "$LOG"; return 1; }
+ensure_updater_running() { echo "ENSURE:$*" >> "$LOG"; return 0; }
+updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
+rc=0
+cmd_updater_reinstall --startup-timeout 300 || rc=$?
+[[ "$rc" -eq 1 ]]
+grep -q '^ENSURE:--startup-timeout 300' "$LOG"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ensure_updater_running_delegates_acquisition_with_options():
+    """无 binary 时的全新装机委托：cmd_updater_install 同样收到用户参数。"""
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+LOG="$(mktemp)"
+trap 'rm -f "$LOG"' EXIT
+unset SAKURA_UPDATER_DEV
+updater_uses_systemd() { return 1; }
+updater_socket_listener_responds() { return 1; }
+updater_binary_is_safe() { return 1; }
+updater_path_exists() { return 1; }
+cmd_updater_install() { echo "ACQ_INSTALL:$*" >> "$LOG"; return 0; }
+updater_backend() {
+    echo "BACKEND:$*" >> "$LOG"
+    [[ "$1" == "is-running" ]] && return 1
+    return 0
+}
+ensure_updater_running --startup-timeout 300
+grep -q '^ACQ_INSTALL:--startup-timeout 300' "$LOG"
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
