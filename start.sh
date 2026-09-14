@@ -4037,19 +4037,21 @@ cmd_updater_reinstall() {
         updater_cancel_stop
         return "$stop_rc"
     fi
-    if cmd_updater_install; then
+    # 用户参数（如 --startup-timeout）必须贯穿 install 与恢复/拉起两阶段，
+    # 否则 reinstall 渲染出的 unit 回退默认值。
+    if cmd_updater_install "$@"; then
         :
     else
         install_rc=$?
         if [[ "$was_running" -eq 1 ]]; then
             warn "updater reinstallation failed; restarting the preserved installed binary" >&2
-            if ! ensure_updater_running; then
+            if ! ensure_updater_running "$@"; then
                 fail "updater reinstallation failed and the preserved daemon could not be restarted" >&2
             fi
         fi
         return "$install_rc"
     fi
-    if ensure_updater_running; then
+    if ensure_updater_running "$@"; then
         :
     else
         start_rc=$?
@@ -4234,7 +4236,8 @@ ensure_updater_running() {
         return 126
     else
         # cmd_updater_install 成功即已完成安装并启动 daemon，直接返回。
-        if cmd_updater_install; then
+        # / Fresh-acquisition delegation must carry the caller's flags too.
+        if cmd_updater_install "$@"; then
             return 0
         else
             install_rc=$?
