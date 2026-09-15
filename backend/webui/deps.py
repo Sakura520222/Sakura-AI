@@ -495,7 +495,9 @@ async def refresh_login_claims(payload: dict) -> dict | None:
         return None
 
     return {
-        "sub": payload.get("sub"),
+        # github_username is authoritative; legacy JWTs keep their old sub only
+        # when the database column is unexpectedly empty.
+        "sub": user.github_username or payload.get("sub"),
         "role": user.role,
         "user_id": user.id,
         "github_id": payload.get("github_id"),
@@ -525,8 +527,6 @@ async def get_current_user(request: Request) -> dict:
     if refreshed_claims is None:
         raise HTTPException(status_code=401, detail="无效或已过期的登录凭证")
 
-    queue_webui_token_renewal(request, refreshed_claims)
-
     return {
         "sub": refreshed_claims["sub"],
         "role": refreshed_claims["role"],
@@ -543,6 +543,8 @@ async def require_auth(request: Request) -> dict:
     user = await get_current_user(request)
     async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
+    # Renew only after the complete auth pipeline (including MFA) succeeds.
+    queue_webui_token_renewal(request, user)
     return user
 
 

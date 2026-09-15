@@ -1,5 +1,7 @@
 """Regression tests for explicit asynchronous database session cleanup."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from backend.models import database as db_module
@@ -52,7 +54,8 @@ async def test_require_auth_closes_mfa_session(monkeypatch):
     monkeypatch.setattr(webui_deps, "get_current_user", fake_get_current_user)
     monkeypatch.setattr(webui_deps, "enforce_mfa_enrollment", fake_enforce_mfa)
 
-    result = await webui_deps.require_auth(object())
+    request = SimpleNamespace(state=SimpleNamespace())
+    result = await webui_deps.require_auth(request)
 
     assert result is user
     assert session.entered == 1
