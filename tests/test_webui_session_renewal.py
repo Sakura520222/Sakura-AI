@@ -5,7 +5,8 @@ from http.cookies import SimpleCookie
 from types import SimpleNamespace
 
 import pytest
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Request as FastAPIRequest
 from fastapi.responses import RedirectResponse
 from starlette.testclient import TestClient
 
@@ -58,6 +59,7 @@ class _Session:
 def _db_user(**overrides):
     values = {
         "id": 7,
+        "github_username": "octocat",
         "role": "admin",
         "email": "fresh@example.com",
         "email_verified": True,
@@ -82,7 +84,10 @@ def _token_payload(**overrides) -> dict:
 
 
 def _set_cookie_values(response) -> list[str]:
-    return response.headers.get_list("set-cookie")
+    headers = response.headers
+    if hasattr(headers, "get_list"):
+        return headers.get_list("set-cookie")
+    return headers.getlist("set-cookie")
 
 
 def _cookie_morsel(set_cookie: str):
@@ -256,9 +261,17 @@ async def test_refresh_login_claims_rejects_invalid_user_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_api_cookie_mode_refreshes_authoritative_claims_and_queues_renewal(
-    monkeypatch,
-):
+async def test_refresh_login_claims_uses_authoritative_username(monkeypatch):
+    session = _Session(_db_user(github_username="renamed-user"))
+    monkeypatch.setattr(deps.db_module, "async_session", lambda: session)
+
+    claims = await deps.refresh_login_claims(_token_payload(sub="old-name"))
+
+    assert claims["sub"] == "renamed-user"
+
+
+@pytest.mark.asyncio
+async def test_api_cookie_mode_refreshes_claims_without_queueing_renewal(monkeypatch):
     token = auth.create_access_token(_token_payload())
     refreshed_claims = _token_payload(
         role="super_admin",
@@ -277,11 +290,62 @@ async def test_api_cookie_mode_refreshes_authoritative_claims_and_queues_renewal
 
     assert user["role"] == "super_admin"
     assert user["email"] == "authoritative@example.com"
+    assert getattr(request.state, api_deps.API_COOKIE_AUTH_STATE_KEY) is True
+    assert not hasattr(request.state, auth.WEBUI_TOKEN_RENEWAL_STATE_KEY)
+
+
+def _install_api_db(monkeypatch, mfa_required: bool):
+    class ApiSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    async def mfa_check(_user_id, _session):
+        return mfa_required
+
+    monkeypatch.setattr(api_deps.db_module, "async_session", lambda: ApiSession())
+    monkeypatch.setattr(api_deps, "user_requires_mfa_enrollment", mfa_check)
+
+
+@pytest.mark.asyncio
+async def test_require_api_auth_queues_cookie_renewal_after_mfa_passes(monkeypatch):
+    _install_api_db(monkeypatch, mfa_required=False)
+    async def refresh_claims(_payload):
+        return _token_payload(role="admin")
+
+    monkeypatch.setattr(api_deps, "refresh_login_claims", refresh_claims)
+    token = auth.create_access_token(_token_payload())
+    request = _Request(cookie_token=token)
+
+    user = await api_deps.require_api_auth(request)
+
+    assert user["role"] == "admin"
     renewed_token = getattr(request.state, auth.WEBUI_TOKEN_RENEWAL_STATE_KEY)
     renewed_payload = auth.decode_access_token(renewed_token)
     assert renewed_payload is not None
-    assert renewed_payload["role"] == "super_admin"
-    assert renewed_payload["email"] == "authoritative@example.com"
+    assert renewed_payload["role"] == "admin"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dependency_name", ["require_api_admin", "require_api_super_admin"])
+async def test_api_admin_dependencies_enforce_mfa_before_renewal(
+    monkeypatch, dependency_name
+):
+    _install_api_db(monkeypatch, mfa_required=True)
+    async def refresh_claims(_payload):
+        return _token_payload(role="super_admin")
+
+    monkeypatch.setattr(api_deps, "refresh_login_claims", refresh_claims)
+    token = auth.create_access_token(_token_payload(role="super_admin"))
+    request = _Request(cookie_token=token)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await getattr(api_deps, dependency_name)(request)
+
+    assert exc_info.value.status_code == 428
+    assert not hasattr(request.state, auth.WEBUI_TOKEN_RENEWAL_STATE_KEY)
 
 
 @pytest.mark.asyncio
@@ -305,3 +369,69 @@ async def test_api_non_cookie_modes_keep_stateless_claims(monkeypatch, request_f
 
     assert user["role"] == "admin"
     assert not hasattr(request.state, auth.WEBUI_TOKEN_RENEWAL_STATE_KEY)
+
+
+def _http_request(cookie_token: str | None = None) -> FastAPIRequest:
+    headers = []
+    if cookie_token:
+        headers.append(
+            (b"cookie", f"{auth.WEBUI_TOKEN_COOKIE_NAME}={cookie_token}".encode())
+        )
+    return FastAPIRequest(
+        {"type": "http", "headers": headers, "query_string": b""}
+    )
+
+
+@pytest.mark.asyncio
+async def test_login_page_clears_stale_but_signed_cookie(monkeypatch):
+    from backend.webui.routes import auth as auth_routes
+
+    async def rejected(_payload):
+        return None
+
+    monkeypatch.setattr(auth_routes, "refresh_login_claims", rejected)
+    monkeypatch.setattr(auth_routes, "render_template", lambda *_a, **_k: Response())
+    token = auth.create_access_token(_token_payload())
+    request = _http_request(cookie_token=token)
+
+    response = await auth_routes.login_page(request)
+
+    assert response.status_code == 200
+    set_cookie_values = _set_cookie_values(response)
+    assert any(
+        value.startswith('webui_token=""') for value in set_cookie_values
+    ), set_cookie_values
+
+
+@pytest.mark.asyncio
+async def test_login_page_keeps_valid_signed_cookie_redirect(monkeypatch):
+    from backend.webui.routes import auth as auth_routes
+
+    async def valid(_payload):
+        return _token_payload()
+
+    monkeypatch.setattr(auth_routes, "refresh_login_claims", valid)
+    token = auth.create_access_token(_token_payload())
+    request = _http_request(cookie_token=token)
+
+    response = await auth_routes.login_page(request)
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("/?")
+    assert not _set_cookie_values(response)
+
+
+@pytest.mark.asyncio
+async def test_webui_401_redirect_clears_rejected_cookie(monkeypatch):
+    from backend import main as main_module
+
+    monkeypatch.setattr(main_module, "is_webui_request", lambda _request: True)
+    response = await main_module.auth_exception_handler(
+        object(), HTTPException(status_code=401)
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/auth/login"
+    set_cookie_values = _set_cookie_values(response)
+    assert len(set_cookie_values) == 1
+    assert set_cookie_values[0].startswith('webui_token=""')
