@@ -20,7 +20,7 @@ import json
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from loguru import logger
 from sqlalchemy import select
@@ -167,6 +167,7 @@ async def auth_start(
 @router.get("/auth/callback")
 async def auth_callback(
     request: Request,
+    response: Response,
     code: str | None = Query(None),
     state: str | None = Query(None),
     error: str | None = Query(None),
@@ -205,7 +206,7 @@ async def auth_callback(
 
     # 必须已登录（cookie）
     try:
-        user = await get_current_user(request)
+        user = await get_current_user(request, response)
     except HTTPException:
         return toast_redirect(
             "/auth/login",

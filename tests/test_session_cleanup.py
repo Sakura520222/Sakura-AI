@@ -42,7 +42,7 @@ async def test_require_auth_closes_mfa_session(monkeypatch):
     user = {"user_id": 7}
     monkeypatch.setattr(db_module, "async_session", lambda: session)
 
-    async def fake_get_current_user(_request):
+    async def fake_get_current_user(_request, _response):
         return user
 
     async def fake_enforce_mfa(_request, current_user, db):
@@ -52,7 +52,7 @@ async def test_require_auth_closes_mfa_session(monkeypatch):
     monkeypatch.setattr(webui_deps, "get_current_user", fake_get_current_user)
     monkeypatch.setattr(webui_deps, "enforce_mfa_enrollment", fake_enforce_mfa)
 
-    result = await webui_deps.require_auth(object())
+    result = await webui_deps.require_auth(object(), object())
 
     assert result is user
     assert session.entered == 1
