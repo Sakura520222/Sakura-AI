@@ -248,11 +248,16 @@ HEXS=2222222222222222222222222222222222222222222222222222222222222222
 HEXR=3333333333333333333333333333333333333333333333333333333333333333
 DEVREV=0123456789abcdef0123456789abcdef01234567
 DEV_TAG="dev-20260830120000-v3.2.0-$DEVREV"
+production_resolve_dev_deployment() {
+    if [[ "$1" != edge && "$1" != "sha256:$HEXW" ]]; then return 1; fi
+    printf '%s\n' "ghcr.io/sakura520222/sakura-ai:$DEV_TAG@sha256:$HEXW" "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:$HEXS" "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:$HEXR"
+}
 docker() {
     case "$*" in
         *com.sakura-ai.build.channel*) echo development ;;
         *org.opencontainers.image.revision*) echo "$DEVREV" ;;
-        *com.sakura-ai.component*) echo web ;;
+        *org.opencontainers.image.version*) echo 3.2.0 ;;
+        *com.sakura-ai.component*) case "$*" in *sakura-ai-sandboxd*) echo sandboxd ;; *sakura-ai-agent-runner*) echo agent-runner ;; *) echo web ;; esac ;;
         *RepoDigests*)
             echo "ghcr.io/sakura520222/sakura-ai@sha256:$HEXW"
             echo "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:$HEXS"
@@ -314,7 +319,8 @@ production_prepare_env_stage || exit 1
 DEPLOYMENT_ENV_FILE="$PRODUCTION_STAGED_ENV_FILE"
 SAKURA_DEPLOY_CHANNEL=development production_prepare_and_pull_images || exit 1
 out=$(SAKURA_DEPLOY_CHANNEL=development production_prepare_and_pull_images 2>&1) || exit 1
-printf '%s\n' "$out" | grep -q '按已 pin 的 digest 拉取三镜像'
+printf '%s\n' "$out" | grep -q '按已 pin 且 revision 一致的旧部署拉取三镜像'
+grep -q '^SAKURA_AI_IMAGE=ghcr\.io/sakura520222/sakura-ai:dev-20260830120000-v3\.2\.0-0123456789abcdef0123456789abcdef01234567@sha256:1111111111111111111111111111111111111111111111111111111111111111$' "$PRODUCTION_STAGED_ENV_FILE"
 '''
     )
     assert result.returncode == 0, result.stderr + result.stdout

@@ -83,3 +83,74 @@ def test_serve_injects_orchestrator_when_host_paths_are_present(monkeypatch, tmp
         deployment_env="/etc/sakura/.deploy/deployment.env",
     )
     assert captured["orchestrator"] is not None
+
+
+def test_serve_recovers_transaction_before_reconcile(monkeypatch, tmp_path):
+    """shutdown-in-flight：deployment_env 存在时 transaction 恢复先于 state 加载/reconcile。
+
+    / Order matters: the deployment journal must be restored to exact old bytes
+    before the daemon reconciles the job gate; without deployment_env the
+    recovery step must not run at all.
+    """
+    import asyncio
+    import sys
+    import types
+
+    from sakura_ai_updater.adapters import image as image_mod
+
+    fake_locks = types.ModuleType("sakura_ai_updater.locks")
+    fake_locks.LockBusyError = RuntimeError
+    fake_locks.acquire_process_lock = lambda path: object()
+    fake_locks.release_process_lock = lambda fd: None
+    monkeypatch.setitem(sys.modules, "sakura_ai_updater.locks", fake_locks)
+    monkeypatch.setattr(main_mod, "prepare_socket_path", lambda path: None)
+    monkeypatch.setattr(main_mod, "cleanup_owned_socket", lambda path: None)
+    order = []
+    async def recover(adapter):
+        order.append("recover")
+
+    monkeypatch.setattr(image_mod.ImageAdapter, "recover_pending_transaction", recover)
+    monkeypatch.setattr(
+        main_mod, "load_state", lambda path: order.append("load") or object()
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "reconcile_interrupted_job",
+        lambda store: order.append("reconcile") or (store, False),
+    )
+
+    class _Listener:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "bind_socket_listener", lambda *a, **k: _Listener())
+    monkeypatch.setattr(main_mod, "create_app", lambda state_path, **kwargs: object())
+    fake_uvicorn = types.ModuleType("uvicorn")
+    fake_uvicorn.Config = lambda app, **kwargs: object()
+
+    class _Server:
+        def __init__(self, config):
+            pass
+
+        async def serve(self, sockets=None):
+            pass
+
+    fake_uvicorn.Server = _Server
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    real_run = asyncio.run
+    monkeypatch.setattr(main_mod.asyncio, "run", lambda awaitable: real_run(awaitable))
+
+    main_mod.serve(
+        "updater.sock",
+        str(tmp_path / "state.json"),
+        "updater.lock",
+        compose_file=str(tmp_path / "compose.yml"),
+        deployment_env=str(tmp_path / "deployment.env"),
+    )
+    assert order[:3] == ["recover", "load", "reconcile"]
+
+    # deployment_env 为 None → 不做 transaction 恢复
+    order.clear()
+    main_mod.serve("updater.sock", str(tmp_path / "state.json"), "updater.lock")
+    assert "recover" not in order
+    assert order[:2] == ["load", "reconcile"]

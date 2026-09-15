@@ -418,11 +418,11 @@ async def test_partial_old_sandbox_pair_is_rejected_before_any_write_or_reinstal
     adapter = ImageAdapter(str(compose), str(env))
     sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
     runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
-    with pytest.raises(ImageAdapterError, match="only one sandbox image digest"):
+    with pytest.raises(ImageAdapterError, match="incomplete deployment has no verified sandbox rollback pair"):
         await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", sandboxd, runner)
 
     assert env.read_bytes() == before
-    assert calls == []
+    assert all(call[:2] == ("docker", "inspect") for call in calls)
 
 
 @pytest.mark.asyncio

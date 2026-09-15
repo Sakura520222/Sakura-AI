@@ -19,6 +19,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from sakura_ai_updater import PROTOCOL_VERSION, __version__
+from sakura_ai_updater._build_identity import BUILD_RELEASE, BUILD_REVISION
+from sakura_ai_updater.contract import DEPLOYMENT_CAPABILITIES
 from sakura_ai_updater.state import UpdateStateStore, load_state
 
 
@@ -28,6 +30,9 @@ def envelope(data: dict, status_code: int = 200) -> JSONResponse:
         {
             "protocol_version": PROTOCOL_VERSION,
             "updater_version": __version__,
+            "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
+            "build_revision": BUILD_REVISION,
+            "build_release": BUILD_RELEASE,
             "data": data,
         },
         status_code=status_code,

@@ -198,6 +198,35 @@ def _patch_trusted_path_tree(
     monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
 
 
+def _patch_runtime_lstat(monkeypatch, target: Path, target_mode: int):
+    """Map only the runtime fixture to a root-owned inode without hiding its mode.
+
+    The general root-owned fixture models writable temporary ancestors as private
+    0755 directories.  Runtime TMPDIR tests must preserve the target's symlink or
+    group-writable mode so the safety check, and its no-chmod guarantee, remain
+    observable.
+    """
+
+    real_lstat = daemon_mod.os.lstat
+    normalized_target = os.path.abspath(target)
+
+    def fake_lstat(path):
+        absolute = os.path.abspath(path)
+        if absolute == normalized_target:
+            return SimpleNamespace(st_mode=target_mode, st_uid=0)
+        result = real_lstat(path)
+        if stat.S_ISDIR(result.st_mode):
+            mode = stat.S_IMODE(result.st_mode)
+            if mode & 0o022:
+                # The pytest temporary root is intentionally shared-writable;
+                # model its ancestors as trusted private directories.
+                mode = 0o755
+            return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0)
+        return SimpleNamespace(st_mode=result.st_mode, st_uid=0)
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+
+
 def _patch_same_process_primitives(
     monkeypatch, *, alive=True, starttime="555666", argv=()
 ):
@@ -697,6 +726,73 @@ def test_validate_production_paths_rejects_untrusted_inputs(
         backend._validate_production_paths()
 
 
+def test_trusted_directory_chain_allows_root_as_existing_ancestor(monkeypatch):
+    root = os.path.abspath(os.sep)
+    monkeypatch.setattr(
+        daemon_mod.os,
+        "lstat",
+        lambda path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0),
+    )
+
+    assert DaemonBackend._check_trusted_directory_chain(root, "fixture") == root
+
+
+def test_ensure_runtime_tmp_rejects_symlink_without_touching_canary(
+    tmp_path, monkeypatch
+):
+    backend = _make_backend(tmp_path)
+    state_dir = Path(backend.state_dir)
+    state_dir.mkdir(mode=0o700)
+    runtime_tmp = Path(backend.runtime_tmp_path)
+    canary = tmp_path / "runtime-tmp-canary"
+    canary.mkdir(mode=0o700)
+    try:
+        runtime_tmp.symlink_to(canary, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this platform")
+
+    _patch_runtime_lstat(monkeypatch, runtime_tmp, stat.S_IFLNK | 0o777)
+    before_mode = stat.S_IMODE(canary.stat().st_mode)
+    chmod_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        daemon_mod.os,
+        "chmod",
+        lambda path, mode: chmod_calls.append((os.path.abspath(path), mode)),
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError, match="must be a directory"):
+        backend.ensure_runtime_tmp()
+
+    assert runtime_tmp.is_symlink()
+    assert stat.S_IMODE(canary.stat().st_mode) == before_mode
+    assert not any(path == os.path.abspath(runtime_tmp) for path, _ in chmod_calls)
+
+
+def test_ensure_runtime_tmp_rejects_shared_writable_target_without_chmod(
+    tmp_path, monkeypatch
+):
+    backend = _make_backend(tmp_path)
+    state_dir = Path(backend.state_dir)
+    state_dir.mkdir(mode=0o700)
+    runtime_tmp = Path(backend.runtime_tmp_path)
+    runtime_tmp.mkdir(mode=0o770)
+
+    _patch_runtime_lstat(monkeypatch, runtime_tmp, stat.S_IFDIR | 0o770)
+    before_mode = stat.S_IMODE(runtime_tmp.stat().st_mode)
+    chmod_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        daemon_mod.os,
+        "chmod",
+        lambda path, mode: chmod_calls.append((os.path.abspath(path), mode)),
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError, match="group/other writable"):
+        backend.ensure_runtime_tmp()
+
+    assert stat.S_IMODE(runtime_tmp.stat().st_mode) == before_mode
+    assert not any(path == os.path.abspath(runtime_tmp) for path, _ in chmod_calls)
+
+
 def test_start_dev_mode_does_not_require_trusted_production_paths(
     tmp_path, monkeypatch
 ):
@@ -786,6 +882,29 @@ def test_start_cleans_child_and_reports_log_path_on_failure(tmp_path, monkeypatc
         backend.start()
     assert "updater.log" in str(excinfo.value)  # 错误带 log path
     assert not os.path.exists(backend._pid_meta_path)
+
+
+def test_start_pidfile_publish_failure_cleans_child_and_pid_records(
+    tmp_path, monkeypatch
+):
+    """PIDFile OSError after meta publish becomes UpdaterStartError and cleans both."""
+    backend = _make_backend(tmp_path)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    child = FakePopen(pid=4242)
+    _patch_popen(monkeypatch, child)
+    monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
+    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
+    monkeypatch.setattr(backend, "_health_ready", lambda *a: True)
+    backend._write_pid_file = lambda pid: (_ for _ in ()).throw(
+        OSError("simulated pidfile failure")
+    )
+
+    with pytest.raises(UpdaterStartError, match="publish updater PID records"):
+        backend.start()
+
+    assert child.terminated is True
+    assert not os.path.exists(backend._pid_meta_path)
+    assert not os.path.exists(backend.pid_file_path)
 
 
 def test_start_raises_updater_start_error_on_popen_oserror(tmp_path, monkeypatch):
@@ -880,12 +999,14 @@ def _make_stop_backend(
 
 def test_stop_without_meta_is_noop(tmp_path, monkeypatch):
     backend = _make_backend(tmp_path)
+    backend._write_pid_file(1234)
     kills = []
     monkeypatch.setattr(
         daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None
     )
     backend.stop()
     assert kills == []
+    assert not os.path.exists(backend.pid_file_path)
 
 
 def test_stop_with_bad_meta_is_noop(tmp_path, monkeypatch):
@@ -1148,6 +1269,7 @@ def test_ensure_group_propagates_groupadd_failure(tmp_path, monkeypatch):
 def test_ensure_run_dir_uses_os_chown_root_and_expected_gid(tmp_path, monkeypatch):
     """ensure_run_dir 用 os.chown(path, 0, 9472) + os.chmod(0770)，不调 subprocess。"""
     backend = _make_backend(tmp_path, run_dir=str(tmp_path / "run"))
+    _patch_root_owned_lstat(monkeypatch)  # 信任链：临时目录模拟 root-owned
     chown_calls, chmod_calls = [], []
     monkeypatch.setattr(
         daemon_mod.os,
@@ -1174,8 +1296,105 @@ def test_ensure_run_dir_uses_os_chown_root_and_expected_gid(tmp_path, monkeypatc
     assert os.path.isdir(backend.run_dir)  # makedirs 已创建
 
 
+def test_ensure_run_dir_refuses_existing_shared_directory(tmp_path, monkeypatch):
+    """已存在的非受管目录（如自定义 --socket-path 派生出的 /run）→ 拒绝接管。
+
+    绝不 chown/chmod 未知目录：把 /run 或 /tmp 收敛成 root:<gid> 0770 会立刻
+    破坏整个共享目录。
+    """
+    shared = tmp_path / "run"
+    shared.mkdir(mode=0o755)  # 模拟 root:root 0755 的共享系统目录
+    backend = _make_backend(tmp_path, run_dir=str(shared))
+    _patch_root_owned_lstat(monkeypatch)
+    chown_calls, chmod_calls = [], []
+    monkeypatch.setattr(
+        daemon_mod.os, "chown", lambda *a: chown_calls.append(a), raising=False
+    )
+    monkeypatch.setattr(
+        daemon_mod.os, "chmod", lambda *a: chmod_calls.append(a), raising=False
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError, match="refusing to manage"):
+        backend.ensure_run_dir()
+
+    assert chown_calls == []
+    assert chmod_calls == []
+
+
+def test_ensure_run_dir_accepts_previously_managed_directory(tmp_path, monkeypatch):
+    """已是先前安装产出的受管形态（root:<gid>、0770 掩码）→ 幂等放行不重设。"""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    backend = _make_backend(tmp_path, run_dir=str(run_dir))
+    real_lstat = daemon_mod.os.lstat
+    normalized = os.path.abspath(run_dir)
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if os.fspath(path) == normalized:
+            # 受管形态：root:9472，group-rwx、other 无权限（sticky/setgid 容忍）
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o770, st_uid=0, st_gid=DEFAULT_GID
+            )
+        if stat.S_ISDIR(result.st_mode):
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0
+            )
+        return result
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+    chown_calls, chmod_calls = [], []
+    monkeypatch.setattr(
+        daemon_mod.os, "chown", lambda *a: chown_calls.append(a), raising=False
+    )
+    monkeypatch.setattr(
+        daemon_mod.os, "chmod", lambda *a: chmod_calls.append(a), raising=False
+    )
+
+    backend.ensure_run_dir()  # 不抛错
+
+    assert chown_calls == []
+    assert chmod_calls == []
+
+
+def test_ensure_run_dir_refuses_symlinked_entry(tmp_path, monkeypatch):
+    """run_dir 路径上是 symlink → 拒绝（不跟随、不接管）。"""
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link = tmp_path / "run"
+    link.symlink_to(real_dir, target_is_directory=True)
+    backend = _make_backend(tmp_path, run_dir=str(link))
+    real_lstat = daemon_mod.os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if stat.S_ISDIR(result.st_mode):
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_gid=0)
+        return result
+
+    monkeypatch.setattr(daemon_mod.os, "lstat", fake_lstat)
+
+    with pytest.raises(UnsafeDeploymentPathError, match="not a symlink"):
+        backend.ensure_run_dir()
+
+
+def test_ensure_run_dir_refuses_group_writable_ancestor(tmp_path, monkeypatch):
+    """最近的已存在祖先 group-writable（如 /tmp）→ 拒绝在之下创建 run dir。"""
+    writable = tmp_path / "shared"
+    writable.mkdir()
+    backend = _make_backend(tmp_path, run_dir=str(writable / "run"))
+    _patch_trusted_path_tree(
+        monkeypatch, file_modes={}, overrides={writable: (stat.S_IFDIR | 0o770, 0)}
+    )
+
+    with pytest.raises(UnsafeDeploymentPathError):
+        backend.ensure_run_dir()
+
+    assert not Path(str(writable / "run")).exists()
+
+
 def test_install_runs_bootstrap_sequence(tmp_path, monkeypatch):
-    """install：root gate → ensure_group → ensure_run_dir → makedirs(state_dir)。
+    """install：root gate → ensure_group → ensure_run_dir → runtime preparation。
 
     不下载 binary（Slice 3c 负责 binary acquisition）。
     """
@@ -1186,10 +1405,48 @@ def test_install_runs_bootstrap_sequence(tmp_path, monkeypatch):
     monkeypatch.setattr(
         backend, "ensure_run_dir", lambda: calls.append("ensure_run_dir")
     )
+    monkeypatch.setattr(
+        backend, "ensure_runtime_tmp", lambda: calls.append("ensure_runtime_tmp")
+    )
     backend.install()
-    assert calls == ["ensure_group", "ensure_run_dir"]
-    assert os.path.isdir(backend.state_dir)
+    assert calls == ["ensure_group", "ensure_run_dir", "ensure_runtime_tmp"]
     assert not os.path.exists(backend.binary_path)  # 不下载 binary
+
+
+def test_dev_install_keeps_user_owned_source_state_path(tmp_path, monkeypatch):
+    """Source-mode install does not apply production root-parent validation."""
+    backend = _make_backend(tmp_path, run_dir=str(tmp_path / "run"))
+    _patch_euid(monkeypatch, uid=0)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    monkeypatch.setattr(backend, "ensure_group", lambda: None)
+    monkeypatch.setattr(backend, "ensure_run_dir", lambda: None)
+    monkeypatch.setattr(
+        backend,
+        "ensure_runtime_tmp",
+        lambda: pytest.fail("dev install must not enforce production TMPDIR"),
+    )
+
+    backend.install()
+
+    assert os.path.isdir(backend.state_dir)
+
+
+def test_install_recreates_custom_socket_parent_directory(tmp_path, monkeypatch):
+    """After a /run-style directory disappears, install recreates its custom parent."""
+    backend = _make_backend(
+        tmp_path,
+        run_dir=str(tmp_path / "runtime" / "sakura-ai"),
+    )
+    _patch_euid(monkeypatch, uid=0)
+    _patch_root_owned_lstat(monkeypatch)  # 重建走信任链校验：临时目录模拟 root
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    monkeypatch.setattr(backend, "ensure_group", lambda: None)
+    monkeypatch.setattr(daemon_mod.os, "chown", lambda *args: None, raising=False)
+    monkeypatch.setattr(daemon_mod.os, "chmod", lambda *args: None, raising=False)
+
+    backend.install()
+
+    assert Path(backend.run_dir).is_dir()
 
 
 # =============================================================================
@@ -1222,6 +1479,17 @@ def test_cli_backend_status_outputs_json(monkeypatch, capsys, tmp_path):
     payload = json.loads(captured.out)
     assert payload["running"] is False
     assert "pid" in payload and "socket_path" in payload and "state_dir" in payload
+
+
+def test_cli_factory_derives_custom_socket_run_dir(tmp_path):
+    from sakura_ai_updater.__main__ import create_backend
+
+    socket_path = tmp_path / "recreated" / "updater.sock"
+    backend = create_backend(
+        state_dir=str(tmp_path / "state"), socket_path=str(socket_path)
+    )
+
+    assert backend.run_dir == str(socket_path.parent.resolve())
 
 
 def test_cli_backend_is_running_exit_code(monkeypatch, capsys, tmp_path):
@@ -1362,3 +1630,133 @@ def test_start_dev_mode_does_not_force_pyinstaller_reset(tmp_path, monkeypatch):
 
     assert "PYINSTALLER_RESET_ENVIRONMENT" not in popen_kwargs["env"]
     assert popen_kwargs["cwd"] == os.path.abspath(os.sep)
+
+
+# =============================================================================
+# P0.5 pidfile：systemd PIDFile= 契约（原子写 / 0600 / symlink 不跟随 / 生命周期）
+# =============================================================================
+
+
+def test_pid_file_path_derives_from_socket_directory(tmp_path):
+    """pidfile 与 socket 同目录派生（/run/sakura-ai/updater.pid）。"""
+    backend = _make_backend(
+        tmp_path, socket_path=str(tmp_path / "run" / "updater.sock")
+    )
+    assert backend.pid_file_path == str(tmp_path / "run" / "updater.pid")
+    assert (
+        daemon_mod.pid_file_path("/run/sakura-ai/updater.sock")
+        == "/run/sakura-ai/updater.pid"
+    )
+
+
+def test_write_pid_file_content_mode_and_atomic_replace(tmp_path, monkeypatch):
+    """内容严格 "pid\n"、mkstemp 0600、owner 为写入进程、原子替换发布。"""
+    backend = _make_backend(tmp_path)
+    calls = []
+    real_replace = os.replace
+    monkeypatch.setattr(
+        daemon_mod.os,
+        "replace",
+        lambda src, dst: calls.append((src, dst)) or real_replace(src, dst),
+    )
+    backend._write_pid_file(4242)
+    pid_path = Path(backend.pid_file_path)
+    assert pid_path.read_bytes() == b"4242\n"
+    assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None:  # Windows 无 geteuid，仅断言 mode
+        assert pid_path.stat().st_uid == geteuid()
+    assert calls and os.path.basename(calls[0][0]).startswith(".")
+
+
+def test_write_pid_file_replaces_preplanted_symlink(tmp_path):
+    """run dir 是 0770 group-writable 且无 sticky：原子替换绝不跟随预置 symlink。"""
+    backend = _make_backend(tmp_path)
+    pid_path = Path(backend.pid_file_path)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    canary = tmp_path / "canary.txt"
+    canary.write_text("do-not-touch", encoding="utf-8")
+    pid_path.symlink_to(canary)
+
+    backend._write_pid_file(4242)
+
+    assert canary.read_text(encoding="utf-8") == "do-not-touch"  # canary 未被覆写
+    assert not pid_path.is_symlink()  # 目录项已被替换为普通文件
+    assert pid_path.read_bytes() == b"4242\n"
+
+
+def test_start_writes_pid_file_only_after_ready(tmp_path, monkeypatch):
+    """health 先 False 后 True → pidfile 与 meta 同节点：ready 后才写。"""
+    backend = _make_backend(tmp_path, poll_interval=0.005)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    child = FakePopen(pid=4242)
+    _patch_popen(monkeypatch, child)
+    monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
+    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: True)
+    health_calls = []
+    monkeypatch.setattr(
+        backend,
+        "_health_ready",
+        lambda *a: health_calls.append(True) or (len(health_calls) >= 2),
+    )
+    backend.start()
+    assert len(health_calls) >= 2
+    assert Path(backend.pid_file_path).read_bytes() == b"4242\n"
+
+
+def test_start_failure_leaves_no_pid_file(tmp_path, monkeypatch):
+    """child 提前退出 → pidfile 绝不先于 readiness 存在（与 meta 同语义）。"""
+    backend = _make_backend(tmp_path)
+    monkeypatch.setenv("SAKURA_UPDATER_DEV", "1")
+    child = FakePopen(pid=4242, poll_returncode=7)
+    _patch_popen(monkeypatch, child)
+    monkeypatch.setattr(daemon_mod, "_read_proc_starttime", lambda pid: "555666")
+    with pytest.raises(UpdaterStartError):
+        backend.start()
+    assert not os.path.exists(backend.pid_file_path)
+
+
+def test_start_idempotent_early_return_republishes_missing_pid_file(
+    tmp_path, monkeypatch
+):
+    """daemon 活着但 pidfile 被清 → start() 早退分支用 meta 存活 pid 补写。"""
+    backend = _make_backend(tmp_path)
+    backend._write_pid_meta(1234, "555666", "sakura_ai_updater")
+    _patch_same_process_primitives(
+        monkeypatch,
+        alive=True,
+        starttime="555666",
+        argv=("python", "-m", "sakura_ai_updater"),
+    )
+    popen_calls = []
+    _patch_popen(monkeypatch, FakePopen(), calls=popen_calls)
+    backend.start()
+    assert popen_calls == []
+    assert Path(backend.pid_file_path).read_bytes() == b"1234\n"
+
+
+def test_stop_clears_pid_file_alongside_meta(tmp_path, monkeypatch):
+    backend, kills = _make_stop_backend(tmp_path, monkeypatch)
+    backend._write_pid_file(1234)
+    monkeypatch.setattr(daemon_mod, "_is_same_process", lambda pid, st, ident: False)
+    backend.stop()
+    assert kills == []
+    assert not os.path.exists(backend.pid_file_path)
+    assert not os.path.exists(backend._pid_meta_path)
+
+
+def test_stop_with_bad_meta_also_clears_stale_pid_file(tmp_path, monkeypatch):
+    """坏 meta 幂等清理时，stale pidfile 一起清理（两份记录同生命周期）。"""
+    backend = _make_backend(tmp_path)
+    os.makedirs(backend.state_dir, exist_ok=True)
+    Path(backend._pid_meta_path).write_text("{corrupt", encoding="utf-8")
+    pid_path = Path(backend.pid_file_path)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("1234\n", encoding="ascii")
+    kills = []
+    monkeypatch.setattr(
+        daemon_mod.os, "kill", lambda p, s: kills.append((p, s)) or None
+    )
+    backend.stop()
+    assert kills == []
+    assert not os.path.exists(backend.pid_file_path)

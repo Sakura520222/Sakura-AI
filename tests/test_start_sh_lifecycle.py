@@ -326,6 +326,7 @@ printf '%s\n' \
 init_deployment_env() { :; }
 require_idle_image_deployment() { :; }
 updater_daemon_is_running() { return 0; }
+updater_ipc_get() { printf '%s' '{"protocol_version":1,"capabilities":["three-image-transaction-v1","deployment-reconcile-v1","deployment-manifest-v1"]}'; }
 curl() { return 7; }
 apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
 cmd_update_image
@@ -371,6 +372,9 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { printf 'ROOT\n'; }
 updater_require_idle_deployment() { printf 'IDLE\n'; }
+# This legacy ordering assertion exercises the manual-daemon path.  Production
+# systemd capability is covered by the dedicated shell migration cases below.
+updater_uses_systemd() { return 1; }
 updater_socket_listener_responds() { return 0; }
 updater_prepare_stop() { printf 'PREPARE\n'; }
 stop_verified_updater() { printf 'STOP\n'; }
@@ -414,6 +418,8 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { :; }
 updater_require_idle_deployment() { :; }
+# Keep this gate-rejection fixture independent of the host running the tests.
+updater_uses_systemd() { return 1; }
 updater_prepare_stop() { printf 'ACTIVE_JOB\n' >&2; return 1; }
 stop_verified_updater() { printf 'UNEXPECTED_STOP\n'; }
 cmd_updater_reinstall
@@ -433,6 +439,9 @@ export _START_SH_SOURCED=1
 source ./start.sh
 updater_require_root() { :; }
 updater_require_idle_deployment() { :; }
+# The preserved-binary recovery contract is a manual-daemon assertion; make
+# systemd capability explicit so a container test does not fail before it.
+updater_uses_systemd() { return 1; }
 updater_socket_listener_responds() { return 0; }
 updater_prepare_stop() { :; }
 stop_verified_updater() { printf 'STOP\n'; }

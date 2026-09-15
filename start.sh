@@ -2105,57 +2105,63 @@ production_web_reference_is_safe() {
 # development 频道工具 / development-channel helpers
 # ------------------------------------------------------------
 
-# development Web 引用：dev primary tag（dev-<utc14>-vX.Y.Z-<revision40>，
-# CI 对三镜像字节级一致）+ digest pin。
+# development Web 引用：canonical deployment tag（dev-<utc14>-vX.Y.Z-
+# <revision40>）+ immutable OCI index digest。
 production_dev_web_reference_is_safe() {
     [[ "$1" =~ ^ghcr\.io/sakura520222/sakura-ai:dev-[0-9]{14}-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-[0-9a-f]{40}@sha256:[0-9a-f]{64}$ ]]
 }
 
-# 从 GHCR 匿名 registry API 解析 Web 仓库最新的 development primary tag。
-# CI 对 Web/sandboxd/runner 使用同一 primary tag 名（同一次构建的坐标），
-# 时间戳内嵌于 tag，字典序即时间序；取最新即得三镜像共同的构建坐标。
-production_resolve_dev_tag() {
-    local token payload tag
-    command -v python3 >/dev/null 2>&1 || {
-        fail "development 频道解析需要 python3" >&2
-        return 1
-    }
-    token=$(curl --silent --show-error --max-time 15 \
-        "https://ghcr.io/token?service=ghcr.io&scope=repository:sakura520222/sakura-ai:pull" \
-        2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' 2>/dev/null) || true
-    [[ -n "${token:-}" ]] || {
-        fail "无法获取 GHCR 匿名 token" >&2
-        return 1
-    }
-    payload=$(curl --silent --show-error --max-time 20 \
-        -H "Authorization: Bearer $token" \
-        "https://ghcr.io/v2/sakura520222/sakura-ai/tags/list?n=1000" \
-        2>/dev/null) || {
-        fail "无法获取 GHCR tag 列表" >&2
-        return 1
-    }
-    tag=$(python3 - "$payload" <<'PY'
+# Bootstrap has no installed Python package. Read the same OCI deployment
+# contract directly using the host standard library, never the newest tag.
+production_resolve_dev_deployment() {
+    python3 - "${1:-edge}" <<'PYMANIFEST'
+import hashlib
 import json
 import re
 import sys
+from urllib.request import Request, urlopen
+
+repository = "ghcr.io/sakura520222/sakura-ai"
+reference = sys.argv[1]
+if reference != "edge" and not re.fullmatch(r"sha256:[0-9a-f]{64}", reference):
+    raise SystemExit("invalid development manifest reference")
+
+def request(url, headers):
+    with urlopen(Request(url, headers=headers), timeout=20) as response:
+        return response.read(), response.headers
 
 try:
-    tags = json.loads(sys.argv[1]).get("tags") or []
-except (json.JSONDecodeError, IndexError):
-    sys.exit(1)
-pattern = re.compile(r"^dev-(\d{14})-v\d+\.\d+\.\d+-[0-9a-f]{40}$")
-dev_tags = [tag for tag in tags if isinstance(tag, str) and pattern.match(tag)]
-print(max(dev_tags, key=lambda tag: pattern.match(tag).group(1)) if dev_tags else "")
-PY
-    ) || {
-        fail "GHCR tag 列表解析失败" >&2
-        return 1
-    }
-    [[ -n "$tag" ]] || {
-        fail "GHCR 上没有可用的 development 构建（dev-* tag）" >&2
-        return 1
-    }
-    printf '%s\n' "$tag"
+    raw, _ = request("https://ghcr.io/token?service=ghcr.io&scope=repository:sakura520222/sakura-ai:pull", {})
+    token = json.loads(raw)["token"]
+    headers = {"Authorization": "Bearer " + token,
+               "Accept": "application/vnd.oci.image.index.v1+json"}
+    base = "https://ghcr.io/v2/sakura520222/sakura-ai/manifests/"
+    raw, response_headers = request(base + reference, headers)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if response_headers.get("Docker-Content-Digest") != digest or (reference != "edge" and reference != digest):
+        raise ValueError("deployment manifest digest mismatch")
+    payload = json.loads(raw)
+    manifest = json.loads(payload["annotations"]["com.sakura-ai.deployment.v1"])
+    tag = manifest["tag"]
+    match = re.fullmatch(r"dev-[0-9]{14}-v([0-9]+\.[0-9]+\.[0-9]+)-([0-9a-f]{40})", tag)
+    if (manifest["schema_version"] != 1 or manifest["channel"] != "development" or not match
+        or match.group(1) != manifest["version"] or match.group(2) != manifest["revision"]):
+        raise ValueError("deployment identity mismatch")
+    if reference == "edge":
+        canonical, _ = request(base + tag, headers)
+        if "sha256:" + hashlib.sha256(canonical).hexdigest() != digest:
+            raise ValueError("development tag/head mismatch")
+    refs = []
+    for component, name in (("sandboxd", "sakura-ai-sandboxd"), ("runner", "sakura-ai-agent-runner")):
+        ref = manifest[component + "_image"]
+        if not re.fullmatch("ghcr.io/sakura520222/" + name + r"@sha256:[0-9a-f]{64}", ref):
+            raise ValueError("invalid deployment component digest")
+        refs.append(ref)
+    print(repository + ":" + tag + "@" + digest)
+    print("\n".join(refs))
+except Exception as exc:
+    raise SystemExit("完整 development deployment manifest 不可用；请等待完整发布，或升级 Host Updater 后 reconcile：" + str(exc))
+PYMANIFEST
 }
 
 # 读取镜像 label；label 缺失/镜像不可查视为失败。
@@ -2167,97 +2173,91 @@ image_label_of() {
     printf '%s\n' "$value"
 }
 
-# 解析并拉取 development 频道三镜像：
-# - 已 pin（deployment.env 有完整 dev 引用）：按 digest 重拉，绝不移动。
-# - 未 pin（首次部署）：从 GHCR 解析最新 dev primary tag，三镜像拉同一
-#   tag 名（CI 对三仓库使用字节级一致的 primary tag，命名本身即对齐坐标），
-#   再以三镜像 label 复核频道与 revision（Web 另校验 component），最后按 RepoDigests pin。
+
+production_validate_dev_image_set() {
+    local web_ref="$1" sandboxd_ref="$2" runner_ref="$3"
+    local tag component expected_component reference label value
+    local revision="" version="" actual_revision actual_version
+
+    tag="${web_ref%@*}"
+    tag="${tag##*:}"
+    revision="${tag##*-}"
+    version="${tag#*-v}"
+    version="${version%-*}"
+    for component in web sandboxd agent-runner; do
+        case "$component" in
+            web) reference="$web_ref" ;;
+            sandboxd) reference="$sandboxd_ref" ;;
+            agent-runner) reference="$runner_ref" ;;
+        esac
+        for label in com.sakura-ai.build.channel org.opencontainers.image.revision org.opencontainers.image.version com.sakura-ai.component; do
+            case "$label" in
+                com.sakura-ai.build.channel) expected_component=development ;;
+                org.opencontainers.image.revision) expected_component="$revision" ;;
+                org.opencontainers.image.version) expected_component="$version" ;;
+                com.sakura-ai.component) expected_component="$component" ;;
+            esac
+            value=$(image_label_of "$reference" "$label") || return 1
+            if [[ "$value" != "$expected_component" ]]; then
+                fail "dev 镜像 label 与 deployment 身份不一致: $reference ($label)" >&2
+                return 2
+            fi
+        done
+    done
+    PRODUCTION_DEV_VALIDATED_REVISION="$revision"
+    PRODUCTION_DEV_VALIDATED_VERSION="$version"
+}
+
+# Resolve one complete published deployment before pulling any component.
+# All validation precedes the existing production transaction's env write.
 production_pull_dev_channel_images() {
-    local web_repo="ghcr.io/sakura520222/sakura-ai"
-    local sandboxd_repo="ghcr.io/sakura520222/sakura-ai-sandboxd"
-    local runner_repo="ghcr.io/sakura520222/sakura-ai-agent-runner"
     local persisted_web persisted_daemon persisted_runner
-    local dev_tag tag_rev web_ref sandboxd_ref runner_ref channel digest rev component
+    local manifest_reference=edge refs web_ref sandboxd_ref runner_ref validation_status
 
     persisted_web=$(read_deployment_value "SAKURA_AI_IMAGE" "$DEPLOYMENT_ENV_FILE")
     persisted_daemon=$(read_deployment_value "SAKURA_SANDBOXD_IMAGE_DIGEST" "$DEPLOYMENT_ENV_FILE")
     persisted_runner=$(read_deployment_value "SAKURA_AGENT_RUNNER_IMAGE_DIGEST" "$DEPLOYMENT_ENV_FILE")
-
     if production_dev_web_reference_is_safe "$persisted_web" \
         && sandbox_registry_digest_is_safe "$persisted_daemon" \
         && sandbox_registry_digest_is_safe "$persisted_runner"; then
-        info "development 频道：按已 pin 的 digest 拉取三镜像"
         sandbox_pull_image "Web" "$persisted_web" || return 1
         sandbox_pull_image "sandboxd" "$persisted_daemon" || return 1
         sandbox_pull_image "Agent runner" "$persisted_runner" || return 1
-        PRODUCTION_WEB_IMAGE="$persisted_web"
-        SANDBOX_IMAGE_DIGEST="$persisted_daemon"
-        SANDBOX_RUNNER_DIGEST="$persisted_runner"
-        SANDBOX_IMAGE="${SANDBOX_IMAGE_DIGEST%@*}"
-        SANDBOX_RUNNER_IMAGE="${SANDBOX_RUNNER_DIGEST%@*}"
-        return 0
+        validation_status=0
+        production_validate_dev_image_set "$persisted_web" "$persisted_daemon" "$persisted_runner" \
+            || validation_status=$?
+        if [[ "$validation_status" -eq 0 ]]; then
+            PRODUCTION_WEB_IMAGE="$persisted_web"
+            SANDBOX_IMAGE_DIGEST="$persisted_daemon"
+            SANDBOX_RUNNER_DIGEST="$persisted_runner"
+            SANDBOX_IMAGE="${persisted_daemon%@*}"
+            SANDBOX_RUNNER_IMAGE="${persisted_runner%@*}"
+            info "development 频道：按已 pin 且 revision 一致的旧部署拉取三镜像"
+            return 0
+        fi
+        if [[ "$validation_status" -ne 2 ]]; then
+            return "$validation_status"
+        fi
+        warn "已 pin 的旧 development 镜像 revision 不一致；改为解析完整 channel head 自愈" >&2
     fi
 
-    info "development 频道：解析最新 dev 构建 tag"
-    dev_tag=$(production_resolve_dev_tag) || return 1
-    tag_rev="${dev_tag##*-}"
-    web_ref="$web_repo:$dev_tag"
-    sandboxd_ref="$sandboxd_repo:$dev_tag"
-    runner_ref="$runner_repo:$dev_tag"
-    info "development 频道：拉取同 tag 三镜像: $dev_tag"
+    refs=$(production_resolve_dev_deployment "$manifest_reference") || return 1
+    web_ref=$(sed -n '1p' <<< "$refs")
+    sandboxd_ref=$(sed -n '2p' <<< "$refs")
+    runner_ref=$(sed -n '3p' <<< "$refs")
+    production_dev_web_reference_is_safe "$web_ref" || return 1
+    sandbox_registry_digest_is_safe "$sandboxd_ref" || return 1
+    sandbox_registry_digest_is_safe "$runner_ref" || return 1
     sandbox_pull_image "Web" "$web_ref" || return 1
     sandbox_pull_image "sandboxd" "$sandboxd_ref" || return 1
     sandbox_pull_image "Agent runner" "$runner_ref" || return 1
-
-    # tag 内嵌 revision；三镜像 label 必须与之一致（防错标：tag 可变，命名
-    # 对齐不构成身份证明）。Web 镜像另校验 component，防与 sandbox 镜像串标。
-    local ref
-    for ref in "$web_ref" "$sandboxd_ref" "$runner_ref"; do
-        channel=$(image_label_of "$ref" "com.sakura-ai.build.channel") || {
-            fail "dev 镜像缺少 com.sakura-ai.build.channel label: $ref" >&2
-            return 1
-        }
-        [[ "$channel" == "development" ]] || {
-            fail "dev 镜像的频道 label 为 '$channel'（应为 development）: $ref" >&2
-            return 1
-        }
-        rev=$(image_label_of "$ref" "org.opencontainers.image.revision") || {
-            fail "dev 镜像缺少 org.opencontainers.image.revision label: $ref" >&2
-            return 1
-        }
-        [[ "$rev" == "$tag_rev" ]] || {
-            fail "dev 镜像 revision label 与 tag 内嵌 revision 不一致: $ref" >&2
-            return 1
-        }
-    done
-    component=$(image_label_of "$web_ref" "com.sakura-ai.component") || {
-        fail "dev Web 镜像缺少 com.sakura-ai.component label: $web_ref" >&2
-        return 1
-    }
-    [[ "$component" == "web" ]] || {
-        fail "dev Web 镜像的 component label 为 '$component'（应为 web）: $web_ref" >&2
-        return 1
-    }
-
-    digest=$(image_digest_of "$web_ref") || {
-        fail "无法解析 dev Web 镜像 digest" >&2
-        return 1
-    }
-    PRODUCTION_WEB_IMAGE="$web_ref@$digest"
-    digest=$(image_digest_of "$sandboxd_ref") || {
-        fail "无法解析 dev sandboxd 镜像 digest" >&2
-        return 1
-    }
-    SANDBOX_IMAGE_DIGEST="$sandboxd_repo@$digest"
-    SANDBOX_IMAGE="$sandboxd_repo"
-    digest=$(image_digest_of "$runner_ref") || {
-        fail "无法解析 dev Agent runner 镜像 digest" >&2
-        return 1
-    }
-    SANDBOX_RUNNER_DIGEST="$runner_repo@$digest"
-    SANDBOX_RUNNER_IMAGE="$runner_repo"
-    info "development 频道三镜像已对齐 ${dev_tag}"
-    return 0
+    production_validate_dev_image_set "$web_ref" "$sandboxd_ref" "$runner_ref" || return $?
+    PRODUCTION_WEB_IMAGE="$web_ref"
+    SANDBOX_IMAGE_DIGEST="$sandboxd_ref"
+    SANDBOX_RUNNER_DIGEST="$runner_ref"
+    SANDBOX_IMAGE="${sandboxd_ref%@*}"
+    SANDBOX_RUNNER_IMAGE="${runner_ref%@*}"
+    info "development 频道完整三镜像已验证: $PRODUCTION_DEV_VALIDATED_REVISION"
 }
 
 production_manifest_digest() {
@@ -2879,6 +2879,11 @@ UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-$UPDATER_PROJECT_R
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
 UPDATER_RELEASE_API_URL="https://api.github.com/repos/Sakura520222/Sakura-AI/releases/latest"
 UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
+# 与 updater.systemd.UNIT_INSTALL_DIR/UNIT_NAME 对齐；仅用于卸载后的安全确认，
+# 不把 unit 路径注入 daemon 参数（unit 仍由 updater 自己写入）。
+UPDATER_SYSTEMD_UNIT_PATH="${UPDATER_SYSTEMD_UNIT_PATH:-/etc/systemd/system/sakura-ai-updater.service}"
+UPDATER_SYSTEMD_UNIT_NAME="sakura-ai-updater.service"
+UPDATER_SYSTEMD_WANTS_PATH="${UPDATER_SYSTEMD_WANTS_PATH:-/etc/systemd/system/multi-user.target.wants/sakura-ai-updater.service}"
 
 # 依据持久化部署模式选择 updater 使用的 Compose 定义。
 #
@@ -3058,6 +3063,110 @@ select_compose_from_deployment_mode() {
             return 1
             ;;
     esac
+}
+
+# 只有显式的 SAKURA_UPDATER_DEV=1 使用源码模块手动运行；所有 root-owned
+# production binary（无论部署状态来自 image 还是 source）均由 systemd 托管。
+updater_uses_systemd() {
+    [[ "${SAKURA_UPDATER_DEV:-0}" != "1" ]]
+}
+
+# 不能只检查 systemctl 文件是否存在：容器/LXC/NAS 常带有 systemctl，但 PID 1
+# 并不是 systemd。允许 degraded/starting 等可调用状态，明确拒绝 offline/unknown。
+updater_systemd_available() {
+    local init_name="" system_state=""
+    command -v systemctl >/dev/null 2>&1 || return 1
+    init_name=$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]') || return 1
+    [[ "$init_name" == "systemd" ]] || return 1
+    system_state=$(systemctl is-system-running 2>/dev/null || true)
+    system_state=$(printf '%s' "$system_state" | tr -d '[:space:]')
+    [[ -n "$system_state" && "$system_state" != "offline" && "$system_state" != "unknown" ]]
+}
+
+updater_require_systemd() {
+    if updater_systemd_available; then
+        return 0
+    fi
+    fail "生产 Host Updater 需要正在运行的 systemd（PID 1=systemd 且 systemctl is-system-running 可用）；当前主机不支持 systemd，未配置开机自启" >&2
+    fail "请在支持 systemd 的 Linux 主机上重试；源码/dev 模式可继续使用手动 daemon" >&2
+    return 1
+}
+
+updater_systemd_unit_exists() {
+    [[ -e "$UPDATER_SYSTEMD_UNIT_PATH" || -L "$UPDATER_SYSTEMD_UNIT_PATH" ]]
+}
+
+updater_systemd_unit_load_state() {
+    local load_state=""
+    updater_systemd_available || return 1
+    load_state=$(systemctl show --property=LoadState --value \
+        "$UPDATER_SYSTEMD_UNIT_NAME" 2>/dev/null || true)
+    load_state=$(printf '%s' "$load_state" | tr -d '[:space:]')
+    printf '%s\n' "$load_state"
+}
+
+updater_systemd_unit_is_loaded() {
+    [[ "$(updater_systemd_unit_load_state)" == "loaded" ]]
+}
+
+updater_systemd_enable_link_exists() {
+    [[ -e "$UPDATER_SYSTEMD_WANTS_PATH" || -L "$UPDATER_SYSTEMD_WANTS_PATH" ]]
+}
+
+# systemctl disable normally removes this link.  If an older release stopped
+# after deleting the unit, remove only the exact updater-owned symlink left in
+# multi-user.target.wants; never follow or unlink an unrelated path.
+updater_systemd_remove_residual_enable_link() {
+    updater_systemd_enable_link_exists || return 0
+    if [[ ! -L "$UPDATER_SYSTEMD_WANTS_PATH" ]]; then
+        fail "updater systemd enable path exists but is not a symlink; refusing cleanup" >&2
+        return 1
+    fi
+    local link_target
+    link_target=$(readlink "$UPDATER_SYSTEMD_WANTS_PATH" 2>/dev/null) || {
+        fail "cannot inspect updater systemd enable link; refusing cleanup" >&2
+        return 1
+    }
+    case "$link_target" in
+        "$UPDATER_SYSTEMD_UNIT_PATH"|"$UPDATER_SYSTEMD_UNIT_NAME"|"../$UPDATER_SYSTEMD_UNIT_NAME")
+            ;;
+        *)
+            fail "updater systemd enable link points outside the updater unit; refusing cleanup" >&2
+            return 1
+            ;;
+    esac
+    rm -f -- "$UPDATER_SYSTEMD_WANTS_PATH" || {
+        fail "cannot remove stale updater systemd enable link; refusing cleanup" >&2
+        return 1
+    }
+    if ! systemctl daemon-reload; then
+        fail "systemd daemon-reload failed after removing stale updater enable link" >&2
+        return 1
+    fi
+}
+
+# 只在确有 unit 文件、systemd 已加载该服务或 enable 残留链接时触发
+# service-uninstall；这样旧版手动 daemon 和重复卸载（binary 已不存在）仍幂等。
+updater_systemd_unit_needs_cleanup() {
+    updater_systemd_unit_exists \
+        || updater_systemd_enable_link_exists \
+        || updater_systemd_unit_is_loaded
+}
+
+updater_systemd_stop_for_reinstall() {
+    # Unit 文件/enable link 残留但服务未加载时，backend stop 足以清理旧 daemon；
+    # 只有 loaded unit 才需要等待 systemd 的 stop job 完成，避免与新安装竞态。
+    updater_systemd_unit_is_loaded || return 0
+    if systemctl stop "$UPDATER_SYSTEMD_UNIT_NAME"; then
+        :
+    else
+        fail "无法停止 updater systemd service；已通过维护门禁但拒绝继续替换" >&2
+        return 1
+    fi
+    if systemctl is-active --quiet "$UPDATER_SYSTEMD_UNIT_NAME"; then
+        fail "updater systemd service 停止后仍处于 active；拒绝继续替换" >&2
+        return 1
+    fi
 }
 
 # Host metadata helpers are isolated so Linux uses real inode data while Git Bash
@@ -3648,6 +3757,13 @@ install_updater_binary() {
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
         return 1
     fi
+    # Verify the checksummed candidate before replacing the installed binary,
+    # including a stable fallback for an unreleased development version.
+    if ! TMPDIR="$UPDATER_STATE_DIR" "$binary_tmp" --identity | updater_identity_compatible; then
+        fail "下载的 Host Updater 不满足当前三镜像部署 contract；旧 binary 保持不变。请使用包含兼容 Updater 的 Release。" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
     if ! updater_sync_temp "$binary_tmp"; then
         fail "updater temporary binary fsync failed; old binary unchanged" >&2
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
@@ -3701,6 +3817,59 @@ updater_backend() {
     fi
 }
 
+# 生产 image 部署的唯一启动入口：渲染、安装、enable 并启动 systemd unit。
+# service-install 由当前 binary 执行；旧 release 不认识该子命令时必须失败，
+# 不能回退到手动 daemon 后宣称宿主机重启可自启。
+updater_service_install() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    local service_rc
+
+    updater_require_systemd || return $?
+    select_compose_from_deployment_mode || return $?
+    if updater_backend service-install \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" \
+        --compose-file "$COMPOSE_FILE" \
+        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE" "$@"; then
+        ok "updater systemd service 已安装、启用并启动"
+        return 0
+    else
+        service_rc=$?
+    fi
+    fail "updater systemd service-install 失败；未能确认服务已启用并运行，请检查 systemctl（当前 binary 可能不支持 service-install）" >&2
+    fail "请先升级到包含 systemd service lifecycle 的 updater release，再运行: sudo ./start.sh updater reinstall" >&2
+    return "$service_rc"
+}
+
+# 生产卸载必须先让 updater 自己执行 systemctl stop/disable、删除 unit 并
+# daemon-reload，再删除 binary；否则 enabled unit 会在下次启动时留下悬空 Exec。
+updater_service_uninstall() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    local service_rc
+
+    updater_require_systemd || return $?
+    if updater_backend service-uninstall \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" "$@"; then
+        if updater_systemd_unit_exists; then
+            fail "updater service-uninstall returned success but unit still exists; refusing to delete binary" >&2
+            return 1
+        fi
+        if ! updater_systemd_remove_residual_enable_link; then
+            return 1
+        fi
+        ok "updater systemd service 已停止、禁用并清理"
+        return 0
+    else
+        service_rc=$?
+    fi
+    fail "updater systemd service-uninstall 失败；binary 保留以便恢复，unit 清理状态需检查 systemctl" >&2
+    fail "请升级到包含 systemd service lifecycle 的 updater release，再运行: sudo ./start.sh updater uninstall" >&2
+    return "$service_rc"
+}
+
 cmd_updater_install() {
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     local was_running=0
@@ -3714,10 +3883,17 @@ cmd_updater_install() {
         return 1
     fi
 
+    # systemd 是 image 生产部署的自启保证；先检测宿主能力，避免下载/替换
+    # binary 后才发现无法安装托管 unit。
+    if updater_uses_systemd; then
+        updater_require_systemd || return $?
+    fi
+
     if [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
         if updater_backend install \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" "$@"; then
             return 0
         else
             local dev_install_rc=$?
@@ -3728,7 +3904,8 @@ cmd_updater_install() {
     if updater_binary_is_safe "$binary"; then
         if updater_backend is-running \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" >/dev/null 2>&1; then
             was_running=1
         fi
         if install_updater_binary; then
@@ -3739,7 +3916,8 @@ cmd_updater_install() {
         fi
         if updater_backend install \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" "$@"; then
             :
         else
             local existing_backend_rc=$?
@@ -3757,7 +3935,8 @@ cmd_updater_install() {
         fi
         if updater_backend install \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" "$@"; then
             :
         else
             local acquired_backend_rc=$?
@@ -3766,12 +3945,24 @@ cmd_updater_install() {
     fi
 
     if [[ "$was_running" -eq 1 ]]; then
+        # Installing a new inode must retain the historical restart-required
+        # contract.  service-install does not request a stop; backend start is
+        # identity-gated and fails closed if an unmanaged listener is present.
+        if updater_uses_systemd; then
+            if updater_service_install "$@"; then
+                :
+            else
+                local service_rc=$?
+                return "$service_rc"
+            fi
+        fi
         warn "updater binary installed while daemon was already running; restart-required (not restarting automatically)" >&2
         return 0
     fi
     # 安装完成后自动拉起 daemon（daemon 未运行时；与 ensure_updater_running
-    # 的引导语义一致，避免"已安装但未运行"的中间状态）。
-    if updater_start_daemon; then
+    # 的引导语义一致，避免"已安装但未运行"的中间状态）。用户参数（如
+    # --startup-timeout）必须随拉起路径透传到 service-install / 手动 start。
+    if updater_start_daemon "$@"; then
         :
     else
         warn "updater 已安装但 daemon 启动失败" >&2
@@ -3803,11 +3994,13 @@ stop_verified_updater() {
     if updater_binary_is_safe "$binary"; then
         updater_backend stop \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" || return $?
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" || return $?
     elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]] && ! updater_path_exists "$binary"; then
         updater_backend stop \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" || return $?
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" || return $?
     elif updater_path_exists "$binary"; then
         fail "refusing to execute unsafe updater binary while stopping: $binary" >&2
         return 126
@@ -3820,13 +4013,30 @@ stop_verified_updater() {
 }
 
 cmd_updater_reinstall() {
-    local was_running=0 install_rc=0 start_rc=0 stop_rc=0
+    local was_running=0 install_rc=0 start_rc=0 stop_rc=0 service_required=0
     updater_require_root || return $?
     updater_require_idle_deployment || return $?
+    # Do this before the maintenance stop: a production binary must not be
+    # taken offline on a host that cannot install/operate its required unit.
+    if updater_uses_systemd; then
+        updater_require_systemd || return $?
+    fi
+    if updater_systemd_unit_needs_cleanup; then
+        service_required=1
+    fi
     if updater_socket_listener_responds; then
         was_running=1
     fi
     updater_prepare_stop || return $?
+    if [[ "$service_required" -eq 1 ]]; then
+        if updater_systemd_stop_for_reinstall; then
+            :
+        else
+            stop_rc=$?
+            updater_cancel_stop
+            return "$stop_rc"
+        fi
+    fi
     if stop_verified_updater; then
         :
     else
@@ -3834,32 +4044,37 @@ cmd_updater_reinstall() {
         updater_cancel_stop
         return "$stop_rc"
     fi
-    if cmd_updater_install; then
+    # 用户参数（如 --startup-timeout）必须贯穿 install 与恢复/拉起两阶段，
+    # 否则 reinstall 渲染出的 unit 回退默认值。
+    if cmd_updater_install "$@"; then
         :
     else
         install_rc=$?
         if [[ "$was_running" -eq 1 ]]; then
             warn "updater reinstallation failed; restarting the preserved installed binary" >&2
-            if ! ensure_updater_running; then
+            if ! ensure_updater_running "$@"; then
                 fail "updater reinstallation failed and the preserved daemon could not be restarted" >&2
             fi
         fi
         return "$install_rc"
     fi
-    if ensure_updater_running; then
+    if ensure_updater_running "$@"; then
         :
     else
         start_rc=$?
         return "$start_rc"
     fi
     ok "updater 已重新安装并启动"
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     updater_backend status \
         --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH"
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary"
 }
 
 cmd_updater_uninstall() {
     local stop_rc=0
+    local service_required=0
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     updater_require_root || return $?
     updater_require_idle_deployment || return $?
@@ -3868,8 +4083,37 @@ cmd_updater_uninstall() {
         fail "refusing unexpected updater binary path during uninstall: $binary" >&2
         return 1
     fi
+    # A unit can outlive deployment-mode metadata (for example after a partial
+    # restore), so its exact installed path also triggers service cleanup.
+    if updater_systemd_unit_needs_cleanup; then
+        service_required=1
+        updater_require_systemd || return $?
+        if ! updater_path_exists "$binary"; then
+            fail "updater systemd unit still exists but updater binary is missing; refusing to claim uninstall succeeded" >&2
+            fail "restore a matching updater release, then run: sudo ./start.sh updater uninstall" >&2
+            return 1
+        fi
+    fi
     updater_prepare_stop || return $?
-    if stop_verified_updater; then
+    # Keep the binary until service-uninstall has stopped/disabled the unit and
+    # removed its Exec paths.  An old release that lacks this subcommand fails
+    # here and leaves both binary and unit recoverable for an upgrade.  The
+    # systemd stop must happen before any raw backend stop: a timeout followed
+    # by SIGKILL can otherwise trigger Restart=on-failure and reopen the socket.
+    if [[ "$service_required" -eq 1 ]]; then
+        if updater_service_uninstall; then
+            :
+        else
+            stop_rc=$?
+            updater_cancel_stop
+            return "$stop_rc"
+        fi
+        if updater_socket_listener_responds; then
+            fail "updater socket is still live after service-uninstall; refusing to remove binary" >&2
+            updater_cancel_stop
+            return 1
+        fi
+    elif stop_verified_updater; then
         :
     else
         stop_rc=$?
@@ -3895,12 +4139,18 @@ cmd_updater_uninstall() {
 
 # 拉起 updater daemon（install 与 ensure_updater_running 共用；避免递归）。
 updater_start_daemon() {
+    if updater_uses_systemd; then
+        updater_service_install "$@"
+        return $?
+    fi
     select_compose_from_deployment_mode
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     if ! updater_backend start \
         --state-dir "$UPDATER_STATE_DIR" \
         --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" \
         --compose-file "$COMPOSE_FILE" \
-        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE"; then
+        --deployment-env "$UPDATER_DEPLOYMENT_ENV_FILE" "$@"; then
         fail "updater 启动失败" >&2
         fail "  若无 binary，设 SAKURA_UPDATER_DEV=1 用源码模式" >&2
         return 1
@@ -3908,11 +4158,68 @@ updater_start_daemon() {
     ok "updater daemon 已运行"
 }
 
+# 生产 + unit 已加载时必须经 systemctl stop：裸 backend stop 在 daemon 超过
+# SIGTERM 窗口后自行升格 SIGKILL，Restart=on-failure 会把该信号死亡视为失败并
+# 拉回 daemon——stop 报成功但服务数秒后复活。stop job 期间 ExecStop 的完整
+# 清理阶梯（SIGTERM→SIGKILL）不会触发重启。dev 模式与未加载 unit（手动
+# daemon / 残留清理）保留裸 backend stop。
+# LoadState=loaded 不证明 systemd 拥有 daemon：unit loaded 但 inactive 时，
+# unit 外手动拉起的 daemon 不受 stop job 影响。stop job 完成后探测 socket，
+# 仍有监听即回落裸 backend stop——此时 unit 已 inactive，SIGKILL 升格不可能
+# 被 Restart=on-failure 复活。
+# / Route production stops through systemd's stop job; the raw backend stop is
+# reserved for dev mode and fallback cleanup of daemons outside systemd.  A
+# loaded unit is not proof of daemon ownership: probe the socket after the
+# stop job and fall back to the raw backend stop while a listener survives,
+# safe because the unit is inactive by then and cannot revive the daemon.
+updater_stop_daemon() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    if updater_uses_systemd && updater_systemd_unit_is_loaded; then
+        if systemctl stop "$UPDATER_SYSTEMD_UNIT_NAME"; then
+            :
+        else
+            fail "无法停止 updater systemd service（systemctl stop 失败）" >&2
+            return 1
+        fi
+        if updater_socket_listener_responds; then
+            warn "updater socket 仍在监听（unit 外手动 daemon）；执行裸 backend stop 兜底" >&2
+        else
+            ok "updater systemd service 已停止"
+            return 0
+        fi
+    fi
+    updater_backend stop \
+        --state-dir "$UPDATER_STATE_DIR" \
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" "$@"
+}
+
 ensure_updater_running() {
+    local read_only_status=0
+    if [[ "${1:-}" == "--status" ]]; then
+        read_only_status=1
+        shift
+    fi
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" >/dev/null 2>&1; then
+        # `status` is a snapshot operation.  It must not install/enable a unit
+        # as a side effect when the daemon is already alive.
+        if [[ "$read_only_status" -eq 1 ]]; then
+            return 0
+        fi
+        if updater_uses_systemd; then
+            updater_service_install "$@"
+            return $?
+        fi
         return 0
+    fi
+    if [[ "$read_only_status" -eq 1 ]] && updater_uses_systemd; then
+        warn "host updater daemon 未运行；status 不会安装或启用 systemd service" >&2
+        return 1
     fi
     if updater_socket_listener_responds; then
         fail "updater socket is live but daemon metadata is missing or stale; refusing duplicate start" >&2
@@ -3921,12 +4228,12 @@ ensure_updater_running() {
     fi
     warn "updater daemon 未运行，正在拉起..."
 
-    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     local install_rc
     if updater_binary_is_safe "$binary"; then
         if updater_backend install \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" "$@"; then
             :
         else
             install_rc=$?
@@ -3936,7 +4243,8 @@ ensure_updater_running() {
     elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
         if updater_backend install \
             --state-dir "$UPDATER_STATE_DIR" \
-            --socket-path "$UPDATER_SOCKET_PATH" "$@"; then
+            --socket-path "$UPDATER_SOCKET_PATH" \
+            --binary-path "$binary" "$@"; then
             :
         else
             install_rc=$?
@@ -3948,7 +4256,8 @@ ensure_updater_running() {
         return 126
     else
         # cmd_updater_install 成功即已完成安装并启动 daemon，直接返回。
-        if cmd_updater_install; then
+        # / Fresh-acquisition delegation must carry the caller's flags too.
+        if cmd_updater_install "$@"; then
             return 0
         else
             install_rc=$?
@@ -3957,11 +4266,12 @@ ensure_updater_running() {
         fi
     fi
 
-    updater_start_daemon
+    updater_start_daemon "$@"
 }
 
 cmd_updater() {
     local action="${1:-status}"
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     shift || true
     case "$action" in
         install)
@@ -3976,10 +4286,14 @@ cmd_updater() {
         start)
             ensure_updater_running "$@"
             ;;
-        stop|status|is-running)
+        stop)
+            updater_stop_daemon "$@"
+            ;;
+        status|is-running)
             updater_backend "$action" \
                 --state-dir "$UPDATER_STATE_DIR" \
-                --socket-path "$UPDATER_SOCKET_PATH" "$@"
+                --socket-path "$UPDATER_SOCKET_PATH" \
+                --binary-path "$binary" "$@"
             ;;
         *)
             fail "未知 updater 子命令: $action"
@@ -4018,6 +4332,7 @@ detect_compose() {
 
 cmd_status() {
     local build_active=0 runner_verified=0
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     if is_running; then
         build_active=1
         runner_verified=1
@@ -4030,7 +4345,8 @@ cmd_status() {
     # acquisition；image :latest 必须等 /health 提供具体版本后才能安全安装。
     if updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1; then
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" >/dev/null 2>&1; then
         ok "host updater daemon 运行中"
     else
         if [[ "$build_active" -eq 1 ]]; then
@@ -4038,13 +4354,13 @@ cmd_status() {
         elif updater_binary_is_safe "${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}" \
             || [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]] \
             || updater_path_exists "${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"; then
-            if ensure_updater_running; then
+            if ensure_updater_running --status; then
                 ok "host updater daemon 运行中"
             else
                 warn "host updater daemon 不可用"
             fi
         elif updater_health_payload >/dev/null 2>&1; then
-            if ensure_updater_running; then
+            if ensure_updater_running --status; then
                 ok "host updater daemon 运行中"
             else
                 warn "host updater daemon 不可用"
@@ -4395,8 +4711,20 @@ build_runner() {
         COMPOSE=$(detect_compose)
     fi
 
-    # host updater daemon 恢复（spec §11.4）
-    ensure_updater_running || warn "updater daemon 未拉起（更新功能不可用，服务不受影响）"
+    # 生产 binary 必须由 systemd 接管并在宿主机重启后可恢复；源码/dev 模式
+    # 保留原有手动 daemon 生命周期。生产失败时让部署失败，不能宣称已完成。
+    if [[ "$prod" == "true" ]] && [[ "${SAKURA_UPDATER_DEV:-0}" != "1" ]]; then
+        if ensure_updater_running; then
+            :
+        else
+            fail "生产 Host Updater 未能安装并启用 systemd service；部署未完成" >&2
+            set_phase "start" "fail"
+            return 1
+        fi
+    else
+        # host updater daemon 恢复（spec §11.4）
+        ensure_updater_running || warn "updater daemon 未拉起（更新功能不可用，服务不受影响）"
+    fi
 
     # --- done ---
     set_phase "done"
@@ -4544,20 +4872,42 @@ updater_ipc_field() {
 }
 
 updater_daemon_is_running() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     updater_backend is-running \
         --state-dir "$UPDATER_STATE_DIR" \
-        --socket-path "$UPDATER_SOCKET_PATH" >/dev/null 2>&1
+        --socket-path "$UPDATER_SOCKET_PATH" \
+        --binary-path "$binary" >/dev/null 2>&1
 }
 
 # Production image updates are a three-image transaction owned by the host
 # updater. There is intentionally no Compose-only fallback here: writing
 # SAKURA_AI_IMAGE alone would leave sandboxd/runner on an unrelated release.
+updater_identity_compatible() {
+    python3 -c '
+import json, sys
+try:
+    identity = json.load(sys.stdin)
+    capabilities = identity.get("capabilities")
+    required = {"three-image-transaction-v1", "deployment-reconcile-v1", "deployment-manifest-v1"}
+    valid = isinstance(capabilities, list) and all(isinstance(x, str) for x in capabilities)
+    missing = required - set(capabilities if valid else [])
+    if identity.get("protocol_version") != 1 or missing:
+        print("Host Updater 缺少部署能力: " + ", ".join(sorted(missing))
+              + "; 请安装兼容 Release 后执行 sudo ./start.sh updater reinstall", file=sys.stderr)
+        sys.exit(1)
+except (ValueError, TypeError, AttributeError):
+    print("Host Updater 未提供有效的能力身份；请升级 Host Updater。", file=sys.stderr)
+    sys.exit(1)
+'
+}
+
 require_image_updater_transaction() {
     if ! updater_daemon_is_running; then
         fail "生产镜像更新需要可用的 host updater daemon；拒绝 Web-only Compose fallback" >&2
         fail "请先执行: sudo ./start.sh updater start" >&2
         return 1
     fi
+    updater_ipc_get /v1/status | updater_identity_compatible || return 1
 }
 
 # Build the structured development target accepted by updater's registry
@@ -4639,9 +4989,8 @@ updater_submit_image_transaction() {
 
     pattern='"error"[[:space:]]*:[[:space:]]*"preflight_failed"'
     if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
-        pattern='"name":"already_current"[[:space:]]*,[[:space:]]*"passed":false'
-        if [[ "$payload" =~ $pattern ]]; then
-            ok "${channel} 频道已是最新版本，无需更新"
+        if python3 -c 'import json,sys; checks=json.load(sys.stdin).get("checks", []); failed=[x.get("name") for x in checks if x.get("passed") is not True and x.get("blocking", True)]; sys.exit(0 if failed and set(failed) <= {"already_current", "target_newer"} else 1)' <<< "$payload"; then
+            ok "${channel} 频道完整部署已一致，无需更新"
             return 0
         fi
         pattern='"name":"channel_switch_confirmed"[[:space:]]*,[[:space:]]*"passed":false'
@@ -4677,7 +5026,10 @@ updater_ipc_wait_job() {
                 last="$state"
             fi
             case "$state" in
-                success)                return 0 ;;
+                success|complete)
+                    if ! updater_identity_compatible <<< "$payload"; then return 1; fi
+                    python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("data", {}).get("deployment_verified") is True else 1)' <<< "$payload"
+                    return $? ;;
                 failed|rolled_back)     return 1 ;;
             esac
         fi
@@ -5740,6 +6092,14 @@ do_start() {
         fail "当前目录不是项目源码仓库，本地构建不可用"
         info "独立部署请使用生产镜像部署（菜单 7 或 --prod）"
         return 1
+    fi
+
+    # The production deployment is only complete when the host supervisor can
+    # enable the updater for the next boot.  Check before touching the pending
+    # deployment transaction so an unsupported container/NAS is not reported as
+    # a successful self-starting production install.
+    if [[ "$prod" == "true" ]] && [[ "${SAKURA_UPDATER_DEV:-0}" != "1" ]]; then
+        updater_require_systemd || return 1
     fi
 
     # 生产模式先准备一个 pending 状态副本。初始化/解析期间只写该副本，

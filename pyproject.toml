@@ -23,23 +23,23 @@ dependencies = [
     "cryptography>=44.0.2",
 
     # AI集成
-    "openai>=1.10.0",
+    "openai>=3.8.0",
     "httpx>=0.28.1",
 
     # 数据库
     "sqlalchemy>=2.0.52,<2.1",
     "asyncmy>=0.2.14",
     "asyncpg>=0.31.0",
-    "alembic>=1.18.5",
+    "alembic>=1.19.2",
 
     # 任务队列
-    "redis>=5.0.1",
+    "redis>=8.1.0",
     "APScheduler>=3.11.3",
 
     # 工具库
     "typing-extensions>=4.16.0",
-    "pyyaml>=6.0.1",
-    "pydantic>=2.5.3",
+    "pyyaml>=6.0.3",
+    "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "Pillow>=12.3.0",
     "tzlocal==5.4.4",
@@ -49,15 +49,15 @@ dependencies = [
     "loguru>=0.7.3",
 
     # Telegram Bot
-    "python-telegram-bot>=21.0",
+    "python-telegram-bot>=22.8",
 
     # RAG 功能
     "chromadb>=1.5.9",
-    "watchfiles>=0.20.0",
-    "python-slugify>=8.0.0",
+    "watchfiles>=1.2.0",
+    "python-slugify>=9.0.0",
 
     # 支付网关
-    "stripe>=15.5.1",
+    "stripe>=15.6.1",
     "paddle-python-sdk>=1.15.0",
 
     # WebUI
@@ -76,7 +76,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.5",
+    "ruff>=0.16.6",
     "pytest>=9.1.1",
 ]
 

@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -180,7 +180,21 @@ The interactive menu's production deployment also asks for the channel on first 
 
 `start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file for the selected image channel (stable from `main`, development from `develop`; override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
 
-`sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs the Host Updater. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+`sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs, enables, and starts the Host Updater systemd unit. Production binaries require a usable systemd as PID 1; otherwise the script fails clearly instead of claiming reboot self-start is configured. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+
+Verify reboot self-start after installation:
+
+```bash
+sudo systemctl is-enabled sakura-ai-updater.service
+sudo systemctl is-active sakura-ai-updater.service
+sudo systemctl status sakura-ai-updater.service --no-pager
+```
+
+Starting with Host Updater 0.3.0, machine-readable capabilities declare the three-image transaction contract. Version management also shows the build revision, release identity, and protocol. Missing capabilities block updates even when the protocol matches. First run `sudo ./start.sh updater reinstall` using the current `start.sh` to install a Release binary with the required capabilities. A development fallback to a stable asset must pass the same check.
+
+Development targets represent fully published Web, Sandboxd, and Runner images: CI binds their immutable identities into the Web OCI index deployment manifest before advancing `edge`. If Web is current but the sandbox has drifted, select “Verify/reconcile this deployment” in version management to converge normally, without reinstalling or changing the database.
+
+Explicit `SAKURA_UPDATER_DEV=1` source/dev mode keeps the manual daemon lifecycle and does not promise systemd reboot recovery.
 
 > **Synchronizing Host Updater after a WebUI update:** A stable WebUI update transaction updates Web, sandboxd, and the Agent runner together, but it does not replace the currently running Host Updater binary. After the update succeeds and `/health` reports the new version, run the following command in `/opt/sakura-ai` to align the Updater binary with that Release:
 >
@@ -188,7 +202,7 @@ The interactive menu's production deployment also asks for the channel on first 
 > sudo ./start.sh updater reinstall
 > ```
 >
-> `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops, installs, starts, and reports the new daemon state; if installation fails, it attempts to restore the existing daemon. If an older updater does not support the atomic maintenance gate, the command fails closed and requires the administrator to stop that legacy daemon explicitly first. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
+> `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops the systemd service under that maintenance gate, installs the matching Release binary, re-enables and starts the unit, and reports the new state; if installation fails, it attempts to restore the existing daemon. If an older updater lacks the atomic maintenance gate or `service-install`, the command fails closed, does not delete the binary currently on disk, reports the error clearly, and requires an upgrade to a matching updater release. A standalone `install` keeps the restart-required contract: it does not raw-stop a running daemon; use `reinstall` for the safe migration. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
 
 Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and deployment files. In a standalone install such as `/opt/sakura-ai`, full uninstall leaves only `start.sh` for a clean redeployment; source repository files are protected. Both modes share the single `UNINSTALL` confirmation word:
 

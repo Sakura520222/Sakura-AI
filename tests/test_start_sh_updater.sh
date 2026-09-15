@@ -5,6 +5,12 @@ export _START_SH_SOURCED=1
 source "$SCRIPT_DIR/start.sh"
 set +e
 
+# The historical resolver/daemon-flow cases exercise the manual lifecycle and
+# must not depend on whether the test host itself boots systemd (CI containers
+# commonly do not).  Dedicated production systemd cases below opt in through
+# this seam and stub the capability probe explicitly.
+updater_uses_systemd() { return 1; }
+
 pass=0; fail=0
 report() { if [ "$1" -eq 0 ]; then echo "[OK] $2"; pass=$((pass+1)); else echo "[FAIL] $2"; fail=$((fail+1)); fi; }
 
@@ -477,6 +483,7 @@ run_state_dir_migration_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_uses_systemd() { return 1; }
         set +e
         local state_dir="$case_dir/state"
         mkdir -p "$state_dir"
@@ -518,6 +525,7 @@ run_state_dir_unsafe_existing_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_uses_systemd() { return 1; }
         set +e
         local state_dir="$case_dir/state"
         mkdir -p "$state_dir"
@@ -587,6 +595,10 @@ SYMLINK_STATE_DIR="$TMPDIR/state-mig-symlink"
 )
 [ "$?" -eq 0 ] && report 0 "M4-symlink: symlink state_dir rejected before chmod" || report 1 "M4-symlink"
 
+compatible_binary_bytes() {
+    printf '%s\n' '#!/bin/sh' "echo '{\"protocol_version\":1,\"capabilities\":[\"three-image-transaction-v1\",\"deployment-reconcile-v1\",\"deployment-manifest-v1\"]}'"
+}
+
 # --- trusted acquisition tests ---
 ACQ_DIR="$TMPDIR/acquisition"
 ACQ_STATE="$ACQ_DIR/state"
@@ -606,12 +618,12 @@ install_updater_binary >/dev/null 2>&1
 FAKE_UID=0
 ACQ_CALLS="$ACQ_DIR/calls.log"
 : > "$ACQ_CALLS"
-ACQ_DIGEST=$(printf '%s\n' 'new-final-bytes' | sha256sum | cut -d' ' -f1)
+ACQ_DIGEST=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
 updater_curl() {
     echo "curl:$1 -> $2" >> "$ACQ_CALLS"
     case "$1" in
         */SHA256SUMS) printf '%s  sakura-ai-updater-linux-amd64\r\n' "$ACQ_DIGEST" > "$2" ;;
-        *) printf '%s\n' 'new-final-bytes' > "$2" ;;
+        *) compatible_binary_bytes > "$2" ;;
     esac
     [[ -n "${3:-}" ]] && : > "$3"
 }
@@ -647,7 +659,7 @@ ACQ_NEW_HASH=$(sha256sum "$ACQ_BINARY" | cut -d' ' -f1)
 updater_curl() {
     case "$1" in
         */SHA256SUMS) printf '%s  sakura-ai-updater-linux-amd64\n' "$ACQ_DIGEST" > "$2" ;;
-        *) printf '%s\n' 'new-final-bytes' > "$2" ;;
+        *) compatible_binary_bytes > "$2" ;;
     esac
     [[ -n "${3:-}" ]] && : > "$3"
 }
@@ -884,14 +896,14 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_
         updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
         updater_uname_s() { printf '%s\n' Linux; }
         updater_uname_m() { printf '%s\n' x86_64; }
-        digest=$(printf '%s\n' new-precommit-bytes | sha256sum | cut -d' ' -f1)
+        digest=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
             printf 'URL:%s\n' "$1" >> "$calls_log"
             if [[ "$1" == */SHA256SUMS ]]; then
                 printf '%s  sakura-ai-updater-linux-amd64\n' "$digest" > "$2"
             else
-                printf '%s\n' new-precommit-bytes > "$2"
+                compatible_binary_bytes > "$2"
             fi
             [[ -z "${3:-}" ]] || : > "$3"
             return 0
@@ -989,14 +1001,14 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_
         updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
         updater_uname_s() { printf '%s\n' Linux; }
         updater_uname_m() { printf '%s\n' x86_64; }
-        digest=$(printf '%s\n' new-postcommit-bytes | sha256sum | cut -d' ' -f1)
+        digest=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
             printf 'URL:%s\n' "$1" >> "$calls_log"
             if [[ "$1" == */SHA256SUMS ]]; then
                 printf '%s  sakura-ai-updater-linux-amd64\n' "$digest" > "$2"
             else
-                printf '%s\n' new-postcommit-bytes > "$2"
+                compatible_binary_bytes > "$2"
             fi
             [[ -z "${3:-}" ]] || : > "$3"
             return 0
@@ -1072,7 +1084,9 @@ run_stable_fallback_case() {
             local candidate="$1"
             [[ -f "$candidate" && ! -L "$candidate" ]]
         }
-        new_bytes="new-fallback-bytes"
+        new_bytes=$(compatible_binary_bytes)
+        if [[ "$case_name" == "incompatible" ]]; then new_bytes='#!/bin/sh
+echo "{}"'; fi
         digest=$(printf '%s\n' "$new_bytes" | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
@@ -1120,6 +1134,8 @@ run_stable_fallback_case() {
                 && grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
                 && grep -q '/v3.1.2/SHA256SUMS$' "$calls_log" \
                 && ! grep -q '/v3.1.3/SHA256SUMS' "$calls_log"
+        elif [[ "$case_name" == "incompatible" ]]; then
+            [[ "$rc" -ne 0 ]] && [ "$old_hash" = "$new_hash" ] && grep -q '不满足当前三镜像' "$out"
         else
             [[ "$rc" -ne 0 ]] && [ "$old_hash" = "$new_hash" ] \
                 && ! grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
@@ -1141,6 +1157,7 @@ run_stable_fallback_case() {
     fi
 }
 run_stable_fallback_case fallback-success 404 yes
+run_stable_fallback_case incompatible 404 no
 run_stable_fallback_case target-network 000 no
 run_stable_fallback_case target-forbidden 403 no
 run_stable_fallback_case target-server-error 500 no
@@ -1155,6 +1172,7 @@ run_install_start_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_uses_systemd() { return 1; }
         set +e
         mkdir -p "$state_dir"
         printf '#!/bin/sh\nold-install-start\n' > "$binary"
@@ -1205,6 +1223,7 @@ run_install_running_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_uses_systemd() { return 1; }
         set +e
         mkdir -p "$state_dir"
         printf '#!/bin/sh\nold-install-running\n' > "$binary"
@@ -1241,6 +1260,331 @@ case_rc=$?
 [ "$case_rc" -eq 0 ] \
     && report 0 "U3b: daemon 已运行时 install 不重复启动" \
     || report 1 "U3b: daemon 已运行时 install 不重复启动"
+
+# --- U4: 生产 binary 通过 systemd 安装、启用并启动（参数不漂移）---
+run_systemd_install_case() {
+    local case_dir="$TMPDIR/systemd-install"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local calls_log="$case_dir/calls.log"
+    local output="$case_dir/output.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export SAKURA_UPDATER_DEV=0
+        export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+        cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+COMPOSE_PROJECT_NAME=sakura-ai
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest
+EOF
+        export UPDATER_SYSTEMD_UNIT_PATH="$case_dir/sakura-ai-updater.service"
+        export UPDATER_SYSTEMD_WANTS_PATH="$case_dir/wants/sakura-ai-updater.service"
+        updater_uses_systemd() { return 0; }
+        updater_systemd_available() { return 0; }
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_binary_owner_uid() { printf '%s\n' 0; }
+        updater_binary_mode() { printf '%s\n' 700; }
+        updater_binary_is_safe() {
+            local candidate="$1"
+            [[ -f "$candidate" && ! -L "$candidate" ]]
+        }
+        install_updater_binary() {
+            printf '#!/bin/sh\nnew-updater\n' > "$binary"
+            chmod 0700 "$binary"
+        }
+        updater_backend() {
+            printf 'BACKEND:%s\n' "$*" >> "$calls_log"
+            [[ "$1" == "is-running" ]] && return 1
+            return 0
+        }
+        : > "$calls_log"
+        cmd_updater_install >"$output" 2>&1
+        rc=$?
+        install_line=$(grep -n '^BACKEND:install ' "$calls_log" | cut -d: -f1)
+        service_line=$(grep -n '^BACKEND:service-install ' "$calls_log" | cut -d: -f1)
+        [ "$rc" -eq 0 ] \
+            && [ -n "$install_line" ] && [ -n "$service_line" ] \
+            && [ "$install_line" -lt "$service_line" ] \
+            && grep -q -- "--binary-path $binary" "$calls_log" \
+            && grep -q -- "--compose-file $UPDATER_PROD_COMPOSE_FILE" "$calls_log" \
+            && grep -q -- "--deployment-env $UPDATER_DEPLOYMENT_ENV_FILE" "$calls_log" \
+            && ! grep -q '^BACKEND:start ' "$calls_log"
+    )
+}
+run_systemd_install_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U4: 生产 install 转 systemd 且透传 binary/compose/env" \
+    || report 1 "U4: 生产 install 转 systemd 且透传 binary/compose/env"
+
+# --- U5: 宿主不支持 systemd 时生产 install fail closed ---
+run_systemd_unavailable_case() {
+    local case_dir="$TMPDIR/systemd-unavailable"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local output="$case_dir/output.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export SAKURA_UPDATER_DEV=0
+        export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+        printf 'SAKURA_DEPLOY_MODE=image\nCOMPOSE_PROJECT_NAME=sakura-ai\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        updater_uses_systemd() { return 0; }
+        updater_systemd_available() { return 1; }
+        updater_current_uid() { printf '%s\n' 0; }
+        install_updater_binary() { printf 'ACQUIRE\n' >> "$output"; return 0; }
+        cmd_updater_install >"$output" 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] \
+            && ! grep -q '^ACQUIRE$' "$output" \
+            && grep -q '不支持 systemd\|未配置开机自启' "$output" \
+            && [ ! -e "$binary" ]
+    )
+}
+run_systemd_unavailable_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U5: 不支持 systemd 时生产 install 明确失败" \
+    || report 1 "U5: 不支持 systemd 时生产 install 明确失败"
+
+# --- U6: 旧 binary 不认识 service-install 时不得回退手动启动 ---
+run_systemd_old_binary_case() {
+    local case_dir="$TMPDIR/systemd-old-binary"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local calls_log="$case_dir/calls.log"
+    local output="$case_dir/output.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nold-updater\n' > "$binary"
+        chmod 0700 "$binary"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export SAKURA_UPDATER_DEV=0
+        export UPDATER_DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+        printf 'SAKURA_DEPLOY_MODE=source\n' > "$UPDATER_DEPLOYMENT_ENV_FILE"
+        updater_uses_systemd() { return 0; }
+        updater_systemd_available() { return 0; }
+        updater_current_uid() { printf '%s\n' 0; }
+        updater_binary_owner_uid() { printf '%s\n' 0; }
+        updater_binary_mode() { printf '%s\n' 700; }
+        updater_binary_is_safe() {
+            local candidate="$1"
+            [[ -f "$candidate" && ! -L "$candidate" ]]
+        }
+        install_updater_binary() { :; }
+        updater_backend() {
+            printf 'BACKEND:%s\n' "$*" >> "$calls_log"
+            case "$1" in
+                is-running|install) return 0 ;;
+                service-install) return 2 ;;
+                *) return 0 ;;
+            esac
+        }
+        : > "$calls_log"
+        cmd_updater_install >"$output" 2>&1
+        rc=$?
+        [ "$rc" -eq 2 ] \
+            && grep -q '^BACKEND:service-install ' "$calls_log" \
+            && ! grep -q '^BACKEND:start ' "$calls_log" \
+            && grep -q 'service-install 失败\|升级到包含 systemd service lifecycle' "$output"
+    )
+}
+run_systemd_old_binary_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U6: 旧 binary 不支持 service-install 时 fail closed" \
+    || report 1 "U6: 旧 binary 不支持 service-install 时 fail closed"
+
+# --- U7: 托管卸载顺序为维护门禁 -> systemd stop/uninstall -> socket 验证 -> 删除 ---
+run_systemd_uninstall_order_case() {
+    local case_dir="$TMPDIR/systemd-uninstall-order"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local unit_path="$case_dir/sakura-ai-updater.service"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nmanaged-updater\n' > "$binary"
+        chmod 0700 "$binary"
+        : > "$unit_path"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export UPDATER_SYSTEMD_UNIT_PATH="$unit_path"
+        export UPDATER_SYSTEMD_WANTS_PATH="$case_dir/wants/sakura-ai-updater.service"
+        updater_require_root() { :; }
+        updater_require_idle_deployment() { :; }
+        updater_existing_state_dir_is_safe() { :; }
+        updater_systemd_available() { return 0; }
+        updater_prepare_stop() { printf 'PREPARE\n' >> "$calls_log"; }
+        updater_socket_listener_responds() { return 1; }
+        stop_verified_updater() { printf 'RAW_STOP\n' >> "$calls_log"; return 0; }
+        updater_backend() {
+            printf 'BACKEND:%s\n' "$*" >> "$calls_log"
+            if [[ "$1" == "service-uninstall" ]]; then
+                rm -f -- "$UPDATER_SYSTEMD_UNIT_PATH"
+            fi
+            return 0
+        }
+        : > "$calls_log"
+        cmd_updater_uninstall >/dev/null 2>&1
+        rc=$?
+        prepare_line=$(grep -n '^PREPARE$' "$calls_log" | cut -d: -f1)
+        service_line=$(grep -n '^BACKEND:service-uninstall ' "$calls_log" | cut -d: -f1)
+        [ "$rc" -eq 0 ] \
+            && [ -n "$prepare_line" ] && [ -n "$service_line" ] \
+            && [ "$prepare_line" -lt "$service_line" ] \
+            && ! grep -q '^RAW_STOP$' "$calls_log" \
+            && [ ! -e "$binary" ] && [ ! -e "$unit_path" ]
+    )
+}
+run_systemd_uninstall_order_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U7: 托管卸载先停 systemd 后删 binary" \
+    || report 1 "U7: 托管卸载先停 systemd 后删 binary"
+
+# --- U8: reinstall 迁移在 maintenance gate 后等待 systemd，再 raw stop ---
+run_systemd_reinstall_order_case() {
+    local case_dir="$TMPDIR/systemd-reinstall-order"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$case_dir"
+        export UPDATER_SYSTEMD_UNIT_PATH="$case_dir/sakura-ai-updater.service"
+        export UPDATER_SYSTEMD_WANTS_PATH="$case_dir/wants/sakura-ai-updater.service"
+        updater_uses_systemd() { return 0; }
+        updater_systemd_available() { return 0; }
+        updater_systemd_unit_needs_cleanup() { return 0; }
+        updater_require_root() { printf 'ROOT\n' >> "$calls_log"; }
+        updater_require_idle_deployment() { printf 'IDLE\n' >> "$calls_log"; }
+        updater_socket_listener_responds() { return 0; }
+        updater_prepare_stop() { printf 'PREPARE\n' >> "$calls_log"; }
+        updater_systemd_stop_for_reinstall() { printf 'SYSTEMD_STOP\n' >> "$calls_log"; }
+        stop_verified_updater() { printf 'RAW_STOP\n' >> "$calls_log"; }
+        cmd_updater_install() { printf 'INSTALL\n' >> "$calls_log"; }
+        ensure_updater_running() { printf 'START\n' >> "$calls_log"; }
+        updater_backend() { printf 'BACKEND:%s\n' "$*" >> "$calls_log"; }
+        : > "$calls_log"
+        cmd_updater_reinstall >/dev/null 2>&1
+        rc=$?
+        expected='ROOT IDLE PREPARE SYSTEMD_STOP RAW_STOP INSTALL START BACKEND:status'
+        actual=$(tr '\n' ' ' < "$calls_log" | sed -E 's/(BACKEND:status).*/\1/' | sed 's/ $//')
+        [ "$rc" -eq 0 ] && [ "$actual" = "$expected" ]
+    )
+}
+run_systemd_reinstall_order_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U8: reinstall 维护门禁后先完成 systemd stop" \
+    || report 1 "U8: reinstall 维护门禁后先完成 systemd stop"
+
+# --- U9: service-uninstall 清理旧 release 遗留的精确 enable symlink ---
+run_systemd_residual_link_case() {
+    local case_dir="$TMPDIR/systemd-residual-link"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local unit_path="$case_dir/sakura-ai-updater.service"
+    local wants_path="$case_dir/wants/sakura-ai-updater.service"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir" "$(dirname "$wants_path")"
+        printf '#!/bin/sh\nmanaged-updater\n' > "$binary"
+        chmod 0700 "$binary"
+        : > "$unit_path"
+        ln -s "$unit_path" "$wants_path"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export UPDATER_SYSTEMD_UNIT_PATH="$unit_path" UPDATER_SYSTEMD_WANTS_PATH="$wants_path"
+        updater_require_root() { :; }
+        updater_require_idle_deployment() { :; }
+        updater_existing_state_dir_is_safe() { :; }
+        updater_systemd_available() { return 0; }
+        updater_prepare_stop() { :; }
+        updater_socket_listener_responds() { return 1; }
+        systemctl() {
+            printf 'SYSTEMCTL:%s\n' "$*" >> "$calls_log"
+            return 0
+        }
+        updater_backend() {
+            printf 'BACKEND:%s\n' "$*" >> "$calls_log"
+            if [[ "$1" == "service-uninstall" ]]; then
+                rm -f -- "$UPDATER_SYSTEMD_UNIT_PATH"
+            fi
+            return 0
+        }
+        : > "$calls_log"
+        cmd_updater_uninstall >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -eq 0 ] \
+            && grep -q '^SYSTEMCTL:daemon-reload$' "$calls_log" \
+            && [ ! -L "$wants_path" ] && [ ! -e "$binary" ]
+    )
+}
+run_systemd_residual_link_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U9: 卸载清理遗留 enable link 并 daemon-reload" \
+    || report 1 "U9: 卸载清理遗留 enable link 并 daemon-reload"
+
+# --- U10: 从未安装 unit 的 legacy binary 可重复卸载，不调用 service-uninstall ---
+run_legacy_repeat_uninstall_case() {
+    local case_dir="$TMPDIR/legacy-repeat-uninstall"
+    local state_dir="$case_dir/state"
+    local binary="$state_dir/sakura-ai-updater"
+    local calls_log="$case_dir/calls.log"
+    (
+        export _START_SH_SOURCED=1
+        source "$SCRIPT_DIR/start.sh"
+        set +e
+        mkdir -p "$state_dir"
+        printf '#!/bin/sh\nlegacy-updater\n' > "$binary"
+        chmod 0700 "$binary"
+        export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
+        export UPDATER_SYSTEMD_UNIT_PATH="$case_dir/no-unit.service"
+        export UPDATER_SYSTEMD_WANTS_PATH="$case_dir/no-wants/sakura-ai-updater.service"
+        updater_require_root() { :; }
+        updater_require_idle_deployment() { :; }
+        updater_existing_state_dir_is_safe() { :; }
+        updater_systemd_available() { return 1; }
+        updater_prepare_stop() { :; }
+        updater_socket_listener_responds() { return 1; }
+        stop_verified_updater() { printf 'RAW_STOP\n' >> "$calls_log"; return 0; }
+        updater_backend() {
+            printf 'BACKEND:%s\n' "$*" >> "$calls_log"
+            return 1
+        }
+        : > "$calls_log"
+        cmd_updater_uninstall
+        first_rc=$?
+        cmd_updater_uninstall
+        second_rc=$?
+        [ "$first_rc" -eq 0 ] && [ "$second_rc" -eq 0 ] \
+            && [ "$(grep -c '^RAW_STOP$' "$calls_log")" -eq 2 ] \
+            && ! grep -q '^BACKEND:service-uninstall ' "$calls_log" \
+            && [ ! -e "$binary" ]
+    )
+}
+run_legacy_repeat_uninstall_case
+case_rc=$?
+[ "$case_rc" -eq 0 ] \
+    && report 0 "U10: legacy 无 unit 重复卸载保持幂等" \
+    || report 1 "U10: legacy 无 unit 重复卸载保持幂等"
 
 rm -rf "$TMPDIR"
 echo ""

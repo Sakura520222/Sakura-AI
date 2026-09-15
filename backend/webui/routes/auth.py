@@ -50,14 +50,17 @@ from backend.services.webauthn_service import (
     finish_authentication,
 )
 from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
     create_access_token,
     create_mfa_pending_token,
     decode_access_token,
     is_mfa_pending_payload,
+    set_webui_token_cookie,
 )
 from backend.webui.deps import (
     get_csrf_serializer,
     get_templates,
+    refresh_login_claims,
     render_template,
     request_origin,
     require_csrf,
@@ -143,14 +146,7 @@ def _build_login_token_payload(
 
 def _set_webui_token_cookie(response: RedirectResponse | JSONResponse, token: str):
     """写入正式 WebUI 登录 Cookie。"""
-    response.set_cookie(
-        "webui_token",
-        token,
-        httponly=True,
-        secure=True,
-        max_age=86400,
-        samesite="lax",
-    )
+    set_webui_token_cookie(response, token)
 
 
 def _set_mfa_pending_cookie(response: RedirectResponse, token: str):
@@ -216,10 +212,16 @@ async def _delete_oauth_state(state: str):
 @router.get("/login")
 async def login_page(request: Request):
     """渲染登录页面（GitHub OAuth 和 Passkey 按钮）"""
-    # 已登录则跳转仪表盘
-    token = request.cookies.get("webui_token")
-    if token and decode_access_token(token):
-        return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
+    # 已登录则跳转仪表盘；仅通过签名校验但数据库已拒绝的会话要清除，
+    # 否则 login -> / -> 401 -> login 会形成重定向循环。
+    stale_session = False
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
+    if token:
+        payload = decode_access_token(token)
+        if payload:
+            if await refresh_login_claims(payload):
+                return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
+            stale_session = True
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
@@ -231,7 +233,7 @@ async def login_page(request: Request):
         set_language_cookie(response, lang)
         return response
 
-    return render_template(
+    response = render_template(
         "login.html",
         request,
         user_prefs={"language": lang},
@@ -240,6 +242,9 @@ async def login_page(request: Request):
         app_version=APP_VERSION,
         has_oauth=has_oauth,
     )
+    if stale_session:
+        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
+    return response
 
 
 @router.get("/github")
@@ -383,7 +388,7 @@ async def github_callback(
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
         response = RedirectResponse(url="/auth/2fa", status_code=302)
         _set_mfa_pending_cookie(response, mfa_token)
-        response.delete_cookie("webui_token")
+        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response
 
     jwt_token = create_access_token(token_data)
@@ -633,7 +638,7 @@ async def logout(request: Request):
     """登出"""
     logger.info("WebUI 用户登出")
     response = toast_redirect("/auth/login", "toast.logged_out", lang=detect_language())
-    response.delete_cookie("webui_token")
+    response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 

@@ -379,7 +379,9 @@ class JobOrchestrator:
         detail = "both immutable refs present or both absent"
         if not complete:
             detail = "deployment.env contains only one sandbox image digest"
-        return refs, self._check("current_sandbox_pair_complete", complete, detail)
+        check = self._check("current_sandbox_pair_complete", complete, detail)
+        check["blocking"] = False  # a repairable defect, not a ban on reconciliation
+        return refs, check
 
     async def _development_sandbox_refs(
         self, target: DevelopmentTarget
@@ -399,12 +401,6 @@ class JobOrchestrator:
         if method is None:
             method = getattr(self.release_client, "fetch_development_sandbox_refs", None)
         if method is None:
-            # The historical unit contract used a literal ``object()`` as a
-            # release placeholder.  Keep that one inert test double from
-            # making a network call; every real/custom release client must
-            # implement the pair contract and is rejected when it does not.
-            if type(self.release_client) is object:
-                return await self._current_sandbox_refs()
             raise RegistryTargetError(
                 "release client cannot resolve development sandbox images"
             )
@@ -453,6 +449,13 @@ class JobOrchestrator:
     async def check(self) -> dict[str, Any]:
         """Read latest stable release and readiness without mutating deployment.env."""
 
+        state, _ = await self._current_state()
+        if state.get("current_channel") == "development":
+            target = await RegistryClient().resolve_development_target()
+            ready = await self.preflight(target)
+            return {**ready, "target": target.to_dict(), "update_ready": ready["can_update"],
+                    "update_available": ready["reconcile_required"],
+                    "readiness": self._readiness_from_checks(ready["checks"])}
         current_version = await self.deployment.resolve_current_version()
         manifest = await self._manifest(None)
         latest_version = _value(manifest, "version")
@@ -482,7 +485,7 @@ class JobOrchestrator:
         return {
             "current_version": current_version,
             "latest_version": latest_version,
-            "update_available": _is_newer(latest_version, current_version),
+            "update_available": readiness.get("target_newer", False),
             "update_ready": bool(ready["can_update"]),
             "readiness": readiness,
             "target": target,
@@ -548,6 +551,28 @@ class JobOrchestrator:
             )
         return state, self._check("current_image_identity_valid", True)
 
+    async def _deployment_drift(self, state, *, digest, revision, sandboxd, runner):
+        refs = await self._current_sandbox_refs()
+        drift = []
+        if state.get("running_container_digest") != digest:
+            drift.append("web.digest")
+        if revision and state.get("current_revision") != revision:
+            drift.append("web.revision")
+        for component, current, target in (("sandboxd", refs[0], sandboxd), ("runner", refs[1], runner)):
+            if not target or current != target:
+                drift.append(component + ".deployment_digest")
+        runtime = state.get("sandbox_runtime")
+        if isinstance(runtime, dict):
+            if runtime.get("runtime_verified") is not True:
+                drift.append("sandbox.runtime_unverified")
+            for component, target in (("sandboxd", sandboxd), ("runner", runner)):
+                if runtime.get(component + "_image") != target:
+                    drift.append(component + ".running_digest")
+                expected_revision = revision or state.get("current_revision")
+                if expected_revision and runtime.get(component + "_revision") != expected_revision:
+                    drift.append(component + ".revision")
+        return drift
+
     async def preflight(
         self,
         target_version: str | dict[str, Any],
@@ -584,14 +609,7 @@ class JobOrchestrator:
                 )
                 target_sandbox_check = self._check(
                     "target_sandbox_pair_revision",
-                    (
-                        target_sandboxd_image is None
-                        and target_runner_image is None
-                    )
-                    or (
-                        target_sandboxd_image is not None
-                        and target_runner_image is not None
-                    ),
+                    target_sandboxd_image is not None and target_runner_image is not None,
                     "both target sandbox images are immutable refs for the target revision",
                 )
             except Exception as exc:
@@ -622,7 +640,9 @@ class JobOrchestrator:
                 else None
             )
             same_channel = current_channel == "development"
-            digest_changed = current_digest != development.digest
+            drift = await self._deployment_drift(current_state, digest=development.digest,
+                revision=development.revision, sandboxd=target_sandboxd_image, runner=target_runner_image)
+            digest_changed = bool(drift)
             # A missing/legacy health identity is not evidence that the host is
             # already on the requested channel.  Require the explicit channel
             # switch confirmation for every current channel except a positively
@@ -631,7 +651,7 @@ class JobOrchestrator:
             if same_channel or current_digest is not None:
                 checks.append(
                     self._check(
-                        "target_newer", digest_changed, "development digest differs"
+                        "target_newer", digest_changed, ", ".join(drift) or "deployment converged"
                     )
                 )
             else:
@@ -681,7 +701,10 @@ class JobOrchestrator:
                 )
             )
             result = {
-                "can_update": all(item["passed"] for item in checks),
+                "can_update": all(item["passed"] for item in checks if item.get("blocking", True)),
+                "drift": drift,
+                "current_deployment": current_state,
+                "reconcile_required": bool(drift),
                 "from_version": current_version,
                 "target_version": development.version,
                 "target_image": development.image,
@@ -725,6 +748,13 @@ class JobOrchestrator:
                 raise ManifestInvalidError(
                     "stable target does not match release manifest"
                 )
+            target_revision = None
+            target_identity_check = self._check("target_deployment_identity", True)
+            try:
+                target_revision = await RegistryClient().verify_stable_deployment(
+                    stable, sandbox_manifest.sandboxd_ref, sandbox_manifest.runner_ref)
+            except Exception as exc:
+                target_identity_check = self._check("target_deployment_identity", False, str(exc))
             current_version = await self.deployment.resolve_current_version()
             _, sandbox_pair_check = await self._current_sandbox_pair()
             min_version = _value(manifest, "min_upgrade_from", "0.0.0")
@@ -741,15 +771,18 @@ class JobOrchestrator:
                 else None
             )
             requires_confirmation = current_channel != "stable"
-            digest_changed = current_digest != stable.digest
+            drift = await self._deployment_drift(current_state, digest=stable.digest,
+                revision=target_revision, sandboxd=sandbox_manifest.sandboxd_ref, runner=sandbox_manifest.runner_ref)
+            digest_changed = bool(drift)
             target_newer = (
-                _is_newer(stable.version, current_version)
+                (_is_newer(stable.version, current_version) or (stable.version == current_version and digest_changed))
                 if current_channel == "stable"
                 else digest_changed
                 if current_channel == "development"
                 else _is_newer(stable.version, current_version)
             )
             checks: list[dict[str, Any]] = [
+                target_identity_check,
                 self._check("manifest_found", True),
                 self._check("manifest_valid", True),
                 identity_check,
@@ -812,11 +845,15 @@ class JobOrchestrator:
             assets_ok = await self._asset_check(manifest, stable.version)
             checks.append(self._check("updater_asset_present", assets_ok))
             result = {
-                "can_update": all(item["passed"] for item in checks),
+                "can_update": all(item["passed"] for item in checks if item.get("blocking", True)),
+                "drift": drift,
+                "current_deployment": current_state,
+                "reconcile_required": bool(drift),
                 "from_version": current_version,
                 "target_version": stable.version,
                 "target_image": stable.image,
                 "target_channel": "stable",
+                "target_revision": target_revision,
                 "target_digest": stable.digest,
                 "target_tag": stable.tag,
                 "target_sandboxd_image": sandbox_manifest.sandboxd_ref,
@@ -1144,6 +1181,7 @@ class JobOrchestrator:
                 )
             if not result["can_update"]:
                 raise PreflightFailedError(result["checks"], result)
+            job.target_revision = result.get("target_revision", job.target_revision)
             job.target_sandboxd_image = result.get(
                 "target_sandboxd_image", job.target_sandboxd_image
             )
@@ -1215,31 +1253,16 @@ class JobOrchestrator:
             if job.target_sandboxd_image and job.target_runner_image:
                 await self._pull_with_timeout_retry(job, job.target_sandboxd_image)
                 await self._pull_with_timeout_retry(job, job.target_runner_image)
+            if not job.target_sandboxd_image or not job.target_runner_image:
+                raise RegistryTargetError("complete deployment target required")
+            await self.adapter.verify_pulled_deployment(
+                job.target_image, job.target_sandboxd_image, job.target_runner_image,
+                version=job.target_version, channel=job.target_channel, revision=job.target_revision,
+            )
             self._transition(job, "activating", "activating")
             job.activation_started = True
             self._save_job(job)
-            activate = self.adapter.activate
-            signature = inspect.signature(activate)
-            parameters = list(signature.parameters.values())
-            accepts_sandbox = any(
-                parameter.kind == inspect.Parameter.VAR_POSITIONAL
-                or parameter.kind == inspect.Parameter.VAR_KEYWORD
-                or parameter.name in {"sandboxd_image", "runner_image"}
-                for parameter in parameters
-            ) or len(parameters) >= 3
-            if accepts_sandbox:
-                activation_result = activate(
-                    job.target_image,
-                    job.target_sandboxd_image,
-                    job.target_runner_image,
-                )
-            else:
-                # Compatibility for source/development adapters that predate
-                # the independent sandbox parameters. Production ImageAdapter
-                # always takes the three-image form.
-                activation_result = activate(job.target_image)
-            if inspect.isawaitable(activation_result):
-                await activation_result
+            await self.adapter.activate(job.target_image, job.target_sandboxd_image, job.target_runner_image)
             job.rollback_allowed = True
             self._save_job(job)
             self._transition(job, "restarting", "restarting")
@@ -1260,6 +1283,11 @@ class JobOrchestrator:
                 )
             else:
                 await self.adapter.health_check(job.target_version)
+            await self.adapter.verify_running_deployment(
+                job.target_image, job.target_sandboxd_image, job.target_runner_image,
+                version=job.target_version, channel=job.target_channel, revision=job.target_revision,
+            )
+            job.deployment_verified = True
             finalize_activation = getattr(self.adapter, "finalize_activation", None)
             if finalize_activation is not None:
                 finalized = finalize_activation()
@@ -1322,6 +1350,7 @@ class JobOrchestrator:
             finally:
                 raise
         except Exception as exc:
+            job.deployment_verified = False
             error_code, message, stderr_lines = self._error_details(exc)
             rollback_error: Exception | None = None
             if job.activation_started and deployment_snapshot is not None:

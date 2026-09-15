@@ -65,16 +65,19 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert "ACTUAL_REVISION=$(git rev-parse HEAD)" in text
     assert 'REVISION" != "$ACTUAL_REVISION"' in text
     assert 'COMMIT_CREATED=$(git show -s --format=%cI "$ACTUAL_REVISION")' in text
-    assert "REMOTE_DEVELOP_REVISION=$(git ls-remote origin refs/heads/develop" in text
-    assert "development source is not the current develop head" in text
     assert "LATEST_RELEASE_TAG=$(gh release view" in text
     assert "stable source is not the current latest Release" in text
-    development_guard = text.index("REMOTE_DEVELOP_REVISION=$(git ls-remote")
-    development_tag = text.index('crane tag "$IMMUTABLE" edge')
+    assert 'crane tag "$IMMUTABLE" edge' not in text
+    assert "only the complete deployment publisher" in text
     stable_guard = text.index("LATEST_RELEASE_TAG=$(gh release view")
     stable_tag = text.index('crane tag "$IMMUTABLE" latest')
-    assert development_guard < development_tag
     assert stable_guard < stable_tag
+    workflow, _ = _load("docker-edge.yml")
+    assert workflow["jobs"]["publish-deployment"]["needs"] == ["publish-edge", "publish-sandbox-edge"]
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert workflow["jobs"]["publish-deployment"]["outputs"]["advanced"] == "${{ steps.deployment.outputs.advanced }}"
+    assert workflow["jobs"]["sync-dockerhub"]["if"] == "needs.publish-deployment.outputs.advanced == 'true'"
+    assert workflow["jobs"]["sync-dockerhub"]["permissions"] == {}
     # Stable release callers check out the immutable tag; identity is derived
     # inside the reusable workflow and must not be copied from main HEAD.
     release = (ROOT / ".github" / "workflows" / "release-on-pr-merge.yml").read_text(
@@ -135,3 +138,10 @@ def test_main_sync_workflow_runs_for_every_main_push():
     assert "outputs.target == 'develop'" in publish["if"]
     assert "outputs.using_pat != 'true'" in publish["if"]
     assert publish["secrets"] == "inherit"
+    complete = workflow["jobs"]["publish-synchronized-development-deployment"]
+    assert complete["needs"] == [
+        "sync-main-to-develop",
+        "publish-synchronized-development",
+        "publish-synchronized-development-sandbox",
+    ]
+    assert "python scripts/publish_development_deployment.py" in text

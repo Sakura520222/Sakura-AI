@@ -6,6 +6,9 @@ source checkout the environment variables are absent and the returned
 variables through the Dockerfile. Image deployments also expose the exact
 ``SAKURA_AI_IMAGE`` selected by deployment.env so health consumers can verify
 the running manifest digest rather than inferring identity from a revision.
+For development this is the annotated deployment index digest, which also pins
+the sandbox pair. This Web projection alone never proves runtime convergence;
+the Host Updater verifies all three components before reporting job success.
 """
 
 from __future__ import annotations

@@ -19,8 +19,14 @@ from backend.core.config import get_settings
 from backend.core.time_service import get_time_service, monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
+from backend.models.telegram_models import TelegramUser
 from backend.services.payment_service import is_payment_enabled
-from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
+    decode_access_token,
+    is_access_token_payload,
+    queue_webui_token_renewal,
+)
 from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
 from backend.webui.time_filters import register_time_filters
 
@@ -469,6 +475,38 @@ def toast_redirect(
 
 
 # ========== 认证 ==========
+async def refresh_login_claims(payload: dict) -> dict | None:
+    """从数据库刷新正式登录令牌中的权威用户声明。"""
+    try:
+        user_id = int(payload.get("user_id"))
+    except (TypeError, ValueError):
+        return None
+
+    async with db_module.async_session() as db:
+        result = await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.id == user_id,
+                TelegramUser.is_active.is_(True),
+            )
+        )
+        user = result.scalar_one_or_none()
+
+    if not user or not getattr(user, "is_active", True):
+        return None
+
+    return {
+        # github_username is authoritative; legacy JWTs keep their old sub only
+        # when the database column is unexpectedly empty.
+        "sub": user.github_username or payload.get("sub"),
+        "role": user.role,
+        "user_id": user.id,
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
+        "email": getattr(user, "email", None),
+        "email_verified": bool(getattr(user, "email_verified", False)),
+    }
+
+
 async def get_current_user(request: Request) -> dict:
     """从 Cookie 获取当前登录用户信息
 
@@ -477,7 +515,7 @@ async def get_current_user(request: Request) -> dict:
     Raises:
         HTTPException: 401 未登录
     """
-    token = request.cookies.get("webui_token")
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
 
@@ -485,19 +523,18 @@ async def get_current_user(request: Request) -> dict:
     if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="登录已过期")
 
-    # 校验必要字段
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="无效的登录凭证")
+    refreshed_claims = await refresh_login_claims(payload)
+    if refreshed_claims is None:
+        raise HTTPException(status_code=401, detail="无效或已过期的登录凭证")
 
     return {
-        "sub": payload.get("sub") or "",  # github_username
-        "role": payload.get("role", "user"),
-        "user_id": user_id,
-        "github_id": payload.get("github_id"),
-        "avatar_url": payload.get("avatar_url"),
-        "email": payload.get("email"),
-        "email_verified": bool(payload.get("email_verified", False)),
+        "sub": refreshed_claims["sub"],
+        "role": refreshed_claims["role"],
+        "user_id": refreshed_claims["user_id"],
+        "github_id": refreshed_claims["github_id"],
+        "avatar_url": refreshed_claims["avatar_url"],
+        "email": refreshed_claims["email"],
+        "email_verified": refreshed_claims["email_verified"],
     }
 
 
@@ -506,6 +543,8 @@ async def require_auth(request: Request) -> dict:
     user = await get_current_user(request)
     async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
+    # Renew only after the complete auth pipeline (including MFA) succeeds.
+    queue_webui_token_renewal(request, user)
     return user
 
 
@@ -533,7 +572,7 @@ _MAX_USER_PREFS_CACHE = 1000
 
 async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_db)):
     """获取当前用户的 WebUI 偏好设置，未配置时返回默认值（带内存缓存）"""
-    token = request.cookies.get("webui_token")
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
     if not token:
         return {"language": "zh-CN", "items_per_page": 20}
 

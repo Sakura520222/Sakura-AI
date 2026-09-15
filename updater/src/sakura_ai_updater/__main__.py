@@ -36,6 +36,7 @@ from sakura_ai_updater.socket_util import (
     prepare_socket_path,
 )
 from sakura_ai_updater.state import load_state, reconcile_interrupted_job, save_state
+from sakura_ai_updater.systemd import ServiceError, install_service, uninstall_service
 
 DEFAULT_SOCKET_PATH = "/run/sakura-ai/updater.sock"
 DEFAULT_STATE_DIR = ".deploy/updater"
@@ -47,6 +48,7 @@ _BACKEND_ERRORS = (
     GIDConflictError,
     PrivilegeError,
     UnsafeDeploymentPathError,
+    ServiceError,
 )
 
 
@@ -94,16 +96,24 @@ def serve(
         # Early-fail：在 flock 外提前检测 socket 路径可用性，避免 bind 时才发现目录缺失
         prepare_socket_path(socket_path)
 
-        # Recover an image transaction before reconciling its job gate.  The
-        # deployment journal is written before the first authoritative env
-        # replacement; a process crash between activation and health must
-        # restore the exact old bytes before the daemon can serve new actions.
+        # Restore the complete runtime before clearing the interrupted job gate.
+        adapter = None
         if deployment_env is not None:
             from sakura_ai_updater.adapters.image import (
+                ImageAdapter,
                 recover_pending_deployment_transaction,
             )
 
-            recover_pending_deployment_transaction(deployment_env)
+            if compose_file is not None:
+                adapter = ImageAdapter(
+                    compose_file=compose_file,
+                    deployment_env=deployment_env,
+                    health_url=health_url,
+                    production=os.environ.get("SAKURA_UPDATER_DEV") != "1",
+                )
+                asyncio.run(adapter.recover_pending_transaction())
+            else:
+                recover_pending_deployment_transaction(deployment_env)
 
         # 3. 崩溃恢复（§7.6 6 invariant）：中断/stale-gate job 处理 + 清 active_job_id
         store = load_state(state_path)
@@ -121,21 +131,10 @@ def serve(
         # daemon's current working directory.
         orchestrator = None
         if compose_file is not None and deployment_env is not None:
-            from sakura_ai_updater.adapters.image import ImageAdapter
             from sakura_ai_updater.deployment import DeploymentStateProvider
             from sakura_ai_updater.jobs import JobOrchestrator
             from sakura_ai_updater.release_client import ReleaseClient
 
-            adapter = ImageAdapter(
-                compose_file=compose_file,
-                deployment_env=deployment_env,
-                health_url=health_url,
-                # Source development may intentionally run the Python updater
-                # as a non-root user.  A real daemon with explicit deployment
-                # paths is production-trusted by default; the dev override is
-                # the only way to select the non-root policy.
-                production=os.environ.get("SAKURA_UPDATER_DEV") != "1",
-            )
             deployment = DeploymentStateProvider(
                 deployment_env=deployment_env,
                 health_url=health_url,
@@ -188,6 +187,9 @@ def create_backend(
         state_dir=state_dir,
         socket_path=socket_path,
         binary_path=binary_path,
+        # The socket's parent is the runtime directory.  Deriving it here
+        # keeps custom --socket-path values bootable after /run is recreated.
+        run_dir=os.path.dirname(os.path.abspath(socket_path)),
         startup_timeout=startup_timeout,
         compose_file=compose_file,
         deployment_env=deployment_env,
@@ -215,6 +217,10 @@ def _run_backend(args: argparse.Namespace) -> None:
             print(json.dumps(backend.status(), ensure_ascii=False))
         elif args.action == "is-running":
             sys.exit(0 if backend.is_running() else 1)
+        elif args.action == "service-install":
+            install_service(backend)
+        elif args.action == "service-uninstall":
+            uninstall_service(backend)
         else:  # pragma: no cover — argparse choices 已约束
             raise ValueError(f"unknown backend action: {args.action}")
     except _BACKEND_ERRORS as e:
@@ -226,8 +232,16 @@ def _main_backend(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="sakura_ai_updater backend")
     parser.add_argument(
         "action",
-        choices=["install", "start", "stop", "status", "is-running"],
-        help="daemon 生命周期动作（install/start 需 root）",
+        choices=[
+            "install",
+            "start",
+            "stop",
+            "status",
+            "is-running",
+            "service-install",
+            "service-uninstall",
+        ],
+        help="daemon 生命周期动作（install/start/service-* 需 root）",
     )
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--socket-path", default=DEFAULT_SOCKET_PATH)
@@ -294,7 +308,14 @@ def main(argv: list[str] | None = None) -> None:
         default=2 * 1024 * 1024 * 1024,
         help="minimum free Docker-root bytes required by preflight",
     )
+    parser.add_argument("--identity", action="store_true", help="print machine-readable capability/build identity")
     args = parser.parse_args(argv)
+
+    if args.identity:
+        from sakura_ai_updater.ipc import envelope
+
+        print(envelope({}).body.decode())
+        return
 
     if not args.serve:
         parser.error("no action specified; use --serve")
