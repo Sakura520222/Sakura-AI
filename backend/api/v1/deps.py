@@ -18,6 +18,10 @@ from backend.webui.deps import refresh_login_claims, user_requires_mfa_enrollmen
 # Backward-compatible export for API modules importing limiter from this module.
 limiter = _limiter
 
+# Marks that the current request authenticated via the WebUI cookie. Only
+# cookie sessions can be safely renewed through a response Set-Cookie header.
+API_COOKIE_AUTH_STATE_KEY = "api_cookie_auth"
+
 
 async def get_api_current_user(
     request: Request,
@@ -74,7 +78,7 @@ async def get_api_current_user(
         raise HTTPException(status_code=401, detail="无效的登录凭证")
 
     if token_from_cookie:
-        queue_webui_token_renewal(request, payload)
+        setattr(request.state, API_COOKIE_AUTH_STATE_KEY, True)
 
     return {
         "sub": payload.get("sub") or "",
@@ -93,20 +97,22 @@ async def require_api_auth(request: Request) -> dict:
     async with db_module.async_session() as session:
         if await user_requires_mfa_enrollment(int(user["user_id"]), session):
             raise HTTPException(status_code=428, detail="MFA enrollment required")
+    if getattr(request.state, API_COOKIE_AUTH_STATE_KEY, False):
+        queue_webui_token_renewal(request, user)
     return user
 
 
 async def require_api_admin(request: Request) -> dict:
-    """需要管理员权限的 API 路由依赖"""
-    user = await get_api_current_user(request)
+    """需要管理员权限的 API 路由依赖（含 MFA 强制校验）"""
+    user = await require_api_auth(request)
     if user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
     return user
 
 
 async def require_api_super_admin(request: Request) -> dict:
-    """需要超级管理员权限的 API 路由依赖"""
-    user = await get_api_current_user(request)
+    """需要超级管理员权限的 API 路由依赖（含 MFA 强制校验）"""
+    user = await require_api_auth(request)
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user

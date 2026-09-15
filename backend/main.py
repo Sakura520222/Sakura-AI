@@ -42,7 +42,11 @@ from backend.core.time_service import (
     initialize_time_service,
 )
 from backend.telegram import start_telegram_bot, stop_telegram_bot
-from backend.webui.auth import WebUITokenRenewalMiddleware, decode_access_token
+from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
+    WebUITokenRenewalMiddleware,
+    decode_access_token,
+)
 from backend.webui.deps import (
     error_page,
     is_webui_request,
@@ -735,7 +739,10 @@ def _get_webui_error_user(request: Request) -> dict | None:
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and is_webui_request(request):
-        return RedirectResponse(url="/auth/login", status_code=302)
+        response = RedirectResponse(url="/auth/login", status_code=302)
+        # A rejected cookie must not bounce between login and the dashboard.
+        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
+        return response
     if exc.status_code == 428 and is_webui_request(request):
         return RedirectResponse(
             url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
