@@ -42,7 +42,7 @@ from backend.core.time_service import (
     initialize_time_service,
 )
 from backend.telegram import start_telegram_bot, stop_telegram_bot
-from backend.webui.auth import decode_access_token
+from backend.webui.auth import WebUITokenRenewalMiddleware, decode_access_token
 from backend.webui.deps import (
     error_page,
     is_webui_request,
@@ -644,6 +644,9 @@ app.add_middleware(
 
 # Bootstrap 中间件（CORS 之后、路由之前）
 app.add_middleware(BootstrapMiddleware)
+
+# Deliver queued WebUI session renewals on the final response.
+app.add_middleware(WebUITokenRenewalMiddleware)
 
 
 # 健康检查
