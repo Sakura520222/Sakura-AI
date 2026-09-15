@@ -106,11 +106,10 @@ def test_serve_recovers_transaction_before_reconcile(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "prepare_socket_path", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_owned_socket", lambda path: None)
     order = []
-    monkeypatch.setattr(
-        image_mod,
-        "recover_pending_deployment_transaction",
-        lambda path: order.append("recover"),
-    )
+    async def recover(adapter):
+        order.append("recover")
+
+    monkeypatch.setattr(image_mod.ImageAdapter, "recover_pending_transaction", recover)
     monkeypatch.setattr(
         main_mod, "load_state", lambda path: order.append("load") or object()
     )

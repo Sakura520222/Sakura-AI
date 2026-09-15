@@ -282,10 +282,8 @@ def test_development_web_and_sandbox_tags_share_the_full_revision_identity():
     _, web_text = _load(DOCKER_PUBLISH_PATH)
     _, sandbox_text = _load(SANDBOX_PUBLISH_PATH)
 
-    # The updater asks GHCR for the complete Web target tag and then checks a
-    # revision-only alias on each sandbox repository. Both reusable workflows
-    # must therefore derive those tags from the same UTC timestamp, version,
-    # and full checked-out commit SHA.
+    # All builds carry the same full revision. The publication join binds
+    # the two sandbox build output digests into the canonical Web OCI index.
     assert 'DEV_TAG="dev-${UTC_CREATED}-v${VERSION}-${REVISION}"' in web_text
     assert 'primary="dev-${utc_created}-v${VERSION}-${actual}"' in sandbox_text
     assert 'immutable="sha-${actual:0:40}"' in sandbox_text
@@ -296,8 +294,10 @@ def test_development_web_and_sandbox_tags_share_the_full_revision_identity():
     assert 'com.sakura-ai.component="web"' in (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
     assert 'com.sakura-ai.component="agent-runner"' in (ROOT / "docker" / "Dockerfile.agent-sandbox").read_text(encoding="utf-8")
     assert "org.opencontainers.image.revision=${{ github.sha }}" not in sandbox_text
-    assert "${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.primary }}" in sandbox_text
-    assert "${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.primary }}" in sandbox_text
+    assert "name=${{ env.SANDBOXD_REPOSITORY }},push-by-digest=true" in sandbox_text
+    assert "name=${{ env.RUNNER_REPOSITORY }},push-by-digest=true" in sandbox_text
+    edge, _ = _load(ROOT / ".github/workflows/docker-edge.yml")
+    assert set(edge["jobs"]["publish-deployment"]["needs"]) == {"publish-edge", "publish-sandbox-edge"}
 
 
 def test_gitflow_failure_notification_uses_validated_environment_branches():
@@ -329,7 +329,7 @@ def test_gitflow_failure_notification_uses_validated_environment_branches():
     assert "steps.branches.outputs.target" not in script
 
 
-def test_gitflow_token_fallback_publishes_web_and_matching_sandbox_pair():
+def test_gitflow_token_fallback_publishes_complete_deployment():
     workflow, text = _load(GITFLOW_SYNC_PATH)
     jobs = workflow["jobs"]
     web = jobs["publish-synchronized-development"]
@@ -349,8 +349,28 @@ def test_gitflow_token_fallback_publishes_web_and_matching_sandbox_pair():
     assert "needs.sync-main-to-develop.outputs.changed == 'true'" in condition
     assert "needs.sync-main-to-develop.outputs.using_pat != 'true'" in condition
     assert "needs.publish-synchronized-development.result == 'success'" in condition
-    assert "docker-publish.yml" in text
-    assert "sandbox-publish.yml" in text
+    deployment = jobs["publish-synchronized-development-deployment"]
+    mirror = jobs["mirror-synchronized-development"]
+    assert deployment["needs"] == [
+        "sync-main-to-develop",
+        "publish-synchronized-development",
+        "publish-synchronized-development-sandbox",
+    ]
+    assert deployment["runs-on"] == "ubuntu-24.04"
+    assert deployment["concurrency"] == {"group": "docker-development", "cancel-in-progress": False}
+    assert "scripts/publish_development_deployment.py" in text
+    assert "DEPLOYMENT_TAG: ${{ needs.publish-synchronized-development.outputs.immutable_tag }}" in text
+    assert "WEB_DIGEST: ${{ needs.publish-synchronized-development.outputs.digest }}" in text
+    assert "SANDBOXD_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.sandboxd_digest }}" in text
+    assert "RUNNER_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.runner_digest }}" in text
+    assert mirror["needs"] == [
+        "publish-synchronized-development",
+        "publish-synchronized-development-deployment",
+    ]
+    assert mirror["continue-on-error"] is True
+    assert "DEPLOYMENT_DIGEST: ${{ needs.publish-synchronized-development-deployment.outputs.digest }}" in text
+    assert "crane tag \"docker.io/sakura520222/sakura-ai:${DEPLOYMENT_TAG}\" edge" in text
+    assert web["with"]["sync_dockerhub"] is False
 
 
 def test_publish_update_manifest_waits_for_release_assets_and_stable_image():

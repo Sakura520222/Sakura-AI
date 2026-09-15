@@ -17,6 +17,7 @@ timeout），故 ``/version/info``（navbar 周期性调）在 updater 未起时
 from __future__ import annotations
 
 import httpx
+from sakura_ai_updater.contract import compatibility
 
 from backend.core.config import get_settings
 
@@ -114,6 +115,16 @@ class UpdaterClient:
         :class:`UpdaterActionError`.
         """
 
+        if path in {"/v1/check", "/v1/preflight", "/v1/update"}:
+            identity = await self._request("GET", "/v1/status")
+            state = compatibility(identity)
+            if not state["compatible"]:
+                raise UpdaterActionError(409, {
+                    "error": "updater_capability_incompatible",
+                    **state,
+                    "detail": "Host Updater lacks " + ", ".join(state["missing_capabilities"])
+                    + "; install a compatible release with sudo ./start.sh updater reinstall.",
+                })
         transport = httpx.AsyncHTTPTransport(uds=self._socket_path)
         request_timeout = (
             self._action_timeout
@@ -149,6 +160,9 @@ class UpdaterClient:
             raise UpdaterActionError(response.status_code, body)
         if not is_valid_v1_envelope(payload):
             raise UpdaterProtocolError("updater returned an invalid v1 envelope")
+        if path.startswith("/v1/jobs/") and payload["data"].get("state") in {"success", "complete"}:
+            if not compatibility(payload)["compatible"] or payload["data"].get("deployment_verified") is not True:
+                raise UpdaterActionError(409, {"error": "deployment_success_unverified"})
         return payload
 
     async def check(self) -> dict:

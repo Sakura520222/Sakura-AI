@@ -68,6 +68,8 @@ COPY --from=builder /opt/venv /opt/venv
 
 # ── 应用代码（显式 COPY，不用 COPY . .）──
 WORKDIR /app
+COPY updater ./updater
+RUN pip install --no-cache-dir --no-deps ./updater
 COPY backend ./backend
 COPY scripts ./scripts
 COPY res ./res

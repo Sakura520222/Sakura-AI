@@ -3,6 +3,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def verified_stable_components(monkeypatch):
+    async def verify(self, target, sandboxd, runner):
+        return "a" * 40
+    monkeypatch.setattr("sakura_ai_updater.registry.RegistryClient.verify_stable_deployment", verify)
+
 from sakura_ai_updater.jobs import (
     JobOrchestrator,
     PreflightFailedError,
@@ -117,7 +125,13 @@ class _Adapter:
         if self.cancel:
             raise asyncio.CancelledError
 
-    async def activate(self, image):
+    async def verify_pulled_deployment(self, *args, **kwargs):
+        pass
+
+    async def verify_running_deployment(self, *args, **kwargs):
+        pass
+
+    async def activate(self, image, sandboxd_image, runner_image):
         self.calls.append(("activate", image))
 
     async def health_check(self, version):
@@ -231,7 +245,7 @@ async def test_stable_preflight_rejects_partial_target_without_tag_and_digest(tm
 
 
 @pytest.mark.asyncio
-async def test_preflight_rejects_partial_persisted_sandbox_pair(tmp_path):
+async def test_preflight_identifies_repairable_partial_persisted_sandbox_pair(tmp_path):
     class _PartialDeployment(_Deployment):
         def sandbox_image_refs(self):
             return {
@@ -249,7 +263,8 @@ async def test_preflight_rejects_partial_persisted_sandbox_pair(tmp_path):
     )
     result = await orchestrator.preflight("3.1.0")
     checks = {item["name"]: item for item in result["checks"]}
-    assert result["can_update"] is False
+    assert result["can_update"] is True
+    assert result["reconcile_required"] is True
     assert checks["current_sandbox_pair_complete"]["passed"] is False
     assert "only one sandbox image digest" in checks[
         "current_sandbox_pair_complete"

@@ -1451,6 +1451,9 @@ billing:
 
 # ========== 关于 / About ==========
 version_manager:
+  updater_capabilities: "部署能力"
+  updater_capability_incompatible: "Host Updater 不兼容。请安装兼容 Release 并执行 sudo ./start.sh updater reinstall。缺少能力："
+  deployment_success_unverified: "任务没有经过验证的三镜像部署结果。请升级 Host Updater 后重新更新以修复漂移。"
   title: "版本管理"
   deployment: "当前部署"
   current_version: "当前版本"
@@ -1532,6 +1535,7 @@ version_manager:
   state_restarting: "重启中"
   state_health_checking: "健康检查中"
   state_success: "成功"
+  state_rolled_back: "已回滚"
   state_failed: "失败"
   step_checking: "检查版本"
   step_update_available: "发现更新"
@@ -1569,6 +1573,7 @@ version_manager:
   channel_unknown: "未知通道"
   error_command_timeout: "Docker 镜像拉取重试后仍超时；deployment.env 未改变。请检查宿主机到 GHCR 的网络后重试"
   registry_empty: "暂无可用镜像"
+  registry_reconcile: "检查并修复此部署"
   registry_select: "更新/切换到此版本"
   registry_not_selectable: "不可更新"
   registry_stale: "目录来自缓存；暂不可发起更新"
