@@ -67,8 +67,12 @@ def attempt(registry):
 @pytest.mark.parametrize("failure", ["web", "sandboxd", "runner", "manifest", "old-head"])
 def test_no_head_move_until_all_components_and_manifest_verified(failure):
     registry = Registry(failure)
-    with pytest.raises(ValueError):
-        attempt(registry)
+    if failure == "old-head":
+        assert attempt(registry) is None
+        assert registry.published is not None
+    else:
+        with pytest.raises(ValueError):
+            attempt(registry)
     assert "advance:edge" not in registry.events
     if failure in DIGESTS:
         assert "publish:manifest" not in registry.events

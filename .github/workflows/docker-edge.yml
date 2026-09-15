@@ -46,6 +46,7 @@ jobs:
     needs: [publish-edge, publish-sandbox-edge]
     outputs:
       digest: ${{ steps.deployment.outputs.digest }}
+      advanced: ${{ steps.deployment.outputs.advanced }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -70,12 +71,23 @@ jobs:
           SANDBOXD_DIGEST: ${{ needs.publish-sandbox-edge.outputs.sandboxd_digest }}
           RUNNER_DIGEST: ${{ needs.publish-sandbox-edge.outputs.runner_digest }}
         run: |
-          digest=$(python scripts/publish_development_deployment.py)
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          published=$(python scripts/publish_development_deployment.py)
+          if [[ "$published" == "superseded" ]]; then
+            echo "advanced=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::A newer develop head superseded this immutable deployment; edge was not changed"
+            exit 0
+          fi
+          [[ "$published" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid deployment manifest digest" >&2
+            exit 1
+          }
+          echo "digest=$published" >> "$GITHUB_OUTPUT"
+          echo "advanced=true" >> "$GITHUB_OUTPUT"
 
   sync-dockerhub:
     name: Mirror the committed deployment to Docker Hub
     needs: [publish-edge, publish-deployment]
+    if: needs.publish-deployment.outputs.advanced == 'true'
     runs-on: ubuntu-24.04
     continue-on-error: true
     env:

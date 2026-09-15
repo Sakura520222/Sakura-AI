@@ -363,6 +363,10 @@ def test_gitflow_token_fallback_publishes_complete_deployment():
     assert "WEB_DIGEST: ${{ needs.publish-synchronized-development.outputs.digest }}" in text
     assert "SANDBOXD_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.sandboxd_digest }}" in text
     assert "RUNNER_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.runner_digest }}" in text
+    assert "advanced: ${{ steps.deployment.outputs.advanced }}" in text
+    assert 'echo "advanced=false" >> "$GITHUB_OUTPUT"' in text
+    assert 'echo "advanced=true" >> "$GITHUB_OUTPUT"' in text
+    assert "needs.publish-synchronized-development-deployment.outputs.advanced == 'true'" in mirror["if"]
     assert mirror["needs"] == [
         "publish-synchronized-development",
         "publish-synchronized-development-deployment",
