@@ -190,6 +190,10 @@ sudo systemctl is-active sakura-ai-updater.service
 sudo systemctl status sakura-ai-updater.service --no-pager
 ```
 
+Starting with Host Updater 0.3.0, machine-readable capabilities declare the three-image transaction contract. Version management also shows the build revision, release identity, and protocol. Missing capabilities block updates even when the protocol matches. First run `sudo ./start.sh updater reinstall` using the current `start.sh` to install a Release binary with the required capabilities. A development fallback to a stable asset must pass the same check.
+
+Development targets represent fully published Web, Sandboxd, and Runner images: CI binds their immutable identities into the Web OCI index deployment manifest before advancing `edge`. If Web is current but the sandbox has drifted, select “Verify/reconcile this deployment” in version management to converge normally, without reinstalling or changing the database.
+
 Explicit `SAKURA_UPDATER_DEV=1` source/dev mode keeps the manual daemon lifecycle and does not promise systemd reboot recovery.
 
 > **Synchronizing Host Updater after a WebUI update:** A stable WebUI update transaction updates Web, sandboxd, and the Agent runner together, but it does not replace the currently running Host Updater binary. After the update succeeds and `/health` reports the new version, run the following command in `/opt/sakura-ai` to align the Updater binary with that Release:

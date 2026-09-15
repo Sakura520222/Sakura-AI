@@ -15,6 +15,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from sakura_ai_updater.contract import parse_deployment_manifest
+
 REPOSITORY = "ghcr.io/sakura520222/sakura-ai"
 SANDBOXD_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-sandboxd"
 RUNNER_REPOSITORY = "ghcr.io/sakura520222/sakura-ai-agent-runner"
@@ -449,66 +451,37 @@ class RegistryClient:
     async def resolve_development_sandbox_pair(
         self, target: DevelopmentTarget
     ) -> DevelopmentSandboxPair:
-        """Resolve sandbox images built from exactly ``target.revision``.
+        """Resolve the sandbox pair from the immutable Web deployment index.
 
-        The Web registry catalog supplies the development target's full tag and
-        digest.  Sandbox images are published with that same canonical
-        ``dev-...-<revision>`` tag plus a revision-only immutable tag.  Require
-        both tags to resolve to the same manifest digest for each repository.
-        Every OCI/Docker image manifest behind those tags is then followed to
-        its config blob and required to carry the target full revision plus
-        the server-owned component label. This prevents the updater from
-        silently retaining the previous sandbox pair or accepting an image
-        rebuilt for another revision/component.
+        Never discover components independently from mutable or revision tags.
+        Validate each referenced image's platform labels against the contract.
         """
-
-        if not isinstance(target, DevelopmentTarget):
-            raise RegistryTargetError("development sandbox target is invalid")
-        # Re-run the structural checks here for callers that construct the
-        # dataclass directly rather than going through the parser.
         parsed = parse_development_target(target.to_dict())
-        revision_tag = f"sha-{parsed.revision}"
-
-        async def resolve(repository: str, component: str) -> str:
-            token = await asyncio.to_thread(self._token_sync, repository)
-            exact, revision = await asyncio.gather(
-                asyncio.to_thread(
-                    self._image_reference_sync,
-                    repository,
-                    parsed.tag,
-                    token,
-                    expected_revision=parsed.revision,
-                    expected_component=component,
-                    expected_channel=parsed.channel,
-                    expected_version=parsed.version,
-                ),
-                asyncio.to_thread(
-                    self._image_reference_sync,
-                    repository,
-                    revision_tag,
-                    token,
-                    expected_revision=parsed.revision,
-                    expected_component=component,
-                    expected_channel=parsed.channel,
-                    expected_version=parsed.version,
-                ),
+        token = await asyncio.to_thread(self._token_sync, self.repository)
+        payload, headers = await asyncio.to_thread(
+            self._manifest_response_sync, self.repository, parsed.digest, token
+        )
+        if self._manifest_digest(headers) != parsed.digest:
+            raise RegistryTargetError("deployment manifest digest mismatch")
+        try:
+            manifest = parse_deployment_manifest(
+                payload, channel=parsed.channel, version=parsed.version, revision=parsed.revision
             )
-            if exact != revision:
-                raise RegistryTargetError(
-                    f"{repository} development tags do not resolve to revision "
-                    f"{parsed.revision}"
-                )
-            return f"{repository}@{exact}"
-
-        sandboxd_ref, runner_ref = await asyncio.gather(
-            resolve(SANDBOXD_REPOSITORY, "sandboxd"),
-            resolve(RUNNER_REPOSITORY, "agent-runner"),
-        )
-        return DevelopmentSandboxPair(
-            revision=parsed.revision,
-            sandboxd_image=sandboxd_ref,
-            runner_image=runner_ref,
-        )
+        except ValueError as exc:
+            raise RegistryTargetError(str(exc)) from exc
+        for component, repository in (("sandboxd", SANDBOXD_REPOSITORY), ("runner", RUNNER_REPOSITORY)):
+            ref = manifest[component + "_image"]
+            digest = ref.rsplit("@", 1)[1]
+            component_token = await asyncio.to_thread(self._token_sync, repository)
+            actual = await asyncio.to_thread(
+                self._image_reference_sync, repository, digest, component_token,
+                expected_revision=parsed.revision,
+                expected_component="agent-runner" if component == "runner" else component,
+                expected_channel=parsed.channel, expected_version=parsed.version,
+            )
+            if actual != digest:
+                raise RegistryTargetError("deployment component digest mismatch")
+        return DevelopmentSandboxPair(parsed.revision, manifest["sandboxd_image"], manifest["runner_image"])
 
     async def development_sandbox_refs(
         self, target: DevelopmentTarget
@@ -517,6 +490,49 @@ class RegistryClient:
 
         pair = await self.resolve_development_sandbox_pair(target)
         return pair.sandboxd_ref, pair.runner_ref
+
+    def _revision_sync(self, repository, digest, token):
+        payload, headers = self._manifest_response_sync(repository, digest, token)
+        if self._manifest_digest(headers) != digest:
+            raise RegistryTargetError("deployment image digest mismatch")
+        descriptor = self._image_descriptors(payload)[0]
+        if descriptor is not payload:
+            payload, _ = self._manifest_response_sync(repository, descriptor["digest"], token)
+        try:
+            config, _ = self._config_response_sync(repository, payload["config"]["digest"], token)
+            revision = config["config"]["Labels"]["org.opencontainers.image.revision"]
+        except (KeyError, TypeError) as exc:
+            raise RegistryTargetError("Web revision label missing") from exc
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise RegistryTargetError("Web revision label invalid")
+        return revision
+
+    async def verify_stable_deployment(self, target, sandboxd, runner):
+        """Bind the existing stable release descriptors by full build revision."""
+        token = await asyncio.to_thread(self._token_sync, self.repository)
+        revision = await asyncio.to_thread(self._revision_sync, self.repository, target.digest, token)
+        for repository, ref, component in ((self.repository, target.image, "web"),
+                (SANDBOXD_REPOSITORY, sandboxd, "sandboxd"), (RUNNER_REPOSITORY, runner, "agent-runner")):
+            digest = ref.rsplit("@", 1)[1]
+            token = await asyncio.to_thread(self._token_sync, repository)
+            actual = await asyncio.to_thread(self._image_reference_sync, repository, digest, token,
+                expected_revision=revision, expected_component=component,
+                expected_channel="stable", expected_version=target.version)
+            if actual != digest:
+                raise RegistryTargetError("stable deployment digest mismatch")
+        return revision
+
+    async def resolve_development_target(self):
+        token = await asyncio.to_thread(self._token_sync, self.repository)
+        payload, headers = await asyncio.to_thread(self._manifest_response_sync, self.repository, "edge", token)
+        from sakura_ai_updater.contract import MANIFEST_ANNOTATION
+
+        try:
+            manifest = json.loads(payload["annotations"][MANIFEST_ANNOTATION])
+            target = parse_development_target({**manifest, "digest": self._manifest_digest(headers)})
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RegistryTargetError("complete development channel manifest unavailable") from exc
+        return await self.verify_target(target)
 
     async def resolve_stable_target(
         self,
@@ -590,6 +606,16 @@ class RegistryClient:
             )
         else:
             actual = await asyncio.to_thread(self._manifest_sync, target.tag, token)
+        if isinstance(target, DevelopmentTarget):
+            payload, headers = await asyncio.to_thread(
+                self._manifest_response_sync, self.repository, target.digest, token
+            )
+            if self._manifest_digest(headers) != target.digest:
+                raise RegistryTargetError("deployment manifest digest mismatch")
+            try:
+                parse_deployment_manifest(payload, channel=target.channel, version=target.version, revision=target.revision)
+            except ValueError as exc:
+                raise RegistryTargetError(str(exc)) from exc
         if actual != target.digest:
             raise RegistryTargetError("registry manifest digest mismatch")
         # ``edge``/``latest`` are only moving discovery aliases; an update

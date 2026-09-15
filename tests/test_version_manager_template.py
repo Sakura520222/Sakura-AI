@@ -26,7 +26,7 @@ def test_failed_preflight_keeps_update_button_disabled_and_uses_vm_i18n():
     # The preflight result must put update_ready inside the envelope data that
     # showReadiness() actually reads; an outer sibling is silently ignored.
     assert "checks: result.checks, update_ready: result.can_update === true" in template
-    assert "updateButton.disabled = payload.update_ready === false" in template
+    assert "updateButton.disabled = !UPDATE_SUPPORTED || payload.update_ready !== true" in template
     for key in (
         "readinessError",
         "preflightPassed",
@@ -123,21 +123,16 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
     assert "[500, 502, 503, 504].includes(error.status)" in template
     assert "POLL_RECOVERY_TIMEOUT_MS" in template
     assert "transientFor >= POLL_RECOVERY_TIMEOUT_MS" in template
-    assert "transientFor >= HEALTH_RECOVERY_DELAY_MS" in template
-    assert "hasExactDigestTarget(progressTarget)" in template
-    assert "await verifyHealth(progressTarget)" in template
+    assert "await verifyHealth(progressTarget)" not in template
+    assert "job.deployment_verified === true" in template
     assert "payload.build.digest !== target.digest" in template
     assert "error instanceof TypeError" in template
     assert "if (isTransientPollError(error))" in template
     assert "continue;" in template
 
     timeout = template.index("transientFor >= POLL_RECOVERY_TIMEOUT_MS")
-    legacy = template.index("!hasExactDigestTarget(progressTarget)", timeout)
-    preserve = template.index(
-        "markProgressError(message, {preserveJob: true});", legacy
-    )
-    bounded_failure = template.index("markProgressError(message);", preserve)
-    assert timeout < legacy < preserve < bounded_failure
+    preserve = template.index("markProgressError(message, {preserveJob: true});", timeout)
+    assert timeout < preserve
 
     permanent_error = template.index(
         "const message = vmFormat(VM_I18N.progressPollFailed"
@@ -149,18 +144,12 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
     assert permanent_error < terminal < stale < readiness < stop
 
 
-def test_registry_catalog_disables_the_exact_running_build():
-    template = Path("backend/webui/templates/version_manager.html").read_text(
-        encoding="utf-8"
-    )
-    assert "const CURRENT_BUILD_DIGEST" in template
-    assert "const CURRENT_BUILD_VERSION" in template
-    assert "function isCurrentRegistryImage(image)" in template
-    assert "image.digest === CURRENT_BUILD_DIGEST" in template
-    assert "CURRENT_BUILD_REVISION" not in template
-    assert "image.revision ===" not in template
-    assert "image.version === CURRENT_BUILD_VERSION" in template
-    assert "action.disabled = isCurrent ||" in template
+def test_registry_catalog_keeps_web_current_target_selectable_for_reconcile():
+    text = (Path(__file__).resolve().parents[1] / "backend/webui/templates/version_manager.html").read_text()
+    assert "action.disabled = !UPDATE_SUPPORTED ||" in text
+    assert "action.disabled = !UPDATE_SUPPORTED || isCurrent" not in text
+    assert "if (image.selectable) action.addEventListener" in text
+    assert "? VM_I18N.registryReconcile" in text
 
 
 def test_persisted_job_recovery_keeps_exact_target_digest_across_reload():

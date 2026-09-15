@@ -130,3 +130,37 @@ def test_recovery_rejects_invalid_journal_shape(tmp_path):
     )
     with pytest.raises(ImageAdapterError):
         recover_pending_deployment_transaction(str(destination))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_crash_recovery_reconverges_runtime_before_discarding_journal(tmp_path, monkeypatch, fail):
+    from sakura_ai_updater.adapters.image import ImageAdapter
+
+    destination = tmp_path / "deployment.env"
+    destination.write_text("SAKURA_AI_IMAGE=new\n")
+    journal, backup = _transaction_paths(destination)
+    backup.write_text("SAKURA_AI_IMAGE=old\n")
+    _write_journal(destination)
+    adapter = ImageAdapter(str(tmp_path / "compose.yml"), str(destination))
+    calls = []
+
+    async def converge(snapshot, *, remove_new_sandbox):
+        assert journal.exists() and backup.exists()
+        assert destination.read_text() == "SAKURA_AI_IMAGE=old\n"
+        assert snapshot.values["SAKURA_AI_IMAGE"] == "old"
+        assert remove_new_sandbox is True
+        calls.append("converge")
+        if fail:
+            raise ImageAdapterError("runtime recovery failed")
+
+    monkeypatch.setattr(adapter, "_restore_and_reconverge", converge)
+    if fail:
+        with pytest.raises(ImageAdapterError, match="runtime recovery failed"):
+            await adapter.recover_pending_transaction()
+        assert journal.exists() and backup.exists()
+    else:
+        await adapter.recover_pending_transaction()
+        assert not journal.exists() and not backup.exists()
+        await adapter.recover_pending_transaction()
+    assert calls == ["converge"]

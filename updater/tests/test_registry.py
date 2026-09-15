@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import pytest
+from sakura_ai_updater.contract import MANIFEST_ANNOTATION
 from sakura_ai_updater.registry import (
     DevelopmentSandboxPair,
     DevelopmentTarget,
@@ -34,6 +37,15 @@ def _image_manifest(config_digest: str) -> dict[str, object]:
     }
 
 
+def _deployment_index(target):
+    return {"annotations": {MANIFEST_ANNOTATION: json.dumps({
+        "schema_version": 1, "channel": target.channel, "version": target.version,
+        "revision": target.revision, "tag": target.tag,
+        "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64,
+        "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64,
+    })}}
+
+
 def _registry_image_mock(
     monkeypatch,
     client,
@@ -63,6 +75,8 @@ def _registry_image_mock(
     )
 
     def json_sync(url: str, headers: dict[str, str]):
+        if url.startswith("https://ghcr.io/v2/sakura520222/sakura-ai/manifests/"):
+            return _deployment_index(target), {"docker-content-digest": target.digest}
         repository = next(
             (
                 candidate
@@ -272,7 +286,7 @@ async def test_development_web_target_requires_full_oci_identity_labels(monkeypa
         client,
         "_manifest_response_sync",
         lambda repository, reference, token: (
-            _image_manifest(config_digest),
+            {**_image_manifest(config_digest), **_deployment_index(target)},
             {"docker-content-digest": manifest_digest},
         ),
     )
@@ -327,7 +341,7 @@ async def test_development_web_target_rejects_wrong_oci_identity_label(
         client,
         "_manifest_response_sync",
         lambda repository, reference, token: (
-            _image_manifest(config_digest),
+            {**_image_manifest(config_digest), **_deployment_index(target)},
             {"docker-content-digest": target.digest},
         ),
     )
@@ -342,7 +356,7 @@ async def test_development_web_target_rejects_wrong_oci_identity_label(
 
 
 @pytest.mark.asyncio
-async def test_development_sandbox_pair_requires_same_full_revision_tags(monkeypatch):
+async def test_development_sandbox_pair_consumes_manifest_digests_without_tag_discovery(monkeypatch):
     from sakura_ai_updater.registry import (
         RUNNER_REPOSITORY,
         SANDBOXD_REPOSITORY,
@@ -359,16 +373,14 @@ async def test_development_sandbox_pair_requires_same_full_revision_tags(monkeyp
     assert pair.runner_ref == f"{RUNNER_REPOSITORY}@sha256:" + "b" * 64
     assert sorted(calls) == sorted(
         [
-            (SANDBOXD_REPOSITORY, target.tag),
-            (SANDBOXD_REPOSITORY, f"sha-{target.revision}"),
-            (RUNNER_REPOSITORY, target.tag),
-            (RUNNER_REPOSITORY, f"sha-{target.revision}"),
+            (SANDBOXD_REPOSITORY, "sha256:" + "a" * 64),
+            (RUNNER_REPOSITORY, "sha256:" + "b" * 64),
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_development_sandbox_pair_rejects_tag_digest_mismatch(monkeypatch):
+async def test_development_sandbox_pair_rejects_manifest_component_digest_mismatch(monkeypatch):
     from sakura_ai_updater.registry import SANDBOXD_REPOSITORY, RegistryClient
 
     target = parse_development_target(_target())
@@ -379,11 +391,11 @@ async def test_development_sandbox_pair_rejects_tag_digest_mismatch(monkeypatch)
         target,
         manifest_digest=lambda repository, reference, digest: (
             "sha256:" + "a" * 64
-            if repository == SANDBOXD_REPOSITORY and reference == target.tag
+            if repository != SANDBOXD_REPOSITORY
             else "sha256:" + "b" * 64
         ),
     )
-    with pytest.raises(RegistryTargetError, match="do not resolve"):
+    with pytest.raises(RegistryTargetError, match="component digest mismatch"):
         await client.resolve_development_sandbox_pair(target)
 
 
