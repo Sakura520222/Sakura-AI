@@ -190,6 +190,10 @@ sudo systemctl is-active sakura-ai-updater.service
 sudo systemctl status sakura-ai-updater.service --no-pager
 ```
 
+Host Updater 0.3.0 起通过机器可读 capabilities 声明三镜像事务能力；版本管理页同时显示构建 revision、Release 身份和协议版本。缺少所需能力的旧 Updater 会被阻止更新，即使 protocol version 相同。请先用当前 `start.sh` 执行 `sudo ./start.sh updater reinstall`，安装提供这些能力的 Release binary；development 回退到 stable asset 也必须通过同一检查。
+
+development 仅提供已经全部发布的 Web、Sandboxd、Runner 集合：CI 将完整镜像 digest 写入 Web OCI index 的 deployment manifest，最后推进 `edge`。Web 已是目标但 sandbox 漂移时，在版本管理中选择「检查并修复此部署」即可正常收敛，无需重装或改数据库。
+
 显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式仍由手动 daemon 管理，不提供 systemd 重启自启保证。
 
 > **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：

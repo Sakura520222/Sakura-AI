@@ -1450,6 +1450,9 @@ billing:
 
 # ========== About ==========
 version_manager:
+  updater_capabilities: "Deployment capabilities"
+  updater_capability_incompatible: "Host Updater is incompatible. Install a compatible release with sudo ./start.sh updater reinstall. Missing capabilities:"
+  deployment_success_unverified: "The job has no verified three-image deployment result. Upgrade Host Updater and reconcile the deployment."
   title: "Version Manager"
   deployment: "Current Deployment"
   current_version: "Current Version"
@@ -1531,6 +1534,7 @@ version_manager:
   state_restarting: "Restarting"
   state_health_checking: "Health check"
   state_success: "Succeeded"
+  state_rolled_back: "Rolled back"
   state_failed: "Failed"
   step_checking: "Checking version"
   step_update_available: "Update found"
@@ -1568,6 +1572,7 @@ version_manager:
   channel_unknown: "Unknown Channel"
   error_command_timeout: "The Docker image pull still timed out after retry; deployment.env was not changed. Check the host connection to GHCR and retry"
   registry_empty: "No images available"
+  registry_reconcile: "Verify/reconcile this deployment"
   registry_select: "Update/switch to this build"
   registry_not_selectable: "Not selectable"
   registry_stale: "Showing cached data; updates are disabled"

@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from loguru import logger
+from sakura_ai_updater.contract import parse_deployment_manifest
 
 from backend.core.time_service import format_rfc3339, monotonic, now_utc
 
@@ -282,6 +283,16 @@ class ContainerRegistryClient:
         digest = headers.get("docker-content-digest")
         if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
             raise ContainerRegistryError("registry manifest digest header missing")
+        if tag == "edge" or parse_development_tag(tag):
+            identity = parse_development_tag(tag)
+            if identity is None:
+                # edge has no tag identity; the canonical tag is independently
+                # validated and must resolve to this exact same digest.
+                return digest.lower()
+            try:
+                parse_deployment_manifest(_payload, channel="development", version=identity["version"], revision=identity["revision"])
+            except ValueError:
+                return None
         return digest.lower()
 
     async def list_images(self, *, force_refresh: bool = False) -> dict[str, Any]:

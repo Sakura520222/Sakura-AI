@@ -416,9 +416,57 @@ class DeploymentStateProvider:
             return False, None
         return usage.free >= threshold, usage.free
 
-    async def current_state(self) -> dict[str, Any]:
-        """Convenience projection used by status/readiness integrations."""
+    async def sandbox_runtime_identity(self) -> dict[str, Any]:
+        """Inspect the actual controller and the runner it is configured to launch.
 
+        Runner containers are ephemeral. Its authoritative runtime identity is
+        the controller's argv plus the local immutable runner image metadata.
+        Unknown/missing runtime state is drift, never evidence of convergence.
+        """
+        result: dict[str, Any] = {}
+        try:
+            name = os.environ.get("SANDBOX_CONTAINER_NAME", "sakura-ai-sandboxd")
+            stdout, _ = await self._run_docker_command(
+                ["docker", "inspect", "--type", "container", "--format={{json .}}", name]
+            )
+            container = json.loads(stdout)
+            config = container["Config"]
+            labels = config.get("Labels", {})
+            if (labels.get("ai.sakura.managed-by") not in {"sandboxd-daemon", "sandboxd"}
+                or not container.get("State", {}).get("Running")):
+                raise DeploymentError("sandbox controller is not running/managed")
+            instance = self._env().get("SAKURA_SANDBOX_INSTANCE_ID")
+            if instance and labels.get("ai.sakura.instance-id") != instance:
+                raise DeploymentError("sandbox instance mismatch")
+            result["instance_id"] = labels.get("ai.sakura.instance-id")
+            runner = labels.get("ai.sakura.runner-image-digest")
+            argv = config.get("Cmd", [])
+            if ("--runner-image-digest" not in argv
+                or argv[argv.index("--runner-image-digest") + 1] != runner):
+                raise DeploymentError("sandbox runner argument/label mismatch")
+            for component, ref, local in (
+                ("sandboxd", config.get("Image"), container["Image"]),
+                ("runner", runner, runner),
+            ):
+                from sakura_ai_updater.contract import REPOSITORIES
+
+                repository = REPOSITORIES[component]
+                if not isinstance(ref, str) or not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", ref):
+                    raise DeploymentError("sandbox runtime immutable ref missing")
+                metadata = await self._inspect_image_metadata(local)
+                digest = self._select_registry_digest(metadata, expected_repository=repository,
+                    expected_tag="", expected_digest=ref.rsplit("@", 1)[1])
+                image_labels = metadata.get("Config", {}).get("Labels", {})
+                result[component + "_image"] = repository + "@" + digest
+                result[component + "_revision"] = image_labels.get("org.opencontainers.image.revision")
+            result["runtime_verified"] = True
+        except (DeploymentError, KeyError, IndexError, TypeError, ValueError) as exc:
+            result["runtime_verified"] = False
+            result["error"] = str(exc)
+        return result
+
+    async def current_state(self) -> dict[str, Any]:
+        """Current selected and running identities, without mutating state."""
         image = self.read_image_ref()
         running_digest = await self.capture_from_digest()
         build = await self.resolve_current_build()
@@ -426,10 +474,9 @@ class DeploymentStateProvider:
             "current_version": await self.resolve_current_version(),
             "current_channel": build.get("channel"),
             "current_revision": build.get("revision"),
-            "current_image": image,
-            "from_image": image,
-            "from_digest": running_digest,
+            "current_image": image, "from_image": image, "from_digest": running_digest,
             "deployment_mode": self.read_deploy_mode(),
             "running_container_digest": running_digest,
             **self.sandbox_image_refs(),
+            "sandbox_runtime": await self.sandbox_runtime_identity(),
         }
