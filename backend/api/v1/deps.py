@@ -3,11 +3,16 @@
 公共函数（get_db, paginate 等）由各路由文件直接从 backend.webui.deps 导入。
 """
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request, Response
 
 from backend.core.rate_limit import limiter as _limiter
 from backend.models import database as db_module
-from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
+    decode_access_token,
+    is_access_token_payload,
+    renew_webui_token_cookie,
+)
 from backend.webui.deps import user_requires_mfa_enrollment
 
 # Backward-compatible export for API modules importing limiter from this module.
@@ -16,6 +21,7 @@ limiter = _limiter
 
 async def get_api_current_user(
     request: Request,
+    response: Response,
     authorization: str = Header(None, alias="Authorization"),
 ) -> dict:
     """API 三模认证：优先 Bearer Token，回退 Cookie / 查询参数
@@ -26,6 +32,7 @@ async def get_api_current_user(
         dict: {"sub": github_username, "role": role, "user_id": id, ...}
     """
     token = None
+    token_from_cookie = False
 
     # 当通过 Depends() 直接注入时 authorization 是字符串；
     # 当被 require_api_auth 等函数手动调用时它是 Header FieldInfo 对象，
@@ -38,7 +45,10 @@ async def get_api_current_user(
 
     # 模式 2：Cookie（WebUI 前端 fetch 到 API 的兼容场景）
     if not token:
-        token = request.cookies.get("webui_token")
+        cookie_token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
+        if cookie_token:
+            token = cookie_token
+            token_from_cookie = True
 
     # 模式 3：查询参数（SSE 等无法设置 Header 的场景）
     # 安全警告：URL 中的 token 会被记录到访问日志、浏览器历史、Referer 头中。
@@ -57,6 +67,9 @@ async def get_api_current_user(
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的登录凭证")
 
+    if token_from_cookie:
+        renew_webui_token_cookie(response, payload)
+
     return {
         "sub": payload.get("sub") or "",
         "role": payload.get("role", "user"),
@@ -68,26 +81,26 @@ async def get_api_current_user(
     }
 
 
-async def require_api_auth(request: Request) -> dict:
+async def require_api_auth(request: Request, response: Response) -> dict:
     """需要登录的 API 路由依赖"""
-    user = await get_api_current_user(request)
+    user = await get_api_current_user(request, response)
     async with db_module.async_session() as session:
         if await user_requires_mfa_enrollment(int(user["user_id"]), session):
             raise HTTPException(status_code=428, detail="MFA enrollment required")
     return user
 
 
-async def require_api_admin(request: Request) -> dict:
+async def require_api_admin(request: Request, response: Response) -> dict:
     """需要管理员权限的 API 路由依赖"""
-    user = await get_api_current_user(request)
+    user = await get_api_current_user(request, response)
     if user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
     return user
 
 
-async def require_api_super_admin(request: Request) -> dict:
+async def require_api_super_admin(request: Request, response: Response) -> dict:
     """需要超级管理员权限的 API 路由依赖"""
-    user = await get_api_current_user(request)
+    user = await get_api_current_user(request, response)
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
