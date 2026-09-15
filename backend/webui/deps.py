@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from fastapi import Depends, Form, Header, HTTPException, Request
+from fastapi import Depends, Form, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -20,7 +20,12 @@ from backend.core.time_service import get_time_service, monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
 from backend.services.payment_service import is_payment_enabled
-from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
+    decode_access_token,
+    is_access_token_payload,
+    renew_webui_token_cookie,
+)
 from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
 from backend.webui.time_filters import register_time_filters
 
@@ -469,7 +474,7 @@ def toast_redirect(
 
 
 # ========== 认证 ==========
-async def get_current_user(request: Request) -> dict:
+async def get_current_user(request: Request, response: Response) -> dict:
     """从 Cookie 获取当前登录用户信息
 
     Returns:
@@ -477,7 +482,7 @@ async def get_current_user(request: Request) -> dict:
     Raises:
         HTTPException: 401 未登录
     """
-    token = request.cookies.get("webui_token")
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
 
@@ -490,6 +495,8 @@ async def get_current_user(request: Request) -> dict:
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的登录凭证")
 
+    renew_webui_token_cookie(response, payload)
+
     return {
         "sub": payload.get("sub") or "",  # github_username
         "role": payload.get("role", "user"),
@@ -501,25 +508,25 @@ async def get_current_user(request: Request) -> dict:
     }
 
 
-async def require_auth(request: Request) -> dict:
+async def require_auth(request: Request, response: Response) -> dict:
     """需要登录的页面路由依赖"""
-    user = await get_current_user(request)
+    user = await get_current_user(request, response)
     async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
     return user
 
 
-async def require_admin(request: Request) -> dict:
+async def require_admin(request: Request, response: Response) -> dict:
     """需要管理员权限的路由依赖"""
-    user = await require_auth(request)
+    user = await require_auth(request, response)
     if user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
     return user
 
 
-async def require_super_admin(request: Request) -> dict:
+async def require_super_admin(request: Request, response: Response) -> dict:
     """需要超级管理员权限的路由依赖"""
-    user = await require_auth(request)
+    user = await require_auth(request, response)
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
@@ -533,7 +540,7 @@ _MAX_USER_PREFS_CACHE = 1000
 
 async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_db)):
     """获取当前用户的 WebUI 偏好设置，未配置时返回默认值（带内存缓存）"""
-    token = request.cookies.get("webui_token")
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
     if not token:
         return {"language": "zh-CN", "items_per_page": 20}
 
