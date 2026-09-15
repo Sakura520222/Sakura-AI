@@ -87,6 +87,7 @@ jobs:
   sync-dockerhub:
     name: Mirror the committed deployment to Docker Hub
     needs: [publish-edge, publish-deployment]
+    permissions: {}
     if: needs.publish-deployment.outputs.advanced == 'true'
     runs-on: ubuntu-24.04
     continue-on-error: true
