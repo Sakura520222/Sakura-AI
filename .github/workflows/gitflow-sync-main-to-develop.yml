@@ -263,6 +263,7 @@ jobs:
     needs:
       - publish-synchronized-development
       - publish-synchronized-development-deployment
+    permissions: {}
     if: >-
       needs.publish-synchronized-development.result == 'success' &&
       needs.publish-synchronized-development-deployment.result == 'success' &&
