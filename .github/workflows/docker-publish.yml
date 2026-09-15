@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: true
+    outputs:
+      digest:
+        value: ${{ jobs.build-and-publish.outputs.digest }}
+      immutable_tag:
+        value: ${{ jobs.build-and-publish.outputs.immutable_tag }}
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -68,8 +73,8 @@ jobs:
       - name: 安装 crane
         uses: imjasonh/setup-crane@v0.7
 
-      # 计算标签和可信构建身份。所有 channel/输入均 fail closed；开发构建
-      # 同一 digest 同时写 edge 与可追溯 immutable tag，不能重复构建。
+      # 计算标签和可信构建身份。所有 channel/输入均 fail closed；development
+      # 只暴露完整 deployment publisher 创建的 canonical tag/head。
       - name: 计算镜像标签
         id: tags
         run: |
@@ -127,10 +132,12 @@ jobs:
           # Moving aliases and the immutable channel tag are materialized
           # after the digest is known, so reruns cannot overwrite an existing
           # immutable tag or leave internal staging tags in the public catalog.
-          echo "immutable_tag=$IMMUTABLE_TAG" >> "$GITHUB_OUTPUT"
-          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
-          echo "created=$CREATED" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "immutable_tag=$IMMUTABLE_TAG"
+            echo "revision=$REVISION"
+            echo "created=$CREATED"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 构建并推送 GHCR（amd64 + arm64）
         uses: docker/build-push-action@v7
@@ -160,6 +167,10 @@ jobs:
             echo "invalid build digest; refusing publication" >&2
             exit 1
           }
+          if [ "${{ inputs.channel }}" = "development" ]; then
+            echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+            exit 0 # only the complete deployment publisher may expose development
+          fi
           SOURCE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
           IMMUTABLE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.immutable_tag }}"
           PUBLISHED_DIGEST="$DIGEST"
@@ -201,21 +212,7 @@ jobs:
             fi
           fi
           rm -f "$existing_error"
-          if [ "${{ inputs.channel }}" = "development" ]; then
-            # Only the current develop head may advance edge.  A rerun of an
-            # older commit can reproduce its immutable digest, but must never
-            # roll the moving channel alias backward.
-            REMOTE_DEVELOP_REVISION=$(git ls-remote origin refs/heads/develop | awk '{print $1}')
-            [[ "$REMOTE_DEVELOP_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
-              echo "unable to resolve the current develop head; refusing edge update" >&2
-              exit 1
-            }
-            if [ "$REMOTE_DEVELOP_REVISION" != "${{ steps.tags.outputs.revision }}" ]; then
-              echo "development source is not the current develop head; refusing edge rollback" >&2
-              exit 1
-            fi
-            crane tag "$IMMUTABLE" edge
-          elif [ "${{ inputs.channel }}" = "stable" ]; then
+          if [ "${{ inputs.channel }}" = "stable" ]; then
             # Likewise, only the current latest stable Release may advance
             # latest.  Serialization prevents concurrent writers, while this
             # identity gate prevents an older serialized rerun from winning.
@@ -233,7 +230,7 @@ jobs:
 
   sync-dockerhub:
     name: 同步 Docker Hub（非阻塞）
-    if: inputs.sync_dockerhub
+    if: inputs.sync_dockerhub && inputs.channel == 'stable'
     needs: build-and-publish
     runs-on: ubuntu-latest
     continue-on-error: true

@@ -23,20 +23,33 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends binutils build-essential file
+apt-get install -y --no-install-recommends binutils build-essential file git
 
 cd -- "$repo_root"
 python -m pip install --no-cache-dir -r ./updater/build/requirements-build.txt
 python -m pip install --no-cache-dir -e ./updater
 
 work_dir=$(mktemp -d)
+cp ./updater/src/sakura_ai_updater/_build_identity.py "$work_dir/build_identity.py"
 cleanup() {
+    cp "$work_dir/build_identity.py" ./updater/src/sakura_ai_updater/_build_identity.py
     rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
 install -d -m 0700 "$work_dir/dist" "$work_dir/work" "$work_dir/smoke/state" "$work_dir/smoke/tmp"
 export PYINSTALLER_CONFIG_DIR="$work_dir/.pyinstaller"
 
+# Stamp the artifact itself; daemon process environment cannot forge this identity.
+python - <<'PYBUILD'
+import json
+import subprocess
+from pathlib import Path
+revision = subprocess.check_output(["git", "-c", "safe.directory=" + str(Path.cwd()), "rev-parse", "HEAD"], text=True).strip()
+release = subprocess.check_output(["git", "-c", "safe.directory=" + str(Path.cwd()), "describe", "--tags", "--always"], text=True).strip()
+Path("updater/src/sakura_ai_updater/_build_identity.py").write_text(
+    "BUILD_REVISION = " + json.dumps(revision) + "\nBUILD_RELEASE = " + json.dumps(release) + "\n"
+)
+PYBUILD
 python -m PyInstaller \
     --clean \
     --noconfirm \

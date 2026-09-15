@@ -326,6 +326,7 @@ printf '%s\n' \
 init_deployment_env() { :; }
 require_idle_image_deployment() { :; }
 updater_daemon_is_running() { return 0; }
+updater_ipc_get() { printf '%s' '{"protocol_version":1,"capabilities":["three-image-transaction-v1","deployment-reconcile-v1","deployment-manifest-v1"]}'; }
 curl() { return 7; }
 apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
 cmd_update_image

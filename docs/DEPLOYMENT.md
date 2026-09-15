@@ -535,6 +535,22 @@ sudo ./start.sh uninstall --purge
 
 生产部署的镜像拉取在后台 runner 中使用 Docker Compose 原生 TTY 进度渲染器。`Ctrl+C` 只退出 `tail` 查看，拉取与启动继续运行；重新连接后可用 `./start.sh --attach` 继续查看，或用 `./start.sh --status` 查看当前 `pull/start/health` 阶段。若宿主 Compose 版本不支持 `--progress`，脚本会明确警告并回退到普通拉取输出。
 
+### 三镜像 deployment contract（Host Updater 0.3.0）
+
+`/v1/status`、`/v1/health` 和 `sakura-ai-updater --identity` 返回 `updater_version`、`protocol_version`、`build_revision`、`build_release` 和 `capabilities`。正式二进制的构建身份在打包时写入；源码运行明确标记为 `source`。协议 1 只保证通信；image-mode 更新要求以下全部能力，未知附加能力不会阻止兼容：
+
+- `three-image-transaction-v1`
+- `deployment-reconcile-v1`
+- `deployment-manifest-v1`
+
+Web 后端在 check/preflight/update 前查询正在运行的 daemon；WebUI 显示兼容状态及缺失能力。安装脚本在替换 binary 前检查候选文件的 `--identity`，因此缺少 development Release asset 时，stable fallback 必须同样兼容。不兼容时保留旧 binary 并拒绝危险更新。使用当前脚本执行 `sudo ./start.sh updater reinstall`；若选定 Release 尚未提供兼容 asset，必须先发布/提供兼容 Release，不能通过修改版本号或忽略能力检查绕过。尚未升级的旧 Web 无法得到新 Web 的保护，因此管理员应先同步脚本与 Updater，再进行应用更新。
+
+development 的单一目标来源是 Web OCI image index 中的 `com.sakura-ai.deployment.v1` JSON annotation。schema 1 包含 channel、完整 revision、version、canonical tag 以及可信 GHCR 仓库的 `sandboxd_image`/`runner_image` digest 引用；index 的平台 descriptors 和外部 digest 标识 Web 本身，避免自引用 digest。CI 先按 digest 发布全部镜像，验证每个平台的构建标签，再发布带 manifest 的 canonical index，回读验证并确认源仍为 develop head 后，最后推进 `edge`。失败构建不会进入目录；不带完整 manifest 的旧 development tag 不再是可选择目标。stable 继续使用现有 Release 的 `update-manifest.json` 和 `agent-sandbox-manifest.json`，并验证共同 revision，不改变 Release 文件格式。
+
+check/preflight 比较三个目标 digest、共同 revision、deployment.env 以及实际 sandboxd/Runner 运行配置。缺失或漂移的 sandbox pair 是可修复状态，不会仅因为 Web 已到目标而报告无需更新。旧的 mixed deployment 可以选择当前目标正常更新；完整一致时则返回无需更新。直接重启遇到已 pin 但 revision 不一致的旧 development 状态时，也会改为解析完整 channel head 自愈。首次 development 安装也只消费完整 manifest，旧的无 manifest pin 无法作为新安装目标，应通过兼容 Updater 迁移到已完整发布的目标。
+
+更新先验证三份远程镜像，再全部 pull 并检查本地不可变身份，之后才原子替换 deployment.env。激活后检查 Web、sandboxd 健康和实际三镜像身份，只有全部通过才提交事务并写入 `deployment_verified=true`。任一步失败则整体恢复旧部署；回滚失败明确记录 failed 和 rollback error，保留恢复 journal。进程中断后的 daemon 启动会先恢复旧 env 并重新收敛容器，再清除中断任务门禁；恢复失败保留 journal 并停止服务，避免继续部分更新。轮询中断或仅 Web `/health` 成功都不能替代完整部署成功凭证。
+
 ---
 
-*最后更新：2026-9-13 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-9-15 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

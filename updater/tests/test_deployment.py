@@ -4,6 +4,14 @@ import asyncio
 import json
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def unknown_sandbox_runtime(monkeypatch):
+    async def runtime(self):
+        return {"runtime_verified": False}
+    monkeypatch.setattr("sakura_ai_updater.deployment.DeploymentStateProvider.sandbox_runtime_identity", runtime)
+
 from sakura_ai_updater.deployment import DeploymentError, DeploymentStateProvider
 
 

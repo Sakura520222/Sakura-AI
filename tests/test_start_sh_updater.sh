@@ -595,6 +595,10 @@ SYMLINK_STATE_DIR="$TMPDIR/state-mig-symlink"
 )
 [ "$?" -eq 0 ] && report 0 "M4-symlink: symlink state_dir rejected before chmod" || report 1 "M4-symlink"
 
+compatible_binary_bytes() {
+    printf '%s\n' '#!/bin/sh' "echo '{\"protocol_version\":1,\"capabilities\":[\"three-image-transaction-v1\",\"deployment-reconcile-v1\",\"deployment-manifest-v1\"]}'"
+}
+
 # --- trusted acquisition tests ---
 ACQ_DIR="$TMPDIR/acquisition"
 ACQ_STATE="$ACQ_DIR/state"
@@ -614,12 +618,12 @@ install_updater_binary >/dev/null 2>&1
 FAKE_UID=0
 ACQ_CALLS="$ACQ_DIR/calls.log"
 : > "$ACQ_CALLS"
-ACQ_DIGEST=$(printf '%s\n' 'new-final-bytes' | sha256sum | cut -d' ' -f1)
+ACQ_DIGEST=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
 updater_curl() {
     echo "curl:$1 -> $2" >> "$ACQ_CALLS"
     case "$1" in
         */SHA256SUMS) printf '%s  sakura-ai-updater-linux-amd64\r\n' "$ACQ_DIGEST" > "$2" ;;
-        *) printf '%s\n' 'new-final-bytes' > "$2" ;;
+        *) compatible_binary_bytes > "$2" ;;
     esac
     [[ -n "${3:-}" ]] && : > "$3"
 }
@@ -655,7 +659,7 @@ ACQ_NEW_HASH=$(sha256sum "$ACQ_BINARY" | cut -d' ' -f1)
 updater_curl() {
     case "$1" in
         */SHA256SUMS) printf '%s  sakura-ai-updater-linux-amd64\n' "$ACQ_DIGEST" > "$2" ;;
-        *) printf '%s\n' 'new-final-bytes' > "$2" ;;
+        *) compatible_binary_bytes > "$2" ;;
     esac
     [[ -n "${3:-}" ]] && : > "$3"
 }
@@ -892,14 +896,14 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_
         updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
         updater_uname_s() { printf '%s\n' Linux; }
         updater_uname_m() { printf '%s\n' x86_64; }
-        digest=$(printf '%s\n' new-precommit-bytes | sha256sum | cut -d' ' -f1)
+        digest=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
             printf 'URL:%s\n' "$1" >> "$calls_log"
             if [[ "$1" == */SHA256SUMS ]]; then
                 printf '%s  sakura-ai-updater-linux-amd64\n' "$digest" > "$2"
             else
-                printf '%s\n' new-precommit-bytes > "$2"
+                compatible_binary_bytes > "$2"
             fi
             [[ -z "${3:-}" ]] || : > "$3"
             return 0
@@ -997,14 +1001,14 @@ SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n' > "$UPDATER_DEPLOYMENT_
         updater_sha256() { sha256sum -- "$1" | awk '{print $1}'; }
         updater_uname_s() { printf '%s\n' Linux; }
         updater_uname_m() { printf '%s\n' x86_64; }
-        digest=$(printf '%s\n' new-postcommit-bytes | sha256sum | cut -d' ' -f1)
+        digest=$(compatible_binary_bytes | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
             printf 'URL:%s\n' "$1" >> "$calls_log"
             if [[ "$1" == */SHA256SUMS ]]; then
                 printf '%s  sakura-ai-updater-linux-amd64\n' "$digest" > "$2"
             else
-                printf '%s\n' new-postcommit-bytes > "$2"
+                compatible_binary_bytes > "$2"
             fi
             [[ -z "${3:-}" ]] || : > "$3"
             return 0
@@ -1080,7 +1084,9 @@ run_stable_fallback_case() {
             local candidate="$1"
             [[ -f "$candidate" && ! -L "$candidate" ]]
         }
-        new_bytes="new-fallback-bytes"
+        new_bytes=$(compatible_binary_bytes)
+        if [[ "$case_name" == "incompatible" ]]; then new_bytes='#!/bin/sh
+echo "{}"'; fi
         digest=$(printf '%s\n' "$new_bytes" | sha256sum | cut -d' ' -f1)
         : > "$calls_log"
         updater_curl() {
@@ -1128,6 +1134,8 @@ run_stable_fallback_case() {
                 && grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
                 && grep -q '/v3.1.2/SHA256SUMS$' "$calls_log" \
                 && ! grep -q '/v3.1.3/SHA256SUMS' "$calls_log"
+        elif [[ "$case_name" == "incompatible" ]]; then
+            [[ "$rc" -ne 0 ]] && [ "$old_hash" = "$new_hash" ] && grep -q '不满足当前三镜像' "$out"
         else
             [[ "$rc" -ne 0 ]] && [ "$old_hash" = "$new_hash" ] \
                 && ! grep -q '/v3.1.2/sakura-ai-updater-linux-amd64$' "$calls_log" \
@@ -1149,6 +1157,7 @@ run_stable_fallback_case() {
     fi
 }
 run_stable_fallback_case fallback-success 404 yes
+run_stable_fallback_case incompatible 404 no
 run_stable_fallback_case target-network 000 no
 run_stable_fallback_case target-forbidden 403 no
 run_stable_fallback_case target-server-error 500 no

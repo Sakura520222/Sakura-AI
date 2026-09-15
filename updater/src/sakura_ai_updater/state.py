@@ -65,6 +65,7 @@ class JobState:
     target_tag: str | None = None
     target_sandboxd_image: str | None = None
     target_runner_image: str | None = None
+    deployment_verified: bool = False
     activation_started: bool = False
     rollback_attempted: bool = False
     state: str = "idle"

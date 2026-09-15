@@ -375,7 +375,7 @@ def _unlink_transaction_file(path: Path) -> None:
         ) from exc
 
 
-def recover_pending_deployment_transaction(path: str) -> None:
+def recover_pending_deployment_transaction(path: str, *, retain_prepared: bool = False) -> bool:
     """Recover a deployment transaction left by a cancelled/crashed updater.
 
     ``prepared`` means the authoritative file may have been replaced but the
@@ -392,7 +392,7 @@ def recover_pending_deployment_transaction(path: str) -> None:
     try:
         journal_data = _read_transaction_journal(journal)
     except FileNotFoundError:
-        return
+        return False
 
     recorded_destination = journal_data.get("deployment_env")
     if recorded_destination != str(destination):
@@ -409,7 +409,7 @@ def recover_pending_deployment_transaction(path: str) -> None:
         # state if cleanup itself fails so the next daemon startup can retry it.
         _unlink_transaction_file(backup)
         _unlink_transaction_file(journal)
-        return
+        return False
 
     had_content = journal_data.get("had_content")
     if type(had_content) is not bool:
@@ -455,8 +455,11 @@ def recover_pending_deployment_transaction(path: str) -> None:
             raise ImageAdapterError(
                 "deployment transaction rollback could not remove deployment file"
             )
+    if retain_prepared:
+        return True
     _unlink_transaction_file(backup)
     _unlink_transaction_file(journal)
+    return False
 
 
 def capture_deployment_snapshot(path: str) -> DeploymentSnapshot:
@@ -683,6 +686,22 @@ class ImageAdapter:
         repository, digest = ref.rsplit("@", 1)
         return repository, digest
 
+    async def recover_pending_transaction(self) -> None:
+        """Restore containers as well as env before releasing a crashed job gate.
+
+        Retain the durable journal until convergence completes, so a failed
+        recovery retries on the next startup instead of losing its old target.
+        """
+        prepared = await asyncio.to_thread(
+            recover_pending_deployment_transaction, self.deployment_env,
+            retain_prepared=True,
+        )
+        if not prepared:
+            return
+        snapshot = await asyncio.to_thread(capture_deployment_snapshot, self.deployment_env)
+        await self._restore_and_reconverge(snapshot, remove_new_sandbox=True)
+        await asyncio.to_thread(recover_pending_deployment_transaction, self.deployment_env)
+
     async def capture_snapshot(
         self, *, anchor_image: str | None = None
     ) -> DeploymentSnapshot:
@@ -694,14 +713,24 @@ class ImageAdapter:
         """
 
         if not self._transaction_active:
-            await asyncio.to_thread(
-                recover_pending_deployment_transaction, self.deployment_env
-            )
+            await self.recover_pending_transaction()
         snapshot = await asyncio.to_thread(capture_deployment_snapshot, self.deployment_env)
         if anchor_image is not None:
             snapshot = _snapshot_with_values(
                 snapshot, {"SAKURA_AI_IMAGE": anchor_image}
             )
+        sandboxd, runner = self._snapshot_sandbox_refs(snapshot)
+        if (sandboxd is None) != (runner is None):
+            from sakura_ai_updater.deployment import DeploymentStateProvider
+
+            provider = DeploymentStateProvider(self.deployment_env, self.web_container, self.health_url)
+            runtime = await provider.sandbox_runtime_identity()
+            if runtime.get("runtime_verified") is not True:
+                raise ImageAdapterError("incomplete deployment has no verified sandbox rollback pair")
+            snapshot = _snapshot_with_values(snapshot, {
+                "SAKURA_SANDBOXD_IMAGE_DIGEST": runtime["sandboxd_image"],
+                "SAKURA_AGENT_RUNNER_IMAGE_DIGEST": runtime["runner_image"],
+            })
         self._last_snapshot = snapshot
         self._pending_snapshot = snapshot
         return snapshot
@@ -711,9 +740,7 @@ class ImageAdapter:
 
         if self._transaction_active:
             raise ImageAdapterError("another deployment transaction is already active")
-        await asyncio.to_thread(
-            recover_pending_deployment_transaction, self.deployment_env
-        )
+        await self.recover_pending_transaction()
         journal, default_backup = _transaction_paths(self.deployment_env)
         backup = default_backup.with_name(
             f"{default_backup.name}.{os.getpid()}.{uuid.uuid4().hex}"
@@ -966,6 +993,67 @@ class ImageAdapter:
 
         await self._run_command(["docker", "pull", target_image])
 
+    async def verify_pulled_deployment(self, web, sandboxd, runner, *, version, channel, revision=None):
+        """Prove all local immutable digests and build labels before committing env."""
+        from sakura_ai_updater.contract import REPOSITORIES
+        from sakura_ai_updater.deployment import DeploymentStateProvider
+
+        provider = DeploymentStateProvider(self.deployment_env, self.web_container, self.health_url)
+        provider._run_docker_command = self._run_command
+        expected_revision = revision
+        for component, ref in (("web", web), ("sandboxd", sandboxd), ("runner", runner)):
+            repository = REPOSITORIES[component]
+            if not isinstance(ref, str) or "@" not in ref:
+                raise ImageAdapterError("complete immutable deployment required")
+            name, digest = ref.rsplit("@", 1)
+            if name.split(":", 1)[0] != repository:
+                raise ImageAdapterError("untrusted deployment repository")
+            metadata = await provider._inspect_image_metadata(ref)
+            provider._select_registry_digest(metadata, expected_repository=repository,
+                                             expected_tag="", expected_digest=digest)
+            labels = metadata.get("Config", {}).get("Labels", {})
+            actual_revision = labels.get("org.opencontainers.image.revision")
+            if not isinstance(actual_revision, str) or not re.fullmatch(r"[0-9a-f]{40}", actual_revision):
+                raise ImageAdapterError("deployment revision label missing")
+            if expected_revision is None:
+                expected_revision = actual_revision
+            if (actual_revision != expected_revision
+                or labels.get("org.opencontainers.image.version") != version
+                or labels.get("com.sakura-ai.build.channel") != channel
+                or labels.get("com.sakura-ai.component") != ("agent-runner" if component == "runner" else component)):
+                raise ImageAdapterError("deployment component build identity mismatch: " + component)
+        return expected_revision
+
+    async def verify_running_deployment(self, web, sandboxd, runner, *, version, channel, revision=None):
+        """Recheck all runtime identities and sandbox readiness before job success."""
+        from sakura_ai_updater.deployment import DeploymentStateProvider
+
+        revision = await self.verify_pulled_deployment(web, sandboxd, runner,
+                                                     version=version, channel=channel, revision=revision)
+        provider = DeploymentStateProvider(self.deployment_env, self.web_container, self.health_url)
+        provider._run_docker_command = self._run_command
+        if provider.read_image_ref() != web or await provider.capture_from_digest() != web.rsplit("@", 1)[1]:
+            raise ImageAdapterError("running Web digest does not match deployment")
+        persisted = provider.sandbox_image_refs()
+        runtime = await provider.sandbox_runtime_identity()
+        if (persisted != {"sandboxd_image": sandboxd, "runner_image": runner}
+            or runtime.get("runtime_verified") is not True
+            or runtime.get("sandboxd_image") != sandboxd or runtime.get("runner_image") != runner
+            or runtime.get("sandboxd_revision") != revision or runtime.get("runner_revision") != revision):
+            raise ImageAdapterError("running sandbox deployment identity mismatch")
+        socket = os.path.join(os.environ.get("SANDBOX_RUNTIME_DIR", "/run/sakura-ai-sandbox"), "sandboxd.sock")
+        stdout, _ = await self._run_command(["curl", "--fail", "--silent", "--show-error",
+            "--max-time", "5", "--unix-socket", socket, "http://localhost/v1/health"])
+        try:
+            health = json.loads(stdout)
+            data = health["data"]
+            if (health.get("protocol_version") != 2 or data.get("ready") is not True
+                or data.get("runtime") != "docker" or data.get("runner_image_digest") != runner
+                or data.get("instance_id") != runtime.get("instance_id")):
+                raise ValueError("sandbox health identity mismatch")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ImageAdapterError("sandbox post-activation health verification failed") from exc
+
     async def activate(
         self,
         target_image: str,
@@ -1001,7 +1089,10 @@ class ImageAdapter:
         # an unsafe production path a true preflight failure with zero writes.
         if sandboxd_image is not None:
             self._project_start_script()
-        values: dict[str, str] = {"SAKURA_AI_IMAGE": target_image}
+        values: dict[str, str] = {"SAKURA_AI_IMAGE": target_image,
+            "SAKURA_DEPLOY_CHANNEL": "development" if ":dev-" in target_image else "stable"}
+        if ":dev-" in target_image:
+            values["SAKURA_SANDBOX_RELEASE_VERSION"] = ""
         if sandboxd_image is not None and runner_image is not None:
             sandboxd_repository, _ = self._sandbox_ref_parts(sandboxd_image, "sandboxd image")
             runner_repository, _ = self._sandbox_ref_parts(runner_image, "runner image")

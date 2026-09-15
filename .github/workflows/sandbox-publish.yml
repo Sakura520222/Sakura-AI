@@ -72,10 +72,8 @@ jobs:
               primary="v$VERSION"
               ;;
             development)
-              # Keep the sandbox tag byte-for-byte aligned with the Web
-              # development image.  The updater resolves the pair from the
-              # full catalog target (timestamp, version and revision), then
-              # verifies the revision-only alias below before pinning a digest.
+              # Labels share the Web build identity. The deployment publisher
+              # consumes build output digests and commits the complete set.
               if [[ -z "$VERSION" ]]; then
                 VERSION=$(sed -nE 's/^__version__[^=]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/__init__.py | head -n1)
               fi
@@ -118,6 +116,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish sandboxd
+        id: sandboxd
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -129,9 +128,7 @@ jobs:
             SAKURA_BUILD_VERSION=${{ steps.tags.outputs.version }}
             SAKURA_BUILD_REVISION=${{ steps.tags.outputs.revision }}
             SAKURA_BUILD_CREATED=${{ steps.tags.outputs.created }}
-          tags: |
-            ${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.primary }}
-            ${{ env.SANDBOXD_REPOSITORY }}:${{ steps.tags.outputs.immutable }}
+          outputs: type=image,name=${{ env.SANDBOXD_REPOSITORY }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}
             org.opencontainers.image.version=${{ steps.tags.outputs.version }}
@@ -139,6 +136,7 @@ jobs:
             com.sakura-ai.component=sandboxd
 
       - name: Build and publish runner
+        id: runner
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -150,9 +148,7 @@ jobs:
             SAKURA_BUILD_VERSION=${{ steps.tags.outputs.version }}
             SAKURA_BUILD_REVISION=${{ steps.tags.outputs.revision }}
             SAKURA_BUILD_CREATED=${{ steps.tags.outputs.created }}
-          tags: |
-            ${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.primary }}
-            ${{ env.RUNNER_REPOSITORY }}:${{ steps.tags.outputs.immutable }}
+          outputs: type=image,name=${{ env.RUNNER_REPOSITORY }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}
             org.opencontainers.image.version=${{ steps.tags.outputs.version }}
@@ -164,12 +160,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sandboxd_digest=$(docker buildx imagetools inspect \
-            "${SANDBOXD_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
-            --format '{{.Manifest.Digest}}')
-          runner_digest=$(docker buildx imagetools inspect \
-            "${RUNNER_REPOSITORY}:${{ steps.tags.outputs.immutable }}" \
-            --format '{{.Manifest.Digest}}')
+          sandboxd_digest="${{ steps.sandboxd.outputs.digest }}"
+          runner_digest="${{ steps.runner.outputs.digest }}"
           [[ "$sandboxd_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo "sandboxd manifest inspection did not return a valid digest" >&2
             exit 1
@@ -189,6 +181,24 @@ jobs:
             echo "sandboxd=${SANDBOXD_REPOSITORY}@${sandboxd_digest}"
             echo "runner=${RUNNER_REPOSITORY}@${runner_digest}"
           } > agent-sandbox-digests.txt
+
+      - name: Install crane for stable aliases
+        if: inputs.channel == 'stable'
+        uses: imjasonh/setup-crane@v0.7
+
+      - name: Preserve stable sandbox aliases after both builds succeed
+        if: inputs.channel == 'stable'
+        env:
+          SANDBOXD_DIGEST: ${{ steps.inspect.outputs.sandboxd_digest }}
+          RUNNER_DIGEST: ${{ steps.inspect.outputs.runner_digest }}
+          PRIMARY: ${{ steps.tags.outputs.primary }}
+          IMMUTABLE: ${{ steps.tags.outputs.immutable }}
+        run: |
+          set -euo pipefail
+          crane copy "${SANDBOXD_REPOSITORY}@${SANDBOXD_DIGEST}" "${SANDBOXD_REPOSITORY}:${PRIMARY}"
+          crane copy "${SANDBOXD_REPOSITORY}@${SANDBOXD_DIGEST}" "${SANDBOXD_REPOSITORY}:${IMMUTABLE}"
+          crane copy "${RUNNER_REPOSITORY}@${RUNNER_DIGEST}" "${RUNNER_REPOSITORY}:${PRIMARY}"
+          crane copy "${RUNNER_REPOSITORY}@${RUNNER_DIGEST}" "${RUNNER_REPOSITORY}:${IMMUTABLE}"
 
       - name: Upload immutable sandbox digest record
         uses: actions/upload-artifact@v7

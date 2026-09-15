@@ -2145,7 +2145,7 @@ dev = [{ name = "sakura-ai-updater", extras = ["dev"], editable = "updater" }]
 
 [[package]]
 name = "sakura-ai-updater"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "updater" }
 dependencies = [
     { name = "fastapi" },

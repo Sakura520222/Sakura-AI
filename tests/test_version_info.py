@@ -4,6 +4,8 @@ build_version_info 接收明确的 deploy_mode 参数，不读取任何环境变
 真正的纯函数，route 层负责从 Settings 读后传参。
 """
 
+from sakura_ai_updater.contract import DEPLOYMENT_CAPABILITIES
+
 import backend.webui.routes.version as version_routes
 from backend import __version__
 from backend.services.update_checker import is_newer_version
@@ -111,7 +113,7 @@ def test_updater_connected_when_info_provided():
     info = build_version_info(
         "image",
         updater_info={
-            "protocol_version": 1,
+            "protocol_version": 1, "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
             "updater_version": "0.1.0",
             "data": {"state": "idle"},
         },
@@ -135,7 +137,7 @@ def test_source_mode_updater_connected_still_unsupported():
     """source 模式即使 updater 连着，仍不支持更新（spec §5.2）。"""
     info = build_version_info(
         "source",
-        updater_info={"protocol_version": 1, "updater_version": "0.1.0", "data": {}},
+        updater_info={"protocol_version": 1, "capabilities": sorted(DEPLOYMENT_CAPABILITIES), "updater_version": "0.1.0", "data": {}},
     )
     assert info["updater_connected"] is True
     assert info["update_supported"] is False
@@ -158,7 +160,7 @@ def test_host_readiness_snapshot_is_mapped_from_updater_status():
     info = build_version_info(
         "image",
         updater_info={
-            "protocol_version": 1,
+            "protocol_version": 1, "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
             "updater_version": "0.1.0",
             "data": {
                 "update_ready": True,
@@ -203,7 +205,7 @@ def test_development_build_uses_matching_updater_digest_snapshot(monkeypatch):
         "image",
         update_info={"latest_version": "99.0.0"},
         updater_info={
-            "protocol_version": 1,
+            "protocol_version": 1, "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
             "updater_version": "0.1.2",
             "data": {
                 "target": {"channel": "development", "version": "3.1.0"},
@@ -225,7 +227,7 @@ def test_development_build_ignores_nonmatching_stable_snapshot(monkeypatch):
     info = build_version_info(
         "image",
         updater_info={
-            "protocol_version": 1,
+            "protocol_version": 1, "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
             "updater_version": "0.1.2",
             "data": {
                 "target": {"channel": "stable", "version": "3.2.0"},

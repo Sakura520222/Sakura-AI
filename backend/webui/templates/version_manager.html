@@ -91,6 +91,18 @@
                {% if version_info.update_unsupported_reason %}<span class="text-gray-400 text-xs">（{{ version_info.update_unsupported_reason }}）</span>{% endif %}</dd></div>
       <div><dt class="text-gray-500 dark:text-gray-400">{{ _("version_manager.updater") }}</dt>
            <dd>{{ _("version_manager.connected") if version_info.updater_connected else _("version_manager.disconnected") }}
+               {% if version_info.updater_connected %}
+               <div class="text-xs font-mono break-all">
+                 Build: {{ version_info.updater_build_release or "—" }} / {{ version_info.updater_build_revision or "—" }}<br>
+                 Protocol: {{ version_info.updater_protocol_version or "—" }}<br>
+                 {{ _("version_manager.updater_capabilities") }}: {{ version_info.updater_capabilities | default([]) | join(", ") }}
+               </div>
+               {% if version_info.updater_compatibility and not version_info.updater_compatibility.compatible %}
+               <div class="text-amber-600">{{ _("version_manager.updater_capability_incompatible") }}
+                 {{ version_info.updater_compatibility.missing_capabilities | join(", ") }}
+               </div>
+               {% endif %}
+               {% endif %}
                {% if version_info.updater_connected and version_info.updater_version %}
                <span class="text-gray-400 text-xs font-mono">v{{ version_info.updater_version }}</span>
                {% endif %}</dd></div>
@@ -205,7 +217,6 @@ const CURRENT_BUILD_VERSION = {{ version_info.current_version | tojson }};
 const JOB_STORAGE_KEY = 'sakura-ai-update-job-id';
 const JOB_TARGET_STORAGE_KEY = 'sakura-ai-update-job-target';
 const POLL_RECOVERY_TIMEOUT_MS = 120000;
-const HEALTH_RECOVERY_DELAY_MS = 5000;
 const recheckButton = document.getElementById('recheck-btn');
 const preflightButton = document.getElementById('preflight-btn');
 const updateButton = document.getElementById('update-btn');
@@ -237,14 +248,11 @@ function registryText(value) {
   return value === null || value === undefined || value === '' ? '—' : String(value);
 }
 
+const UPDATE_SUPPORTED = {{ version_info.update_supported | default(false) | tojson }};
+
 function isCurrentRegistryImage(image) {
-  if (!image || image.channel !== CURRENT_BUILD_CHANNEL) return false;
-  if (CURRENT_BUILD_DIGEST) {
-    return Boolean(image.digest && image.digest === CURRENT_BUILD_DIGEST);
-  }
-  // Stable version tags are immutable. A development revision can be rebuilt
-  // to a new digest, so leave it selectable when exact digest proof is absent.
-  return image.channel === 'stable' && image.version === CURRENT_BUILD_VERSION;
+  return image.channel === CURRENT_BUILD_CHANNEL && CURRENT_BUILD_DIGEST
+    && image.digest === CURRENT_BUILD_DIGEST;
 }
 
 function renderRegistryPanel(channel) {
@@ -277,11 +285,11 @@ function renderRegistryPanel(channel) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'rounded-lg border px-2 py-1 text-xs disabled:opacity-50';
-    action.disabled = isCurrent || image.selectable !== true || registryCatalog.stale === true;
+    action.disabled = !UPDATE_SUPPORTED || image.selectable !== true || registryCatalog.stale === true;
     action.textContent = isCurrent
-      ? VM_I18N.current
+      ? VM_I18N.registryReconcile
       : image.selectable ? VM_I18N.registrySelect : (image.legacy_reason || VM_I18N.registryNotSelectable);
-    if (image.selectable && !isCurrent) action.addEventListener('click', () => {
+    if (image.selectable) action.addEventListener('click', () => {
       const candidate = {
         channel: image.channel, version: image.version, revision: image.revision,
         tag: image.canonical_tag, digest: image.digest
@@ -382,6 +390,7 @@ const VM_I18N = {
   reconnectingJob: {{ _("version_manager.reconnecting_job") | tojson }},
   errorDetail: {{ _("version_manager.error_detail") | tojson }},
   registryEmpty: {{ _("version_manager.registry_empty") | tojson }},
+  registryReconcile: {{ _("version_manager.registry_reconcile") | tojson }},
   registrySelect: {{ _("version_manager.registry_select") | tojson }},
   registryNotSelectable: {{ _("version_manager.registry_not_selectable") | tojson }},
   registryStale: {{ _("version_manager.registry_stale") | tojson }},
@@ -400,6 +409,8 @@ const VM_I18N = {
     channel_head_unavailable: {{ _("version_manager.channel_head_unavailable") | tojson }},
     job_not_found: {{ _("version_manager.error_job_not_found") | tojson }},
     protocol_error: {{ _("version_manager.error_protocol") | tojson }},
+    updater_capability_incompatible: {{ _("version_manager.updater_capability_incompatible") | tojson }},
+    deployment_success_unverified: {{ _("version_manager.deployment_success_unverified") | tojson }},
     updater_protocol_error: {{ _("version_manager.error_protocol") | tojson }},
     updater_internal_error: {{ _("version_manager.error_internal") | tojson }},
     command_timeout: {{ _("version_manager.error_command_timeout") | tojson }}
@@ -414,7 +425,8 @@ const VM_I18N = {
     restarting: {{ _("version_manager.state_restarting") | tojson }},
     health_checking: {{ _("version_manager.state_health_checking") | tojson }},
     success: {{ _("version_manager.state_success") | tojson }},
-    failed: {{ _("version_manager.state_failed") | tojson }}
+    failed: {{ _("version_manager.state_failed") | tojson }},
+    rolled_back: {{ _("version_manager.state_rolled_back") | tojson }}
   },
   stepLabels: {
     checking: {{ _("version_manager.step_checking") | tojson }},
@@ -591,12 +603,6 @@ function clearPersistedJob() {
   sessionStorage.removeItem(JOB_TARGET_STORAGE_KEY);
 }
 
-function hasExactDigestTarget(target) {
-  return Boolean(target && typeof target === 'object'
-    && (target.channel === 'stable' || target.channel === 'development')
-    && /^sha256:[0-9a-f]{64}$/.test(target.digest || '')
-    && (target.channel !== 'development' || /^[0-9a-f]{40}$/.test(target.revision || '')));
-}
 
 function markProgressError(message, {allowRetry = false, preserveJob = false} = {}) {
   if (!preserveJob && progressJobId
@@ -704,7 +710,7 @@ function showReadiness(data) {
   });
   const updateInProgress = !updateProgressModal.classList.contains('hidden') && !progressTerminal;
   if (!updateInProgress) {
-    updateButton.disabled = payload.update_ready === false || payload.update_available === false;
+    updateButton.disabled = !UPDATE_SUPPORTED || payload.update_ready !== true || payload.update_available === false;
   }
   return payload;
 }
@@ -852,7 +858,7 @@ async function pollJob(jobId) {
         const state = vmStateLabel(job.state);
         setStatus(vmFormat(VM_I18N.updateStatus, {state: state}) + (job.step ? ' · ' + vmStepLabel(job.step) : ''), null);
         renderProgress({state: job.state, step: job.step});
-        if (job.state === 'success' || job.state === 'complete') {
+        if (['success', 'complete'].includes(job.state) && job.deployment_verified === true) {
           setUpdateProgress(UPDATE_PROGRESS.success);
           const target = progressTarget || job.target_version || progressTargetVersion;
           if (target && await verifyHealth(target)) {
@@ -868,7 +874,7 @@ async function pollJob(jobId) {
           }
           return;
         }
-        if (job.state === 'failed') {
+        if (job.state === 'failed' || job.state === 'rolled_back') {
           const detail = VM_I18N.errorLabels[job.error_code]
             || job.error || job.error_code || VM_I18N.unknownState;
           markProgressError(vmFormat(VM_I18N.updateFailed, {error: detail}), {allowRetry: true});
@@ -884,30 +890,10 @@ async function pollJob(jobId) {
           renderProgress({kind: 'reconnecting', message: VM_I18N.progressReconnecting});
           transientSince = transientSince || Date.now();
           const transientFor = Date.now() - transientSince;
-          if (transientFor >= HEALTH_RECOVERY_DELAY_MS
-              && hasExactDigestTarget(progressTarget)
-              && await verifyHealth(progressTarget)) {
-            clearPersistedJob();
-            progressTerminal = true;
-            setUpdateProgress(UPDATE_PROGRESS.success);
-            setStatus(vmFormat(VM_I18N.updateSuccess, {version: progressTargetVersion}), 'ok');
-            renderProgress({kind: 'success', message: VM_I18N.progressRefreshing});
-            updateButton.disabled = false;
-            scheduleRefresh();
-            return;
-          }
           if (transientFor >= POLL_RECOVERY_TIMEOUT_MS) {
-            if (!hasExactDigestTarget(progressTarget)) {
-              // A job id written by an older page has no target digest. Do not
-              // infer success from the newly running build, and do not discard
-              // the only handle that can recover the authoritative job later.
-              const message = vmFormat(VM_I18N.progressPollDeferred, {error: vmUpdaterError(error)});
-              markProgressError(message, {preserveJob: true});
-              setStatus(message, 'error');
-              return;
-            }
-            const message = vmFormat(VM_I18N.progressPollFailed, {error: vmUpdaterError(error)});
-            markProgressError(message);
+            // Web health cannot prove the sandbox deployment or job commit.
+            const message = vmFormat(VM_I18N.progressPollDeferred, {error: vmUpdaterError(error)});
+            markProgressError(message, {preserveJob: true});
             setStatus(message, 'error');
             return;
           }
