@@ -97,8 +97,11 @@ def build_version_info(
     )
     if not isinstance(updater_data, dict):
         updater_data = {}
+    from sakura_ai_updater.contract import compatibility
+
+    contract = compatibility(updater_info)
     protocol_compatible = updater_protocol_version == 1
-    update_supported = mode == "image" and updater_connected and protocol_compatible
+    update_supported = mode == "image" and updater_connected and contract["compatible"]
     if mode == "source":
         reason = "source_updater_not_available"
     elif mode == "image":
@@ -106,6 +109,8 @@ def build_version_info(
             reason = "updater_not_connected"
         elif not protocol_compatible:
             reason = "updater_protocol_incompatible"
+        elif not contract["compatible"]:
+            reason = "updater_capability_incompatible"
         else:
             reason = None
     else:
@@ -155,12 +160,16 @@ def build_version_info(
         "check_error": ui.get("check_error"),
         "updater_connected": updater_connected,
         "updater_version": updater_version,
+        "updater_compatibility": contract,
+        "updater_capabilities": sorted(set((updater_info or {}).get("capabilities") or [])) if isinstance((updater_info or {}).get("capabilities"), list) and all(isinstance(cap, str) for cap in updater_info["capabilities"]) else [],
+        "updater_build_revision": (updater_info or {}).get("build_revision"),
+        "updater_build_release": (updater_info or {}).get("build_release"),
         "updater_protocol_version": updater_protocol_version,
         "updater_state": updater_data.get("state"),
         "has_active_job": bool(updater_data.get("has_active_job", False)),
         "active_job_id": updater_data.get("active_job_id"),
         "updater_deployment": updater_data.get("deployment"),
-        "update_ready": bool(updater_data.get("update_ready", False)),
+        "update_ready": update_supported and bool(updater_data.get("update_ready", False)),
         # Host readiness is authoritative only when supplied by the updater's
         # most recent read-only check/preflight snapshot.  Keep the structured
         # checks and target available to callers instead of reducing readiness

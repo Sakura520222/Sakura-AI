@@ -2,6 +2,7 @@
 
 import pytest
 from httpx import Response
+from sakura_ai_updater.contract import DEPLOYMENT_CAPABILITIES
 
 from backend.services.updater_client import (
     UpdaterActionError,
@@ -90,6 +91,7 @@ async def test_action_requests_use_long_timeout_but_job_polling_stays_short(
             return Response(
                 200,
                 json={
+                    "capabilities": sorted(DEPLOYMENT_CAPABILITIES),
                     "protocol_version": 1,
                     "updater_version": "0.1.0",
                     "data": {},
@@ -106,4 +108,4 @@ async def test_action_requests_use_long_timeout_but_job_polling_stays_short(
     await client.get_job("upd_1")
     await client.get_job_logs("upd_1")
 
-    assert seen_timeouts == [90.0, 90.0, 90.0, 2.0, 2.0]
+    assert seen_timeouts == [2.0, 90.0, 2.0, 90.0, 2.0, 90.0, 2.0, 2.0]

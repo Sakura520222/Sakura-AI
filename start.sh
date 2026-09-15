@@ -2105,57 +2105,63 @@ production_web_reference_is_safe() {
 # development 频道工具 / development-channel helpers
 # ------------------------------------------------------------
 
-# development Web 引用：dev primary tag（dev-<utc14>-vX.Y.Z-<revision40>，
-# CI 对三镜像字节级一致）+ digest pin。
+# development Web 引用：canonical deployment tag（dev-<utc14>-vX.Y.Z-
+# <revision40>）+ immutable OCI index digest。
 production_dev_web_reference_is_safe() {
     [[ "$1" =~ ^ghcr\.io/sakura520222/sakura-ai:dev-[0-9]{14}-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-[0-9a-f]{40}@sha256:[0-9a-f]{64}$ ]]
 }
 
-# 从 GHCR 匿名 registry API 解析 Web 仓库最新的 development primary tag。
-# CI 对 Web/sandboxd/runner 使用同一 primary tag 名（同一次构建的坐标），
-# 时间戳内嵌于 tag，字典序即时间序；取最新即得三镜像共同的构建坐标。
-production_resolve_dev_tag() {
-    local token payload tag
-    command -v python3 >/dev/null 2>&1 || {
-        fail "development 频道解析需要 python3" >&2
-        return 1
-    }
-    token=$(curl --silent --show-error --max-time 15 \
-        "https://ghcr.io/token?service=ghcr.io&scope=repository:sakura520222/sakura-ai:pull" \
-        2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' 2>/dev/null) || true
-    [[ -n "${token:-}" ]] || {
-        fail "无法获取 GHCR 匿名 token" >&2
-        return 1
-    }
-    payload=$(curl --silent --show-error --max-time 20 \
-        -H "Authorization: Bearer $token" \
-        "https://ghcr.io/v2/sakura520222/sakura-ai/tags/list?n=1000" \
-        2>/dev/null) || {
-        fail "无法获取 GHCR tag 列表" >&2
-        return 1
-    }
-    tag=$(python3 - "$payload" <<'PY'
+# Bootstrap has no installed Python package. Read the same OCI deployment
+# contract directly using the host standard library, never the newest tag.
+production_resolve_dev_deployment() {
+    python3 - "${1:-edge}" <<'PYMANIFEST'
+import hashlib
 import json
 import re
 import sys
+from urllib.request import Request, urlopen
+
+repository = "ghcr.io/sakura520222/sakura-ai"
+reference = sys.argv[1]
+if reference != "edge" and not re.fullmatch(r"sha256:[0-9a-f]{64}", reference):
+    raise SystemExit("invalid development manifest reference")
+
+def request(url, headers):
+    with urlopen(Request(url, headers=headers), timeout=20) as response:
+        return response.read(), response.headers
 
 try:
-    tags = json.loads(sys.argv[1]).get("tags") or []
-except (json.JSONDecodeError, IndexError):
-    sys.exit(1)
-pattern = re.compile(r"^dev-(\d{14})-v\d+\.\d+\.\d+-[0-9a-f]{40}$")
-dev_tags = [tag for tag in tags if isinstance(tag, str) and pattern.match(tag)]
-print(max(dev_tags, key=lambda tag: pattern.match(tag).group(1)) if dev_tags else "")
-PY
-    ) || {
-        fail "GHCR tag 列表解析失败" >&2
-        return 1
-    }
-    [[ -n "$tag" ]] || {
-        fail "GHCR 上没有可用的 development 构建（dev-* tag）" >&2
-        return 1
-    }
-    printf '%s\n' "$tag"
+    raw, _ = request("https://ghcr.io/token?service=ghcr.io&scope=repository:sakura520222/sakura-ai:pull", {})
+    token = json.loads(raw)["token"]
+    headers = {"Authorization": "Bearer " + token,
+               "Accept": "application/vnd.oci.image.index.v1+json"}
+    base = "https://ghcr.io/v2/sakura520222/sakura-ai/manifests/"
+    raw, response_headers = request(base + reference, headers)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if response_headers.get("Docker-Content-Digest") != digest or (reference != "edge" and reference != digest):
+        raise ValueError("deployment manifest digest mismatch")
+    payload = json.loads(raw)
+    manifest = json.loads(payload["annotations"]["com.sakura-ai.deployment.v1"])
+    tag = manifest["tag"]
+    match = re.fullmatch(r"dev-[0-9]{14}-v([0-9]+\.[0-9]+\.[0-9]+)-([0-9a-f]{40})", tag)
+    if (manifest["schema_version"] != 1 or manifest["channel"] != "development" or not match
+        or match.group(1) != manifest["version"] or match.group(2) != manifest["revision"]):
+        raise ValueError("deployment identity mismatch")
+    if reference == "edge":
+        canonical, _ = request(base + tag, headers)
+        if "sha256:" + hashlib.sha256(canonical).hexdigest() != digest:
+            raise ValueError("development tag/head mismatch")
+    refs = []
+    for component, name in (("sandboxd", "sakura-ai-sandboxd"), ("runner", "sakura-ai-agent-runner")):
+        ref = manifest[component + "_image"]
+        if not re.fullmatch("ghcr.io/sakura520222/" + name + r"@sha256:[0-9a-f]{64}", ref):
+            raise ValueError("invalid deployment component digest")
+        refs.append(ref)
+    print(repository + ":" + tag + "@" + digest)
+    print("\n".join(refs))
+except Exception as exc:
+    raise SystemExit("完整 development deployment manifest 不可用；请等待完整发布，或升级 Host Updater 后 reconcile：" + str(exc))
+PYMANIFEST
 }
 
 # 读取镜像 label；label 缺失/镜像不可查视为失败。
@@ -2167,97 +2173,91 @@ image_label_of() {
     printf '%s\n' "$value"
 }
 
-# 解析并拉取 development 频道三镜像：
-# - 已 pin（deployment.env 有完整 dev 引用）：按 digest 重拉，绝不移动。
-# - 未 pin（首次部署）：从 GHCR 解析最新 dev primary tag，三镜像拉同一
-#   tag 名（CI 对三仓库使用字节级一致的 primary tag，命名本身即对齐坐标），
-#   再以三镜像 label 复核频道与 revision（Web 另校验 component），最后按 RepoDigests pin。
+
+production_validate_dev_image_set() {
+    local web_ref="$1" sandboxd_ref="$2" runner_ref="$3"
+    local tag component expected_component reference label value
+    local revision="" version="" actual_revision actual_version
+
+    tag="${web_ref%@*}"
+    tag="${tag##*:}"
+    revision="${tag##*-}"
+    version="${tag#*-v}"
+    version="${version%-*}"
+    for component in web sandboxd agent-runner; do
+        case "$component" in
+            web) reference="$web_ref" ;;
+            sandboxd) reference="$sandboxd_ref" ;;
+            agent-runner) reference="$runner_ref" ;;
+        esac
+        for label in com.sakura-ai.build.channel org.opencontainers.image.revision org.opencontainers.image.version com.sakura-ai.component; do
+            case "$label" in
+                com.sakura-ai.build.channel) expected_component=development ;;
+                org.opencontainers.image.revision) expected_component="$revision" ;;
+                org.opencontainers.image.version) expected_component="$version" ;;
+                com.sakura-ai.component) expected_component="$component" ;;
+            esac
+            value=$(image_label_of "$reference" "$label") || return 1
+            if [[ "$value" != "$expected_component" ]]; then
+                fail "dev 镜像 label 与 deployment 身份不一致: $reference ($label)" >&2
+                return 2
+            fi
+        done
+    done
+    PRODUCTION_DEV_VALIDATED_REVISION="$revision"
+    PRODUCTION_DEV_VALIDATED_VERSION="$version"
+}
+
+# Resolve one complete published deployment before pulling any component.
+# All validation precedes the existing production transaction's env write.
 production_pull_dev_channel_images() {
-    local web_repo="ghcr.io/sakura520222/sakura-ai"
-    local sandboxd_repo="ghcr.io/sakura520222/sakura-ai-sandboxd"
-    local runner_repo="ghcr.io/sakura520222/sakura-ai-agent-runner"
     local persisted_web persisted_daemon persisted_runner
-    local dev_tag tag_rev web_ref sandboxd_ref runner_ref channel digest rev component
+    local manifest_reference=edge refs web_ref sandboxd_ref runner_ref validation_status
 
     persisted_web=$(read_deployment_value "SAKURA_AI_IMAGE" "$DEPLOYMENT_ENV_FILE")
     persisted_daemon=$(read_deployment_value "SAKURA_SANDBOXD_IMAGE_DIGEST" "$DEPLOYMENT_ENV_FILE")
     persisted_runner=$(read_deployment_value "SAKURA_AGENT_RUNNER_IMAGE_DIGEST" "$DEPLOYMENT_ENV_FILE")
-
     if production_dev_web_reference_is_safe "$persisted_web" \
         && sandbox_registry_digest_is_safe "$persisted_daemon" \
         && sandbox_registry_digest_is_safe "$persisted_runner"; then
-        info "development 频道：按已 pin 的 digest 拉取三镜像"
         sandbox_pull_image "Web" "$persisted_web" || return 1
         sandbox_pull_image "sandboxd" "$persisted_daemon" || return 1
         sandbox_pull_image "Agent runner" "$persisted_runner" || return 1
-        PRODUCTION_WEB_IMAGE="$persisted_web"
-        SANDBOX_IMAGE_DIGEST="$persisted_daemon"
-        SANDBOX_RUNNER_DIGEST="$persisted_runner"
-        SANDBOX_IMAGE="${SANDBOX_IMAGE_DIGEST%@*}"
-        SANDBOX_RUNNER_IMAGE="${SANDBOX_RUNNER_DIGEST%@*}"
-        return 0
+        validation_status=0
+        production_validate_dev_image_set "$persisted_web" "$persisted_daemon" "$persisted_runner" \
+            || validation_status=$?
+        if [[ "$validation_status" -eq 0 ]]; then
+            PRODUCTION_WEB_IMAGE="$persisted_web"
+            SANDBOX_IMAGE_DIGEST="$persisted_daemon"
+            SANDBOX_RUNNER_DIGEST="$persisted_runner"
+            SANDBOX_IMAGE="${persisted_daemon%@*}"
+            SANDBOX_RUNNER_IMAGE="${persisted_runner%@*}"
+            info "development 频道：按已 pin 且 revision 一致的旧部署拉取三镜像"
+            return 0
+        fi
+        if [[ "$validation_status" -ne 2 ]]; then
+            return "$validation_status"
+        fi
+        warn "已 pin 的旧 development 镜像 revision 不一致；改为解析完整 channel head 自愈" >&2
     fi
 
-    info "development 频道：解析最新 dev 构建 tag"
-    dev_tag=$(production_resolve_dev_tag) || return 1
-    tag_rev="${dev_tag##*-}"
-    web_ref="$web_repo:$dev_tag"
-    sandboxd_ref="$sandboxd_repo:$dev_tag"
-    runner_ref="$runner_repo:$dev_tag"
-    info "development 频道：拉取同 tag 三镜像: $dev_tag"
+    refs=$(production_resolve_dev_deployment "$manifest_reference") || return 1
+    web_ref=$(sed -n '1p' <<< "$refs")
+    sandboxd_ref=$(sed -n '2p' <<< "$refs")
+    runner_ref=$(sed -n '3p' <<< "$refs")
+    production_dev_web_reference_is_safe "$web_ref" || return 1
+    sandbox_registry_digest_is_safe "$sandboxd_ref" || return 1
+    sandbox_registry_digest_is_safe "$runner_ref" || return 1
     sandbox_pull_image "Web" "$web_ref" || return 1
     sandbox_pull_image "sandboxd" "$sandboxd_ref" || return 1
     sandbox_pull_image "Agent runner" "$runner_ref" || return 1
-
-    # tag 内嵌 revision；三镜像 label 必须与之一致（防错标：tag 可变，命名
-    # 对齐不构成身份证明）。Web 镜像另校验 component，防与 sandbox 镜像串标。
-    local ref
-    for ref in "$web_ref" "$sandboxd_ref" "$runner_ref"; do
-        channel=$(image_label_of "$ref" "com.sakura-ai.build.channel") || {
-            fail "dev 镜像缺少 com.sakura-ai.build.channel label: $ref" >&2
-            return 1
-        }
-        [[ "$channel" == "development" ]] || {
-            fail "dev 镜像的频道 label 为 '$channel'（应为 development）: $ref" >&2
-            return 1
-        }
-        rev=$(image_label_of "$ref" "org.opencontainers.image.revision") || {
-            fail "dev 镜像缺少 org.opencontainers.image.revision label: $ref" >&2
-            return 1
-        }
-        [[ "$rev" == "$tag_rev" ]] || {
-            fail "dev 镜像 revision label 与 tag 内嵌 revision 不一致: $ref" >&2
-            return 1
-        }
-    done
-    component=$(image_label_of "$web_ref" "com.sakura-ai.component") || {
-        fail "dev Web 镜像缺少 com.sakura-ai.component label: $web_ref" >&2
-        return 1
-    }
-    [[ "$component" == "web" ]] || {
-        fail "dev Web 镜像的 component label 为 '$component'（应为 web）: $web_ref" >&2
-        return 1
-    }
-
-    digest=$(image_digest_of "$web_ref") || {
-        fail "无法解析 dev Web 镜像 digest" >&2
-        return 1
-    }
-    PRODUCTION_WEB_IMAGE="$web_ref@$digest"
-    digest=$(image_digest_of "$sandboxd_ref") || {
-        fail "无法解析 dev sandboxd 镜像 digest" >&2
-        return 1
-    }
-    SANDBOX_IMAGE_DIGEST="$sandboxd_repo@$digest"
-    SANDBOX_IMAGE="$sandboxd_repo"
-    digest=$(image_digest_of "$runner_ref") || {
-        fail "无法解析 dev Agent runner 镜像 digest" >&2
-        return 1
-    }
-    SANDBOX_RUNNER_DIGEST="$runner_repo@$digest"
-    SANDBOX_RUNNER_IMAGE="$runner_repo"
-    info "development 频道三镜像已对齐 ${dev_tag}"
-    return 0
+    production_validate_dev_image_set "$web_ref" "$sandboxd_ref" "$runner_ref" || return $?
+    PRODUCTION_WEB_IMAGE="$web_ref"
+    SANDBOX_IMAGE_DIGEST="$sandboxd_ref"
+    SANDBOX_RUNNER_DIGEST="$runner_ref"
+    SANDBOX_IMAGE="${sandboxd_ref%@*}"
+    SANDBOX_RUNNER_IMAGE="${runner_ref%@*}"
+    info "development 频道完整三镜像已验证: $PRODUCTION_DEV_VALIDATED_REVISION"
 }
 
 production_manifest_digest() {
@@ -3757,6 +3757,13 @@ install_updater_binary() {
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
         return 1
     fi
+    # Verify the checksummed candidate before replacing the installed binary,
+    # including a stable fallback for an unreleased development version.
+    if ! TMPDIR="$UPDATER_STATE_DIR" "$binary_tmp" --identity | updater_identity_compatible; then
+        fail "下载的 Host Updater 不满足当前三镜像部署 contract；旧 binary 保持不变。请使用包含兼容 Updater 的 Release。" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
     if ! updater_sync_temp "$binary_tmp"; then
         fail "updater temporary binary fsync failed; old binary unchanged" >&2
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
@@ -4875,12 +4882,32 @@ updater_daemon_is_running() {
 # Production image updates are a three-image transaction owned by the host
 # updater. There is intentionally no Compose-only fallback here: writing
 # SAKURA_AI_IMAGE alone would leave sandboxd/runner on an unrelated release.
+updater_identity_compatible() {
+    python3 -c '
+import json, sys
+try:
+    identity = json.load(sys.stdin)
+    capabilities = identity.get("capabilities")
+    required = {"three-image-transaction-v1", "deployment-reconcile-v1", "deployment-manifest-v1"}
+    valid = isinstance(capabilities, list) and all(isinstance(x, str) for x in capabilities)
+    missing = required - set(capabilities if valid else [])
+    if identity.get("protocol_version") != 1 or missing:
+        print("Host Updater 缺少部署能力: " + ", ".join(sorted(missing))
+              + "; 请安装兼容 Release 后执行 sudo ./start.sh updater reinstall", file=sys.stderr)
+        sys.exit(1)
+except (ValueError, TypeError, AttributeError):
+    print("Host Updater 未提供有效的能力身份；请升级 Host Updater。", file=sys.stderr)
+    sys.exit(1)
+'
+}
+
 require_image_updater_transaction() {
     if ! updater_daemon_is_running; then
         fail "生产镜像更新需要可用的 host updater daemon；拒绝 Web-only Compose fallback" >&2
         fail "请先执行: sudo ./start.sh updater start" >&2
         return 1
     fi
+    updater_ipc_get /v1/status | updater_identity_compatible || return 1
 }
 
 # Build the structured development target accepted by updater's registry
@@ -4962,9 +4989,8 @@ updater_submit_image_transaction() {
 
     pattern='"error"[[:space:]]*:[[:space:]]*"preflight_failed"'
     if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
-        pattern='"name":"already_current"[[:space:]]*,[[:space:]]*"passed":false'
-        if [[ "$payload" =~ $pattern ]]; then
-            ok "${channel} 频道已是最新版本，无需更新"
+        if python3 -c 'import json,sys; checks=json.load(sys.stdin).get("checks", []); failed=[x.get("name") for x in checks if x.get("passed") is not True and x.get("blocking", True)]; sys.exit(0 if failed and set(failed) <= {"already_current", "target_newer"} else 1)' <<< "$payload"; then
+            ok "${channel} 频道完整部署已一致，无需更新"
             return 0
         fi
         pattern='"name":"channel_switch_confirmed"[[:space:]]*,[[:space:]]*"passed":false'
@@ -5000,7 +5026,10 @@ updater_ipc_wait_job() {
                 last="$state"
             fi
             case "$state" in
-                success)                return 0 ;;
+                success|complete)
+                    if ! updater_identity_compatible <<< "$payload"; then return 1; fi
+                    python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("data", {}).get("deployment_verified") is True else 1)' <<< "$payload"
+                    return $? ;;
                 failed|rolled_back)     return 1 ;;
             esac
         fi

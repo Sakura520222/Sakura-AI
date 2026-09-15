@@ -3,6 +3,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def verified_stable_components(monkeypatch):
+    async def verify(self, target, sandboxd, runner):
+        return "a" * 40
+    monkeypatch.setattr("sakura_ai_updater.registry.RegistryClient.verify_stable_deployment", verify)
+
 from sakura_ai_updater.adapters.image import HealthCheckVersionMismatch, ImageAdapter
 from sakura_ai_updater.deployment import DeploymentError
 from sakura_ai_updater.jobs import JobOrchestrator
@@ -104,6 +112,12 @@ async def test_structured_stable_health_requires_stable_channel(monkeypatch):
 class _Deployment:
     deployment_env = "."
 
+    def sandbox_image_refs(self):
+        return {
+            "sandboxd_image": "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64,
+            "runner_image": "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64,
+        }
+
     async def resolve_current_version(self):
         return "3.0.2"
 
@@ -113,11 +127,17 @@ class _Deployment:
     async def current_state(self):
         return {
             "current_channel": "development",
+            "current_revision": "a" * 40,
             "running_container_digest": "sha256:" + "b" * 64,
         }
 
     async def disk_space_sufficient(self, threshold):
         return True, threshold * 2
+
+
+class _DevelopmentRelease:
+    async def resolve_development_sandbox_pair(self, target):
+        return {"revision": target.revision, **_Deployment().sandbox_image_refs()}
 
 
 class _Adapter:
@@ -216,7 +236,7 @@ async def test_same_development_digest_is_not_updateable(monkeypatch, tmp_path):
     result = await JobOrchestrator(
         str(tmp_path / "state.json"),
         _Adapter(),
-        object(),
+        _DevelopmentRelease(),
         _Deployment(),
         disk_space_threshold=1,
     ).preflight(_target())
@@ -238,7 +258,7 @@ async def test_deployment_identity_error_is_a_failed_check_not_protocol_error(
     result = await JobOrchestrator(
         str(tmp_path / "state.json"),
         _Adapter(),
-        object(),
+        _DevelopmentRelease(),
         _InvalidImageIdentityDeployment(),
         disk_space_threshold=1,
     ).preflight(_target(), confirm_channel_switch=True)
@@ -267,7 +287,7 @@ async def test_development_unknown_current_channel_requires_confirmation(
     orchestrator = JobOrchestrator(
         str(tmp_path / "state.json"),
         _Adapter(),
-        object(),
+        _DevelopmentRelease(),
         _UnknownChannelDeployment(),
         disk_space_threshold=1,
     )
@@ -288,7 +308,7 @@ async def test_submit_update_accepts_development_target_and_persists_job(
     orchestrator = JobOrchestrator(
         str(tmp_path / "state.json"),
         _Adapter(),
-        object(),
+        _DevelopmentRelease(),
         _Deployment(),
         disk_space_threshold=1,
     )
@@ -361,7 +381,7 @@ async def test_development_to_stable_same_semver_requires_confirmation(
 
 
 @pytest.mark.asyncio
-async def test_stable_to_stable_same_semver_is_still_strictly_newer(
+async def test_stable_same_semver_digest_drift_requires_reconcile(
     monkeypatch, tmp_path
 ):
     async def verify(self, target):
@@ -376,9 +396,9 @@ async def test_stable_to_stable_same_semver_is_still_strictly_newer(
         disk_space_threshold=1,
     )
     result = await orchestrator.preflight(_stable_target(), confirm_channel_switch=True)
-    assert result["can_update"] is False
+    assert result["can_update"] is True
     assert any(
-        item["name"] == "target_newer" and not item["passed"]
+        item["name"] == "target_newer" and item["passed"]
         for item in result["checks"]
     )
 
