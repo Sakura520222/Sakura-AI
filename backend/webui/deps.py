@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from fastapi import Depends, Form, Header, HTTPException, Request, Response
+from fastapi import Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -19,12 +19,13 @@ from backend.core.config import get_settings
 from backend.core.time_service import get_time_service, monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
+from backend.models.telegram_models import TelegramUser
 from backend.services.payment_service import is_payment_enabled
 from backend.webui.auth import (
     WEBUI_TOKEN_COOKIE_NAME,
     decode_access_token,
     is_access_token_payload,
-    renew_webui_token_cookie,
+    queue_webui_token_renewal,
 )
 from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
 from backend.webui.time_filters import register_time_filters
@@ -474,7 +475,37 @@ def toast_redirect(
 
 
 # ========== 认证 ==========
-async def get_current_user(request: Request, response: Response) -> dict:
+async def refresh_login_claims(payload: dict) -> dict | None:
+    """从数据库刷新正式登录令牌中的权威用户声明。"""
+    try:
+        user_id = int(payload.get("user_id"))
+    except (TypeError, ValueError):
+        return None
+
+    async with db_module.async_session() as db:
+        result = await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.id == user_id,
+                TelegramUser.is_active.is_(True),
+            )
+        )
+        user = result.scalar_one_or_none()
+
+    if not user or not getattr(user, "is_active", True):
+        return None
+
+    return {
+        "sub": payload.get("sub"),
+        "role": user.role,
+        "user_id": user.id,
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
+        "email": getattr(user, "email", None),
+        "email_verified": bool(getattr(user, "email_verified", False)),
+    }
+
+
+async def get_current_user(request: Request) -> dict:
     """从 Cookie 获取当前登录用户信息
 
     Returns:
@@ -490,43 +521,42 @@ async def get_current_user(request: Request, response: Response) -> dict:
     if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="登录已过期")
 
-    # 校验必要字段
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="无效的登录凭证")
+    refreshed_claims = await refresh_login_claims(payload)
+    if refreshed_claims is None:
+        raise HTTPException(status_code=401, detail="无效或已过期的登录凭证")
 
-    renew_webui_token_cookie(response, payload)
+    queue_webui_token_renewal(request, refreshed_claims)
 
     return {
-        "sub": payload.get("sub") or "",  # github_username
-        "role": payload.get("role", "user"),
-        "user_id": user_id,
-        "github_id": payload.get("github_id"),
-        "avatar_url": payload.get("avatar_url"),
-        "email": payload.get("email"),
-        "email_verified": bool(payload.get("email_verified", False)),
+        "sub": refreshed_claims["sub"],
+        "role": refreshed_claims["role"],
+        "user_id": refreshed_claims["user_id"],
+        "github_id": refreshed_claims["github_id"],
+        "avatar_url": refreshed_claims["avatar_url"],
+        "email": refreshed_claims["email"],
+        "email_verified": refreshed_claims["email_verified"],
     }
 
 
-async def require_auth(request: Request, response: Response) -> dict:
+async def require_auth(request: Request) -> dict:
     """需要登录的页面路由依赖"""
-    user = await get_current_user(request, response)
+    user = await get_current_user(request)
     async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
     return user
 
 
-async def require_admin(request: Request, response: Response) -> dict:
+async def require_admin(request: Request) -> dict:
     """需要管理员权限的路由依赖"""
-    user = await require_auth(request, response)
+    user = await require_auth(request)
     if user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
     return user
 
 
-async def require_super_admin(request: Request, response: Response) -> dict:
+async def require_super_admin(request: Request) -> dict:
     """需要超级管理员权限的路由依赖"""
-    user = await require_auth(request, response)
+    user = await require_auth(request)
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
