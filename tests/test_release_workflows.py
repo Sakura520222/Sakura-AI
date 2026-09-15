@@ -371,6 +371,7 @@ def test_gitflow_token_fallback_publishes_complete_deployment():
         "publish-synchronized-development",
         "publish-synchronized-development-deployment",
     ]
+    assert mirror["permissions"] == {}
     assert mirror["continue-on-error"] is True
     assert "DEPLOYMENT_DIGEST: ${{ needs.publish-synchronized-development-deployment.outputs.digest }}" in text
     assert "crane tag \"docker.io/sakura520222/sakura-ai:${DEPLOYMENT_TAG}\" edge" in text

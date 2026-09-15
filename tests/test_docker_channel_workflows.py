@@ -77,6 +77,7 @@ def test_reusable_publish_fails_closed_and_sets_build_identity():
     assert workflow["concurrency"]["cancel-in-progress"] is False
     assert workflow["jobs"]["publish-deployment"]["outputs"]["advanced"] == "${{ steps.deployment.outputs.advanced }}"
     assert workflow["jobs"]["sync-dockerhub"]["if"] == "needs.publish-deployment.outputs.advanced == 'true'"
+    assert workflow["jobs"]["sync-dockerhub"]["permissions"] == {}
     # Stable release callers check out the immutable tag; identity is derived
     # inside the reusable workflow and must not be copied from main HEAD.
     release = (ROOT / ".github" / "workflows" / "release-on-pr-merge.yml").read_text(
