@@ -60,6 +60,7 @@ from backend.webui.auth import (
 from backend.webui.deps import (
     get_csrf_serializer,
     get_templates,
+    refresh_login_claims,
     render_template,
     request_origin,
     require_csrf,
@@ -211,10 +212,16 @@ async def _delete_oauth_state(state: str):
 @router.get("/login")
 async def login_page(request: Request):
     """渲染登录页面（GitHub OAuth 和 Passkey 按钮）"""
-    # 已登录则跳转仪表盘
+    # 已登录则跳转仪表盘；仅通过签名校验但数据库已拒绝的会话要清除，
+    # 否则 login -> / -> 401 -> login 会形成重定向循环。
+    stale_session = False
     token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
-    if token and decode_access_token(token):
-        return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
+    if token:
+        payload = decode_access_token(token)
+        if payload:
+            if await refresh_login_claims(payload):
+                return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
+            stale_session = True
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
@@ -226,7 +233,7 @@ async def login_page(request: Request):
         set_language_cookie(response, lang)
         return response
 
-    return render_template(
+    response = render_template(
         "login.html",
         request,
         user_prefs={"language": lang},
@@ -235,6 +242,9 @@ async def login_page(request: Request):
         app_version=APP_VERSION,
         has_oauth=has_oauth,
     )
+    if stale_session:
+        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
+    return response
 
 
 @router.get("/github")
