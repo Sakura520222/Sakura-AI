@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import Response
 
 from backend.core.github_app import GitHubAppClient
 from backend.services import star_aid_github_service as github_service
@@ -166,6 +167,7 @@ async def test_auth_callback_silently_handles_github_app_setup_action():
 
     resp = await star_aid_route.auth_callback(
         request=MagicMock(),
+        response=Response(),
         setup_action="update",
         code=None,
         state=None,
@@ -194,6 +196,7 @@ async def test_auth_callback_setup_install_with_code_redirects_to_dashboard(
 
     resp = await star_aid_route.auth_callback(
         request=MagicMock(),
+        response=Response(),
         setup_action="install",
         code="fake-auth-code",
         state=None,
