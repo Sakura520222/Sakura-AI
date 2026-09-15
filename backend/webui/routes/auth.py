@@ -50,10 +50,12 @@ from backend.services.webauthn_service import (
     finish_authentication,
 )
 from backend.webui.auth import (
+    WEBUI_TOKEN_COOKIE_NAME,
     create_access_token,
     create_mfa_pending_token,
     decode_access_token,
     is_mfa_pending_payload,
+    set_webui_token_cookie,
 )
 from backend.webui.deps import (
     get_csrf_serializer,
@@ -143,14 +145,7 @@ def _build_login_token_payload(
 
 def _set_webui_token_cookie(response: RedirectResponse | JSONResponse, token: str):
     """写入正式 WebUI 登录 Cookie。"""
-    response.set_cookie(
-        "webui_token",
-        token,
-        httponly=True,
-        secure=True,
-        max_age=86400,
-        samesite="lax",
-    )
+    set_webui_token_cookie(response, token)
 
 
 def _set_mfa_pending_cookie(response: RedirectResponse, token: str):
@@ -217,7 +212,7 @@ async def _delete_oauth_state(state: str):
 async def login_page(request: Request):
     """渲染登录页面（GitHub OAuth 和 Passkey 按钮）"""
     # 已登录则跳转仪表盘
-    token = request.cookies.get("webui_token")
+    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
     if token and decode_access_token(token):
         return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
 
@@ -383,7 +378,7 @@ async def github_callback(
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
         response = RedirectResponse(url="/auth/2fa", status_code=302)
         _set_mfa_pending_cookie(response, mfa_token)
-        response.delete_cookie("webui_token")
+        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response
 
     jwt_token = create_access_token(token_data)
@@ -633,7 +628,7 @@ async def logout(request: Request):
     """登出"""
     logger.info("WebUI 用户登出")
     response = toast_redirect("/auth/login", "toast.logged_out", lang=detect_language())
-    response.delete_cookie("webui_token")
+    response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 

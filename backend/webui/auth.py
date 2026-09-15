@@ -3,13 +3,17 @@
 from datetime import timedelta
 from typing import Literal
 
+from fastapi import Response
 from jose import JWTError, jwt
 from loguru import logger
 
 from backend.core.time_service import now_utc
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 24
+ACCESS_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_HOURS = ACCESS_TOKEN_EXPIRE_DAYS * 24
+WEBUI_TOKEN_COOKIE_NAME = "webui_token"
+WEBUI_TOKEN_COOKIE_MAX_AGE = ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_MFA_PENDING = "mfa_pending"
 
@@ -17,6 +21,23 @@ TOKEN_TYPE_MFA_PENDING = "mfa_pending"
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """创建 JWT 访问令牌"""
     return _create_token(data, TOKEN_TYPE_ACCESS, expires_delta)
+
+
+def set_webui_token_cookie(response: Response, token: str) -> None:
+    """写入正式 WebUI 登录 Cookie。"""
+    response.set_cookie(
+        WEBUI_TOKEN_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=True,
+        max_age=WEBUI_TOKEN_COOKIE_MAX_AGE,
+        samesite="lax",
+    )
+
+
+def renew_webui_token_cookie(response: Response, payload: dict) -> None:
+    """用现有声明重新签发并写入滑动 WebUI 登录 Cookie。"""
+    set_webui_token_cookie(response, create_access_token(payload))
 
 
 def create_mfa_pending_token(data: dict, expires_delta: timedelta | None = None) -> str:
