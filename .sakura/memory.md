@@ -1,58 +1,37 @@
 # 项目记忆
 
-累计反思 27 次
+累计反思 35 次
 
 ## 核心审查原则
 
 - **"无评论"≠"无问题"**：空结果可能源于工具故障；"无问题"结论须附验证依据（搜索命令、CI 链接）
-- **高分警惕确认偏误**：高分仍须做负向用例验证；"阻断合并"必须对应 error/major 标签
-- **审查策略动态升级**：批量升级多库或 PR 提交数激增（≥30 commits / >500 行）时 quick 必漏检，须切 full；最简变更也宜 medium
+- **高分警惕确认偏误**：高分仍须负向用例验证；"阻断合并"必须对应 error/major 标签
+- **审查策略动态升级**：≥30 commits / >500 行，或增量超 3 轮 / 累计 >800 行时切 full；最简变更也宜 medium
 - **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据
-- **报告结构化**：摘要→关键风险→修复建议；阻断项须在摘要阶段可见，勿埋在后续评论
+- **报告结构化**：阻断项须在摘要可见；每轮增量后自动列出"全局待验证项"（历史 major 闭环状态）
 
-## 依赖与锁文件（高频主题）
+## Gitflow 同步冲突与 Issue 自动化（#581-#584 高频主题）
 
-- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；漂移须标 error 而非 minor——锁文件随发布包分发
-- **CI 与发布链路一致**：pip install -r vs uv.lock 会"CI 过、发布挂"；统一 uv sync --locked；死依赖删除前查 CI/Dockerfile/脚本间接消费
-- **升级必附 Release Notes**：核对 Breaking Changes 与 Supported Python Versions；加 snapshot 对比关键输入输出，平台相关行为多 OS 验证
-- **工具限制**：大文件超搜索上限时改分块读取，勿跳过验证
+- **自动同步勿直接 merge**：main→develop 先 `git merge --no-commit --no-ff` 预检；有冲突则建 draft PR 而非直接合并/建 Issue，并附 `git diff --name-only` 冲突文件清单
+- **优先级看影响面**：冲突阻断 develop CI（阻塞全部在途 PR）宜升 high；已自愈仅一次告警可 low，但须复核自动化健壮性
+- **重复检测防误报**：标题相似≠重复；须比对分支方向、冲突 SHA、时间点；同类不同次标 related/similar
+- **闭环留痕**：关闭自愈 Issue 前注释解决的 commit SHA；同步流程写入 CONTRIBUTING.md
+- **标签统一防碎片化**：细分 gitflow/merge-conflict/ci-failure，勿笼统 other；automated/automation 二选一；维护 LABELS.md，≤5 核心标签
+- **.sakura/ 生成文件冲突**：宜重跑生成脚本而非手工编辑；设合并窗口降冲突频率
 
-## 会话认证与中间件（PR579 高频主题）
+## 依赖与锁文件
 
-- **Cookie 写入统一走 ASGI 中间件**（http.response.start 阶段），替代侵入式 Response 注入；临时数据用 request.state 传递
-- **续期前刷新权威 Claims**：重查 DB 同步角色/激活状态，防禁用用户旧 token 续命；幂等守卫（has_webui_cookie）防重复写，并发续期须幂等单测
-- **Set-Cookie 时序**：检查 RedirectResponse/StreamingResponse 是否丢 Cookie；多中间件须文档化加载顺序
-- **特权入口单一校验**：管理员 API 不得绕过 MFA 公共校验链；401 处理器须删 Cookie 防重定向死循环
-- **Bearer/Query 不滑动续期**属需求决策，文档须明示"Cookie 滑动续期"边界
+- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；CI 加 `uv sync --locked`/`uv lock --check`，漂移标 error
+- **CI 与发布链路一致**：统一 uv sync --locked 防"CI 过、发布挂"；升级必附 Release Notes + snapshot 对比
 
-## 函数签名与常量
+## 会话认证与函数签名（PR578-579）
 
-- **改公开函数签名前全库搜调用点**（含直接调用的单测）；新增参数宜提供默认值/包装层；CI 加 type-check 捕获不匹配
-- **常量集中定义防漂移**：604800 等硬编码须 CI 检测；测试黑盒验证（断言 Set-Cookie Max-Age）勿依赖内部常量
+- **Cookie 写入统一走 ASGI 中间件**；续期前刷新权威 Claims；特权入口不得绕过 MFA；Bearer/Query 不滑动续期须文档明示
+- **改公开函数签名前全库搜调用点**；常量集中定义，测试黑盒断言勿依赖内部常量
+- **禁同方法内递归自身 _request**：统一封装外部调用；合约变更须端到端兼容+灰度+故障注入（高覆盖≠安全）
 
-## 递归调用与协议变更（PR578）
+## 安全、CI 契约与流程
 
-- **禁同方法内递归自身 _request**：致超时误判/递归死锁；外部调用统一封装 request_with_timeout
-- **合约/协议变更全链路影响**：端到端兼容检查+灰度发布；CI 步骤须幂等+资源清理；doc-sync 自动比对文档与代码
-- **测试高覆盖≠安全**：成功路径 3000+ 通过仍需故障注入（网络延迟、镜像拉取失败）
-
-## 核心模块与并发
-
-- **无界循环须物理硬约束**；状态写入幂等+并发防护；迁移/服务脚本幂等+回退路径测试
-- **配置项须有真实消费点**；环境变量须在容器镜像/部署模板声明
-
-## 安全与守护进程
-
-- **异常脱敏分级**：用户输入错误可透传，内部错误脱敏；禁止裸 except
-- **系统级资源防御式校验**：路径/权限/所有者检查集中到统一抽象
-- **非 systemd 环境回退**：容器/裸机下明确报错或 fallback，勿留僵尸进程；PIDFile 残留清理须有测试
-
-## 流程与协作
-
-- **增量审查须复查前轮未决项**；开始前跑全链路抽查（grep 关键函数所有调用点），结束后全局回归
-- **merge commit 噪声**：增量审查过滤合并提交；引导 rebase/squash
-
-## Issue 分析
-
-- **优先级纳入影响范围与恢复成本**：数据永久缺失类升 high；重复检测仅靠关键字会误/漏报
-- **AI 审查改进**：adversarial pass 仅高风险文件触发；历史 PR 构建回归套件
+- **安全契约配套测试**：workflow `permissions: {}` 等最小权限写成 Workflow Contract Tests 断言，防回归
+- **CI 验证不止 lint**：同步类工作流须含单测+type-check，仅 ruff 不足以保证功能可用
+- **增量审查勿代全局评估**：每轮复查前轮未决 major；异常脱敏分级、禁裸 except；非 systemd 环境明确报错勿留僵尸进程
