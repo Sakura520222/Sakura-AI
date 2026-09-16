@@ -1,37 +1,49 @@
 # 项目记忆
 
-累计反思 35 次
+累计反思 33 次
 
-## 核心审查原则
+## 核心审查原则（简要）
+- **无评论≠无问题**：空结果需检查工具；结论需附验证依据。
+- **Fail‑Closed**：宁可误报也不可漏报；阻断项必须标记 error/major。
+- **动态审查策略**：增量审查 >3 次或改动 >1000 行时切换 full‑review。
+- **最小权限**：CI 工作流显式 `permissions: {}`，配合同约测试。
+- **锁文件同步**：`pyproject.toml`、`requirements.txt` 与 `uv.lock` 必须保持一致。
+- **递归调用禁令**：网络请求封装层禁止自调用，需使用幂等包装。
+- **安全 Cookie**：Set‑Cookie 必须声明 `Secure; HttpOnly; SameSite`，并在合适阶段写入。
 
-- **"无评论"≠"无问题"**：空结果可能源于工具故障；"无问题"结论须附验证依据（搜索命令、CI 链接）
-- **高分警惕确认偏误**：高分仍须负向用例验证；"阻断合并"必须对应 error/major 标签
-- **审查策略动态升级**：≥30 commits / >500 行，或增量超 3 轮 / 累计 >800 行时切 full；最简变更也宜 medium
-- **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据
-- **报告结构化**：阻断项须在摘要可见；每轮增量后自动列出"全局待验证项"（历史 major 闭环状态）
+## 新增反思要点
+### 1. ISSUE‑582（Gitflow 同步冲突）
+- **分类**：应归为 `workflow`/`git`，标签建议 `gitflow`, `ci-failure`, `merge-conflict`, `automation`（统一使用 `automation`）。
+- **优先级**：当前 low，若项目对 Gitflow 自动同步有 SLA，提升至 medium。
+- **可行性**：仅需 `git fetch && git log` 检查，工作量 <5 分钟。
+- **经验**：在 CI 报警时附冲突文件列表，自动创建 PR 而非直接合并；在文档 `CONTRIBUTING.md` 中加入同步流程。
 
-## Gitflow 同步冲突与 Issue 自动化（#581-#584 高频主题）
+### 2. ISSUE‑581（待补）
+（此文件暂无具体内容，保留占位以待后续补充）
 
-- **自动同步勿直接 merge**：main→develop 先 `git merge --no-commit --no-ff` 预检；有冲突则建 draft PR 而非直接合并/建 Issue，并附 `git diff --name-only` 冲突文件清单
-- **优先级看影响面**：冲突阻断 develop CI（阻塞全部在途 PR）宜升 high；已自愈仅一次告警可 low，但须复核自动化健壮性
-- **重复检测防误报**：标题相似≠重复；须比对分支方向、冲突 SHA、时间点；同类不同次标 related/similar
-- **闭环留痕**：关闭自愈 Issue 前注释解决的 commit SHA；同步流程写入 CONTRIBUTING.md
-- **标签统一防碎片化**：细分 gitflow/merge-conflict/ci-failure，勿笼统 other；automated/automation 二选一；维护 LABELS.md，≤5 核心标签
-- **.sakura/ 生成文件冲突**：宜重跑生成脚本而非手工编辑；设合并窗口降冲突频率
+### 3. PR‑580 增量审查（incr2 / incr3 / 主 PR）
+- **覆盖度**：增量审查聚焦改动文件，常漏掉历史 `major` 风险（锁文件漂移、递归调用）。
+- **模式**：最小化权限声明、Workflow Contract Tests、频繁小幅增量导致全局风险忽视。
+- **建议**：
+  1. **锁文件同步检查**：任何 `pyproject.toml`/`requirements.txt` 变动必须自动比对 `uv.lock`，不一致阻断合并。
+  2. **递归调用检测**：对 `*_client.py` 使用 AST 检查自调用，标记 `major`。
+  3. **增量+全局双模**：>3 次增量或累计改动行数 >800 自动触发 full‑review，列出所有未闭环 `major` 项。
+  4. **CI 输出约定**：业务脚本统一返回 JSON（`{"status":"superseded"}`），CI 统一解析，避免字符串误判。
+  5. **文档同步**：修改工作流或系统服务必须同步更新对应文档，缺失给 `minor` 警告。
 
-## 依赖与锁文件
+### 4. 其他发现（系统服务、Auth 中间件）
+- **systemd 脚本**：需保证幂等、原子写入、权限最小化；在非 systemd 环境提供回退。
+- **Auth 中间件**：`WebUITokenRenewalMiddleware` 在 `http.response.start` 写 Cookie，必须声明安全属性并配合 CSRF 防护。
+- **依赖升级**：大幅升级 `pydantic`, `redis`, `openai` 时需在 CI 加入兼容性测试套件。
 
-- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；CI 加 `uv sync --locked`/`uv lock --check`，漂移标 error
-- **CI 与发布链路一致**：统一 uv sync --locked 防"CI 过、发布挂"；升级必附 Release Notes + snapshot 对比
+## 行动建议
+1. **立即在 PR 中同步锁文件**（`uv lock && git add uv.lock`）。
+2. **重构 `updater_client.py`**，消除递归调用，加入幂等包装。
+3. **在 CI 添加 `uv lock --check` 与递归调用静态检测**。
+4. **更新项目标签列表**：统一使用 `automation`，新增 `merge-conflict`, `ci-failure`。
+5. **在审查模板中加入 “前置未解决问题” 检查项**，确保每轮增量审查都回顾历史 `major` 风险。
+6. **文档补全**：在 `CONTRIBUTING.md` 添加 Gitflow 同步流程、系统服务启动说明、Cookie 安全策略。
 
-## 会话认证与函数签名（PR578-579）
+---
 
-- **Cookie 写入统一走 ASGI 中间件**；续期前刷新权威 Claims；特权入口不得绕过 MFA；Bearer/Query 不滑动续期须文档明示
-- **改公开函数签名前全库搜调用点**；常量集中定义，测试黑盒断言勿依赖内部常量
-- **禁同方法内递归自身 _request**：统一封装外部调用；合约变更须端到端兼容+灰度+故障注入（高覆盖≠安全）
-
-## 安全、CI 契约与流程
-
-- **安全契约配套测试**：workflow `permissions: {}` 等最小权限写成 Workflow Contract Tests 断言，防回归
-- **CI 验证不止 lint**：同步类工作流须含单测+type-check，仅 ruff 不足以保证功能可用
-- **增量审查勿代全局评估**：每轮复查前轮未决 major；异常脱敏分级、禁裸 except；非 systemd 环境明确报错勿留僵尸进程
+通过上述更新，审查覆盖度、准确度与完整性将得到显著提升，既保持快速迭代，又确保关键风险不被遗漏。
