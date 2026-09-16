@@ -284,8 +284,8 @@ jobs:
                   {"role": "user", "content": user_prompt},
               ],
               "temperature": 0.3,
-              "reasoning_effort": "max",
-              "max_tokens": 131072,
+              "reasoning_effort": "high",
+              "max_tokens": 32000,
               "stream": False,
           }
           body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
