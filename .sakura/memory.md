@@ -1,49 +1,63 @@
 # 项目记忆
 
-累计反思 33 次
+累计反思 32 次
 
-## 核心审查原则（简要）
-- **无评论≠无问题**：空结果需检查工具；结论需附验证依据。
-- **Fail‑Closed**：宁可误报也不可漏报；阻断项必须标记 error/major。
-- **动态审查策略**：增量审查 >3 次或改动 >1000 行时切换 full‑review。
-- **最小权限**：CI 工作流显式 `permissions: {}`，配合同约测试。
-- **锁文件同步**：`pyproject.toml`、`requirements.txt` 与 `uv.lock` 必须保持一致。
-- **递归调用禁令**：网络请求封装层禁止自调用，需使用幂等包装。
-- **安全 Cookie**：Set‑Cookie 必须声明 `Secure; HttpOnly; SameSite`，并在合适阶段写入。
+## 核心审查原则
 
-## 新增反思要点
-### 1. ISSUE‑582（Gitflow 同步冲突）
-- **分类**：应归为 `workflow`/`git`，标签建议 `gitflow`, `ci-failure`, `merge-conflict`, `automation`（统一使用 `automation`）。
-- **优先级**：当前 low，若项目对 Gitflow 自动同步有 SLA，提升至 medium。
-- **可行性**：仅需 `git fetch && git log` 检查，工作量 <5 分钟。
-- **经验**：在 CI 报警时附冲突文件列表，自动创建 PR 而非直接合并；在文档 `CONTRIBUTING.md` 中加入同步流程。
+- **"无评论"≠"无问题"**：空结果可能源于工具故障；"无问题"结论须附验证依据（搜索命令、CI 链接）
+- **高分警惕确认偏误**：高分仍须负向用例验证；已有 major 未决项时，即使增量干净也须保持阻断，勿被高分掩盖
+- **审查策略动态升级**：≥30 commits / >500 行、或增量 ≥3 轮 / 累计 >1000 行时须切 full；最简变更也宜 medium
+- **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据
+- **大块改动分层审查**：单文件 >100 行拆分 PR 或专项审查，辅以 shellcheck/actionlint
+- **报告结构化**：摘要→关键风险→修复建议；阻断项须在摘要阶段可见，勿埋在后续评论
 
-### 2. ISSUE‑581（待补）
-（此文件暂无具体内容，保留占位以待后续补充）
+## 依赖与锁文件（高频主题）
 
-### 3. PR‑580 增量审查（incr2 / incr3 / 主 PR）
-- **覆盖度**：增量审查聚焦改动文件，常漏掉历史 `major` 风险（锁文件漂移、递归调用）。
-- **模式**：最小化权限声明、Workflow Contract Tests、频繁小幅增量导致全局风险忽视。
-- **建议**：
-  1. **锁文件同步检查**：任何 `pyproject.toml`/`requirements.txt` 变动必须自动比对 `uv.lock`，不一致阻断合并。
-  2. **递归调用检测**：对 `*_client.py` 使用 AST 检查自调用，标记 `major`。
-  3. **增量+全局双模**：>3 次增量或累计改动行数 >800 自动触发 full‑review，列出所有未闭环 `major` 项。
-  4. **CI 输出约定**：业务脚本统一返回 JSON（`{"status":"superseded"}`），CI 统一解析，避免字符串误判。
-  5. **文档同步**：修改工作流或系统服务必须同步更新对应文档，缺失给 `minor` 警告。
+- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；漂移须标 error；CI 加 `uv sync --locked && uv pip check` 或 `uv lock --check`
+- **子项目依赖须与根项目一致**（如 updater/pyproject.toml），差异须附兼容性说明
+- **升级必附 Release Notes**：核对 Breaking Changes 与 Python 版本；snapshot 对比关键输入输出 + 兼容测试（pydantic 2.x、redis RESP3 行为差异）
+- **递归调用禁令**：网络封装层禁同方法递归 _request（超时叠加/资源泄漏）；审查用 AST 静态分析检测自调用；统一封装低层请求函数
 
-### 4. 其他发现（系统服务、Auth 中间件）
-- **systemd 脚本**：需保证幂等、原子写入、权限最小化；在非 systemd 环境提供回退。
-- **Auth 中间件**：`WebUITokenRenewalMiddleware` 在 `http.response.start` 写 Cookie，必须声明安全属性并配合 CSRF 防护。
-- **依赖升级**：大幅升级 `pydantic`, `redis`, `openai` 时需在 CI 加入兼容性测试套件。
+## 会话认证与中间件（PR579/580 高频主题）
 
-## 行动建议
-1. **立即在 PR 中同步锁文件**（`uv lock && git add uv.lock`）。
-2. **重构 `updater_client.py`**，消除递归调用，加入幂等包装。
-3. **在 CI 添加 `uv lock --check` 与递归调用静态检测**。
-4. **更新项目标签列表**：统一使用 `automation`，新增 `merge-conflict`, `ci-failure`。
-5. **在审查模板中加入 “前置未解决问题” 检查项**，确保每轮增量审查都回顾历史 `major` 风险。
-6. **文档补全**：在 `CONTRIBUTING.md` 添加 Gitflow 同步流程、系统服务启动说明、Cookie 安全策略。
+- **Cookie 写入统一走 ASGI 中间件**（http.response.start 阶段）；须显式 Secure/HttpOnly/SameSite；幂等守卫防重复写；多中间件顺序文档化
+- **续期前刷新权威 Claims**：重查 DB 防禁用用户续命；新增 DB 查询须评估负载与缓存
+- **特权入口单一校验**：管理员 API 不得绕过 MFA 链；401 处理器须删 Cookie 防死循环
+- **行号白名单脆弱**：改用装饰器等语义标记 + CI 自动校验
+- **Bearer/Query 不滑动续期**属需求决策，文档须明示边界
 
----
+## 函数签名与常量
 
-通过上述更新，审查覆盖度、准确度与完整性将得到显著提升，既保持快速迭代，又确保关键风险不被遗漏。
+- **改公开函数签名前全库搜调用点**（含直接调用的单测）；新增参数宜提供默认值/包装层；CI 加 type-check 捕获不匹配
+- **常量集中定义防漂移**：604800 等硬编码须 CI 检测；测试黑盒验证（断言 Set-Cookie Max-Age）勿依赖内部常量
+
+## CI/工作流与协议变更（PR578/580）
+
+- **合约/协议变更全链路影响**：端到端兼容检查+灰度发布；CI 步骤须幂等+资源清理；doc-sync 比对文档与代码
+- **最小权限+契约测试**：workflow 显式 `permissions: {}` 并配套断言测试；改动须附影响矩阵；正则扫 secrets./sudo
+- **脚本→CI 耦合**：脚本影响 CI 须统一 JSON 输出；业务层勿裸抛异常（返回值+CI 捕获）
+- **测试高覆盖≠安全**：成功路径 3000+ 通过仍需故障注入
+
+## 核心模块与并发
+
+- **无界循环须物理硬约束**；状态写入幂等+并发防护；迁移/服务脚本幂等+回退路径测试
+- **配置项须有真实消费点**；环境变量须在容器镜像/部署模板声明
+
+## 安全与守护进程
+
+- **异常脱敏分级**：用户输入错误可透传，内部错误脱敏；禁止裸 except
+- **系统级资源防御式校验**：路径/权限/所有者检查集中到统一抽象
+- **systemd/脚本幂等**：原子写入 os.replace、PIDFile 残留清理须有测试、非 systemd 环境显式回退；User=/CapabilityBoundingSet= 最小化
+
+## 增量审查与协作（核心经验）
+
+- **增量+全局双模**：每轮增量后全局抽查（grep 关键常量/函数全部调用点），复查前轮 major 项闭环状态，结束后全局回归
+- **模板强制列"前置未解决问题"**：未解决 → 阻断合并
+- **merge commit 噪声**：增量审查过滤合并提交；引导 rebase/squash
+
+## Issue 分析
+
+- **分类避免笼统 other**（如 gitflow 冲突应为 workflow/git）；标签统一防碎片（automation≠automated），最多 4-5 个核心标签
+- **重复检测**：关键字组合+模糊匹配+近 30 天过滤，防误/漏报
+- **低优 Issue 关闭前附解决 commit 注释**；优先级纳入影响范围与恢复成本（数据永久缺失升 high）
+- **AI 审查改进**：adversarial pass 仅高风险文件触发；历史 PR 构建回归套件
