@@ -76,11 +76,16 @@ def publish(*, tag, web_digest, sandboxd_digest, runner_digest, run=command, cli
         raise ValueError("published deployment verification failed")
     digest = client._manifest_digest(headers)
     if run("git", "ls-remote", "origin", "refs/heads/develop").split()[0] != revision:
-        raise ValueError("source is no longer develop head; refusing channel rollback")
+        # A serialized older run can finish after another writer has advanced
+        # develop. Its immutable canonical deployment remains useful and safe,
+        # but moving edge now would roll the channel back. Report supersession
+        # so the workflow can succeed without advancing either registry head.
+        return None
     run("crane", "copy", repository + "@" + digest, repository + ":edge")
     return digest
 
 
 if __name__ == "__main__":
-    print(publish(tag=os.environ["DEPLOYMENT_TAG"], web_digest=os.environ["WEB_DIGEST"],
-                  sandboxd_digest=os.environ["SANDBOXD_DIGEST"], runner_digest=os.environ["RUNNER_DIGEST"]))
+    result = publish(tag=os.environ["DEPLOYMENT_TAG"], web_digest=os.environ["WEB_DIGEST"],
+                     sandboxd_digest=os.environ["SANDBOXD_DIGEST"], runner_digest=os.environ["RUNNER_DIGEST"])
+    print(result or "superseded")
