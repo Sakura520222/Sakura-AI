@@ -435,6 +435,62 @@ def test_systemctl_oserror_is_service_error(monkeypatch):
         systemd_mod._systemctl("daemon-reload")
 
 
+def test_run_systemctl_strips_pyinstaller_loader_env(monkeypatch, tmp_path):
+    """Host systemctl must not see loader paths from our _MEI extraction."""
+    extraction_dir = tmp_path / "_MEIextract"
+    extraction_dir.mkdir()
+    monkeypatch.setenv(
+        "LD_LIBRARY_PATH", f"{extraction_dir}:/opt/host/lib"
+    )
+    monkeypatch.setenv(
+        "LD_PRELOAD", f"{extraction_dir}/lib/libcrypto.so.3"
+    )
+    monkeypatch.setenv("SAKURA_HOST_MARKER", "required")
+    monkeypatch.setattr(
+        systemd_mod.sys, "_MEIPASS", str(extraction_dir), raising=False
+    )
+    calls: list[dict] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append({"argv": argv, "kwargs": kwargs})
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(systemd_mod.subprocess, "run", fake_run)
+
+    proc = systemd_mod._run_systemctl("daemon-reload")
+
+    assert proc.returncode == 0
+    assert calls[0]["argv"] == ["systemctl", "daemon-reload"]
+    env = calls[0]["kwargs"]["env"]
+    assert env["LD_LIBRARY_PATH"] == "/opt/host/lib"
+    assert "LD_PRELOAD" not in env
+    assert env["SAKURA_HOST_MARKER"] == "required"
+    assert all(str(extraction_dir) not in value for value in env.values())
+
+
+def test_run_systemctl_preserves_loader_env_outside_pyinstaller(monkeypatch):
+    """Without a PyInstaller root, host loader settings are unchanged."""
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/host/lib")
+    monkeypatch.setenv("LD_PRELOAD", "/opt/host/libaudit.so")
+    calls: list[dict] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append({"argv": argv, "kwargs": kwargs})
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(systemd_mod.subprocess, "run", fake_run)
+
+    systemd_mod._run_systemctl("is-active", UNIT_NAME)
+
+    env = calls[0]["kwargs"]["env"]
+    assert env["LD_LIBRARY_PATH"] == "/opt/host/lib"
+    assert env["LD_PRELOAD"] == "/opt/host/libaudit.so"
+
+
 def test_systemctl_multiline_stderr_is_single_line(monkeypatch):
     completed = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr="first line\nsecond line\n"
