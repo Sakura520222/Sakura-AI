@@ -75,6 +75,39 @@ async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
         return lock
 
 
+
+def _pyproject_is_installable(pyproject_path: Path) -> bool:
+    """Check whether a pyproject.toml describes an installable Python package.
+
+    A project is considered *not* installable (and ``pip install -e .`` would
+    fail) when:
+
+    * It has no ``[build-system]`` table — setuptools flat-layout auto-discovery
+      will refuse to proceed when multiple top-level directories exist.
+    * ``[tool.uv].package`` is explicitly set to ``false`` — the uv convention
+      for a *virtual project* that is never built or installed.
+
+    When the project is not installable the caller should fall back to
+    ``requirements.txt`` (if present) instead of attempting an editable install.
+    """
+
+    import tomllib  # stdlib ≥ 3.11
+
+    try:
+        with open(pyproject_path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+    # [tool.uv] package = false → virtual project, never installable
+    uv_package = data.get("tool", {}).get("uv", {}).get("package")
+    if uv_package is False:
+        return False
+
+    # No [build-system] → setuptools cannot determine how to build
+    return "build-system" in data
+
+
 class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
     """负责 clone/fetch/checkout Agent 独立工作区。"""
 
@@ -462,7 +495,13 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         # server-owned egress network.  No request or model field can select
         # or widen that network.
         pip_cmd = "/workspace/.venv/sandbox/bin/pip"
-        if has_pyproject:
+        # A pyproject.toml that is not installable (no [build-system], or
+        # marked as a virtual uv project) must not be editable-installed;
+        # fall back to requirements.txt when available.
+        installable_pyproject = has_pyproject and _pyproject_is_installable(
+            self._resolve_dependency_path(workspace, "pyproject.toml")
+        )
+        if installable_pyproject:
             result = await execute_request(
                 executor,
                 ExecutionRequest(
@@ -488,6 +527,11 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                     cancel_event=cancel_event,
                 ),
             )
+        else:
+            logger.info(
+                "Agent 工作区 pyproject.toml 不可安装且无 requirements.txt，跳过依赖安装"
+            )
+            return
         if self._dependency_result_was_cancelled(result, cancel_event):
             return
         if result.returncode != 0:
@@ -568,7 +612,13 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             dependency_python = executor.dependency_venv_python()
         except (OSError, RuntimeError, ValueError) as exc:
             raise ExecutionError("Agent 本地依赖 Python 路径不在工作区内") from exc
-        if has_pyproject:
+        # A pyproject.toml that is not installable (no [build-system], or
+        # marked as a virtual uv project) must not be editable-installed;
+        # fall back to requirements.txt when available.
+        installable_pyproject = has_pyproject and _pyproject_is_installable(
+            self._resolve_dependency_path(workspace, "pyproject.toml")
+        )
+        if installable_pyproject:
             dependency_args = (
                 str(dependency_python),
                 "-m",
@@ -578,7 +628,7 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 ".",
                 "--quiet",
             )
-        else:
+        elif (workspace / "requirements.txt").is_file():
             dependency_args = (
                 str(dependency_python),
                 "-m",
@@ -588,6 +638,11 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 "requirements.txt",
                 "--quiet",
             )
+        else:
+            logger.info(
+                "Agent 工作区 pyproject.toml 不可安装且无 requirements.txt，跳过依赖安装"
+            )
+            return
         result = await execute_request(
             executor,
             ExecutionRequest(
