@@ -529,3 +529,34 @@ async def test_health_failure_rolls_back_web_and_sandbox_transaction(tmp_path):
         {"version": "3.1.0", "channel": "stable"},
         "3.0.0",
     ]
+
+
+@pytest.mark.asyncio
+async def test_update_heals_missing_baseline_images_before_activation(tmp_path):
+    class _HealAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.ensured = []
+
+        async def ensure_image_present(self, image_ref, component_name="image"):
+            self.ensured.append((image_ref, component_name))
+
+    path = str(tmp_path / "state.json")
+    adapter = _HealAdapter()
+    deployment = _Deployment()
+    orchestrator = JobOrchestrator(
+        path,
+        adapter,
+        _Release(),
+        deployment,
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "success"
+    # Verify baseline images were ensured present
+    ensured_names = [item[1] for item in adapter.ensured]
+    assert "baseline web" in ensured_names
