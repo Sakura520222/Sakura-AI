@@ -888,9 +888,38 @@ class ImageAdapter:
         """
 
         await asyncio.to_thread(restore_deployment_snapshot, snapshot)
-        sandboxd_ref, _ = self._validate_snapshot_sandbox_refs(snapshot)
+        sandboxd_ref, runner_ref = self._validate_snapshot_sandbox_refs(snapshot)
         if sandboxd_ref is not None:
-            await self._run_sandboxd_reinstall()
+            try:
+                await self._run_sandboxd_reinstall()
+            except ImageCommandError as exc:
+                # If reinstall failed during rollback, check if old sandbox/runner images are missing and attempt recovery pull
+                recovered = False
+                if runner_ref:
+                    try:
+                        await self.pull(runner_ref)
+                        recovered = True
+                    except Exception:
+                        pass
+                if sandboxd_ref:
+                    try:
+                        await self.pull(sandboxd_ref)
+                        recovered = True
+                    except Exception:
+                        pass
+                if recovered:
+                    try:
+                        await self._run_sandboxd_reinstall()
+                    except Exception as retry_exc:
+                        detail = exc.stderr.strip() if exc.stderr else str(exc)
+                        raise ImageAdapterError(
+                            f"sandboxd rollback reinstall failed after auto-pull retry: {detail or retry_exc}"
+                        ) from retry_exc
+                else:
+                    detail = exc.stderr.strip() if exc.stderr else str(exc)
+                    raise ImageAdapterError(
+                        f"sandboxd rollback reinstall failed: {detail or exc}"
+                    ) from exc
         elif remove_new_sandbox:
             await self._run_sandboxd_uninstall_with_retry()
         await self._run_compose_up()
@@ -992,6 +1021,30 @@ class ImageAdapter:
         """Download an image without changing the authoritative env file."""
 
         await self._run_command(["docker", "pull", target_image])
+
+    async def ensure_image_present(self, image_ref: str, component_name: str = "image") -> None:
+        """Ensure an image is present locally; pull from registry if missing."""
+        if not image_ref:
+            return
+        try:
+            await self._run_command(["docker", "image", "inspect", image_ref])
+            return
+        except ImageCommandError:
+            pass
+
+        try:
+            await self.pull(image_ref)
+        except Exception as exc:
+            raise ImageAdapterError(
+                f"missing {component_name} image {image_ref!r} could not be pulled: {exc}"
+            ) from exc
+
+        try:
+            await self._run_command(["docker", "image", "inspect", image_ref])
+        except ImageCommandError as exc:
+            raise ImageAdapterError(
+                f"pulled {component_name} image {image_ref!r} is still missing from docker daemon: {exc}"
+            ) from exc
 
     async def verify_pulled_deployment(self, web, sandboxd, runner, *, version, channel, revision=None):
         """Prove all local immutable digests and build labels before committing env."""
@@ -1121,7 +1174,18 @@ class ImageAdapter:
                 # command can create the managed sidecar and then fail its
                 # readiness probe.  Legacy rollback must remove that sidecar.
                 self._new_sandbox_install_attempted = True
-                await self._run_sandboxd_reinstall()
+                try:
+                    await self._run_sandboxd_reinstall()
+                except ImageCommandError as exc:
+                    detail = exc.stderr.strip() if exc.stderr else str(exc)
+                    raise ImageCommandError(
+                        f"sandboxd reinstall failed: {detail or exc}",
+                        argv=exc.argv,
+                        returncode=exc.returncode,
+                        stdout=exc.stdout,
+                        stderr=exc.stderr,
+                        error_code=exc.error_code,
+                    ) from exc
             await self._run_compose_up()
         except Exception:
             try:

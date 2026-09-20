@@ -1069,7 +1069,13 @@ class JobOrchestrator:
         error_code = str(getattr(exc, "error_code", "update_failed"))
         stderr = str(getattr(exc, "stderr", "") or "")
         lines = stderr.splitlines() or None
-        return error_code, str(exc), lines
+        msg = str(exc)
+        if stderr and "detail:" not in msg:
+            err_lines = [l.strip() for l in stderr.splitlines() if l.strip()]
+            meaningful = [l for l in err_lines if "[FAIL]" in l or "Error:" in l or "error:" in l or "failed" in l.lower()]
+            if meaningful:
+                msg = f"{msg} (detail: {'; '.join(meaningful)})"
+        return error_code, msg, lines
 
     async def _rollback_after_cancellation(
         self, snapshot: Any, *, already_rolled_back: bool = False
@@ -1259,6 +1265,15 @@ class JobOrchestrator:
                 job.target_image, job.target_sandboxd_image, job.target_runner_image,
                 version=job.target_version, channel=job.target_channel, revision=job.target_revision,
             )
+            # Ensure baseline rollback images exist locally before activation.
+            # If any baseline image was pruned/deleted locally, self-heal by pulling it.
+            ensure_image = getattr(self.adapter, "ensure_image_present", None)
+            if ensure_image is not None:
+                if job.from_sandboxd_image and job.from_runner_image:
+                    await ensure_image(job.from_sandboxd_image, "baseline sandboxd")
+                    await ensure_image(job.from_runner_image, "baseline agent-runner")
+                if job.from_image:
+                    await ensure_image(job.from_image, "baseline web")
             self._transition(job, "activating", "activating")
             job.activation_started = True
             self._save_job(job)

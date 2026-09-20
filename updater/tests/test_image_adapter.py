@@ -683,3 +683,62 @@ def test_production_start_script_rejects_symlink_and_outside_project(tmp_path):
         pytest.skip("symlink creation is unavailable on this platform")
     with pytest.raises(ImageAdapterError, match="symlinks"):
         _trusted_start_script(symlink, project, lstat=os.lstat)
+
+
+@pytest.mark.asyncio
+async def test_rollback_auto_pulls_missing_baseline_runner_on_reinstall_failure(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    old_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    old_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n"
+        f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+    reinstall_attempts = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal reinstall_attempts
+        command = tuple(argv)
+        calls.append(command)
+        if command[0:4] == ("bash", str((project / "start.sh").resolve()), "sandboxd", "reinstall"):
+            reinstall_attempts += 1
+            if reinstall_attempts == 1:
+                # Activation reinstall fails (e.g. new sandboxd error)
+                return _Process(1, b"", b"[FAIL] sandboxd failed to start")
+            elif reinstall_attempts == 2:
+                # First rollback reinstall fails because old runner was deleted locally!
+                return _Process(1, b"", b"[FAIL] agent-runner image missing")
+            elif reinstall_attempts == 3:
+                # After auto-pull of runner, second rollback reinstall succeeds
+                return _Process()
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    # Activation will fail, but rollback should auto-pull old_runner and succeed!
+    with pytest.raises(ImageCommandError):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    content = env.read_text(encoding="utf-8")
+    assert f"SAKURA_AI_IMAGE={old_web}\n" in content
+    assert f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n" in content
+    assert f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n" in content
+    # Verify old_runner was pulled during rollback self-healing
+    assert ("docker", "pull", old_runner) in calls
+    assert reinstall_attempts == 3
