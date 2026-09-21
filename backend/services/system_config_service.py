@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, get_args
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -505,6 +506,16 @@ class SystemConfigService:
                 continue
             if key in all_dynamic_keys or key in CORE_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
+
+        if "star_aid_scheduler_enabled" in changed:
+            try:
+                from backend.services.star_aid_scheduler import get_star_aid_scheduler
+
+                scheduler = get_star_aid_scheduler()
+                if scheduler is not None:
+                    scheduler.restart_if_needed()
+            except Exception as exc:
+                logger.warning("热更新仓库互助调度器失败: {}", exc)
 
     def build_audit_log(
         self, changed: dict[str, dict[str, str]]

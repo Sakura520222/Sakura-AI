@@ -558,7 +558,17 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
             "message": "reauth_required" if result.reauth_required else "no_token",
         }
 
-    repos = await gh.list_user_public_repositories(token)
+    repo_list_res = await gh.list_user_public_repositories(token)
+    # 兼容处理：支持 RepositoryListResult 对象或原始 list（如测试 mock）
+    if isinstance(repo_list_res, list):
+        repos = repo_list_res
+        is_complete = True
+        is_success = True
+    else:
+        repos = repo_list_res.repositories
+        is_complete = repo_list_res.complete
+        is_success = repo_list_res.success
+
     synced_repo_ids: set[int] = set()
     synced = 0
     for r in repos:
@@ -636,26 +646,36 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
 
     await session.flush()
 
-    # 清理：该 owner 本次同步缺失的仓库（改为 private/删除/失权）移出展示池，
-    # 避免页面和调度器继续曝光 stale 仓库。
-    owner_result = await session.execute(
-        select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
-    )
+    # 清理规则（Fail-safe）：只有在拉取完全成功且未被截断（is_success and is_complete）时，
+    # 才将缺失的仓库标记为失效（stale cleanup）。如果第一页或中间页失败，绝不清空现有展示仓库。
     hidden = 0
-    for repo in owner_result.scalars().all():
-        still_visible = repo.repo_id in synced_repo_ids
-        if not still_visible and repo.is_displayed:
-            repo.is_displayed = False
-            repo.is_public = False
-            hidden += 1
-    await session.flush()
-    logger.info(
-        "star_aid repos synced: user_id={}, count={}, hidden={}",
-        user_id,
-        synced,
-        hidden,
-    )
-    return {"success": True, "synced": synced, "message": "ok"}
+    if is_success and is_complete:
+        owner_result = await session.execute(
+            select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
+        )
+        for repo in owner_result.scalars().all():
+            still_visible = repo.repo_id in synced_repo_ids
+            if not still_visible and repo.is_displayed:
+                repo.is_displayed = False
+                repo.is_public = False
+                hidden += 1
+        await session.flush()
+        logger.info(
+            "star_aid repos sync complete: user_id={}, count={}, hidden={}",
+            user_id,
+            synced,
+            hidden,
+        )
+        return {"success": True, "synced": synced, "message": "ok"}
+    else:
+        logger.warning(
+            "star_aid repos sync partial/failed: user_id={}, count={}, complete={}, cleanup_skipped=True",
+            user_id,
+            synced,
+            is_complete,
+        )
+        err_msg = getattr(repo_list_res, "error_code", None) or "sync_incomplete"
+        return {"success": False, "synced": synced, "message": err_msg}
 
 
 def _parse_github_timestamp(raw) -> datetime | None:

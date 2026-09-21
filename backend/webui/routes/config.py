@@ -1513,6 +1513,13 @@ async def save_general_config(
 
             reset_review_semaphore()
 
+        if "star_aid_scheduler_enabled" in changed:
+            from backend.services.star_aid_scheduler import get_star_aid_scheduler
+
+            star_sched = get_star_aid_scheduler()
+            if star_sched is not None:
+                star_sched.restart_if_needed()
+
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
         log_changed = {}
