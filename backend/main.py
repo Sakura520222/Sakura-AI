@@ -494,9 +494,13 @@ async def lifespan(app: FastAPI):
 
                     # 启动仓库互助调度器
                     try:
-                        from backend.services.star_aid_scheduler import StarAidScheduler
+                        from backend.services.star_aid_scheduler import (
+                            StarAidScheduler,
+                            set_star_aid_scheduler,
+                        )
 
                         star_aid_scheduler = StarAidScheduler()
+                        set_star_aid_scheduler(star_aid_scheduler)
                         star_aid_scheduler.start()
                         app.state.star_aid_scheduler = star_aid_scheduler
                         existing_supervisor.register_scheduler(star_aid_scheduler)

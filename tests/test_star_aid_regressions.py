@@ -108,9 +108,11 @@ async def test_list_user_public_repositories_reads_all_pages(monkeypatch):
 
     monkeypatch.setattr(github_service.httpx, "AsyncClient", FakeClient)
 
-    repos = await github_service.list_user_public_repositories("token")
+    result = await github_service.list_user_public_repositories("token")
 
-    assert [r["full_name"] for r in repos] == ["owner/one", "owner/two"]
+    assert result.success is True
+    assert result.complete is True
+    assert [r["full_name"] for r in result.repositories] == ["owner/one", "owner/two"]
     assert calls == [1, 2, 3]
 
 

@@ -15,17 +15,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import func, select
 
 from backend.core.config import get_dynamic_config
 from backend.core.time_service import (
+    format_rfc3339,
     get_time_service,
     local_date,
     now_utc,
+    parse_rfc3339,
     start_of_local_day,
 )
 from backend.models.database import async_session
@@ -44,9 +47,51 @@ from backend.services import star_aid_service
 # 单成员每轮最多尝试的目标数
 _MAX_TARGETS_PER_MEMBER = 3
 
+# Redis cooldown 键名
+_REDIS_COOLDOWN_KEY = "star_aid:worker:cooldown"
+
+# 进程内内存 cooldown 时间戳（aware UTC）
+_in_process_cooldown_until: datetime | None = None
+
 
 class StarAidWorker:
     """单轮自动 star 执行器。"""
+
+    @classmethod
+    async def get_cooldown_until(cls) -> datetime | None:
+        now = now_utc()
+        # 1. 优先检查 Redis 中的全局冷却时间
+        try:
+            from backend.core.redis import get_async_redis
+
+            r = await get_async_redis()
+            val = await r.get(_REDIS_COOLDOWN_KEY)
+            if val:
+                redis_until = parse_rfc3339(val)
+                if redis_until > now:
+                    return redis_until
+        except Exception:
+            pass
+
+        # 2. 回退检查进程内冷却
+        if _in_process_cooldown_until and _in_process_cooldown_until > now:
+            return _in_process_cooldown_until
+        return None
+
+    @classmethod
+    async def set_cooldown_until(cls, until: datetime) -> None:
+        global _in_process_cooldown_until
+        _in_process_cooldown_until = until
+        now = now_utc()
+        ttl = max(1, int((until - now).total_seconds()))
+        try:
+            from backend.core.redis import get_async_redis
+
+            r = await get_async_redis()
+            await r.set(_REDIS_COOLDOWN_KEY, format_rfc3339(until), ex=ttl)
+        except Exception:
+            pass
+
 
     async def run_tick(self) -> None:
         if async_session is None:
@@ -57,8 +102,13 @@ class StarAidWorker:
         if not await star_aid_service.is_auto_star_enabled():
             return
 
-        batch_size = int(await get_dynamic_config("star_aid_batch_size") or 5)
+        cooldown_until = await self.get_cooldown_until()
         now = now_utc()
+        if cooldown_until and cooldown_until > now:
+            logger.warning("star_aid tick skipped: worker in cooldown until {}", cooldown_until)
+            return
+
+        batch_size = int(await get_dynamic_config("star_aid_batch_size") or 5)
         async with async_session() as session:
             result = await session.execute(
                 select(StarAidMember.id)
@@ -76,7 +126,10 @@ class StarAidWorker:
         logger.info("star_aid tick: {} active member(s) due", len(member_ids))
         for member_id in member_ids:
             try:
-                await self._process_member(member_id)
+                short_circuit = await self._process_member(member_id)
+                if short_circuit:
+                    logger.warning("star_aid tick: aborting remaining batch members due to rate limit")
+                    break
             except Exception as exc:
                 logger.error(
                     "star_aid process member failed: member_id={}, error={}",
@@ -101,7 +154,13 @@ class StarAidWorker:
 
             rate_reset_at = None
             reauth = False
-            for repo_id in targets:
+            hit_rate_limit = False
+            for idx, repo_id in enumerate(targets):
+                if idx > 0:
+                    # 写操作 mutation pacing 间隔：1~2 秒 + 小随机 jitter
+                    pacing_seconds = random.uniform(1.0, 2.0)
+                    await asyncio.sleep(pacing_seconds)
+
                 result = await star_aid_service.perform_star(
                     session,
                     actor_user_id=member.user_id,
@@ -112,8 +171,13 @@ class StarAidWorker:
                 if result.get("reauth_required"):
                     reauth = True
                     break
-                if result.get("rate_limited") and result.get("rate_limit_reset_at"):
-                    rate_reset_at = result["rate_limit_reset_at"]
+                if result.get("rate_limited"):
+                    hit_rate_limit = True
+                    rate_reset_at = result.get("rate_limit_reset_at")
+                    if rate_reset_at is None:
+                        rate_reset_at = now + timedelta(seconds=60)
+                    # 触发 worker 级 cooldown 并短路后续成员
+                    await self.set_cooldown_until(rate_reset_at)
                     break
 
             min_interval = int(
@@ -136,6 +200,7 @@ class StarAidWorker:
                         minutes=random.randint(lo, hi)
                     )
             await session.commit()
+            return hit_rate_limit
 
     def _needs_daily_reset(self, member: StarAidMember) -> bool:
         service = get_time_service()
