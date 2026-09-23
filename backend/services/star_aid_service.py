@@ -181,6 +181,7 @@ async def get_page_state(
     user: dict,
     *,
     admin_repository_query: dict | None = None,
+    admin_member_query: dict | None = None,
 ) -> dict:
     """聚合仓库互助页面所需的全部状态。"""
     user_id = int(user["user_id"])
@@ -229,10 +230,14 @@ async def get_page_state(
 
     # 管理员可见的成员/仓库列表
     admin_members = None
+    admin_member_page = None
     admin_repositories = None
     admin_repository_page = None
     if role in ("admin", "super_admin"):
-        admin_members = await get_admin_members(session)
+        admin_member_page = await get_admin_member_page(
+            session, **(admin_member_query or {})
+        )
+        admin_members = admin_member_page["items"]
         admin_repository_page = await get_admin_repository_page(
             session, **(admin_repository_query or {})
         )
@@ -253,6 +258,7 @@ async def get_page_state(
         "displayed_repos": displayed_dicts,
         "public_repos": public_repos,
         "admin_members": admin_members,
+        "admin_member_page": admin_member_page,
         "admin_repositories": admin_repositories,
         "admin_repository_page": admin_repository_page,
     }
@@ -292,6 +298,85 @@ async def get_admin_members(session) -> list[dict]:
         }
         for m in members
     ]
+
+
+_ADMIN_MEMBER_STATUSES = frozenset(
+    {"all", "active", "paused", "banned", "reauth_required"}
+)
+
+
+async def get_admin_member_page(
+    session,
+    *,
+    member_q: str = "",
+    member_status: str = "all",
+    member_page: int = 1,
+    member_page_size: int = 20,
+) -> dict:
+    """Return one filtered member page without loading the entire member table."""
+    member_q = (member_q or "").strip()[:100]
+    member_status = (
+        member_status if member_status in _ADMIN_MEMBER_STATUSES else "all"
+    )
+    member_page = max(1, int(member_page))
+    member_page_size = min(100, max(1, int(member_page_size)))
+    filters = [StarAidMember.status != MEMBER_STATUS_LEFT]
+    if member_q:
+        # A username search treats SQL LIKE wildcards as literal characters.
+        escape = "\\"
+        escaped = (
+            member_q.replace(escape, escape * 2)
+            .replace("%", escape + "%")
+            .replace("_", escape + "_")
+        )
+        filters.append(
+            StarAidMember.github_username.ilike(f"%{escaped}%", escape=escape)
+        )
+    if member_status != "all":
+        filters.append(StarAidMember.status == member_status)
+    count = await session.execute(
+        select(func.count()).select_from(StarAidMember).where(*filters)
+    )
+    total = int(count.scalar_one())
+    pages = max(1, (total + member_page_size - 1) // member_page_size)
+    member_page = min(member_page, pages)
+    if member_q or member_status != "all":
+        unfiltered = await session.execute(
+            select(func.count()).select_from(StarAidMember).where(
+                StarAidMember.status != MEMBER_STATUS_LEFT
+            )
+        )
+        all_total = int(unfiltered.scalar_one())
+    else:
+        all_total = total
+    result = await session.execute(
+        select(StarAidMember)
+        .where(*filters)
+        .order_by(
+            StarAidMember.status, StarAidMember.joined_at.desc(), StarAidMember.id
+        )
+        .offset((member_page - 1) * member_page_size)
+        .limit(member_page_size)
+    )
+    return {
+        "items": [
+            {
+                "user_id": m.user_id,
+                "github_username": m.github_username,
+                "status": m.status,
+                "daily_star_used": m.daily_star_used,
+                "daily_star_limit": m.daily_star_limit,
+            }
+            for m in result.scalars().all()
+        ],
+        "total": total,
+        "all_total": all_total,
+        "pages": pages,
+        "page": member_page,
+        "page_size": member_page_size,
+        "q": member_q,
+        "status": member_status,
+    }
 
 
 async def get_admin_repositories(session) -> list[dict]:
