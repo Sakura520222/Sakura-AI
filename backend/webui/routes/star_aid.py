@@ -341,9 +341,26 @@ async def index(
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
     user_prefs: dict = Depends(get_user_preferences),
+    q: str = Query(default="", max_length=255),
+    status: str = Query(default="all"),
+    sort: str = Query(default="stars"),
+    order: str = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
 ):
     """仓库互助页面主入口（所有已登录用户可访问）。"""
-    state = await star_aid_service.get_page_state(db, user)
+    state = await star_aid_service.get_page_state(
+        db,
+        user,
+        admin_repository_query={
+            "q": q,
+            "status": status,
+            "sort": sort,
+            "order": order,
+            "page": page,
+            "page_size": page_size,
+        },
+    )
     return render_template(
         "star_aid/index.html",
         request,
