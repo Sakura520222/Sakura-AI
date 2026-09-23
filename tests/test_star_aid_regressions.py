@@ -564,7 +564,15 @@ def test_star_aid_template_refreshes_only_the_repository_list():
     assert 'data-admin-repository-search' in template
     assert template.count('data-admin-repository-filter class=') == 4
     assert "setTimeout(() => refreshFromForm(form), 350)" in template
-    assert "currentPanel.replaceWith(nextPanel)" in template
+    assert "currentResults.replaceWith(nextResults)" in template
+    assert "currentPanel.replaceWith(nextPanel)" not in template
+    assert 'id="star-aid-admin-repository-results"' in template
+    assert 'id="star-aid-admin-repositories"' in template
+    assert 'id="star-aid-admin-repositories" class="rounded-lg border border-gray-200 dark:border-gray-700" open' not in template
+    assert 'name="member_q"' in template
+    assert 'name="member_status"' in template
+    assert 'name="member_page_size"' in template
+    assert "star_aid.bulk_actions_later" in template
     assert "data-admin-repository-page" in template
     assert "{{ _('common.search') }}" not in template
     assert ">Sakura AI</p>" not in template
@@ -579,3 +587,110 @@ def test_star_aid_template_posts_selected_repository_names_to_expected_field():
 
     assert 'name="repo_full_names"' in template
     assert 'name="repositories"' not in template
+
+
+@pytest.mark.asyncio
+async def test_admin_member_page_filters_counts_and_clamps_page():
+    from types import SimpleNamespace
+
+    member = SimpleNamespace(
+        user_id=9, github_username="alice", status="active",
+        daily_star_used=2, daily_star_limit=20,
+    )
+
+    class Result:
+        def __init__(self, total=None, rows=None):
+            self.total = total
+            self.rows = rows or []
+
+        def scalar_one(self):
+            return self.total
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Session:
+        def __init__(self):
+            self.statements = []
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return [Result(total=21), Result(total=43), Result(rows=[member])][
+                len(self.statements) - 1
+            ]
+
+    session = Session()
+    page = await star_aid_service.get_admin_member_page(
+        session, member_q="ali%_", member_status="active",
+        member_page=99, member_page_size=20,
+    )
+    assert page["total"] == 21
+    assert page["all_total"] == 43
+    assert page["page"] == 2 and page["pages"] == 2
+    assert page["items"][0]["github_username"] == "alice"
+    assert "LIKE" in str(session.statements[0])
+    assert "LIMIT" in str(session.statements[2])
+    assert "OFFSET" in str(session.statements[2])
+
+
+def test_star_aid_template_is_parseable():
+    from jinja2 import Environment
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "backend/webui/templates/star_aid/index.html"
+    ).read_text(encoding="utf-8")
+    Environment().parse(template)
+
+
+def test_admin_page_renders_empty_filtered_member_and_repository_panels():
+    from types import SimpleNamespace
+
+    from jinja2 import DictLoader, Environment, StrictUndefined
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "backend/webui/templates/star_aid/index.html"
+    ).read_text(encoding="utf-8")
+    environment = Environment(
+        loader=DictLoader({
+            "base.html": "{% block content %}{% endblock %}{% block extra_scripts %}{% endblock %}",
+            "star_aid/index.html": template,
+        }),
+        undefined=StrictUndefined,
+        autoescape=True,
+    )
+    state = {
+        "feature_enabled": True,
+        "member": None,
+        "credential_status": "authorized",
+        "daily_star_used": 0,
+        "daily_star_limit": 20,
+        "available_repos": [],
+        "displayed_repos": [],
+        "public_repos": [],
+        "is_admin": True,
+        "admin_members": [],
+        "admin_member_page": {
+            "items": [], "q": "", "status": "all", "total": 0,
+            "all_total": 0, "page": 1, "pages": 1, "page_size": 20,
+        },
+        "admin_repositories": [],
+        "admin_repository_page": {
+            "items": [], "q": "", "status": "all", "sort": "stars",
+            "order": "desc", "total": 0, "page": 1, "pages": 1,
+            "page_size": 20,
+        },
+    }
+    output = environment.get_template("star_aid/index.html").render(
+        state=state,
+        request=SimpleNamespace(query_params={}),
+        csrf_token="test",
+        _=lambda key, **_kwargs: key,
+    )
+    assert 'name="member_status"' in output
+    assert 'id="star-aid-admin-repository-results"' in output
+    assert 'id="star-aid-admin-repositories"' in output

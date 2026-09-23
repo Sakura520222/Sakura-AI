@@ -347,6 +347,10 @@ async def index(
     order: str = Query(default="desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    member_q: str = Query(default="", max_length=100),
+    member_status: str = Query(default="all"),
+    member_page: int = Query(default=1, ge=1),
+    member_page_size: int = Query(default=20, ge=1, le=100),
 ):
     """仓库互助页面主入口（所有已登录用户可访问）。"""
     state = await star_aid_service.get_page_state(
@@ -359,6 +363,12 @@ async def index(
             "order": order,
             "page": page,
             "page_size": page_size,
+        },
+        admin_member_query={
+            "member_q": member_q,
+            "member_status": member_status,
+            "member_page": member_page,
+            "member_page_size": member_page_size,
         },
     )
     return render_template(
