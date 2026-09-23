@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -30,6 +29,7 @@ from backend.core.github_app import (
     refresh_user_access_token,
 )
 from backend.core.time_service import now_utc
+from backend.models import database as db_module
 from backend.models.star_aid_models import (
     MEMBER_STATUS_REAUTH_REQUIRED,
     StarAidCredential,
@@ -257,83 +257,6 @@ def _result_from_response(
 
 # ========== 凭据管理 / Credential management ==========
 
-# 并发刷新锁（跨进程 Redis 分布式锁 + 进程内 asyncio.Lock 双重串行化）
-_REFRESH_LOCKS: dict[int, asyncio.Lock] = {}
-_REFRESH_LOCKS_GUARD = asyncio.Lock()
-
-
-class _UserRefreshLockContext:
-    """跨实例/跨进程安全的同一用户 Refresh Token 并发锁。
-
-    结合进程内 asyncio.Lock 避免本进程多协程撞击 Redis，同时使用 Redis 键
-    实现 Uvicorn 多 worker / 多容器部署时的跨进程互斥。
-    当 Redis 不可用时安全降级为纯进程内互斥锁。
-    """
-
-    def __init__(self, user_id: int):
-        self.user_id = user_id
-        self._proc_lock: asyncio.Lock | None = None
-        self._redis_lock_key = f"star_aid:token_refresh_lock:{user_id}"
-        self._redis_token: str | None = None
-
-    async def __aenter__(self):
-        # 1. 获取进程内锁
-        async with _REFRESH_LOCKS_GUARD:
-            self._proc_lock = _REFRESH_LOCKS.get(self.user_id)
-            if self._proc_lock is None:
-                self._proc_lock = asyncio.Lock()
-                _REFRESH_LOCKS[self.user_id] = self._proc_lock
-
-        await self._proc_lock.acquire()
-
-        # 2. 尝试获取跨进程 Redis 锁（最多等待 15 秒，TTL 30 秒）
-        import uuid
-        token = str(uuid.uuid4())
-        self._redis_token = token
-        acquired_redis = False
-        try:
-            from backend.core.redis import get_async_redis
-
-            client = await get_async_redis()
-            start_time = asyncio.get_running_loop().time()
-            while asyncio.get_running_loop().time() - start_time < 15:
-                # set nx ex=30
-                ok = await client.set(self._redis_lock_key, token, nx=True, ex=30)
-                if ok:
-                    acquired_redis = True
-                    break
-                await asyncio.sleep(0.1)
-        except Exception as exc:
-            logger.debug("Redis 不可用，refresh token lock 降级为单实例进程锁: {}", exc)
-            acquired_redis = True  # 优雅降级
-
-        if not acquired_redis:
-            logger.warning("获取 Redis token refresh 锁超时: user_id={}", self.user_id)
-
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # 释放 Redis 锁（仅当持有对应 token 时释放）
-        try:
-            from backend.core.redis import get_async_redis
-
-            client = await get_async_redis()
-            current = await client.get(self._redis_lock_key)
-            if current == self._redis_token:
-                await client.delete(self._redis_lock_key)
-        except Exception:
-            pass
-
-        # 释放进程内锁
-        if self._proc_lock is not None and self._proc_lock.locked():
-            self._proc_lock.release()
-
-
-def _get_user_refresh_lock(user_id: int) -> _UserRefreshLockContext:
-    return _UserRefreshLockContext(user_id)
-
-
-
 def _client_credentials() -> tuple[str, str]:
     """从配置取 GitHub App client id / secret。"""
     settings = get_settings()
@@ -479,10 +402,19 @@ async def get_effective_access_token(
     if not expired:
         return access_token, GitHubCallResult(success=True)
 
-    # 需要刷新：进入用户级别锁进行串行化
-    async with _get_user_refresh_lock(user_id):
-        # Double check: 重新获取最新凭据，判断是否已被其他并发协程刷新
-        latest_cred = await get_credential(session, user_id)
+    # An independent transaction holds the row lock through the durable commit,
+    # without committing unrelated changes in the caller's session. A locking
+    # read also bypasses a stale caller identity map and repeatable-read snapshot.
+    if db_module.async_session is None:
+        return None, GitHubCallResult(error_code="database_unavailable")
+    async with db_module.async_session() as refresh_session:
+        locked = await refresh_session.execute(
+            select(StarAidCredential)
+            .where(StarAidCredential.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        latest_cred = locked.scalar_one_or_none()
         if latest_cred is None or latest_cred.revoked_at is not None:
             return None, GitHubCallResult(reauth_required=True, error_code="no_credential")
 
@@ -499,7 +431,9 @@ async def get_effective_access_token(
             except SecretCryptoError:
                 pass
 
-        refreshed, result = await _refresh_and_persist(session, latest_cred)
+        refreshed, result = await _refresh_and_persist(refresh_session, latest_cred)
+        if refreshed is not None or result.reauth_required:
+            await refresh_session.commit()
         if refreshed is None:
             return None, result
         return refreshed, GitHubCallResult(success=True)
