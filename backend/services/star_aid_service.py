@@ -20,7 +20,7 @@ import random
 from datetime import datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from backend.core.config import get_dynamic_config
 from backend.core.time_service import now_utc, parse_rfc3339
@@ -161,6 +161,7 @@ def _repo_to_dict(repo: StarAidRepository, *, score: float | None = None) -> dic
         "primary_language": repo.primary_language,
         "stargazers_count": repo.stargazers_count or 0,
         "pushed_at": repo.pushed_at,
+        "created_at": repo.created_at,
         "ai_summary": repo.ai_summary,
         "ai_summary_status": repo.ai_summary_status,
         "ai_summary_language": repo.ai_summary_language,
@@ -175,7 +176,12 @@ def _repo_to_dict(repo: StarAidRepository, *, score: float | None = None) -> dic
 # ========== 页面状态 ==========
 
 
-async def get_page_state(session, user: dict) -> dict:
+async def get_page_state(
+    session,
+    user: dict,
+    *,
+    admin_repository_query: dict | None = None,
+) -> dict:
     """聚合仓库互助页面所需的全部状态。"""
     user_id = int(user["user_id"])
     role = user.get("role", "user")
@@ -224,9 +230,15 @@ async def get_page_state(session, user: dict) -> dict:
     # 管理员可见的成员/仓库列表
     admin_members = None
     admin_repositories = None
+    admin_repository_page = None
     if role in ("admin", "super_admin"):
         admin_members = await get_admin_members(session)
-        admin_repositories = await get_admin_repositories(session)
+        admin_repository_page = await get_admin_repository_page(
+            session, **(admin_repository_query or {})
+        )
+        # Keep the legacy state key for callers/templates that consume it, but
+        # never load the entire repository table for the WebUI page.
+        admin_repositories = admin_repository_page["items"]
 
     return {
         "feature_enabled": feature_enabled,
@@ -242,6 +254,7 @@ async def get_page_state(session, user: dict) -> dict:
         "public_repos": public_repos,
         "admin_members": admin_members,
         "admin_repositories": admin_repositories,
+        "admin_repository_page": admin_repository_page,
     }
 
 
@@ -290,6 +303,150 @@ async def get_admin_repositories(session) -> list[dict]:
         )
     )
     return [_repo_to_dict(repo) for repo in result.scalars().all()]
+
+
+_ADMIN_REPOSITORY_STATUSES = frozenset(
+    {"all", "displayed", "not_displayed", "disabled"}
+)
+_ADMIN_REPOSITORY_SORT_COLUMNS = {
+    "name": StarAidRepository.full_name,
+    "stars": StarAidRepository.stargazers_count,
+    "pushed_at": StarAidRepository.pushed_at,
+    "created_at": StarAidRepository.created_at,
+}
+_ADMIN_REPOSITORY_ORDERS = frozenset({"asc", "desc"})
+_ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE = 20
+_ADMIN_REPOSITORY_MAX_PAGE_SIZE = 100
+
+
+def _normalize_admin_repository_query(
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> dict:
+    """Normalize administrator repository-list query input.
+
+    The values are used only to choose from fixed SQLAlchemy columns and
+    predicates.  Request values are never interpolated into SQL.
+    """
+    normalized_status = status if status in _ADMIN_REPOSITORY_STATUSES else "all"
+    normalized_sort = sort if sort in _ADMIN_REPOSITORY_SORT_COLUMNS else "stars"
+    normalized_order = order if order in _ADMIN_REPOSITORY_ORDERS else "desc"
+    try:
+        normalized_page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        normalized_page = 1
+    try:
+        normalized_page_size = int(page_size or _ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE)
+    except (TypeError, ValueError):
+        normalized_page_size = _ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE
+
+    return {
+        "q": (q or "").strip()[:255],
+        "status": normalized_status,
+        "sort": normalized_sort,
+        "order": normalized_order,
+        "page": normalized_page,
+        "page_size": min(
+            _ADMIN_REPOSITORY_MAX_PAGE_SIZE,
+            max(1, normalized_page_size),
+        ),
+    }
+
+
+def _admin_repository_filters(query: dict) -> list:
+    filters = []
+    if query["q"]:
+        pattern = f"%{query['q']}%"
+        filters.append(
+            or_(
+                StarAidRepository.full_name.ilike(pattern),
+                StarAidRepository.owner_login.ilike(pattern),
+                StarAidRepository.repo_name.ilike(pattern),
+            )
+        )
+    if query["status"] == "displayed":
+        filters.extend(
+            (
+                StarAidRepository.is_displayed.is_(True),
+                StarAidRepository.disabled_by_admin.is_(False),
+            )
+        )
+    elif query["status"] == "not_displayed":
+        filters.extend(
+            (
+                StarAidRepository.is_displayed.is_(False),
+                StarAidRepository.disabled_by_admin.is_(False),
+            )
+        )
+    elif query["status"] == "disabled":
+        filters.append(StarAidRepository.disabled_by_admin.is_(True))
+    return filters
+
+
+async def get_admin_repository_page(
+    session,
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> dict:
+    """Return one filtered, sorted administrator repository page.
+
+    This query is deliberately separate from :func:`get_admin_repositories`,
+    which remains available for existing non-WebUI callers that truly require
+    the full list.
+    """
+    query = _normalize_admin_repository_query(
+        q=q,
+        status=status,
+        sort=sort,
+        order=order,
+        page=page,
+        page_size=page_size,
+    )
+    filters = _admin_repository_filters(query)
+    total_result = await session.execute(
+        select(func.count()).select_from(StarAidRepository).where(*filters)
+    )
+    total = int(total_result.scalar_one())
+    pages = max(1, (total + query["page_size"] - 1) // query["page_size"])
+    query["page"] = min(query["page"], pages)
+
+    sort_column = _ADMIN_REPOSITORY_SORT_COLUMNS[query["sort"]]
+    sort_expression = (
+        sort_column.asc()
+        if query["order"] == "asc"
+        else sort_column.desc()
+    )
+    # Keep NULL timestamps after actual timestamps on engines that otherwise
+    # disagree about NULL ordering.  The primary-key tie-breaker keeps paging
+    # stable while records are added concurrently.
+    ordering = []
+    if query["sort"] == "pushed_at":
+        ordering.append(sort_column.is_(None).asc())
+    ordering.extend((sort_expression, StarAidRepository.id.asc()))
+
+    result = await session.execute(
+        select(StarAidRepository)
+        .where(*filters)
+        .order_by(*ordering)
+        .offset((query["page"] - 1) * query["page_size"])
+        .limit(query["page_size"])
+    )
+    return {
+        **query,
+        "items": [_repo_to_dict(repo) for repo in result.scalars().all()],
+        "total": total,
+        "pages": pages,
+    }
 
 
 # ========== 仓库同步与选择 ==========
