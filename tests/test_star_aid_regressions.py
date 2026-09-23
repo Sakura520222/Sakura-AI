@@ -1,6 +1,7 @@
 """Star Aid regression tests for completion gaps."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -441,3 +442,140 @@ async def test_upsert_action_log_preserves_existing_created_star():
     )
 
     assert existing.created_star is True  # 保留历史 True，退出时仍能识别为本功能创建
+
+
+def test_admin_repository_query_normalizes_untrusted_values():
+    query = star_aid_service._normalize_admin_repository_query(
+        q="  Sakura-AI  ",
+        status="unexpected",
+        sort="DROP TABLE",
+        order="sideways",
+        page=-8,
+        page_size=9999,
+    )
+
+    assert query == {
+        "q": "Sakura-AI",
+        "status": "all",
+        "sort": "stars",
+        "order": "desc",
+        "page": 1,
+        "page_size": 100,
+    }
+
+
+def test_admin_repository_filters_cover_search_and_each_status():
+    for status, expected_fragment in (
+        ("displayed", "is_displayed"),
+        ("not_displayed", "is_displayed"),
+        ("disabled", "disabled_by_admin"),
+    ):
+        query = star_aid_service._normalize_admin_repository_query(
+            q="owner/repo", status=status
+        )
+        filters = star_aid_service._admin_repository_filters(query)
+        rendered = " ".join(str(condition) for condition in filters)
+
+        assert "full_name" in rendered
+        assert "owner_login" in rendered
+        assert "repo_name" in rendered
+        assert expected_fragment in rendered
+
+
+@pytest.mark.asyncio
+async def test_admin_repository_page_applies_sort_and_pagination():
+    from types import SimpleNamespace
+
+    repo = SimpleNamespace(
+        id=8,
+        full_name="owner/repo",
+        owner_login="owner",
+        repo_name="repo",
+        html_url="https://github.com/owner/repo",
+        description=None,
+        topics_json=None,
+        primary_language="Python",
+        stargazers_count=42,
+        pushed_at=datetime(2026, 9, 1, tzinfo=UTC),
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+        ai_summary=None,
+        ai_summary_status="pending",
+        ai_summary_language=None,
+        is_displayed=True,
+        disabled_by_admin=False,
+    )
+
+    class ScalarRows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class Result:
+        def __init__(self, *, total=None, rows=None):
+            self._total = total
+            self._rows = rows or []
+
+        def scalar_one(self):
+            return self._total
+
+        def scalars(self):
+            return ScalarRows(self._rows)
+
+    class FakeSession:
+        def __init__(self):
+            self.statements = []
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            if len(self.statements) == 1:
+                return Result(total=41)
+            return Result(rows=[repo])
+
+    session = FakeSession()
+    result = await star_aid_service.get_admin_repository_page(
+        session,
+        q="owner",
+        status="displayed",
+        sort="name",
+        order="asc",
+        page=3,
+        page_size=20,
+    )
+
+    assert result["total"] == 41
+    assert result["pages"] == 3
+    assert result["page"] == 3
+    assert result["items"][0]["full_name"] == "owner/repo"
+    rendered = str(session.statements[1])
+    assert "ORDER BY star_aid_repositories.full_name ASC" in rendered
+    assert "LIMIT" in rendered and "OFFSET" in rendered
+
+
+def test_star_aid_template_refreshes_only_the_repository_list():
+    """筛选只替换仓库列表 DOM，不触发整页导航。"""
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "backend/webui/templates/star_aid/index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'name="page_size"' in template
+    assert 'data-admin-repository-search' in template
+    assert template.count('data-admin-repository-filter class=') == 4
+    assert "setTimeout(() => refreshFromForm(form), 350)" in template
+    assert "currentPanel.replaceWith(nextPanel)" in template
+    assert "data-admin-repository-page" in template
+    assert "{{ _('common.search') }}" not in template
+    assert ">Sakura AI</p>" not in template
+
+
+def test_star_aid_template_posts_selected_repository_names_to_expected_field():
+    """编辑展示仓库时，复选框字段必须匹配路由的 repo_full_names 参数。"""
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "backend/webui/templates/star_aid/index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'name="repo_full_names"' in template
+    assert 'name="repositories"' not in template
