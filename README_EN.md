@@ -182,6 +182,8 @@ The interactive menu's production deployment also asks for the channel on first 
 
 `sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs, enables, and starts the Host Updater systemd unit. Production binaries require a usable systemd as PID 1; otherwise the script fails clearly instead of claiming reboot self-start is configured. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
 
+Before activation, the Updater checks that local rollback images are available. If deployment state contains only one sandbox image digest, it reconstructs the complete pair from verified runtime identity and checks both images before activation, pulling either one if missing.
+
 Verify reboot self-start after installation:
 
 ```bash

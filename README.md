@@ -182,6 +182,8 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 `sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装并启用 Host Updater 的 systemd unit。生产 binary 要求宿主机 PID 1 为可用的 systemd；不满足时脚本会明确失败，不会声称已配置重启自启。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
 
+更新激活前，Updater 会检查本地回滚镜像；部署配置只记录一个沙箱镜像 digest 时，会从已验证的运行时恢复完整沙箱镜像对，并在激活前确认两者均可用（缺失时尝试拉取）。
+
 安装完成后可验证宿主机重启自启状态：
 
 ```bash

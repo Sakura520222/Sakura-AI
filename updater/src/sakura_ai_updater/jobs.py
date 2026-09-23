@@ -1269,9 +1269,17 @@ class JobOrchestrator:
             # If any baseline image was pruned/deleted locally, self-heal by pulling it.
             ensure_image = getattr(self.adapter, "ensure_image_present", None)
             if ensure_image is not None:
-                if job.from_sandboxd_image and job.from_runner_image:
-                    await ensure_image(job.from_sandboxd_image, "baseline sandboxd")
-                    await ensure_image(job.from_runner_image, "baseline agent-runner")
+                baseline_sandboxd = job.from_sandboxd_image
+                baseline_runner = job.from_runner_image
+                snapshot_values = getattr(deployment_snapshot, "values", None)
+                if isinstance(snapshot_values, Mapping):
+                    sandboxd = snapshot_values.get("SAKURA_SANDBOXD_IMAGE_DIGEST")
+                    runner = snapshot_values.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST")
+                    if sandboxd and runner:
+                        baseline_sandboxd, baseline_runner = sandboxd, runner
+                if baseline_sandboxd and baseline_runner:
+                    await ensure_image(baseline_sandboxd, "baseline sandboxd")
+                    await ensure_image(baseline_runner, "baseline agent-runner")
                 if job.from_image:
                     await ensure_image(job.from_image, "baseline web")
             self._transition(job, "activating", "activating")
