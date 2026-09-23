@@ -893,33 +893,44 @@ class ImageAdapter:
             try:
                 await self._run_sandboxd_reinstall()
             except ImageCommandError as exc:
-                # If reinstall failed during rollback, check if old sandbox/runner images are missing and attempt recovery pull
+                original = exc.stderr.strip() or str(exc)
                 recovered = False
-                if runner_ref:
+                recovery_errors: list[str] = []
+                for component, image_ref in (
+                    ("agent-runner", runner_ref),
+                    ("sandboxd", sandboxd_ref),
+                ):
+                    if image_ref is None:
+                        continue
                     try:
-                        await self.pull(runner_ref)
-                        recovered = True
-                    except Exception:
-                        pass
-                if sandboxd_ref:
-                    try:
-                        await self.pull(sandboxd_ref)
-                        recovered = True
-                    except Exception:
-                        pass
-                if recovered:
-                    try:
-                        await self._run_sandboxd_reinstall()
-                    except Exception as retry_exc:
-                        detail = exc.stderr.strip() if exc.stderr else str(exc)
-                        raise ImageAdapterError(
-                            f"sandboxd rollback reinstall failed after auto-pull retry: {detail or retry_exc}"
-                        ) from retry_exc
-                else:
-                    detail = exc.stderr.strip() if exc.stderr else str(exc)
+                        recovered = (
+                            await self.ensure_image_present(image_ref, component)
+                            or recovered
+                        )
+                    except ImageAdapterError as recovery_exc:
+                        recovery_errors.append(str(recovery_exc))
+                if recovery_errors:
                     raise ImageAdapterError(
-                        f"sandboxd rollback reinstall failed: {detail or exc}"
+                        "sandboxd rollback reinstall failed: "
+                        f"{original}; image recovery failed: {'; '.join(recovery_errors)}"
                     ) from exc
+                if not recovered:
+                    raise ImageAdapterError(
+                        "sandboxd rollback reinstall failed with baseline images present: "
+                        f"{original}"
+                    ) from exc
+                try:
+                    await self._run_sandboxd_reinstall()
+                except Exception as retry_exc:
+                    retry_detail = (
+                        retry_exc.stderr.strip() or str(retry_exc)
+                        if isinstance(retry_exc, ImageCommandError)
+                        else str(retry_exc)
+                    )
+                    raise ImageAdapterError(
+                        "sandboxd rollback reinstall failed after image recovery: "
+                        f"initial: {original}; retry: {retry_detail}"
+                    ) from retry_exc
         elif remove_new_sandbox:
             await self._run_sandboxd_uninstall_with_retry()
         await self._run_compose_up()
@@ -1022,21 +1033,22 @@ class ImageAdapter:
 
         await self._run_command(["docker", "pull", target_image])
 
-    async def ensure_image_present(self, image_ref: str, component_name: str = "image") -> None:
+    async def ensure_image_present(self, image_ref: str, component_name: str = "image") -> bool:
         """Ensure an image is present locally; pull from registry if missing."""
         if not image_ref:
-            return
+            return False
         try:
             await self._run_command(["docker", "image", "inspect", image_ref])
-            return
+            return False
         except ImageCommandError:
             pass
 
         try:
             await self.pull(image_ref)
-        except Exception as exc:
+        except ImageCommandError as exc:
+            detail = exc.stderr.strip() or str(exc)
             raise ImageAdapterError(
-                f"missing {component_name} image {image_ref!r} could not be pulled: {exc}"
+                f"missing {component_name} image {image_ref!r} could not be pulled: {detail}"
             ) from exc
 
         try:
@@ -1045,6 +1057,7 @@ class ImageAdapter:
             raise ImageAdapterError(
                 f"pulled {component_name} image {image_ref!r} is still missing from docker daemon: {exc}"
             ) from exc
+        return True
 
     async def verify_pulled_deployment(self, web, sandboxd, runner, *, version, channel, revision=None):
         """Prove all local immutable digests and build labels before committing env."""
