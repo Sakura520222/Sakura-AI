@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -560,3 +561,44 @@ async def test_update_heals_missing_baseline_images_before_activation(tmp_path):
     # Verify baseline images were ensured present
     ensured_names = [item[1] for item in adapter.ensured]
     assert "baseline web" in ensured_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_ref", ["sandboxd", "runner"])
+async def test_update_ensures_repaired_sandbox_rollback_pair_before_activation(
+    tmp_path, missing_ref,
+):
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "d" * 64
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "e" * 64
+
+    class _PartialDeployment(_Deployment):
+        async def sandbox_image_refs(self):
+            return (None if missing_ref == "sandboxd" else sandboxd,
+                    None if missing_ref == "runner" else runner)
+
+    class _RepairAdapter(_Adapter):
+        async def capture_snapshot(self, *, anchor_image=None):
+            return SimpleNamespace(values={
+                "SAKURA_SANDBOXD_IMAGE_DIGEST": sandboxd,
+                "SAKURA_AGENT_RUNNER_IMAGE_DIGEST": runner,
+            })
+
+        async def ensure_image_present(self, image_ref, component_name="image"):
+            self.calls.append(("ensure", image_ref, component_name))
+
+        async def activate(self, image, sandboxd_image, runner_image):
+            assert ("ensure", sandboxd, "baseline sandboxd") in self.calls
+            assert ("ensure", runner, "baseline agent-runner") in self.calls
+            self.calls.append(("activate", image))
+
+    path = str(tmp_path / "state.json")
+    adapter = _RepairAdapter()
+    orchestrator = JobOrchestrator(path, adapter, _Release(), _PartialDeployment(), disk_space_threshold=1)
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "success"
+    assert ("ensure", sandboxd, "baseline sandboxd") in adapter.calls
+    assert ("ensure", runner, "baseline agent-runner") in adapter.calls
