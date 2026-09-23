@@ -168,29 +168,58 @@
 
         {% if state.is_admin %}
         {% set admin_page = state.admin_repository_page or {} %}
+        {% set member_page = state.admin_member_page or {} %}
         {% set admin_items = admin_page["items"] if admin_page else state.admin_repositories %}
-        <details class="group">
+        <details class="group" {% if request.query_params.get('member_page') %}open{% endif %}>
             <summary class="flex h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
                 <div class="flex min-w-0 items-center gap-2">
                     <h2 class="font-semibold">{{ _('star_aid.admin_area') }}</h2>
-                    <span class="truncate text-xs text-sakura-700 dark:text-sakura-300">{{ _('star_aid.admin_members_count', count=state.admin_members|length) }} · {{ _('star_aid.admin_repositories_count', count=admin_page.total if admin_page else state.admin_repositories|length) }}</span>
+                    <span class="truncate text-xs text-sakura-700 dark:text-sakura-300">{{ _('star_aid.admin_members_count', count=member_page.all_total if member_page else state.admin_members|length) }} · {{ _('star_aid.admin_repositories_count', count=admin_page.total if admin_page else state.admin_repositories|length) }}</span>
                 </div>
                 <span class="text-lg text-gray-400 transition group-open:rotate-180">⌄</span>
             </summary>
             <div class="space-y-4 border-t border-gray-100 px-4 py-4 dark:border-gray-700">
-                {% if state.admin_members %}
-                <details class="rounded-lg border border-gray-200 dark:border-gray-700">
-                    <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_members') }} · {{ state.admin_members|length }}</summary>
+                <details class="rounded-lg border border-gray-200 dark:border-gray-700" {% if request.query_params.get('member_page') %}open{% endif %}>
+                    <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_members') }} · {{ member_page.all_total }}</summary>
+                    <form method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
+                        <input type="hidden" name="member_page" value="1">
+                        <label class="min-w-48 flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.search_members') }}
+                            <input type="search" name="member_q" value="{{ member_page.q }}" class="mt-1 min-h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.status_filter') }}
+                            <select name="member_status" class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                                {% for status in ['all', 'active', 'paused', 'banned', 'reauth_required'] %}
+                                <option value="{{ status }}" {% if member_page.status == status %}selected{% endif %}>{{ _('star_aid.member_filter_' ~ status) }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.page_size') }}
+                            <select name="member_page_size" class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                                {% for size in [20, 50, 100] %}<option value="{{ size }}" {% if member_page.page_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+                            </select>
+                        </label>
+                        <button type="submit" class="min-h-9 rounded-lg bg-sakura-600 px-3 text-sm text-white">{{ _('star_aid.apply_filters') }}</button>
+                    </form>
+                    {% if state.admin_members %}
                     <div class="overflow-x-auto border-t border-gray-200 dark:border-gray-700">
                         <table class="w-full min-w-[620px] text-left text-sm">
                             <thead><tr class="text-gray-500 dark:text-gray-400"><th class="px-3 py-2">{{ _('star_aid.admin_member_user') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_status') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_today') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_actions') }}</th></tr></thead>
                             <tbody>{% for member in state.admin_members %}<tr class="border-t border-gray-100 dark:border-gray-700/60"><td class="px-3 py-2">{{ member.github_username or member.user_id }}</td><td class="px-3 py-2">{{ member.status }}</td><td class="px-3 py-2">{{ member.daily_star_used }} / {{ member.daily_star_limit }}</td><td class="px-3 py-2">{% if member.status == 'banned' %}<form method="post" action="/star-aid/admin/members/{{ member.user_id }}/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-green-300 px-2 py-1 text-xs text-green-700 dark:border-green-800">{{ _('star_aid.unban_member') }}</button></form>{% else %}<form method="post" action="/star-aid/admin/members/{{ member.user_id }}/ban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800">{{ _('star_aid.ban_member') }}</button></form>{% endif %}</td></tr>{% endfor %}</tbody>
                         </table>
                     </div>
+                    {% else %}<p class="border-t border-gray-200 p-3 text-sm text-gray-500 dark:border-gray-700">{{ _('star_aid.no_matching_members') }}</p>{% endif %}
+                    {% if member_page.pages > 1 %}
+                    <nav class="flex items-center justify-between gap-3 border-t border-gray-200 p-3 text-sm dark:border-gray-700">
+                        <span>{{ _('star_aid.page_of', page=member_page.page, pages=member_page.pages) }}</span>
+                        <div class="flex gap-2">
+                            {% if member_page.page > 1 %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page - 1 }}&member_page_size={{ member_page.page_size }}" class="rounded border px-2 py-1">{{ _('star_aid.previous_page') }}</a>{% endif %}
+                            {% if member_page.page < member_page.pages %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page + 1 }}&member_page_size={{ member_page.page_size }}" class="rounded border px-2 py-1">{{ _('star_aid.next_page') }}</a>{% endif %}
+                        </div>
+                    </nav>
+                    {% endif %}
                 </details>
-                {% endif %}
 
-                <details id="star-aid-admin-repositories" class="rounded-lg border border-gray-200 dark:border-gray-700" open>
+                <details id="star-aid-admin-repositories" class="rounded-lg border border-gray-200 dark:border-gray-700">
                     <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_repositories') }} · {{ admin_page.total if admin_page else state.admin_repositories|length }}</summary>
                     <form id="star-aid-admin-repository-filters" method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
                         <input type="hidden" name="page" value="{{ admin_page.page or 1 }}">
@@ -215,6 +244,12 @@
                             <select name="page_size" data-admin-repository-filter class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900"><option value="10" {% if admin_page.page_size == 10 %}selected{% endif %}>10</option><option value="20" {% if admin_page.page_size == 20 or not admin_page.page_size %}selected{% endif %}>20</option><option value="50" {% if admin_page.page_size == 50 %}selected{% endif %}>50</option><option value="100" {% if admin_page.page_size == 100 %}selected{% endif %}>100</option></select>
                         </label>
                     </form>
+                    <div class="flex flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-700">
+                        <span>{{ _('star_aid.bulk_actions_later') }}</span>
+                        <button type="button" disabled class="rounded border px-2 py-1 opacity-50">{{ _('star_aid.bulk_enable') }}</button>
+                        <button type="button" disabled class="rounded border px-2 py-1 opacity-50">{{ _('star_aid.bulk_disable') }}</button>
+                    </div>
+                    <div id="star-aid-admin-repository-results">
                     {% if admin_items %}
                     <div class="overflow-x-auto">
                         <table class="w-full min-w-[760px] text-left text-sm">
@@ -232,6 +267,7 @@
                         </div>
                     </nav>
                     {% endif %}
+                    </div>
                 </details>
             </div>
         </details>
@@ -276,7 +312,15 @@
             );
             if (!nextPanel || !currentPanel) throw new Error('Missing repository panel');
 
-            currentPanel.replaceWith(nextPanel);
+            const nextResults = nextPanel.querySelector('#star-aid-admin-repository-results');
+            const currentResults = currentPanel.querySelector('#star-aid-admin-repository-results');
+            if (!nextResults || !currentResults) throw new Error('Missing repository results');
+            // Keep the live filter form and its focused input in the DOM.
+            currentResults.replaceWith(nextResults);
+            currentPanel.querySelector('summary').textContent =
+                nextPanel.querySelector('summary').textContent;
+            currentPanel.querySelector('[name="page"]').value =
+                nextPanel.querySelector('[name="page"]').value;
             if (pushHistory) history.replaceState(null, '', url);
         } catch (error) {
             if (error.name !== 'AbortError') {
