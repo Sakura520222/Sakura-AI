@@ -2,11 +2,49 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from backend.models.star_aid_models import StarAidRepository
 from backend.services import star_aid_github_service as gh
 from backend.services import star_aid_service
+
+
+@pytest.mark.asyncio
+async def test_non_list_payload_is_incomplete_and_preserves_displayed_repos(monkeypatch):
+    """A 200 object is not an empty terminal page and must not trigger cleanup."""
+    response = httpx.Response(
+        200,
+        json={"message": "unexpected"},
+        request=httpx.Request("GET", "https://api.github.com/user/repos"),
+    )
+    client = AsyncMock()
+    client.get.return_value = response
+    client.__aenter__.return_value = client
+    monkeypatch.setattr(gh.httpx, "AsyncClient", lambda: client)
+
+    listed = await gh.list_user_public_repositories("token")
+    assert not listed.success and not listed.complete
+    assert listed.error_code == "invalid_payload"
+
+    existing = StarAidRepository(
+        id=1, owner_user_id=123, repo_id=1001,
+        full_name="owner/repo-one", is_displayed=True, is_public=True,
+    )
+    monkeypatch.setattr(
+        star_aid_service.gh, "get_effective_access_token",
+        AsyncMock(return_value=("token", gh.GitHubCallResult(success=True))),
+    )
+    monkeypatch.setattr(
+        star_aid_service.gh, "list_user_public_repositories",
+        AsyncMock(return_value=listed),
+    )
+    session = AsyncMock()
+    result = await star_aid_service.refresh_available_repositories(session, 123)
+    assert result["success"] is False
+    assert result["message"] == "invalid_payload"
+    assert existing.is_displayed and existing.is_public
+    session.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

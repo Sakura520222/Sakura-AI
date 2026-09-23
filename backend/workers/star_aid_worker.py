@@ -155,19 +155,22 @@ class StarAidWorker:
             rate_reset_at = None
             reauth = False
             hit_rate_limit = False
-            for idx, repo_id in enumerate(targets):
-                if idx > 0:
-                    # 写操作 mutation pacing 间隔：1~2 秒 + 小随机 jitter
-                    pacing_seconds = random.uniform(1.0, 2.0)
-                    await asyncio.sleep(pacing_seconds)
+            for repo_id in targets:
+                # Preserve the gap between attempts across member boundaries.
+                if getattr(self, "_last_star_attempt_finished", False):
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
 
-                result = await star_aid_service.perform_star(
-                    session,
-                    actor_user_id=member.user_id,
-                    repository_id=repo_id,
-                    trigger="scheduler",
-                    enforce_daily_limit=True,
-                )
+                try:
+                    result = await star_aid_service.perform_star(
+                        session,
+                        actor_user_id=member.user_id,
+                        repository_id=repo_id,
+                        trigger="scheduler",
+                        enforce_daily_limit=True,
+                    )
+                finally:
+                    # The attempt may have reached GitHub before raising.
+                    self._last_star_attempt_finished = True
                 if result.get("reauth_required"):
                     reauth = True
                     break

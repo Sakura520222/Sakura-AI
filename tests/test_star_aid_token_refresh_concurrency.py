@@ -1,7 +1,6 @@
 """Concurrent token refresh tests for Star Aid."""
 
 import asyncio
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -56,43 +55,43 @@ async def test_concurrent_refresh_calls_github_only_once(monkeypatch):
 
     monkeypatch.setattr(gh, "save_credential_from_token", fake_save_credential)
 
-    fake_session = AsyncMock()
-
     async def fake_get_cred(session, uid):
         return cred
 
     monkeypatch.setattr(gh, "get_credential", fake_get_cred)
 
-    # Model a separate credential transaction serialized through a row lock.
+    # Model caller transactions serialized through the credential row lock.
     row_lock = asyncio.Lock()
-    refresh_session = AsyncMock()
-    refresh_session.execute.return_value = MagicMock(
-        scalar_one_or_none=lambda: cred
-    )
+    sessions = []
 
-    @asynccontextmanager
-    async def credential_session():
-        async with row_lock:
-            yield refresh_session
+    async def call_with_caller_session():
+        session = AsyncMock()
+        sessions.append(session)
 
-    monkeypatch.setattr(gh.db_module, "async_session", credential_session)
+        async def locked_read(_query):
+            await row_lock.acquire()
+            return MagicMock(scalar_one_or_none=lambda: cred)
+
+        session.execute.side_effect = locked_read
+        try:
+            return await gh.get_effective_access_token(session, user_id)
+        finally:
+            await session.commit()
+            if row_lock.locked() and session.execute.await_count:
+                row_lock.release()
 
     # 5 个并发协程同时调用 get_effective_access_token
     results = await asyncio.gather(
-        gh.get_effective_access_token(fake_session, user_id),
-        gh.get_effective_access_token(fake_session, user_id),
-        gh.get_effective_access_token(fake_session, user_id),
-        gh.get_effective_access_token(fake_session, user_id),
-        gh.get_effective_access_token(fake_session, user_id),
+        *(call_with_caller_session() for _ in range(5))
     )
 
     # 验证 GitHub 仅被请求刷新 1 次
     assert refresh_calls == 1
-    refresh_session.commit.assert_awaited_once()
-    assert fake_session.commit.await_count == 0
+    assert sum(session.execute.await_count for session in sessions) == 5
+    assert all(session.commit.await_count == 1 for session in sessions)
     from sqlalchemy.dialects import mysql
 
-    locked_query = refresh_session.execute.call_args.args[0]
+    locked_query = next(session.execute.call_args.args[0] for session in sessions if session.execute.await_count)
     assert "FOR UPDATE" in str(locked_query.compile(dialect=mysql.dialect()))
     assert locked_query.get_execution_options()["populate_existing"] is True
 
@@ -164,8 +163,8 @@ async def test_race_refresh_failure_does_not_revoke_if_already_refreshed(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_refresh_commits_before_releasing_independent_session(monkeypatch):
-    """A stale caller must not commit its work or refresh a second time."""
+async def test_refresh_uses_caller_transaction_and_reuses_locked_credential(monkeypatch):
+    """The token refresh must not open another session while the caller owns a connection."""
     now = datetime.now(UTC)
     stale = StarAidCredential(
         user_id=123, github_username="test",
@@ -200,27 +199,10 @@ async def test_refresh_commits_before_releasing_independent_session(monkeypatch)
 
     monkeypatch.setattr(gh, "refresh_user_access_token", fake_refresh)
     monkeypatch.setattr(gh, "save_credential_from_token", fake_save)
-    events = []
-
-    @asynccontextmanager
-    async def credential_session():
-        events.append("acquire")
-        dedicated = AsyncMock()
-        dedicated.execute.return_value = MagicMock(scalar_one_or_none=lambda: latest)
-
-        async def committed():
-            events.append("commit")
-
-        dedicated.commit.side_effect = committed
-        try:
-            yield dedicated
-        finally:
-            events.append("release")
-
-    monkeypatch.setattr(gh.db_module, "async_session", credential_session)
+    caller.execute.return_value = MagicMock(scalar_one_or_none=lambda: latest)
     for _ in range(2):
         token, result = await gh.get_effective_access_token(caller, 123)
         assert result.success and token == "new_access"
     assert refresh_calls == 1
-    assert events == ["acquire", "commit", "release", "acquire", "release"]
+    assert caller.execute.await_count == 2
     caller.commit.assert_not_awaited()
