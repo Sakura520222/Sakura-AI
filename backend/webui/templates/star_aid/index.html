@@ -74,7 +74,7 @@
         </div>
         <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
             {% for repo in state.public_repos %}
-            <article x-show="!publicSearch || {{ (repo.full_name ~ ' ' ~ (repo.description or '') ~ ' ' ~ (repo.primary_language or ''))|lower|tojson }}.includes(publicSearch.toLowerCase())" class="flex min-h-52 flex-col rounded-xl border border-gray-200 p-4 transition hover:border-sakura-200 hover:shadow-sm dark:border-gray-700 dark:hover:border-sakura-800">
+            <article x-show="!publicSearch || {{ (repo.full_name ~ ' ' ~ (repo.description or '') ~ ' ' ~ (repo.primary_language or ''))|lower|tojson|forceescape }}.includes(publicSearch.toLowerCase())" class="flex min-h-52 flex-col rounded-xl border border-gray-200 p-4 transition hover:border-sakura-200 hover:shadow-sm dark:border-gray-700 dark:hover:border-sakura-800">
                 <div class="flex items-start justify-between gap-3">
                     <a href="{{ repo.html_url }}" target="_blank" rel="noopener" class="min-w-0 truncate font-semibold text-sakura-700 hover:underline dark:text-sakura-300">{{ repo.full_name }}</a>
                     <span class="shrink-0 text-xs text-gray-500">★ {{ repo.stargazers_count }} {{ _('star_aid.stars_unit') }}</span>
@@ -170,6 +170,8 @@
         {% set admin_page = state.admin_repository_page or {} %}
         {% set member_page = state.admin_member_page or {} %}
         {% set admin_items = admin_page["items"] if admin_page else state.admin_repositories %}
+        {% set member_params = '&member_q=' ~ (member_page.q|urlencode) ~ '&member_status=' ~ member_page.status ~ '&member_page=' ~ member_page.page ~ '&member_page_size=' ~ member_page.page_size %}
+        {% set repository_params = '&q=' ~ (admin_page.q|urlencode) ~ '&status=' ~ admin_page.status ~ '&sort=' ~ admin_page.sort ~ '&order=' ~ admin_page.order ~ '&page=' ~ admin_page.page ~ '&page_size=' ~ admin_page.page_size %}
         <details class="group" {% if request.query_params.get('member_page') %}open{% endif %}>
             <summary class="flex h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
                 <div class="flex min-w-0 items-center gap-2">
@@ -181,7 +183,13 @@
             <div class="space-y-4 border-t border-gray-100 px-4 py-4 dark:border-gray-700">
                 <details class="rounded-lg border border-gray-200 dark:border-gray-700" {% if request.query_params.get('member_page') %}open{% endif %}>
                     <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_members') }} · {{ member_page.all_total }}</summary>
-                    <form method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
+                    <form id="star-aid-admin-member-filters" method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
+                        <input type="hidden" name="q" value="{{ admin_page.q }}">
+                        <input type="hidden" name="status" value="{{ admin_page.status }}">
+                        <input type="hidden" name="sort" value="{{ admin_page.sort }}">
+                        <input type="hidden" name="order" value="{{ admin_page.order }}">
+                        <input type="hidden" name="page" value="{{ admin_page.page }}">
+                        <input type="hidden" name="page_size" value="{{ admin_page.page_size }}">
                         <input type="hidden" name="member_page" value="1">
                         <label class="min-w-48 flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.search_members') }}
                             <input type="search" name="member_q" value="{{ member_page.q }}" class="mt-1 min-h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
@@ -212,8 +220,8 @@
                     <nav class="flex items-center justify-between gap-3 border-t border-gray-200 p-3 text-sm dark:border-gray-700">
                         <span>{{ _('star_aid.page_of', page=member_page.page, pages=member_page.pages) }}</span>
                         <div class="flex gap-2">
-                            {% if member_page.page > 1 %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page - 1 }}&member_page_size={{ member_page.page_size }}" class="rounded border px-2 py-1">{{ _('star_aid.previous_page') }}</a>{% endif %}
-                            {% if member_page.page < member_page.pages %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page + 1 }}&member_page_size={{ member_page.page_size }}" class="rounded border px-2 py-1">{{ _('star_aid.next_page') }}</a>{% endif %}
+                            {% if member_page.page > 1 %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page - 1 }}&member_page_size={{ member_page.page_size }}{{ repository_params }}" class="rounded border px-2 py-1">{{ _('star_aid.previous_page') }}</a>{% endif %}
+                            {% if member_page.page < member_page.pages %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page + 1 }}&member_page_size={{ member_page.page_size }}{{ repository_params }}" class="rounded border px-2 py-1">{{ _('star_aid.next_page') }}</a>{% endif %}
                         </div>
                     </nav>
                     {% endif %}
@@ -262,8 +270,8 @@
                     <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 p-3 text-sm dark:border-gray-700">
                         <span class="text-gray-500">{{ _('star_aid.page_of', page=admin_page.page, pages=admin_page.pages) }}</span>
                         <div class="flex gap-2">
-                            {% if admin_page.page > 1 %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page - 1 }}&page_size={{ admin_page.page_size }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.previous_page') }}</a>{% endif %}
-                            {% if admin_page.page < admin_page.pages %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page + 1 }}&page_size={{ admin_page.page_size }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.next_page') }}</a>{% endif %}
+                            {% if admin_page.page > 1 %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page - 1 }}&page_size={{ admin_page.page_size }}{{ member_params }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.previous_page') }}</a>{% endif %}
+                            {% if admin_page.page < admin_page.pages %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page + 1 }}&page_size={{ admin_page.page_size }}{{ member_params }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.next_page') }}</a>{% endif %}
                         </div>
                     </nav>
                     {% endif %}
@@ -332,11 +340,23 @@
     }
 
     function refreshFromForm(form) {
-        const params = new URLSearchParams(new FormData(form));
-        return refreshRepositoryList(`${form.action}?${params.toString()}`);
+        const url = new URL(form.action);
+        url.search = new URL(window.location.href).search;
+        for (const [key, value] of new FormData(form)) {
+            url.searchParams.set(key, value);
+        }
+        return refreshRepositoryList(url.toString());
     }
 
     document.addEventListener('submit', (event) => {
+        const memberForm = event.target.closest('#star-aid-admin-member-filters');
+        if (memberForm) {
+            const params = new URL(window.location.href).searchParams;
+            for (const key of ['q', 'status', 'sort', 'order', 'page', 'page_size']) {
+                const input = memberForm.querySelector(`[name="${key}"]`);
+                if (input && params.has(key)) input.value = params.get(key);
+            }
+        }
         const form = event.target.closest('#star-aid-admin-repository-filters');
         if (!form) return;
         event.preventDefault();
@@ -366,7 +386,12 @@
         const link = event.target.closest('[data-admin-repository-page]');
         if (!link) return;
         event.preventDefault();
-        refreshRepositoryList(link.href);
+        const url = new URL(link.href);
+        const current = new URL(window.location.href);
+        for (const [key, value] of current.searchParams) {
+            if (key.startsWith('member_')) url.searchParams.set(key, value);
+        }
+        refreshRepositoryList(url.toString());
     });
 })();
 </script>

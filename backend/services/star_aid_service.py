@@ -446,12 +446,18 @@ def _normalize_admin_repository_query(
 def _admin_repository_filters(query: dict) -> list:
     filters = []
     if query["q"]:
-        pattern = f"%{query['q']}%"
+        escape = "\\"
+        escaped = (
+            query["q"].replace(escape, escape * 2)
+            .replace("%", escape + "%")
+            .replace("_", escape + "_")
+        )
+        pattern = f"%{escaped}%"
         filters.append(
             or_(
-                StarAidRepository.full_name.ilike(pattern),
-                StarAidRepository.owner_login.ilike(pattern),
-                StarAidRepository.repo_name.ilike(pattern),
+                StarAidRepository.full_name.ilike(pattern, escape=escape),
+                StarAidRepository.owner_login.ilike(pattern, escape=escape),
+                StarAidRepository.repo_name.ilike(pattern, escape=escape),
             )
         )
     if query["status"] == "displayed":

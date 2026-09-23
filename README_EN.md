@@ -119,7 +119,7 @@
 - **Manual Star** — Manually star from the display list, sharing idempotency logic
 - **Member & Permission Governance** — Join / leave / pause / ban; offending repositories can be disabled
 - **Security Checks** — Rejects cross-user state reuse; GitHub account must match the logged-in user
-- **WebUI Management Page** — Members / displayed repositories / today's usage / feature toggles
+- **WebUI Management Page** — Members / displayed repositories / today's usage / feature toggles; member and repository filters and pagination retain each other's state, and searches treat `%` and `_` literally
 
 ### Management & Operations
 
