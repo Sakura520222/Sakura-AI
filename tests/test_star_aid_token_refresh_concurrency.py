@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.models.star_aid_models import StarAidCredential
+from backend.models.star_aid_models import StarAidCredential, StarAidMember
 from backend.services import star_aid_github_service as gh
 from backend.services.secret_crypto_service import encrypt_secret
 
@@ -69,15 +69,17 @@ async def test_concurrent_refresh_calls_github_only_once(monkeypatch):
         sessions.append(session)
 
         async def locked_read(_query):
-            await row_lock.acquire()
-            return MagicMock(scalar_one_or_none=lambda: cred)
+            if _query.column_descriptions[0]["entity"] is StarAidCredential:
+                await row_lock.acquire()
+                return MagicMock(scalar_one_or_none=lambda: cred)
+            return MagicMock(scalar_one_or_none=lambda: None)
 
         session.execute.side_effect = locked_read
         try:
             return await gh.get_effective_access_token(session, user_id)
         finally:
             await session.commit()
-            if row_lock.locked() and session.execute.await_count:
+            if row_lock.locked() and session.execute.await_count == 2:
                 row_lock.release()
 
     # 5 个并发协程同时调用 get_effective_access_token
@@ -87,11 +89,11 @@ async def test_concurrent_refresh_calls_github_only_once(monkeypatch):
 
     # 验证 GitHub 仅被请求刷新 1 次
     assert refresh_calls == 1
-    assert sum(session.execute.await_count for session in sessions) == 5
+    assert sum(session.execute.await_count for session in sessions) == 10
     assert all(session.commit.await_count == 1 for session in sessions)
     from sqlalchemy.dialects import mysql
 
-    locked_query = next(session.execute.call_args.args[0] for session in sessions if session.execute.await_count)
+    locked_query = sessions[0].execute.call_args_list[1].args[0]
     assert "FOR UPDATE" in str(locked_query.compile(dialect=mysql.dialect()))
     assert locked_query.get_execution_options()["populate_existing"] is True
 
@@ -204,5 +206,72 @@ async def test_refresh_uses_caller_transaction_and_reuses_locked_credential(monk
         token, result = await gh.get_effective_access_token(caller, 123)
         assert result.success and token == "new_access"
     assert refresh_calls == 1
-    assert caller.execute.await_count == 2
+    assert caller.execute.await_count == 4
     caller.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_denied_refresh_locks_member_before_credential(monkeypatch):
+    """The worker and a concurrent manual/summary request use the same row order."""
+    now = datetime.now(UTC)
+    member = StarAidMember(user_id=123, status="active")
+    cred = StarAidCredential(
+        user_id=123,
+        encrypted_access_token=encrypt_secret("expired"),
+        access_token_expires_at=now - timedelta(minutes=1),
+        encrypted_refresh_token=None,
+    )
+    monkeypatch.setattr(gh, "get_credential", AsyncMock(return_value=cred))
+    session = AsyncMock()
+    order = []
+
+    def queried(stmt):
+        entity = stmt.column_descriptions[0]["entity"]
+        order.append(entity)
+        return MagicMock(
+            scalar_one_or_none=lambda: member if entity is StarAidMember else cred
+        )
+
+    session.execute.side_effect = queried
+    token, result = await gh.get_effective_access_token(session, 123)
+
+    assert token is None and result.reauth_required
+    assert order == [
+        StarAidMember, StarAidCredential, StarAidMember, StarAidCredential,
+    ]
+    from sqlalchemy.dialects import mysql
+
+    for call in session.execute.call_args_list:
+        assert "FOR UPDATE" in str(call.args[0].compile(dialect=mysql.dialect()))
+    assert member.status == "reauth_required"
+    assert cred.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_authorization_callback_locks_member_before_saving_credential(monkeypatch):
+    """A later identity-mismatch reauth cannot invert the worker lock order."""
+    monkeypatch.setattr(gh, "_client_credentials", lambda: ("id", "secret"))
+    monkeypatch.setattr(
+        gh, "exchange_user_access_token",
+        AsyncMock(return_value={"access_token": "new-token"}),
+    )
+    session = AsyncMock()
+    events = []
+
+    async def execute(stmt):
+        events.append(("lock", stmt.column_descriptions[0]["entity"]))
+        return MagicMock()
+
+    async def save(*_args):
+        events.append(("save", StarAidCredential))
+        return MagicMock()
+
+    session.execute.side_effect = execute
+    monkeypatch.setattr(gh, "save_credential_from_token", save)
+
+    await gh.exchange_authorization_code(session, 123, "name", "code")
+
+    assert events == [
+        ("lock", StarAidMember),
+        ("save", StarAidCredential),
+    ]

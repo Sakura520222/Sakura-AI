@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from backend.core.time_service import format_rfc3339
 from backend.services import star_aid_github_service as gh
+from backend.workers import star_aid_worker
 from backend.workers.star_aid_worker import StarAidWorker
 
 
@@ -87,11 +89,50 @@ def test_403_ordinary_forbidden_is_not_rate_limited():
 
 
 @pytest.mark.asyncio
+async def test_cooldown_only_extends_shared_deadline(monkeypatch):
+    """A shorter concurrent rate limit cannot replace the Redis value or TTL."""
+    state = {"value": None, "ttl": None}
+
+    class FakeRedis:
+        async def eval(self, script, key_count, key, value, ttl):
+            assert key_count == 1
+            assert key == star_aid_worker._REDIS_COOLDOWN_KEY
+            assert "GET" in script and "SET" in script
+            if state["value"] is None or state["value"] < value:
+                state.update(value=value, ttl=ttl)
+            return state["value"]
+
+    monkeypatch.setattr(star_aid_worker, "_in_process_cooldown_until", None)
+    monkeypatch.setattr(
+        "backend.core.redis.get_async_redis", AsyncMock(return_value=FakeRedis())
+    )
+    now = datetime.now(UTC)
+    long_until = now + timedelta(seconds=180)
+    short_until = now + timedelta(seconds=60)
+    await StarAidWorker.set_cooldown_until(long_until)
+    original_ttl = state["ttl"]
+
+    await StarAidWorker.set_cooldown_until(short_until)
+
+    assert state == {"value": format_rfc3339(long_until), "ttl": original_ttl}
+    assert star_aid_worker._in_process_cooldown_until == long_until
+    assert await StarAidWorker.get_cooldown_until() == long_until
+    state["value"] = format_rfc3339(short_until)
+    assert await StarAidWorker.get_cooldown_until() == long_until
+
+    later_until = now + timedelta(seconds=300)
+    await StarAidWorker.set_cooldown_until(later_until)
+    assert state["value"] == format_rfc3339(later_until)
+    assert state["ttl"] >= original_ttl
+
+
+@pytest.mark.asyncio
 async def test_worker_aborts_batch_on_rate_limit(monkeypatch):
     worker = StarAidWorker()
 
-    # 清理冷却状态
-    await worker.set_cooldown_until(datetime.now(UTC) - timedelta(seconds=10))
+    # Keep the unit test isolated from the production Redis cooldown key.
+    monkeypatch.setattr(worker, "get_cooldown_until", AsyncMock(return_value=None))
+    monkeypatch.setattr(worker, "set_cooldown_until", AsyncMock())
 
     # Mock 动态配置
     async def fake_cfg(k):
