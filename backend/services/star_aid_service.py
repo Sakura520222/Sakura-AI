@@ -303,6 +303,8 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
     """
     user_id = int(user_id)
     token, result = await gh.get_effective_access_token(session, user_id)
+    # Finish any token rotation before network pagination and repository sync.
+    await session.commit()
     if token is None:
         return {
             "success": False,
@@ -491,9 +493,14 @@ async def join_plan(
         return {"success": False, "message": "banned"}
 
     # 加入前必须有可用 GitHub App user token，否则进入互助池也只能收 star、无法贡献
-    token, _ = await gh.get_effective_access_token(session, user_id)
+    token, token_result = await gh.get_effective_access_token(session, user_id)
+    # No plan changes have been made yet; persist a rotated token before joining.
+    await session.commit()
     if token is None:
-        return {"success": False, "message": "reauth_required"}
+        return {
+            "success": False,
+            "message": "reauth_required" if token_result.reauth_required else "no_token",
+        }
 
     min_interval = int(await get_dynamic_config("star_aid_min_interval_minutes"))
     max_interval = int(await get_dynamic_config("star_aid_max_interval_minutes"))
@@ -573,6 +580,9 @@ async def _unstar_created_repos(session, user_id: int) -> dict:
     failed 日志，不阻塞退出状态。
     """
     token, _ = await gh.get_effective_access_token(session, int(user_id))
+    # Leaving is already requested; persist it and any token rotation before
+    # the best-effort network unstar cleanup.
+    await session.commit()
     if token is None:
         logger.warning("star_aid exit unstar skipped (no token): user_id={}", user_id)
         return {"attempted": 0, "succeeded": 0, "failed": 0, "reason": "no_token"}
@@ -828,20 +838,25 @@ async def perform_star(
     token, token_result = await gh.get_effective_access_token(
         session, int(actor_user_id)
     )
+    # Persist a rotated refresh token before potentially failing GitHub calls.
+    # The worker's daily reset (if any) is safe to persist at this boundary.
+    await session.commit()
     if token is None:
+        needs_reauth = token_result.reauth_required
         await _upsert_action_log(
             session,
             actor_user_id=actor_user_id,
             target_repository_id=repo.id,
             action=action,
             trigger=trigger,
-            status=ACTION_STATUS_REAUTH_REQUIRED,
+            status=ACTION_STATUS_REAUTH_REQUIRED if needs_reauth else ACTION_STATUS_FAILED,
             error_code=token_result.error_code or "no_token",
+            error_message=token_result.error_message,
         )
         return {
-            "status": "reauth_required",
+            "status": "reauth_required" if needs_reauth else "failed",
             "created_star": False,
-            "reauth_required": True,
+            "reauth_required": needs_reauth,
         }
 
     owner = repo.owner_login or ""

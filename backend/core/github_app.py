@@ -138,6 +138,7 @@ class GitHubAppClient:
             token, _ = await star_aid_github_service.get_effective_access_token(
                 session, int(user_id)
             )
+            await session.commit()
             return token
 
     async def get_user_client(self, user_id: int) -> Github | None:

@@ -14,6 +14,7 @@ README 原文不会展示给用户；传给 AI 时不再截断（原字符预算
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 
@@ -30,6 +31,11 @@ from backend.models.star_aid_models import (
 )
 from backend.services import star_aid_github_service as gh
 from backend.services.ai_reviewer.api_client import AIApiClient
+
+# A page can trigger one task per displayed repository. Limit simultaneous
+# sessions (including those waiting on the same credential row) below the DB
+# pool capacity.
+_background_refresh_slots = asyncio.Semaphore(5)
 
 
 def prepare_readme_for_prompt(readme_text: str | None, *, budget: int = 0) -> str:
@@ -215,6 +221,10 @@ async def refresh_repository_summary(
 
     # 取 README（用 owner 的 user token）
     token, _ = await gh.get_effective_access_token(session, repo.owner_user_id)
+    # No summary writes have happened yet. Commit a potentially rotated token
+    # before the README request and long-running AI generation, releasing the
+    # credential lock for concurrent summaries of the same owner.
+    await session.commit()
     readme_sha: str | None = None
     readme_text: str | None = None
     if token:
@@ -302,9 +312,10 @@ def trigger_summary_refresh(repository_id: int) -> None:
 
 async def _refresh_in_background(repository_id: int) -> None:
     try:
-        async with db_module.async_session() as session:
-            await refresh_repository_summary(session, repository_id)
-            await session.commit()
+        async with _background_refresh_slots:
+            async with db_module.async_session() as session:
+                await refresh_repository_summary(session, repository_id)
+                await session.commit()
     except Exception as exc:
         logger.error(
             "star_aid background summary error: repo_id={}, error={}",

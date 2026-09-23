@@ -250,6 +250,9 @@ async def test_empty_ai_summary_marks_failed_and_retries(monkeypatch):
         async def flush(self):
             pass
 
+        async def commit(self):
+            pass
+
     async def fake_token(*a, **k):
         return None, None
 
@@ -387,7 +390,7 @@ async def test_select_repositories_rejects_non_active_member(monkeypatch):
 @pytest.mark.asyncio
 async def test_join_plan_requires_valid_token(monkeypatch):
     """token 失效时不得加入互助池（避免只收 star 不贡献）。"""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     async def fake_enabled():
         return True
@@ -402,7 +405,7 @@ async def test_join_plan_requires_valid_token(monkeypatch):
     monkeypatch.setattr(star_aid_service, "get_member", fake_get_member)
     monkeypatch.setattr(star_aid_service.gh, "get_effective_access_token", fake_token)
 
-    result = await star_aid_service.join_plan(MagicMock(), 7, "gh-user", ["a/b"])
+    result = await star_aid_service.join_plan(AsyncMock(), 7, "gh-user", ["a/b"])
 
     assert result == {"success": False, "message": "reauth_required"}
 

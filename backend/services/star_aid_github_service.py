@@ -29,7 +29,6 @@ from backend.core.github_app import (
     refresh_user_access_token,
 )
 from backend.core.time_service import now_utc
-from backend.models import database as db_module
 from backend.models.star_aid_models import (
     MEMBER_STATUS_REAUTH_REQUIRED,
     StarAidCredential,
@@ -380,7 +379,8 @@ async def get_effective_access_token(
     """获取可用的 user access token，必要时自动刷新（带同一 user 并发控制与 double-check）。
 
     Returns:
-        (token, result)。token 为 None 表示需要重新授权（result.reauth_required）。
+        (token, result)。token 为 None 时依据 result.reauth_required
+        区分凭据失效和可重试故障；刷新写入由调用方事务提交。
     """
     cred = await get_credential(session, user_id)
     if cred is None or cred.revoked_at is not None:
@@ -402,41 +402,36 @@ async def get_effective_access_token(
     if not expired:
         return access_token, GitHubCallResult(success=True)
 
-    # An independent transaction holds the row lock through the durable commit,
-    # without committing unrelated changes in the caller's session. A locking
-    # read also bypasses a stale caller identity map and repeatable-read snapshot.
-    if db_module.async_session is None:
-        return None, GitHubCallResult(error_code="database_unavailable")
-    async with db_module.async_session() as refresh_session:
-        locked = await refresh_session.execute(
-            select(StarAidCredential)
-            .where(StarAidCredential.user_id == user_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        latest_cred = locked.scalar_one_or_none()
-        if latest_cred is None or latest_cred.revoked_at is not None:
-            return None, GitHubCallResult(reauth_required=True, error_code="no_credential")
+    # Keep credential and member updates in the caller's transaction. Opening
+    # another session while the caller owns a connection can exhaust the pool
+    # or wait on a member row that the caller itself has locked.
+    locked = await session.execute(
+        select(StarAidCredential)
+        .where(StarAidCredential.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    latest_cred = locked.scalar_one_or_none()
+    if latest_cred is None or latest_cred.revoked_at is not None:
+        return None, GitHubCallResult(reauth_required=True, error_code="no_credential")
 
-        now = now_utc()
-        latest_expired = (
-            latest_cred.access_token_expires_at is not None
-            and latest_cred.access_token_expires_at <= now + timedelta(minutes=5)
-        )
-        if not latest_expired and latest_cred.encrypted_access_token:
-            try:
-                new_token = decrypt_secret(latest_cred.encrypted_access_token)
-                logger.info("star_aid token refresh: user_id={}, result=reused", user_id)
-                return new_token, GitHubCallResult(success=True)
-            except SecretCryptoError:
-                pass
+    now = now_utc()
+    latest_expired = (
+        latest_cred.access_token_expires_at is not None
+        and latest_cred.access_token_expires_at <= now + timedelta(minutes=5)
+    )
+    if not latest_expired and latest_cred.encrypted_access_token:
+        try:
+            new_token = decrypt_secret(latest_cred.encrypted_access_token)
+            logger.info("star_aid token refresh: user_id={}, result=reused", user_id)
+            return new_token, GitHubCallResult(success=True)
+        except SecretCryptoError:
+            pass
 
-        refreshed, result = await _refresh_and_persist(refresh_session, latest_cred)
-        if refreshed is not None or result.reauth_required:
-            await refresh_session.commit()
-        if refreshed is None:
-            return None, result
-        return refreshed, GitHubCallResult(success=True)
+    refreshed, result = await _refresh_and_persist(session, latest_cred)
+    if refreshed is None:
+        return None, result
+    return refreshed, GitHubCallResult(success=True)
 
 
 async def _refresh_and_persist(
@@ -584,7 +579,15 @@ async def list_user_public_repositories(
                         status_code=resp.status_code,
                         error_code="invalid_json",
                     )
-                if not isinstance(data, list) or not data:
+                if not isinstance(data, list):
+                    return RepositoryListResult(
+                        success=False,
+                        complete=False,
+                        repositories=repos,
+                        status_code=resp.status_code,
+                        error_code="invalid_payload",
+                    )
+                if not data:
                     # 翻页结束，所有页面成功获取
                     return RepositoryListResult(
                         success=True,
