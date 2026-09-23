@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from datetime import datetime, timedelta
 
@@ -50,6 +51,18 @@ _MAX_TARGETS_PER_MEMBER = 3
 # Redis cooldown 键名
 _REDIS_COOLDOWN_KEY = "star_aid:worker:cooldown"
 
+# Both the value and expiration are replaced in one operation only when the
+# new UTC deadline extends the current one. format_rfc3339 emits fixed-width
+# microseconds, so its UTC timestamps compare lexicographically.
+_EXTEND_COOLDOWN_LUA = """
+local current = redis.call('GET', KEYS[1])
+if not current or current < ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    return ARGV[1]
+end
+return current
+"""
+
 # 进程内内存 cooldown 时间戳（aware UTC）
 _in_process_cooldown_until: datetime | None = None
 
@@ -60,6 +73,7 @@ class StarAidWorker:
     @classmethod
     async def get_cooldown_until(cls) -> datetime | None:
         now = now_utc()
+        redis_until = None
         # 1. 优先检查 Redis 中的全局冷却时间
         try:
             from backend.core.redis import get_async_redis
@@ -68,30 +82,36 @@ class StarAidWorker:
             val = await r.get(_REDIS_COOLDOWN_KEY)
             if val:
                 redis_until = parse_rfc3339(val)
-                if redis_until > now:
-                    return redis_until
         except Exception:
             pass
 
-        # 2. 回退检查进程内冷却
-        if _in_process_cooldown_until and _in_process_cooldown_until > now:
-            return _in_process_cooldown_until
-        return None
+        # A local extension must still be honored if Redis became unavailable
+        # before the write, or contains an older deadline.
+        until = max(
+            (candidate for candidate in (redis_until, _in_process_cooldown_until) if candidate),
+            default=None,
+        )
+        return until if until and until > now else None
 
     @classmethod
     async def set_cooldown_until(cls, until: datetime) -> None:
         global _in_process_cooldown_until
-        _in_process_cooldown_until = until
+        if _in_process_cooldown_until is None or until > _in_process_cooldown_until:
+            _in_process_cooldown_until = until
         now = now_utc()
-        ttl = max(1, int((until - now).total_seconds()))
+        ttl = max(1, math.ceil((until - now).total_seconds()))
         try:
             from backend.core.redis import get_async_redis
 
             r = await get_async_redis()
-            await r.set(_REDIS_COOLDOWN_KEY, format_rfc3339(until), ex=ttl)
+            effective = await r.eval(
+                _EXTEND_COOLDOWN_LUA, 1, _REDIS_COOLDOWN_KEY,
+                format_rfc3339(until), ttl,
+            )
+            effective_until = parse_rfc3339(effective)
+            _in_process_cooldown_until = max(_in_process_cooldown_until, effective_until)
         except Exception:
             pass
-
 
     async def run_tick(self) -> None:
         if async_session is None:

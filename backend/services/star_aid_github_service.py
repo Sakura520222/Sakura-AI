@@ -321,13 +321,23 @@ async def get_credential(
 async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
     """标记用户需要重新授权：吊销凭据并把成员状态置为 reauth_required。"""
     now = now_utc()
-    cred = await get_credential(session, user_id)
+    # All paths that may update both rows lock member before credential.
+    with session.no_autoflush:
+        member_result = await session.execute(
+            select(StarAidMember)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
+    member = member_result.scalar_one_or_none()
+    credential_result = await session.execute(
+        select(StarAidCredential)
+        .where(StarAidCredential.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    cred = credential_result.scalar_one_or_none()
     if cred and cred.revoked_at is None:
         cred.revoked_at = now
-    member_result = await session.execute(
-        select(StarAidMember).where(StarAidMember.user_id == user_id)
-    )
-    member = member_result.scalar_one_or_none()
     if member and member.status not in (
         MEMBER_STATUS_REAUTH_REQUIRED,
         "left",
@@ -368,6 +378,14 @@ async def exchange_authorization_code(
         )
         return None
 
+    # The callback may subsequently mark a mismatched identity for reauth.
+    # Keep its member -> credential lock order consistent with token refresh.
+    with session.no_autoflush:
+        await session.execute(
+            select(StarAidMember)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
     return await save_credential_from_token(
         session, user_id, github_username, token_payload
     )
@@ -404,7 +422,14 @@ async def get_effective_access_token(
 
     # Keep credential and member updates in the caller's transaction. Opening
     # another session while the caller owns a connection can exhaust the pool
-    # or wait on a member row that the caller itself has locked.
+    # or wait on a member row that the caller itself has locked. Lock member
+    # before credential, matching the worker's post-reset row-lock order.
+    with session.no_autoflush:
+        await session.execute(
+            select(StarAidMember)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
     locked = await session.execute(
         select(StarAidCredential)
         .where(StarAidCredential.user_id == user_id)
@@ -596,6 +621,16 @@ async def list_user_public_repositories(
                         status_code=200,
                     )
                 repos.extend(data)
+                # A short page without an explicit next link is terminal. A
+                # next link takes precedence (some API filters underfill pages).
+                has_next = 'rel="next"' in resp.headers.get("link", "")
+                if len(data) < 100 and not has_next:
+                    return RepositoryListResult(
+                        success=True,
+                        complete=True,
+                        repositories=repos,
+                        status_code=200,
+                    )
                 page += 1
     except httpx.RequestError as exc:
         logger.warning("star_aid list repos network error: page={}, error={}", page, exc)

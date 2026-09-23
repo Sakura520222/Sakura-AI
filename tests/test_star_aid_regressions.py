@@ -83,6 +83,13 @@ async def test_list_user_public_repositories_reads_all_pages(monkeypatch):
         def __init__(self, page):
             self.status_code = 200
             self._page = page
+            self.headers = (
+                {"link": '<https://api.github.com/user/repos?page=2>; rel="next"'}
+                if page == 1 else (
+                    {"link": '<https://api.github.com/user/repos?page=3>; rel="next"'}
+                    if page == 2 else {}
+                )
+            )
 
         def json(self):
             if self._page == 1:
