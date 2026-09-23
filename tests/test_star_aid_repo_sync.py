@@ -11,6 +11,25 @@ from backend.services import star_aid_service
 
 
 @pytest.mark.asyncio
+async def test_short_page_finishes_without_an_extra_request(monkeypatch):
+    response = httpx.Response(
+        200,
+        json=[{"id": 1, "full_name": "owner/repo"}],
+        request=httpx.Request("GET", "https://api.github.com/user/repos"),
+    )
+    client = AsyncMock()
+    client.get.side_effect = [response, AssertionError("unexpected page 2")]
+    client.__aenter__.return_value = client
+    monkeypatch.setattr(gh.httpx, "AsyncClient", lambda: client)
+
+    listed = await gh.list_user_public_repositories("token")
+
+    assert listed.success and listed.complete
+    assert [r["id"] for r in listed.repositories] == [1]
+    client.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_non_list_payload_is_incomplete_and_preserves_displayed_repos(monkeypatch):
     """A 200 object is not an empty terminal page and must not trigger cleanup."""
     response = httpx.Response(
