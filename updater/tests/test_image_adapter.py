@@ -716,6 +716,10 @@ async def test_rollback_auto_pulls_missing_baseline_runner_on_reinstall_failure(
         nonlocal reinstall_attempts
         command = tuple(argv)
         calls.append(command)
+        if command == ("docker", "image", "inspect", old_runner) and (
+            "docker", "pull", old_runner
+        ) not in calls:
+            return _Process(1, b"", b"runner image missing")
         if command[0:4] == ("bash", str((project / "start.sh").resolve()), "sandboxd", "reinstall"):
             reinstall_attempts += 1
             if reinstall_attempts == 1:
@@ -742,3 +746,64 @@ async def test_rollback_auto_pulls_missing_baseline_runner_on_reinstall_failure(
     # Verify old_runner was pulled during rollback self-healing
     assert ("docker", "pull", old_runner) in calls
     assert reinstall_attempts == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("missing_runner", "pull_fails", "retry_fails", "expected", "reinstall_count"),
+    [
+        (False, False, False, "baseline images present", 1),
+        (True, True, False, "missing agent-runner image", 1),
+        (True, False, True, "retry: second reinstall failure", 2),
+    ],
+)
+async def test_rollback_reports_missing_image_and_retry_failure(
+    tmp_path, monkeypatch, missing_runner, pull_fails, retry_fails, expected, reinstall_count
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    (project / "start.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={sandboxd}\n"
+        f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={runner}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    calls = []
+    reinstall = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal reinstall
+        command = tuple(argv)
+        calls.append(command)
+        if command[0] == "bash":
+            reinstall += 1
+            detail = b"first reinstall failure" if reinstall == 1 else b"second reinstall failure"
+            return _Process(1 if reinstall == 1 or retry_fails else 0, b"", detail)
+        if command == ("docker", "image", "inspect", runner) and missing_runner:
+            if ("docker", "pull", runner) not in calls or pull_fails:
+                return _Process(1, b"", b"image missing")
+        if command == ("docker", "pull", runner) and pull_fails:
+            return _Process(1, b"", b"registry unavailable")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    snapshot = await adapter.capture_snapshot()
+    with pytest.raises(ImageAdapterError, match=expected) as error:
+        await adapter.rollback(snapshot)
+    assert "first reinstall failure" in str(error.value)
+    assert reinstall == reinstall_count
+    assert (("docker", "pull", runner) in calls) is missing_runner
+    assert ("docker", "pull", sandboxd) not in calls
+    if retry_fails:
+        assert "second reinstall failure" in str(error.value)
+    if pull_fails:
+        assert "registry unavailable" in str(error.value)
