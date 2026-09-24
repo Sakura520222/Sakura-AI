@@ -14,7 +14,6 @@ from backend.services.ai_reviewer.constants import (
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
     MAX_FILE_LINES,
-    MAX_FILE_SIZE_BYTES,
 )
 
 
@@ -323,20 +322,6 @@ class FileToolHandler:
                     "tried_refs": fetch.tried_refs,
                 }
 
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return {
-                    "file_path": file_path,
-                    "error": "文件过大",
-                    "size": content_file.size,
-                    "content": None,
-                    "tried_branches": tried_branches,
-                    "branch_requested": branch_requested,
-                    "branch_used": branch_used,
-                    "ref_used": fetch.ref_used,
-                    "tried_refs": fetch.tried_refs,
-                    "hint": "请基于PR diff中的patch进行审查，避免读取完整文件",
-                }
-
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
 
@@ -348,7 +333,13 @@ class FileToolHandler:
             if start_line is not None and end_line is not None:
                 # 转换为0-based索引
                 start_idx = max(0, start_line - 1)
-                end_idx = min(len(lines), end_line)
+                max_returned_lines = max(1, limits["max_file_lines"])
+                actual_end_line = min(
+                    end_line,
+                    total_lines,
+                    start_line + max_returned_lines - 1,
+                )
+                end_idx = actual_end_line
 
                 if start_idx >= len(lines):
                     retry_end_line = total_lines
@@ -401,11 +392,17 @@ class FileToolHandler:
                         ),
                     }
 
-                selected_lines = lines[start_idx:end_idx]
-                actual_end_line = min(end_line, total_lines)
                 end_line_truncated = end_line > total_lines
+                requested_end_in_file = min(end_line, total_lines)
+                output_truncated = actual_end_line < requested_end_in_file
                 range_status = (
-                    "end_line_truncated" if end_line_truncated else "ok"
+                    "end_line_and_output_truncated"
+                    if end_line_truncated and output_truncated
+                    else "end_line_truncated"
+                    if end_line_truncated
+                    else "output_truncated"
+                    if output_truncated
+                    else "ok"
                 )
                 line_range = {
                     "requested": {
@@ -420,9 +417,12 @@ class FileToolHandler:
                     "status": range_status,
                     "start_line_valid": True,
                     "end_line_valid": not end_line_truncated,
-                    "truncated": end_line_truncated,
+                    "truncated": end_line_truncated or output_truncated,
                     "stale_context_suspected": False,
                 }
+                if output_truncated:
+                    line_range["output_line_limit"] = max_returned_lines
+                selected_lines = lines[start_idx:end_idx]
                 # 为每行添加行号前缀
                 numbered_content = "\n".join(
                     f"{start_idx + i + 1:>6}\t{line}"
@@ -445,13 +445,39 @@ class FileToolHandler:
                     "tried_refs": fetch.tried_refs,
                     "line_range": line_range,
                 }
-                if end_line_truncated:
+                if end_line_truncated and not output_truncated:
                     result["hint"] = (
                         f"请求 end_line={end_line} 超出当前文件总行数 {total_lines}，"
                         f"已返回当前可用范围 start_line={start_line}, "
                         f"end_line={actual_end_line}。这是可用结果而非错误；"
                         "如需读取其他位置，请依据当前文件行号重新请求。"
                     )
+                elif output_truncated:
+                    next_start_line = actual_end_line + 1
+                    next_end_line = min(
+                        total_lines,
+                        next_start_line + max_returned_lines - 1,
+                    )
+                    if end_line_truncated:
+                        result["hint"] = (
+                            f"请求 end_line={end_line} 超出当前文件总行数 "
+                            f"{total_lines}，且请求范围超过单次返回上限 "
+                            f"{max_returned_lines} 行；已返回 start_line="
+                            f"{start_line}, end_line={actual_end_line}。"
+                            "如需继续读取，请使用 "
+                            f"start_line={next_start_line}, "
+                            f"end_line={next_end_line}。"
+                        )
+                    else:
+                        result["hint"] = (
+                            f"请求范围 start_line={start_line}, "
+                            f"end_line={end_line} "
+                            f"超过单次返回上限 {max_returned_lines} 行，"
+                            f"已返回 start_line={start_line}, "
+                            f"end_line={actual_end_line}。如需继续读取，请使用 "
+                            f"start_line={next_start_line}, "
+                            f"end_line={next_end_line}。"
+                        )
                 return result
 
             # 模式2: 内容搜索
@@ -561,7 +587,10 @@ class FileToolHandler:
             return {
                 "file_path": file_path,
                 "error": f"读取文件时发生错误: {e!s}",
-                "hint": "请检查文件路径是否正确，或基于PR diff进行审查",
+                "hint": (
+                    "请检查文件路径是否正确；如文件较大，请使用 "
+                    "start_line/end_line 分段读取，或使用 search_pattern 定位内容。"
+                ),
             }
 
     async def list_directory(

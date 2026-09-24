@@ -11,7 +11,6 @@ from urllib.parse import urlencode
 from loguru import logger
 
 from backend.core.config import get_strategy_config, path_matches_skip
-from backend.services.ai_reviewer.constants import MAX_FILE_SIZE_BYTES
 from backend.services.ai_reviewer.tools.file_tool import format_search_results
 
 # 常见的二进制文件后缀 / Common binary file extensions
@@ -424,8 +423,6 @@ class SearchFilesToolHandler:
                     logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
                     return (file_path, None, True)
 
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return (file_path, None, False)
             decoded_content = content_file.decoded_content
             if decoded_content is None:
                 return (file_path, None, False)
@@ -590,8 +587,6 @@ class SearchFilesToolHandler:
                     logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
                     return None
 
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return None
             decoded_content = content_file.decoded_content
             if decoded_content is None:
                 return None

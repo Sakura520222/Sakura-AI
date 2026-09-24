@@ -12,9 +12,8 @@ SUMMARY_TIMEOUT = 60.0  # 总结阶段超时
 LABEL_RECOMMENDATION_TIMEOUT = 60.0  # 标签推荐超时
 
 # =============================================================================
-# 文件限制
+# 文件输出限制
 # =============================================================================
-MAX_FILE_SIZE_BYTES = 200000  # 最大文件大小（200KB）
 MAX_FILE_LINES = 500  # 最大文件行数（fallback 默认值，实际值从策略配置读取）
 DEFAULT_CONTEXT_LINES = 20  # 搜索匹配时的默认上下文行数
 MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
@@ -97,8 +96,10 @@ READ_FILE_TOOL = {
             "内容为准，不要沿用其他分支或旧提交中的行号。"
             "如果 start_line 超出当前文件范围，结果会保留原始请求、当前 total_lines"
             "和 recovery.retry_arguments；请根据 hint 使用新行号重试，工具不会自动重试。"
-            "如果 end_line 超出范围，工具会保留可用内容并在 line_range 中标明"
-            "实际返回范围和 truncated 状态，不会将其视为硬错误。"
+                    "如果 end_line 超出范围，工具会保留可用内容并在 line_range 中标明"
+                    "实际返回范围和 truncated 状态，不会将其视为硬错误。"
+                    "请求范围超过单次输出行数限制时，同样会返回可用窗口、"
+                    "truncated 状态和下一段读取参数。"
         ),
         "parameters": {
             "type": "object",
@@ -121,6 +122,7 @@ READ_FILE_TOOL = {
                         "结束行号（从1开始，包含该行）。仅当需要读取文件特定范围时指定。"
                         "超出当前文件长度时会截断到实际最后一行，并在返回的"
                         "line_range 元数据中注明实际范围和 truncated 状态。"
+                        "单次返回行数也会受 max_file_lines 输出限制保护。"
                     ),
                 },
                 "search_pattern": {
