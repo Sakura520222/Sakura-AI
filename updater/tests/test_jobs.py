@@ -19,7 +19,14 @@ from sakura_ai_updater.jobs import (
     UpdaterMaintenanceError,
 )
 from sakura_ai_updater.registry import RegistryClient, RegistryTargetError
-from sakura_ai_updater.state import load_state, reconcile_interrupted_job
+from sakura_ai_updater.state import (
+    JobState,
+    StateCorruptionError,
+    UpdateStateStore,
+    load_state,
+    reconcile_interrupted_job,
+    save_state,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -378,6 +385,28 @@ async def test_cleanup_keeps_destructive_job_gate_closed(tmp_path):
     release_cleanup.set()
     await orchestrator.wait_for_job(job_id)
     assert load_state(orchestrator.state_path).active_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_mismatched_durable_gate_rejects_update_and_lifecycle_stop(tmp_path):
+    path = str(tmp_path / "state.json")
+    save_state(
+        path,
+        UpdateStateStore(
+            active_job_id="upd_other",
+            current_job=JobState(job_id="upd_running", state="downloading"),
+        ),
+    )
+    orchestrator = JobOrchestrator(
+        path, _Adapter(), _Release(), _Deployment(), disk_space_threshold=1
+    )
+
+    with pytest.raises(StateCorruptionError, match="active_job_id.*current_job.job_id"):
+        await orchestrator.submit_update("3.1.0")
+    with pytest.raises(StateCorruptionError, match="active_job_id.*current_job.job_id"):
+        await orchestrator.prepare_stop()
+    assert load_state(path).active_job_id == "upd_other"
+    assert load_state(path).current_job.job_id == "upd_running"
 
 
 @pytest.mark.asyncio

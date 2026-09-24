@@ -94,7 +94,9 @@ async def test_cleanup_only_removes_unused_official_images(tmp_path, monkeypatch
     )
     images = {
         _image_id(digit): {
-            "RepoTags": [f"{repo}:v1"] if digit != "6" else [],
+            "RepoTags": [
+                f"{repo}:{'current' if digit in 'abc' else 'v1'}"
+            ] if digit != "6" else [],
             "RepoDigests": [f"{repo}@sha256:{digit * 64}"],
         }
         for digit, repo in zip("abc456", (*REPOSITORIES.values(), *REPOSITORIES.values()), strict=True)
@@ -124,7 +126,9 @@ async def test_cleanup_only_removes_unused_official_images(tmp_path, monkeypatch
         _image_id(digit) for digit in "456"
     }
     assert [call[4] for call in calls if call[:3] == ["docker", "image", "rm"]] == [
-        _image_id(digit) for digit in "456"
+        f"{REPOSITORIES['web']}:v1",
+        f"{REPOSITORIES['sandboxd']}:v1",
+        _image_id("6"),
     ]
     assert set(images) == {_image_id(digit) for digit in "abc7890"}
     assert all("-f" not in call and "--force" not in call for call in calls)
@@ -168,13 +172,96 @@ async def test_cleanup_removal_failure_continues_without_force(tmp_path, monkeyp
             "RepoTags": [f"{REPOSITORIES['web']}:v{digit}"], "RepoDigests": []
         }
     adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
-    _cleanup_docker(monkeypatch, adapter, images, current, failed=(_image_id("4"),))
+    _cleanup_docker(
+        monkeypatch, adapter, images, current,
+        failed=(f"{REPOSITORIES['web']}:v4",),
+    )
 
     removed, warnings = await adapter.cleanup_unused_sakura_images(current)
 
     assert len(removed) == 1 and removed[0].startswith(_image_id("5"))
     assert len(warnings) == 1 and _image_id("4") in warnings[0]
     assert _image_id("4") in images
+
+
+@pytest.mark.asyncio
+async def test_cleanup_single_tag_replaced_by_unrelated_repo_is_not_removed(
+    tmp_path, monkeypatch
+):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    old_tag = f"{REPOSITORIES['web']}:v1"
+    images[_image_id("4")] = {"RepoTags": [old_tag], "RepoDigests": []}
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current)
+    original_run = adapter._run_command
+
+    async def retag_before_removal(argv, **kwargs):
+        if argv[:3] == ["docker", "image", "rm"] and argv[4] == old_tag:
+            images[_image_id("4")]["RepoTags"] = ["ghcr.io/unrelated/service:now-owned"]
+            raise ImageCommandError("tag no longer exists", argv=argv, returncode=1)
+        return await original_run(argv, **kwargs)
+
+    monkeypatch.setattr(adapter, "_run_command", retag_before_removal)
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert removed == []
+    assert len(warnings) == 1
+    assert images[_image_id("4")]["RepoTags"] == [
+        "ghcr.io/unrelated/service:now-owned"
+    ]
+    assert not any(
+        call[:3] == ["docker", "image", "rm"] and call[4] == _image_id("4")
+        for call in calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_rechecks_remaining_references_before_removing_image_id(
+    tmp_path, monkeypatch
+):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    old_tag = f"{REPOSITORIES['web']}:v1"
+    images[_image_id("4")] = {
+        "RepoTags": [old_tag],
+        "RepoDigests": [f"{REPOSITORIES['web']}@sha256:{'4' * 64}"],
+    }
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current)
+    original_run = adapter._run_command
+
+    async def newly_shared_image(argv, **kwargs):
+        result = await original_run(argv, **kwargs)
+        if argv[:3] == ["docker", "image", "rm"] and argv[4] == old_tag:
+            images[_image_id("4")] = {
+                "RepoTags": ["ghcr.io/unrelated/service:new"],
+                "RepoDigests": [f"{REPOSITORIES['web']}@sha256:{'4' * 64}"],
+            }
+        return result
+
+    monkeypatch.setattr(adapter, "_run_command", newly_shared_image)
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert removed == []
+    assert len(warnings) == 1 and "references changed" in warnings[0]
+    assert _image_id("4") in images
+    assert not any(
+        call[:3] == ["docker", "image", "rm"] and call[4] == _image_id("4")
+        for call in calls
+    )
 
 
 @pytest.mark.asyncio
