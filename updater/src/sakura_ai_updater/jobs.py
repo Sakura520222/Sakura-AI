@@ -880,15 +880,7 @@ class JobOrchestrator:
         raise TargetNotFoundError("stable target")
 
     def _active_job(self) -> JobState | None:
-        store = self._load()
-        job = store.current_job
-        if (
-            store.active_job_id is not None
-            and job is not None
-            and store.active_job_id == job.job_id
-        ):
-            return job
-        return None
+        return self._load().gated_job()
 
     async def prepare_stop(self) -> dict[str, bool]:
         """Atomically reject new jobs after proving that no job is active.
