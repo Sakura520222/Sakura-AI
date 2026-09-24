@@ -354,6 +354,33 @@ async def test_cleanup_runs_only_after_verified_success_and_is_best_effort(
 
 
 @pytest.mark.asyncio
+async def test_cleanup_keeps_destructive_job_gate_closed(tmp_path):
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    class _BlockingCleanupAdapter(_Adapter):
+        async def cleanup_unused_sakura_images(self, current_images):
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return [], []
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"), _BlockingCleanupAdapter(), _Release(),
+        _Deployment(), disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await cleanup_started.wait()
+
+    with pytest.raises(UpdateInProgressError) as caught:
+        await orchestrator.submit_update("3.1.0")
+    assert caught.value.job_id == job_id
+
+    release_cleanup.set()
+    await orchestrator.wait_for_job(job_id)
+    assert load_state(orchestrator.state_path).active_job_id is None
+
+
+@pytest.mark.asyncio
 async def test_failed_health_check_never_attempts_image_cleanup(tmp_path):
     class _FailedAdapter(_Adapter):
         async def health_check(self, version):

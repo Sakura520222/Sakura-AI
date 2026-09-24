@@ -885,7 +885,7 @@ class JobOrchestrator:
         if (
             store.active_job_id is not None
             and job is not None
-            and not job.is_terminal()
+            and store.active_job_id == job.job_id
         ):
             return job
         return None
