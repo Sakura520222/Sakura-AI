@@ -1033,6 +1033,119 @@ class ImageAdapter:
 
         await self._run_command(["docker", "pull", target_image])
 
+    async def cleanup_unused_sakura_images(
+        self, current_images: tuple[str, str, str]
+    ) -> tuple[list[str], list[str]]:
+        """Remove only unused, exclusively official images after a verified update.
+
+        Docker's non-forced removal is the final guard against containers
+        created after the inventory was taken. Never use a daemon-wide prune.
+        """
+        from sakura_ai_updater.contract import REPOSITORIES
+
+        repositories = tuple(REPOSITORIES.values())
+
+        def is_official_ref(ref: str) -> bool:
+            return any(
+                ref.startswith((repo + ":", repo + "@")) for repo in repositories
+            )
+
+        if len(current_images) != len(repositories) or any(
+            not isinstance(ref, str)
+            or not re.fullmatch(
+                re.escape(repo) + r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?@sha256:[0-9a-f]{64}",
+                ref,
+            )
+            for ref, repo in zip(current_images, repositories, strict=True)
+        ):
+            raise ImageAdapterError("complete official deployment required for image cleanup")
+
+        async def metadata(ref: str) -> dict[str, Any]:
+            stdout, _ = await self._run_command(
+                ["docker", "image", "inspect", "--format", "{{json .}}", ref]
+            )
+            value = json.loads(stdout)
+            if not isinstance(value, dict) or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(value.get("Id", ""))
+            ):
+                raise ImageAdapterError("invalid Docker image metadata")
+            return value
+
+        protected_ids = {(await metadata(ref))["Id"] for ref in current_images}
+        containers, _ = await self._run_command(
+            ["docker", "container", "ls", "--all", "--quiet", "--no-trunc"]
+        )
+        container_ids = containers.split()
+        in_use: set[str] = set()
+        if container_ids:
+            stdout, _ = await self._run_command(
+                ["docker", "container", "inspect", "--format", "{{.Image}}", *container_ids]
+            )
+            in_use = set(stdout.split())
+            if len(stdout.split()) != len(container_ids) or any(
+                not re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in in_use
+            ):
+                raise ImageAdapterError("invalid Docker container image inventory")
+
+        stdout, _ = await self._run_command(
+            ["docker", "image", "ls", "--all", "--no-trunc", "--quiet"]
+        )
+        candidates = set(stdout.split())
+        if any(not re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in candidates):
+            raise ImageAdapterError("invalid Docker image inventory")
+
+        removed: list[str] = []
+        warnings: list[str] = []
+        for image_id in sorted(candidates - protected_ids - in_use):
+            try:
+                image = await metadata(image_id)
+                tags = image.get("RepoTags") or []
+                digests = image.get("RepoDigests") or []
+                if image["Id"] != image_id or not isinstance(tags, list) or not isinstance(digests, list):
+                    raise ImageAdapterError("inconsistent Docker image metadata")
+                refs = tags + digests
+                if not refs or any(not isinstance(ref, str) for ref in refs):
+                    continue  # Unknown dangling layers are not Sakura images.
+                if any(not is_official_ref(ref) for ref in refs):
+                    continue  # Shared with an unrelated repository: keep the whole image.
+                # Removing an ID with multiple tags conflicts without --force.
+                # Untag its exclusively official references one by one instead.
+                if len(tags) > 1:
+                    for tag in tags:
+                        if (await metadata(tag))["Id"] != image_id:
+                            raise ImageAdapterError("image tag changed during cleanup")
+                        await self._run_command(["docker", "image", "rm", "--no-prune", tag])
+                    try:
+                        remaining = await metadata(image_id)
+                    except ImageCommandError as exc:
+                        if "no such image" not in exc.stderr.lower():
+                            raise
+                    else:
+                        if remaining["Id"] != image_id:
+                            raise ImageAdapterError("image identity changed during cleanup")
+                        remaining_refs = (
+                            (remaining.get("RepoTags") or [])
+                            + (remaining.get("RepoDigests") or [])
+                        )
+                        if any(
+                            not isinstance(ref, str) or not is_official_ref(ref)
+                            for ref in remaining_refs
+                        ):
+                            raise ImageAdapterError(
+                                "image acquired an unrelated reference during cleanup"
+                            )
+                        await self._run_command(
+                            ["docker", "image", "rm", "--no-prune", image_id]
+                        )
+                else:
+                    await self._run_command(
+                        ["docker", "image", "rm", "--no-prune", image_id]
+                    )
+                removed.append(f"{image_id} ({', '.join(refs)})")
+            except (ImageAdapterError, ValueError, TypeError) as exc:
+                warnings.append(f"{image_id}: {exc}")
+        return removed, warnings
+
     async def ensure_image_present(self, image_ref: str, component_name: str = "image") -> bool:
         """Ensure an image is present locally; pull from registry if missing."""
         if not image_ref:
