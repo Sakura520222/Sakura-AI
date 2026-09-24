@@ -1038,9 +1038,25 @@ class ImageAdapter:
     ) -> tuple[list[str], list[str]]:
         """Remove only unused, exclusively official images after a verified update.
 
+        Bound the complete inventory-and-removal operation by the adapter's
+        command timeout.  A deadline around the whole operation is necessary
+        because this cleanup can issue one metadata command per local image.
+
         Docker's non-forced removal is the final guard against containers
         created after the inventory was taken. Never use a daemon-wide prune.
         """
+        try:
+            async with asyncio.timeout(self.command_timeout):
+                return await self._cleanup_unused_sakura_images(current_images)
+        except TimeoutError as exc:
+            raise ImageCommandError(
+                "unused Sakura image cleanup timed out",
+                error_code="cleanup_timeout",
+            ) from exc
+
+    async def _cleanup_unused_sakura_images(
+        self, current_images: tuple[str, str, str]
+    ) -> tuple[list[str], list[str]]:
         from sakura_ai_updater.contract import REPOSITORIES
 
         repositories = tuple(REPOSITORIES.values())
