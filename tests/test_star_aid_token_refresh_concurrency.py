@@ -214,7 +214,7 @@ async def test_refresh_uses_caller_transaction_and_reuses_locked_credential(monk
 async def test_denied_refresh_locks_member_before_credential(monkeypatch):
     """The worker and a concurrent manual/summary request use the same row order."""
     now = datetime.now(UTC)
-    member = StarAidMember(user_id=123, status="active")
+    member = StarAidMember(id=1, user_id=123, status="active")
     cred = StarAidCredential(
         user_id=123,
         encrypted_access_token=encrypt_secret("expired"),
@@ -229,10 +229,12 @@ async def test_denied_refresh_locks_member_before_credential(monkeypatch):
         entity = stmt.column_descriptions[0]["entity"]
         order.append(entity)
         return MagicMock(
-            scalar_one_or_none=lambda: member if entity is StarAidMember else cred
+            scalar_one_or_none=lambda: member if entity is StarAidMember else cred,
+            one_or_none=lambda: (member.id, member.status),
         )
 
     session.execute.side_effect = queried
+    session.get.return_value = member
     token, result = await gh.get_effective_access_token(session, 123)
 
     assert token is None and result.reauth_required
@@ -244,6 +246,28 @@ async def test_denied_refresh_locks_member_before_credential(monkeypatch):
     for call in session.execute.call_args_list:
         assert "FOR UPDATE" in str(call.args[0].compile(dialect=mysql.dialect()))
     assert member.status == "reauth_required"
+    assert cred.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_reauth_does_not_overwrite_concurrent_admin_ban():
+    """The locked DB status wins over an active member cached by the worker."""
+    member = StarAidMember(id=1, user_id=123, status="active", daily_star_used=0)
+    cred = StarAidCredential(user_id=123, revoked_at=None)
+    session = AsyncMock()
+
+    def queried(stmt):
+        entity = stmt.column_descriptions[0]["entity"]
+        if entity is StarAidMember:
+            return MagicMock(one_or_none=lambda: (1, "banned"))
+        return MagicMock(scalar_one_or_none=lambda: cred)
+
+    session.execute.side_effect = queried
+    session.get.return_value = member
+    await gh.mark_reauth_required(session, 123)
+
+    assert member.status == "banned"
+    assert member.daily_star_used == 0
     assert cred.revoked_at is not None
 
 

@@ -30,6 +30,37 @@ async def test_short_page_finishes_without_an_extra_request(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("page_count", [1, 2])
+async def test_full_terminal_page_without_next_link_is_complete(monkeypatch, page_count):
+    responses = []
+    for page in range(page_count):
+        headers = (
+            {"link": f'<https://api.github.com/user/repos?page={page + 2}>; rel="next"'}
+            if page + 1 < page_count else {}
+        )
+        responses.append(
+            httpx.Response(
+                200, headers=headers,
+                json=[
+                    {"id": page * 100 + index, "full_name": f"owner/repo-{page}-{index}"}
+                    for index in range(100)
+                ],
+                request=httpx.Request("GET", "https://api.github.com/user/repos"),
+            )
+        )
+    client = AsyncMock()
+    client.get.side_effect = [*responses, AssertionError("unexpected extra page")]
+    client.__aenter__.return_value = client
+    monkeypatch.setattr(gh.httpx, "AsyncClient", lambda: client)
+
+    listed = await gh.list_user_public_repositories("token")
+
+    assert listed.success and listed.complete
+    assert len(listed.repositories) == page_count * 100
+    assert client.get.await_count == page_count
+
+
+@pytest.mark.asyncio
 async def test_non_list_payload_is_incomplete_and_preserves_displayed_repos(monkeypatch):
     """A 200 object is not an empty terminal page and must not trigger cleanup."""
     response = httpx.Response(
