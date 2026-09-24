@@ -381,6 +381,33 @@ async def test_cleanup_keeps_destructive_job_gate_closed(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_active_gate_clear_failure_does_not_rollback_committed_update(
+    tmp_path, monkeypatch
+):
+    path = str(tmp_path / "state.json")
+    adapter = _Adapter()
+    orchestrator = JobOrchestrator(
+        path, adapter, _Release(), _Deployment(), disk_space_threshold=1
+    )
+
+    def fail_gate_clear(job):
+        raise OSError("state fsync failed")
+
+    monkeypatch.setattr(orchestrator, "_clear_active_gate", fail_gate_clear)
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = orchestrator.get_job(job_id)
+    assert job is not None
+    assert job.state == "success"
+    assert job.rollback_attempted is False
+    assert not any(call[0] == "rollback" for call in adapter.calls)
+    logs = orchestrator.get_job_logs(job_id)["logs"]
+    assert logs[-1]["level"] == "warning"
+    assert "active update gate cleanup failed: state fsync failed" in logs[-1]["msg"]
+
+
+@pytest.mark.asyncio
 async def test_failed_health_check_never_attempts_image_cleanup(tmp_path):
     class _FailedAdapter(_Adapter):
         async def health_check(self, version):

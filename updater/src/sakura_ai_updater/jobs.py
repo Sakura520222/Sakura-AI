@@ -1374,7 +1374,17 @@ class JobOrchestrator:
                     level="warning", step="complete",
                 )
             finally:
-                self._clear_active_gate(job)
+                try:
+                    self._clear_active_gate(job)
+                except Exception as exc:
+                    # Activation is already committed and its rollback images
+                    # may have been removed by cleanup.  A gate persistence
+                    # failure must therefore remain outside the transactional
+                    # error handler, which would otherwise attempt rollback.
+                    self._log(
+                        job, f"active update gate cleanup failed: {exc}",
+                        level="warning", step="complete",
+                    )
         except asyncio.CancelledError:
             # Cancellation is not a normal failure, but once activation has
             # started it must still restore the exact pre-activation snapshot

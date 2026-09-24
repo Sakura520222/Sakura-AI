@@ -209,6 +209,28 @@ async def test_cleanup_fails_closed_when_container_inventory_is_incomplete(
 
 
 @pytest.mark.asyncio
+async def test_cleanup_has_single_deadline_for_complete_image_scan(tmp_path, monkeypatch):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    adapter = ImageAdapter(
+        "compose.yml", str(tmp_path / "deployment.env"), command_timeout=0.01
+    )
+
+    async def slow_inventory(argv, **kwargs):
+        await asyncio.sleep(1)
+        raise AssertionError("cleanup deadline did not cancel the inventory command")
+
+    monkeypatch.setattr(adapter, "_run_command", slow_inventory)
+
+    with pytest.raises(ImageCommandError) as caught:
+        await adapter.cleanup_unused_sakura_images(current)
+
+    assert caught.value.error_code == "cleanup_timeout"
+
+
+@pytest.mark.asyncio
 async def test_pull_failure_does_not_touch_deployment_env(tmp_path, monkeypatch):
     env = tmp_path / "deployment.env"
     env.write_text("SAKURA_AI_IMAGE=old:image\nOTHER=keep\n", encoding="utf-8")
