@@ -1347,14 +1347,41 @@ class JobOrchestrator:
                 },
             )
             self._log(job, "update completed", step="complete")
-            self._clear_active_gate(job)
+            try:
+                cleanup = getattr(self.adapter, "cleanup_unused_sakura_images", None)
+                if cleanup is not None:
+                    outcome = cleanup(
+                        (
+                            job.target_image,
+                            job.target_sandboxd_image,
+                            job.target_runner_image,
+                        )
+                    )
+                    removed, warnings = (
+                        await outcome if inspect.isawaitable(outcome) else outcome
+                    )
+                    for image in removed:
+                        self._log(job, f"removed unused Sakura image: {image}", step="complete")
+                    for warning in warnings:
+                        self._log(
+                            job, f"Sakura image cleanup skipped: {warning}",
+                            level="warning", step="complete",
+                        )
+            except Exception as exc:
+                # Cleanup is maintenance, not part of the committed deployment.
+                self._log(
+                    job, f"Sakura image cleanup skipped: {exc}",
+                    level="warning", step="complete",
+                )
+            finally:
+                self._clear_active_gate(job)
         except asyncio.CancelledError:
             # Cancellation is not a normal failure, but once activation has
             # started it must still restore the exact pre-activation snapshot
             # before this task exits.  Keep the active gate durable so a
             # daemon restart can reconcile any incomplete rollback.
             rollback_error: Exception | None = None
-            if job.activation_started and deployment_snapshot is not None:
+            if not job.is_terminal() and job.activation_started and deployment_snapshot is not None:
                 job.rollback_attempted = True
                 rollback_error = await self._rollback_after_cancellation(
                     deployment_snapshot,

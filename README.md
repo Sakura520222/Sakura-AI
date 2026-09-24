@@ -184,6 +184,8 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 更新激活前，Updater 会检查本地回滚镜像；部署配置只记录一个沙箱镜像 digest 时，会从已验证的运行时恢复完整沙箱镜像对，并在激活前确认两者均可用（缺失时尝试拉取）。
 
+三镜像更新成功、运行状态验证通过并结束回滚事务后，Host Updater 会尝试清理本地不再被任何容器引用的旧版 Sakura-AI 官方镜像。当前部署镜像、其他容器仍在使用的镜像和非 Sakura-AI 镜像不会被删除；清理结果记入更新任务日志，清理失败只产生警告，不影响已成功的更新。
+
 安装完成后可验证宿主机重启自启状态：
 
 ```bash

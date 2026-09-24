@@ -79,7 +79,7 @@ def test_ui_exposes_contract_compatibility_and_build_identity(caps, compatible):
 def test_status_health_and_cli_publish_same_machine_identity(tmp_path):
     from sakura_ai_updater import __version__
 
-    assert __version__ == "0.3.0"
+    assert __version__ == "0.3.1"
     client = TestClient(create_app(str(tmp_path / "state.json")))
     identities = [client.get(path).json() for path in ("/v1/status", "/v1/health")]
     cli = subprocess.run([sys.executable, "-m", "sakura_ai_updater", "--identity"],

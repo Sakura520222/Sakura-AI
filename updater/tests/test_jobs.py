@@ -313,6 +313,65 @@ async def test_update_success_clears_active_gate(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_cleanup_runs_only_after_verified_success_and_is_best_effort(
+    tmp_path, cleanup_fails
+):
+    path = str(tmp_path / "state.json")
+
+    class _CleanupAdapter(_Adapter):
+        async def cleanup_unused_sakura_images(self, current_images):
+            job = load_state(path).current_job
+            assert job is not None
+            assert job.state == "success"
+            assert job.deployment_verified is True
+            assert job.rollback_allowed is False
+            assert load_state(path).active_job_id == job.job_id
+            assert current_images == (
+                job.target_image, job.target_sandboxd_image, job.target_runner_image
+            )
+            self.calls.append(("cleanup", current_images))
+            if cleanup_fails:
+                raise RuntimeError("Docker unavailable")
+            return ["sha256:old (ghcr.io/sakura520222/sakura-ai:v1)"], ["image in use"]
+
+    adapter = _CleanupAdapter()
+    orchestrator = JobOrchestrator(
+        path, adapter, _Release(), _Deployment(), disk_space_threshold=1
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    store = load_state(path)
+    assert store.current_job and store.current_job.state == "success"
+    assert store.active_job_id is None
+    assert adapter.calls[-1][0] == "cleanup"
+    logs = orchestrator.get_job_logs(job_id)["logs"]
+    assert logs[-1]["level"] == "warning"
+    assert ("Docker unavailable" if cleanup_fails else "image in use") in logs[-1]["msg"]
+    if not cleanup_fails:
+        assert any("removed unused Sakura image: sha256:old" in log["msg"] for log in logs)
+
+
+@pytest.mark.asyncio
+async def test_failed_health_check_never_attempts_image_cleanup(tmp_path):
+    class _FailedAdapter(_Adapter):
+        async def health_check(self, version):
+            raise RuntimeError("unhealthy deployment")
+
+        async def cleanup_unused_sakura_images(self, current_images):
+            raise AssertionError("cleanup before successful health verification")
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"), _FailedAdapter(), _Release(), _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+    assert orchestrator.get_job(job_id).state == "failed"
+
+
+@pytest.mark.asyncio
 async def test_prepare_stop_atomically_blocks_submit_finishing_preflight(tmp_path):
     orchestrator = JobOrchestrator(
         str(tmp_path / "state.json"),
