@@ -103,6 +103,25 @@ class UpdateStateStore:
     active_job_id: str | None = None
     current_job: JobState | None = None
 
+    def gated_job(self) -> JobState | None:
+        """Return the durable gate owner, rejecting inconsistent state."""
+        job = self.current_job
+        if self.active_job_id is None:
+            if job is not None and not job.is_terminal():
+                raise StateCorruptionError(
+                    f"active_job_id is null but current_job {job.job_id!r} is non-terminal"
+                )
+            return None
+        if job is None:
+            raise StateCorruptionError(
+                f"active_job_id={self.active_job_id!r} but current_job is null"
+            )
+        if self.active_job_id != job.job_id:
+            raise StateCorruptionError(
+                f"active_job_id={self.active_job_id!r} != current_job.job_id={job.job_id!r}"
+            )
+        return job
+
     def to_dict(self) -> dict:
         return {
             "schema_version": self.schema_version,

@@ -1124,36 +1124,35 @@ class ImageAdapter:
                     continue  # Unknown dangling layers are not Sakura images.
                 if any(not is_official_ref(ref) for ref in refs):
                     continue  # Shared with an unrelated repository: keep the whole image.
-                # Removing an ID with multiple tags conflicts without --force.
-                # Untag its exclusively official references one by one instead.
-                if len(tags) > 1:
+                # Remove validated references, not a tagged image ID: a tag
+                # could have been replaced by an unrelated repository since
+                # the initial inventory. Docker still guards in-use images.
+                if tags:
                     for tag in tags:
                         if (await metadata(tag))["Id"] != image_id:
                             raise ImageAdapterError("image tag changed during cleanup")
                         await self._run_command(["docker", "image", "rm", "--no-prune", tag])
-                    try:
-                        remaining = await metadata(image_id)
-                    except ImageCommandError as exc:
-                        if "no such image" not in exc.stderr.lower():
-                            raise
-                    else:
-                        if remaining["Id"] != image_id:
-                            raise ImageAdapterError("image identity changed during cleanup")
-                        remaining_refs = (
-                            (remaining.get("RepoTags") or [])
-                            + (remaining.get("RepoDigests") or [])
-                        )
-                        if any(
-                            not isinstance(ref, str) or not is_official_ref(ref)
-                            for ref in remaining_refs
-                        ):
-                            raise ImageAdapterError(
-                                "image acquired an unrelated reference during cleanup"
-                            )
-                        await self._run_command(
-                            ["docker", "image", "rm", "--no-prune", image_id]
-                        )
+                try:
+                    remaining = await metadata(image_id)
+                except ImageCommandError as exc:
+                    if not tags or "no such image" not in exc.stderr.lower():
+                        raise
                 else:
+                    remaining_tags = remaining.get("RepoTags") or []
+                    remaining_digests = remaining.get("RepoDigests") or []
+                    if (
+                        remaining["Id"] != image_id
+                        or not isinstance(remaining_tags, list)
+                        or not isinstance(remaining_digests, list)
+                        or remaining_tags
+                        or any(
+                            not isinstance(ref, str) or not is_official_ref(ref)
+                            for ref in remaining_digests
+                        )
+                    ):
+                        raise ImageAdapterError(
+                            "image references changed during cleanup"
+                        )
                     await self._run_command(
                         ["docker", "image", "rm", "--no-prune", image_id]
                     )

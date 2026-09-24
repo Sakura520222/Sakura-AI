@@ -184,11 +184,7 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
         """当前 updater 状态 + 是否有进行中的 job（spec §7.3）。"""
         store: UpdateStateStore = load_state(app.state.state_path)
         job = store.current_job
-        has_active = (
-            store.active_job_id is not None
-            and job is not None
-            and not job.is_terminal()
-        )
+        has_active = store.gated_job() is not None
         data: dict[str, Any] = {
             "state": job.state if job else "idle",
             "has_active_job": has_active,
