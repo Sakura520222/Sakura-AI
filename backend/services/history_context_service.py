@@ -8,13 +8,10 @@ from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
-from backend.core.config import get_settings
 from backend.core.time_service import get_time_service
 from backend.models.database import PRReview, PRStatus
 from backend.services.ai_reviewer.api_client import AIApiClient
 
-# 摘要生成常量
-HISTORY_SUMMARY_TEMPERATURE = 0.2
 MAX_COMMENTS_PER_REVIEW = 10
 MAX_COMMENT_CONTENT_LENGTH = 200
 
@@ -181,8 +178,6 @@ class HistoryContextService:
 
     async def _generate_ai_summary(self, history_text: str) -> str | None:
         """调用 AI 生成历史审查的自然语言摘要"""
-        settings = get_settings()
-
         response = await self.api_client.call_with_retry(
             messages=[
                 {"role": "system", "content": self._build_summary_system_prompt()},
@@ -192,9 +187,6 @@ class HistoryContextService:
                 },
             ],
             model="",
-            temperature=HISTORY_SUMMARY_TEMPERATURE,
-            # 输出上限折叠到全局 ai_max_tokens（AI 配置页）
-            max_tokens=settings.ai_max_tokens,
             role="summary",
         )
 

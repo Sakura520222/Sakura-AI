@@ -96,18 +96,8 @@ def test_account_candidate_uses_model_override_metadata():
     assert candidate.model.reasoning_params.thinking == {"type": "adaptive"}
 
 
-def test_unknown_model_uses_128k_context_fallback(monkeypatch):
+def test_unknown_model_uses_128k_context_fallback():
     """未发现模型元数据时，必须按全局保守上限 128K 规划上下文。"""
-    from backend.core import model_context as model_context_module
-
-    monkeypatch.setattr(
-        model_context_module,
-        "get_settings",
-        lambda: type(
-            "Settings", (), {"openai_model": "unknown-model", "model_context_window": 0}
-        )(),
-    )
-
     manager = ModelContextManager()
 
     assert manager.get_context_window("unknown-model") == 128
@@ -127,18 +117,8 @@ def test_unknown_role_model_metadata_uses_128k_context_fallback():
     assert metadata.context_window_tokens == 128000
 
 
-def test_model_context_manager_uses_actual_resolved_model_override(monkeypatch):
+def test_model_context_manager_uses_actual_resolved_model_override():
     """角色最终使用的模型 ID 应命中对应单模型覆盖，而非旧全局模型。"""
-    from backend.core import model_context as model_context_module
-
-    monkeypatch.setattr(
-        model_context_module,
-        "get_settings",
-        lambda: type(
-            "Settings", (), {"openai_model": "gpt-5.6-terra", "model_context_window": 0}
-        )(),
-    )
-
     manager = ModelContextManager()
     manager.set_overrides({"gpt-5.6-sol": 512})
 

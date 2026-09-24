@@ -9,7 +9,7 @@
 - 新仓库展示后可异步触发；也支持页面按钮手动刷新。
 
 README 原文不会展示给用户；传给 AI 时不再截断（原字符预算配置已移除）。
-摘要输出上限统一走全局 ``ai_max_tokens``（AI 配置页）。
+模型参数与输出上限由 summary 角色实际绑定的单模型配置解析。
 """
 
 from __future__ import annotations
@@ -144,7 +144,6 @@ async def generate_summary(
     primary_language: str,
     readme_excerpt: str,
     lang: str,
-    max_tokens: int,
 ) -> str:
     """调用 AI 生成摘要文本。
 
@@ -164,8 +163,6 @@ async def generate_summary(
     resp = await client.call_with_retry(
         model="",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=int(max_tokens),
         role="summary",
     )
     if not resp.choices:
@@ -249,9 +246,6 @@ async def refresh_repository_summary(
     if readme_sha is not None:
         repo.readme_sha = readme_sha
 
-    # 摘要输出 token 上限折叠到全局 ai_max_tokens
-    max_tokens = get_settings().ai_max_tokens
-
     gen_kwargs = {
         "full_name": repo.full_name,
         "description": repo.description or "",
@@ -259,7 +253,6 @@ async def refresh_repository_summary(
         "primary_language": repo.primary_language or "",
         "readme_excerpt": readme_input,
         "lang": lang,
-        "max_tokens": max_tokens,
     }
     try:
         summary = await generate_summary(**gen_kwargs)

@@ -30,10 +30,10 @@ from backend.services.protocol_repair import (
     run_protocol_repair_loop,
 )
 
-from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
+from .api_client import AIApiClient, AIEmptyResponseError
 from .compact_diff import build_tool_handler_with_diff
-from .compression import ContextCompressor
 from .label_recommender import LabelRecommender
+from .message_utils import estimate_messages_tokens
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
 from .review_protocol import (
@@ -161,7 +161,7 @@ class AIReviewer:
     - PromptBuilder: 提示词构建
     - ReviewResultParser: 结果解析
     - ToolHandler/ToolManager: 工具管理
-    - ContextCompressor: 上下文压缩
+    - UnifiedAIClient/UnifiedContextCompressor: 统一请求策略与上下文压缩
     - LabelRecommender: 标签推荐
 
     所有 PR 审查统一为单次审查 + AI 自主使用工具查看文件变更。
@@ -198,15 +198,7 @@ class AIReviewer:
         self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
 
-        # 初始化上下文压缩。实际模型由 main 角色绑定解析。
-        self.enable_compression = settings.enable_context_compression
-        self.compression_threshold = settings.context_compression_threshold
-        self.keep_rounds = settings.context_compression_keep_rounds
-        self.context_compressor = ContextCompressor(
-            api_client=self.api_client,
-            model="",
-            keep_rounds=self.keep_rounds,
-        )
+        # 上下文预检与压缩统一由 UnifiedAIClient / UnifiedContextCompressor 执行。
         self.model_context_mgr = get_model_context_manager()
 
         # 初始化标签推荐
@@ -223,11 +215,6 @@ class AIReviewer:
     def _refresh_runtime_config(self) -> None:
         """刷新不应被长生命周期审查器固化的运行时配置。"""
         settings = get_settings()
-        self.enable_compression = settings.enable_context_compression
-        self.compression_threshold = settings.context_compression_threshold
-        self.keep_rounds = settings.context_compression_keep_rounds
-        self.context_compressor.keep_rounds = self.keep_rounds
-
         self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_clients(self) -> None:
@@ -236,9 +223,6 @@ class AIReviewer:
             self.api_client = AIApiClient()
         self.summary_api_client = self.api_client
 
-        if hasattr(self, "context_compressor"):
-            self.context_compressor.api_client = self.api_client
-            self.context_compressor.model = ""
         if hasattr(self, "label_recommender"):
             self.label_recommender.api_client = self.summary_api_client
             self.label_recommender.model = ""
@@ -339,7 +323,6 @@ class AIReviewer:
             self._refresh_runtime_config()
             logger.info("开始AI审查，策略: {}", strategy)
 
-            settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
             output_lang = await get_user_dynamic_config(
                 "output_language", context.get("user_id")
@@ -367,7 +350,6 @@ class AIReviewer:
             response = await self.api_client.call_with_retry(
                 model="",
                 messages=messages,
-                temperature=settings.ai_temperature,
                 role="main",
                 cancel_event=cancel_event,
                 context=invocation_context,
@@ -442,7 +424,6 @@ class AIReviewer:
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
-        settings = get_settings()
         active_tool_handler = tool_handler or self.tool_handler
         # 工具循环不再设置轮次上限：依赖模型自然停止（无工具调用即交付），
         # 整体时长由共享 soft deadline 控制；到期只切换下一次调用为最终回答。
@@ -453,14 +434,6 @@ class AIReviewer:
             context_model,
             context_window_tokens,
         ) = await self.api_client.resolve_role_model_context("main")
-        if context_window_tokens and context_window_tokens > 0:
-            safe_context = int(
-                context_window_tokens * settings.context_safety_threshold
-            )
-        else:
-            safe_context = self.model_context_mgr.calculate_safe_context(
-                None, settings.context_safety_threshold
-            )
         # 增量审查恢复的历史 tool_calls 可能是字符串（checkpoint 持久化损坏），
         # 发送给 AI 前统一规范化为标准 dict，避免上游反序列化失败（400）
         _normalize_tool_calls_inplace(messages)
@@ -524,7 +497,6 @@ class AIReviewer:
                 "messages": messages,
                 "tools": enabled_tools,
                 "tool_choice": "auto",
-                "temperature": settings.ai_temperature,
                 "role": "main",
                 "cancel_event": cancel_event,
                 "context": invocation_context,
@@ -546,10 +518,6 @@ class AIReviewer:
             # 相关判断必须基于实际 winner（Issue #529：此前判定传空字符串
             # 导致思考轨迹在工具循环中恒被丢弃）
             context_model = _resolve_served_model(response, context_model)
-            # 压缩（含失败回退的 _clean_message_for_model）也须按实际 winner
-            # 判定 reasoning_content 去留，否则主循环保留的字段会在压缩
-            # 回退时又被剥掉
-            self.context_compressor.model = context_model or ""
             reported_context_tokens = tracker.log_context_usage(
                 response,
                 context_window_tokens,
@@ -704,9 +672,7 @@ class AIReviewer:
 
             # 本地估算仅用于预测下一次发送前是否应压缩；不得展示为
             # Provider 精确上下文使用量。
-            estimated_message_tokens = self.context_compressor.estimate_messages_tokens(
-                messages
-            )
+            estimated_message_tokens = estimate_messages_tokens(messages)
 
             # 通知 Check Run：本轮进度快照（轮次/工具调用/Token/上下文/模型）。
             # worker 侧 _review_event_callback 识别 "progress" 事件桥接到 Analysis Check。
@@ -727,61 +693,6 @@ class AIReviewer:
                     )
                 except Exception as exc:
                     logger.warning("event_callback progress failed: {}", exc)
-
-            # 检查上下文是否超限，触发压缩
-            if self.enable_compression:
-                threshold_tokens = int(safe_context * self.compression_threshold)
-
-                if estimated_message_tokens > threshold_tokens:
-                    current_k = estimated_message_tokens / 1000
-                    threshold_k = threshold_tokens / 1000
-                    logger.warning(
-                        "🚨 本地上下文估算超限: {:.1f}K tokens > {:.1f}K tokens "
-                        "(阈值 {}%)，启动压缩...",
-                        current_k,
-                        threshold_k,
-                        self.compression_threshold * 100,
-                    )
-
-                    messages = (
-                        await self.context_compressor.compress_conversation_history(
-                            messages,
-                            system_prompt,
-                            threshold_tokens,
-                            tracker=tracker,
-                        )
-                    )
-
-                    # 压缩成功后写入可观测性：创建 context_operation + 替换消息行，
-                    # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
-                    # Persist the replacement so the observability timeline and
-                    # conversation stream reflect this explicit compression.
-                    if observer is not None:
-                        record_replacement = getattr(
-                            observer, "record_context_replacement", None
-                        )
-                        if record_replacement is not None:
-                            try:
-                                await record_replacement(
-                                    messages,
-                                    trigger_reason="threshold",
-                                )
-                            except Exception as exc:
-                                logger.warning(
-                                    "PR 审查压缩可观测性记录失败（不影响审查）: {}",
-                                    exc,
-                                )
-
-                    # 压缩发生在下一次 Provider 请求前，此时只能本地估算；
-                    # 精确值会在下一次响应 usage 中记录。
-                    post_compress_tokens = (
-                        self.context_compressor.estimate_messages_tokens(messages)
-                    )
-                    logger.info(
-                        "上下文压缩后本地估算: {:,} tokens；精确值等待下一次 "
-                        "Provider usage",
-                        post_compress_tokens,
-                    )
 
     async def _append_pending_user_message_if_any(
         self,
@@ -959,63 +870,6 @@ class AIReviewer:
                     deadline=task_deadline,
                 )
 
-            except PromptTooLongError as e:
-                logger.warning(
-                    "🚨 Prompt 超出模型上下文限制 (估算 ~{} tokens, 模型: {})",
-                    e.estimated_tokens,
-                    e.model,
-                )
-                # 尝试压缩后重试
-                if self.enable_compression:
-                    settings = get_settings()
-                    (
-                        served_model_id,
-                        ctx_tokens,
-                    ) = await self.api_client.resolve_role_model_context("main")
-                    self.context_compressor.model = served_model_id or ""
-                    if ctx_tokens and ctx_tokens > 0:
-                        safe_context = int(
-                            ctx_tokens * settings.context_safety_threshold
-                        )
-                    else:
-                        safe_context = self.model_context_mgr.calculate_safe_context(
-                            None, settings.context_safety_threshold
-                        )
-                    threshold_tokens = int(safe_context * self.compression_threshold)
-                    compressed_messages = (
-                        await self.context_compressor.compress_conversation_history(
-                            messages,
-                            system_prompt,
-                            threshold_tokens,
-                            tracker=tracker,
-                        )
-                    )
-                    # 重新加载 diff 数据（前一次 clear 可能已清空）
-                    diff_tool.set_files_data(context.get("files", []))
-                    return await self._run_tool_loop(
-                        messages=compressed_messages,
-                        system_prompt=system_prompt,
-                        strategy=strategy,
-                        enabled_tools=enabled_tools,
-                        repo=repo,
-                        pr=pr,
-                        tracker=tracker,
-                        context=context,
-                        tool_handler=active_tool_handler,
-                        event_callback=event_callback,
-                        pending_user_message_callback=pending_user_message_callback,
-                        cancel_event=cancel_event,
-                        publication_coordinator=publication_coordinator,
-                        invocation_context=invocation_context,
-                        observer=observer,
-                        deadline=task_deadline,
-                    )
-                logger.error(
-                    "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",
-                    e.estimated_tokens,
-                )
-                raise
-
             finally:
                 diff_tool.clear()
 
@@ -1039,7 +893,6 @@ class AIReviewer:
         try:
             self._refresh_ai_clients()
             self._refresh_runtime_config()
-            settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
             system_prompt = strategy_config_data.get("prompt", "")
 
@@ -1061,7 +914,6 @@ class AIReviewer:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=settings.ai_temperature,
                 role="main",
             )
 

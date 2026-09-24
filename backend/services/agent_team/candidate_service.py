@@ -704,7 +704,6 @@ class AgentTeamCandidateService:
             response = await client.call_with_retry(
                 messages=messages,
                 model="",
-                temperature=0.1,
                 role="agent_team",
             )
         except AIError as exc:

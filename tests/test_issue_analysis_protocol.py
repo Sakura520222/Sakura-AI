@@ -271,7 +271,7 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
     )
 
     assert result["parse_source"] == "tagged_issue"
-    assert analyzer.api_client.calls[0]["temperature"] == 0
+    assert "temperature" not in analyzer.api_client.calls[0]
     repair_messages = analyzer.api_client.calls[0]["messages"]
     assert repair_messages[0] == {"role": "system", "content": "system contract"}
     assert repair_messages[1] == {"role": "user", "content": "issue evidence"}
