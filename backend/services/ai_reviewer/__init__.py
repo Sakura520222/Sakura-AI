@@ -21,7 +21,6 @@ from .constants import (
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
     MAX_FILE_LINES,
-    MAX_FILE_SIZE_BYTES,
     SEVERITY_EMOJI,
 )
 from .label_recommender import LabelRecommender
@@ -35,7 +34,6 @@ __all__ = [
     # 常量
     "MAX_CONTEXT_LINES",
     "MAX_FILE_LINES",
-    "MAX_FILE_SIZE_BYTES",
     "SEVERITY_EMOJI",
     # 子模块
     "AIApiClient",

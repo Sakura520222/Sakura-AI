@@ -234,6 +234,156 @@ async def test_read_file_non_pr_no_branch_uses_default(file_strategy):
 
 
 @pytest.mark.asyncio
+async def test_read_file_large_file_line_range_is_allowed(file_strategy):
+    """大文件按请求行范围读取，而不是按文件字节数直接拒绝。"""
+    content = "\n".join(f"line {i}" for i in range(1, 151))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=100
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "line_range"
+    assert result["returned_lines"] == 100
+    assert result["size"] == 262335
+    assert result["content"].splitlines()[0].endswith("line 1")
+    assert result["content"].splitlines()[-1].endswith("line 100")
+
+
+@pytest.mark.asyncio
+async def test_read_file_large_file_search_is_allowed(file_strategy):
+    """大文件搜索只返回匹配上下文，不因文件字节数提前跳过。"""
+    content = "\n".join(
+        f"line {i}" if i != 125 else "line 125 with keyword" for i in range(1, 151)
+    )
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh",
+        repo,
+        pr=None,
+        search_pattern="keyword",
+        context_lines=1,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search"
+    assert result["match_count"] == 1
+    assert result["returned_lines"] == 3
+    assert "keyword" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_large_file_full_read_is_line_truncated(file_strategy):
+    """大文件完整读取仍按输出行数截断，并保留任务无关的后续读取提示。"""
+    content = "\n".join(f"line {i}" for i in range(1, 551))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file("large.sh", repo, pr=None)
+
+    assert "error" not in result
+    assert result["mode"] == "full"
+    assert result["total_lines"] == 550
+    assert result["returned_lines"] == 500
+    assert result["truncated_lines"] == 500
+    assert result["content"].splitlines()[-1].endswith("line 500")
+    assert "PR" not in result["warning"]
+    assert "start_line/end_line" in result["warning"]
+    assert "search_pattern" in result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_line_range_output_is_capped_without_rejecting(
+    file_strategy,
+):
+    """超大行范围请求返回首个输出窗口，并给出下一段读取参数。"""
+    content = "\n".join(f"line {i}" for i in range(1, 601))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 1_000_000
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=600
+    )
+
+    assert "error" not in result
+    assert result["end_line"] == 500
+    assert result["returned_lines"] == 500
+    assert result["line_range"]["status"] == "output_truncated"
+    assert result["line_range"]["truncated"] is True
+    assert result["line_range"]["output_line_limit"] == 500
+    assert "start_line=501" in result["hint"]
+    assert "end_line=600" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_line_range_reports_combined_truncation(file_strategy):
+    """行范围同时越界并超过输出上限时，两种截断原因都保持可见。"""
+    content = "\n".join(f"line {i}" for i in range(1, 551))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 1_000_000
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=600
+    )
+
+    assert result["line_range"]["status"] == "end_line_and_output_truncated"
+    assert result["line_range"]["output_line_limit"] == 500
+    assert "超出当前文件总行数" in result["hint"]
+    assert "单次返回上限" in result["hint"]
+    assert "start_line=501" in result["hint"]
+    assert "end_line=550" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_unexpected_error_hint_is_task_agnostic(
+    file_strategy, monkeypatch
+):
+    """异常兜底提示不得默认当前任务是 PR 审查。"""
+    handler = FileToolHandler()
+    monkeypatch.setattr(
+        handler,
+        "_fetch_contents",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = await handler.read_file("a.py", object(), pr=None)
+
+    assert "读取文件时发生错误" in result["error"]
+    assert "PR" not in result["hint"]
+    assert "start_line/end_line" in result["hint"]
+    assert "search_pattern" in result["hint"]
+
+
+@pytest.mark.asyncio
 async def test_read_file_non_pr_all_branches_fail_returns_error(file_strategy):
     """非 PR 场景指定分支和默认分支都失败时返回结构化错误并保留尝试记录。"""
     repo = _FakeRepo(branches={}, default_branch="main")
@@ -493,6 +643,26 @@ async def test_search_in_files_zero_matches_does_not_fall_back(search_strategy):
     assert result["branch_used"] == "feature/x"
     assert result["total_matches"] == 0
     assert result["tried_branches"] == ["feature/x"]
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_scans_large_files(search_strategy):
+    """跨文件搜索不因文件字节数跳过，只返回匹配内容与上下文。"""
+    fake_content = _FakeContent("large.sh", "before\nkeyword here\nafter\n")
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        trees={"main": _FakeTree(["large.sh"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert "error" not in result
+    assert result["total_matches"] == 1
+    assert result["results"][0]["file_path"] == "large.sh"
+    assert "keyword here" in result["results"][0]["content"]
 
 
 # ── Search API 路径（ref-inaccessible 检测 + 降级）──────────
