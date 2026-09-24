@@ -89,7 +89,7 @@ jobs:
           output_file="$(mktemp)"
           trap 'rm -f "$output_file"' EXIT
           sudo --preserve-env=SAKURA_SANDBOX_DOCKER_INTEGRATION,SAKURA_AGENT_RUNNER_IMAGE_DIGEST \
-            "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests/integration/test_docker_isolation.py -q \
+            "$SANDBOXER_QUALITY_PYTHON" -m pytest sandboxer/tests/integration/test_docker_isolation.py -q -rs \
             | tee "$output_file"
           if grep -Eq '[0-9]+ skipped' "$output_file"; then
             echo 'Docker sandbox integration unexpectedly skipped a test' >&2

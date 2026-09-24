@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ _DOCKER_SECRET_RE = re.compile(
     r"\s*[:=]\s*[^\s,;]+"
 )
 _DOCKER_DIGEST_RE = re.compile(r"(?i)sha256:[0-9a-f]{64}")
+_DOCKER_PROBE_ATTEMPTS = 5
 
 
 def _redact_docker_stderr(value: bytes | str, *, tmp_path: Path) -> str:
@@ -137,22 +139,29 @@ def _integration_config(tmp_path: Path) -> tuple[SandboxdConfig, str]:
         pytest.skip("set SAKURA_SANDBOX_DOCKER_INTEGRATION=1 to run the Docker gate")
     docker = shutil.which("docker")
     if docker is None:
-        pytest.skip("Docker CLI is unavailable")
-    try:
-        probe = subprocess.run(
-            [docker, "info"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pytest.skip("Docker daemon is unavailable")
-    if probe.returncode != 0:
-        pytest.skip("Docker daemon is unavailable")
+        pytest.fail("Docker CLI is unavailable for the required integration gate")
+    # The daemon can briefly reject probes just after the runner image builds.
+    # Do not turn one transient probe into a silent skip in the mandatory gate.
+    for attempt in range(_DOCKER_PROBE_ATTEMPTS):
+        try:
+            probe = subprocess.run(
+                [docker, "info"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            if probe.returncode == 0:
+                break
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if attempt + 1 < _DOCKER_PROBE_ATTEMPTS:
+            time.sleep(1)
+    else:
+        pytest.fail("Docker daemon is unavailable after repeated probes")
     digest = os.environ.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST")
     if not digest:
-        pytest.skip("immutable runner digest is not configured")
+        pytest.fail("immutable runner digest is not configured for the required gate")
     root = tmp_path / "workplace"
     workspace = root / "owner" / "repo" / "worktrees" / "42-integration"
     workspace.mkdir(parents=True)
@@ -167,6 +176,49 @@ def _integration_config(tmp_path: Path) -> tuple[SandboxdConfig, str]:
         ),
         key,
     )
+
+
+def test_docker_preflight_retries_transient_daemon_failure(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("SAKURA_SANDBOX_DOCKER_INTEGRATION", "1")
+    monkeypatch.setenv("SAKURA_AGENT_RUNNER_IMAGE_DIGEST", f"sha256:{'a' * 64}")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    calls: list[list[str]] = []
+    delays: list[int] = []
+
+    def probe(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs["timeout"] == 5
+        return subprocess.CompletedProcess(argv, 1 if len(calls) == 1 else 0)
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    monkeypatch.setattr(time, "sleep", delays.append)
+
+    config, key = _integration_config(tmp_path)
+
+    assert config.runner_image_digest == f"sha256:{'a' * 64}"
+    assert key
+    assert calls == [["/usr/bin/docker", "info"]] * 2
+    assert delays == [1]
+
+
+def test_docker_preflight_fails_instead_of_skipping_unavailable_daemon(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("SAKURA_SANDBOX_DOCKER_INTEGRATION", "1")
+    monkeypatch.setenv("SAKURA_AGENT_RUNNER_IMAGE_DIGEST", f"sha256:{'a' * 64}")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    attempts = []
+
+    def probe(argv, **_kwargs):
+        attempts.append(argv)
+        raise subprocess.TimeoutExpired(argv, 5)
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(pytest.fail.Exception, match="after repeated probes"):
+        _integration_config(tmp_path)
+    assert len(attempts) == _DOCKER_PROBE_ATTEMPTS
 
 
 @pytest.mark.asyncio
