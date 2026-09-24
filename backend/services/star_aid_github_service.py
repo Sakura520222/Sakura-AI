@@ -321,14 +321,16 @@ async def get_credential(
 async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
     """标记用户需要重新授权：吊销凭据并把成员状态置为 reauth_required。"""
     now = now_utc()
-    # All paths that may update both rows lock member before credential.
+    # Read the *current* status under the row lock rather than trusting an
+    # already-loaded member in the identity map. Select columns here so a
+    # worker's pending daily-reset changes are not discarded by populate_existing.
     with session.no_autoflush:
         member_result = await session.execute(
-            select(StarAidMember)
+            select(StarAidMember.id, StarAidMember.status)
             .where(StarAidMember.user_id == user_id)
             .with_for_update()
         )
-    member = member_result.scalar_one_or_none()
+    locked_member = member_result.one_or_none()
     credential_result = await session.execute(
         select(StarAidCredential)
         .where(StarAidCredential.user_id == user_id)
@@ -338,12 +340,19 @@ async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
     cred = credential_result.scalar_one_or_none()
     if cred and cred.revoked_at is None:
         cred.revoked_at = now
-    if member and member.status not in (
-        MEMBER_STATUS_REAUTH_REQUIRED,
-        "left",
-        "banned",
-    ):
-        member.status = MEMBER_STATUS_REAUTH_REQUIRED
+    if locked_member:
+        member = await session.get(StarAidMember, locked_member[0])
+        if member is not None:
+            # The identity map can still contain a pre-ban "active" member.
+            # Keep it aligned with the locking read without refreshing away
+            # unrelated pending fields (e.g. the worker's daily reset).
+            member.status = locked_member[1]
+            if locked_member[1] not in (
+                MEMBER_STATUS_REAUTH_REQUIRED,
+                "left",
+                "banned",
+            ):
+                member.status = MEMBER_STATUS_REAUTH_REQUIRED
     await session.flush()
     logger.warning("star_aid reauth required: user_id={}", user_id)
 
@@ -621,10 +630,10 @@ async def list_user_public_repositories(
                         status_code=200,
                     )
                 repos.extend(data)
-                # A short page without an explicit next link is terminal. A
-                # next link takes precedence (some API filters underfill pages).
+                # GitHub's Link header is authoritative even when the final
+                # page happens to contain exactly per_page repositories.
                 has_next = 'rel="next"' in resp.headers.get("link", "")
-                if len(data) < 100 and not has_next:
+                if not has_next:
                     return RepositoryListResult(
                         success=True,
                         complete=True,
