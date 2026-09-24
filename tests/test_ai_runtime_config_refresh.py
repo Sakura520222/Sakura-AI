@@ -30,11 +30,8 @@ class _FakeAIApiClient:
 
 def _role_only_settings():
     return SimpleNamespace(
-        ai_temperature=0.3,
         enable_context_compression=True,
         context_compression_threshold=0.85,
-        context_compression_keep_rounds=2,
-        context_safety_threshold=0.8,
         web_search_enabled=False,
         fetch_url_enabled=False,
     )
@@ -62,12 +59,9 @@ def test_reviewer_refresh_keeps_auxiliary_components_on_role_facade(monkeypatch)
     monkeypatch.setattr(reviewer_module, "AIApiClient", _FakeAIApiClient)
 
     reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
-    reviewer.context_compressor = SimpleNamespace(api_client=None, model="stale")
     reviewer.label_recommender = SimpleNamespace(api_client=None, model="stale")
     reviewer._refresh_ai_clients()
 
-    assert reviewer.context_compressor.api_client is reviewer.api_client
-    assert reviewer.context_compressor.model == ""
     assert reviewer.label_recommender.api_client is reviewer.api_client
     assert reviewer.label_recommender.model == ""
 
@@ -84,18 +78,14 @@ def test_issue_analyzer_refreshes_client_after_dynamic_config_change(monkeypatch
     assert analyzer._refresh_ai_client() is None
 
 
-def test_reviewer_refreshes_runtime_tool_and_compression_config(monkeypatch):
+def test_reviewer_refreshes_runtime_tool_config(monkeypatch):
     settings = SimpleNamespace(
-        enable_context_compression=False,
-        context_compression_threshold=0.7,
-        context_compression_keep_rounds=4,
         web_search_enabled=False,
         fetch_url_enabled=False,
     )
     monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
 
     reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
-    reviewer.context_compressor = SimpleNamespace(keep_rounds=1)
     reviewer.tool_handler = ToolHandler(
         file_tool=None,
         search_tool=None,
@@ -108,10 +98,6 @@ def test_reviewer_refreshes_runtime_tool_and_compression_config(monkeypatch):
 
     reviewer._refresh_runtime_config()
 
-    assert reviewer.enable_compression is False
-    assert reviewer.compression_threshold == 0.7
-    assert reviewer.keep_rounds == 4
-    assert reviewer.context_compressor.keep_rounds == 4
     assert reviewer.tool_handler.web_search_tool is None
     assert reviewer.tool_handler.fetch_url_tool is None
 
@@ -178,16 +164,12 @@ def test_sakura_memory_refreshes_main_and_summary_credentials():
 def test_reviewer_runtime_config_creates_web_tools_when_enabled(monkeypatch):
     """web_search / fetch_url 启用时按需创建工具，且刷新幂等不重建已有实例。"""
     settings = SimpleNamespace(
-        enable_context_compression=True,
-        context_compression_threshold=0.85,
-        context_compression_keep_rounds=2,
         web_search_enabled=True,
         fetch_url_enabled=True,
     )
     monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
 
     reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
-    reviewer.context_compressor = SimpleNamespace(keep_rounds=1)
     reviewer.tool_handler = ToolHandler(
         file_tool=None,
         search_tool=None,

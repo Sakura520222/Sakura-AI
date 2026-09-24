@@ -64,7 +64,7 @@ async def test_invalid_response_is_repaired_once():
     assert result["ai_decision"] == "approve"
     assert len(reviewer.api_client.calls) == 1
     repair_call = reviewer.api_client.calls[0]
-    assert repair_call["temperature"] == 0
+    assert "temperature" not in repair_call
     assert "tools" not in repair_call
     # 新循环保留完整 base_messages（system+user），每轮追加 assistant+user
     assert len(repair_call["messages"]) == 4

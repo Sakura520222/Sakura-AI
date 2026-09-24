@@ -3,6 +3,6 @@
 导出压缩相关的类。
 """
 
-from .context_compressor import ContextCompressor
+from .unified_compressor import UnifiedContextCompressor
 
-__all__ = ["ContextCompressor"]
+__all__ = ["UnifiedContextCompressor"]

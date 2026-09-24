@@ -15,20 +15,30 @@ from backend.core.ai_protocol.models import AIErrorCategory
 # 保留空集合以兼容调用方对 ``is_terminal`` 的读取。
 TERMINAL_CATEGORIES: frozenset[AIErrorCategory] = frozenset()
 
-# 认证/权限/模型不存在时，当前候选没有重试价值，直接进入下一候选。
-# Authentication, permission, and missing-model failures fail over immediately.
+# 这些错误对当前 payload 没有重试价值，直接进入下一候选。
+# These errors have no retry value for the current payload and fail over.
 FALLBACK_ONLY_CATEGORIES: frozenset[AIErrorCategory] = frozenset(
     {
         AIErrorCategory.AUTH_INVALID,
         AIErrorCategory.PERMISSION_DENIED,
         AIErrorCategory.MODEL_NOT_FOUND,
+        AIErrorCategory.BAD_REQUEST,
+        AIErrorCategory.REFUSAL,
     }
 )
 
-# 其余归一化 AI 错误允许重试，并在当前候选耗尽后故障转移。
-# Other normalized AI errors are retried, then failed over after exhaustion.
-RETRYABLE_CATEGORIES: frozenset[AIErrorCategory] = frozenset(AIErrorCategory) - (
-    FALLBACK_ONLY_CATEGORIES
+# 仅明确瞬时/服务端错误允许重试；上下文超限由统一客户端走一次压缩恢复。
+# Only explicitly transient/server errors retry; context overflow routes through
+# the unified client's bounded compression recovery instead.
+RETRYABLE_CATEGORIES: frozenset[AIErrorCategory] = frozenset(
+    {
+        AIErrorCategory.RATE_LIMITED,
+        AIErrorCategory.SERVER_ERROR,
+        AIErrorCategory.OVERLOADED,
+        AIErrorCategory.NETWORK,
+        # 2xx 非 JSON 等协议兼容问题可能来自瞬时代理/网关，保留有限重试。
+        AIErrorCategory.UNKNOWN,
+    }
 )
 
 # 上下文超长关键词（跨协议累积）/ Context overflow keywords (cross-protocol)

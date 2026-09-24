@@ -726,22 +726,10 @@ class ScanWorker:
             await _event_callback("message", initial_message)
 
         # 7. 多轮工具调用（模型由 main 角色绑定解析）
-        settings = get_settings()
-
         (
             role_model,
             role_context_tokens,
         ) = await reviewer.api_client.resolve_role_model_context("main")
-        # 上下文安全阈值与 Issue 分析对齐（0.8 常量，不设扫描专属配置）
-        if role_context_tokens and role_context_tokens > 0:
-            safe_context = int(role_context_tokens * 0.8)
-        elif reviewer.model_context_mgr:
-            safe_context = reviewer.model_context_mgr.calculate_safe_context(
-                None,
-                0.8,
-            )
-        else:
-            safe_context = 0
         logger.info(
             "扫描使用 main 角色绑定: model={}, context_tokens={}",
             role_model or "<role metadata>",
@@ -792,7 +780,6 @@ class ScanWorker:
                     "messages": messages,
                     "tools": enabled_tools,
                     "tool_choice": "auto",
-                    "temperature": settings.ai_temperature,
                     "role": "main",
                     "context": invocation_context,
                     "observer": observer,
@@ -949,32 +936,6 @@ class ScanWorker:
                                 "content": error_payload,
                             },
                         )
-
-                # 本地估算仅用于决定下一轮发送前是否压缩。
-                try:
-                    current_tokens = (
-                        reviewer.context_compressor.estimate_messages_tokens(messages)
-                    )
-                except Exception:
-                    logger.warning("token estimation failed, skipping", exc_info=True)
-                    current_tokens = 0
-
-                # 上下文压缩检查（使用扫描独立配置）
-                if reviewer.enable_compression:
-                    try:
-                        threshold_tokens = int(
-                            safe_context * settings.context_compression_threshold
-                        )
-
-                        if current_tokens > threshold_tokens:
-                            messages = await reviewer.context_compressor.compress_conversation_history(
-                                messages,
-                                messages[0]["content"],
-                                threshold_tokens,
-                            )
-                            logger.info("扫描上下文压缩完成，继续...")
-                    except Exception as e:
-                        logger.warning(f"扫描上下文压缩失败: {e}")
 
             except Exception as e:
                 logger.error(f"全仓扫描 AI 调用失败: {e}")

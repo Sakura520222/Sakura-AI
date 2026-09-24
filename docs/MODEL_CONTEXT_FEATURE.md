@@ -10,8 +10,8 @@ Sakura AI 会根据模型上下文窗口、当前 PR 内容和多轮工具调用
 
 ## 功能概览
 
-- **模型上下文窗口识别**：优先使用 WebUI 动态配置，也可通过 AI Provider 注册表自动获取模型列表和上下文窗口信息。
-- **安全上下文预算**：按 `context_safety_threshold` 预留响应空间、工具调用空间和格式化开销。
+- **模型上下文窗口识别**：优先使用「AI 配置」的单模型高级配置，也可通过 AI Provider 注册表自动获取模型列表和上下文窗口信息。
+- **安全上下文预算**：按候选模型的上下文窗口、最终输出上限和安全预留统一计算。
 - **大型 PR compact diff**：初始 diff 过大时，只发送文件元信息与增删行统计，AI 通过工具按需读取具体文件 diff。
 - **对话历史自动压缩**：多轮工具调用导致历史接近阈值时，使用独立压缩会话总结历史，再继续审查。
 - **辅助模型回退**：摘要、上下文压缩等轻量任务可使用辅助模型；未配置时回退主模型。
@@ -36,12 +36,10 @@ UserConfig > app_config > Settings 默认值
 
 | 配置项 | 说明 |
 |--------|------|
-| `model_context_window` | 手动指定模型上下文窗口（tokens）。为空或无效时使用模型自动识别结果或默认值 |
-| `auto_fetch_model_context` | 是否尝试从 AI Provider API / 注册表获取模型上下文信息 |
-| `context_safety_threshold` | 安全上下文比例，用于预留输出和工具调用空间 |
+| 单模型 `context_window_tokens` | 在「AI 配置」的角色绑定模型上配置上下文窗口 |
+| 单模型 `max_output_tokens` | 在「AI 配置」的角色绑定模型上配置最终输出上限 |
 | `enable_context_compression` | 是否启用对话历史自动压缩 |
 | `context_compression_threshold` | 压缩触发阈值：当前历史 tokens 超过安全上下文的该比例时触发 |
-| `context_compression_keep_rounds` | 压缩时保留最近对话轮数的配置项 |
 | summary 角色绑定（WebUI「AI 配置」） | 辅助模型配置，用于摘要、压缩、标签推荐等轻量任务；历史 `summary_model` / `summary_api_base` / `summary_api_key` 键已废弃，不再被读取 |
 | `ai_api_timeout_seconds` | AI API 单次 HTTP 请求超时 |
 | `ai_api_total_timeout_seconds` | 一次 AI 调用在重试循环中的总耗时上限 |
@@ -50,7 +48,7 @@ UserConfig > app_config > Settings 默认值
 
 系统按以下顺序确定模型上下文窗口：
 
-1. `model_context_window` 动态配置。
+1. `ai_model_override.<provider>.<model>` 中的 `context_window_tokens`。
 2. AI Provider 注册表中已知模型或模型列表返回的上下文窗口信息。
 3. 模型名称规则匹配结果。
 4. 默认安全值。
@@ -62,7 +60,14 @@ Setup Wizard 和 WebUI 配置页会使用 AI Provider 注册表展示内置厂�
 安全上下文预算按模型窗口和阈值计算：
 
 ```text
-safe_context = model_context_window × context_safety_threshold
+effective_max_output =
+min(model.max_output_tokens, task.output_token_cap, context_window - estimated_input - safety_reserve)
+```
+
+最终发送前必须满足：
+
+```text
+estimated_input + effective_max_output + safety_reserve <= context_window
 ```
 
 该预算用于容纳：
@@ -145,7 +150,7 @@ AI 可按需调用：
 
 1. 在 WebUI 中检查 AI Provider、API Base、模型名是否正确。
 2. 尝试从配置页重新获取模型列表。
-3. 必要时手动设置 `model_context_window`。
+3. 在「AI 配置」中为该模型设置 `context_window_tokens`。
 
 ### 大型 PR 审查仍然失败
 

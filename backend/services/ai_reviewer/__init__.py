@@ -17,10 +17,8 @@
 # 主类 - 保持向后兼容
 # 可导出的子模块（供需要细粒度控制的场景使用）
 from .api_client import AIApiClient
-from .compression import ContextCompressor
 from .constants import (
     DEFAULT_CONTEXT_LINES,
-    DEFAULT_MAX_TOKENS,
     MAX_CONTEXT_LINES,
     MAX_FILE_LINES,
     MAX_FILE_SIZE_BYTES,
@@ -35,7 +33,6 @@ from .tools import FileToolHandler, SearchToolHandler, ToolHandler, ToolManager
 __all__ = [
     "DEFAULT_CONTEXT_LINES",
     # 常量
-    "DEFAULT_MAX_TOKENS",
     "MAX_CONTEXT_LINES",
     "MAX_FILE_LINES",
     "MAX_FILE_SIZE_BYTES",
@@ -44,7 +41,6 @@ __all__ = [
     "AIApiClient",
     # 主类（保持向后兼容）
     "AIReviewer",
-    "ContextCompressor",
     "FileToolHandler",
     "LabelRecommender",
     "PromptBuilder",

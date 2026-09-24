@@ -153,7 +153,6 @@ async def run_protocol_repair_loop(
         call_kwargs: dict[str, Any] = {
             "model": "",
             "messages": repair_messages,
-            "temperature": 0,
             "role": "main",
             "cancel_event": cancel_event,
             "context": invocation_context,

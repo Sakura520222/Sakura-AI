@@ -161,8 +161,7 @@ class SakuraAgentBase:
                     model="",
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.3,
-                    max_tokens=4096,
+                    output_token_cap=4096,
                     role="main",
                     cancel_event=cancel_event,
                 )

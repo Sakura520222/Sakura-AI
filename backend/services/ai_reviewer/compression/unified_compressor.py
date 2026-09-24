@@ -25,6 +25,7 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
 )
 from backend.core.ai_protocol.registry import get_adapter
+from backend.core.ai_protocol.request_policy import filter_reasoning_params
 from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -128,6 +129,8 @@ class UnifiedContextCompressor:
         messages: list[UnifiedMessage],
         *,
         tracker: TokenTracker | None = None,
+        effective_max_output_tokens: int | None = None,
+        safety_reserve_tokens: int | None = None,
     ) -> tuple[bool, list[UnifiedMessage]]:
         """按预算决定是否压缩，返回 (是否压缩, 消息列表).
 
@@ -151,7 +154,28 @@ class UnifiedContextCompressor:
                 candidate.model.model_id, self.threshold
             )
         current = self._estimate(messages)
-        if current <= budget:
+        final_output_tokens = max(
+            1,
+            int(
+                effective_max_output_tokens
+                or candidate.model.reasoning_params.max_output_tokens
+            ),
+        )
+        reserve = max(
+            0,
+            int(
+                safety_reserve_tokens
+                if safety_reserve_tokens is not None
+                else min(
+                    _SUMMARY_SAFETY_MARGIN_TOKENS,
+                    max(32, self._context_window_tokens(candidate) // 20),
+                )
+            ),
+        )
+        exact_input_budget = self._context_window_tokens(
+            candidate
+        ) - final_output_tokens - reserve
+        if current <= budget and current <= exact_input_budget:
             return False, messages
 
         if self._has_pending_tool_results(messages):
@@ -171,7 +195,8 @@ class UnifiedContextCompressor:
             candidate,
             messages,
             tracker=tracker,
-            final_output_tokens=candidate.model.reasoning_params.max_output_tokens,
+            final_output_tokens=final_output_tokens,
+            safety_reserve_tokens=reserve,
         )
         if compressed is None:
             return False, messages
@@ -191,6 +216,7 @@ class UnifiedContextCompressor:
         messages: list[UnifiedMessage],
         system: str | None = None,
         max_output_tokens: int | None = None,
+        safety_reserve_tokens: int | None = None,
     ) -> list[UnifiedMessage] | None:
         """强制压缩入口（供 UnifiedAIClient 超限恢复调用）.
 
@@ -207,6 +233,7 @@ class UnifiedContextCompressor:
             messages,
             system=system,
             final_output_tokens=max_output_tokens,
+            safety_reserve_tokens=safety_reserve_tokens,
         )
         return compressed
 
@@ -250,6 +277,7 @@ class UnifiedContextCompressor:
         system: str | None = None,
         tracker: TokenTracker | None = None,
         final_output_tokens: int | None = None,
+        safety_reserve_tokens: int | None = None,
     ) -> list[UnifiedMessage] | None:
         """调用当前候选模型生成历史摘要并组装压缩消息.
 
@@ -267,7 +295,22 @@ class UnifiedContextCompressor:
         if not history_text.strip():
             return None
 
-        prompt = self._build_prompt(history_text, self.summary_max_tokens)
+        summary_output_tokens = max(
+            1,
+            min(
+                self.summary_max_tokens,
+                int(candidate.model.reasoning_params.max_output_tokens),
+            ),
+        )
+        prompt = self._build_prompt(history_text, summary_output_tokens)
+        params = filter_reasoning_params(
+            candidate.model,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+            thinking=None,
+            effort=None,
+        )
         request = UnifiedRequest(
             model=candidate.model.model_id,
             messages=[
@@ -277,8 +320,12 @@ class UnifiedContextCompressor:
                 ),
                 UnifiedMessage(role="user", content=prompt),
             ],
-            max_tokens=self.summary_max_tokens,
-            temperature=0.2,
+            max_tokens=summary_output_tokens,
+            temperature=params["temperature"],
+            top_p=params["top_p"],
+            top_k=params["top_k"],
+            thinking=params["thinking"],
+            effort=params["effort"],
             stream=False,
         )
 
@@ -334,6 +381,7 @@ class UnifiedContextCompressor:
             candidate,
             compressed,
             final_output_tokens=final_output_tokens,
+            safety_reserve_tokens=safety_reserve_tokens,
         )
         return bounded
 
@@ -365,7 +413,13 @@ class UnifiedContextCompressor:
         separated from its tool result while building the untrusted summary.
         """
         window = self._context_window_tokens(candidate)
-        summary_output = max(1, int(self.summary_max_tokens))
+        summary_output = max(
+            1,
+            min(
+                self.summary_max_tokens,
+                int(candidate.model.reasoning_params.max_output_tokens),
+            ),
+        )
         fixed_tokens = (
             self._model_ctx.estimate_tokens(self._summary_system_text())
             + self._model_ctx.estimate_tokens(self._build_prompt("", summary_output))
@@ -383,6 +437,7 @@ class UnifiedContextCompressor:
         messages: list[UnifiedMessage],
         *,
         final_output_tokens: int | None,
+        safety_reserve_tokens: int | None = None,
     ) -> list[UnifiedMessage] | None:
         """Keep the post-summary request input within the same context window."""
         if final_output_tokens is None:
@@ -391,7 +446,11 @@ class UnifiedContextCompressor:
         input_budget = (
             window
             - max(1, int(final_output_tokens))
-            - min(_SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20))
+            - (
+                safety_reserve_tokens
+                if safety_reserve_tokens is not None
+                else min(_SUMMARY_SAFETY_MARGIN_TOKENS, max(32, window // 20))
+            )
         )
         if input_budget <= 0:
             return None

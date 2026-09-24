@@ -54,6 +54,16 @@ def test_openai_adapter_serializes_tool_calls_and_parses_response():
     assert body["model"] == "test-model"
     assert body["tools"][0]["function"]["name"] == "read_file"
 
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+        effort="low",
+    )
+    body = adapter.serialize_request(request)
+    assert body["reasoning_effort"] == "low"
+    assert "effort" not in body
+
     response = adapter.parse_response(
         {
             "choices": [

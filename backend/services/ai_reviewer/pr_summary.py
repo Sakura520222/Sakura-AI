@@ -52,8 +52,7 @@ class PRSummaryService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0.3,
-            max_tokens=16000,
+            output_token_cap=16000,
             role="summary",
         )
 

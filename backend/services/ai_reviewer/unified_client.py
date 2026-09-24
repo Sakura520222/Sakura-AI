@@ -32,7 +32,6 @@ from backend.core.ai_protocol.errors import (
 )
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
-    ModelMetadata,
     ResolvedModel,
     UnifiedMessage,
     UnifiedRequest,
@@ -40,6 +39,10 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     images_from_mapping,
     strip_message_images,
+)
+from backend.core.ai_protocol.request_policy import (
+    filter_reasoning_params,
+    resolve_effective_request_policy,
 )
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
@@ -99,7 +102,7 @@ class _CallState:
 
 
 def _filter_params_by_capability(
-    metadata: ModelMetadata,
+    metadata: Any,
     *,
     temperature: float | None,
     top_p: float | None,
@@ -107,30 +110,15 @@ def _filter_params_by_capability(
     thinking: dict[str, Any] | None,
     effort: str | None,
 ) -> dict[str, Any]:
-    """按模型能力过滤推理参数 / Filter reasoning params by model capability."""
-    caps = metadata.capabilities
-    params = metadata.reasoning_params
-    result: dict[str, Any] = {}
-
-    def _pick(passed: Any, configured: Any, allowed: bool) -> Any:
-        if not allowed:
-            return None
-        return passed if passed is not None else configured
-
-    result["temperature"] = _pick(temperature, params.temperature, caps.temperature)
-    result["top_p"] = _pick(top_p, params.top_p, caps.top_p)
-    result["top_k"] = _pick(top_k, params.top_k, caps.top_k)
-    result["thinking"] = (
-        thinking
-        if (thinking is not None and caps.thinking)
-        else (params.thinking if caps.thinking else None)
+    """Compatibility alias for the shared effective-parameter resolver."""
+    return filter_reasoning_params(
+        metadata,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        thinking=thinking,
+        effort=effort,
     )
-    result["effort"] = (
-        effort
-        if (effort is not None and caps.effort)
-        else (params.effort if caps.effort else None)
-    )
-    return result
 
 
 def _reasoning_mode(value: Any, *, supported: bool) -> str:
@@ -453,6 +441,7 @@ class UnifiedAIClient:
         top_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        output_token_cap: int | None = None,
         thinking: dict[str, Any] | None = None,
         effort: str | None = None,
         timeout: float | None = None,
@@ -528,6 +517,21 @@ class UnifiedAIClient:
         # long tool loops never exceed the model context window.
         if self._compressor is not None:
             try:
+                preflight_policy = resolve_effective_request_policy(
+                    selected[0],
+                    unified_messages,
+                    role=role,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    thinking=thinking,
+                    effort=effort,
+                    max_tokens=max_tokens,
+                    output_token_cap=output_token_cap,
+                    tools=unified_tools,
+                    clamp_to_context=False,
+                    stream=False,
+                )
                 (
                     compressed_once,
                     unified_messages,
@@ -535,6 +539,10 @@ class UnifiedAIClient:
                     selected[0],
                     unified_messages,
                     tracker=None,
+                    effective_max_output_tokens=max(
+                        1, preflight_policy.max_output_tokens
+                    ),
+                    safety_reserve_tokens=preflight_policy.safety_reserve_tokens,
                 )
             except Exception as exc:
                 logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
@@ -579,18 +587,6 @@ class UnifiedAIClient:
                 candidate.provider.id,
                 candidate.model.model_id,
             )
-            params = _filter_params_by_capability(
-                candidate.model,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                thinking=thinking,
-                effort=effort,
-            )
-            effective_max_tokens = (
-                max_tokens or candidate.model.reasoning_params.max_output_tokens
-            )
-
             # vision 门控：能力不含 vision 的候选剔除图片附件，正文中的
             # markdown 图片链接保持原样，模型仍可读取 URL / strip images
             # for non-vision candidates; markdown links remain in the text.
@@ -599,18 +595,52 @@ class UnifiedAIClient:
                 if candidate.model.capabilities.vision
                 else strip_message_images(unified_messages)
             )
+            policy = resolve_effective_request_policy(
+                candidate,
+                request_messages,
+                role=role,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                thinking=thinking,
+                effort=effort,
+                max_tokens=max_tokens,
+                output_token_cap=output_token_cap,
+                tools=unified_tools,
+                stream=False,
+            )
+            if not policy.fits_context:
+                last_error = ContextOverflowError(
+                    "模型上下文不足以容纳输入、输出上限和安全预留",
+                    estimated_tokens=policy.estimated_input_tokens,
+                    model=candidate.model.model_id,
+                    provider=candidate.provider.id,
+                )
+                logger.warning(
+                    "候选模型上下文预算不足，尝试下一候选: role={} provider={} "
+                    "model={} estimated_input={} window={} output={} reserve={}",
+                    role,
+                    candidate.provider.id,
+                    candidate.model.model_id,
+                    policy.estimated_input_tokens,
+                    policy.context_window_tokens,
+                    policy.max_output_tokens,
+                    policy.safety_reserve_tokens,
+                )
+                continue
+            logger.info("AI effective request: {}", policy.safe_log_dict())
 
             request = UnifiedRequest(
                 model=candidate.model.model_id,
                 messages=list(request_messages),
-                max_tokens=effective_max_tokens,
+                max_tokens=policy.max_output_tokens,
                 tools=unified_tools,
                 tool_choice=tool_choice,
-                temperature=params["temperature"],
-                top_p=params["top_p"],
-                top_k=params["top_k"],
-                thinking=params["thinking"],
-                effort=params["effort"],
+                temperature=policy.temperature,
+                top_p=policy.top_p,
+                top_k=policy.top_k,
+                thinking=policy.thinking,
+                effort=policy.effort,
                 stream=False,
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
@@ -651,6 +681,7 @@ class UnifiedAIClient:
                     candidate.model.context_window_tokens
                 )
                 response.meta.served_capabilities = candidate.model.capabilities
+                response.meta.effective_request = policy.safe_log_dict()
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
                 self._last_successful[role] = candidate.sticky_identity
                 logger.info(
@@ -809,6 +840,7 @@ class UnifiedAIClient:
         top_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        output_token_cap: int | None = None,
         thinking: dict[str, Any] | None = None,
         effort: str | None = None,
         timeout: float | None = None,
@@ -855,6 +887,34 @@ class UnifiedAIClient:
                         ]
                     break
 
+        if self._compressor is not None:
+            try:
+                preflight_policy = resolve_effective_request_policy(
+                    selected[0],
+                    unified_messages,
+                    role=role,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    thinking=thinking,
+                    effort=effort,
+                    max_tokens=max_tokens,
+                    output_token_cap=output_token_cap,
+                    clamp_to_context=False,
+                    stream=True,
+                )
+                _compressed, unified_messages = await self._compressor.maybe_compress(
+                    selected[0],
+                    unified_messages,
+                    tracker=None,
+                    effective_max_output_tokens=max(
+                        1, preflight_policy.max_output_tokens
+                    ),
+                    safety_reserve_tokens=preflight_policy.safety_reserve_tokens,
+                )
+            except Exception as exc:
+                logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
+
         logical_call_id = str(active_logical_call_factory())
         logical_call_started = time.monotonic()
         # ``total_timeout`` is a logical-call budget.  Non-positive values have
@@ -880,28 +940,47 @@ class UnifiedAIClient:
                 budget_exhausted = True
                 break
             fallback_from_id = previous_attempt_id
-            params = _filter_params_by_capability(
-                candidate.model,
+            request_messages = (
+                unified_messages
+                if candidate.model.capabilities.vision
+                else strip_message_images(unified_messages)
+            )
+            policy = resolve_effective_request_policy(
+                candidate,
+                request_messages,
+                role=role,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
                 thinking=thinking,
                 effort=effort,
+                max_tokens=max_tokens,
+                output_token_cap=output_token_cap,
+                stream=True,
             )
+            if not policy.fits_context:
+                last_error = ContextOverflowError(
+                    "模型上下文不足以容纳输入、输出上限和安全预留",
+                    estimated_tokens=policy.estimated_input_tokens,
+                    model=candidate.model.model_id,
+                    provider=candidate.provider.id,
+                )
+                logger.warning(
+                    "流式候选模型上下文预算不足，尝试下一候选: role={} model={}",
+                    role,
+                    candidate.model.model_id,
+                )
+                continue
+            logger.info("AI effective request: {}", policy.safe_log_dict())
             request = UnifiedRequest(
                 model=candidate.model.model_id,
-                messages=(
-                    list(unified_messages)
-                    if candidate.model.capabilities.vision
-                    else list(strip_message_images(unified_messages))
-                ),
-                max_tokens=max_tokens
-                or candidate.model.reasoning_params.max_output_tokens,
-                temperature=params["temperature"],
-                top_p=params["top_p"],
-                top_k=params["top_k"],
-                thinking=params["thinking"],
-                effort=params["effort"],
+                messages=list(request_messages),
+                max_tokens=policy.max_output_tokens,
+                temperature=policy.temperature,
+                top_p=policy.top_p,
+                top_k=policy.top_k,
+                thinking=policy.thinking,
+                effort=policy.effort,
                 stream=True,
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
@@ -1101,6 +1180,9 @@ class UnifiedAIClient:
                     if exc.is_fallback_only:
                         # 当前候选的认证/权限/模型错误不重试，直接尝试下一候选。
                         break
+                    if not exc.is_retryable:
+                        # BAD_REQUEST / REFUSAL 对相同 payload 是确定性的。
+                        break
                     if retry_index < self.fallback_config.max_retries:
                         try:
                             delay = self._calculate_delay(retry_index)
@@ -1246,6 +1328,8 @@ class UnifiedAIClient:
                 # 认证、权限和模型不存在不是当前候选的瞬时故障，直接交给
                 # 上层切换下一个候选 / fail over immediately for this candidate.
                 if exc.is_fallback_only:
+                    raise
+                if not exc.is_retryable:
                     raise
                 if attempt < cfg.max_retries:
                     delay = self._calculate_delay(attempt)

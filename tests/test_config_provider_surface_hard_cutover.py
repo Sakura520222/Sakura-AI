@@ -62,7 +62,7 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
     for registry in registries:
         assert LEGACY_SUPPLIER_KEYS.isdisjoint(registry)
 
-    assert {"ai_temperature", "ai_max_tokens"}.issubset(Settings.model_fields)
+    assert {"ai_temperature", "ai_max_tokens"}.isdisjoint(Settings.model_fields)
     # Agent 专属任务时限和轮数上限不再属于 Settings 或动态配置 surface。
     removed_agent_limits = {
         "agent_team_timeout_seconds",

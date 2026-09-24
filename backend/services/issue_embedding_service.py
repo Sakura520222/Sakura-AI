@@ -607,7 +607,6 @@ class IssueEmbeddingService:
                     {"role": "user", "content": user_prompt},
                 ],
                 model="",
-                temperature=0.1,
                 role="summary",
             )
 

@@ -197,8 +197,7 @@ class PRDependencyGraphService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0.2,
-            max_tokens=16000,
+            output_token_cap=16000,
             role="summary",
         )
 

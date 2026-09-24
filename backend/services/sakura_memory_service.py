@@ -1422,8 +1422,7 @@ class SakuraMemoryService:
         response = await self.api_client.call_with_retry(
             messages=messages,
             model="",
-            temperature=0.7,
-            max_tokens=4000,
+            output_token_cap=4000,
             role="summary",
         )
         if not response.choices:

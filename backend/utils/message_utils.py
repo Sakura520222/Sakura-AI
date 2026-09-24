@@ -1,8 +1,7 @@
 """Shared message utility functions for Agent Team tool call handling.
 
 Consolidates duplicated tool-call serialization and reconstruction logic
-previously scattered across fullstack_expert.py, professional_reviewer.py,
-and context_compressor.py.
+previously scattered across agent-team execution paths and reviewer loops.
 """
 
 from __future__ import annotations

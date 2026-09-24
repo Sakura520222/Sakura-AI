@@ -703,7 +703,6 @@ class IssueAnalyzer:
                     "messages": messages,
                     "tools": enabled_tools,
                     "tool_choice": "auto",
-                    "temperature": settings.ai_temperature,
                     "role": "main",
                     "cancel_event": cancel_event,
                     "context": invocation_context,
