@@ -40,10 +40,8 @@ class StarAidScheduler:
                 return
 
             settings = get_settings()
-            # 启动时检查调度器开关与全局调度器总开关
-            if not bool(getattr(settings, "star_aid_scheduler_enabled", True)):
-                logger.info("star_aid 调度器未启用（star_aid_scheduler_enabled=False）")
-                return
+            # Keep the lightweight tick registered even while Star Aid is
+            # disabled: every replica must observe a later DB-backed enable.
             if not bool(getattr(settings, "enable_scheduler", True)):
                 logger.info("star_aid 调度器未启用（enable_scheduler=False）")
                 return
@@ -93,11 +91,9 @@ class StarAidScheduler:
                 self._scheduler = None
 
     def restart_if_needed(self) -> None:
-        """根据最新配置重启或启停调度器。"""
+        """Only the process-wide scheduler switch controls the timer lifecycle."""
         settings = get_settings()
-        enabled = bool(getattr(settings, "star_aid_scheduler_enabled", True)) and bool(
-            getattr(settings, "enable_scheduler", True)
-        )
+        enabled = bool(getattr(settings, "enable_scheduler", True))
         if enabled:
             if not self.is_running:
                 self.start()
@@ -114,8 +110,9 @@ class StarAidScheduler:
             return
         if self._worker is None:
             return
-        # 运行时动态检查配置
-        if not bool(await get_dynamic_config("star_aid_scheduler_enabled")):
+        # Bypass this process's config TTL so a remote replica's toggle is
+        # observed on its next tick even if it started while disabled.
+        if not bool(await get_dynamic_config("star_aid_scheduler_enabled", fresh=True)):
             logger.debug("star_aid tick skipped: star_aid_scheduler_enabled is False")
             return
         if not bool(await get_dynamic_config("star_aid_enabled")):
