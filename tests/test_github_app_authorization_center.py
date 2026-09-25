@@ -401,6 +401,7 @@ def _configure_valid_user(
         github_username="alice",
         revoked_at=None,
         github_app_client_id=client_id,
+        encrypted_access_token="encrypted-old-access-token",
     )
     monkeypatch.setattr(
         service_module.credential_service,
@@ -663,8 +664,14 @@ async def test_github_401_persists_reauthorization_state(monkeypatch) -> None:
 
     marked = []
 
-    async def mark_reauth_required(session: Any, user_id: int) -> None:
-        marked.append(user_id)
+    async def mark_reauth_required(
+        session: Any,
+        user_id: int,
+        *,
+        expected_encrypted_access_token: str | None = None,
+    ) -> bool:
+        marked.append((user_id, expected_encrypted_access_token))
+        return True
 
     monkeypatch.setattr(
         service_module.credential_service,
@@ -684,7 +691,7 @@ async def test_github_401_persists_reauthorization_state(monkeypatch) -> None:
 
     assert authorization.status == "needs_authorization"
     assert authorization.error_code == "unauthorized"
-    assert marked == [7]
+    assert marked == [(7, "encrypted-old-access-token")]
     assert session.commits == 2
 
 
@@ -699,8 +706,14 @@ async def test_github_401_without_callback_reports_unconfigured(monkeypatch) -> 
 
     marked = []
 
-    async def mark_reauth_required(session: Any, user_id: int) -> None:
-        marked.append(user_id)
+    async def mark_reauth_required(
+        session: Any,
+        user_id: int,
+        *,
+        expected_encrypted_access_token: str | None = None,
+    ) -> bool:
+        marked.append((user_id, expected_encrypted_access_token))
+        return True
 
     monkeypatch.setattr(
         service_module.credential_service,
@@ -719,7 +732,51 @@ async def test_github_401_without_callback_reports_unconfigured(monkeypatch) -> 
 
     assert authorization.status == "unconfigured"
     assert authorization.error_code == "app_not_configured"
-    assert marked == [7]
+    assert marked == [(7, "encrypted-old-access-token")]
+
+
+@pytest.mark.asyncio
+async def test_github_401_does_not_commit_replaced_credential_revocation(
+    monkeypatch,
+) -> None:
+    _configure_valid_user(monkeypatch)
+
+    class UnauthorizedClient(_AsyncClient):
+        async def get(self, url: str, **_kwargs: Any) -> _Response:
+            self.urls.append(url)
+            return _Response({}, status_code=401)
+
+    calls = []
+
+    async def mark_reauth_required(
+        session: Any,
+        user_id: int,
+        *,
+        expected_encrypted_access_token: str | None = None,
+    ) -> bool:
+        calls.append((user_id, expected_encrypted_access_token))
+        return False
+
+    monkeypatch.setattr(
+        service_module.credential_service,
+        "mark_reauth_required",
+        mark_reauth_required,
+    )
+    monkeypatch.setattr(
+        service_module.httpx,
+        "AsyncClient",
+        lambda timeout=None: UnauthorizedClient(),
+    )
+    session = _Session()
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=session, user_id=7, expected_github_username="alice"
+    )
+
+    assert calls == [(7, "encrypted-old-access-token")]
+    assert session.commits == 1
+    assert authorization.status == "needs_authorization"
+    assert authorization.error_code == "unauthorized"
 
 
 def test_authorization_template_is_parseable_and_has_no_operations_actions() -> None:
