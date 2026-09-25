@@ -42,6 +42,14 @@ class _JsonRequest:
         return self._payload
 
 
+class _FormRequest:
+    def __init__(self, form: dict) -> None:
+        self._form = form
+
+    async def form(self) -> dict:
+        return self._form
+
+
 def test_github_app_routes_are_available_to_every_authenticated_user() -> None:
     """The authorization center is user-scoped and must not require admin."""
     for path in ("/github-app/", "/github-app/list-fragment"):
@@ -62,6 +70,7 @@ def test_user_authorization_app_slug_is_loaded_from_database() -> None:
 
     assert key in CORE_CONFIG_KEYS
     assert key in get_all_db_config_keys()
+    assert system_config.system_config_service.validate_updates({key: ""}) == {key: ""}
 
 
 def test_user_authorization_routes_do_not_accept_installation_ids() -> None:
@@ -659,3 +668,72 @@ def test_system_config_slug_field_has_dedicated_auto_fetch_button() -> None:
     assert 'x-ref="githubAppSlugInput"' in template
     assert "fetchGithubAppSlug($refs.githubAppSlugInput)" in template
     assert template.count("fetchGithubAppSlug(") >= 2
+    assert 'name="star_aid_github_app_slug_changed"' in template
+    assert (
+        'x-on:input="$refs.star_aid_github_app_slug_changed.value = \'true\'"'
+        in template
+    )
+
+
+@pytest.mark.asyncio
+async def test_system_config_slug_can_be_explicitly_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "star_aid_github_app_slug"
+
+    class FakeConfigService:
+        def __init__(self) -> None:
+            self.validated: list[dict[str, str]] = []
+            self.applied: list[dict[str, dict[str, str]]] = []
+            self.save_calls = 0
+
+        def validate_updates(self, updates: dict[str, str]) -> dict[str, str]:
+            self.validated.append(dict(updates))
+            return dict(updates)
+
+        async def save_configs(self, db: Any, updates: dict[str, str]):
+            self.save_calls += 1
+            assert updates == {key: ""}
+            return ({key: {"old": "old-app", "new": "", "raw_new": ""}}, False)
+
+        async def apply_live_settings(self, changed: dict) -> None:
+            self.applied.append(changed)
+
+        def build_audit_log(self, changed: dict) -> dict:
+            return changed
+
+    service = FakeConfigService()
+    admin_logs = []
+
+    async def log_admin_action(*args: Any, **kwargs: Any) -> None:
+        admin_logs.append((args, kwargs))
+
+    redirects = []
+
+    def toast_redirect(path: str, toast_key: str, *args: Any, **kwargs: Any):
+        redirects.append(toast_key)
+        return SimpleNamespace(path=path, toast_key=toast_key)
+
+    monkeypatch.setattr(system_config, "system_config_service", service)
+    monkeypatch.setattr(system_config, "log_admin_action", log_admin_action)
+    monkeypatch.setattr(system_config, "toast_redirect", toast_redirect)
+
+    cleared = await system_config.save_system_config(
+        request=_FormRequest({key: "", f"{key}_changed": "true"}),
+        db=SimpleNamespace(),
+        user={"user_id": 1, "sub": "alice"},
+        csrf_token="valid",
+    )
+    untouched = await system_config.save_system_config(
+        request=_FormRequest({key: "", f"{key}_changed": "false"}),
+        db=SimpleNamespace(),
+        user={"user_id": 1, "sub": "alice"},
+        csrf_token="valid",
+    )
+
+    assert cleared.toast_key == "system_config.saved"
+    assert untouched.toast_key == "toast.config_no_change"
+    assert service.validated == [{key: ""}, {}]
+    assert service.save_calls == 1
+    assert service.applied == [{key: {"old": "old-app", "new": "", "raw_new": ""}}]
+    assert len(admin_logs) == 1
