@@ -177,6 +177,13 @@
                                    placeholder="system / Area/City"
                                    autocomplete="off"
                                    class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
+                            {% elif item.key == 'star_aid_github_app_slug' %}
+                            <input type="text"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   autocomplete="off"
+                                   x-ref="githubAppSlugInput"
+                                   class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
                             {% elif item.key == 'smtp_security' %}
                             <select name="{{ item.key }}"
                                     class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -224,6 +231,21 @@
                                     :class="testing ? 'opacity-50 cursor-not-allowed' : ''">
                                 <span x-show="!testing">{{ _('system_config.test_connection') }}</span>
                                 <span x-show="testing" class="flex items-center gap-1">
+                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    {{ _('common.loading') }}
+                                </span>
+                            </button>
+                            {% elif item.key == 'star_aid_github_app_slug' %}
+                            <button type="button"
+                                    @click="fetchGithubAppSlug($refs.githubAppSlugInput)"
+                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
+                                    :disabled="fetchingGithubAppSlug"
+                                    :class="fetchingGithubAppSlug ? 'opacity-50 cursor-not-allowed' : ''">
+                                <span x-show="!fetchingGithubAppSlug">{{ _('system_config.auto_fetch_github_app_slug') }}</span>
+                                <span x-show="fetchingGithubAppSlug" class="flex items-center gap-1">
                                     <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -407,6 +429,7 @@ function systemConfig() {
     return {
         activeTab: 'database',
         testing: false,
+        fetchingGithubAppSlug: false,
         testResult: null,
         csrfToken: '{{ csrf_token }}',
         databaseResetDialogOpen: false,
@@ -556,6 +579,57 @@ function systemConfig() {
                 this.testResult = { success: false, message: '{{ _("system_config.test_failed") }}' + e.message };
             } finally {
                 this.testing = false;
+                this.clearTestResult();
+            }
+        },
+
+        async fetchGithubAppSlug(input) {
+            const clientId = (
+                document.querySelector('[name=star_aid_github_app_client_id]')?.value || ''
+            ).trim();
+            if (!clientId) {
+                this.testResult = {
+                    success: false,
+                    message: '{{ _("system_config.github_app_slug_client_id_required") }}',
+                };
+                this.clearTestResult();
+                return;
+            }
+
+            this.fetchingGithubAppSlug = true;
+            this.testResult = null;
+            try {
+                const response = await fetch('/system-config/github-app-slug', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': this.csrfToken,
+                    },
+                    body: JSON.stringify({ clientId }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) {
+                    this.testResult = data.message
+                        ? data
+                        : {
+                            success: false,
+                            message: '{{ _("system_config.github_app_slug_lookup_failed") }}',
+                        };
+                    return;
+                }
+
+                if (input && data.slug) {
+                    input.value = data.slug;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                this.testResult = data;
+            } catch (e) {
+                this.testResult = {
+                    success: false,
+                    message: '{{ _("system_config.test_failed") }}' + e.message,
+                };
+            } finally {
+                this.fetchingGithubAppSlug = false;
                 this.clearTestResult();
             }
         },

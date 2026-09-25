@@ -203,7 +203,7 @@ WebUI 登录需额外创建 [OAuth App](https://github.com/settings/developers)�
 
 ### 用户级 GitHub App 授权（仓库互助 / 授权中心，可选）
 
-启用仓库互助或普通用户 GitHub App 授权中心时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**；仓库互助还需 **Starring** 写权限。两者共用回调地址 `https://your-domain.com/star-aid/auth/callback`。授权中心基于 GitHub 官方 `/user/installations` 接口，只显示当前登录 GitHub 用户可访问的安装与仓库。
+启用仓库互助或普通用户 GitHub App 授权中心时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**；仓库互助还需 **Starring** 写权限。两者共用回调地址 `https://your-domain.com/star-aid/auth/callback`。该 App 可复用审查主 App，也可在系统核心配置中独立配置；独立 App 必须填写 `star_aid_github_app_slug`，否则授权中心不展示“安装到其他账户/组织”链接。授权中心基于 GitHub 官方 `/user/installations` 接口，只显示当前登录 GitHub 用户可访问的安装与仓库。
 
 ---
 
