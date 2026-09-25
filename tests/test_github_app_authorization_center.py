@@ -775,8 +775,8 @@ async def test_github_401_does_not_commit_replaced_credential_revocation(
 
     assert calls == [(7, "encrypted-old-access-token")]
     assert session.commits == 1
-    assert authorization.status == "needs_authorization"
-    assert authorization.error_code == "unauthorized"
+    assert authorization.status == "error"
+    assert authorization.error_code == "credential_replaced"
 
 
 def test_authorization_template_is_parseable_and_has_no_operations_actions() -> None:
