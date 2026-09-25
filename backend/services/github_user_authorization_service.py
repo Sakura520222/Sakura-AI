@@ -218,6 +218,7 @@ class GitHubUserAuthorizationService:
                             raise result
                         installations.append(result)
         except _GitHubUserAPIError as exc:
+            error_code = exc.error_code
             if exc.status_code == 401:
                 revoked_current_credential = (
                     await credential_service.mark_reauth_required(
@@ -231,11 +232,17 @@ class GitHubUserAuthorizationService:
                     # shared credential/member state so later page loads and workers
                     # stop treating the revoked token as usable.
                     await session.commit()
-                status = (
-                    "needs_authorization"
-                    if authorization_flow_configured
-                    else "unconfigured"
-                )
+                    status = (
+                        "needs_authorization"
+                        if authorization_flow_configured
+                        else "unconfigured"
+                    )
+                else:
+                    # Another request replaced the rejected token after this
+                    # discovery started. Report a retryable error rather than
+                    # telling the user to authorize a credential that is current.
+                    status = "error"
+                    error_code = "credential_replaced"
             else:
                 status = "error"
             logger.warning(
@@ -251,7 +258,7 @@ class GitHubUserAuthorizationService:
                 error_code=(
                     "app_not_configured"
                     if status == "unconfigured"
-                    else exc.error_code
+                    else error_code
                 ),
             )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
