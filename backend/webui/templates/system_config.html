@@ -183,7 +183,12 @@
                                    value="{{ item.value }}"
                                    autocomplete="off"
                                    x-ref="githubAppSlugInput"
+                                   x-on:input="$refs.star_aid_github_app_slug_changed.value = 'true'"
                                    class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
+                            <input type="hidden"
+                                   name="star_aid_github_app_slug_changed"
+                                   value="false"
+                                   x-ref="star_aid_github_app_slug_changed">
                             {% elif item.key == 'smtp_security' %}
                             <select name="{{ item.key }}"
                                     class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
