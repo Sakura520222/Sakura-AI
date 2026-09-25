@@ -318,8 +318,13 @@ async def get_credential(
     return result.scalar_one_or_none()
 
 
-async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
-    """标记用户需要重新授权：吊销凭据并把成员状态置为 reauth_required。"""
+async def mark_reauth_required(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    expected_encrypted_access_token: str | None = None,
+) -> bool:
+    """标记用户需要重新授权；可只在指定凭据仍是当前凭据时执行。"""
     now = now_utc()
     # Read the *current* status under the row lock rather than trusting an
     # already-loaded member in the identity map. Select columns here so a
@@ -338,6 +343,19 @@ async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
         .execution_options(populate_existing=True)
     )
     cred = credential_result.scalar_one_or_none()
+    if (
+        expected_encrypted_access_token is not None
+        and (
+            cred is None
+            or cred.encrypted_access_token != expected_encrypted_access_token
+        )
+    ):
+        logger.info(
+            "star_aid reauth skipped because credential was replaced: user_id={}",
+            user_id,
+        )
+        return False
+
     if cred and cred.revoked_at is None:
         cred.revoked_at = now
     if locked_member:
@@ -355,6 +373,7 @@ async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
                 member.status = MEMBER_STATUS_REAUTH_REQUIRED
     await session.flush()
     logger.warning("star_aid reauth required: user_id={}", user_id)
+    return True
 
 
 async def exchange_authorization_code(

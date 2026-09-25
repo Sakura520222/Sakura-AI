@@ -272,6 +272,38 @@ async def test_reauth_does_not_overwrite_concurrent_admin_ban():
 
 
 @pytest.mark.asyncio
+async def test_reauth_with_replaced_access_token_is_skipped():
+    """A stale request must not revoke a credential replaced by reauthorization."""
+    member = StarAidMember(id=1, user_id=123, status="active", daily_star_used=4)
+    cred = StarAidCredential(
+        user_id=123,
+        encrypted_access_token="current-encrypted-access-token",
+        revoked_at=None,
+    )
+    session = AsyncMock()
+
+    def queried(stmt):
+        entity = stmt.column_descriptions[0]["entity"]
+        if entity is StarAidMember:
+            return MagicMock(one_or_none=lambda: (1, "active"))
+        return MagicMock(scalar_one_or_none=lambda: cred)
+
+    session.execute.side_effect = queried
+    session.get.return_value = member
+
+    marked = await gh.mark_reauth_required(
+        session,
+        123,
+        expected_encrypted_access_token="old-encrypted-access-token",
+    )
+
+    assert marked is False
+    assert member.status == "active"
+    assert member.daily_star_used == 4
+    assert cred.revoked_at is None
+
+
+@pytest.mark.asyncio
 async def test_authorization_callback_locks_member_before_saving_credential(monkeypatch):
     """A later identity-mismatch reauth cannot invert the worker lock order."""
     monkeypatch.setattr(gh, "_client_credentials", lambda: ("id", "secret"))
