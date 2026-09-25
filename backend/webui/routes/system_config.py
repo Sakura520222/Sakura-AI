@@ -72,6 +72,11 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
     }
 )
 
+# These optional text fields support an explicit clear action.  An empty value
+# is submitted only when the browser marks that field as user-changed; an
+# untouched empty field keeps the historical "leave unchanged" behavior.
+_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug"})
+
 
 @router.get("/")
 async def system_config_page(
@@ -141,7 +146,10 @@ async def save_system_config(
 
             val = str(raw).strip()
             if not val and key not in _SYSTEM_TYPED_VALUE_KEYS:
-                continue
+                clearable = key in _SYSTEM_CLEARABLE_VALUE_KEYS
+                changed_by_user = form.get(f"{key}_changed") == "true"
+                if not clearable or not changed_by_user:
+                    continue
 
             # 数据库连接字符串验证（接受所有可规范化的异步驱动格式）
             if key == "database_url":
