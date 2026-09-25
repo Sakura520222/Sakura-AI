@@ -218,7 +218,11 @@ class GitHubUserAuthorizationService:
                 # credential/member state so later page loads and workers stop
                 # treating the revoked token as usable.
                 await session.commit()
-                status = "needs_authorization"
+                status = (
+                    "needs_authorization"
+                    if authorization_flow_configured
+                    else "unconfigured"
+                )
             else:
                 status = "error"
             logger.warning(
@@ -231,7 +235,11 @@ class GitHubUserAuthorizationService:
             return GitHubUserAuthorization(
                 status=status,
                 github_username=expected or github_username,
-                error_code=exc.error_code,
+                error_code=(
+                    "app_not_configured"
+                    if status == "unconfigured"
+                    else exc.error_code
+                ),
             )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.warning(
@@ -330,12 +338,19 @@ class GitHubUserAuthorizationService:
         repositories: list[dict[str, Any]] = []
         for raw_repository in raw_repositories:
             try:
+                private = raw_repository.get("private") is True
+                raw_visibility = str(raw_repository.get("visibility") or "").lower()
+                if raw_visibility in {"public", "private", "internal"}:
+                    visibility = raw_visibility
+                else:
+                    visibility = "private" if private else "public"
                 repositories.append(
                     {
                         "id": int(raw_repository["id"]),
                         "full_name": str(raw_repository["full_name"]),
                         "name": str(raw_repository["name"]),
-                        "private": raw_repository.get("private") is True,
+                        "private": private,
+                        "visibility": visibility,
                         "html_url": _safe_github_url(raw_repository.get("html_url")),
                     }
                 )
