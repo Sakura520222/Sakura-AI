@@ -729,6 +729,7 @@ github_app:
   no_installations: "尚未安装 Sakura AI GitHub App"
   no_installations_hint: "先安装 GitHub App，然后返回这里刷新状态。"
   public: "公开"
+  internal: "内部"
 
 # ========== 配置 / Configuration ==========
 config:

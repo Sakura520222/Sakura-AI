@@ -44,7 +44,7 @@ from backend.webui.deps import (
     require_super_admin,
     toast_redirect,
 )
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import SUPPORTED_LANGUAGES, detect_language
 
 router = APIRouter(prefix="/star-aid", tags=["WebUI Star Aid"])
 
@@ -134,6 +134,7 @@ async def auth_start(
     repo_id: int | None = Query(None),
     return_to: str | None = Query(None),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """发起 GitHub App user-to-server 授权。
 
@@ -151,6 +152,11 @@ async def auth_start(
         "intent": intent,
         "repo_id": repo_id,
         "return_to": _safe_return_to(return_to),
+        "language": (
+            user_prefs.get("language")
+            if user_prefs.get("language") in SUPPORTED_LANGUAGES
+            else "zh-CN"
+        ),
     }
     await _save_auth_state(state, payload)
 
@@ -218,6 +224,10 @@ async def auth_callback(
             toast_type="error",
             lang=lang,
         )
+
+    state_language = state_data.get("language")
+    if state_language in SUPPORTED_LANGUAGES:
+        lang = state_language
 
     # 用户拒绝了授权。先完成同一个 state/user 校验，才能使用其中保存的
     # return_to，否则取消授权会把授权中心用户带回仓库互助页。
