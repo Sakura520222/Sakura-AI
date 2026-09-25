@@ -189,6 +189,14 @@
                                    name="star_aid_github_app_slug_changed"
                                    value="false"
                                    x-ref="star_aid_github_app_slug_changed">
+                            {% elif item.key == 'star_aid_github_app_discovery_timeout_seconds' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   min="1" max="120" step="1"
+                                   inputmode="decimal"
+                                   required
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             {% elif item.key == 'smtp_security' %}
                             <select name="{{ item.key }}"
                                     class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">

@@ -13,7 +13,11 @@ import yaml
 from fastapi.routing import APIRoute
 from jinja2 import DictLoader, Environment, StrictUndefined
 
-from backend.core.config import CORE_CONFIG_KEYS, get_all_db_config_keys
+from backend.core.config import (
+    CORE_CONFIG_KEYS,
+    Settings,
+    get_all_db_config_keys,
+)
 from backend.services import github_user_authorization_service as service_module
 from backend.services.github_user_authorization_service import (
     GitHubUserAuthorizationService,
@@ -390,11 +394,12 @@ def _configure_valid_user(
     *,
     client_id: str = "client",
     callback_url: str = "https://example.com/star-aid/auth/callback",
-) -> None:
+) -> SimpleNamespace:
     settings = SimpleNamespace(
         star_aid_github_app_client_id=client_id,
         star_aid_github_app_client_secret="secret",
         star_aid_github_app_callback_url=callback_url,
+        star_aid_github_app_discovery_timeout_seconds=45.0,
     )
     monkeypatch.setattr(service_module, "get_settings", lambda: settings)
     credential = SimpleNamespace(
@@ -413,6 +418,7 @@ def _configure_valid_user(
         "get_effective_access_token",
         lambda session, user_id: _await_value(("token", GitHubCallResult(success=True))),
     )
+    return settings
 
 
 async def _await_value(value: Any) -> Any:
@@ -546,7 +552,7 @@ async def test_installation_repository_discovery_has_bounded_concurrency(
 async def test_installation_repository_discovery_has_one_deadline(
     monkeypatch,
 ) -> None:
-    _configure_valid_user(monkeypatch)
+    settings = _configure_valid_user(monkeypatch)
 
     class SlowRepositoryClient(_AsyncClient):
         async def get(self, url: str, **_kwargs: Any) -> _Response:
@@ -571,7 +577,7 @@ async def test_installation_repository_discovery_has_one_deadline(
         "AsyncClient",
         lambda timeout=None: SlowRepositoryClient(),
     )
-    monkeypatch.setattr(service_module, "_DISCOVERY_TIMEOUT_SECONDS", 0.001)
+    settings.star_aid_github_app_discovery_timeout_seconds = 0.001
 
     authorization = await GitHubUserAuthorizationService().get_installations(
         session=_Session(), user_id=7, expected_github_username="alice"
@@ -931,6 +937,8 @@ def test_system_config_translations_cover_shared_user_authorization_app() -> Non
         "key_star_aid_github_app_slug",
         "key_star_aid_github_app_slug_desc",
         "key_star_aid_github_app_callback_url_desc",
+        "key_star_aid_github_app_discovery_timeout_seconds",
+        "key_star_aid_github_app_discovery_timeout_seconds_desc",
         "invalid_github_app_slug",
     }
 
@@ -1022,6 +1030,30 @@ def test_system_config_slug_field_has_dedicated_auto_fetch_button() -> None:
         'x-on:input="$refs.star_aid_github_app_slug_changed.value = \'true\'"'
         in template
     )
+
+
+def test_user_authorization_discovery_timeout_is_independently_configurable() -> None:
+    key = "star_aid_github_app_discovery_timeout_seconds"
+    field = Settings.model_fields[key]
+    constraints = {
+        name: getattr(metadata, name, None)
+        for metadata in field.metadata
+        for name in ("ge", "le")
+        if getattr(metadata, name, None) is not None
+    }
+
+    assert service_module._REQUEST_TIMEOUT == 15
+    assert field.default == 45.0
+    assert constraints == {"ge": 1.0, "le": 120.0}
+    assert key in CORE_CONFIG_KEYS
+    assert key in get_all_db_config_keys()
+    assert key in system_config._SYSTEM_TYPED_VALUE_KEYS
+    star_aid_app_group = next(
+        group
+        for group in system_config.SYSTEM_CONFIG_GROUPS
+        if group["id"] == "star_aid_app"
+    )
+    assert key in star_aid_app_group["keys"]
 
 
 @pytest.mark.asyncio
