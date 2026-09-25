@@ -69,6 +69,7 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
         "app_timezone",
         "smtp_security",
         "log_level",
+        "star_aid_github_app_discovery_timeout_seconds",
     }
 )
 

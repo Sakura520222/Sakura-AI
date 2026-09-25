@@ -388,6 +388,16 @@ class Settings(BaseSettings):
         "",
         description="仓库互助与 GitHub App 授权中心共用的授权回调地址",
     )
+    star_aid_github_app_discovery_timeout_seconds: float = Field(
+        45.0,
+        ge=1.0,
+        le=120.0,
+        description=(
+            "GitHub App 授权中心安装与仓库发现的总超时时间（秒）。"
+            "默认值等于三个单请求超时预算，用于覆盖分页和并发仓库加载；"
+            "需保持低于反向代理/网关请求超时"
+        ),
+    )
 
     # 通知 Provider 配置。Telegram/SMTP 都是可选能力，不能阻塞 GitHub/Passkey 登录。
     telegram_enabled: bool = Field(
@@ -2218,6 +2228,7 @@ CORE_CONFIG_KEYS = frozenset(
         "star_aid_github_app_client_secret",
         "star_aid_github_app_slug",
         "star_aid_github_app_callback_url",
+        "star_aid_github_app_discovery_timeout_seconds",
     }
 )
 
