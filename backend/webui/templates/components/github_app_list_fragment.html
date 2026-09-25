@@ -155,9 +155,9 @@
             const matches = !query || (row.dataset.repositoryName || '').indexOf(query) !== -1;
             const isCollapsedExtra = row.classList.contains(
                 'data-github-app-repository-extra'
-            ) && !expanded;
+            ) && !expanded && !query;
             row.classList.toggle('hidden', !matches || isCollapsedExtra);
-            if (matches) visible++;
+            if (!row.classList.contains('hidden')) visible++;
         });
         const empty = card.querySelector('[data-github-app-empty]');
         if (empty) empty.classList.toggle('hidden', visible !== 0);

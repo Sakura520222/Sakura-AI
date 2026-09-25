@@ -378,10 +378,16 @@ class _Session:
         self.commits += 1
 
 
-def _configure_valid_user(monkeypatch, *, client_id: str = "client") -> None:
+def _configure_valid_user(
+    monkeypatch,
+    *,
+    client_id: str = "client",
+    callback_url: str = "https://example.com/star-aid/auth/callback",
+) -> None:
     settings = SimpleNamespace(
         star_aid_github_app_client_id=client_id,
         star_aid_github_app_client_secret="secret",
+        star_aid_github_app_callback_url=callback_url,
     )
     monkeypatch.setattr(service_module, "get_settings", lambda: settings)
     credential = SimpleNamespace(
@@ -431,6 +437,44 @@ async def test_user_installations_use_github_user_scope_and_dto_boundary(
     assert installation["repository_selection"] == "selected"
     assert installation["permissions"] == {"metadata": True, "administration": False}
     assert all("raw_unconstrained_field" not in row for row in installation["repositories"])
+
+
+@pytest.mark.asyncio
+async def test_missing_callback_reports_first_time_user_as_unconfigured(
+    monkeypatch,
+) -> None:
+    _configure_valid_user(monkeypatch, callback_url="")
+    monkeypatch.setattr(
+        service_module.credential_service,
+        "get_credential",
+        lambda session, user_id: _await_value(None),
+    )
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=_Session(), user_id=7, expected_github_username="alice"
+    )
+
+    assert authorization.status == "unconfigured"
+    assert authorization.error_code == "app_not_configured"
+
+
+@pytest.mark.asyncio
+async def test_existing_usable_credential_can_render_without_callback(
+    monkeypatch,
+) -> None:
+    _configure_valid_user(monkeypatch, callback_url="")
+    monkeypatch.setattr(
+        service_module.httpx,
+        "AsyncClient",
+        lambda timeout=None: _AsyncClient(),
+    )
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=_Session(), user_id=7, expected_github_username="alice"
+    )
+
+    assert authorization.status == "connected"
+    assert authorization.repository_count == 8
 
 
 @pytest.mark.asyncio
@@ -617,6 +661,8 @@ def test_authorization_template_is_parseable_and_has_no_operations_actions() -> 
     assert "loop.index0 >= 6" in fragment
     assert "data-github-app-toggle-repositories" in fragment
     assert "const expanded = toggle?.dataset.expanded === 'true';" in fragment
+    assert "!expanded && !query" in fragment
+    assert "if (!row.classList.contains('hidden')) visible++;" in fragment
     assert "row.classList.toggle('hidden', !matches || isCollapsedExtra);" in fragment
     assert "/repos/" not in fragment
     assert "triggerIndex" not in fragment
@@ -751,6 +797,7 @@ def test_github_app_slug_fetch_endpoint_keeps_admin_and_csrf_boundaries() -> Non
     calls = _dependency_calls(route)
 
     assert system_config.require_super_admin in calls
+    assert system_config.get_user_preferences in calls
     assert system_config.require_csrf_header in calls
 
 
@@ -763,14 +810,29 @@ async def test_github_app_slug_fetch_reuses_review_app_identity(
         return "review-app", None
 
     monkeypatch.setattr(system_config, "_resolve_review_github_app_slug", resolve)
+    languages = []
+
+    def make_translation_func(language: str):
+        languages.append(language)
+        return lambda key: f"{language}:{key}"
+
+    monkeypatch.setattr(
+        system_config, "detect_language", lambda user_prefs: user_prefs["language"]
+    )
+    monkeypatch.setattr(
+        system_config, "make_translation_func", make_translation_func
+    )
 
     result = await system_config.fetch_github_app_slug(
         _JsonRequest({"clientId": "Iv1.review"}),
         _user={"user_id": 1, "sub": "alice"},
+        user_prefs={"language": "en"},
     )
 
     assert result["success"] is True
     assert result["slug"] == "review-app"
+    assert languages == ["en"]
+    assert result["message"] == "en:system_config.github_app_slug_filled"
 
 
 @pytest.mark.asyncio
@@ -785,6 +847,7 @@ async def test_github_app_slug_fetch_rejects_separate_app_without_guessing(
     result = await system_config.fetch_github_app_slug(
         _JsonRequest({"clientId": "Iv1.separate"}),
         _user={"user_id": 1, "sub": "alice"},
+        user_prefs={"language": "en"},
     )
 
     assert result["success"] is False
