@@ -378,7 +378,11 @@ class Settings(BaseSettings):
     )
     star_aid_github_app_client_secret: str = Field(
         "",
-        description="仓库互助使用的 GitHub App Client Secret",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App Client Secret",
+    )
+    star_aid_github_app_slug: str = Field(
+        "",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App slug；使用独立于审查主 App 的应用时必填",
     )
     star_aid_github_app_callback_url: str = Field(
         "",

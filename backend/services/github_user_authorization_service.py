@@ -137,11 +137,20 @@ class GitHubUserAuthorizationService:
         )
         if not access_token:
             status = "needs_authorization" if token_result.reauth_required else "error"
+            if token_result.reauth_required:
+                # get_effective_access_token() may have marked the credential and
+                # member as reauthorization-required before returning no token.
+                await session.commit()
             return GitHubUserAuthorization(
                 status=status,
                 github_username=expected or github_username,
                 error_code=token_result.error_code or "token_unavailable",
             )
+
+        # GitHub rotates the refresh token during get_effective_access_token().
+        # Persist that rotation before any installation discovery request can fail;
+        # otherwise rollback would discard the only still-valid refresh token.
+        await session.commit()
 
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -164,7 +173,15 @@ class GitHubUserAuthorizationService:
                         )
                     )
         except _GitHubUserAPIError as exc:
-            status = "needs_authorization" if exc.status_code == 401 else "error"
+            if exc.status_code == 401:
+                await credential_service.mark_reauth_required(session, int(user_id))
+                # The token is definitively rejected by GitHub. Persist the shared
+                # credential/member state so later page loads and workers stop
+                # treating the revoked token as usable.
+                await session.commit()
+                status = "needs_authorization"
+            else:
+                status = "error"
             logger.warning(
                 "GitHub App user installations request failed: "
                 "user_id={}, status={}, error={}",
