@@ -82,6 +82,7 @@ SYSTEM_CONFIG_GROUPS = [
         "keys": [
             "star_aid_github_app_client_id",
             "star_aid_github_app_client_secret",
+            "star_aid_github_app_slug",
             "star_aid_github_app_callback_url",
         ],
     },

@@ -313,6 +313,78 @@ async def test_connection(
     return {"success": False, "message": "Unsupported test type"}
 
 
+async def _resolve_review_github_app_slug(
+    authorization_client_id: str,
+) -> tuple[str | None, str | None]:
+    """Resolve the review App slug only when it owns the authorization client ID."""
+    from backend.core.github_app import GitHubAppClient
+
+    try:
+        slug, review_client_id = await asyncio.to_thread(
+            GitHubAppClient().get_app_identity
+        )
+    except Exception as exc:
+        logger.warning(
+            "GitHub App slug lookup failed: {}",
+            type(exc).__name__,
+        )
+        return None, "github_app_slug_lookup_failed"
+
+    if not slug or slug == "unknown-bot" or not review_client_id:
+        return None, "github_app_slug_lookup_failed"
+    if review_client_id != authorization_client_id:
+        # GitHub has no API for reverse-looking-up a separate App from only
+        # its OAuth Client ID/Secret. Never fill this field with the review
+        # App slug when those are different Apps.
+        return None, "github_app_slug_requires_manual_entry"
+    return slug.removesuffix("[bot]"), None
+
+
+@router.post("/github-app-slug")
+async def fetch_github_app_slug(
+    request: Request,
+    _user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """Auto-fill the App slug when the user-authorization App is the review App."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+
+    client_id = (
+        str(body.get("clientId", "")).strip()
+        if isinstance(body, dict)
+        else ""
+    )
+    if not client_id:
+        return {
+            "success": False,
+            "error_code": "github_app_slug_client_id_required",
+            "message": make_translation_func(detect_language())(
+                "system_config.github_app_slug_client_id_required"
+            ),
+        }
+
+    slug, error_code = await _resolve_review_github_app_slug(client_id)
+    if error_code:
+        return {
+            "success": False,
+            "error_code": error_code,
+            "message": make_translation_func(detect_language())(
+                f"system_config.{error_code}"
+            ),
+        }
+
+    return {
+        "success": True,
+        "slug": slug,
+        "message": make_translation_func(detect_language())(
+            "system_config.github_app_slug_filled"
+        ),
+    }
+
+
 def _schedule_application_restart(delay_seconds: float = 2.0) -> None:
     """响应发出后复用 Setup 的应用重启机制（优雅停机，由监督者/容器拉起）。"""
 
