@@ -164,6 +164,12 @@ class GitHubUserAuthorizationService:
                 ),
             )
 
+        # The ORM credential is updated in place when get_effective_access_token()
+        # refreshes it.  Snapshot this encrypted token after that call: it identifies
+        # the exact credential sent to GitHub, even if reauthorization replaces the
+        # row while installation discovery is in flight.
+        used_encrypted_access_token = credential.encrypted_access_token
+
         # GitHub rotates the refresh token during get_effective_access_token().
         # Persist that rotation before any installation discovery request can fail;
         # otherwise rollback would discard the only still-valid refresh token.
@@ -213,11 +219,18 @@ class GitHubUserAuthorizationService:
                         installations.append(result)
         except _GitHubUserAPIError as exc:
             if exc.status_code == 401:
-                await credential_service.mark_reauth_required(session, int(user_id))
-                # The token is definitively rejected by GitHub. Persist the shared
-                # credential/member state so later page loads and workers stop
-                # treating the revoked token as usable.
-                await session.commit()
+                revoked_current_credential = (
+                    await credential_service.mark_reauth_required(
+                        session,
+                        int(user_id),
+                        expected_encrypted_access_token=used_encrypted_access_token,
+                    )
+                )
+                if revoked_current_credential:
+                    # The token is definitively rejected by GitHub. Persist the
+                    # shared credential/member state so later page loads and workers
+                    # stop treating the revoked token as usable.
+                    await session.commit()
                 status = (
                     "needs_authorization"
                     if authorization_flow_configured
