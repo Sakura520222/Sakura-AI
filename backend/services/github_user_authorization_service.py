@@ -8,6 +8,7 @@ what the currently authenticated GitHub user may see.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,8 @@ _GITHUB_API_BASE = "https://api.github.com"
 _GITHUB_API_VERSION = "2022-11-28"
 _REQUEST_TIMEOUT = 15
 _PAGE_SIZE = 100
+_INSTALLATION_FETCH_CONCURRENCY = 4
+_DISCOVERY_TIMEOUT_SECONDS = _REQUEST_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -158,20 +161,42 @@ class GitHubUserAuthorizationService:
             "X-GitHub-Api-Version": _GITHUB_API_VERSION,
         }
         try:
-            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-                installations_payload = await self._paginate(
-                    client,
-                    f"{_GITHUB_API_BASE}/user/installations",
-                    headers,
-                    "installations",
-                )
-                installations: list[GitHubUserInstallation] = []
-                for raw_installation in installations_payload:
-                    installations.append(
-                        await self._installation_with_repositories(
-                            client, raw_installation, headers
+            async with asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                    installations_payload = await self._paginate(
+                        client,
+                        f"{_GITHUB_API_BASE}/user/installations",
+                        headers,
+                        "installations",
+                    )
+                    # Repository discovery is secondary fan-out for every account
+                    # installation. Bound it and keep the whole page under one
+                    # deadline so a large account cannot extend this request by
+                    # one HTTP timeout per GitHub call.
+                    semaphore = asyncio.Semaphore(_INSTALLATION_FETCH_CONCURRENCY)
+
+                    async def fetch_installation(
+                        raw_installation: dict[str, Any],
+                    ) -> GitHubUserInstallation:
+                        async with semaphore:
+                            return await self._installation_with_repositories(
+                                client, raw_installation, headers
+                            )
+
+                    fetched: list[GitHubUserInstallation | BaseException] = (
+                        await asyncio.gather(
+                            *(
+                                asyncio.create_task(fetch_installation(raw))
+                                for raw in installations_payload
+                            ),
+                            return_exceptions=True,
                         )
                     )
+                    installations: list[GitHubUserInstallation] = []
+                    for result in fetched:
+                        if isinstance(result, BaseException):
+                            raise result
+                        installations.append(result)
         except _GitHubUserAPIError as exc:
             if exc.status_code == 401:
                 await credential_service.mark_reauth_required(session, int(user_id))
@@ -199,6 +224,16 @@ class GitHubUserAuthorizationService:
                 "GitHub App user installations network error: user_id={}, error={}",
                 user_id,
                 type(exc).__name__,
+            )
+            return GitHubUserAuthorization(
+                status="error",
+                github_username=expected or github_username,
+                error_code="github_unavailable",
+            )
+        except TimeoutError:
+            logger.warning(
+                "GitHub App user installations discovery timed out: user_id={}",
+                user_id,
             )
             return GitHubUserAuthorization(
                 status="error",
