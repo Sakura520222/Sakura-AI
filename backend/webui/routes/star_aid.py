@@ -193,16 +193,6 @@ async def auth_callback(
     if setup_action is not None and not error:
         return RedirectResponse("/", status_code=302)
 
-    # 用户拒绝了授权
-    if error:
-        logger.warning("star_aid auth denied: {} - {}", error, error_description or "")
-        return toast_redirect(
-            "/star-aid/",
-            "star_aid.auth_denied",
-            toast_type="error",
-            lang=lang,
-        )
-
     # 必须已登录（cookie）
     try:
         user = await get_current_user(request)
@@ -225,6 +215,19 @@ async def auth_callback(
         return toast_redirect(
             "/star-aid/",
             "star_aid.auth_state_invalid",
+            toast_type="error",
+            lang=lang,
+        )
+
+    # 用户拒绝了授权。先完成同一个 state/user 校验，才能使用其中保存的
+    # return_to，否则取消授权会把授权中心用户带回仓库互助页。
+    if error:
+        logger.warning("star_aid auth denied: {} - {}", error, error_description or "")
+        if state:
+            await _delete_auth_state(state)
+        return toast_redirect(
+            _safe_return_to(state_data.get("return_to")),
+            "star_aid.auth_denied",
             toast_type="error",
             lang=lang,
         )
