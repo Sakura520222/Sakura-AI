@@ -297,7 +297,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | WebUI 配置管理 | `star_aid_batch_size` | 每轮调度最大处理成员数 |
 | WebUI 配置管理 | `star_aid_user_daily_limit` / `star_aid_repo_daily_limit` | 每用户 / 每仓库每日上限 |
 | WebUI 配置管理 | `star_aid_summary_enabled` / `star_aid_summary_language` | 展示仓库 AI 摘要（README 全文传入不截断，输出上限跟随 summary 角色实际绑定模型） |
-| WebUI 配置管理 | `star_aid_github_app_client_id` / `star_aid_github_app_client_secret` / `star_aid_github_app_callback_url` | 仓库互助 GitHub App user-to-server 凭据（可复用审查 App） |
+| WebUI 配置管理 | `star_aid_github_app_client_id` / `star_aid_github_app_client_secret` / `star_aid_github_app_callback_url` | 仓库互助与 GitHub App 授权中心共用的 GitHub App user-to-server 凭据（可复用审查 App） |
 | WebUI 配置管理 | `star_aid_token_encryption_key` | token 加密密钥 |
 
 ---
@@ -366,4 +366,4 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 ---
 
-*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-9-25 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

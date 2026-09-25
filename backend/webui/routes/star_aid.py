@@ -139,7 +139,7 @@ async def auth_start(
 
     生成绑定当前用户的 state，存 Redis，重定向到 GitHub 授权页。
     """
-    if intent not in ("join", "manual_star"):
+    if intent not in ("join", "manual_star", "github_app"):
         intent = "join"
 
     client_id, callback_url = _ensure_app_configured()
