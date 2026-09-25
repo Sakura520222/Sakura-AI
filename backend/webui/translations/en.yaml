@@ -729,6 +729,7 @@ github_app:
   no_installations: "No GitHub App installations"
   no_installations_hint: "Install the Sakura AI GitHub App, then return here and refresh."
   public: "Public"
+  internal: "Internal"
 
 # ========== Configuration ==========
 config:

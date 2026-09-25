@@ -107,9 +107,19 @@
                         <a href="{{ repo.html_url }}" target="_blank" rel="noopener" class="hover:text-sakura-600">{{ repo.full_name }}</a>
                         {% else %}{{ repo.full_name }}{% endif %}
                     </span>
-                    <span class="text-xs {{ 'text-yellow-700 dark:text-yellow-400' if repo.private else 'text-gray-500 dark:text-gray-400' }}">
-                        {{ _('common.private') if repo.private else _('github_app.public') }}
+                    {% if repo.visibility == 'internal' %}
+                    <span class="text-xs text-purple-700 dark:text-purple-400">
+                        {{ _('github_app.internal') }}
                     </span>
+                    {% elif repo.private %}
+                    <span class="text-xs text-yellow-700 dark:text-yellow-400">
+                        {{ _('common.private') }}
+                    </span>
+                    {% else %}
+                    <span class="text-xs text-gray-500 dark:text-gray-400">
+                        {{ _('github_app.public') }}
+                    </span>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>

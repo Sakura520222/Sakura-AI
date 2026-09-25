@@ -194,7 +194,12 @@ class _AsyncClient:
                             "id": index,
                             "full_name": f"alice/repo-{index}",
                             "name": f"repo-{index}",
-                            "private": index % 2 == 0,
+                            "private": index % 2 == 0 or index == 8,
+                            "visibility": (
+                                "internal"
+                                if index == 8
+                                else "private" if index % 2 == 0 else "public"
+                            ),
                             "html_url": "https://github.com/alice/repo",
                             "raw_unconstrained_field": "must-not-render",
                         }
@@ -339,6 +344,7 @@ async def test_denied_authorization_returns_to_authorization_center(
             "user_id": 7,
             "intent": "github_app",
             "return_to": "/github-app/",
+            "language": "en",
         }
 
     async def delete_auth_state(state: str) -> None:
@@ -367,6 +373,7 @@ async def test_denied_authorization_returns_to_authorization_center(
     assert response.path == "/github-app/"
     assert captured["toast_key"] == "star_aid.auth_denied"
     assert captured["toast_type"] == "error"
+    assert captured["lang"] == "en"
     assert deleted_states == ["state-token"]
 
 
@@ -412,6 +419,35 @@ async def _await_value(value: Any) -> Any:
 
 
 @pytest.mark.asyncio
+async def test_authorization_start_preserves_user_language_in_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved_states = {}
+
+    async def save_auth_state(state: str, payload: dict) -> None:
+        saved_states[state] = payload
+
+    monkeypatch.setattr(
+        star_aid,
+        "_ensure_app_configured",
+        lambda: ("client", "https://example.com/callback"),
+    )
+    monkeypatch.setattr(star_aid, "_save_auth_state", save_auth_state)
+
+    response = await star_aid.auth_start(
+        request=SimpleNamespace(),
+        intent="github_app",
+        repo_id=None,
+        return_to="/github-app/",
+        user={"user_id": 7, "sub": "alice"},
+        user_prefs={"language": "en", "items_per_page": 20},
+    )
+
+    assert response.status_code == 302
+    assert [payload["language"] for payload in saved_states.values()] == ["en"]
+
+
+@pytest.mark.asyncio
 async def test_user_installations_use_github_user_scope_and_dto_boundary(
     monkeypatch,
 ) -> None:
@@ -436,6 +472,8 @@ async def test_user_installations_use_github_user_scope_and_dto_boundary(
     assert installation["account_type"] == "User"
     assert installation["repository_selection"] == "selected"
     assert installation["permissions"] == {"metadata": True, "administration": False}
+    assert installation["repositories"][-1]["visibility"] == "internal"
+    assert installation["repositories"][-1]["private"] is True
     assert all("raw_unconstrained_field" not in row for row in installation["repositories"])
 
 
@@ -650,6 +688,40 @@ async def test_github_401_persists_reauthorization_state(monkeypatch) -> None:
     assert session.commits == 2
 
 
+@pytest.mark.asyncio
+async def test_github_401_without_callback_reports_unconfigured(monkeypatch) -> None:
+    _configure_valid_user(monkeypatch, callback_url="")
+
+    class UnauthorizedClient(_AsyncClient):
+        async def get(self, url: str, **_kwargs: Any) -> _Response:
+            self.urls.append(url)
+            return _Response({}, status_code=401)
+
+    marked = []
+
+    async def mark_reauth_required(session: Any, user_id: int) -> None:
+        marked.append(user_id)
+
+    monkeypatch.setattr(
+        service_module.credential_service,
+        "mark_reauth_required",
+        mark_reauth_required,
+    )
+    monkeypatch.setattr(
+        service_module.httpx,
+        "AsyncClient",
+        lambda timeout=None: UnauthorizedClient(),
+    )
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=_Session(), user_id=7, expected_github_username="alice"
+    )
+
+    assert authorization.status == "unconfigured"
+    assert authorization.error_code == "app_not_configured"
+    assert marked == [7]
+
+
 def test_authorization_template_is_parseable_and_has_no_operations_actions() -> None:
     template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
     fragment = (
@@ -664,6 +736,7 @@ def test_authorization_template_is_parseable_and_has_no_operations_actions() -> 
     assert "!expanded && !query" in fragment
     assert "if (!row.classList.contains('hidden')) visible++;" in fragment
     assert "row.classList.toggle('hidden', !matches || isCollapsedExtra);" in fragment
+    assert "repo.visibility == 'internal'" in fragment
     assert "/repos/" not in fragment
     assert "triggerIndex" not in fragment
     assert "triggerScan" not in fragment
@@ -695,6 +768,18 @@ def test_error_authorization_renders_failure_not_connected_state() -> None:
 
     assert "github_app.request_failed" in output
     assert "github_app.connected" not in output
+
+
+def test_github_app_translations_cover_internal_repository_label() -> None:
+    translation_root = (
+        Path(__file__).resolve().parents[1] / "backend/webui/translations"
+    )
+
+    for filename in ("en.yaml", "zh-CN.yaml"):
+        payload = yaml.safe_load(
+            (translation_root / filename).read_text(encoding="utf-8")
+        )
+        assert payload["github_app"]["internal"]
 
 
 def test_connected_authorization_template_renders_with_strict_variables() -> None:
@@ -730,6 +815,7 @@ def test_connected_authorization_template_renders_with_strict_variables() -> Non
                         "full_name": "alice/private",
                         "name": "private",
                         "private": True,
+                        "visibility": "private",
                         "html_url": "https://github.com/alice/private",
                     },
                     {
@@ -737,7 +823,16 @@ def test_connected_authorization_template_renders_with_strict_variables() -> Non
                         "full_name": "alice/public",
                         "name": "public",
                         "private": False,
+                        "visibility": "public",
                         "html_url": "https://github.com/alice/public",
+                    },
+                    {
+                        "id": 3,
+                        "full_name": "alice/internal",
+                        "name": "internal",
+                        "private": True,
+                        "visibility": "internal",
+                        "html_url": "https://github.com/alice/internal",
                     },
                 ],
             )
@@ -756,6 +851,7 @@ def test_connected_authorization_template_renders_with_strict_variables() -> Non
     )
 
     assert "alice/private" in output
+    assert "github_app.internal" in output
     assert "github_app.manage_authorization" in output
 
 
