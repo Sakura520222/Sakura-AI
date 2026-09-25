@@ -352,9 +352,11 @@ async def _resolve_review_github_app_slug(
 async def fetch_github_app_slug(
     request: Request,
     _user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
     _csrf: str = Depends(require_csrf_header),
 ):
     """Auto-fill the App slug when the user-authorization App is the review App."""
+    translate = make_translation_func(detect_language(user_prefs))
     try:
         body = await request.json()
     except Exception:
@@ -369,9 +371,7 @@ async def fetch_github_app_slug(
         return {
             "success": False,
             "error_code": "github_app_slug_client_id_required",
-            "message": make_translation_func(detect_language())(
-                "system_config.github_app_slug_client_id_required"
-            ),
+            "message": translate("system_config.github_app_slug_client_id_required"),
         }
 
     slug, error_code = await _resolve_review_github_app_slug(client_id)
@@ -379,17 +379,13 @@ async def fetch_github_app_slug(
         return {
             "success": False,
             "error_code": error_code,
-            "message": make_translation_func(detect_language())(
-                f"system_config.{error_code}"
-            ),
+            "message": translate(f"system_config.{error_code}"),
         }
 
     return {
         "success": True,
         "slug": slug,
-        "message": make_translation_func(detect_language())(
-            "system_config.github_app_slug_filled"
-        ),
+        "message": translate("system_config.github_app_slug_filled"),
     }
 
 

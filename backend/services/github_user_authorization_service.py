@@ -108,10 +108,12 @@ class GitHubUserAuthorizationService:
     ) -> GitHubUserAuthorization:
         settings = get_settings()
         client_id = settings.star_aid_github_app_client_id
+        callback_url = settings.star_aid_github_app_callback_url
         if not client_id or not settings.star_aid_github_app_client_secret:
             return GitHubUserAuthorization(
                 status="unconfigured", error_code="app_not_configured"
             )
+        authorization_flow_configured = bool(callback_url)
 
         credential = await credential_service.get_credential(session, int(user_id))
         github_username = (credential.github_username or "") if credential else ""
@@ -129,6 +131,12 @@ class GitHubUserAuthorizationService:
             or not credential_matches_app
             or not credential_matches_user
         ):
+            if not authorization_flow_configured:
+                return GitHubUserAuthorization(
+                    status="unconfigured",
+                    github_username=expected or github_username,
+                    error_code="app_not_configured",
+                )
             return GitHubUserAuthorization(
                 status="needs_authorization",
                 github_username=expected or github_username,
@@ -140,6 +148,8 @@ class GitHubUserAuthorizationService:
         )
         if not access_token:
             status = "needs_authorization" if token_result.reauth_required else "error"
+            if token_result.reauth_required and not authorization_flow_configured:
+                status = "unconfigured"
             if token_result.reauth_required:
                 # get_effective_access_token() may have marked the credential and
                 # member as reauthorization-required before returning no token.
@@ -147,7 +157,11 @@ class GitHubUserAuthorizationService:
             return GitHubUserAuthorization(
                 status=status,
                 github_username=expected or github_username,
-                error_code=token_result.error_code or "token_unavailable",
+                error_code=(
+                    "app_not_configured"
+                    if status == "unconfigured"
+                    else token_result.error_code or "token_unavailable"
+                ),
             )
 
         # GitHub rotates the refresh token during get_effective_access_token().
