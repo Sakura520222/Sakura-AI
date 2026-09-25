@@ -1740,6 +1740,8 @@ system_config:
   key_star_aid_github_app_slug_desc: "Slug used by the authorization center's install link. Required when this App differs from the review App; it can remain empty when reusing the review App."
   key_star_aid_github_app_callback_url: "Authorization Callback URL"
   key_star_aid_github_app_callback_url_desc: "User-to-server callback URL shared by Repository Aid and the authorization center; it must match the GitHub App Callback URL, e.g. https://your-domain/star-aid/auth/callback"
+  key_star_aid_github_app_discovery_timeout_seconds: "Discovery Total Timeout (seconds)"
+  key_star_aid_github_app_discovery_timeout_seconds_desc: "Total budget for loading authorization-center installations and repositories. Keep it below the reverse-proxy/gateway timeout; the 45-second default is about three single-request timeouts."
   key_telegram_bot_token: "Bot Token"
   key_telegram_bot_token_desc: "Telegram Bot API Token from @BotFather"
   key_telegram_enabled: "Enable Telegram Notifications"

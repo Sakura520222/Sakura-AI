@@ -1741,6 +1741,8 @@ system_config:
   key_star_aid_github_app_slug_desc: "授权中心安装链接使用的 App slug。配置为独立于审查主 App 的应用时必填；复用审查 App 时可留空。"
   key_star_aid_github_app_callback_url: "授权回调地址"
   key_star_aid_github_app_callback_url_desc: "仓库互助与授权中心共用的 user-to-server 授权回调地址，需在该 GitHub App 的 Callback URL 中配置一致，如 https://你的域名/star-aid/auth/callback"
+  key_star_aid_github_app_discovery_timeout_seconds: "安装发现总超时（秒）"
+  key_star_aid_github_app_discovery_timeout_seconds_desc: "授权中心拉取安装和仓库列表的总超时预算，需低于反向代理/网关超时；默认 45 秒约等于三个单请求超时。"
   key_telegram_bot_token: "Bot Token"
   key_telegram_bot_token_desc: "Telegram Bot API Token，从 @BotFather 获取"
   key_telegram_enabled: "启用 Telegram 通知"

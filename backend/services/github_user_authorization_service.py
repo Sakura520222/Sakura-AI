@@ -24,7 +24,6 @@ _GITHUB_API_VERSION = "2022-11-28"
 _REQUEST_TIMEOUT = 15
 _PAGE_SIZE = 100
 _INSTALLATION_FETCH_CONCURRENCY = 4
-_DISCOVERY_TIMEOUT_SECONDS = _REQUEST_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -181,7 +180,9 @@ class GitHubUserAuthorizationService:
             "X-GitHub-Api-Version": _GITHUB_API_VERSION,
         }
         try:
-            async with asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS):
+            async with asyncio.timeout(
+                settings.star_aid_github_app_discovery_timeout_seconds
+            ):
                 async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
                     installations_payload = await self._paginate(
                         client,
