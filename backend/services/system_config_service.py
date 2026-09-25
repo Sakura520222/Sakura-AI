@@ -142,6 +142,7 @@ SYSTEM_CONFIG_KEYS = frozenset(
 SYSTEM_CONFIG_UPDATE_KEYS = SYSTEM_CONFIG_KEYS | frozenset({"star_aid_enabled"})
 
 _INTEGER_RE = re.compile(r"^[+-]?[0-9]+$")
+_GITHUB_APP_SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
 
 class SystemConfigValidationError(ValueError):
@@ -380,6 +381,14 @@ class SystemConfigService:
 
         if key == "app_domain" and value:
             value = sanitize_domain(value)
+        elif key == "star_aid_github_app_slug" and value:
+            if not _GITHUB_APP_SLUG_RE.fullmatch(value):
+                raise SystemConfigValidationError(
+                    key,
+                    "GitHub App Slug 格式无效",
+                    toast_key="system_config.invalid_github_app_slug",
+                    field_key=key,
+                )
 
         return value
 

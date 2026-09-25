@@ -1665,6 +1665,7 @@ system_config:
   saved: "系统配置已保存并即时生效"
   saved_restart_required: "系统配置已保存，部分配置需重启服务后生效"
   invalid_timezone: "应用时区无效。请输入 system 或有效的 IANA 时区名称（例如 Asia/Shanghai）"
+  invalid_github_app_slug: "App Slug 无效。请只输入 GitHub App 的 slug（字母、数字或连字符），不要填写完整 URL"
   time_title: "应用时间上下文"
   time_configured: "配置值"
   time_resolved: "当前解析 IANA 时区"
