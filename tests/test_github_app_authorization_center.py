@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from backend.services.github_user_authorization_service import (
     GitHubUserInstallation,
 )
 from backend.services.star_aid_github_service import GitHubCallResult
+from backend.services.system_config_service import SystemConfigValidationError
 from backend.webui.deps import require_admin, require_super_admin
 from backend.webui.routes import github_app, repos, star_aid, system_config
 
@@ -71,6 +73,16 @@ def test_user_authorization_app_slug_is_loaded_from_database() -> None:
     assert key in CORE_CONFIG_KEYS
     assert key in get_all_db_config_keys()
     assert system_config.system_config_service.validate_updates({key: ""}) == {key: ""}
+
+
+@pytest.mark.parametrize("invalid_slug", ["https://github.com/apps/my-app", "my app"])
+def test_user_authorization_app_slug_rejects_invalid_values(invalid_slug: str) -> None:
+    with pytest.raises(SystemConfigValidationError) as caught:
+        system_config.system_config_service.validate_updates(
+            {"star_aid_github_app_slug": invalid_slug}
+        )
+
+    assert caught.value.toast_key == "system_config.invalid_github_app_slug"
 
 
 def test_user_authorization_routes_do_not_accept_installation_ids() -> None:
@@ -190,6 +202,59 @@ class _AsyncClient:
                     ]
                 }
             )
+        raise AssertionError(f"Unexpected GitHub URL: {url}")
+
+
+class _ConcurrencyTrackingClient(_AsyncClient):
+    def __init__(self, installation_count: int) -> None:
+        super().__init__()
+        self.installation_count = installation_count
+        self.active_requests = 0
+        self.max_active_requests = 0
+
+    async def get(
+        self, url: str, headers: dict[str, str], params: dict[str, int] | None = None
+    ) -> _Response:
+        if url.endswith("/user/installations"):
+            return _Response(
+                {
+                    "installations": [
+                        {
+                            "id": installation_id,
+                            "account": {"login": f"org-{installation_id}"},
+                            "target_type": "Organization",
+                            "repository_selection": "selected",
+                        }
+                        for installation_id in range(1, self.installation_count + 1)
+                    ]
+                }
+            )
+
+        prefix = "https://api.github.com/user/installations/"
+        suffix = "/repositories"
+        if url.startswith(prefix) and url.endswith(suffix):
+            installation_id = int(url.removeprefix(prefix).removesuffix(suffix))
+            self.active_requests += 1
+            self.max_active_requests = max(
+                self.max_active_requests, self.active_requests
+            )
+            try:
+                await asyncio.sleep(0)
+                return _Response(
+                    {
+                        "repositories": [
+                            {
+                                "id": installation_id,
+                                "full_name": f"org-{installation_id}/repo",
+                                "name": "repo",
+                                "private": False,
+                            }
+                        ]
+                    }
+                )
+            finally:
+                self.active_requests -= 1
+
         raise AssertionError(f"Unexpected GitHub URL: {url}")
 
 
@@ -369,6 +434,71 @@ async def test_user_installations_use_github_user_scope_and_dto_boundary(
 
 
 @pytest.mark.asyncio
+async def test_installation_repository_discovery_has_bounded_concurrency(
+    monkeypatch,
+) -> None:
+    _configure_valid_user(monkeypatch)
+    client = _ConcurrencyTrackingClient(
+        installation_count=service_module._INSTALLATION_FETCH_CONCURRENCY * 2
+    )
+    monkeypatch.setattr(
+        service_module.httpx, "AsyncClient", lambda timeout=None: client
+    )
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=_Session(), user_id=7, expected_github_username="alice"
+    )
+
+    assert authorization.status == "connected"
+    assert [
+        installation.installation_id for installation in authorization.installations
+    ] == list(range(1, client.installation_count + 1))
+    assert client.max_active_requests <= (
+        service_module._INSTALLATION_FETCH_CONCURRENCY
+    )
+    assert client.max_active_requests > 1
+
+
+@pytest.mark.asyncio
+async def test_installation_repository_discovery_has_one_deadline(
+    monkeypatch,
+) -> None:
+    _configure_valid_user(monkeypatch)
+
+    class SlowRepositoryClient(_AsyncClient):
+        async def get(self, url: str, **_kwargs: Any) -> _Response:
+            if url.endswith("/user/installations"):
+                return _Response(
+                    {
+                        "installations": [
+                            {
+                                "id": 1001,
+                                "account": {"login": "alice"},
+                                "target_type": "User",
+                                "repository_selection": "selected",
+                            }
+                        ]
+                    }
+                )
+            await asyncio.sleep(0.1)
+            raise AssertionError("Repository discovery should have been cancelled")
+
+    monkeypatch.setattr(
+        service_module.httpx,
+        "AsyncClient",
+        lambda timeout=None: SlowRepositoryClient(),
+    )
+    monkeypatch.setattr(service_module, "_DISCOVERY_TIMEOUT_SECONDS", 0.001)
+
+    authorization = await GitHubUserAuthorizationService().get_installations(
+        session=_Session(), user_id=7, expected_github_username="alice"
+    )
+
+    assert authorization.status == "error"
+    assert authorization.error_code == "github_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_credential_from_another_github_app_is_not_reused(monkeypatch) -> None:
     _configure_valid_user(monkeypatch, client_id="review-app")
     credential = SimpleNamespace(
@@ -486,6 +616,8 @@ def test_authorization_template_is_parseable_and_has_no_operations_actions() -> 
     assert "data-github-app-repository-filter" in fragment
     assert "loop.index0 >= 6" in fragment
     assert "data-github-app-toggle-repositories" in fragment
+    assert "const expanded = toggle?.dataset.expanded === 'true';" in fragment
+    assert "row.classList.toggle('hidden', !matches || isCollapsedExtra);" in fragment
     assert "/repos/" not in fragment
     assert "triggerIndex" not in fragment
     assert "triggerScan" not in fragment
@@ -600,6 +732,7 @@ def test_system_config_translations_cover_shared_user_authorization_app() -> Non
         "key_star_aid_github_app_slug",
         "key_star_aid_github_app_slug_desc",
         "key_star_aid_github_app_callback_url_desc",
+        "invalid_github_app_slug",
     }
 
     for filename in ("en.yaml", "zh-CN.yaml"):

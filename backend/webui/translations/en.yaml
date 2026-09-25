@@ -1664,6 +1664,7 @@ system_config:
   saved: "System config saved and applied live"
   saved_restart_required: "System config saved. Some changes require a service restart to take effect."
   invalid_timezone: "Invalid application timezone. Enter system or a valid IANA timezone such as Asia/Shanghai."
+  invalid_github_app_slug: "Invalid App Slug. Enter only the GitHub App slug using letters, numbers, or hyphens; do not enter a full URL"
   time_title: "Application Time Context"
   time_configured: "Configured value"
   time_resolved: "Resolved IANA timezone"

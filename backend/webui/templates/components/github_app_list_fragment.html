@@ -148,15 +148,19 @@
         if (!card) return;
         const query = input.value.trim().toLowerCase();
         const rows = card.querySelectorAll('[data-github-app-repository]');
+        const toggle = card.querySelector('[data-github-app-toggle-repositories]');
+        const expanded = toggle?.dataset.expanded === 'true';
         let visible = 0;
         rows.forEach(function(row) {
             const matches = !query || (row.dataset.repositoryName || '').indexOf(query) !== -1;
-            row.classList.toggle('hidden', !matches);
+            const isCollapsedExtra = row.classList.contains(
+                'data-github-app-repository-extra'
+            ) && !expanded;
+            row.classList.toggle('hidden', !matches || isCollapsedExtra);
             if (matches) visible++;
         });
         const empty = card.querySelector('[data-github-app-empty]');
         if (empty) empty.classList.toggle('hidden', visible !== 0);
-        const toggle = card.querySelector('[data-github-app-toggle-repositories]');
         if (toggle) toggle.classList.toggle('hidden', query.length > 0);
     });
 
