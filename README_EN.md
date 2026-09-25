@@ -108,6 +108,7 @@
 - **Task Cancellation** — Cancel anytime with safe workspace cleanup
 - **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
 - **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas
+- **GitHub App Authorization Center** — Users view their own installations and repository access, then manage or extend authorization on GitHub
 
 ### Repository Aid
 
@@ -132,7 +133,7 @@
 - **Persistent AI Account Configuration** — Multiple accounts + role bindings + fallback chains, per-model capability overrides
 - **Multi-Protocol Adaptation Layer** — Unified runtime for OpenAI / Anthropic / Gemini native / compatible endpoints
 - **Cross-Protocol Fallback** — Backoff retry + cross-vendor switch + context overflow compression
-- **GitHub App Installation Management** — Auto-syncs repository authorization status
+- **GitHub App Repository Management** — Administrators view global installations, indexing, and scan status
 - **Security Center & MFA** — TOTP / recovery codes / Passkeys / global or per-user MFA enforcement / failure lockout
 - **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
 - **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset

@@ -374,7 +374,7 @@ class Settings(BaseSettings):
     )
     star_aid_github_app_client_id: str = Field(
         "",
-        description="仓库互助使用的 GitHub App Client ID（user-to-server flow）",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App Client ID（user-to-server flow）",
     )
     star_aid_github_app_client_secret: str = Field(
         "",
@@ -382,7 +382,7 @@ class Settings(BaseSettings):
     )
     star_aid_github_app_callback_url: str = Field(
         "",
-        description="仓库互助 GitHub App user-to-server 授权回调地址",
+        description="仓库互助与 GitHub App 授权中心共用的授权回调地址",
     )
 
     # 通知 Provider 配置。Telegram/SMTP 都是可选能力，不能阻塞 GitHub/Passkey 登录。
