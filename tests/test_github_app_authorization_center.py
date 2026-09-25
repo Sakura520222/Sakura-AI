@@ -12,6 +12,7 @@ import yaml
 from fastapi.routing import APIRoute
 from jinja2 import DictLoader, Environment, StrictUndefined
 
+from backend.core.config import CORE_CONFIG_KEYS, get_all_db_config_keys
 from backend.services import github_user_authorization_service as service_module
 from backend.services.github_user_authorization_service import (
     GitHubUserAuthorizationService,
@@ -19,7 +20,7 @@ from backend.services.github_user_authorization_service import (
 )
 from backend.services.star_aid_github_service import GitHubCallResult
 from backend.webui.deps import require_admin, require_super_admin
-from backend.webui.routes import github_app, repos, system_config
+from backend.webui.routes import github_app, repos, star_aid, system_config
 
 
 def _route(router: Any, path: str, method: str = "GET") -> APIRoute:
@@ -54,6 +55,13 @@ def test_admin_repository_routes_keep_their_admin_boundary() -> None:
     for path in ("/repos/", "/repos/list-fragment"):
         dependencies = _dependency_calls(_route(repos.router, path))
         assert repos.require_admin in dependencies
+
+
+def test_user_authorization_app_slug_is_loaded_from_database() -> None:
+    key = "star_aid_github_app_slug"
+
+    assert key in CORE_CONFIG_KEYS
+    assert key in get_all_db_config_keys()
 
 
 def test_user_authorization_routes_do_not_accept_installation_ids() -> None:
@@ -213,6 +221,79 @@ async def test_separate_app_without_slug_does_not_fall_back_to_review_app(
     monkeypatch.setattr(core_github_app, "GitHubAppClient", FakeMainApp)
 
     assert await github_app._get_install_url() is None
+
+
+@pytest.mark.asyncio
+async def test_inferred_install_url_cache_is_scoped_to_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.core import github_app as core_github_app
+
+    class FakeMainApp:
+        def get_app_identity(self) -> tuple[str, str]:
+            return ("review-app", "Iv1.review")
+
+    settings = SimpleNamespace(
+        star_aid_github_app_slug="",
+        star_aid_github_app_client_id="Iv1.review",
+    )
+    monkeypatch.setattr(github_app, "_app_slug", None)
+    monkeypatch.setattr(github_app, "_app_slug_client_id", None)
+    monkeypatch.setattr(github_app, "get_settings", lambda: settings)
+    monkeypatch.setattr(core_github_app, "GitHubAppClient", FakeMainApp)
+
+    first_url = await github_app._get_install_url()
+    settings.star_aid_github_app_client_id = "Iv1.separate"
+    second_url = await github_app._get_install_url()
+
+    assert first_url == "https://github.com/apps/review-app/installations/new"
+    assert second_url is None
+
+
+@pytest.mark.asyncio
+async def test_denied_authorization_returns_to_authorization_center(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deleted_states: list[str] = []
+
+    async def get_current_user(request: Any) -> dict:
+        return {"user_id": 7, "sub": "alice"}
+
+    async def get_auth_state(state: str) -> dict:
+        assert state == "state-token"
+        return {
+            "user_id": 7,
+            "intent": "github_app",
+            "return_to": "/github-app/",
+        }
+
+    async def delete_auth_state(state: str) -> None:
+        deleted_states.append(state)
+
+    captured = {}
+
+    def toast_redirect(path: str, toast_key: str, **kwargs: Any):
+        captured.update({"path": path, "toast_key": toast_key, **kwargs})
+        return SimpleNamespace(path=path)
+
+    monkeypatch.setattr(star_aid, "get_current_user", get_current_user)
+    monkeypatch.setattr(star_aid, "_get_auth_state", get_auth_state)
+    monkeypatch.setattr(star_aid, "_delete_auth_state", delete_auth_state)
+    monkeypatch.setattr(star_aid, "toast_redirect", toast_redirect)
+
+    response = await star_aid.auth_callback(
+        request=SimpleNamespace(),
+        code=None,
+        state="state-token",
+        error="access_denied",
+        error_description="The user has denied your application access",
+        setup_action=None,
+    )
+
+    assert response.path == "/github-app/"
+    assert captured["toast_key"] == "star_aid.auth_denied"
+    assert captured["toast_type"] == "error"
+    assert deleted_states == ["state-token"]
 
 
 class _Session:

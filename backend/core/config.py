@@ -2216,6 +2216,7 @@ CORE_CONFIG_KEYS = frozenset(
         "database_url",
         "star_aid_github_app_client_id",
         "star_aid_github_app_client_secret",
+        "star_aid_github_app_slug",
         "star_aid_github_app_callback_url",
     }
 )

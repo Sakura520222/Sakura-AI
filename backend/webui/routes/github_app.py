@@ -23,6 +23,7 @@ from backend.webui.deps import (
 
 router = APIRouter(prefix="/github-app", tags=["WebUI GitHub App"])
 _app_slug: str | None = None
+_app_slug_client_id: str | None = None
 _GITHUB_APP_SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
 
@@ -36,14 +37,16 @@ def _install_url_for_slug(slug: str) -> str | None:
 
 async def _get_install_url() -> str | None:
     """Resolve the install URL for the configured user-authorization App."""
-    global _app_slug
-    if _app_slug:
-        return f"https://github.com/apps/{_app_slug}/installations/new"
+    global _app_slug, _app_slug_client_id
 
     settings = get_settings()
+    client_id = settings.star_aid_github_app_client_id
     configured_slug = settings.star_aid_github_app_slug
     if configured_slug:
         return _install_url_for_slug(configured_slug)
+
+    if _app_slug and _app_slug_client_id == client_id:
+        return f"https://github.com/apps/{_app_slug}/installations/new"
 
     from backend.core.github_app import GitHubAppClient
 
@@ -58,7 +61,7 @@ async def _get_install_url() -> str | None:
         not slug
         or slug == "unknown-bot"
         or not main_app_client_id
-        or main_app_client_id != settings.star_aid_github_app_client_id
+        or main_app_client_id != client_id
     ):
         logger.warning(
             "A separate user-authorization GitHub App requires its slug to be configured"
@@ -66,6 +69,7 @@ async def _get_install_url() -> str | None:
         return None
     slug = slug.removesuffix("[bot]")
     _app_slug = slug
+    _app_slug_client_id = client_id
     return f"https://github.com/apps/{slug}/installations/new"
 
 
