@@ -44,13 +44,39 @@ def test_mobile_sidebar_button_opens_sidebar_and_overlay():
 
 
 @pytest.mark.parametrize("role", ["user", "admin", "super_admin"])
-def test_contextual_tabs_respect_roles(role):
-    template = get_templates().get_template("components/domain_tabs.html")
-    html = template.render(
-        active_page="settings", current_user={"role": role}, settings=SettingsStub()
+def test_sidebar_is_the_only_domain_navigation(role):
+    html = (
+        get_templates()
+        .get_template("components/sidebar.html")
+        .render(
+            active_page="github_app",
+            current_user={"role": role},
+            settings=SettingsStub(),
+        )
     )
-    assert ('href="/settings/"' in html) == (role == "super_admin")
-    assert ('href="/config/ai"' in html) == (role == "super_admin")
+    repository_routes = {
+        "user": ("/github-app/",),
+        "admin": ("/github-app/", "/repos/", "/scans/"),
+        "super_admin": (
+            "/github-app/",
+            "/repos/",
+            "/scans/",
+            "/sakura-memory/",
+            "/vector-db/",
+        ),
+    }[role]
+    for route in repository_routes:
+        assert html.count(f'href="{route}"') == 1
+    if role == "super_admin":
+        assert "Sakura 记忆" in html
+        assert "向量数据" in html
+
+
+def test_page_header_does_not_repeat_sidebar_domain_navigation():
+    templates = Path(__file__).parents[1] / "backend/webui/templates"
+    base = (templates / "base.html").read_text(encoding="utf-8")
+    assert "components/domain_tabs.html" not in base
+    assert not (templates / "components/domain_tabs.html").exists()
 
 
 @pytest.mark.asyncio
@@ -91,6 +117,27 @@ async def test_legacy_review_urls_preserve_filters_and_point_to_pr():
     assert fragment.headers["HX-Redirect"] == "/pr/?repo=org-a%2Fapi&page=2"
     detail = await log_detail_fragment(htmx_request, 42, user={"sub": "alice"})
     assert detail.headers["HX-Redirect"] == "/pr/42?repo=org-a%2Fapi&page=2"
+
+
+@pytest.mark.asyncio
+async def test_legacy_review_redirects_drop_unrecognized_query_parameters():
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/logs/",
+            "query_string": (
+                b"next=https%3A%2F%2Fevil.example&repo=demo&search=hello+world"
+            ),
+            "headers": [],
+        }
+    )
+
+    detail = await log_detail_fragment(request, 42, user={"sub": "alice"})
+
+    assert detail.headers["location"] == "/pr/42?repo=demo&search=hello+world"
+    assert "next=" not in detail.headers["location"]
+    assert "evil.example" not in detail.headers["location"]
 
 
 def test_review_filters_apply_to_list_count_and_export_queries():
