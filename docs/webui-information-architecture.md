@@ -1,8 +1,10 @@
 # WebUI navigation and route compatibility
 
-The first navigation level is a business domain. The sidebar expands to show
-its features, and pages in the same domain share contextual tabs. Permissions
-remain on the individual routes, not only on the navigation links.
+The first navigation level is a business domain. Sidebar groups are collapsed
+except for the active domain, and the sidebar is the only business-domain
+navigation. Page headers keep only the current page title, description, and
+page-level actions. Permissions remain on the individual routes, not only on
+the navigation links.
 
 | Domain | Existing routes | Visibility |
 | --- | --- | --- |
