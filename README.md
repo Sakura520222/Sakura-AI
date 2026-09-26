@@ -141,7 +141,7 @@
 - **外部支付与退款** — Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT 直收
 - **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
 - **管理员操作审计** — 完整操作日志
-- **WebUI 管理界面** — 仪表盘、PR、用户、配置、队列、扫描、Agent、记忆、仓库互助、向量库管理
+- **WebUI 管理界面** — 按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口；PR 审查页统一提供仓库与日期筛选，旧审查日志地址重定向至 PR 页面
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断

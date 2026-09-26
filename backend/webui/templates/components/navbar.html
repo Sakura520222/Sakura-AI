@@ -79,7 +79,8 @@
         {% endif %}
 
         <!-- 用户信息 -->
-        <div class="flex items-center gap-2 ml-2">
+        <details class="relative ml-2 group">
+            <summary class="flex items-center gap-2 cursor-pointer list-none rounded-xl p-1 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 [&::-webkit-details-marker]:hidden" aria-label="{{ _('nav.account_menu') }}">
             {% if current_user.get('avatar_url') %}
             <img src="{{ current_user.avatar_url }}"
                  alt="{{ current_user.sub }}"
@@ -94,7 +95,12 @@
             </div>
             {% endif %}
             <span class="hidden sm:inline text-sm font-medium">{{ current_user.sub }}</span>
-        </div>
+            </summary>
+            <div class="absolute right-0 top-full mt-2 w-40 rounded-xl border border-sakura-200 bg-white p-1 shadow-lg dark:border-sakura-800 dark:bg-gray-800">
+                <a href="/settings/" class="block rounded-lg px-3 py-2 text-sm hover:bg-sakura-50 dark:hover:bg-sakura-900/20">{{ _('nav.personal_settings') }}</a>
+                <a href="/settings/about" class="block rounded-lg px-3 py-2 text-sm hover:bg-sakura-50 dark:hover:bg-sakura-900/20">{{ _('nav.about') }}</a>
+            </div>
+        </details>
 
         <!-- 登出 -->
         <form method="POST" action="/auth/logout" class="ml-1"

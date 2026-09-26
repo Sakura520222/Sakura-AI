@@ -141,7 +141,7 @@
 - **External Payments & Refunds** — Stripe / Paddle / Alipay / NOWPayments / TRON USDT
 - **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
 - **Admin Action Audit** — Complete operation logs
-- **WebUI Dashboard** — Dashboard, PR, user, config, queue, scan, Agent, memory, Repository Aid, vector storage management
+- **WebUI Dashboard** — Navigation grouped into Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings; the PR review page includes repository and date filters, with old review-log URLs redirecting to it
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions

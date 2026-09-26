@@ -79,7 +79,7 @@ def test_all_reviewed_date_filter_routes_use_the_aware_boundary_helper():
     root = Path(__file__).parents[1]
     for relative in (
         "backend/api/v1/logs.py",
-        "backend/webui/routes/logs.py",
+        "backend/webui/routes/pr.py",
         "backend/webui/routes/action_logs.py",
         "backend/webui/routes/queue.py",
     ):

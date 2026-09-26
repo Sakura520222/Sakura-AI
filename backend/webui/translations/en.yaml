@@ -114,6 +114,17 @@ auth:
 
 # ========== Navigation =========="
 nav:
+  main_navigation: "Main navigation"
+  section_navigation: "Section navigation"
+  review_domain: "Reviews & Analysis"
+  repository_domain: "Repositories"
+  agent_tasks: "Tasks & Workspaces"
+  observability_domain: "Observability"
+  administration_domain: "Administration"
+  settings_domain: "Settings"
+  review_config: "Review & Analysis Policies"
+  billing_overview: "Overview"
+  account_menu: "Account menu"
   global_config: "General Config"
   toggle_sidebar: "Toggle sidebar"
   toggle_dark: "Switch to dark mode"
