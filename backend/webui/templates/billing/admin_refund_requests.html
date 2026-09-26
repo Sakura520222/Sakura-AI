@@ -91,7 +91,8 @@
                             {% if item.status in ['pending', 'failed'] %}
                             <div class="space-y-2 min-w-56">
                                 <form method="POST" action="/billing/admin/refund-requests/{{ item.id }}/approve"
-                                      onsubmit="return confirm('{{ _('billing.confirm_approve_refund') }}');"
+                                      data-confirm="{{ _('billing.confirm_approve_refund') }}"
+                                      data-confirm-variant="warning"
                                       class="space-y-2">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     <textarea name="review_note" rows="2" placeholder="{{ _('billing.review_note') }}"
@@ -102,7 +103,8 @@
                                     </button>
                                 </form>
                                 <form method="POST" action="/billing/admin/refund-requests/{{ item.id }}/reject"
-                                      onsubmit="return confirm('{{ _('billing.confirm_reject_refund') }}');"
+                                      data-confirm="{{ _('billing.confirm_reject_refund') }}"
+                                      data-confirm-variant="warning"
                                       class="space-y-2">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     <textarea name="review_note" rows="2" placeholder="{{ _('billing.review_note') }}"

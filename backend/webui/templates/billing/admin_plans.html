@@ -2,6 +2,8 @@
 
 {% block title %}{{ _('billing.admin_plans') }} - Sakura AI{% endblock %}
 
+{% from "components/modal.html" import modal_shell %}
+
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8 flex items-center justify-between">
@@ -9,7 +11,7 @@
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.admin_plans') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.create_plan') }}</p>
         </div>
-        <button onclick="document.getElementById('create-plan-modal').classList.remove('hidden')"
+        <button onclick="Sakura.openModal('create-plan-modal')"
                 class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg transition-colors">
             {{ _('billing.create_plan') }}
         </button>
@@ -27,14 +29,16 @@
                 {{ _('billing.batch_toggle') }}
             </button>
         </form>
-        <form id="batch-delete-form" action="/billing/admin/plans/batch-delete" method="POST" class="inline">
+        <form id="batch-delete-form" action="/billing/admin/plans/batch-delete" method="POST" class="inline"
+              data-confirm="{{ _('billing.confirm_batch_delete') }}"
+              data-confirm-variant="danger">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div id="batch-delete-ids"></div>
             <label class="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
                 <input type="checkbox" name="hard_delete" value="on" class="h-3 w-3 rounded border-gray-300 text-red-600">
                 {{ _('billing.hard_delete') }}
             </label>
-            <button type="submit" onclick="return confirm('{{ _('billing.confirm_batch_delete') }}')"
+            <button type="submit"
                     class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
                 {{ _('billing.batch_delete') }}
             </button>
@@ -115,16 +119,9 @@
     </div>
 </div>
 
-<!-- 创建套餐弹窗 -->
-<div id="create-plan-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.create_plan') }}</h3>
-            <button onclick="this.closest('#create-plan-modal').classList.add('hidden')"
-                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
-        </div>
-        <form action="/billing/admin/plans" method="POST" class="px-6 py-4 space-y-4">
+<!-- 创建套餐弹窗（统一 Modal） -->
+{% call modal_shell(id="create-plan-modal", title=_('billing.create_plan'), size="lg", close_sr=_('common.close')) %}
+        <form action="/billing/admin/plans" method="POST" class="space-y-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="grid grid-cols-2 gap-4">
@@ -266,7 +263,7 @@
 
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button"
-                        onclick="this.closest('#create-plan-modal').classList.add('hidden')"
+                        onclick="Sakura.closeModal('create-plan-modal')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
                     {{ _('common.cancel') }}
@@ -278,19 +275,11 @@
                 </button>
             </div>
         </form>
-    </div>
-</div>
+{% endcall %}
 
-<!-- 编辑套餐弹窗 -->
-<div id="edit-plan-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.edit_plan') }}</h3>
-            <button onclick="this.closest('#edit-plan-modal').classList.add('hidden')"
-                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
-        </div>
-        <form id="edit-plan-form" action="" method="POST" class="px-6 py-4 space-y-4">
+<!-- 编辑套餐弹窗（统一 Modal） -->
+{% call modal_shell(id="edit-plan-modal", title=_('billing.edit_plan'), size="lg", close_sr=_('common.close')) %}
+        <form id="edit-plan-form" action="" method="POST" class="space-y-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="grid grid-cols-2 gap-4">
@@ -432,7 +421,7 @@
 
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button"
-                        onclick="this.closest('#edit-plan-modal').classList.add('hidden')"
+                        onclick="Sakura.closeModal('edit-plan-modal')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
                     {{ _('common.cancel') }}
@@ -444,17 +433,11 @@
                 </button>
             </div>
         </form>
-    </div>
-</div>
+{% endcall %}
 
-<!-- 删除套餐确认弹窗 -->
-<div id="delete-plan-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 class="text-lg font-semibold text-red-600">{{ _('billing.delete_plan') }}</h3>
-        </div>
-        <div class="px-6 py-4">
+<!-- 删除套餐确认弹窗（统一 Modal） -->
+{% call modal_shell(id="delete-plan-modal", title=_('billing.delete_plan'), size="sm", close_sr=_('common.close')) %}
+        <div>
             <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">
                 {{ _('billing.confirm_delete_plan') }} (<span id="delete-plan-name" class="font-semibold"></span>)
             </p>
@@ -470,7 +453,7 @@
                 </div>
                 <div class="flex justify-end gap-3 pt-2">
                     <button type="button"
-                            onclick="this.closest('#delete-plan-modal').classList.add('hidden')"
+                            onclick="Sakura.closeModal('delete-plan-modal')"
                             class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                    hover:bg-gray-200 dark:hover:bg-gray-600">
                         {{ _('common.cancel') }}
@@ -483,8 +466,7 @@
                 </div>
             </form>
         </div>
-    </div>
-</div>
+{% endcall %}
 
 <script>
 // plansData: object keyed by plan ID (integer, auto-coerced to string by JS)
@@ -520,7 +502,7 @@ function openEditPlanModal(planId) {
     document.getElementById('edit-agent_monthly_add').value = plan.agent_monthly_add;
     document.getElementById('edit-description').value = plan.description;
     document.getElementById('edit-sort_order').value = plan.sort_order;
-    document.getElementById('edit-plan-modal').classList.remove('hidden');
+    Sakura.openModal('edit-plan-modal');
 }
 
 function openDeletePlanModal(planId) {
@@ -533,7 +515,7 @@ function openDeletePlanModal(planId) {
     document.getElementById('delete-plan-name').textContent = plan.name;
     document.getElementById('delete-plan-form').action = '/billing/admin/plans/' + plan.id + '/delete';
     document.getElementById('hard-delete-checkbox').checked = false;
-    document.getElementById('delete-plan-modal').classList.remove('hidden');
+    Sakura.openModal('delete-plan-modal');
 }
 
 // ========== 批量选择 ==========

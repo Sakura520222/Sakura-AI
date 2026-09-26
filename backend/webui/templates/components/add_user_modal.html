@@ -1,51 +1,18 @@
+{% from "components/modal.html" import modal_shell %}
+
 {% macro render(csrf_token) %}
-<div x-data="{ open: false }" x-cloak>
+<div>
     <!-- 触发按钮 -->
-    <button @click="open = true"
+    <button @click="Sakura.openModal('add-user-modal')"
             class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors inline-flex items-center gap-2">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
         </svg>
         {{ _('user.add_user') }}
     </button>
 
-    <!-- Modal -->
-    <div x-show="open"
-         x-transition:enter="transition ease-out duration-200"
-         x-transition:enter-start="opacity-0"
-         x-transition:enter-end="opacity-100"
-         x-transition:leave="transition ease-in duration-150"
-         x-transition:leave-start="opacity-100"
-         x-transition:leave-end="opacity-0"
-         class="fixed inset-0 z-[120] flex items-center justify-center"
-         @keydown.escape.window="open = false">
-        <!-- 遮罩 -->
-        <div x-show="open" class="absolute inset-0 bg-black/50" @click="open = false"
-             x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0"
-             x-transition:enter-end="opacity-100"></div>
-
-        <!-- 内容 -->
-        <div x-show="open"
-             x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0 scale-95"
-             x-transition:enter-end="opacity-100 scale-100"
-             x-transition:leave="transition ease-in duration-150"
-             x-transition:leave-start="opacity-100 scale-100"
-             x-transition:leave-end="opacity-0 scale-95"
-             class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-lg w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
-            <!-- 标题 -->
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ _('user.add_user') }}</h2>
-                <button @click="open = false"
-                        class="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
-
-            <!-- 表单 -->
+    <!-- Modal（统一组件） -->
+    {% call modal_shell(id="add-user-modal", title=_('user.add_user'), size="lg", close_sr=_('common.close')) %}
             <form method="POST" action="/users/add">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
@@ -124,7 +91,7 @@
 
                 <!-- 操作按钮 -->
                 <div class="mt-6 flex justify-end gap-3">
-                    <button type="button" @click="open = false"
+                    <button type="button" @click="Sakura.closeModal('add-user-modal')"
                             class="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
                         {{ _('common.cancel') }}
                     </button>
@@ -134,7 +101,6 @@
                     </button>
                 </div>
             </form>
-        </div>
-    </div>
+    {% endcall %}
 </div>
 {% endmacro %}

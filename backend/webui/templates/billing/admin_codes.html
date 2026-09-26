@@ -2,6 +2,8 @@
 
 {% block title %}{{ _('billing.admin_codes') }} - Sakura AI{% endblock %}
 
+{% from "components/modal.html" import modal_shell %}
+
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8 flex items-center justify-between">
@@ -9,7 +11,7 @@
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.admin_codes') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.batch_generate') }}</p>
         </div>
-        <button onclick="document.getElementById('generate-modal').classList.remove('hidden')"
+        <button onclick="Sakura.openModal('generate-modal')"
                 class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg transition-colors">
             {{ _('billing.generate_code') }}
         </button>
@@ -34,10 +36,12 @@
                 {{ _('billing.batch_enable') }}
             </button>
         </form>
-        <form id="batch-delete-form" action="/billing/admin/codes/batch-delete" method="POST" class="inline">
+        <form id="batch-delete-form" action="/billing/admin/codes/batch-delete" method="POST" class="inline"
+              data-confirm="{{ _('billing.confirm_batch_delete') }}"
+              data-confirm-variant="danger">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div id="batch-delete-ids"></div>
-            <button type="submit" onclick="return confirm('{{ _('billing.confirm_batch_delete') }}')"
+            <button type="submit"
                     class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
                 {{ _('billing.batch_delete') }}
             </button>
@@ -112,16 +116,9 @@
     </div>
 </div>
 
-<!-- 生成兑换码弹窗 -->
-<div id="generate-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.generate_code') }}</h3>
-            <button onclick="this.closest('#generate-modal').classList.add('hidden')"
-                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
-        </div>
-        <form action="/billing/admin/codes/generate" method="POST" class="px-6 py-4 space-y-4">
+<!-- 生成兑换码弹窗（统一 Modal） -->
+{% call modal_shell(id="generate-modal", title=_('billing.generate_code'), size="md", close_sr=_('common.close')) %}
+        <form action="/billing/admin/codes/generate" method="POST" class="space-y-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div>
@@ -158,7 +155,7 @@
 
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button"
-                        onclick="this.closest('#generate-modal').classList.add('hidden')"
+                        onclick="Sakura.closeModal('generate-modal')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
                     {{ _('common.cancel') }}
@@ -170,19 +167,11 @@
                 </button>
             </div>
         </form>
-    </div>
-</div>
+{% endcall %}
 
-<!-- 编辑兑换码弹窗 -->
-<div id="edit-code-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.edit_code') }}</h3>
-            <button onclick="this.closest('#edit-code-modal').classList.add('hidden')"
-                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
-        </div>
-        <form id="edit-code-form" action="" method="POST" class="px-6 py-4 space-y-4">
+<!-- 编辑兑换码弹窗（统一 Modal） -->
+{% call modal_shell(id="edit-code-modal", title=_('billing.edit_code'), size="md", close_sr=_('common.close')) %}
+        <form id="edit-code-form" action="" method="POST" class="space-y-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div>
@@ -229,7 +218,7 @@
 
             <div class="flex justify-end gap-3 pt-2">
                 <button type="button"
-                        onclick="this.closest('#edit-code-modal').classList.add('hidden')"
+                        onclick="Sakura.closeModal('edit-code-modal')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
                     {{ _('common.cancel') }}
@@ -241,17 +230,11 @@
                 </button>
             </div>
         </form>
-    </div>
-</div>
+{% endcall %}
 
-<!-- 删除兑换码确认弹窗 -->
-<div id="delete-code-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 class="text-lg font-semibold text-red-600">{{ _('billing.delete_code') }}</h3>
-        </div>
-        <div class="px-6 py-4">
+<!-- 删除兑换码确认弹窗（统一 Modal） -->
+{% call modal_shell(id="delete-code-modal", title=_('billing.delete_code'), size="sm", close_sr=_('common.close')) %}
+        <div>
             <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">
                 {{ _('billing.confirm_delete_code') }} (<span id="delete-code-value" class="font-mono font-semibold"></span>)
             </p>
@@ -260,7 +243,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="flex justify-end gap-3 pt-2">
                     <button type="button"
-                            onclick="this.closest('#delete-code-modal').classList.add('hidden')"
+                            onclick="Sakura.closeModal('delete-code-modal')"
                             class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                    hover:bg-gray-200 dark:hover:bg-gray-600">
                         {{ _('common.cancel') }}
@@ -273,8 +256,7 @@
                 </div>
             </form>
         </div>
-    </div>
-</div>
+{% endcall %}
 
 <script>
 function openEditCodeModal(codeJson) {
@@ -289,7 +271,7 @@ function openEditCodeModal(codeJson) {
                 : '';
         document.getElementById('edit-code-max-uses').value = code.max_uses;
         document.getElementById('edit-code-plan').value = code.plan_id;
-        document.getElementById('edit-code-modal').classList.remove('hidden');
+        Sakura.openModal('edit-code-modal');
     } catch (e) {
         console.error('Failed to parse code data:', e);
         alert('Failed to load code data. Please refresh the page.');
@@ -312,7 +294,7 @@ function openDeleteCodeModal(deleteJson) {
             submitBtn.disabled = false;
             submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
-        document.getElementById('delete-code-modal').classList.remove('hidden');
+        Sakura.openModal('delete-code-modal');
     } catch (e) {
         console.error('Failed to parse code data:', e);
         alert('Failed to load code data. Please refresh the page.');
