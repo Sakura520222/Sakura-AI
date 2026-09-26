@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from loguru import logger
@@ -65,15 +66,27 @@ return current
 
 # 进程内内存 cooldown 时间戳（aware UTC）
 _in_process_cooldown_until: datetime | None = None
+_coordination_failed_until: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CooldownState:
+    """Shared cooldown read result and coordination health."""
+
+    until: datetime | None
+    shared_state_healthy: bool
 
 
 class StarAidWorker:
     """单轮自动 star 执行器。"""
 
     @classmethod
-    async def get_cooldown_until(cls) -> datetime | None:
+    async def get_cooldown_state(cls) -> CooldownState:
         now = now_utc()
         redis_until = None
+        shared_state_healthy = not (
+            _coordination_failed_until and _coordination_failed_until > now
+        )
         # 1. 优先检查 Redis 中的全局冷却时间
         try:
             from backend.core.redis import get_async_redis
@@ -83,7 +96,11 @@ class StarAidWorker:
             if val:
                 redis_until = parse_rfc3339(val)
         except Exception:
-            pass
+            shared_state_healthy = False
+            logger.warning(
+                "star_aid shared cooldown read failed; failing closed for this tick",
+                exc_info=True,
+            )
 
         # A local extension must still be honored if Redis became unavailable
         # before the write, or contains an older deadline.
@@ -91,10 +108,19 @@ class StarAidWorker:
             (candidate for candidate in (redis_until, _in_process_cooldown_until) if candidate),
             default=None,
         )
-        return until if until and until > now else None
+        return CooldownState(
+            until=until if until and until > now else None,
+            shared_state_healthy=shared_state_healthy,
+        )
 
     @classmethod
-    async def set_cooldown_until(cls, until: datetime) -> None:
+    async def get_cooldown_until(cls) -> datetime | None:
+        """Compatibility accessor returning only the active deadline."""
+        return (await cls.get_cooldown_state()).until
+
+    @classmethod
+    async def set_cooldown_until(cls, until: datetime) -> bool:
+        global _coordination_failed_until
         global _in_process_cooldown_until
         if _in_process_cooldown_until is None or until > _in_process_cooldown_until:
             _in_process_cooldown_until = until
@@ -110,8 +136,19 @@ class StarAidWorker:
             )
             effective_until = parse_rfc3339(effective)
             _in_process_cooldown_until = max(_in_process_cooldown_until, effective_until)
+            if _coordination_failed_until is None or effective_until >= _coordination_failed_until:
+                _coordination_failed_until = None
+            return True
         except Exception:
-            pass
+            if _coordination_failed_until is None or until > _coordination_failed_until:
+                _coordination_failed_until = until
+            logger.warning(
+                "star_aid global cooldown persistence failed: until={} "
+                "current replica will pause, but cross-replica coordination is unavailable",
+                until,
+                exc_info=True,
+            )
+            return False
 
     async def run_tick(self) -> None:
         if async_session is None:
@@ -122,7 +159,13 @@ class StarAidWorker:
         if not await star_aid_service.is_auto_star_enabled():
             return
 
-        cooldown_until = await self.get_cooldown_until()
+        cooldown_state = await self.get_cooldown_state()
+        if not cooldown_state.shared_state_healthy:
+            logger.warning(
+                "star_aid tick skipped: shared cooldown state is unavailable"
+            )
+            return
+        cooldown_until = cooldown_state.until
         now = now_utc()
         if cooldown_until and cooldown_until > now:
             logger.warning("star_aid tick skipped: worker in cooldown until {}", cooldown_until)
@@ -175,6 +218,7 @@ class StarAidWorker:
             rate_reset_at = None
             reauth = False
             hit_rate_limit = False
+            rate_limit_kind = None
             for repo_id in targets:
                 # Preserve the gap between attempts across member boundaries.
                 if getattr(self, "_last_star_attempt_finished", False):
@@ -195,12 +239,17 @@ class StarAidWorker:
                     reauth = True
                     break
                 if result.get("rate_limited"):
-                    hit_rate_limit = True
                     rate_reset_at = result.get("rate_limit_reset_at")
+                    rate_limit_kind = (
+                        result.get("rate_limit_kind") or "primary"
+                    )
                     if rate_reset_at is None:
                         rate_reset_at = now + timedelta(seconds=60)
-                    # 触发 worker 级 cooldown 并短路后续成员
-                    await self.set_cooldown_until(rate_reset_at)
+                    if rate_limit_kind == "secondary":
+                        # Secondary limits can apply to the shared API entry
+                        # point, so pause this worker and later batch members.
+                        hit_rate_limit = True
+                        await self.set_cooldown_until(rate_reset_at)
                     break
 
             min_interval = int(

@@ -68,6 +68,7 @@ class AIApiClient:
         self._observer = observer
         self._logical_call_factory = logical_call_factory
         self._compressor = compressor
+        self._compressor_initialized = compressor is not None
 
     async def call_with_retry(
         self,
@@ -259,19 +260,44 @@ class AIApiClient:
                     settings, "ai_fallback_sticky_candidate", True
                 ),
             )
-            compressor = self._compressor
-            if compressor is None:
-                built = UnifiedContextCompressor.from_settings()
-                # disabled 时保持 None，避免溢出恢复路径误走强制压缩。
-                compressor = built if built.enabled else None
+            if not self._compressor_initialized:
+                self._compressor = UnifiedContextCompressor.from_settings()
+                self._compressor_initialized = True
             self._unified_client = UnifiedAIClient(
                 fallback_config=config,
                 observer=self._observer,
                 context=self._context,
                 logical_call_factory=self._logical_call_factory,
-                compressor=compressor,
+                compressor=self._compressor,
             )
         return self._unified_client
+
+    def refresh_runtime_config(self, settings: Any | None = None) -> None:
+        """Refresh long-lived compression settings in place.
+
+        A disabled compressor remains owned by this facade.  UnifiedAIClient's
+        overflow-recovery path therefore must check ``enabled`` explicitly.
+        """
+        if not self._compressor_initialized:
+            from backend.services.ai_reviewer.compression.unified_compressor import (
+                UnifiedContextCompressor,
+            )
+
+            self._compressor = UnifiedContextCompressor.from_settings()
+            self._compressor_initialized = True
+            return
+        if settings is None:
+            from backend.core.config import get_settings
+
+            settings = get_settings()
+        if hasattr(self._compressor, "enabled"):
+            self._compressor.enabled = bool(  # type: ignore[attr-defined]
+                settings.enable_context_compression
+            )
+        if hasattr(self._compressor, "threshold"):
+            self._compressor.threshold = float(  # type: ignore[attr-defined]
+                settings.context_compression_threshold
+            )
 
     async def _resolve_role_chain(self, role: str) -> Any:
         """从账号与角色绑定解析候选链 / Resolve a chain from accounts and roles."""
