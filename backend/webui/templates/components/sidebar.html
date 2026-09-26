@@ -88,3 +88,11 @@
 </aside>
 
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="document.getElementById('sidebar').classList.toggle('-translate-x-full'); this.classList.add('hidden');"></div>
+
+<script>
+// Mobile navigation is hidden by default; the top-bar button opens it.
+document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('-translate-x-full');
+    document.getElementById('sidebar-overlay').classList.toggle('hidden');
+});
+</script>

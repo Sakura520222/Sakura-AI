@@ -13,8 +13,12 @@
         <select name="repo" aria-label="{{ _('pr.repo') }}"
                 class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm">
             <option value="">{{ _('common.all') }} {{ _('pr.repo') }}</option>
-            {% for r in available_repos %}
-            <option value="{{ r }}" {% if repo == r %}selected{% endif %}>{{ r }}</option>
+            {% if repo and '/' not in repo %}
+            <option value="{{ repo }}" selected>{{ _('pr.all_owners') }} / {{ repo }}</option>
+            {% endif %}
+            {% for owner, name in available_repos %}
+            {% set full_name = owner ~ '/' ~ name %}
+            <option value="{{ full_name }}" {% if repo == full_name %}selected{% endif %}>{{ full_name }}</option>
             {% endfor %}
         </select>
 
