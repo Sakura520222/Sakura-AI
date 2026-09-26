@@ -497,6 +497,7 @@ dashboard:
 
 # ========== PR 审查 / PR Reviews ==========
 pr:
+  all_owners: "所有所有者"
   title: "PR 审查"
   list: "审查列表"
   detail: "审查详情"

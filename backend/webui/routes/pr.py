@@ -39,7 +39,14 @@ def apply_review_filters(
     if search_filter is not None:
         query = query.where(search_filter)
     if repo:
-        query = query.where(PRReview.repo_name == repo)
+        if "/" in repo:
+            owner, name = repo.split("/", 1)
+            query = query.where(
+                PRReview.repo_owner == owner, PRReview.repo_name == name
+            )
+        else:
+            # Accept old /logs/?repo=name bookmarks during the migration.
+            query = query.where(PRReview.repo_name == repo)
     if status:
         query = query.where(PRReview.status == status)
     if decision:
@@ -195,10 +202,14 @@ async def pr_list_fragment(
     }
     query = apply_review_filters(query, **filters)
     count_query = apply_review_filters(count_query, **filters)
-    repo_query = select(PRReview.repo_name).distinct().order_by(PRReview.repo_name)
+    repo_query = (
+        select(PRReview.repo_owner, PRReview.repo_name)
+        .distinct()
+        .order_by(PRReview.repo_owner, PRReview.repo_name)
+    )
     if scope_filter is not None:
         repo_query = repo_query.where(scope_filter)
-    available_repos = (await db.execute(repo_query)).scalars().all()
+    available_repos = (await db.execute(repo_query)).all()
 
     # 排序
     query = query.order_by(desc(PRReview.created_at))

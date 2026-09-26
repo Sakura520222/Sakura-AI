@@ -1,5 +1,7 @@
 """Navigation and compatibility checks for the WebUI domain migration."""
 
+from pathlib import Path
+
 import pytest
 from fastapi import Request
 from sqlalchemy import select
@@ -30,6 +32,15 @@ def test_sidebar_groups_domains_without_leaking_admin_links(role):
     assert ('href="/logs/actions/"' in html) == (role != "user")
     assert ('href="/config"' in html) == (role == "super_admin")
     assert ('href="/billing/admin/plans"' in html) == (role == "super_admin")
+
+
+def test_mobile_sidebar_button_opens_sidebar_and_overlay():
+    sidebar = (
+        Path(__file__).parents[1] / "backend/webui/templates/components/sidebar.html"
+    ).read_text(encoding="utf-8")
+    assert "getElementById('sidebar-toggle')?.addEventListener('click'" in sidebar
+    assert "getElementById('sidebar').classList.toggle('-translate-x-full')" in sidebar
+    assert "getElementById('sidebar-overlay').classList.toggle('hidden')" in sidebar
 
 
 @pytest.mark.parametrize("role", ["user", "admin", "super_admin"])
@@ -66,10 +77,25 @@ async def test_legacy_review_urls_preserve_filters_and_point_to_pr():
     detail = await log_detail_fragment(request, 42, user={"sub": "alice"})
     assert detail.headers["location"] == "/pr/42?repo=demo&date_from=2026-09-01"
 
+    htmx_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/logs/list-fragment",
+            "query_string": b"repo=org-a%2Fapi&page=2",
+            "headers": [(b"hx-request", b"true")],
+        }
+    )
+    fragment = await logs_list_fragment(htmx_request, user={"sub": "alice"})
+    assert fragment.status_code == 200
+    assert fragment.headers["HX-Redirect"] == "/pr/?repo=org-a%2Fapi&page=2"
+    detail = await log_detail_fragment(htmx_request, 42, user={"sub": "alice"})
+    assert detail.headers["HX-Redirect"] == "/pr/42?repo=org-a%2Fapi&page=2"
+
 
 def test_review_filters_apply_to_list_count_and_export_queries():
     filters = {
-        "repo": "demo",
+        "repo": "org-a/api",
         "search": "fix",
         "status": "completed",
         "decision": "approve",
@@ -86,7 +112,8 @@ def test_review_filters_apply_to_list_count_and_export_queries():
         assert "pr_reviews.created_at >=" in sql
         assert "pr_reviews.created_at <" in sql
         assert "pr_reviews.repo_owner" in sql and "pr_reviews.author" in sql
-        assert "demo" in params and "completed" in params and "approve" in params
+        assert "org-a" in params and "api" in params
+        assert "completed" in params and "approve" in params
         assert sum(value.__class__.__name__ == "datetime" for value in params) == 2
 
 
@@ -95,3 +122,21 @@ def test_invalid_date_does_not_remove_other_review_filters():
     sql = str(query)
     assert "pr_reviews.repo_name" in sql
     assert "pr_reviews.created_at" not in sql.split("WHERE", 1)[-1]
+
+
+def test_repository_selector_distinguishes_same_name_under_different_owners():
+    html = (
+        get_templates()
+        .get_template("components/pr_filters.html")
+        .render(
+            search="",
+            repo="org-b/api",
+            status="",
+            decision="",
+            date_from="",
+            date_to="",
+            available_repos=[("org-a", "api"), ("org-b", "api")],
+        )
+    )
+    assert 'value="org-a/api"' in html
+    assert 'value="org-b/api" selected' in html
