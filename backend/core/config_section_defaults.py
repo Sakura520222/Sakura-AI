@@ -137,6 +137,8 @@ coverage limitations in the summary without inventing findings.
         "max_files_for_deep_strategy": 500,
         # 单文件最大读取行数（超过则截断并提示 AI 使用行范围读取）
         "max_file_lines": 3000,
+        # read_file 单次返回的最大字符数（行数和字符上限共同生效）
+        "max_file_output_chars": 50000,
         # 搜索匹配时的默认上下文行数（匹配行前后各显示多少行）
         "default_context_lines": 20,
         # 搜索匹配时的最大上下文行数

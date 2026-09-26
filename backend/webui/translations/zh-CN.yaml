@@ -2122,6 +2122,7 @@ strategy:
   max_file_size: "单文件最大大小 (字节)"
   file_read_limits: "文件读取工具限制"
   max_file_lines: "单文件最大读取行数"
+  max_file_output_chars: "单次返回最大字符数"
   default_context: "搜索默认上下文行数"
   max_context: "搜索最大上下文行数"
   cross_file_search: "跨文件搜索工具"

@@ -2121,6 +2121,7 @@ strategy:
   max_file_size: "Max file size (bytes)"
   file_read_limits: "File Read Limits"
   max_file_lines: "Max file read lines"
+  max_file_output_chars: "Max file response characters"
   default_context: "Default context lines"
   max_context: "Max context lines"
   cross_file_search: "Cross-file Search Tool"

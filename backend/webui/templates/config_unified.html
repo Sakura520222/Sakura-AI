@@ -244,11 +244,17 @@
 
                         <div class="mt-4">
                             <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.file_read_limits') }}</h3>
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_lines') }}</label>
                                     <input type="number" name="max_file_lines" min="50"
                                            value="{{ ce.get('max_file_lines', 500) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_output_chars') }}</label>
+                                    <input type="number" name="max_file_output_chars" min="1000"
+                                           value="{{ ce.get('max_file_output_chars', 50000) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 </div>
                                 <div>

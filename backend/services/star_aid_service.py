@@ -550,14 +550,16 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
         {"success": bool, "synced": int, "message": str}
     """
     user_id = int(user_id)
-    token, result = await gh.get_effective_access_token(session, user_id)
+    token, token_result = await gh.get_effective_access_token(session, user_id)
     # Finish any token rotation before network pagination and repository sync.
     await session.commit()
     if token is None:
         return {
             "success": False,
             "synced": 0,
-            "message": "reauth_required" if result.reauth_required else "no_token",
+            "message": (
+                "reauth_required" if token_result.reauth_required else "no_token"
+            ),
         }
 
     repo_list_res = await gh.list_user_public_repositories(token)
@@ -677,6 +679,19 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
             is_complete,
         )
         err_msg = getattr(repo_list_res, "error_code", None) or "sync_incomplete"
+        if err_msg == "bad_credentials":
+            expected_encrypted_access_token = getattr(
+                token_result,
+                "credential_encrypted_access_token",
+                None,
+            )
+            if expected_encrypted_access_token is not None:
+                marked = await gh.mark_reauth_required(
+                    session,
+                    user_id,
+                    expected_encrypted_access_token=expected_encrypted_access_token,
+                )
+                err_msg = "reauth_required" if marked else "credential_replaced"
         return {"success": False, "synced": synced, "message": err_msg}
 
 
@@ -1017,7 +1032,8 @@ async def perform_star(
 
     Returns:
         ``{"status": str, "created_star": bool, "reauth_required": bool,
-        "rate_limited": bool, "rate_limit_reset_at": datetime|None}``
+        "rate_limited": bool, "rate_limit_reset_at": datetime|None,
+        "rate_limit_kind": str|None}``
     """
     action = ACTION_MANUAL_STAR if trigger == "manual" else ACTION_STAR
 
@@ -1150,7 +1166,17 @@ async def perform_star(
     # 失败分支
     status = ACTION_STATUS_FAILED
     if result.reauth_required:
-        await gh.mark_reauth_required(session, int(actor_user_id))
+        mark_kwargs = {}
+        expected_encrypted_access_token = getattr(
+            token_result,
+            "credential_encrypted_access_token",
+            None,
+        )
+        if expected_encrypted_access_token is not None:
+            mark_kwargs["expected_encrypted_access_token"] = (
+                expected_encrypted_access_token
+            )
+        await gh.mark_reauth_required(session, int(actor_user_id), **mark_kwargs)
         status = ACTION_STATUS_REAUTH_REQUIRED
     elif result.error_code == "rate_limited":
         status = ACTION_STATUS_RATE_LIMITED
@@ -1172,4 +1198,5 @@ async def perform_star(
         "reauth_required": result.reauth_required,
         "rate_limited": result.error_code == "rate_limited",
         "rate_limit_reset_at": result.rate_limit_reset_at,
+        "rate_limit_kind": result.rate_limit_kind,
     }

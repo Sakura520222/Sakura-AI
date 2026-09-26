@@ -24,10 +24,16 @@ from backend.core.ai_protocol.models import (
     StopReason,
     UnifiedMessage,
     UnifiedResponse,
+    UnifiedStreamEvent,
+    UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
+from backend.core.ai_protocol.request_policy import (
+    estimate_unified_messages,
+    estimate_unified_tools,
+)
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.compression.unified_compressor import (
     UnifiedContextCompressor,
@@ -166,6 +172,32 @@ class _RecoveryOnlyCompressor(UnifiedContextCompressor):
         return False, messages
 
 
+class _FailPrimaryAdapter(_RecordingAdapter):
+    """Fail the primary candidate so the smaller fallback is exercised."""
+
+    async def chat(self, client, endpoint, credential, request, *, timeout=None):
+        if request.model == "primary":
+            self.calls += 1
+            self.requests.append(request)
+            raise AIError(
+                AIErrorCategory.AUTH_INVALID,
+                "primary credential is invalid",
+            )
+        return await super().chat(
+            client, endpoint, credential, request, timeout=timeout
+        )
+
+    async def stream(self, client, endpoint, credential, request, **kwargs):
+        self.calls += 1
+        self.requests.append(request)
+        if request.model == "primary":
+            raise AIError(
+                AIErrorCategory.AUTH_INVALID,
+                "primary credential is invalid",
+            )
+        yield UnifiedStreamEvent(type="done")
+
+
 def _install_stub(monkeypatch, adapter):
     from backend.core.ai_protocol import registry as reg
     from backend.services.ai_reviewer.compression import unified_compressor as uc_module
@@ -205,6 +237,32 @@ async def test_maybe_compress_budget_uses_candidate_context_window(monkeypatch):
     assert any(
         m.content and m.content.startswith("## 已压缩的历史上下文") for m in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_maybe_compress_counts_tool_declarations_in_budget(monkeypatch):
+    """Fixed tool schemas consume the same budget as the eventual wire request."""
+    adapter = _RecordingAdapter()
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate("tool-budget", context_window_tokens=2_500)
+    tool = UnifiedTool(
+        name="search",
+        description="x" * 4_000,
+        parameters={"type": "object", "properties": {}},
+    )
+    compressor = UnifiedContextCompressor(threshold=0.8)
+
+    compressed, messages = await compressor.maybe_compress(
+        candidate,
+        [UnifiedMessage(role="user", content="x" * 5_600)],
+        effective_max_output_tokens=50,
+        safety_reserve_tokens=100,
+        tools=[tool],
+    )
+
+    assert compressed is True
+    total_input = estimate_unified_messages(messages) + estimate_unified_tools([tool])
+    assert total_input + 50 + 100 <= 2_500
 
 
 @pytest.mark.asyncio
@@ -278,6 +336,84 @@ async def test_call_with_retry_compresses_when_over_budget(monkeypatch):
     assert adapter.calls == 2
     main_texts = _message_texts(adapter.requests[1])
     assert any(t.startswith("## 已压缩的历史上下文") for t in main_texts)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fallback_compression_uses_fallback_candidate_budget(monkeypatch):
+    """A smaller fallback is compressed even when the primary can fit."""
+    adapter = _FailPrimaryAdapter()
+    _install_stub(monkeypatch, adapter)
+    primary = _candidate("primary", context_window_tokens=20_000)
+    fallback = _candidate("fallback-small", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    response = await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="x" * 50_000)],
+        model="",
+        max_tokens=100,
+        role="main",
+    )
+
+    assert response.meta.compressed is True
+    assert [request.model for request in adapter.requests] == [
+        "primary",
+        "fallback-small",
+        "fallback-small",
+    ]
+    assert "compress" in (adapter.requests[1].messages[0].content or "").lower()
+    assert any(
+        message.content or ""
+        for message in adapter.requests[2].messages
+        if message.content
+        and message.content.startswith("## 已压缩的历史上下文")
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_fallback_compression_uses_fallback_candidate_budget(
+    monkeypatch,
+):
+    """The streaming path also compresses against the candidate actually served."""
+    adapter = _FailPrimaryAdapter()
+    _install_stub(monkeypatch, adapter)
+    primary = _candidate("primary", context_window_tokens=20_000)
+    fallback = _candidate("fallback-small", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    events = [
+        event
+        async for event in client.stream_with_retry(
+            [primary, fallback],
+            [UnifiedMessage(role="user", content="x" * 50_000)],
+            model="",
+            max_tokens=100,
+            role="main",
+        )
+    ]
+
+    assert [event.type for event in events] == ["done"]
+    assert [request.model for request in adapter.requests] == [
+        "primary",
+        "fallback-small",
+        "fallback-small",
+    ]
+    assert "compress" in (adapter.requests[1].messages[0].content or "").lower()
+    assert any(
+        message.content
+        and message.content.startswith("## 已压缩的历史上下文")
+        for message in adapter.requests[2].messages
+    )
     await client.aclose()
 
 

@@ -79,11 +79,11 @@ async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
 def _pyproject_is_installable(pyproject_path: Path) -> bool:
     """Check whether a pyproject.toml describes an installable Python package.
 
-    A project is considered *not* installable (and ``pip install -e .`` would
-    fail) when:
+    PEP 518 specifies that a pyproject.toml without ``[build-system]`` uses the
+    legacy setuptools build backend.  Therefore the absence of that table alone
+    does not make a project non-installable (notably setup.py projects remain
+    editable-installable).  A project is considered *not* installable only when:
 
-    * It has no ``[build-system]`` table — setuptools flat-layout auto-discovery
-      will refuse to proceed when multiple top-level directories exist.
     * ``[tool.uv].package`` is explicitly set to ``false`` — the uv convention
       for a *virtual project* that is never built or installed.
 
@@ -101,11 +101,8 @@ def _pyproject_is_installable(pyproject_path: Path) -> bool:
 
     # [tool.uv] package = false → virtual project, never installable
     uv_package = data.get("tool", {}).get("uv", {}).get("package")
-    if uv_package is False:
-        return False
-
-    # No [build-system] → setuptools cannot determine how to build
-    return "build-system" in data
+    # PEP 518 defaults a missing build-system table to setuptools.
+    return uv_package is not False
 
 
 class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):

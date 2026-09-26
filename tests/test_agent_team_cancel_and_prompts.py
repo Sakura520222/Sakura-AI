@@ -764,11 +764,14 @@ def test_pyproject_is_installable_with_build_system(tmp_path):
     assert _pyproject_is_installable(p) is True
 
 
-def test_pyproject_is_installable_returns_false_without_build_system(tmp_path):
-    """A pyproject.toml without [build-system] is NOT installable."""
+def test_pyproject_is_installable_without_build_system(tmp_path):
+    """PEP 518 defaults a missing build-system table to setuptools."""
     p = tmp_path / "pyproject.toml"
     p.write_text("[project]\nname = 'app'\nversion = '0.1'\n")
-    assert _pyproject_is_installable(p) is False
+    (tmp_path / "setup.py").write_text(
+        "from setuptools import setup\nsetup(name='app')\n"
+    )
+    assert _pyproject_is_installable(p) is True
 
 
 def test_pyproject_is_installable_returns_false_for_uv_virtual_project(tmp_path):

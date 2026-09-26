@@ -364,6 +364,77 @@ async def test_read_file_line_range_reports_combined_truncation(file_strategy):
 
 
 @pytest.mark.asyncio
+async def test_read_file_full_output_is_capped_by_characters(file_strategy):
+    """A single very long line cannot bypass the response-size limit."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file("minified.js", repo, pr=None)
+
+    assert "error" not in result
+    assert result["mode"] == "full"
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+
+
+@pytest.mark.asyncio
+async def test_read_file_range_output_is_capped_by_characters(file_strategy):
+    """One-line ranges are also bounded by response characters."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "minified.js", repo, pr=None, start_line=1, end_line=1
+    )
+
+    assert "error" not in result
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+    assert result["line_range"]["output_char_truncated"] is True
+    assert result["line_range"]["status"] == "output_char_truncated"
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_output_is_capped_by_characters(file_strategy):
+    """Search results cannot return an unbounded minified line."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 0,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "needle" + "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "minified.js", repo, pr=None, search_pattern="needle", context_lines=0
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search"
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+
+
+@pytest.mark.asyncio
 async def test_read_file_unexpected_error_hint_is_task_agnostic(
     file_strategy, monkeypatch
 ):

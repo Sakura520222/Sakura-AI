@@ -15,6 +15,7 @@ LABEL_RECOMMENDATION_TIMEOUT = 60.0  # 标签推荐超时
 # 文件输出限制
 # =============================================================================
 MAX_FILE_LINES = 500  # 最大文件行数（fallback 默认值，实际值从策略配置读取）
+MAX_FILE_OUTPUT_CHARS = 50_000  # 单次 read_file 返回的最大字符数
 DEFAULT_CONTEXT_LINES = 20  # 搜索匹配时的默认上下文行数
 MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 
@@ -123,6 +124,7 @@ READ_FILE_TOOL = {
                         "超出当前文件长度时会截断到实际最后一行，并在返回的"
                         "line_range 元数据中注明实际范围和 truncated 状态。"
                         "单次返回行数也会受 max_file_lines 输出限制保护。"
+                        "返回内容还会受单次字符上限保护。"
                     ),
                 },
                 "search_pattern": {

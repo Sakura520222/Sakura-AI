@@ -23,9 +23,13 @@ from backend.core.ai_protocol.models import (
     ResolvedModel,
     UnifiedMessage,
     UnifiedRequest,
+    UnifiedTool,
 )
 from backend.core.ai_protocol.registry import get_adapter
-from backend.core.ai_protocol.request_policy import filter_reasoning_params
+from backend.core.ai_protocol.request_policy import (
+    estimate_unified_tools,
+    filter_reasoning_params,
+)
 from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -131,6 +135,7 @@ class UnifiedContextCompressor:
         tracker: TokenTracker | None = None,
         effective_max_output_tokens: int | None = None,
         safety_reserve_tokens: int | None = None,
+        tools: list[UnifiedTool] | None = None,
     ) -> tuple[bool, list[UnifiedMessage]]:
         """按预算决定是否压缩，返回 (是否压缩, 消息列表).
 
@@ -153,7 +158,8 @@ class UnifiedContextCompressor:
             budget = self._model_ctx.get_compression_budget(
                 candidate.model.model_id, self.threshold
             )
-        current = self._estimate(messages)
+        fixed_tool_tokens = estimate_unified_tools(tools, model_context=self._model_ctx)
+        current = self._estimate(messages) + fixed_tool_tokens
         final_output_tokens = max(
             1,
             int(
@@ -174,7 +180,7 @@ class UnifiedContextCompressor:
         )
         exact_input_budget = self._context_window_tokens(
             candidate
-        ) - final_output_tokens - reserve
+        ) - final_output_tokens - reserve - fixed_tool_tokens
         if current <= budget and current <= exact_input_budget:
             return False, messages
 
@@ -197,10 +203,11 @@ class UnifiedContextCompressor:
             tracker=tracker,
             final_output_tokens=final_output_tokens,
             safety_reserve_tokens=reserve,
+            tools=tools,
         )
         if compressed is None:
             return False, messages
-        after = self._estimate(compressed)
+        after = self._estimate(compressed) + fixed_tool_tokens
         logger.info(
             "压缩完成: {} → {} tokens (model={})",
             current,
@@ -217,6 +224,7 @@ class UnifiedContextCompressor:
         system: str | None = None,
         max_output_tokens: int | None = None,
         safety_reserve_tokens: int | None = None,
+        tools: list[UnifiedTool] | None = None,
     ) -> list[UnifiedMessage] | None:
         """强制压缩入口（供 UnifiedAIClient 超限恢复调用）.
 
@@ -234,6 +242,7 @@ class UnifiedContextCompressor:
             system=system,
             final_output_tokens=max_output_tokens,
             safety_reserve_tokens=safety_reserve_tokens,
+            tools=tools,
         )
         return compressed
 
@@ -278,6 +287,7 @@ class UnifiedContextCompressor:
         tracker: TokenTracker | None = None,
         final_output_tokens: int | None = None,
         safety_reserve_tokens: int | None = None,
+        tools: list[UnifiedTool] | None = None,
     ) -> list[UnifiedMessage] | None:
         """调用当前候选模型生成历史摘要并组装压缩消息.
 
@@ -382,6 +392,7 @@ class UnifiedContextCompressor:
             compressed,
             final_output_tokens=final_output_tokens,
             safety_reserve_tokens=safety_reserve_tokens,
+            tools=tools,
         )
         return bounded
 
@@ -438,6 +449,7 @@ class UnifiedContextCompressor:
         *,
         final_output_tokens: int | None,
         safety_reserve_tokens: int | None = None,
+        tools: list[UnifiedTool] | None = None,
     ) -> list[UnifiedMessage] | None:
         """Keep the post-summary request input within the same context window."""
         if final_output_tokens is None:
@@ -446,6 +458,7 @@ class UnifiedContextCompressor:
         input_budget = (
             window
             - max(1, int(final_output_tokens))
+            - estimate_unified_tools(tools, model_context=self._model_ctx)
             - (
                 safety_reserve_tokens
                 if safety_reserve_tokens is not None

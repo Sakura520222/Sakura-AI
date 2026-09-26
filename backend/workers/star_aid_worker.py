@@ -175,6 +175,7 @@ class StarAidWorker:
             rate_reset_at = None
             reauth = False
             hit_rate_limit = False
+            rate_limit_kind = None
             for repo_id in targets:
                 # Preserve the gap between attempts across member boundaries.
                 if getattr(self, "_last_star_attempt_finished", False):
@@ -195,12 +196,17 @@ class StarAidWorker:
                     reauth = True
                     break
                 if result.get("rate_limited"):
-                    hit_rate_limit = True
                     rate_reset_at = result.get("rate_limit_reset_at")
+                    rate_limit_kind = (
+                        result.get("rate_limit_kind") or "primary"
+                    )
                     if rate_reset_at is None:
                         rate_reset_at = now + timedelta(seconds=60)
-                    # 触发 worker 级 cooldown 并短路后续成员
-                    await self.set_cooldown_until(rate_reset_at)
+                    if rate_limit_kind == "secondary":
+                        # Secondary limits can apply to the shared API entry
+                        # point, so pause this worker and later batch members.
+                        hit_rate_limit = True
+                        await self.set_cooldown_until(rate_reset_at)
                     break
 
             min_interval = int(

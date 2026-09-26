@@ -66,6 +66,9 @@ class GitHubCallResult:
     reauth_required: bool = False
     already_done: bool = False
     data: dict | None = field(default=None)
+    # Identity of the encrypted credential whose decrypted token was returned.
+    # Used only for compare-and-set reauthorization marking; never log this value.
+    credential_encrypted_access_token: str | None = None
 
 
 @dataclass
@@ -446,7 +449,10 @@ async def get_effective_access_token(
         and cred.access_token_expires_at <= now + timedelta(minutes=5)
     )
     if not expired:
-        return access_token, GitHubCallResult(success=True)
+        return access_token, GitHubCallResult(
+            success=True,
+            credential_encrypted_access_token=cred.encrypted_access_token,
+        )
 
     # Keep credential and member updates in the caller's transaction. Opening
     # another session while the caller owns a connection can exhaust the pool
@@ -477,14 +483,19 @@ async def get_effective_access_token(
         try:
             new_token = decrypt_secret(latest_cred.encrypted_access_token)
             logger.info("star_aid token refresh: user_id={}, result=reused", user_id)
-            return new_token, GitHubCallResult(success=True)
+            return new_token, GitHubCallResult(
+                success=True,
+                credential_encrypted_access_token=(
+                    latest_cred.encrypted_access_token
+                ),
+            )
         except SecretCryptoError:
             pass
 
     refreshed, result = await _refresh_and_persist(session, latest_cred)
     if refreshed is None:
         return None, result
-    return refreshed, GitHubCallResult(success=True)
+    return refreshed, result
 
 
 async def _refresh_and_persist(
@@ -541,7 +552,12 @@ async def _refresh_and_persist(
             try:
                 reused_token = decrypt_secret(refreshed_check.encrypted_access_token)
                 logger.info("star_aid token refresh: user_id={}, result=reused_after_race", user_id)
-                return reused_token, GitHubCallResult(success=True)
+                return reused_token, GitHubCallResult(
+                    success=True,
+                    credential_encrypted_access_token=(
+                        refreshed_check.encrypted_access_token
+                    ),
+                )
             except SecretCryptoError:
                 pass
 
@@ -559,7 +575,10 @@ async def _refresh_and_persist(
     )
     new_access = token_payload.get("access_token") or ""
     logger.info("star_aid token refresh: user_id={}, result=refreshed", cred.user_id)
-    return new_access, GitHubCallResult(success=True)
+    return new_access, GitHubCallResult(
+        success=True,
+        credential_encrypted_access_token=cred.encrypted_access_token,
+    )
 
 
 # ========== GitHub REST 操作 / GitHub REST operations ==========
