@@ -138,18 +138,23 @@ def test_agent_skills_templates_compile_and_use_compact_ledger():
         root / "backend/webui/templates/components/agent_skills_list_fragment.html"
     ).read_text(encoding="utf-8")
 
-    assert '<dialog x-ref="installDialog"' in page
+    # Issue #625：安装弹窗已迁移到统一 Modal 基础设施（modal_shell）。
+    assert "modal_shell(id=\"agent-skill-install\"" in page
+    assert "<dialog" not in page
+    assert "Sakura.openModal('agent-skill-install')" in page
     assert 'role="tablist"' in page
     assert 'name="q"' in page
     assert 'name="status"' in page
     assert 'name="source"' in page
-    assert "prefers-reduced-motion: reduce" in page
+    # prefers-reduced-motion 由 base.html 统一动画层保障（sakura-modal-shell）。
+    assert "prefers-reduced-motion: reduce" not in page
     assert "rounded-3xl" not in page
     assert "from-purple" not in page
     assert "<details" in fragment
     assert "agent_skills.file_manifest" in fragment
     assert "/agent-skills/{{ skill.id }}/toggle" in fragment
     assert "/agent-skills/{{ skill.id }}/delete" in fragment
+    assert "data-confirm" in fragment
 
 
 def test_agent_skills_template_translation_keys_have_catalog_parity():

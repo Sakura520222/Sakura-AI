@@ -694,7 +694,11 @@ function aiConfigPage() {
             if (!this.bindings.main.primary.account && this.accounts[0]) this.bindings = emptyBindings(this.accounts);
         },
         async deleteAccount(id) {
-            if (!confirm(aiText('accountDeleteConfirm'))) return;
+            const confirmed = await window.Sakura.confirm({
+                message: aiText('accountDeleteConfirm'),
+                variant: 'danger',
+            });
+            if (!confirmed) return;
             const resp = await fetch(`/api/v1/config/ai/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
             const data = await resp.json();
             if (!data.success) { showAiToast('error', data.error || aiText('accountDeleteFailed')); return; }

@@ -106,7 +106,8 @@
               action="/config/backup/users/import"
               enctype="multipart/form-data"
               class="p-5 space-y-4"
-              onsubmit="return confirm({{ _('config.user_backup_import_confirm') | tojson }});">
+              data-confirm="{{ _('config.user_backup_import_confirm') }}"
+              data-confirm-variant="danger">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label class="block">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.backup_file') }}</span>
@@ -140,7 +141,8 @@
               action="/config/backup/import"
               enctype="multipart/form-data"
               class="p-5 space-y-4"
-              onsubmit="return confirm({{ _('config.backup_import_confirm') | tojson }});">
+              data-confirm="{{ _('config.backup_import_confirm') }}"
+              data-confirm-variant="danger">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label class="block">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.backup_file') }}</span>
