@@ -52,6 +52,7 @@ from .tools import (
     ToolHandler,
     ToolManager,
 )
+from .unified_client import messages_to_legacy
 
 PendingUserMessageCallback = Callable[[], Coroutine[Any, Any, dict[str, Any] | None]]
 
@@ -216,6 +217,12 @@ class AIReviewer:
         """刷新不应被长生命周期审查器固化的运行时配置。"""
         settings = get_settings()
         self.tool_handler.apply_web_tool_settings(settings)
+        api_client = getattr(self, "api_client", None)
+        refresh_compressor = getattr(
+            api_client, "refresh_runtime_config", None
+        )
+        if callable(refresh_compressor):
+            refresh_compressor(settings)
 
     def _refresh_ai_clients(self) -> None:
         """刷新角色驱动的 AI 门面，不读取旧的扁平供应商配置。"""
@@ -514,6 +521,13 @@ class AIReviewer:
                     logger.warning("event_callback failed: {}", exc)
             response = await self.api_client.call_with_retry(**call_kwargs)
             tracker.accumulate(response)
+            effective_messages = getattr(
+                getattr(response, "meta", None),
+                "effective_messages",
+                None,
+            )
+            if effective_messages is not None:
+                messages[:] = messages_to_legacy(effective_messages)
             # fallback 可能切换到不同能力的模型，reasoning_content 等模型
             # 相关判断必须基于实际 winner（Issue #529：此前判定传空字符串
             # 导致思考轨迹在工具循环中恒被丢弃）

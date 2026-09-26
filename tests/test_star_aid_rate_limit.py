@@ -7,9 +7,29 @@ import httpx
 import pytest
 
 from backend.core.time_service import format_rfc3339
+from backend.models.star_aid_models import StarAidMember
 from backend.services import star_aid_github_service as gh
 from backend.workers import star_aid_worker
-from backend.workers.star_aid_worker import StarAidWorker
+from backend.workers.star_aid_worker import CooldownState, StarAidWorker
+
+
+class _FakeWorkerSessionContext:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *args):
+        return None
+
+
+def _install_worker_session(monkeypatch, session):
+    monkeypatch.setattr(
+        star_aid_worker,
+        "async_session",
+        lambda: _FakeWorkerSessionContext(session),
+    )
 
 
 def test_403_with_remaining_zero_is_rate_limited():
@@ -103,6 +123,7 @@ async def test_cooldown_only_extends_shared_deadline(monkeypatch):
             return state["value"]
 
     monkeypatch.setattr(star_aid_worker, "_in_process_cooldown_until", None)
+    monkeypatch.setattr(star_aid_worker, "_coordination_failed_until", None)
     monkeypatch.setattr(
         "backend.core.redis.get_async_redis", AsyncMock(return_value=FakeRedis())
     )
@@ -127,11 +148,57 @@ async def test_cooldown_only_extends_shared_deadline(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_malformed_shared_cooldown_fails_closed(monkeypatch):
+    class FakeRedis:
+        async def get(self, key):
+            return "not-an-rfc3339-timestamp"
+
+    monkeypatch.setattr(star_aid_worker, "_in_process_cooldown_until", None)
+    monkeypatch.setattr(star_aid_worker, "_coordination_failed_until", None)
+    monkeypatch.setattr(
+        "backend.core.redis.get_async_redis", AsyncMock(return_value=FakeRedis())
+    )
+
+    state = await StarAidWorker.get_cooldown_state()
+
+    assert state.until is None
+    assert state.shared_state_healthy is False
+
+
+@pytest.mark.asyncio
+async def test_cooldown_write_failure_is_reported_and_kept_local(monkeypatch):
+    class FakeRedis:
+        async def get(self, key):
+            return None
+
+        async def eval(self, *args, **kwargs):
+            raise RuntimeError("redis EVAL rejected")
+
+    until = datetime.now(UTC) + timedelta(minutes=5)
+    monkeypatch.setattr(star_aid_worker, "_in_process_cooldown_until", None)
+    monkeypatch.setattr(star_aid_worker, "_coordination_failed_until", None)
+    monkeypatch.setattr(
+        "backend.core.redis.get_async_redis", AsyncMock(return_value=FakeRedis())
+    )
+
+    assert await StarAidWorker.set_cooldown_until(until) is False
+    assert star_aid_worker._in_process_cooldown_until == until
+    assert star_aid_worker._coordination_failed_until == until
+    state = await StarAidWorker.get_cooldown_state()
+    assert state.until == until
+    assert state.shared_state_healthy is False
+
+
+@pytest.mark.asyncio
 async def test_worker_aborts_batch_on_rate_limit(monkeypatch):
     worker = StarAidWorker()
 
     # Keep the unit test isolated from the production Redis cooldown key.
-    monkeypatch.setattr(worker, "get_cooldown_until", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        worker,
+        "get_cooldown_state",
+        AsyncMock(return_value=CooldownState(None, True)),
+    )
     monkeypatch.setattr(worker, "set_cooldown_until", AsyncMock())
 
     # Mock 动态配置
@@ -170,3 +237,86 @@ async def test_worker_aborts_batch_on_rate_limit(monkeypatch):
 
     # 成员 1 限流后，应短路中断，不再执行成员 2 和 3
     assert processed_members == [1]
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_closed_when_shared_cooldown_unreadable(monkeypatch):
+    worker = StarAidWorker()
+    monkeypatch.setattr(
+        worker,
+        "get_cooldown_state",
+        AsyncMock(return_value=CooldownState(None, False)),
+    )
+    monkeypatch.setattr(
+        "backend.services.star_aid_service.is_feature_enabled",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.star_aid_service.is_auto_star_enabled",
+        AsyncMock(return_value=True),
+    )
+
+    def _no_database():
+        raise AssertionError("run_tick must fail closed before database work")
+
+    monkeypatch.setattr(star_aid_worker, "async_session", _no_database)
+
+    assert await worker.run_tick() is None
+
+
+@pytest.mark.asyncio
+async def test_primary_rate_limit_reschedules_member_without_global_cooldown(
+    monkeypatch,
+):
+    worker = StarAidWorker()
+    member = StarAidMember(id=1, user_id=2, status="active")
+    session = AsyncMock()
+    session.get.return_value = member
+    _install_worker_session(monkeypatch, session)
+    reset_at = datetime.now(UTC) + timedelta(minutes=30)
+    worker._select_targets = AsyncMock(return_value=[3])
+    monkeypatch.setattr(
+        "backend.workers.star_aid_worker.star_aid_service.perform_star",
+        AsyncMock(
+            return_value={
+                "rate_limited": True,
+                "rate_limit_reset_at": reset_at,
+                "rate_limit_kind": "primary",
+            }
+        ),
+    )
+    worker.set_cooldown_until = AsyncMock()
+
+    short_circuit = await worker._process_member(1)
+
+    assert short_circuit is False
+    worker.set_cooldown_until.assert_not_awaited()
+    assert member.next_scheduled_at >= reset_at
+
+
+@pytest.mark.asyncio
+async def test_secondary_rate_limit_applies_worker_cooldown(monkeypatch):
+    worker = StarAidWorker()
+    member = StarAidMember(id=1, user_id=2, status="active")
+    session = AsyncMock()
+    session.get.return_value = member
+    _install_worker_session(monkeypatch, session)
+    reset_at = datetime.now(UTC) + timedelta(minutes=5)
+    worker._select_targets = AsyncMock(return_value=[3])
+    monkeypatch.setattr(
+        "backend.workers.star_aid_worker.star_aid_service.perform_star",
+        AsyncMock(
+            return_value={
+                "rate_limited": True,
+                "rate_limit_reset_at": reset_at,
+                "rate_limit_kind": "secondary",
+            }
+        ),
+    )
+    worker.set_cooldown_until = AsyncMock()
+
+    short_circuit = await worker._process_member(1)
+
+    assert short_circuit is True
+    worker.set_cooldown_until.assert_awaited_once_with(reset_at)
+    assert member.next_scheduled_at >= reset_at
