@@ -14,6 +14,7 @@ from backend.services.ai_reviewer.constants import (
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
     MAX_FILE_LINES,
+    MAX_FILE_OUTPUT_CHARS,
 )
 
 
@@ -41,6 +42,13 @@ def format_search_results(
         result_parts.append(f"{line_prefix}{lines[i]}")
 
     return "\n".join(result_parts)
+
+
+def _cap_output_chars(content: str, limit: int) -> tuple[str, bool]:
+    """Cap rendered tool output by Unicode characters."""
+    if len(content) <= limit:
+        return content, False
+    return content[:limit], True
 
 
 class _ContentsFetchResult:
@@ -101,6 +109,9 @@ class FileToolHandler:
         ce = get_strategy_config().get_context_enhancement_config()
         return {
             "max_file_lines": int(ce.get("max_file_lines", MAX_FILE_LINES)),
+            "max_file_output_chars": max(
+                1, int(ce.get("max_file_output_chars", MAX_FILE_OUTPUT_CHARS))
+            ),
             "default_context_lines": int(
                 ce.get("default_context_lines", DEFAULT_CONTEXT_LINES)
             ),
@@ -394,14 +405,28 @@ class FileToolHandler:
 
                 end_line_truncated = end_line > total_lines
                 requested_end_in_file = min(end_line, total_lines)
-                output_truncated = actual_end_line < requested_end_in_file
+                output_line_truncated = actual_end_line < requested_end_in_file
+                selected_lines = lines[start_idx:end_idx]
+                # 为每行添加行号前缀
+                numbered_content = "\n".join(
+                    f"{start_idx + i + 1:>6}\t{line}"
+                    for i, line in enumerate(selected_lines)
+                )
+                (
+                    numbered_content,
+                    output_char_truncated,
+                ) = _cap_output_chars(
+                    numbered_content, limits["max_file_output_chars"]
+                )
                 range_status = (
                     "end_line_and_output_truncated"
-                    if end_line_truncated and output_truncated
+                    if end_line_truncated and output_line_truncated
                     else "end_line_truncated"
                     if end_line_truncated
                     else "output_truncated"
-                    if output_truncated
+                    if output_line_truncated
+                    else "output_char_truncated"
+                    if output_char_truncated
                     else "ok"
                 )
                 line_range = {
@@ -417,17 +442,17 @@ class FileToolHandler:
                     "status": range_status,
                     "start_line_valid": True,
                     "end_line_valid": not end_line_truncated,
-                    "truncated": end_line_truncated or output_truncated,
+                    "truncated": (
+                        end_line_truncated
+                        or output_line_truncated
+                        or output_char_truncated
+                    ),
                     "stale_context_suspected": False,
                 }
-                if output_truncated:
+                if output_line_truncated:
                     line_range["output_line_limit"] = max_returned_lines
-                selected_lines = lines[start_idx:end_idx]
-                # 为每行添加行号前缀
-                numbered_content = "\n".join(
-                    f"{start_idx + i + 1:>6}\t{line}"
-                    for i, line in enumerate(selected_lines)
-                )
+                if output_char_truncated:
+                    line_range["output_char_truncated"] = True
                 result = {
                     "file_path": file_path,
                     "content": numbered_content,
@@ -445,14 +470,21 @@ class FileToolHandler:
                     "tried_refs": fetch.tried_refs,
                     "line_range": line_range,
                 }
-                if end_line_truncated and not output_truncated:
+                if output_char_truncated:
+                    result["output_truncated"] = True
+                    result["output_char_limit"] = limits["max_file_output_chars"]
+                    result["warning"] = (
+                        f"单次返回内容超过 {limits['max_file_output_chars']} 字符，"
+                        "已在字符上限处截断。"
+                    )
+                if end_line_truncated and not output_line_truncated:
                     result["hint"] = (
                         f"请求 end_line={end_line} 超出当前文件总行数 {total_lines}，"
                         f"已返回当前可用范围 start_line={start_line}, "
                         f"end_line={actual_end_line}。这是可用结果而非错误；"
                         "如需读取其他位置，请依据当前文件行号重新请求。"
                     )
-                elif output_truncated:
+                elif output_line_truncated:
                     next_start_line = actual_end_line + 1
                     next_end_line = min(
                         total_lines,
@@ -505,17 +537,24 @@ class FileToolHandler:
                         "tried_refs": fetch.tried_refs,
                     }
 
+                max_returned_matches = max(1, limits["max_file_lines"])
+                returned_matches = matches[:max_returned_matches]
+                matches_truncated = len(returned_matches) < len(matches)
                 numbered_content = format_search_results(
-                    lines, matches, effective_context_lines
+                    lines, returned_matches, effective_context_lines
+                )
+                numbered_content, output_char_truncated = _cap_output_chars(
+                    numbered_content, limits["max_file_output_chars"]
                 )
 
-                return {
+                result = {
                     "file_path": file_path,
                     "content": numbered_content,
                     "mode": "search",
                     "search_pattern": search_pattern,
                     "total_lines": total_lines,
                     "match_count": len(matches),
+                    "returned_matches": len(returned_matches),
                     "context_lines": effective_context_lines,
                     "returned_lines": len(numbered_content.split("\n")),
                     "size": content_file.size,
@@ -525,12 +564,23 @@ class FileToolHandler:
                     "tried_branches": tried_branches,
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
-                    "hint": (
-                        f"共找到 {len(matches)} 处匹配。"
-                        f"如需查看更多上下文，可增大 context_lines 参数（当前 {effective_context_lines}）。"
-                        f"如需查看特定匹配附近的完整代码，请使用行范围读取。"
-                    ),
                 }
+                if matches_truncated:
+                    result["matches_truncated"] = True
+                if output_char_truncated:
+                    result["output_truncated"] = True
+                    result["output_char_limit"] = limits["max_file_output_chars"]
+                if matches_truncated or output_char_truncated:
+                    result["hint"] = (
+                        f"共找到 {len(matches)} 处匹配，本次结果受行数或字符上限截断。"
+                        "请使用更精确的 search_pattern，或基于已返回行号使用行范围读取。"
+                    )
+                else:
+                    result["hint"] = (
+                        f"共找到 {len(matches)} 处匹配。"
+                        "如需查看特定匹配附近的完整代码，请使用行范围读取。"
+                    )
+                return result
 
             # 模式3: 完整读取（默认，向后兼容）
             max_file_lines = limits["max_file_lines"]
@@ -539,10 +589,13 @@ class FileToolHandler:
                 numbered_content = "\n".join(
                     f"{i + 1:>6}\t{line}" for i, line in enumerate(truncated_lines)
                 )
+                numbered_content, output_char_truncated = _cap_output_chars(
+                    numbered_content, limits["max_file_output_chars"]
+                )
                 logger.warning(
                     f"文件 {file_path} 过大 ({total_lines} 行)，已截断为前 {max_file_lines} 行"
                 )
-                return {
+                result = {
                     "file_path": file_path,
                     "content": numbered_content,
                     "mode": "full",
@@ -562,12 +615,23 @@ class FileToolHandler:
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
                 }
+                if output_char_truncated:
+                    result["output_truncated"] = True
+                    result["output_char_limit"] = limits["max_file_output_chars"]
+                    result["warning"] += (
+                        f" 单次返回内容超过 {limits['max_file_output_chars']} 字符，"
+                        "已在字符上限处截断。"
+                    )
+                return result
 
             # 正常大小文件 - 也添加行号
             numbered_content = "\n".join(
                 f"{i + 1:>6}\t{line}" for i, line in enumerate(lines)
             )
-            return {
+            numbered_content, output_char_truncated = _cap_output_chars(
+                numbered_content, limits["max_file_output_chars"]
+            )
+            result = {
                 "file_path": file_path,
                 "content": numbered_content,
                 "mode": "full",
@@ -581,6 +645,14 @@ class FileToolHandler:
                 "ref_used": fetch.ref_used,
                 "tried_refs": fetch.tried_refs,
             }
+            if output_char_truncated:
+                result["output_truncated"] = True
+                result["output_char_limit"] = limits["max_file_output_chars"]
+                result["warning"] = (
+                    f"单次返回内容超过 {limits['max_file_output_chars']} 字符，"
+                    "已在字符上限处截断。请使用 search_pattern 或行范围读取。"
+                )
+            return result
 
         except Exception as e:
             logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)

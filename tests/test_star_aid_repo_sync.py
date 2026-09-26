@@ -146,6 +146,53 @@ async def test_first_page_failure_does_not_clear_displayed_repos(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bad_credentials_marks_reauth_with_credential_identity(monkeypatch):
+    """A revoked but locally unexpired token is marked only if it is still current."""
+    user_id = 123
+    monkeypatch.setattr(
+        star_aid_service.gh,
+        "get_effective_access_token",
+        AsyncMock(
+            return_value=(
+                "revoked-token",
+                gh.GitHubCallResult(
+                    success=True,
+                    credential_encrypted_access_token="encrypted-token",
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        star_aid_service.gh,
+        "list_user_public_repositories",
+        AsyncMock(
+            return_value=gh.RepositoryListResult(
+                success=False,
+                complete=False,
+                status_code=401,
+                error_code="bad_credentials",
+            )
+        ),
+    )
+    mark_reauth = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        star_aid_service.gh,
+        "mark_reauth_required",
+        mark_reauth,
+    )
+    session = AsyncMock()
+
+    result = await star_aid_service.refresh_available_repositories(session, user_id)
+
+    assert result == {"success": False, "synced": 0, "message": "reauth_required"}
+    mark_reauth.assert_awaited_once_with(
+        session,
+        user_id,
+        expected_encrypted_access_token="encrypted-token",
+    )
+
+
+@pytest.mark.asyncio
 async def test_mid_page_failure_does_not_clear_displayed_repos(monkeypatch):
     """拉取多页中间某一页失败，虽部分同步，但 complete=False，必须跳过 stale cleanup。"""
     user_id = 123

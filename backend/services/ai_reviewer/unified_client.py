@@ -512,60 +512,6 @@ class UnifiedAIClient:
         last_error: AIError | None = None
         compressed_once = False
 
-        # 主动压缩：请求发出前按候选模型上下文预算预检，避免长工具链超限。
-        # Proactive compression: check the budget before the first request so
-        # long tool loops never exceed the model context window.
-        if self._compressor is not None:
-            try:
-                preflight_policy = resolve_effective_request_policy(
-                    selected[0],
-                    unified_messages,
-                    role=role,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    thinking=thinking,
-                    effort=effort,
-                    max_tokens=max_tokens,
-                    output_token_cap=output_token_cap,
-                    tools=unified_tools,
-                    clamp_to_context=False,
-                    stream=False,
-                )
-                (
-                    compressed_once,
-                    unified_messages,
-                ) = await self._compressor.maybe_compress(
-                    selected[0],
-                    unified_messages,
-                    tracker=None,
-                    effective_max_output_tokens=max(
-                        1, preflight_policy.max_output_tokens
-                    ),
-                    safety_reserve_tokens=preflight_policy.safety_reserve_tokens,
-                )
-            except Exception as exc:
-                logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
-                compressed_once = False
-            # 主动压缩成功后写入可观测性：创建 context_operation + 替换消息行，
-            # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
-            # Persist the replacement context so the observability timeline and
-            # conversation stream reflect the proactive compression.
-            if compressed_once and active_observer is not None:
-                record_replacement = getattr(
-                    active_observer, "record_context_replacement", None
-                )
-                if record_replacement is not None:
-                    try:
-                        await record_replacement(
-                            unified_messages,
-                            trigger_reason="threshold",
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "主动压缩可观测性记录失败（不影响审查）: {}", exc
-                        )
-
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
             if cancel_event is not None and cancel_event.is_set():
@@ -595,6 +541,70 @@ class UnifiedAIClient:
                 if candidate.model.capabilities.vision
                 else strip_message_images(unified_messages)
             )
+            # Compression budgets are candidate-specific.  In particular, a
+            # fallback model may need compression even when the primary model
+            # can carry the original history.
+            candidate_messages = unified_messages
+            if self._compressor is not None:
+                try:
+                    preflight_policy = resolve_effective_request_policy(
+                        candidate,
+                        request_messages,
+                        role=role,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        thinking=thinking,
+                        effort=effort,
+                        max_tokens=max_tokens,
+                        output_token_cap=output_token_cap,
+                        tools=unified_tools,
+                        clamp_to_context=False,
+                        stream=False,
+                    )
+                    compressor_kwargs = {
+                        "tracker": None,
+                        "effective_max_output_tokens": max(
+                            1, preflight_policy.max_output_tokens
+                        ),
+                        "safety_reserve_tokens": (
+                            preflight_policy.safety_reserve_tokens
+                        ),
+                    }
+                    if unified_tools:
+                        compressor_kwargs["tools"] = unified_tools
+                    did_compress, candidate_messages = (
+                        await self._compressor.maybe_compress(
+                            candidate,
+                            unified_messages,
+                            **compressor_kwargs,
+                        )
+                    )
+                    compressed_once = compressed_once or did_compress
+                    request_messages = (
+                        candidate_messages
+                        if candidate.model.capabilities.vision
+                        else strip_message_images(candidate_messages)
+                    )
+                    # Persist the replacement context so the observability
+                    # timeline and conversation stream reflect compression.
+                    if did_compress and active_observer is not None:
+                        record_replacement = getattr(
+                            active_observer, "record_context_replacement", None
+                        )
+                        if record_replacement is not None:
+                            try:
+                                await record_replacement(
+                                    candidate_messages,
+                                    trigger_reason="threshold",
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "主动压缩可观测性记录失败（不影响审查）: {}",
+                                    exc,
+                                )
+                except Exception as exc:
+                    logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -750,7 +760,7 @@ class UnifiedAIClient:
                     try:
                         recovered = await self._attempt_compress_recovery(
                             candidate=candidate,
-                            messages=unified_messages,
+                            messages=candidate_messages,
                             request=request,
                             remaining=selected[idx + 1 :],
                             attempt_chain=attempt_chain,
@@ -887,34 +897,6 @@ class UnifiedAIClient:
                         ]
                     break
 
-        if self._compressor is not None:
-            try:
-                preflight_policy = resolve_effective_request_policy(
-                    selected[0],
-                    unified_messages,
-                    role=role,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    thinking=thinking,
-                    effort=effort,
-                    max_tokens=max_tokens,
-                    output_token_cap=output_token_cap,
-                    clamp_to_context=False,
-                    stream=True,
-                )
-                _compressed, unified_messages = await self._compressor.maybe_compress(
-                    selected[0],
-                    unified_messages,
-                    tracker=None,
-                    effective_max_output_tokens=max(
-                        1, preflight_policy.max_output_tokens
-                    ),
-                    safety_reserve_tokens=preflight_policy.safety_reserve_tokens,
-                )
-            except Exception as exc:
-                logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
-
         logical_call_id = str(active_logical_call_factory())
         logical_call_started = time.monotonic()
         # ``total_timeout`` is a logical-call budget.  Non-positive values have
@@ -945,6 +927,45 @@ class UnifiedAIClient:
                 if candidate.model.capabilities.vision
                 else strip_message_images(unified_messages)
             )
+            # Streaming fallback candidates can have a smaller context window
+            # than the primary candidate; compress against each actual model.
+            candidate_messages = unified_messages
+            if self._compressor is not None:
+                try:
+                    preflight_policy = resolve_effective_request_policy(
+                        candidate,
+                        request_messages,
+                        role=role,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        thinking=thinking,
+                        effort=effort,
+                        max_tokens=max_tokens,
+                        output_token_cap=output_token_cap,
+                        clamp_to_context=False,
+                        stream=True,
+                    )
+                    _compressed, candidate_messages = (
+                        await self._compressor.maybe_compress(
+                            candidate,
+                            unified_messages,
+                            tracker=None,
+                            effective_max_output_tokens=max(
+                                1, preflight_policy.max_output_tokens
+                            ),
+                            safety_reserve_tokens=(
+                                preflight_policy.safety_reserve_tokens
+                            ),
+                        )
+                    )
+                    request_messages = (
+                        candidate_messages
+                        if candidate.model.capabilities.vision
+                        else strip_message_images(candidate_messages)
+                    )
+                except Exception as exc:
+                    logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -1489,12 +1510,17 @@ class UnifiedAIClient:
         """
         if self._compressor is None:
             return None
+        compressor_kwargs = {
+            "system": request.system,
+            "max_output_tokens": request.max_tokens,
+        }
+        if request.tools:
+            compressor_kwargs["tools"] = request.tools
         try:
             compressed = await self._compressor.compress_for_candidate(
                 candidate=candidate,
                 messages=messages,
-                system=request.system,
-                max_output_tokens=request.max_tokens,
+                **compressor_kwargs,
             )
         except Exception as exc:
             logger.warning("压缩恢复失败: {}", exc)

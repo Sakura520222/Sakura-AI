@@ -191,6 +191,7 @@ _CE_INT_FIELDS = (
     "max_file_size",
     "max_files_for_deep_strategy",
     "max_file_lines",
+    "max_file_output_chars",
     "default_context_lines",
     "max_context_lines",
 )

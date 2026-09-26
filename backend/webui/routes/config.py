@@ -158,6 +158,9 @@ async def save_strategies_section(
                     form.get("max_files_for_deep_strategy", 10)
                 ),
                 "max_file_lines": int(float(form.get("max_file_lines", 500))),
+                "max_file_output_chars": int(
+                    float(form.get("max_file_output_chars", 50000))
+                ),
                 "default_context_lines": int(
                     float(form.get("default_context_lines", 20))
                 ),
