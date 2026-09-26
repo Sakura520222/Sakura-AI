@@ -180,7 +180,7 @@ class UnifiedContextCompressor:
         )
         exact_input_budget = self._context_window_tokens(
             candidate
-        ) - final_output_tokens - reserve - fixed_tool_tokens
+        ) - final_output_tokens - reserve
         if current <= budget and current <= exact_input_budget:
             return False, messages
 

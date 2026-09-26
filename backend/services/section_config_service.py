@@ -216,6 +216,11 @@ def _validate_context_enhancement(data: dict) -> None:
             "default_context_lines",
             "default_max_results",
             "max_files_to_search",
+            "concurrency",
+            "max_file_bytes",
+            "max_total_scan_bytes",
+            "max_matches_per_file",
+            "max_output_chars",
         ):
             if field in sif:
                 _validate_int(sif[field], f"search_in_files.{field}")
