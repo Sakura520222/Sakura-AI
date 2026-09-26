@@ -1,0 +1,87 @@
+{# ============================================================
+   Sakura AI 统一确认弹窗（ConfirmDialog）
+   ------------------------------------------------------------
+   公共 API：Sakura.confirm(options) -> Promise<boolean>
+
+   options:
+     - title:        标题（默认“确认操作”）
+     - message:      正文（默认“确定要执行此操作吗？”）
+     - warning:      危险提示文案（呈现为红色强调行）
+     - confirmText:  确认按钮文案（默认“确认”）
+     - variant:      'default' | 'warning' | 'danger'（决定图标与确认按钮语义色）
+     - persistent:   true 时禁止 ESC / backdrop 关闭（danger 默认 true）
+     - onConfirm:    回调；返回 Promise 时进入 loading 态，
+                     期间禁止任何关闭（destructive 防误关）
+
+   视觉规范（与 modal.html modal_shell 一致）：
+     rounded-2xl / glass / shadow-2xl / z-[110] / bg-gray-950/50 backdrop
+     统一 150-200ms 过渡；prefers-reduced-motion 下经全局
+     .sakura-modal-shell 动画规则自动禁用非必要动画。
+   可访问性：
+     role="dialog" + aria-modal + aria-labelledby/aria-describedby、
+     focus trap（Tab 循环）、focus restore（关闭后回到触发元素）、
+     body scroll lock（Sakura.lockScroll 引用计数）。
+   ============================================================ #}
+<div data-sakura-confirm-dialog
+     x-data="sakuraConfirmDialog()"
+     x-show="active"
+     x-cloak
+     class="sakura-modal-shell fixed inset-0 z-[110] flex items-center justify-center p-4"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="sakura-confirm-dialog-title"
+     aria-describedby="sakura-confirm-dialog-message"
+     @keydown.escape.window="dismiss()">
+    <!-- backdrop：loading / persistent 状态下点击不关闭 -->
+    <div class="absolute inset-0 bg-gray-950/50 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
+
+    <div class="relative w-full max-w-md rounded-2xl border border-sakura-200 bg-white/95 p-6 text-gray-900 shadow-2xl backdrop-blur-sm dark:border-sakura-800/60 dark:bg-[#1e1028]/95 dark:text-gray-100">
+        <div class="flex items-start gap-4">
+            <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                  :class="variant === 'danger'
+                          ? 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300'
+                          : variant === 'warning'
+                            ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300'
+                            : 'bg-sakura-100 text-sakura-600 dark:bg-sakura-900/40 dark:text-sakura-300'">
+                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+                </svg>
+            </span>
+            <div class="min-w-0 flex-1">
+                <h3 id="sakura-confirm-dialog-title" class="text-lg font-semibold" x-text="title"></h3>
+                <p id="sakura-confirm-dialog-message" class="mt-1.5 text-sm text-gray-500 dark:text-gray-400" x-text="message"></p>
+                <p x-show="warning" x-text="warning" x-cloak
+                   class="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-300"></p>
+            </div>
+        </div>
+
+        <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button"
+                    data-sakura-confirm-button
+                    @click="cancel()"
+                    :disabled="loading"
+                    class="rounded-xl border border-gray-300 bg-white/80 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700/80 dark:text-gray-300 dark:hover:bg-gray-600">
+                <span x-text="cancelText"></span>
+            </button>
+            <button type="button"
+                    data-sakura-confirm-button
+                    @click="confirm()"
+                    :disabled="loading"
+                    :class="variant === 'danger'
+                            ? 'bg-red-600 hover:bg-red-700 focus-visible:ring-red-500'
+                            : variant === 'warning'
+                              ? 'bg-amber-600 hover:bg-amber-700 focus-visible:ring-amber-500'
+                              : 'bg-sakura-600 hover:bg-sakura-700 focus-visible:ring-sakura-500'"
+                    class="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-gray-900">
+                <span x-show="!loading" x-text="confirmText"></span>
+                <span x-show="loading" x-cloak class="inline-flex items-center gap-2">
+                    <svg class="h-4 w-4 animate-spin motion-reduce:animate-none" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg>
+                    <span x-text="processingText"></span>
+                </span>
+            </button>
+        </div>
+    </div>
+</div>

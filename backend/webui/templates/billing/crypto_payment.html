@@ -165,7 +165,8 @@
                     {{ _('billing.crypto_back_anyway') }}
                 </a>
                 <form method="POST" action="/billing/orders/{{ order_id }}/cancel"
-                      onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                      data-confirm="{{ _('billing.confirm_cancel_order') }}"
+                      data-confirm-variant="warning"
                       class="inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit"

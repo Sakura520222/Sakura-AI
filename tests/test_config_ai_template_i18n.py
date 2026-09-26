@@ -105,7 +105,12 @@ def test_config_ai_has_no_raw_chinese_js_state_or_unsafe_html_message_path():
         assert hardcoded not in script
 
     assert "p.textContent = message" in script
-    assert "confirm(aiText('accountDeleteConfirm'))" in script
+    # Issue #625：原生 confirm() 已替换为统一 Sakura.confirm 公共 API
+    # （danger variant 承载删除确认），生产模板禁止再出现原生 confirm 调用。
+    assert "window.Sakura.confirm({" in script
+    assert "aiText('accountDeleteConfirm')" in script
+    assert "variant: 'danger'" in script
+    assert not re.search(r"(?<![\w.$])confirm\(aiText", script)
     assert "innerHTML" not in script
 
 

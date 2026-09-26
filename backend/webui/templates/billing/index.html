@@ -247,7 +247,8 @@
                             </span>
                             {% else %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/refund"
-                                  onsubmit="return confirm('{{ _('billing.confirm_refund_request') }}');"
+                                  data-confirm="{{ _('billing.confirm_refund_request') }}"
+                                  data-confirm-variant="warning"
                                   class="inline-flex items-center gap-2">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <input type="text" name="reason" placeholder="{{ _('billing.refund_reason') }}"
@@ -267,7 +268,8 @@
                             <span class="text-gray-300 dark:text-gray-600">|</span>
                             {% endif %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/cancel"
-                                  onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                                  data-confirm="{{ _('billing.confirm_cancel_order') }}"
+                                  data-confirm-variant="warning"
                                   class="inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button type="submit"
@@ -277,7 +279,8 @@
                             </form>
                             {% elif order.status in ['cancelled', 'expired', 'refunded'] %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/delete"
-                                  onsubmit="return confirm('{{ _('billing.confirm_delete_order') }}');"
+                                  data-confirm="{{ _('billing.confirm_delete_order') }}"
+                                  data-confirm-variant="danger"
                                   class="inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button type="submit"

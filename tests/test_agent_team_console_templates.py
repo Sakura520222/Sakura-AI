@@ -47,7 +47,7 @@ def test_agent_team_templates_compile_and_page_uses_one_console_surface():
     assert "clearSelectedTask()" in page
     assert '@click="refreshLiveView()"' in _read(LIVE)
     assert page.count("agent-secondary-drawer-shell") == 1
-    assert "top-16 z-40 h-[calc(100dvh-4rem)]" in page
+    assert "top-16 z-[100] h-[calc(100dvh-4rem)]" in page
     assert "secondaryPanel === 'candidates'" in page
     assert "secondaryPanel === 'create'" in page
     assert "secondaryPanel === 'workspaces'" in page

@@ -97,39 +97,46 @@ var _batchIssuesProgress = { total: 0, completed: 0, failed: 0, active: false };
 
 function batchIndexIssues(btn, csrfToken) {
     if (btn.disabled) return;
-    if (!confirm(_t('repo_confirm_batch_index'))) return;
 
-    btn.disabled = true;
-    btn.dataset.originalText = btn.textContent;
-    btn.textContent = _t('repo_queuing');
+    const run = () => {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.textContent;
+        btn.textContent = _t('repo_queuing');
 
-    fetch('/repos/batch/index-issues', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken }
-    })
-    .then(function(r) {
-        if (!r.ok) {
-            return r.json().catch(function() { return {}; }).then(function(data) {
-                throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
-            });
-        }
-        return r.json();
-    })
-    .then(function(data) {
-        if (data.success) {
-            _batchIssuesProgress = { total: data.queued, completed: 0, failed: 0, active: true };
-            btn.textContent = _t('repo_indexing_progress').replace('{done}', '0').replace('{total}', data.queued);
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
-        } else {
+        return fetch('/repos/batch/index-issues', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken }
+        })
+        .then(function(r) {
+            if (!r.ok) {
+                return r.json().catch(function() { return {}; }).then(function(data) {
+                    throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.success) {
+                _batchIssuesProgress = { total: data.queued, completed: 0, failed: 0, active: true };
+                btn.textContent = _t('repo_indexing_progress').replace('{done}', '0').replace('{total}', data.queued);
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+            } else {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.originalText;
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_batch_index_failed'), type: data.queued === 0 ? 'info' : 'error' } }));
+            }
+        })
+        .catch(function(err) {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_batch_index_failed'), type: data.queued === 0 ? 'info' : 'error' } }));
-        }
-    })
-    .catch(function(err) {
-        btn.disabled = false;
-        btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
+        });
+    };
+
+    window.Sakura.confirm({
+        message: _t('repo_confirm_batch_index'),
+        variant: 'warning',
+        onConfirm: run,
     });
 }
 
@@ -215,38 +222,46 @@ window.addEventListener('sse:index-issues', function(e) {
 // 触发仓库扫描
 function triggerScan(btn, repoName, csrfToken) {
     if (btn.disabled) return;
-    if (!confirm(_t('repo_confirm_scan').replace('{repo}', repoName))) return;
 
-    btn.disabled = true;
-    btn.dataset.originalText = btn.textContent;
-    btn.textContent = _t('repo_scanning');
+    const encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
 
-    var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
-    fetch('/repos/' + encodedName + '/scan', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken }
-    })
-    .then(function(r) {
-        if (!r.ok) {
-            return r.json().catch(function() { return {}; }).then(function(data) {
-                throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
-            });
-        }
-        return r.json();
-    })
-    .then(function(data) {
-        if (!data.success) {
+    const run = () => {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.textContent;
+        btn.textContent = _t('repo_scanning');
+
+        return fetch('/repos/' + encodedName + '/scan', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken }
+        })
+        .then(function(r) {
+            if (!r.ok) {
+                return r.json().catch(function() { return {}; }).then(function(data) {
+                    throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (!data.success) {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.originalText;
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_scan_failed'), type: 'error' } }));
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+            }
+        })
+        .catch(function(err) {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_scan_failed'), type: 'error' } }));
-        } else {
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
-        }
-    })
-    .catch(function(err) {
-        btn.disabled = false;
-        btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
+        });
+    };
+
+    window.Sakura.confirm({
+        message: _t('repo_confirm_scan').replace('{repo}', repoName),
+        variant: 'warning',
+        onConfirm: run,
     });
 }
 
