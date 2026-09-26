@@ -157,6 +157,14 @@ coverage limitations in the summary without inventing findings.
             "max_files_to_search": 100,
             # 并发获取文件内容的线程数（过高可能触发 GitHub 次级速率限制）
             "concurrency": 8,
+            # 单个文件参与跨文件搜索的最大字节数（不影响 read_file 行范围读取）
+            "max_file_bytes": 2_097_152,
+            # 单次跨文件搜索最多解码扫描的总字节数
+            "max_total_scan_bytes": 16_777_216,
+            # 单个文件最多返回的匹配数；达到上限后标记结果不精确
+            "max_matches_per_file": 20,
+            # 跨文件搜索渲染内容的总字符预算
+            "max_output_chars": 50_000,
         },
         # Git 工具配置
         "git_tools": {

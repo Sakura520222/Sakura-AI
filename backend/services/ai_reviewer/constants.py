@@ -127,6 +127,16 @@ READ_FILE_TOOL = {
                         "返回内容还会受单次字符上限保护。"
                     ),
                 },
+                "start_char": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "起始行内的字符偏移（从0开始，不含行号前缀）。"
+                        "仅在 start_line/end_line 模式中使用；当 partial_line "
+                        "报告超长单行被截断时，把 partial_line.end_char 作为"
+                        "下一次请求的 start_char。"
+                    ),
+                },
                 "search_pattern": {
                     "type": "string",
                     "description": (

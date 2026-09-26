@@ -177,6 +177,21 @@ async def save_strategies_section(
                     "max_files_to_search": int(
                         float(form.get("sif_max_files_to_search", 100))
                     ),
+                    "concurrency": int(
+                        float(form.get("sif_concurrency", 8))
+                    ),
+                    "max_file_bytes": int(
+                        float(form.get("sif_max_file_bytes", 2_097_152))
+                    ),
+                    "max_total_scan_bytes": int(
+                        float(form.get("sif_max_total_scan_bytes", 16_777_216))
+                    ),
+                    "max_matches_per_file": int(
+                        float(form.get("sif_max_matches_per_file", 20))
+                    ),
+                    "max_output_chars": int(
+                        float(form.get("sif_max_output_chars", 50_000))
+                    ),
                 },
                 "git_tools": {
                     "default_branch_count": int(

@@ -238,6 +238,45 @@ def messages_from_legacy(
     return result
 
 
+def messages_to_legacy(
+    messages: list[UnifiedMessage],
+) -> list[dict[str, Any]]:
+    """UnifiedMessage → legacy dict without losing protocol fields.
+
+    This is the in-process inverse of :func:`messages_from_legacy`, not a wire
+    format.  Tool calls, tool identifiers, reasoning metadata, and images are
+    retained so applying compressed history cannot orphan a later tool result.
+    """
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        converted: dict[str, Any] = {
+            "role": message.role,
+            "content": message.content,
+        }
+        if message.tool_calls:
+            converted["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+        if message.tool_call_id is not None:
+            converted["tool_call_id"] = message.tool_call_id
+        if message.reasoning_content is not None:
+            converted["reasoning_content"] = message.reasoning_content
+        if message.name is not None:
+            converted["name"] = message.name
+        if message.images:
+            converted["images"] = [image.to_dict() for image in message.images]
+        result.append(converted)
+    return result
+
+
 def _tools_from_legacy(
     tools: list[dict[str, Any]] | None,
 ) -> list[UnifiedTool] | None:
@@ -510,7 +549,6 @@ class UnifiedAIClient:
         logical_call_id = str(call_state.logical_call_factory())
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
-        compressed_once = False
 
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
@@ -545,6 +583,7 @@ class UnifiedAIClient:
             # fallback model may need compression even when the primary model
             # can carry the original history.
             candidate_messages = unified_messages
+            winner_did_compress = False
             if self._compressor is not None:
                 try:
                     preflight_policy = resolve_effective_request_policy(
@@ -580,7 +619,7 @@ class UnifiedAIClient:
                             **compressor_kwargs,
                         )
                     )
-                    compressed_once = compressed_once or did_compress
+                    winner_did_compress = did_compress
                     request_messages = (
                         candidate_messages
                         if candidate.model.capabilities.vision
@@ -686,7 +725,9 @@ class UnifiedAIClient:
                         "retry": 0,
                     }
                 ]
-                response.meta.compressed = compressed_once
+                response.meta.compressed = winner_did_compress
+                if winner_did_compress:
+                    response.meta.effective_messages = candidate_messages
                 response.meta.context_window_tokens = (
                     candidate.model.context_window_tokens
                 )
@@ -1508,7 +1549,7 @@ class UnifiedAIClient:
         Compress then retry the same candidate; if still overflowing, return
         None so the caller falls back to the next candidate.
         """
-        if self._compressor is None:
+        if self._compressor is None or not getattr(self._compressor, "enabled", True):
             return None
         compressor_kwargs = {
             "system": request.system,
@@ -1574,6 +1615,8 @@ class UnifiedAIClient:
                 call_state=call_state,
                 reasoning_snapshot=reasoning_snapshot,
             )
+            response.meta.compressed = True
+            response.meta.effective_messages = compressed
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(
                 AttemptRecord(

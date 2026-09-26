@@ -116,6 +116,7 @@ class ToolHandler:
                     pr=pr,
                     start_line=arguments.get("start_line"),
                     end_line=arguments.get("end_line"),
+                    start_char=arguments.get("start_char"),
                     search_pattern=arguments.get("search_pattern"),
                     context_lines=arguments.get("context_lines"),
                     branch=arguments.get("branch"),
