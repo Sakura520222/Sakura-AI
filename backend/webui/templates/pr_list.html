@@ -11,7 +11,7 @@
     </div>
 
     <!-- PR 列表（通过 HTMX 加载） -->
-    <div id="pr-list-container" hx-get="/pr/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="pr-list-container" hx-get="/pr/list-fragment{% if request.url.query %}?{{ request.url.query }}{% endif %}" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
             <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>

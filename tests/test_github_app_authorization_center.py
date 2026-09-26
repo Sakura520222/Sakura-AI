@@ -919,11 +919,16 @@ def test_connected_authorization_template_renders_with_strict_variables() -> Non
 
 
 def test_sidebar_exposes_github_app_to_authenticated_users() -> None:
-    sidebar = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/components/sidebar.html"
-    ).read_text(encoding="utf-8")
-    assert '{% if current_user %}\n        <a href="/github-app/"' in sidebar
+    from backend.webui.deps import get_templates
+
+    template = get_templates().get_template("components/sidebar.html")
+    for role in ("user", "admin", "super_admin"):
+        rendered = template.render(
+            active_page="github_app",
+            current_user={"role": role},
+            settings=type("SettingsStub", (), {"payment_enabled": False})(),
+        )
+        assert 'href="/github-app/"' in rendered
 
 
 def test_system_config_translations_cover_shared_user_authorization_app() -> None:

@@ -1,297 +1,90 @@
-<!-- 侧边栏 -->
-<aside id="sidebar"
-         class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out overflow-y-auto overscroll-contain">
-     <nav class="p-4 pb-6 space-y-1">
-        <a href="/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'dashboard' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-            </svg>
-            {{ _('nav.dashboard') }}
-        </a>
+{# Top-level navigation describes business domains; routes remain unchanged. #}
+{% macro link(url, label, page) %}
+<a href="{{ url }}" {% if active_page == page %}aria-current="page"{% endif %}
+   class="block rounded-lg px-3 py-2 text-sm transition-colors {% if active_page == page %}bg-sakura-100 text-sakura-800 dark:bg-sakura-900/40 dark:text-sakura-300 font-semibold{% else %}text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20{% endif %}">{{ label }}</a>
+{% endmacro %}
+{% macro domain(label, pages) %}
+<details class="group rounded-xl" {% if active_page in pages %}open{% endif %}>
+    <summary class="flex cursor-pointer list-none items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 [&::-webkit-details-marker]:hidden">
+        <span>{{ label }}</span>
+        <svg class="h-4 w-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9 6 6 6-6"/></svg>
+    </summary>
+    <div class="ml-3 space-y-0.5 border-l border-sakura-200 pl-2 dark:border-sakura-800">{{ caller() }}</div>
+</details>
+{% endmacro %}
+<aside id="sidebar" class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out overflow-y-auto overscroll-contain">
+    <nav class="p-4 pb-6 space-y-1" aria-label="{{ _('nav.main_navigation') }}">
+        {{ link('/', _('nav.dashboard'), 'dashboard') }}
 
-        <a href="/activity/observability/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                 {% if active_page == 'activity_observability' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-            </svg>
-            {{ _('nav.activity_monitor') }}
-        </a>
+        {% call domain(_('nav.review_domain'), ['pr', 'issues', 'queue']) %}
+            {{ link('/pr/', _('nav.pr_reviews'), 'pr') }}
+            {{ link('/issues/', _('nav.issue_analysis'), 'issues') }}
+            {% if current_user and current_user.role in ('admin', 'super_admin') %}
+                {{ link('/queue/', _('nav.review_queue'), 'queue') }}
+            {% endif %}
+        {% endcall %}
 
-        <a href="/pr/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'pr' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
-            </svg>
-            {{ _('nav.pr_reviews') }}
-        </a>
-
-        <a href="/issues/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'issues' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-            </svg>
-            {{ _('nav.issue_analysis') }}
-        </a>
-
-        <a href="/logs/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'logs' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
-            {{ _('nav.review_logs') }}
-        </a>
-
-        <a href="/announcements"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'announcements' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4.5-5.8V4a1.5 1.5 0 00-3 0v1.2A6 6 0 006 11v3.2a2 2 0 01-.6 1.4L4 17h5m2 0v1a2 2 0 004 0v-1m-4 0h4"/>
-            </svg>
-            {{ _('announcements.title') }}
-        </a>
-
-        {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
-        <a href="/scans/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'scans' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-            </svg>
-            {{ _('nav.repo_scans') }}
-        </a>
+        {% if current_user %}
+            {% call domain(_('nav.repository_domain'), ['repos', 'scans', 'sakura_memory', 'vector_db', 'github_app']) %}
+                {{ link('/github-app/', _('nav.github_app'), 'github_app') }}
+                {% if current_user.role in ('admin', 'super_admin') %}
+                    {{ link('/repos/', _('nav.installed_repos'), 'repos') }}
+                    {{ link('/scans/', _('nav.repo_scans'), 'scans') }}
+                {% endif %}
+                {% if current_user.role == 'super_admin' %}
+                    {{ link('/sakura-memory/', _('nav.sakura_memory'), 'sakura_memory') }}
+                    {{ link('/vector-db/', _('nav.vector_db'), 'vector_db') }}
+                {% endif %}
+            {% endcall %}
         {% endif %}
 
         {% if current_user %}
-        <a href="/agent-team/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'agent_team' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a.75.75 0 01.75.75V5h3V3.75a.75.75 0 011.5 0V5h.75A2.25 2.25 0 0118 7.25v8.5A2.25 2.25 0 0115.75 18h-7.5A2.25 2.25 0 016 15.75v-8.5A2.25 2.25 0 018.25 5H9V3.75A.75.75 0 019.75 3zM8.25 6.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h7.5a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75h-7.5z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h.01M12 10h.01M15 10h.01M9 13h6"/>
-            </svg>
-            {{ _('nav.agent_team') }}
-        </a>
-        {% if current_user.role == 'super_admin' %}
-        <a href="/agent-skills/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'agent_skills' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-            </svg>
-            {{ _('nav.agent_skills') }}
-        </a>
-        {% endif %}
+            {% call domain(_('nav.agent_team'), ['agent_team', 'agent_skills']) %}
+                {{ link('/agent-team/', _('nav.agent_tasks'), 'agent_team') }}
+                {% if current_user.role == 'super_admin' %}
+                    {{ link('/agent-skills/', _('nav.agent_skills'), 'agent_skills') }}
+                {% endif %}
+            {% endcall %}
+            {{ link('/star-aid/', _('nav.star_aid'), 'star_aid') }}
         {% endif %}
 
-        {% if current_user %}
-        <a href="/github-app/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'github_app' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9h4"/>
-            </svg>
-            {{ _('nav.github_app') }}
-        </a>
-
-        <a href="/star-aid/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'star_aid' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
-            </svg>
-            {{ _('nav.star_aid') }}
-        </a>
-        {% endif %}
-
-        {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
-        <a href="/logs/actions/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'action_logs' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            {{ _('nav.action_logs') }}
-        </a>
-
-        <a href="/queue/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'queue' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-            </svg>
-            {{ _('nav.review_queue') }}
-        </a>
-        {% endif %}
-
-        {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
-        <!-- 分隔线 -->
-        <div class="border-t border-sakura-200/50 dark:border-sakura-800/30 my-3"></div>
-
-        <a href="/users/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'users' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
-            </svg>
-            {{ _('nav.user_management') }}
-        </a>
-
-        {% if current_user.role == 'super_admin' %}
-        <a href="/security/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'security' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c1.657 0 3-1.343 3-3S13.657 5 12 5 9 6.343 9 8s1.343 3 3 3zm0 0c-3.314 0-6 2.015-6 4.5V18h12v-2.5c0-2.485-2.686-4.5-6-4.5z"/>
-            </svg>
-            {{ _('nav.security_management') }}
-        </a>
-        {% endif %}
-
-        <a href="/repos/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'repos' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-            </svg>
-            {{ _('nav.installed_repos') }}
-        </a>
-        {% endif %}
-
-        <!-- 分隔线 -->
-        <div class="border-t border-sakura-200/50 dark:border-sakura-800/30 my-3"></div>
-
-        {% if current_user and current_user.role == 'super_admin' %}
-        <a href="/config"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'config_unified' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
-            </svg>
-            {{ _('nav.global_config') }}
-        </a>
-        <a href="/config/ai"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'config_ai' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-            </svg>
-            {{ _('nav.ai_config') }}
-        </a>
-        <a href="/config/backup"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'config_backup' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7M8 3h8a2 2 0 012 2v2H6V5a2 2 0 012-2zm4 7v6m0 0l-3-3m3 3l3-3"/>
-            </svg>
-            {{ _('nav.config_backup') }}
-        </a>
-        <a href="/sakura-memory/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'sakura_memory' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-            </svg>
-            {{ _('nav.sakura_memory') }}
-        </a>
-        <a href="/system-config/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'system_config' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
-            </svg>
-            {{ _('nav.system_config') }}
-        </a>
-        <a href="/vector-db/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'vector_db' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
-            </svg>
-            {{ _('nav.vector_db') }}
-        </a>
-        {% endif %}
+        {% call domain(_('nav.observability_domain'), ['activity_observability', 'action_logs']) %}
+            {{ link('/activity/observability/', _('nav.activity_monitor'), 'activity_observability') }}
+            {% if current_user and current_user.role in ('admin', 'super_admin') %}
+                {{ link('/logs/actions/', _('nav.action_logs'), 'action_logs') }}
+            {% endif %}
+        {% endcall %}
 
         {% if settings.payment_enabled %}
-        <!-- 分隔线 -->
-        <div class="border-t border-sakura-200/50 dark:border-sakura-800/30 my-3"></div>
-
-        <a href="/billing/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'billing' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
-            </svg>
-            {{ _('nav.billing_center') }}
-        </a>
-
-        {% if current_user and current_user.role == 'super_admin' %}
-        <a href="/billing/admin/plans"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'billing_admin_plans' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
-            {{ _('nav.plan_management') }}
-        </a>
-        <a href="/billing/admin/codes"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'billing_admin_codes' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"/>
-            </svg>
-            {{ _('nav.redemption_codes') }}
-        </a>
-        <a href="/billing/admin/refund-requests"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'billing_admin_refunds' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a4 4 0 014 4v6m0 0l-3-3m3 3l3-3M3 4h18M3 7h18"/>
-            </svg>
-            {{ _('nav.refund_reviews') }}
-        </a>
-        {% endif %}
+            {% call domain(_('nav.billing_center'), ['billing', 'billing_admin_plans', 'billing_admin_codes', 'billing_admin_refunds']) %}
+                {{ link('/billing/', _('nav.billing_overview'), 'billing') }}
+                {% if current_user and current_user.role == 'super_admin' %}
+                    {{ link('/billing/admin/plans', _('nav.plan_management'), 'billing_admin_plans') }}
+                    {{ link('/billing/admin/codes', _('nav.redemption_codes'), 'billing_admin_codes') }}
+                    {{ link('/billing/admin/refund-requests', _('nav.refund_reviews'), 'billing_admin_refunds') }}
+                {% endif %}
+            {% endcall %}
         {% endif %}
 
-        <!-- 分隔线 -->
-        <div class="border-t border-sakura-200/50 dark:border-sakura-800/30 my-3"></div>
+        {% if current_user and current_user.role in ('admin', 'super_admin') %}
+            {% call domain(_('nav.administration_domain'), ['users', 'security']) %}
+                {{ link('/users/', _('nav.user_management'), 'users') }}
+                {% if current_user.role == 'super_admin' %}
+                    {{ link('/security/', _('nav.security_management'), 'security') }}
+                {% endif %}
+            {% endcall %}
+        {% endif %}
 
-        <a href="/settings/"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'settings' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-            </svg>
-            {{ _('nav.personal_settings') }}
-        </a>
-
-        <a href="/settings/about"
-           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                  {% if active_page == 'about' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
-            {{ _('nav.about') }}
-        </a>
-
+        {% call domain(_('nav.settings_domain'), ['settings', 'config_unified', 'config_ai', 'config_backup', 'system_config']) %}
+            {{ link('/settings/', _('nav.personal_settings'), 'settings') }}
+            {% if current_user and current_user.role == 'super_admin' %}
+                {{ link('/config', _('nav.review_config'), 'config_unified') }}
+                {{ link('/config/ai', _('nav.ai_config'), 'config_ai') }}
+                {{ link('/system-config/', _('nav.system_config'), 'system_config') }}
+                {{ link('/config/backup', _('nav.config_backup'), 'config_backup') }}
+            {% endif %}
+        {% endcall %}
     </nav>
 </aside>
 
-<!-- 移动端遮罩 -->
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="document.getElementById('sidebar').classList.toggle('-translate-x-full'); this.classList.add('hidden');"></div>
-
-<script>
-// 移动端侧边栏切换
-document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-    sidebar.classList.toggle('-translate-x-full');
-    overlay.classList.toggle('hidden');
-});
-</script>

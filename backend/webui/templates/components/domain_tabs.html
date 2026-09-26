@@ -1,0 +1,49 @@
+{# Contextual navigation shared by pages in the same business domain. #}
+{% set tabs = [] %}
+{% if active_page in ('pr', 'issues', 'queue') %}
+    {% set tabs = [('/pr/', _('nav.pr_reviews'), 'pr'), ('/issues/', _('nav.issue_analysis'), 'issues')] %}
+    {% if current_user.role in ('admin', 'super_admin') %}
+        {% set tabs = tabs + [('/queue/', _('nav.review_queue'), 'queue')] %}
+    {% endif %}
+{% elif active_page in ('github_app', 'repos', 'scans', 'sakura_memory', 'vector_db') %}
+    {% set tabs = [('/github-app/', _('nav.github_app'), 'github_app')] %}
+    {% if current_user.role in ('admin', 'super_admin') %}
+        {% set tabs = tabs + [('/repos/', _('nav.installed_repos'), 'repos'), ('/scans/', _('nav.repo_scans'), 'scans')] %}
+    {% endif %}
+    {% if current_user.role == 'super_admin' %}
+        {% set tabs = tabs + [('/sakura-memory/', _('nav.sakura_memory'), 'sakura_memory'), ('/vector-db/', _('nav.vector_db'), 'vector_db')] %}
+    {% endif %}
+{% elif active_page in ('agent_team', 'agent_skills') %}
+    {% set tabs = [('/agent-team/', _('nav.agent_tasks'), 'agent_team')] %}
+    {% if current_user.role == 'super_admin' %}
+        {% set tabs = tabs + [('/agent-skills/', _('nav.agent_skills'), 'agent_skills')] %}
+    {% endif %}
+{% elif active_page in ('activity_observability', 'action_logs') %}
+    {% set tabs = [('/activity/observability/', _('nav.activity_monitor'), 'activity_observability')] %}
+    {% if current_user.role in ('admin', 'super_admin') %}
+        {% set tabs = tabs + [('/logs/actions/', _('nav.action_logs'), 'action_logs')] %}
+    {% endif %}
+{% elif active_page in ('billing', 'billing_admin_plans', 'billing_admin_codes', 'billing_admin_refunds') and settings.payment_enabled %}
+    {% set tabs = [('/billing/', _('nav.billing_overview'), 'billing')] %}
+    {% if current_user.role == 'super_admin' %}
+        {% set tabs = tabs + [('/billing/admin/plans', _('nav.plan_management'), 'billing_admin_plans'), ('/billing/admin/codes', _('nav.redemption_codes'), 'billing_admin_codes'), ('/billing/admin/refund-requests', _('nav.refund_reviews'), 'billing_admin_refunds')] %}
+    {% endif %}
+{% elif active_page in ('users', 'security') %}
+    {% set tabs = [('/users/', _('nav.user_management'), 'users')] %}
+    {% if current_user.role == 'super_admin' %}
+        {% set tabs = tabs + [('/security/', _('nav.security_management'), 'security')] %}
+    {% endif %}
+{% elif active_page in ('settings', 'config_unified', 'config_ai', 'config_backup', 'system_config') %}
+    {% set tabs = [('/settings/', _('nav.personal_settings'), 'settings')] %}
+    {% if current_user.role == 'super_admin' %}
+        {% set tabs = tabs + [('/config', _('nav.review_config'), 'config_unified'), ('/config/ai', _('nav.ai_config'), 'config_ai'), ('/system-config/', _('nav.system_config'), 'system_config'), ('/config/backup', _('nav.config_backup'), 'config_backup')] %}
+    {% endif %}
+{% endif %}
+{% if tabs|length > 1 %}
+<nav class="mb-5 flex gap-2 overflow-x-auto pb-2" aria-label="{{ _('nav.section_navigation') }}">
+    {% for url, label, page in tabs %}
+    <a href="{{ url }}" {% if active_page == page %}aria-current="page"{% endif %}
+       class="shrink-0 rounded-lg px-3 py-2 text-sm font-medium {% if active_page == page %}bg-sakura-500 text-white{% else %}bg-white text-gray-600 hover:bg-sakura-50 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-sakura-900/20{% endif %}">{{ label }}</a>
+    {% endfor %}
+</nav>
+{% endif %}
