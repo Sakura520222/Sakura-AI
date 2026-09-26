@@ -8,7 +8,11 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.time_service import filename_timestamp, get_time_service
+from backend.core.time_service import (
+    filename_timestamp,
+    get_time_service,
+    parse_local_date_boundary,
+)
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
     build_review_search_filter,
@@ -25,6 +29,41 @@ from backend.webui.deps import (
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])
 templates = get_templates()
+
+
+def apply_review_filters(
+    query, *, search="", repo="", status="", decision="", date_from="", date_to=""
+):
+    """Apply the same filters to the PR list, count, and CSV export."""
+    search_filter = build_review_search_filter(search)
+    if search_filter is not None:
+        query = query.where(search_filter)
+    if repo:
+        if "/" in repo:
+            owner, name = repo.split("/", 1)
+            query = query.where(
+                PRReview.repo_owner == owner, PRReview.repo_name == name
+            )
+        else:
+            # Accept old /logs/?repo=name bookmarks during the migration.
+            query = query.where(PRReview.repo_name == repo)
+    if status:
+        query = query.where(PRReview.status == status)
+    if decision:
+        query = query.where(PRReview.decision == decision)
+    for value, operator, exclusive_end in (
+        (date_from, PRReview.created_at.__ge__, False),
+        (date_to, PRReview.created_at.__lt__, True),
+    ):
+        if value:
+            try:
+                boundary = parse_local_date_boundary(
+                    value, get_time_service().zone, exclusive_end=exclusive_end
+                )
+            except ValueError:
+                continue
+            query = query.where(operator(boundary))
+    return query
 
 
 @router.get("/")
@@ -49,8 +88,11 @@ async def export_pr_csv(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     search: str = Query("", description="搜索关键词"),
+    repo: str = Query("", description="按仓库过滤"),
     status: str = Query("", description="按状态过滤"),
     decision: str = Query("", description="按决策过滤"),
+    date_from: str = Query("", description="开始日期 (YYYY-MM-DD)"),
+    date_to: str = Query("", description="结束日期 (YYYY-MM-DD)"),
 ):
     """导出 PR 审查列表为 CSV"""
     query = select(PRReview)
@@ -60,18 +102,15 @@ async def export_pr_csv(
     if scope_filter is not None:
         query = query.where(scope_filter)
 
-    # 搜索过滤
-    search_filter = build_review_search_filter(search)
-    if search_filter is not None:
-        query = query.where(search_filter)
-
-    # 状态过滤
-    if status:
-        query = query.where(PRReview.status == status)
-
-    # 决策过滤
-    if decision:
-        query = query.where(PRReview.decision == decision)
+    query = apply_review_filters(
+        query,
+        search=search,
+        repo=repo,
+        status=status,
+        decision=decision,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     # 排序 + 限制
     query = query.order_by(desc(PRReview.created_at)).limit(1000)
@@ -133,8 +172,11 @@ async def pr_list_fragment(
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
     search: str = Query("", description="搜索关键词（PR标题/仓库名/作者）"),
+    repo: str = Query("", description="按仓库过滤"),
     status: str = Query("", description="按状态过滤"),
     decision: str = Query("", description="按决策过滤"),
+    date_from: str = Query("", description="开始日期 (YYYY-MM-DD)"),
+    date_to: str = Query("", description="结束日期 (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(None, ge=1, le=100),
 ):
@@ -150,21 +192,24 @@ async def pr_list_fragment(
         query = query.where(scope_filter)
         count_query = count_query.where(scope_filter)
 
-    # 搜索过滤
-    search_filter = build_review_search_filter(search)
-    if search_filter is not None:
-        query = query.where(search_filter)
-        count_query = count_query.where(search_filter)
-
-    # 状态过滤
-    if status:
-        query = query.where(PRReview.status == status)
-        count_query = count_query.where(PRReview.status == status)
-
-    # 决策过滤
-    if decision:
-        query = query.where(PRReview.decision == decision)
-        count_query = count_query.where(PRReview.decision == decision)
+    filters = {
+        "search": search,
+        "repo": repo,
+        "status": status,
+        "decision": decision,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    query = apply_review_filters(query, **filters)
+    count_query = apply_review_filters(count_query, **filters)
+    repo_query = (
+        select(PRReview.repo_owner, PRReview.repo_name)
+        .distinct()
+        .order_by(PRReview.repo_owner, PRReview.repo_name)
+    )
+    if scope_filter is not None:
+        repo_query = repo_query.where(scope_filter)
+    available_repos = (await db.execute(repo_query)).all()
 
     # 排序
     query = query.order_by(desc(PRReview.created_at))
@@ -182,8 +227,12 @@ async def pr_list_fragment(
             "request": request,
             "reviews": reviews,
             "search": search,
+            "repo": repo,
             "status": status,
             "decision": decision,
+            "date_from": date_from,
+            "date_to": date_to,
+            "available_repos": available_repos,
             "page": page,
             "total_pages": total_pages,
             "total": total,

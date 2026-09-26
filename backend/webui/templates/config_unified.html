@@ -244,11 +244,17 @@
 
                         <div class="mt-4">
                             <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.file_read_limits') }}</h3>
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_lines') }}</label>
                                     <input type="number" name="max_file_lines" min="50"
                                            value="{{ ce.get('max_file_lines', 500) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_output_chars') }}</label>
+                                    <input type="number" name="max_file_output_chars" min="1000"
+                                           value="{{ ce.get('max_file_output_chars', 50000) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 </div>
                                 <div>
@@ -309,6 +315,40 @@
                                                value="{{ sif.get('max_files_to_search', 100) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                         <p class="mt-1 text-xs text-gray-500">{{ _('strategy.fallback_max_files_desc') }}</p>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.search_max_file_bytes') }}</label>
+                                        <input type="number" name="sif_max_file_bytes" min="1"
+                                               value="{{ sif.get('max_file_bytes', 2097152) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.search_max_total_bytes') }}</label>
+                                        <input type="number" name="sif_max_total_scan_bytes" min="1"
+                                               value="{{ sif.get('max_total_scan_bytes', 16777216) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.search_max_matches_per_file') }}</label>
+                                        <input type="number" name="sif_max_matches_per_file" min="1"
+                                               value="{{ sif.get('max_matches_per_file', 20) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.search_max_output_chars') }}</label>
+                                        <input type="number" name="sif_max_output_chars" min="1"
+                                               value="{{ sif.get('max_output_chars', 50000) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.search_concurrency') }}</label>
+                                        <input type="number" name="sif_concurrency" min="1"
+                                               value="{{ sif.get('concurrency', 8) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                     </div>
                                 </div>
                             </div>

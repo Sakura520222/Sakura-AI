@@ -32,7 +32,6 @@ from backend.core.ai_protocol.errors import (
 )
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
-    ModelMetadata,
     ResolvedModel,
     UnifiedMessage,
     UnifiedRequest,
@@ -40,6 +39,10 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     images_from_mapping,
     strip_message_images,
+)
+from backend.core.ai_protocol.request_policy import (
+    filter_reasoning_params,
+    resolve_effective_request_policy,
 )
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
@@ -99,7 +102,7 @@ class _CallState:
 
 
 def _filter_params_by_capability(
-    metadata: ModelMetadata,
+    metadata: Any,
     *,
     temperature: float | None,
     top_p: float | None,
@@ -107,30 +110,15 @@ def _filter_params_by_capability(
     thinking: dict[str, Any] | None,
     effort: str | None,
 ) -> dict[str, Any]:
-    """按模型能力过滤推理参数 / Filter reasoning params by model capability."""
-    caps = metadata.capabilities
-    params = metadata.reasoning_params
-    result: dict[str, Any] = {}
-
-    def _pick(passed: Any, configured: Any, allowed: bool) -> Any:
-        if not allowed:
-            return None
-        return passed if passed is not None else configured
-
-    result["temperature"] = _pick(temperature, params.temperature, caps.temperature)
-    result["top_p"] = _pick(top_p, params.top_p, caps.top_p)
-    result["top_k"] = _pick(top_k, params.top_k, caps.top_k)
-    result["thinking"] = (
-        thinking
-        if (thinking is not None and caps.thinking)
-        else (params.thinking if caps.thinking else None)
+    """Compatibility alias for the shared effective-parameter resolver."""
+    return filter_reasoning_params(
+        metadata,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        thinking=thinking,
+        effort=effort,
     )
-    result["effort"] = (
-        effort
-        if (effort is not None and caps.effort)
-        else (params.effort if caps.effort else None)
-    )
-    return result
 
 
 def _reasoning_mode(value: Any, *, supported: bool) -> str:
@@ -247,6 +235,45 @@ def messages_from_legacy(
                 images=images_from_mapping(msg.get("images")),
             )
         )
+    return result
+
+
+def messages_to_legacy(
+    messages: list[UnifiedMessage],
+) -> list[dict[str, Any]]:
+    """UnifiedMessage → legacy dict without losing protocol fields.
+
+    This is the in-process inverse of :func:`messages_from_legacy`, not a wire
+    format.  Tool calls, tool identifiers, reasoning metadata, and images are
+    retained so applying compressed history cannot orphan a later tool result.
+    """
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        converted: dict[str, Any] = {
+            "role": message.role,
+            "content": message.content,
+        }
+        if message.tool_calls:
+            converted["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+        if message.tool_call_id is not None:
+            converted["tool_call_id"] = message.tool_call_id
+        if message.reasoning_content is not None:
+            converted["reasoning_content"] = message.reasoning_content
+        if message.name is not None:
+            converted["name"] = message.name
+        if message.images:
+            converted["images"] = [image.to_dict() for image in message.images]
+        result.append(converted)
     return result
 
 
@@ -453,6 +480,7 @@ class UnifiedAIClient:
         top_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        output_token_cap: int | None = None,
         thinking: dict[str, Any] | None = None,
         effort: str | None = None,
         timeout: float | None = None,
@@ -521,42 +549,6 @@ class UnifiedAIClient:
         logical_call_id = str(call_state.logical_call_factory())
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
-        compressed_once = False
-
-        # 主动压缩：请求发出前按候选模型上下文预算预检，避免长工具链超限。
-        # Proactive compression: check the budget before the first request so
-        # long tool loops never exceed the model context window.
-        if self._compressor is not None:
-            try:
-                (
-                    compressed_once,
-                    unified_messages,
-                ) = await self._compressor.maybe_compress(
-                    selected[0],
-                    unified_messages,
-                    tracker=None,
-                )
-            except Exception as exc:
-                logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
-                compressed_once = False
-            # 主动压缩成功后写入可观测性：创建 context_operation + 替换消息行，
-            # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
-            # Persist the replacement context so the observability timeline and
-            # conversation stream reflect the proactive compression.
-            if compressed_once and active_observer is not None:
-                record_replacement = getattr(
-                    active_observer, "record_context_replacement", None
-                )
-                if record_replacement is not None:
-                    try:
-                        await record_replacement(
-                            unified_messages,
-                            trigger_reason="threshold",
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "主动压缩可观测性记录失败（不影响审查）: {}", exc
-                        )
 
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
@@ -579,18 +571,6 @@ class UnifiedAIClient:
                 candidate.provider.id,
                 candidate.model.model_id,
             )
-            params = _filter_params_by_capability(
-                candidate.model,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                thinking=thinking,
-                effort=effort,
-            )
-            effective_max_tokens = (
-                max_tokens or candidate.model.reasoning_params.max_output_tokens
-            )
-
             # vision 门控：能力不含 vision 的候选剔除图片附件，正文中的
             # markdown 图片链接保持原样，模型仍可读取 URL / strip images
             # for non-vision candidates; markdown links remain in the text.
@@ -599,18 +579,117 @@ class UnifiedAIClient:
                 if candidate.model.capabilities.vision
                 else strip_message_images(unified_messages)
             )
+            # Compression budgets are candidate-specific.  In particular, a
+            # fallback model may need compression even when the primary model
+            # can carry the original history.
+            candidate_messages = unified_messages
+            winner_did_compress = False
+            if self._compressor is not None:
+                try:
+                    preflight_policy = resolve_effective_request_policy(
+                        candidate,
+                        request_messages,
+                        role=role,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        thinking=thinking,
+                        effort=effort,
+                        max_tokens=max_tokens,
+                        output_token_cap=output_token_cap,
+                        tools=unified_tools,
+                        clamp_to_context=False,
+                        stream=False,
+                    )
+                    compressor_kwargs = {
+                        "tracker": None,
+                        "effective_max_output_tokens": max(
+                            1, preflight_policy.max_output_tokens
+                        ),
+                        "safety_reserve_tokens": (
+                            preflight_policy.safety_reserve_tokens
+                        ),
+                    }
+                    if unified_tools:
+                        compressor_kwargs["tools"] = unified_tools
+                    did_compress, candidate_messages = (
+                        await self._compressor.maybe_compress(
+                            candidate,
+                            unified_messages,
+                            **compressor_kwargs,
+                        )
+                    )
+                    winner_did_compress = did_compress
+                    request_messages = (
+                        candidate_messages
+                        if candidate.model.capabilities.vision
+                        else strip_message_images(candidate_messages)
+                    )
+                    # Persist the replacement context so the observability
+                    # timeline and conversation stream reflect compression.
+                    if did_compress and active_observer is not None:
+                        record_replacement = getattr(
+                            active_observer, "record_context_replacement", None
+                        )
+                        if record_replacement is not None:
+                            try:
+                                await record_replacement(
+                                    candidate_messages,
+                                    trigger_reason="threshold",
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "主动压缩可观测性记录失败（不影响审查）: {}",
+                                    exc,
+                                )
+                except Exception as exc:
+                    logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
+            policy = resolve_effective_request_policy(
+                candidate,
+                request_messages,
+                role=role,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                thinking=thinking,
+                effort=effort,
+                max_tokens=max_tokens,
+                output_token_cap=output_token_cap,
+                tools=unified_tools,
+                stream=False,
+            )
+            if not policy.fits_context:
+                last_error = ContextOverflowError(
+                    "模型上下文不足以容纳输入、输出上限和安全预留",
+                    estimated_tokens=policy.estimated_input_tokens,
+                    model=candidate.model.model_id,
+                    provider=candidate.provider.id,
+                )
+                logger.warning(
+                    "候选模型上下文预算不足，尝试下一候选: role={} provider={} "
+                    "model={} estimated_input={} window={} output={} reserve={}",
+                    role,
+                    candidate.provider.id,
+                    candidate.model.model_id,
+                    policy.estimated_input_tokens,
+                    policy.context_window_tokens,
+                    policy.max_output_tokens,
+                    policy.safety_reserve_tokens,
+                )
+                continue
+            logger.info("AI effective request: {}", policy.safe_log_dict())
 
             request = UnifiedRequest(
                 model=candidate.model.model_id,
                 messages=list(request_messages),
-                max_tokens=effective_max_tokens,
+                max_tokens=policy.max_output_tokens,
                 tools=unified_tools,
                 tool_choice=tool_choice,
-                temperature=params["temperature"],
-                top_p=params["top_p"],
-                top_k=params["top_k"],
-                thinking=params["thinking"],
-                effort=params["effort"],
+                temperature=policy.temperature,
+                top_p=policy.top_p,
+                top_k=policy.top_k,
+                thinking=policy.thinking,
+                effort=policy.effort,
                 stream=False,
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
@@ -646,11 +725,14 @@ class UnifiedAIClient:
                         "retry": 0,
                     }
                 ]
-                response.meta.compressed = compressed_once
+                response.meta.compressed = winner_did_compress
+                if winner_did_compress:
+                    response.meta.effective_messages = candidate_messages
                 response.meta.context_window_tokens = (
                     candidate.model.context_window_tokens
                 )
                 response.meta.served_capabilities = candidate.model.capabilities
+                response.meta.effective_request = policy.safe_log_dict()
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
                 self._last_successful[role] = candidate.sticky_identity
                 logger.info(
@@ -719,7 +801,7 @@ class UnifiedAIClient:
                     try:
                         recovered = await self._attempt_compress_recovery(
                             candidate=candidate,
-                            messages=unified_messages,
+                            messages=candidate_messages,
                             request=request,
                             remaining=selected[idx + 1 :],
                             attempt_chain=attempt_chain,
@@ -809,6 +891,7 @@ class UnifiedAIClient:
         top_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        output_token_cap: int | None = None,
         thinking: dict[str, Any] | None = None,
         effort: str | None = None,
         timeout: float | None = None,
@@ -880,28 +963,86 @@ class UnifiedAIClient:
                 budget_exhausted = True
                 break
             fallback_from_id = previous_attempt_id
-            params = _filter_params_by_capability(
-                candidate.model,
+            request_messages = (
+                unified_messages
+                if candidate.model.capabilities.vision
+                else strip_message_images(unified_messages)
+            )
+            # Streaming fallback candidates can have a smaller context window
+            # than the primary candidate; compress against each actual model.
+            candidate_messages = unified_messages
+            if self._compressor is not None:
+                try:
+                    preflight_policy = resolve_effective_request_policy(
+                        candidate,
+                        request_messages,
+                        role=role,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        thinking=thinking,
+                        effort=effort,
+                        max_tokens=max_tokens,
+                        output_token_cap=output_token_cap,
+                        clamp_to_context=False,
+                        stream=True,
+                    )
+                    _compressed, candidate_messages = (
+                        await self._compressor.maybe_compress(
+                            candidate,
+                            unified_messages,
+                            tracker=None,
+                            effective_max_output_tokens=max(
+                                1, preflight_policy.max_output_tokens
+                            ),
+                            safety_reserve_tokens=(
+                                preflight_policy.safety_reserve_tokens
+                            ),
+                        )
+                    )
+                    request_messages = (
+                        candidate_messages
+                        if candidate.model.capabilities.vision
+                        else strip_message_images(candidate_messages)
+                    )
+                except Exception as exc:
+                    logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
+            policy = resolve_effective_request_policy(
+                candidate,
+                request_messages,
+                role=role,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
                 thinking=thinking,
                 effort=effort,
+                max_tokens=max_tokens,
+                output_token_cap=output_token_cap,
+                stream=True,
             )
+            if not policy.fits_context:
+                last_error = ContextOverflowError(
+                    "模型上下文不足以容纳输入、输出上限和安全预留",
+                    estimated_tokens=policy.estimated_input_tokens,
+                    model=candidate.model.model_id,
+                    provider=candidate.provider.id,
+                )
+                logger.warning(
+                    "流式候选模型上下文预算不足，尝试下一候选: role={} model={}",
+                    role,
+                    candidate.model.model_id,
+                )
+                continue
+            logger.info("AI effective request: {}", policy.safe_log_dict())
             request = UnifiedRequest(
                 model=candidate.model.model_id,
-                messages=(
-                    list(unified_messages)
-                    if candidate.model.capabilities.vision
-                    else list(strip_message_images(unified_messages))
-                ),
-                max_tokens=max_tokens
-                or candidate.model.reasoning_params.max_output_tokens,
-                temperature=params["temperature"],
-                top_p=params["top_p"],
-                top_k=params["top_k"],
-                thinking=params["thinking"],
-                effort=params["effort"],
+                messages=list(request_messages),
+                max_tokens=policy.max_output_tokens,
+                temperature=policy.temperature,
+                top_p=policy.top_p,
+                top_k=policy.top_k,
+                thinking=policy.thinking,
+                effort=policy.effort,
                 stream=True,
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
@@ -1101,6 +1242,9 @@ class UnifiedAIClient:
                     if exc.is_fallback_only:
                         # 当前候选的认证/权限/模型错误不重试，直接尝试下一候选。
                         break
+                    if not exc.is_retryable:
+                        # BAD_REQUEST / REFUSAL 对相同 payload 是确定性的。
+                        break
                     if retry_index < self.fallback_config.max_retries:
                         try:
                             delay = self._calculate_delay(retry_index)
@@ -1246,6 +1390,8 @@ class UnifiedAIClient:
                 # 认证、权限和模型不存在不是当前候选的瞬时故障，直接交给
                 # 上层切换下一个候选 / fail over immediately for this candidate.
                 if exc.is_fallback_only:
+                    raise
+                if not exc.is_retryable:
                     raise
                 if attempt < cfg.max_retries:
                     delay = self._calculate_delay(attempt)
@@ -1403,14 +1549,19 @@ class UnifiedAIClient:
         Compress then retry the same candidate; if still overflowing, return
         None so the caller falls back to the next candidate.
         """
-        if self._compressor is None:
+        if self._compressor is None or not getattr(self._compressor, "enabled", True):
             return None
+        compressor_kwargs = {
+            "system": request.system,
+            "max_output_tokens": request.max_tokens,
+        }
+        if request.tools:
+            compressor_kwargs["tools"] = request.tools
         try:
             compressed = await self._compressor.compress_for_candidate(
                 candidate=candidate,
                 messages=messages,
-                system=request.system,
-                max_output_tokens=request.max_tokens,
+                **compressor_kwargs,
             )
         except Exception as exc:
             logger.warning("压缩恢复失败: {}", exc)
@@ -1464,6 +1615,8 @@ class UnifiedAIClient:
                 call_state=call_state,
                 reasoning_snapshot=reasoning_snapshot,
             )
+            response.meta.compressed = True
+            response.meta.effective_messages = compressed
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(
                 AttemptRecord(

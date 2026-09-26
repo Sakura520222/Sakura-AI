@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +19,14 @@ from sakura_ai_updater.jobs import (
     UpdaterMaintenanceError,
 )
 from sakura_ai_updater.registry import RegistryClient, RegistryTargetError
-from sakura_ai_updater.state import load_state, reconcile_interrupted_job
+from sakura_ai_updater.state import (
+    JobState,
+    StateCorruptionError,
+    UpdateStateStore,
+    load_state,
+    reconcile_interrupted_job,
+    save_state,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -312,6 +320,141 @@ async def test_update_success_clears_active_gate(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_cleanup_runs_only_after_verified_success_and_is_best_effort(
+    tmp_path, cleanup_fails
+):
+    path = str(tmp_path / "state.json")
+
+    class _CleanupAdapter(_Adapter):
+        async def cleanup_unused_sakura_images(self, current_images):
+            job = load_state(path).current_job
+            assert job is not None
+            assert job.state == "success"
+            assert job.deployment_verified is True
+            assert job.rollback_allowed is False
+            assert load_state(path).active_job_id == job.job_id
+            assert current_images == (
+                job.target_image, job.target_sandboxd_image, job.target_runner_image
+            )
+            self.calls.append(("cleanup", current_images))
+            if cleanup_fails:
+                raise RuntimeError("Docker unavailable")
+            return ["sha256:old (ghcr.io/sakura520222/sakura-ai:v1)"], ["image in use"]
+
+    adapter = _CleanupAdapter()
+    orchestrator = JobOrchestrator(
+        path, adapter, _Release(), _Deployment(), disk_space_threshold=1
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    store = load_state(path)
+    assert store.current_job and store.current_job.state == "success"
+    assert store.active_job_id is None
+    assert adapter.calls[-1][0] == "cleanup"
+    logs = orchestrator.get_job_logs(job_id)["logs"]
+    assert logs[-1]["level"] == "warning"
+    assert ("Docker unavailable" if cleanup_fails else "image in use") in logs[-1]["msg"]
+    if not cleanup_fails:
+        assert any("removed unused Sakura image: sha256:old" in log["msg"] for log in logs)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_destructive_job_gate_closed(tmp_path):
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    class _BlockingCleanupAdapter(_Adapter):
+        async def cleanup_unused_sakura_images(self, current_images):
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return [], []
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"), _BlockingCleanupAdapter(), _Release(),
+        _Deployment(), disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await cleanup_started.wait()
+
+    with pytest.raises(UpdateInProgressError) as caught:
+        await orchestrator.submit_update("3.1.0")
+    assert caught.value.job_id == job_id
+
+    release_cleanup.set()
+    await orchestrator.wait_for_job(job_id)
+    assert load_state(orchestrator.state_path).active_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_mismatched_durable_gate_rejects_update_and_lifecycle_stop(tmp_path):
+    path = str(tmp_path / "state.json")
+    save_state(
+        path,
+        UpdateStateStore(
+            active_job_id="upd_other",
+            current_job=JobState(job_id="upd_running", state="downloading"),
+        ),
+    )
+    orchestrator = JobOrchestrator(
+        path, _Adapter(), _Release(), _Deployment(), disk_space_threshold=1
+    )
+
+    with pytest.raises(StateCorruptionError, match="active_job_id.*current_job.job_id"):
+        await orchestrator.submit_update("3.1.0")
+    with pytest.raises(StateCorruptionError, match="active_job_id.*current_job.job_id"):
+        await orchestrator.prepare_stop()
+    assert load_state(path).active_job_id == "upd_other"
+    assert load_state(path).current_job.job_id == "upd_running"
+
+
+@pytest.mark.asyncio
+async def test_active_gate_clear_failure_does_not_rollback_committed_update(
+    tmp_path, monkeypatch
+):
+    path = str(tmp_path / "state.json")
+    adapter = _Adapter()
+    orchestrator = JobOrchestrator(
+        path, adapter, _Release(), _Deployment(), disk_space_threshold=1
+    )
+
+    def fail_gate_clear(job):
+        raise OSError("state fsync failed")
+
+    monkeypatch.setattr(orchestrator, "_clear_active_gate", fail_gate_clear)
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = orchestrator.get_job(job_id)
+    assert job is not None
+    assert job.state == "success"
+    assert job.rollback_attempted is False
+    assert not any(call[0] == "rollback" for call in adapter.calls)
+    logs = orchestrator.get_job_logs(job_id)["logs"]
+    assert logs[-1]["level"] == "warning"
+    assert "active update gate cleanup failed: state fsync failed" in logs[-1]["msg"]
+
+
+@pytest.mark.asyncio
+async def test_failed_health_check_never_attempts_image_cleanup(tmp_path):
+    class _FailedAdapter(_Adapter):
+        async def health_check(self, version):
+            raise RuntimeError("unhealthy deployment")
+
+        async def cleanup_unused_sakura_images(self, current_images):
+            raise AssertionError("cleanup before successful health verification")
+
+    orchestrator = JobOrchestrator(
+        str(tmp_path / "state.json"), _FailedAdapter(), _Release(), _Deployment(),
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+    assert orchestrator.get_job(job_id).state == "failed"
+
+
+@pytest.mark.asyncio
 async def test_prepare_stop_atomically_blocks_submit_finishing_preflight(tmp_path):
     orchestrator = JobOrchestrator(
         str(tmp_path / "state.json"),
@@ -529,3 +672,75 @@ async def test_health_failure_rolls_back_web_and_sandbox_transaction(tmp_path):
         {"version": "3.1.0", "channel": "stable"},
         "3.0.0",
     ]
+
+
+@pytest.mark.asyncio
+async def test_update_heals_missing_baseline_images_before_activation(tmp_path):
+    class _HealAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.ensured = []
+
+        async def ensure_image_present(self, image_ref, component_name="image"):
+            self.ensured.append((image_ref, component_name))
+
+    path = str(tmp_path / "state.json")
+    adapter = _HealAdapter()
+    deployment = _Deployment()
+    orchestrator = JobOrchestrator(
+        path,
+        adapter,
+        _Release(),
+        deployment,
+        disk_space_threshold=1,
+    )
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "success"
+    # Verify baseline images were ensured present
+    ensured_names = [item[1] for item in adapter.ensured]
+    assert "baseline web" in ensured_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_ref", ["sandboxd", "runner"])
+async def test_update_ensures_repaired_sandbox_rollback_pair_before_activation(
+    tmp_path, missing_ref,
+):
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "d" * 64
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "e" * 64
+
+    class _PartialDeployment(_Deployment):
+        async def sandbox_image_refs(self):
+            return (None if missing_ref == "sandboxd" else sandboxd,
+                    None if missing_ref == "runner" else runner)
+
+    class _RepairAdapter(_Adapter):
+        async def capture_snapshot(self, *, anchor_image=None):
+            return SimpleNamespace(values={
+                "SAKURA_SANDBOXD_IMAGE_DIGEST": sandboxd,
+                "SAKURA_AGENT_RUNNER_IMAGE_DIGEST": runner,
+            })
+
+        async def ensure_image_present(self, image_ref, component_name="image"):
+            self.calls.append(("ensure", image_ref, component_name))
+
+        async def activate(self, image, sandboxd_image, runner_image):
+            assert ("ensure", sandboxd, "baseline sandboxd") in self.calls
+            assert ("ensure", runner, "baseline agent-runner") in self.calls
+            self.calls.append(("activate", image))
+
+    path = str(tmp_path / "state.json")
+    adapter = _RepairAdapter()
+    orchestrator = JobOrchestrator(path, adapter, _Release(), _PartialDeployment(), disk_space_threshold=1)
+    job_id = await orchestrator.submit_update("3.1.0")
+    await orchestrator.wait_for_job(job_id)
+
+    job = load_state(path).current_job
+    assert job is not None
+    assert job.state == "success"
+    assert ("ensure", sandboxd, "baseline sandboxd") in adapter.calls
+    assert ("ensure", runner, "baseline agent-runner") in adapter.calls

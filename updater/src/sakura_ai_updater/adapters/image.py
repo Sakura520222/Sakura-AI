@@ -888,9 +888,49 @@ class ImageAdapter:
         """
 
         await asyncio.to_thread(restore_deployment_snapshot, snapshot)
-        sandboxd_ref, _ = self._validate_snapshot_sandbox_refs(snapshot)
+        sandboxd_ref, runner_ref = self._validate_snapshot_sandbox_refs(snapshot)
         if sandboxd_ref is not None:
-            await self._run_sandboxd_reinstall()
+            try:
+                await self._run_sandboxd_reinstall()
+            except ImageCommandError as exc:
+                original = exc.stderr.strip() or str(exc)
+                recovered = False
+                recovery_errors: list[str] = []
+                for component, image_ref in (
+                    ("agent-runner", runner_ref),
+                    ("sandboxd", sandboxd_ref),
+                ):
+                    if image_ref is None:
+                        continue
+                    try:
+                        recovered = (
+                            await self.ensure_image_present(image_ref, component)
+                            or recovered
+                        )
+                    except ImageAdapterError as recovery_exc:
+                        recovery_errors.append(str(recovery_exc))
+                if recovery_errors:
+                    raise ImageAdapterError(
+                        "sandboxd rollback reinstall failed: "
+                        f"{original}; image recovery failed: {'; '.join(recovery_errors)}"
+                    ) from exc
+                if not recovered:
+                    raise ImageAdapterError(
+                        "sandboxd rollback reinstall failed with baseline images present: "
+                        f"{original}"
+                    ) from exc
+                try:
+                    await self._run_sandboxd_reinstall()
+                except Exception as retry_exc:
+                    retry_detail = (
+                        retry_exc.stderr.strip() or str(retry_exc)
+                        if isinstance(retry_exc, ImageCommandError)
+                        else str(retry_exc)
+                    )
+                    raise ImageAdapterError(
+                        "sandboxd rollback reinstall failed after image recovery: "
+                        f"initial: {original}; retry: {retry_detail}"
+                    ) from retry_exc
         elif remove_new_sandbox:
             await self._run_sandboxd_uninstall_with_retry()
         await self._run_compose_up()
@@ -992,6 +1032,160 @@ class ImageAdapter:
         """Download an image without changing the authoritative env file."""
 
         await self._run_command(["docker", "pull", target_image])
+
+    async def cleanup_unused_sakura_images(
+        self, current_images: tuple[str, str, str]
+    ) -> tuple[list[str], list[str]]:
+        """Remove only unused, exclusively official images after a verified update.
+
+        Bound the complete inventory-and-removal operation by the adapter's
+        command timeout.  A deadline around the whole operation is necessary
+        because this cleanup can issue one metadata command per local image.
+
+        Docker's non-forced removal is the final guard against containers
+        created after the inventory was taken. Never use a daemon-wide prune.
+        """
+        try:
+            async with asyncio.timeout(self.command_timeout):
+                return await self._cleanup_unused_sakura_images(current_images)
+        except TimeoutError as exc:
+            raise ImageCommandError(
+                "unused Sakura image cleanup timed out",
+                error_code="cleanup_timeout",
+            ) from exc
+
+    async def _cleanup_unused_sakura_images(
+        self, current_images: tuple[str, str, str]
+    ) -> tuple[list[str], list[str]]:
+        from sakura_ai_updater.contract import REPOSITORIES
+
+        repositories = tuple(REPOSITORIES.values())
+
+        def is_official_ref(ref: str) -> bool:
+            return any(
+                ref.startswith((repo + ":", repo + "@")) for repo in repositories
+            )
+
+        if len(current_images) != len(repositories) or any(
+            not isinstance(ref, str)
+            or not re.fullmatch(
+                re.escape(repo) + r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?@sha256:[0-9a-f]{64}",
+                ref,
+            )
+            for ref, repo in zip(current_images, repositories, strict=True)
+        ):
+            raise ImageAdapterError("complete official deployment required for image cleanup")
+
+        async def metadata(ref: str) -> dict[str, Any]:
+            stdout, _ = await self._run_command(
+                ["docker", "image", "inspect", "--format", "{{json .}}", ref]
+            )
+            value = json.loads(stdout)
+            if not isinstance(value, dict) or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(value.get("Id", ""))
+            ):
+                raise ImageAdapterError("invalid Docker image metadata")
+            return value
+
+        protected_ids = {(await metadata(ref))["Id"] for ref in current_images}
+        containers, _ = await self._run_command(
+            ["docker", "container", "ls", "--all", "--quiet", "--no-trunc"]
+        )
+        container_ids = containers.split()
+        in_use: set[str] = set()
+        if container_ids:
+            stdout, _ = await self._run_command(
+                ["docker", "container", "inspect", "--format", "{{.Image}}", *container_ids]
+            )
+            in_use = set(stdout.split())
+            if len(stdout.split()) != len(container_ids) or any(
+                not re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in in_use
+            ):
+                raise ImageAdapterError("invalid Docker container image inventory")
+
+        stdout, _ = await self._run_command(
+            ["docker", "image", "ls", "--all", "--no-trunc", "--quiet"]
+        )
+        candidates = set(stdout.split())
+        if any(not re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in candidates):
+            raise ImageAdapterError("invalid Docker image inventory")
+
+        removed: list[str] = []
+        warnings: list[str] = []
+        for image_id in sorted(candidates - protected_ids - in_use):
+            try:
+                image = await metadata(image_id)
+                tags = image.get("RepoTags") or []
+                digests = image.get("RepoDigests") or []
+                if image["Id"] != image_id or not isinstance(tags, list) or not isinstance(digests, list):
+                    raise ImageAdapterError("inconsistent Docker image metadata")
+                refs = tags + digests
+                if not refs or any(not isinstance(ref, str) for ref in refs):
+                    continue  # Unknown dangling layers are not Sakura images.
+                if any(not is_official_ref(ref) for ref in refs):
+                    continue  # Shared with an unrelated repository: keep the whole image.
+                # Remove validated references, not a tagged image ID: a tag
+                # could have been replaced by an unrelated repository since
+                # the initial inventory. Docker still guards in-use images.
+                if tags:
+                    for tag in tags:
+                        if (await metadata(tag))["Id"] != image_id:
+                            raise ImageAdapterError("image tag changed during cleanup")
+                        await self._run_command(["docker", "image", "rm", "--no-prune", tag])
+                try:
+                    remaining = await metadata(image_id)
+                except ImageCommandError as exc:
+                    if not tags or "no such image" not in exc.stderr.lower():
+                        raise
+                else:
+                    remaining_tags = remaining.get("RepoTags") or []
+                    remaining_digests = remaining.get("RepoDigests") or []
+                    if (
+                        remaining["Id"] != image_id
+                        or not isinstance(remaining_tags, list)
+                        or not isinstance(remaining_digests, list)
+                        or remaining_tags
+                        or any(
+                            not isinstance(ref, str) or not is_official_ref(ref)
+                            for ref in remaining_digests
+                        )
+                    ):
+                        raise ImageAdapterError(
+                            "image references changed during cleanup"
+                        )
+                    await self._run_command(
+                        ["docker", "image", "rm", "--no-prune", image_id]
+                    )
+                removed.append(f"{image_id} ({', '.join(refs)})")
+            except (ImageAdapterError, ValueError, TypeError) as exc:
+                warnings.append(f"{image_id}: {exc}")
+        return removed, warnings
+
+    async def ensure_image_present(self, image_ref: str, component_name: str = "image") -> bool:
+        """Ensure an image is present locally; pull from registry if missing."""
+        if not image_ref:
+            return False
+        try:
+            await self._run_command(["docker", "image", "inspect", image_ref])
+            return False
+        except ImageCommandError:
+            pass
+
+        try:
+            await self.pull(image_ref)
+        except ImageCommandError as exc:
+            detail = exc.stderr.strip() or str(exc)
+            raise ImageAdapterError(
+                f"missing {component_name} image {image_ref!r} could not be pulled: {detail}"
+            ) from exc
+
+        try:
+            await self._run_command(["docker", "image", "inspect", image_ref])
+        except ImageCommandError as exc:
+            raise ImageAdapterError(
+                f"pulled {component_name} image {image_ref!r} is still missing from docker daemon: {exc}"
+            ) from exc
+        return True
 
     async def verify_pulled_deployment(self, web, sandboxd, runner, *, version, channel, revision=None):
         """Prove all local immutable digests and build labels before committing env."""
@@ -1121,7 +1315,18 @@ class ImageAdapter:
                 # command can create the managed sidecar and then fail its
                 # readiness probe.  Legacy rollback must remove that sidecar.
                 self._new_sandbox_install_attempted = True
-                await self._run_sandboxd_reinstall()
+                try:
+                    await self._run_sandboxd_reinstall()
+                except ImageCommandError as exc:
+                    detail = exc.stderr.strip() if exc.stderr else str(exc)
+                    raise ImageCommandError(
+                        f"sandboxd reinstall failed: {detail or exc}",
+                        argv=exc.argv,
+                        returncode=exc.returncode,
+                        stdout=exc.stdout,
+                        stderr=exc.stderr,
+                        error_code=exc.error_code,
+                    ) from exc
             await self._run_compose_up()
         except Exception:
             try:

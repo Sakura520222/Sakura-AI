@@ -2,7 +2,7 @@
 
 import os
 
-__version__ = "3.2.2"
+__version__ = "3.2.3"
 
 # python-telegram-bot ≥22.2 正把时间类属性从 int 迁往 datetime.timedelta
 # （v23 起的默认），旧形态每次访问都会发出 PTBDeprecationWarning。这里在包

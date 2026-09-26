@@ -20,7 +20,7 @@ import random
 from datetime import datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from backend.core.config import get_dynamic_config
 from backend.core.time_service import now_utc, parse_rfc3339
@@ -161,6 +161,7 @@ def _repo_to_dict(repo: StarAidRepository, *, score: float | None = None) -> dic
         "primary_language": repo.primary_language,
         "stargazers_count": repo.stargazers_count or 0,
         "pushed_at": repo.pushed_at,
+        "created_at": repo.created_at,
         "ai_summary": repo.ai_summary,
         "ai_summary_status": repo.ai_summary_status,
         "ai_summary_language": repo.ai_summary_language,
@@ -175,7 +176,13 @@ def _repo_to_dict(repo: StarAidRepository, *, score: float | None = None) -> dic
 # ========== 页面状态 ==========
 
 
-async def get_page_state(session, user: dict) -> dict:
+async def get_page_state(
+    session,
+    user: dict,
+    *,
+    admin_repository_query: dict | None = None,
+    admin_member_query: dict | None = None,
+) -> dict:
     """聚合仓库互助页面所需的全部状态。"""
     user_id = int(user["user_id"])
     role = user.get("role", "user")
@@ -223,10 +230,20 @@ async def get_page_state(session, user: dict) -> dict:
 
     # 管理员可见的成员/仓库列表
     admin_members = None
+    admin_member_page = None
     admin_repositories = None
+    admin_repository_page = None
     if role in ("admin", "super_admin"):
-        admin_members = await get_admin_members(session)
-        admin_repositories = await get_admin_repositories(session)
+        admin_member_page = await get_admin_member_page(
+            session, **(admin_member_query or {})
+        )
+        admin_members = admin_member_page["items"]
+        admin_repository_page = await get_admin_repository_page(
+            session, **(admin_repository_query or {})
+        )
+        # Keep the legacy state key for callers/templates that consume it, but
+        # never load the entire repository table for the WebUI page.
+        admin_repositories = admin_repository_page["items"]
 
     return {
         "feature_enabled": feature_enabled,
@@ -241,7 +258,9 @@ async def get_page_state(session, user: dict) -> dict:
         "displayed_repos": displayed_dicts,
         "public_repos": public_repos,
         "admin_members": admin_members,
+        "admin_member_page": admin_member_page,
         "admin_repositories": admin_repositories,
+        "admin_repository_page": admin_repository_page,
     }
 
 
@@ -281,6 +300,85 @@ async def get_admin_members(session) -> list[dict]:
     ]
 
 
+_ADMIN_MEMBER_STATUSES = frozenset(
+    {"all", "active", "paused", "banned", "reauth_required"}
+)
+
+
+async def get_admin_member_page(
+    session,
+    *,
+    member_q: str = "",
+    member_status: str = "all",
+    member_page: int = 1,
+    member_page_size: int = 20,
+) -> dict:
+    """Return one filtered member page without loading the entire member table."""
+    member_q = (member_q or "").strip()[:100]
+    member_status = (
+        member_status if member_status in _ADMIN_MEMBER_STATUSES else "all"
+    )
+    member_page = max(1, int(member_page))
+    member_page_size = min(100, max(1, int(member_page_size)))
+    filters = [StarAidMember.status != MEMBER_STATUS_LEFT]
+    if member_q:
+        # A username search treats SQL LIKE wildcards as literal characters.
+        escape = "\\"
+        escaped = (
+            member_q.replace(escape, escape * 2)
+            .replace("%", escape + "%")
+            .replace("_", escape + "_")
+        )
+        filters.append(
+            StarAidMember.github_username.ilike(f"%{escaped}%", escape=escape)
+        )
+    if member_status != "all":
+        filters.append(StarAidMember.status == member_status)
+    count = await session.execute(
+        select(func.count()).select_from(StarAidMember).where(*filters)
+    )
+    total = int(count.scalar_one())
+    pages = max(1, (total + member_page_size - 1) // member_page_size)
+    member_page = min(member_page, pages)
+    if member_q or member_status != "all":
+        unfiltered = await session.execute(
+            select(func.count()).select_from(StarAidMember).where(
+                StarAidMember.status != MEMBER_STATUS_LEFT
+            )
+        )
+        all_total = int(unfiltered.scalar_one())
+    else:
+        all_total = total
+    result = await session.execute(
+        select(StarAidMember)
+        .where(*filters)
+        .order_by(
+            StarAidMember.status, StarAidMember.joined_at.desc(), StarAidMember.id
+        )
+        .offset((member_page - 1) * member_page_size)
+        .limit(member_page_size)
+    )
+    return {
+        "items": [
+            {
+                "user_id": m.user_id,
+                "github_username": m.github_username,
+                "status": m.status,
+                "daily_star_used": m.daily_star_used,
+                "daily_star_limit": m.daily_star_limit,
+            }
+            for m in result.scalars().all()
+        ],
+        "total": total,
+        "all_total": all_total,
+        "pages": pages,
+        "page": member_page,
+        "page_size": member_page_size,
+        "q": member_q,
+        "status": member_status,
+    }
+
+
 async def get_admin_repositories(session) -> list[dict]:
     """管理员视角的仓库列表（含已禁用仓库）。"""
     result = await session.execute(
@@ -290,6 +388,156 @@ async def get_admin_repositories(session) -> list[dict]:
         )
     )
     return [_repo_to_dict(repo) for repo in result.scalars().all()]
+
+
+_ADMIN_REPOSITORY_STATUSES = frozenset(
+    {"all", "displayed", "not_displayed", "disabled"}
+)
+_ADMIN_REPOSITORY_SORT_COLUMNS = {
+    "name": StarAidRepository.full_name,
+    "stars": StarAidRepository.stargazers_count,
+    "pushed_at": StarAidRepository.pushed_at,
+    "created_at": StarAidRepository.created_at,
+}
+_ADMIN_REPOSITORY_ORDERS = frozenset({"asc", "desc"})
+_ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE = 20
+_ADMIN_REPOSITORY_MAX_PAGE_SIZE = 100
+
+
+def _normalize_admin_repository_query(
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> dict:
+    """Normalize administrator repository-list query input.
+
+    The values are used only to choose from fixed SQLAlchemy columns and
+    predicates.  Request values are never interpolated into SQL.
+    """
+    normalized_status = status if status in _ADMIN_REPOSITORY_STATUSES else "all"
+    normalized_sort = sort if sort in _ADMIN_REPOSITORY_SORT_COLUMNS else "stars"
+    normalized_order = order if order in _ADMIN_REPOSITORY_ORDERS else "desc"
+    try:
+        normalized_page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        normalized_page = 1
+    try:
+        normalized_page_size = int(page_size or _ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE)
+    except (TypeError, ValueError):
+        normalized_page_size = _ADMIN_REPOSITORY_DEFAULT_PAGE_SIZE
+
+    return {
+        "q": (q or "").strip()[:255],
+        "status": normalized_status,
+        "sort": normalized_sort,
+        "order": normalized_order,
+        "page": normalized_page,
+        "page_size": min(
+            _ADMIN_REPOSITORY_MAX_PAGE_SIZE,
+            max(1, normalized_page_size),
+        ),
+    }
+
+
+def _admin_repository_filters(query: dict) -> list:
+    filters = []
+    if query["q"]:
+        escape = "\\"
+        escaped = (
+            query["q"].replace(escape, escape * 2)
+            .replace("%", escape + "%")
+            .replace("_", escape + "_")
+        )
+        pattern = f"%{escaped}%"
+        filters.append(
+            or_(
+                StarAidRepository.full_name.ilike(pattern, escape=escape),
+                StarAidRepository.owner_login.ilike(pattern, escape=escape),
+                StarAidRepository.repo_name.ilike(pattern, escape=escape),
+            )
+        )
+    if query["status"] == "displayed":
+        filters.extend(
+            (
+                StarAidRepository.is_displayed.is_(True),
+                StarAidRepository.disabled_by_admin.is_(False),
+            )
+        )
+    elif query["status"] == "not_displayed":
+        filters.extend(
+            (
+                StarAidRepository.is_displayed.is_(False),
+                StarAidRepository.disabled_by_admin.is_(False),
+            )
+        )
+    elif query["status"] == "disabled":
+        filters.append(StarAidRepository.disabled_by_admin.is_(True))
+    return filters
+
+
+async def get_admin_repository_page(
+    session,
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> dict:
+    """Return one filtered, sorted administrator repository page.
+
+    This query is deliberately separate from :func:`get_admin_repositories`,
+    which remains available for existing non-WebUI callers that truly require
+    the full list.
+    """
+    query = _normalize_admin_repository_query(
+        q=q,
+        status=status,
+        sort=sort,
+        order=order,
+        page=page,
+        page_size=page_size,
+    )
+    filters = _admin_repository_filters(query)
+    total_result = await session.execute(
+        select(func.count()).select_from(StarAidRepository).where(*filters)
+    )
+    total = int(total_result.scalar_one())
+    pages = max(1, (total + query["page_size"] - 1) // query["page_size"])
+    query["page"] = min(query["page"], pages)
+
+    sort_column = _ADMIN_REPOSITORY_SORT_COLUMNS[query["sort"]]
+    sort_expression = (
+        sort_column.asc()
+        if query["order"] == "asc"
+        else sort_column.desc()
+    )
+    # Keep NULL timestamps after actual timestamps on engines that otherwise
+    # disagree about NULL ordering.  The primary-key tie-breaker keeps paging
+    # stable while records are added concurrently.
+    ordering = []
+    if query["sort"] == "pushed_at":
+        ordering.append(sort_column.is_(None).asc())
+    ordering.extend((sort_expression, StarAidRepository.id.asc()))
+
+    result = await session.execute(
+        select(StarAidRepository)
+        .where(*filters)
+        .order_by(*ordering)
+        .offset((query["page"] - 1) * query["page_size"])
+        .limit(query["page_size"])
+    )
+    return {
+        **query,
+        "items": [_repo_to_dict(repo) for repo in result.scalars().all()],
+        "total": total,
+        "pages": pages,
+    }
 
 
 # ========== 仓库同步与选择 ==========
@@ -302,15 +550,29 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
         {"success": bool, "synced": int, "message": str}
     """
     user_id = int(user_id)
-    token, result = await gh.get_effective_access_token(session, user_id)
+    token, token_result = await gh.get_effective_access_token(session, user_id)
+    # Finish any token rotation before network pagination and repository sync.
+    await session.commit()
     if token is None:
         return {
             "success": False,
             "synced": 0,
-            "message": "reauth_required" if result.reauth_required else "no_token",
+            "message": (
+                "reauth_required" if token_result.reauth_required else "no_token"
+            ),
         }
 
-    repos = await gh.list_user_public_repositories(token)
+    repo_list_res = await gh.list_user_public_repositories(token)
+    # 兼容处理：支持 RepositoryListResult 对象或原始 list（如测试 mock）
+    if isinstance(repo_list_res, list):
+        repos = repo_list_res
+        is_complete = True
+        is_success = True
+    else:
+        repos = repo_list_res.repositories
+        is_complete = repo_list_res.complete
+        is_success = repo_list_res.success
+
     synced_repo_ids: set[int] = set()
     synced = 0
     for r in repos:
@@ -388,26 +650,49 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
 
     await session.flush()
 
-    # 清理：该 owner 本次同步缺失的仓库（改为 private/删除/失权）移出展示池，
-    # 避免页面和调度器继续曝光 stale 仓库。
-    owner_result = await session.execute(
-        select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
-    )
+    # 清理规则（Fail-safe）：只有在拉取完全成功且未被截断（is_success and is_complete）时，
+    # 才将缺失的仓库标记为失效（stale cleanup）。如果第一页或中间页失败，绝不清空现有展示仓库。
     hidden = 0
-    for repo in owner_result.scalars().all():
-        still_visible = repo.repo_id in synced_repo_ids
-        if not still_visible and repo.is_displayed:
-            repo.is_displayed = False
-            repo.is_public = False
-            hidden += 1
-    await session.flush()
-    logger.info(
-        "star_aid repos synced: user_id={}, count={}, hidden={}",
-        user_id,
-        synced,
-        hidden,
-    )
-    return {"success": True, "synced": synced, "message": "ok"}
+    if is_success and is_complete:
+        owner_result = await session.execute(
+            select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
+        )
+        for repo in owner_result.scalars().all():
+            still_visible = repo.repo_id in synced_repo_ids
+            if not still_visible and repo.is_displayed:
+                repo.is_displayed = False
+                repo.is_public = False
+                hidden += 1
+        await session.flush()
+        logger.info(
+            "star_aid repos sync complete: user_id={}, count={}, hidden={}",
+            user_id,
+            synced,
+            hidden,
+        )
+        return {"success": True, "synced": synced, "message": "ok"}
+    else:
+        logger.warning(
+            "star_aid repos sync partial/failed: user_id={}, count={}, complete={}, cleanup_skipped=True",
+            user_id,
+            synced,
+            is_complete,
+        )
+        err_msg = getattr(repo_list_res, "error_code", None) or "sync_incomplete"
+        if err_msg == "bad_credentials":
+            expected_encrypted_access_token = getattr(
+                token_result,
+                "credential_encrypted_access_token",
+                None,
+            )
+            if expected_encrypted_access_token is not None:
+                marked = await gh.mark_reauth_required(
+                    session,
+                    user_id,
+                    expected_encrypted_access_token=expected_encrypted_access_token,
+                )
+                err_msg = "reauth_required" if marked else "credential_replaced"
+        return {"success": False, "synced": synced, "message": err_msg}
 
 
 def _parse_github_timestamp(raw) -> datetime | None:
@@ -471,9 +756,14 @@ async def join_plan(
         return {"success": False, "message": "banned"}
 
     # 加入前必须有可用 GitHub App user token，否则进入互助池也只能收 star、无法贡献
-    token, _ = await gh.get_effective_access_token(session, user_id)
+    token, token_result = await gh.get_effective_access_token(session, user_id)
+    # No plan changes have been made yet; persist a rotated token before joining.
+    await session.commit()
     if token is None:
-        return {"success": False, "message": "reauth_required"}
+        return {
+            "success": False,
+            "message": "reauth_required" if token_result.reauth_required else "no_token",
+        }
 
     min_interval = int(await get_dynamic_config("star_aid_min_interval_minutes"))
     max_interval = int(await get_dynamic_config("star_aid_max_interval_minutes"))
@@ -553,6 +843,9 @@ async def _unstar_created_repos(session, user_id: int) -> dict:
     failed 日志，不阻塞退出状态。
     """
     token, _ = await gh.get_effective_access_token(session, int(user_id))
+    # Leaving is already requested; persist it and any token rotation before
+    # the best-effort network unstar cleanup.
+    await session.commit()
     if token is None:
         logger.warning("star_aid exit unstar skipped (no token): user_id={}", user_id)
         return {"attempted": 0, "succeeded": 0, "failed": 0, "reason": "no_token"}
@@ -739,7 +1032,8 @@ async def perform_star(
 
     Returns:
         ``{"status": str, "created_star": bool, "reauth_required": bool,
-        "rate_limited": bool, "rate_limit_reset_at": datetime|None}``
+        "rate_limited": bool, "rate_limit_reset_at": datetime|None,
+        "rate_limit_kind": str|None}``
     """
     action = ACTION_MANUAL_STAR if trigger == "manual" else ACTION_STAR
 
@@ -808,20 +1102,25 @@ async def perform_star(
     token, token_result = await gh.get_effective_access_token(
         session, int(actor_user_id)
     )
+    # Persist a rotated refresh token before potentially failing GitHub calls.
+    # The worker's daily reset (if any) is safe to persist at this boundary.
+    await session.commit()
     if token is None:
+        needs_reauth = token_result.reauth_required
         await _upsert_action_log(
             session,
             actor_user_id=actor_user_id,
             target_repository_id=repo.id,
             action=action,
             trigger=trigger,
-            status=ACTION_STATUS_REAUTH_REQUIRED,
+            status=ACTION_STATUS_REAUTH_REQUIRED if needs_reauth else ACTION_STATUS_FAILED,
             error_code=token_result.error_code or "no_token",
+            error_message=token_result.error_message,
         )
         return {
-            "status": "reauth_required",
+            "status": "reauth_required" if needs_reauth else "failed",
             "created_star": False,
-            "reauth_required": True,
+            "reauth_required": needs_reauth,
         }
 
     owner = repo.owner_login or ""
@@ -867,7 +1166,17 @@ async def perform_star(
     # 失败分支
     status = ACTION_STATUS_FAILED
     if result.reauth_required:
-        await gh.mark_reauth_required(session, int(actor_user_id))
+        mark_kwargs = {}
+        expected_encrypted_access_token = getattr(
+            token_result,
+            "credential_encrypted_access_token",
+            None,
+        )
+        if expected_encrypted_access_token is not None:
+            mark_kwargs["expected_encrypted_access_token"] = (
+                expected_encrypted_access_token
+            )
+        await gh.mark_reauth_required(session, int(actor_user_id), **mark_kwargs)
         status = ACTION_STATUS_REAUTH_REQUIRED
     elif result.error_code == "rate_limited":
         status = ACTION_STATUS_RATE_LIMITED
@@ -889,4 +1198,5 @@ async def perform_star(
         "reauth_required": result.reauth_required,
         "rate_limited": result.error_code == "rate_limited",
         "rate_limit_reset_at": result.rate_limit_reset_at,
+        "rate_limit_kind": result.rate_limit_kind,
     }

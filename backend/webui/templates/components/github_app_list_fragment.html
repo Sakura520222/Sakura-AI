@@ -1,0 +1,190 @@
+{% if error_code %}
+<section class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+    {{ _('github_app.request_failed') }}
+</section>
+{% elif not authorization or authorization.status == 'unconfigured' %}
+<section class="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
+    {{ _('github_app.unconfigured') }}
+</section>
+{% elif authorization.status == 'error' %}
+<section class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+    {{ _('github_app.request_failed') }}
+</section>
+{% elif authorization.status == 'needs_authorization' %}
+<section class="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+            <p class="text-lg font-semibold">{{ _('github_app.not_connected') }}</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('github_app.authorize_hint') }}</p>
+        </div>
+        {% if authorization_url %}
+        <a href="{{ authorization_url }}" class="rounded-lg bg-sakura-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sakura-700">
+            {{ _('github_app.connect') }}
+        </a>
+        {% endif %}
+    </div>
+</section>
+{% else %}
+<section class="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+            <div class="flex flex-wrap items-center gap-3">
+                <p class="text-lg font-semibold">{{ _('github_app.app_title') }}</p>
+                <span class="rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                    {{ _('github_app.connected') }}
+                </span>
+            </div>
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                GitHub: @{{ authorization.github_username }}
+            </p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ authorization.installations|length }} {{ _('github_app.installations') }} ·
+                {{ authorization.repository_count }} {{ _('github_app.authorized_repositories') }}
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            {% if install_url %}
+            <a href="{{ install_url }}" target="_blank" rel="noopener" class="rounded-lg border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">
+                {{ _('github_app.install_more') }}
+            </a>
+            {% endif %}
+            {% if authorization_url %}
+            <a href="{{ authorization_url }}" class="rounded-lg border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">
+                {{ _('github_app.reauthorize') }}
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% if authorization.installations %}
+<div class="mt-4 space-y-4">
+    {% for inst in authorization.installations %}
+    <details class="group rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+        <summary class="flex cursor-pointer flex-wrap items-center gap-4 p-5">
+            {% if inst.account_avatar_url %}
+            <img src="{{ inst.account_avatar_url }}" alt="" class="h-10 w-10 rounded-full border border-gray-200 dark:border-gray-700">
+            {% else %}
+            <span class="flex h-10 w-10 items-center justify-center rounded-full bg-sakura-100 text-sm font-semibold text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300">
+                {{ inst.account_login[:1]|upper if inst.account_login else '?' }}
+            </span>
+            {% endif %}
+            <span class="min-w-0 flex-1">
+                <span class="flex flex-wrap items-center gap-2">
+                    <span class="truncate text-base font-semibold">{{ inst.account_login }}</span>
+                    <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                        {{ _('github_app.organization') if inst.account_type|lower == 'organization' else _('github_app.personal') }}
+                    </span>
+                </span>
+                <span class="mt-1 block text-sm text-gray-500 dark:text-gray-400">
+                    {{ _('github_app.all_repositories') if inst.repository_selection == 'all' else _('github_app.selected_repositories') }}
+                    · {{ inst.repositories|length }} {{ _('github_app.repositories') }}
+                </span>
+            </span>
+            <span class="flex flex-wrap justify-end gap-2">
+                <a href="{{ inst.manage_url }}" target="_blank" rel="noopener"
+                   class="rounded-lg bg-sakura-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-sakura-700">
+                    {{ _('github_app.manage_authorization') }}
+                </a>
+                <span class="rounded-lg border border-gray-300 px-3 py-2 text-xs transition-colors group-open:bg-gray-50 dark:border-gray-600 dark:group-open:bg-gray-700">
+                    {{ _('github_app.toggle_repositories') }}
+                </span>
+            </span>
+        </summary>
+
+        <div class="border-t border-gray-100 p-5 dark:border-gray-700">
+            <label class="sr-only" for="github-app-search-{{ loop.index }}">{{ _('github_app.search_repositories') }}</label>
+            <input id="github-app-search-{{ loop.index }}" type="search"
+                   data-github-app-repository-filter
+                   placeholder="{{ _('github_app.search_repositories') }}"
+                   class="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900">
+            <div data-github-app-repository-list class="divide-y divide-gray-100 dark:divide-gray-700">
+                {% for repo in inst.repositories %}
+                <div data-github-app-repository data-repository-name="{{ repo.full_name|lower }}"
+                     class="flex flex-wrap items-center gap-3 py-3{% if loop.index0 >= 6 %} hidden data-github-app-repository-extra{% endif %}">
+                    <span class="min-w-0 flex-1 truncate text-sm">
+                        {% if repo.html_url %}
+                        <a href="{{ repo.html_url }}" target="_blank" rel="noopener" class="hover:text-sakura-600">{{ repo.full_name }}</a>
+                        {% else %}{{ repo.full_name }}{% endif %}
+                    </span>
+                    {% if repo.visibility == 'internal' %}
+                    <span class="text-xs text-purple-700 dark:text-purple-400">
+                        {{ _('github_app.internal') }}
+                    </span>
+                    {% elif repo.private %}
+                    <span class="text-xs text-yellow-700 dark:text-yellow-400">
+                        {{ _('common.private') }}
+                    </span>
+                    {% else %}
+                    <span class="text-xs text-gray-500 dark:text-gray-400">
+                        {{ _('github_app.public') }}
+                    </span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            <p data-github-app-empty class="hidden py-3 text-sm text-gray-500 dark:text-gray-400">{{ _('github_app.no_matching_repositories') }}</p>
+            {% if inst.repositories|length > 6 %}
+            <button type="button" data-github-app-toggle-repositories class="mt-3 text-sm font-medium text-sakura-600 hover:text-sakura-700">
+                {{ _('github_app.show_all_repositories') }} ({{ inst.repositories|length }})
+            </button>
+            {% endif %}
+        </div>
+    </details>
+    {% endfor %}
+</div>
+{% else %}
+<section class="mt-4 rounded-2xl border border-dashed border-gray-300 p-8 text-center dark:border-gray-600">
+    <p class="text-base font-medium">{{ _('github_app.no_installations') }}</p>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('github_app.no_installations_hint') }}</p>
+    {% if install_url %}
+    <a href="{{ install_url }}" target="_blank" rel="noopener" class="mt-4 inline-block rounded-lg bg-sakura-600 px-4 py-2 text-sm font-medium text-white hover:bg-sakura-700">
+        {{ _('github_app.install_more') }}
+    </a>
+    {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+<script>
+(function() {
+    if (window.__githubAppRepositoryFilterBound) return;
+    window.__githubAppRepositoryFilterBound = true;
+
+    document.addEventListener('input', function(event) {
+        const input = event.target.closest('[data-github-app-repository-filter]');
+        if (!input) return;
+        const card = input.closest('details');
+        if (!card) return;
+        const query = input.value.trim().toLowerCase();
+        const rows = card.querySelectorAll('[data-github-app-repository]');
+        const toggle = card.querySelector('[data-github-app-toggle-repositories]');
+        const expanded = toggle?.dataset.expanded === 'true';
+        let visible = 0;
+        rows.forEach(function(row) {
+            const matches = !query || (row.dataset.repositoryName || '').indexOf(query) !== -1;
+            const isCollapsedExtra = row.classList.contains(
+                'data-github-app-repository-extra'
+            ) && !expanded && !query;
+            row.classList.toggle('hidden', !matches || isCollapsedExtra);
+            if (!row.classList.contains('hidden')) visible++;
+        });
+        const empty = card.querySelector('[data-github-app-empty]');
+        if (empty) empty.classList.toggle('hidden', visible !== 0);
+        if (toggle) toggle.classList.toggle('hidden', query.length > 0);
+    });
+
+    document.addEventListener('click', function(event) {
+        const button = event.target.closest('[data-github-app-toggle-repositories]');
+        if (!button) return;
+        const card = button.closest('details');
+        const extras = card.querySelectorAll('[data-github-app-repository].data-github-app-repository-extra');
+        const expanded = button.dataset.expanded === 'true';
+        extras.forEach(function(row) { row.classList.toggle('hidden', expanded); });
+        button.dataset.expanded = expanded ? 'false' : 'true';
+        button.textContent = expanded
+            ? {{ _('github_app.show_all_repositories') | tojson }} + ' (' + extras.length + ')'
+            : {{ _('github_app.show_fewer_repositories') | tojson }};
+    });
+})();
+</script>

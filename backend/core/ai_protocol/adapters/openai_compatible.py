@@ -226,11 +226,12 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             body["tool_choice"] = self._serialize_tool_choice(request.tool_choice)
         if request.stream:
             body["stream"] = True
-        # thinking / effort 等通过 extra body 透传给支持的兼容端点（少数厂商支持）
+        # thinking / effort 等通过 extra body 透传给支持的兼容端点（少数厂商支持）。
+        # Chat Completions 的 wire 字段是 reasoning_effort，而不是内部字段名 effort。
         if request.thinking is not None:
             body["thinking"] = request.thinking
         if request.effort is not None:
-            body["effort"] = request.effort
+            body["reasoning_effort"] = request.effort
         return body
 
     @staticmethod

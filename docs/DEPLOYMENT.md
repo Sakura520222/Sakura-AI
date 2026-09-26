@@ -201,9 +201,9 @@ Remove-Item Env:SAKURA_AI_IMAGE
 
 WebUI 登录需额外创建 [OAuth App](https://github.com/settings/developers)，回调地址设为 `https://your-domain.com/auth/callback`。
 
-### 仓库互助授权（可选）
+### 用户级 GitHub App 授权（仓库互助 / 授权中心，可选）
 
-启用仓库互助功能时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**，并赋予 **Starring** 写权限；仓库互助回调地址为 `https://your-domain.com/star-aid/auth/callback`。
+启用仓库互助或普通用户 GitHub App 授权中心时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**；仓库互助还需 **Starring** 写权限。两者共用回调地址 `https://your-domain.com/star-aid/auth/callback`。该 App 可复用审查主 App，也可在系统核心配置中独立配置；独立 App 必须填写 `star_aid_github_app_slug`，否则授权中心不展示“安装到其他账户/组织”链接。授权中心基于 GitHub 官方 `/user/installations` 接口，只显示当前登录 GitHub 用户可访问的安装与仓库；安装与仓库发现的总超时由 `star_aid_github_app_discovery_timeout_seconds` 控制，默认 45 秒，部署时应低于反向代理/网关超时。
 
 ---
 
@@ -553,4 +553,4 @@ check/preflight 比较三个目标 digest、共同 revision、deployment.env 以
 
 ---
 
-*最后更新：2026-9-15 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-9-25 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

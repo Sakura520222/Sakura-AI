@@ -42,19 +42,9 @@ class Settings(BaseSettings):
     github_private_key: str | None = None
     github_webhook_secret: str | None = None
 
-    # AI 调用默认参数（模型、端点与凭据仅由 AI 账号和角色绑定提供）
-    ai_temperature: float = 0.3
-    ai_max_tokens: int = 128000
-
-    # 模型上下文配置
-    model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
-    auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
-    context_safety_threshold: float = 0.8  # 上下文安全阈值（0-1），默认使用 80%
-
-    # 上下文压缩配置
+    # 上下文压缩配置；模型上下文与输出上限由单模型高级配置解析。
     enable_context_compression: bool = True  # 是否启用上下文自动压缩
     context_compression_threshold: float = 0.85  # 压缩触发阈值（0-1），默认 85%
-    context_compression_keep_rounds: int = 5  # 保留最近几轮对话不压缩
 
     # 数据库配置
     database_url: str | None = None
@@ -384,15 +374,29 @@ class Settings(BaseSettings):
     )
     star_aid_github_app_client_id: str = Field(
         "",
-        description="仓库互助使用的 GitHub App Client ID（user-to-server flow）",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App Client ID（user-to-server flow）",
     )
     star_aid_github_app_client_secret: str = Field(
         "",
-        description="仓库互助使用的 GitHub App Client Secret",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App Client Secret",
+    )
+    star_aid_github_app_slug: str = Field(
+        "",
+        description="仓库互助与 GitHub App 授权中心共用的 GitHub App slug；使用独立于审查主 App 的应用时必填",
     )
     star_aid_github_app_callback_url: str = Field(
         "",
-        description="仓库互助 GitHub App user-to-server 授权回调地址",
+        description="仓库互助与 GitHub App 授权中心共用的授权回调地址",
+    )
+    star_aid_github_app_discovery_timeout_seconds: float = Field(
+        45.0,
+        ge=1.0,
+        le=120.0,
+        description=(
+            "GitHub App 授权中心安装与仓库发现的总超时时间（秒）。"
+            "默认值等于三个单请求超时预算，用于覆盖分页和并发仓库加载；"
+            "需保持低于反向代理/网关请求超时"
+        ),
     )
 
     # 通知 Provider 配置。Telegram/SMTP 都是可选能力，不能阻塞 GitHub/Passkey 登录。
@@ -2222,7 +2226,9 @@ CORE_CONFIG_KEYS = frozenset(
         "database_url",
         "star_aid_github_app_client_id",
         "star_aid_github_app_client_secret",
+        "star_aid_github_app_slug",
         "star_aid_github_app_callback_url",
+        "star_aid_github_app_discovery_timeout_seconds",
     }
 )
 

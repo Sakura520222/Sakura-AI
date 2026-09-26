@@ -129,10 +129,6 @@ def _build_reviewer(fake_client) -> AIReviewer:
     reviewer.model_context_mgr = SimpleNamespace(
         calculate_safe_context=lambda model, threshold: 100_000
     )
-    reviewer.enable_compression = False
-    reviewer.context_compressor = SimpleNamespace(
-        estimate_messages_tokens=lambda msgs: 10
-    )
     return reviewer
 
 
@@ -258,12 +254,12 @@ async def test_tool_loop_uses_served_capabilities_for_custom_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_loop_syncs_served_model_to_context_compressor(monkeypatch):
-    """实际 winner 模型名须同步给压缩器，避免压缩回退清理误剥保留字段。"""
+async def test_tool_loop_no_longer_owns_legacy_context_compressor(monkeypatch):
+    """上下文压缩由 UnifiedAIClient 的实际 winner 策略统一处理。"""
     _patch_strategy_config(monkeypatch)
     fake_client = _ToolLoopFakeClient(served_by="deepseek/deepseek-v4-flash")
     reviewer = _build_reviewer(fake_client)
 
     await _run_single_tool_round(reviewer)
 
-    assert reviewer.context_compressor.model == "deepseek-v4-flash"
+    assert not hasattr(reviewer, "context_compressor")

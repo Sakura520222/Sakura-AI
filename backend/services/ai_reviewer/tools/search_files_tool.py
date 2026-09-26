@@ -5,14 +5,13 @@
 """
 
 import asyncio
+import io
 from typing import Any
 from urllib.parse import urlencode
 
 from loguru import logger
 
 from backend.core.config import get_strategy_config, path_matches_skip
-from backend.services.ai_reviewer.constants import MAX_FILE_SIZE_BYTES
-from backend.services.ai_reviewer.tools.file_tool import format_search_results
 
 # 常见的二进制文件后缀 / Common binary file extensions
 BINARY_EXTENSIONS = frozenset(
@@ -70,6 +69,8 @@ def _scan_content(
     decoded_content: bytes,
     keyword_lower: str,
     context_lines: int,
+    max_matches: int = 20,
+    max_output_chars: int = 50_000,
 ) -> dict[str, Any] | None:
     """同步解码并搜索关键词匹配（纯 CPU，线程安全，供 to_thread 调用）。
 
@@ -83,16 +84,108 @@ def _scan_content(
         匹配结果字典；无匹配返回 None
     """
     decoded = decoded_content.decode("utf-8")
-    lines = decoded.split("\n")
-    matches = [idx for idx, line in enumerate(lines) if keyword_lower in line.lower()]
-    if not matches:
+    match_limit = max(1, int(max_matches))
+    output_limit = max(1, int(max_output_chars))
+    window: dict[int, str] = {}
+    pending_matches: list[int] = []
+    result_parts: list[str] = []
+    output_chars = 0
+    included_through = -1
+    match_count = 0
+    returned_matches = 0
+    lines_seen = 0
+    scan_complete = True
+    matches_truncated = False
+    output_truncated = False
+
+    for line_no, line in enumerate(io.StringIO(decoded), 1):
+        idx = line_no - 1
+        lines_seen = line_no
+        window[idx] = line
+        window_size = 2 * context_lines + 2
+        while len(window) > window_size:
+            window.pop(next(iter(window)))
+
+        if keyword_lower in line.lower():
+            if match_count >= match_limit:
+                matches_truncated = True
+                scan_complete = False
+                break
+            match_count += 1
+            pending_matches.append(idx)
+
+        while pending_matches and idx >= pending_matches[0] + context_lines:
+            match_idx = pending_matches.pop(0)
+            returned_matches += 1
+            block_start = max(0, match_idx - context_lines)
+            block_end = match_idx + context_lines
+            emit_from = max(block_start, included_through + 1)
+            for current_idx in range(emit_from, block_end + 1):
+                current_line = window.get(current_idx)
+                if current_line is None:
+                    scan_complete = False
+                    output_truncated = True
+                    break
+                prefix = f"{current_idx + 1:>6}\t"
+                if current_idx == match_idx:
+                    prefix += ">>>\t"
+                separator = "\n" if result_parts else ""
+                part = separator + prefix + current_line
+                if output_chars + len(part) > output_limit:
+                    scan_complete = False
+                    output_truncated = True
+                    break
+                result_parts.append(part)
+                output_chars += len(part)
+                included_through = current_idx
+            if not scan_complete:
+                break
+        if not scan_complete:
+            break
+    else:
+        if not decoded or decoded.endswith("\n"):
+            window[lines_seen] = ""
+            lines_seen += 1
+        while pending_matches:
+            match_idx = pending_matches.pop(0)
+            returned_matches += 1
+            block_start = max(0, match_idx - context_lines)
+            block_end = min(lines_seen - 1, match_idx + context_lines)
+            emit_from = max(block_start, included_through + 1)
+            for current_idx in range(emit_from, block_end + 1):
+                current_line = window.get(current_idx)
+                if current_line is None:
+                    scan_complete = False
+                    output_truncated = True
+                    break
+                prefix = f"{current_idx + 1:>6}\t"
+                if current_idx == match_idx:
+                    prefix += ">>>\t"
+                separator = "\n" if result_parts else ""
+                part = separator + prefix + current_line
+                if output_chars + len(part) > output_limit:
+                    scan_complete = False
+                    output_truncated = True
+                    break
+                result_parts.append(part)
+                output_chars += len(part)
+                included_through = current_idx
+            if not scan_complete:
+                break
+
+    if not match_count:
         return None
-    numbered_content = format_search_results(lines, matches, context_lines)
+
     return {
         "file_path": file_path,
-        "content": numbered_content,
-        "match_count": len(matches),
-        "total_lines": len(lines),
+        "content": "\n".join(result_parts),
+        "match_count": match_count,
+        "returned_matches": returned_matches,
+        "matches_truncated": matches_truncated,
+        "output_truncated": output_truncated,
+        "scan_complete": scan_complete,
+        "lines_scanned": lines_seen,
+        **({"total_lines": lines_seen} if scan_complete else {}),
     }
 
 
@@ -118,6 +211,18 @@ class SearchFilesToolHandler:
             "use_search_api": search_config.get("use_search_api", True),
             "max_files_to_search": int(search_config.get("max_files_to_search", 100)),
             "concurrency": max(1, int(search_config.get("concurrency", 8))),
+            "max_file_bytes": max(
+                1, int(search_config.get("max_file_bytes", 2 * 1024 * 1024))
+            ),
+            "max_total_scan_bytes": max(
+                1, int(search_config.get("max_total_scan_bytes", 16 * 1024 * 1024))
+            ),
+            "max_matches_per_file": max(
+                1, int(search_config.get("max_matches_per_file", 20))
+            ),
+            "max_output_chars": max(
+                1, int(search_config.get("max_output_chars", 50_000))
+            ),
         }
 
     async def search_in_files(
@@ -338,6 +443,194 @@ class SearchFilesToolHandler:
             config["max_files_to_search"],
         )
 
+    async def _scan_candidate_files(
+        self,
+        keyword_lower: str,
+        repo: Any,
+        ref: str,
+        candidate_files: list[str],
+        effective_context_lines: int,
+        effective_max_results: int,
+        config: dict,
+        candidate_sizes: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch and scan candidates with bounded concurrency and budgets."""
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        for file_path in candidate_files:
+            queue.put_nowait(file_path)
+
+        results_by_path: dict[str, dict[str, Any]] = {}
+        skipped_by_path: dict[str, dict[str, Any]] = {}
+        budget_lock = asyncio.Lock()
+        state = {
+            "bytes_scanned": 0,
+            "output_chars": 0,
+            "files_with_matches": 0,
+            "fetch_failures": 0,
+            "inflight": 0,
+            "scan_complete": True,
+            "stop": False,
+            "stop_reason": None,
+        }
+
+        async def worker() -> None:
+            while not state["stop"]:
+                try:
+                    file_path = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                predeclared_size = int((candidate_sizes or {}).get(file_path, 0))
+                if predeclared_size > config["max_file_bytes"]:
+                    skipped_by_path[file_path] = {
+                        "file_path": file_path,
+                        "status": "skipped",
+                        "reason": "file_size_limit",
+                        "size": predeclared_size,
+                        "limit": config["max_file_bytes"],
+                    }
+                    continue
+                try:
+                    content_file = await asyncio.to_thread(
+                        repo.get_contents, file_path, ref
+                    )
+                except Exception as e:
+                    state["fetch_failures"] += 1
+                    logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
+                    continue
+
+                state["inflight"] += 1
+                try:
+                    async with budget_lock:
+                        if state["stop"]:
+                            continue
+                        try:
+                            declared_size = int(
+                                getattr(content_file, "size", 0) or 0
+                            )
+                        except (TypeError, ValueError):
+                            declared_size = 0
+
+                        max_file_bytes = config["max_file_bytes"]
+                        if declared_size and declared_size > max_file_bytes:
+                            skipped_by_path[file_path] = {
+                                "file_path": file_path,
+                                "status": "skipped",
+                                "reason": "file_size_limit",
+                                "size": declared_size,
+                                "limit": max_file_bytes,
+                            }
+                            continue
+
+                        decoded_content = content_file.decoded_content
+                        if decoded_content is None:
+                            skipped_by_path[file_path] = {
+                                "file_path": file_path,
+                                "status": "skipped",
+                                "reason": "no_decoded_content",
+                            }
+                            continue
+
+                        actual_size = declared_size or len(decoded_content)
+                        if actual_size > max_file_bytes:
+                            skipped_by_path[file_path] = {
+                                "file_path": file_path,
+                                "status": "skipped",
+                                "reason": "file_size_limit",
+                                "size": actual_size,
+                                "limit": max_file_bytes,
+                            }
+                            continue
+
+                        remaining_scan = (
+                            config["max_total_scan_bytes"]
+                            - state["bytes_scanned"]
+                        )
+                        if actual_size > remaining_scan:
+                            skipped_by_path[file_path] = {
+                                "file_path": file_path,
+                                "status": "skipped",
+                                "reason": "total_scan_budget",
+                                "size": actual_size,
+                                "remaining_bytes": max(0, remaining_scan),
+                            }
+                            state["scan_complete"] = False
+                            state["stop"] = True
+                            state["stop_reason"] = "total_scan_budget"
+                            continue
+
+                        output_budget = (
+                            config["max_output_chars"] - state["output_chars"]
+                        )
+                        if output_budget <= 0:
+                            state["scan_complete"] = False
+                            state["stop"] = True
+                            state["stop_reason"] = "output_budget"
+                            continue
+
+                        # Reserve scan bytes before the await so concurrent
+                        # workers cannot collectively exceed the total budget.
+                        state["bytes_scanned"] += actual_size
+                        result = await asyncio.to_thread(
+                            _scan_content,
+                            file_path,
+                            decoded_content,
+                            keyword_lower,
+                            effective_context_lines,
+                            config["max_matches_per_file"],
+                            output_budget,
+                        )
+                        if result is None:
+                            continue
+
+                        results_by_path[file_path] = result
+                        state["output_chars"] += len(result["content"])
+                        state["files_with_matches"] += 1
+                        if not result["scan_complete"]:
+                            state["scan_complete"] = False
+                            state["stop_reason"] = (
+                                "output_budget"
+                                if result["output_truncated"]
+                                else "matches_per_file"
+                            )
+
+                        has_unseen_files = queue.qsize() > 0 or state["inflight"] > 1
+                        if (
+                            state["output_chars"] >= config["max_output_chars"]
+                            and has_unseen_files
+                        ) or (
+                            state["files_with_matches"] >= effective_max_results
+                            and has_unseen_files
+                        ):
+                            state["scan_complete"] = False
+                            state["stop"] = True
+                            if state["stop_reason"] is None:
+                                state["stop_reason"] = (
+                                    "output_budget"
+                                    if state["output_chars"]
+                                    >= config["max_output_chars"]
+                                    else "max_results"
+                                )
+                finally:
+                    state["inflight"] -= 1
+
+        worker_count = min(config["concurrency"], len(candidate_files) or 1)
+        await asyncio.gather(*(worker() for _ in range(worker_count)))
+        ordered_paths = [path for path in candidate_files if path in results_by_path]
+        return {
+            "results": [results_by_path[path] for path in ordered_paths],
+            "skipped_files": [
+                skipped_by_path[path]
+                for path in candidate_files
+                if path in skipped_by_path
+            ],
+            "files_searched": len(candidate_files) - queue.qsize(),
+            "candidate_count": len(candidate_files),
+            "bytes_scanned": state["bytes_scanned"],
+            "fetch_failures": state["fetch_failures"],
+            "scan_complete": state["scan_complete"],
+            "stop_reason": state["stop_reason"],
+        }
+
     async def _search_via_api(
         self,
         keyword: str,
@@ -394,6 +687,7 @@ class SearchFilesToolHandler:
 
         # 过滤候选文件（skip_paths / 二进制）/ Filter candidates
         candidates: list[str] = []
+        candidate_sizes: dict[str, int] = {}
         for item in data.get("items", []):
             file_path = item.get("path", "")
             if path_matches_skip(file_path, skip_paths):
@@ -405,47 +699,28 @@ class SearchFilesToolHandler:
                 if f".{ext}" in BINARY_EXTENSIONS:
                     continue
             candidates.append(file_path)
+            try:
+                candidate_sizes[file_path] = int(item.get("size", 0) or 0)
+            except (TypeError, ValueError):
+                candidate_sizes[file_path] = 0
 
-        # 并发 get_contents + 搜索；信号量限流避免触发 GitHub 次级速率限制
-        # Concurrent fetch + search; semaphore caps in-flight requests
-        concurrency = self._get_config()["concurrency"]
-        sem = asyncio.Semaphore(concurrency)
-
-        async def _fetch_and_match(
-            file_path: str,
-        ) -> tuple[str, dict[str, Any] | None, bool]:
-            """返回 (file_path, 匹配结果或 None, 是否读取失败)。"""
-            async with sem:
-                try:
-                    content_file = await asyncio.to_thread(
-                        repo.get_contents, file_path, ref
-                    )
-                except Exception as e:
-                    logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
-                    return (file_path, None, True)
-
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return (file_path, None, False)
-            decoded_content = content_file.decoded_content
-            if decoded_content is None:
-                return (file_path, None, False)
-
-            result = await asyncio.to_thread(
-                _scan_content,
-                file_path,
-                decoded_content,
-                keyword_lower,
-                effective_context_lines,
-            )
-            return (file_path, result, False)
-
-        raw_results = await asyncio.gather(*[_fetch_and_match(fp) for fp in candidates])
-
-        files_searched = len(candidates)
-        fetch_failures = sum(1 for _, _, failed in raw_results if failed)
-        all_results: list[dict[str, Any]] = [
-            r for _, r, _ in raw_results if r is not None
-        ]
+        config = self._get_config()
+        candidates_truncated = len(candidates) > config["max_files_to_search"]
+        if candidates_truncated:
+            candidates = candidates[: config["max_files_to_search"]]
+        scan = await self._scan_candidate_files(
+            keyword_lower,
+            repo,
+            ref,
+            candidates,
+            effective_context_lines,
+            effective_max_results,
+            config,
+            candidate_sizes,
+        )
+        all_results: list[dict[str, Any]] = scan["results"]
+        files_searched = scan["files_searched"]
+        fetch_failures = scan["fetch_failures"]
 
         # ref 不可访问检测 / Ref-inaccessible detection
         # Search API 找到匹配文件但全部 get_contents 失败，通常意味着 ref 无效，
@@ -463,29 +738,39 @@ class SearchFilesToolHandler:
                 "results": [],
                 "total_matches": 0,
                 "files_searched": files_searched,
+                "candidate_files": scan["candidate_count"],
                 "ref": ref,
                 "search_method": "github_search_api",
             }
 
-        # 截断到 max_results / Truncate to max_results
         total_matches = sum(r["match_count"] for r in all_results)
-        truncated = all_results[:effective_max_results]
+        scan_complete = (
+            scan["scan_complete"] and not candidates_truncated
+        )
 
         return {
             "keyword": keyword,
-            "results": truncated,
+            "results": all_results[:effective_max_results],
             "files_searched": files_searched,
+            "candidate_files": scan["candidate_count"],
             "files_with_matches": len(all_results),
             "total_matches": total_matches,
-            "returned_files": len(truncated),
+            "total_matches_exact": scan_complete,
+            "scan_complete": scan_complete,
+            "bytes_scanned": scan["bytes_scanned"],
+            "skipped_files": scan["skipped_files"],
+            "returned_files": min(len(all_results), effective_max_results),
             "context_lines": effective_context_lines,
             "ref": ref,
             "search_method": "github_search_api",
+            "stop_reason": scan["stop_reason"],
             "hint": (
                 f"在 {files_searched} 个文件中搜索，"
                 f"{len(all_results)} 个文件包含匹配，"
-                f"共 {total_matches} 处匹配。"
-                if len(truncated) < len(all_results)
+                f"至少找到 {total_matches} 处匹配；搜索因预算提前停止。"
+                if not scan_complete
+                else f"共 {total_matches} 处匹配。"
+                if len(all_results) > effective_max_results
                 else None
             ),
         }
@@ -534,6 +819,7 @@ class SearchFilesToolHandler:
 
         # 过滤文件列表 / Filter file list
         candidate_files: list[str] = []
+        candidate_sizes: dict[str, int] = {}
         for entry in tree.tree:
             if entry.type != "blob":
                 continue
@@ -561,8 +847,13 @@ class SearchFilesToolHandler:
                     continue
 
             candidate_files.append(path)
+            try:
+                candidate_sizes[path] = int(getattr(entry, "size", 0) or 0)
+            except (TypeError, ValueError):
+                candidate_sizes[path] = 0
 
         # 截断到 max_files_to_search / Cap candidates before concurrent fetch
+        candidates_truncated = len(candidate_files) > max_files_to_search
         if len(candidate_files) > max_files_to_search:
             logger.debug(
                 f"候选文件 {len(candidate_files)} 超过 "
@@ -572,64 +863,47 @@ class SearchFilesToolHandler:
 
         logger.debug(f"跨文件搜索 '{keyword}': 候选文件 {len(candidate_files)} 个")
 
-        # 并发 get_contents + 搜索 / Concurrent fetch + search
         keyword_lower = keyword.lower()
-        concurrency = self._get_config()["concurrency"]
-        sem = asyncio.Semaphore(concurrency)
-
-        async def _fetch_and_match(
-            file_path: str,
-        ) -> dict[str, Any] | None:
-            """返回匹配结果字典；无匹配或读取失败返回 None。"""
-            async with sem:
-                try:
-                    content_file = await asyncio.to_thread(
-                        repo.get_contents, file_path, ref
-                    )
-                except Exception as e:
-                    logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
-                    return None
-
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return None
-            decoded_content = content_file.decoded_content
-            if decoded_content is None:
-                return None
-
-            return await asyncio.to_thread(
-                _scan_content,
-                file_path,
-                decoded_content,
-                keyword_lower,
-                effective_context_lines,
-            )
-
-        raw_results = await asyncio.gather(
-            *[_fetch_and_match(fp) for fp in candidate_files]
+        config = self._get_config()
+        scan = await self._scan_candidate_files(
+            keyword_lower,
+            repo,
+            ref,
+            candidate_files,
+            effective_context_lines,
+            effective_max_results,
+            config,
+            candidate_sizes,
         )
-
-        files_scanned = len(candidate_files)
-        all_results: list[dict[str, Any]] = [r for r in raw_results if r is not None]
-
-        # 截断到 max_results / Truncate to max_results
+        all_results: list[dict[str, Any]] = scan["results"]
+        files_scanned = scan["files_searched"]
         total_matches = sum(r["match_count"] for r in all_results)
-        truncated = all_results[:effective_max_results]
+        scan_complete = scan["scan_complete"] and not candidates_truncated
+        returned_results = all_results[:effective_max_results]
 
         return {
             "keyword": keyword,
-            "results": truncated,
+            "results": returned_results,
             "files_searched": files_scanned,
+            "candidate_files": scan["candidate_count"],
             "files_with_matches": len(all_results),
             "total_matches": total_matches,
-            "returned_files": len(truncated),
+            "total_matches_exact": scan_complete,
+            "scan_complete": scan_complete,
+            "bytes_scanned": scan["bytes_scanned"],
+            "skipped_files": scan["skipped_files"],
+            "returned_files": len(returned_results),
             "context_lines": effective_context_lines,
             "ref": ref,
             "search_method": "per_file_traversal",
+            "stop_reason": scan["stop_reason"],
             "hint": (
                 f"在 {files_scanned} 个文件中搜索，"
                 f"{len(all_results)} 个文件包含匹配，"
-                f"共 {total_matches} 处匹配。"
-                if len(truncated) < len(all_results)
+                f"至少找到 {total_matches} 处匹配；搜索因预算提前停止。"
+                if not scan_complete
+                else f"共 {total_matches} 处匹配。"
+                if len(returned_results) < len(all_results)
                 else None
             ),
         }

@@ -15,7 +15,6 @@ model catalog → legacy predefined table → conservative fallback.
 from loguru import logger
 
 from backend.core.ai_protocol.models import DEFAULT_CONTEXT_WINDOW_TOKENS
-from backend.core.config import get_settings
 
 
 class ModelContextManager:
@@ -72,7 +71,6 @@ class ModelContextManager:
     CONSERVATIVE_FALLBACK_K = DEFAULT_CONTEXT_WINDOW_TOKENS // 1000
 
     def __init__(self):
-        self.settings = get_settings()
         self._context_cache: dict[str, int] = {}
         # per-model 覆盖入口（由配置层注入，避免本模块依赖数据库）
         # Per-model override hook (injected by config layer; this module
@@ -89,9 +87,8 @@ class ModelContextManager:
 
         优先级：
         1. per-model 覆盖
-        2. 旧全局 MODEL_CONTEXT_WINDOW（兼容，仅当未设置覆盖时）
-        3. 预定义模型映射表（含新模型）
-        4. 保守兜底 128K
+        2. 预定义模型映射表（含新模型）
+        3. 保守兜底 128K
         """
         if model_name is None:
             logger.warning(
@@ -106,21 +103,7 @@ class ModelContextManager:
         if normalized and normalized in self._overrides:
             return self._overrides[normalized]
 
-        # 2. 旧全局 MODEL_CONTEXT_WINDOW（兼容）
-        if (
-            hasattr(self.settings, "model_context_window")
-            and self.settings.model_context_window
-        ):
-            # 注意：全局值仅在未命中 per-model 时作为最后已知手段，并打日志提示
-            # Global value is a legacy last-resort; log a hint to migrate.
-            custom_context = self.settings.model_context_window
-            logger.debug(
-                "使用旧全局 MODEL_CONTEXT_WINDOW={}K（建议迁移为 per-model 配置）",
-                custom_context,
-            )
-            return custom_context
-
-        # 3. 缓存 → 预定义表
+        # 2. 缓存 → 预定义表
         if normalized and normalized in self._context_cache:
             return self._context_cache[normalized]
         context_size = self._get_from_predefined(normalized) if normalized else None
@@ -128,7 +111,7 @@ class ModelContextManager:
             self._context_cache[normalized] = context_size
             return context_size
 
-        # 4. 保守兜底 / conservative fallback
+        # 3. 保守兜底 / conservative fallback
         logger.warning(
             "未找到模型 {} 的上下文信息，使用保守兜底 {}K tokens。"
             "请在配置页为该模型设置上下文窗口或触发模型发现。",

@@ -880,15 +880,7 @@ class JobOrchestrator:
         raise TargetNotFoundError("stable target")
 
     def _active_job(self) -> JobState | None:
-        store = self._load()
-        job = store.current_job
-        if (
-            store.active_job_id is not None
-            and job is not None
-            and not job.is_terminal()
-        ):
-            return job
-        return None
+        return self._load().gated_job()
 
     async def prepare_stop(self) -> dict[str, bool]:
         """Atomically reject new jobs after proving that no job is active.
@@ -1069,7 +1061,13 @@ class JobOrchestrator:
         error_code = str(getattr(exc, "error_code", "update_failed"))
         stderr = str(getattr(exc, "stderr", "") or "")
         lines = stderr.splitlines() or None
-        return error_code, str(exc), lines
+        msg = str(exc)
+        if stderr and "detail:" not in msg:
+            err_lines = [l.strip() for l in stderr.splitlines() if l.strip()]
+            meaningful = [l for l in err_lines if "[FAIL]" in l or "Error:" in l or "error:" in l or "failed" in l.lower()]
+            if meaningful:
+                msg = f"{msg} (detail: {'; '.join(meaningful)})"
+        return error_code, msg, lines
 
     async def _rollback_after_cancellation(
         self, snapshot: Any, *, already_rolled_back: bool = False
@@ -1259,6 +1257,23 @@ class JobOrchestrator:
                 job.target_image, job.target_sandboxd_image, job.target_runner_image,
                 version=job.target_version, channel=job.target_channel, revision=job.target_revision,
             )
+            # Ensure baseline rollback images exist locally before activation.
+            # If any baseline image was pruned/deleted locally, self-heal by pulling it.
+            ensure_image = getattr(self.adapter, "ensure_image_present", None)
+            if ensure_image is not None:
+                baseline_sandboxd = job.from_sandboxd_image
+                baseline_runner = job.from_runner_image
+                snapshot_values = getattr(deployment_snapshot, "values", None)
+                if isinstance(snapshot_values, Mapping):
+                    sandboxd = snapshot_values.get("SAKURA_SANDBOXD_IMAGE_DIGEST")
+                    runner = snapshot_values.get("SAKURA_AGENT_RUNNER_IMAGE_DIGEST")
+                    if sandboxd and runner:
+                        baseline_sandboxd, baseline_runner = sandboxd, runner
+                if baseline_sandboxd and baseline_runner:
+                    await ensure_image(baseline_sandboxd, "baseline sandboxd")
+                    await ensure_image(baseline_runner, "baseline agent-runner")
+                if job.from_image:
+                    await ensure_image(job.from_image, "baseline web")
             self._transition(job, "activating", "activating")
             job.activation_started = True
             self._save_job(job)
@@ -1324,14 +1339,51 @@ class JobOrchestrator:
                 },
             )
             self._log(job, "update completed", step="complete")
-            self._clear_active_gate(job)
+            try:
+                cleanup = getattr(self.adapter, "cleanup_unused_sakura_images", None)
+                if cleanup is not None:
+                    outcome = cleanup(
+                        (
+                            job.target_image,
+                            job.target_sandboxd_image,
+                            job.target_runner_image,
+                        )
+                    )
+                    removed, warnings = (
+                        await outcome if inspect.isawaitable(outcome) else outcome
+                    )
+                    for image in removed:
+                        self._log(job, f"removed unused Sakura image: {image}", step="complete")
+                    for warning in warnings:
+                        self._log(
+                            job, f"Sakura image cleanup skipped: {warning}",
+                            level="warning", step="complete",
+                        )
+            except Exception as exc:
+                # Cleanup is maintenance, not part of the committed deployment.
+                self._log(
+                    job, f"Sakura image cleanup skipped: {exc}",
+                    level="warning", step="complete",
+                )
+            finally:
+                try:
+                    self._clear_active_gate(job)
+                except Exception as exc:
+                    # Activation is already committed and its rollback images
+                    # may have been removed by cleanup.  A gate persistence
+                    # failure must therefore remain outside the transactional
+                    # error handler, which would otherwise attempt rollback.
+                    self._log(
+                        job, f"active update gate cleanup failed: {exc}",
+                        level="warning", step="complete",
+                    )
         except asyncio.CancelledError:
             # Cancellation is not a normal failure, but once activation has
             # started it must still restore the exact pre-activation snapshot
             # before this task exits.  Keep the active gate durable so a
             # daemon restart can reconcile any incomplete rollback.
             rollback_error: Exception | None = None
-            if job.activation_started and deployment_snapshot is not None:
+            if not job.is_terminal() and job.activation_started and deployment_snapshot is not None:
                 job.rollback_attempted = True
                 rollback_error = await self._rollback_after_cancellation(
                     deployment_snapshot,

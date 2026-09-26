@@ -15,19 +15,19 @@ dependencies = [
     # Web框架
     "fastapi>=0.141.1,<1.0.0",
     "starlette>=1.6.0,<2.0.0",
-    "uvicorn[standard]>=0.52.1",
+    "uvicorn[standard]>=0.53.0",
     "python-multipart>=0.0.32",
 
     # GitHub集成
     "PyGithub>=2.10.0",
-    "cryptography>=44.0.2",
+    "cryptography>=50.0.1",
 
     # AI集成
     "openai>=3.8.0",
     "httpx>=0.28.1",
 
     # 数据库
-    "sqlalchemy>=2.0.52,<2.1",
+    "sqlalchemy>=2.0.54,<2.1",
     "asyncmy>=0.2.14",
     "asyncpg>=0.31.0",
     "alembic>=1.19.2",
@@ -43,7 +43,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "Pillow>=12.3.0",
     "tzlocal==5.4.4",
-    "tzdata==2026.3",
+    "tzdata==2026.4",
 
     # 日志
     "loguru>=0.7.3",
@@ -76,7 +76,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.6",
+    "ruff>=0.16.8",
     "pytest>=9.1.1",
 ]
 

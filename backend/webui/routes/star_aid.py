@@ -44,7 +44,7 @@ from backend.webui.deps import (
     require_super_admin,
     toast_redirect,
 )
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import SUPPORTED_LANGUAGES, detect_language
 
 router = APIRouter(prefix="/star-aid", tags=["WebUI Star Aid"])
 
@@ -134,12 +134,13 @@ async def auth_start(
     repo_id: int | None = Query(None),
     return_to: str | None = Query(None),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """发起 GitHub App user-to-server 授权。
 
     生成绑定当前用户的 state，存 Redis，重定向到 GitHub 授权页。
     """
-    if intent not in ("join", "manual_star"):
+    if intent not in ("join", "manual_star", "github_app"):
         intent = "join"
 
     client_id, callback_url = _ensure_app_configured()
@@ -151,6 +152,11 @@ async def auth_start(
         "intent": intent,
         "repo_id": repo_id,
         "return_to": _safe_return_to(return_to),
+        "language": (
+            user_prefs.get("language")
+            if user_prefs.get("language") in SUPPORTED_LANGUAGES
+            else "zh-CN"
+        ),
     }
     await _save_auth_state(state, payload)
 
@@ -193,16 +199,6 @@ async def auth_callback(
     if setup_action is not None and not error:
         return RedirectResponse("/", status_code=302)
 
-    # 用户拒绝了授权
-    if error:
-        logger.warning("star_aid auth denied: {} - {}", error, error_description or "")
-        return toast_redirect(
-            "/star-aid/",
-            "star_aid.auth_denied",
-            toast_type="error",
-            lang=lang,
-        )
-
     # 必须已登录（cookie）
     try:
         user = await get_current_user(request)
@@ -225,6 +221,23 @@ async def auth_callback(
         return toast_redirect(
             "/star-aid/",
             "star_aid.auth_state_invalid",
+            toast_type="error",
+            lang=lang,
+        )
+
+    state_language = state_data.get("language")
+    if state_language in SUPPORTED_LANGUAGES:
+        lang = state_language
+
+    # 用户拒绝了授权。先完成同一个 state/user 校验，才能使用其中保存的
+    # return_to，否则取消授权会把授权中心用户带回仓库互助页。
+    if error:
+        logger.warning("star_aid auth denied: {} - {}", error, error_description or "")
+        if state:
+            await _delete_auth_state(state)
+        return toast_redirect(
+            _safe_return_to(state_data.get("return_to")),
+            "star_aid.auth_denied",
             toast_type="error",
             lang=lang,
         )
@@ -341,9 +354,36 @@ async def index(
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
     user_prefs: dict = Depends(get_user_preferences),
+    q: str = Query(default="", max_length=255),
+    status: str = Query(default="all"),
+    sort: str = Query(default="stars"),
+    order: str = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    member_q: str = Query(default="", max_length=100),
+    member_status: str = Query(default="all"),
+    member_page: int = Query(default=1, ge=1),
+    member_page_size: int = Query(default=20, ge=1, le=100),
 ):
     """仓库互助页面主入口（所有已登录用户可访问）。"""
-    state = await star_aid_service.get_page_state(db, user)
+    state = await star_aid_service.get_page_state(
+        db,
+        user,
+        admin_repository_query={
+            "q": q,
+            "status": status,
+            "sort": sort,
+            "order": order,
+            "page": page,
+            "page_size": page_size,
+        },
+        admin_member_query={
+            "member_q": member_q,
+            "member_status": member_status,
+            "member_page": member_page,
+            "member_page_size": member_page_size,
+        },
+    )
     return render_template(
         "star_aid/index.html",
         request,

@@ -29,10 +29,18 @@ from backend.core.ai_protocol.models import (
     images_from_mapping,
     strip_message_images,
 )
+from backend.core.ai_protocol.request_policy import (
+    EffectiveRequestPolicy,
+    default_safety_reserve,
+    estimate_unified_messages,
+    filter_reasoning_params,
+    resolve_effective_request_policy,
+)
 
 __all__ = [
     "AIErrorCategory",
     "AuthScheme",
+    "EffectiveRequestPolicy",
     "MetadataSource",
     "ModelCapabilitySet",
     "ModelDiscoveryResult",
@@ -51,6 +59,10 @@ __all__ = [
     "UnifiedTool",
     "UnifiedToolCall",
     "UnifiedUsage",
+    "default_safety_reserve",
+    "estimate_unified_messages",
+    "filter_reasoning_params",
     "images_from_mapping",
+    "resolve_effective_request_policy",
     "strip_message_images",
 ]

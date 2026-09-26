@@ -13,7 +13,12 @@ import pytest
 from sakura_ai_updater import PROTOCOL_VERSION
 from sakura_ai_updater.backends.daemon import DEFAULT_GID
 from sakura_ai_updater.ipc import create_app
-from sakura_ai_updater.state import JobState, UpdateStateStore, save_state
+from sakura_ai_updater.state import (
+    JobState,
+    StateCorruptionError,
+    UpdateStateStore,
+    save_state,
+)
 from starlette.testclient import TestClient
 
 
@@ -55,6 +60,37 @@ def test_status_reflects_active_job(tmp_path):
     assert body["data"]["active_job_id"] == "upd_001"
     assert body["data"]["deployment"] == "image"
     assert body["data"]["state"] == "downloading"
+
+
+def test_status_reports_retained_terminal_gate_until_cleanup_releases_it(tmp_path):
+    state_path = str(tmp_path / "update-state.json")
+    client = TestClient(create_app(state_path))
+    job = JobState(job_id="upd_cleanup", state="success", step="complete")
+    save_state(state_path, UpdateStateStore(active_job_id=job.job_id, current_job=job))
+
+    during = client.get("/v1/status").json()["data"]
+    assert during["state"] == "success"
+    assert during["has_active_job"] is True
+    assert during["active_job_id"] == job.job_id
+
+    save_state(state_path, UpdateStateStore(current_job=job))
+    after = client.get("/v1/status").json()["data"]
+    assert after["state"] == "success"
+    assert after["has_active_job"] is False
+    assert after["active_job_id"] is None
+
+
+def test_status_rejects_mismatched_persisted_gate(tmp_path):
+    state_path = str(tmp_path / "update-state.json")
+    save_state(
+        state_path,
+        UpdateStateStore(
+            active_job_id="upd_other",
+            current_job=JobState(job_id="upd_running", state="downloading"),
+        ),
+    )
+    with pytest.raises(StateCorruptionError, match="active_job_id.*current_job.job_id"):
+        TestClient(create_app(state_path)).get("/v1/status")
 
 
 def test_status_merges_orchestrator_readiness_snapshot_without_io(tmp_path):

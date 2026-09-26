@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import stat
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from sakura_ai_updater.adapters.image import (
     ImageCommandError,
     _trusted_start_script,
 )
+from sakura_ai_updater.contract import REPOSITORIES
 
 
 class _Process:
@@ -32,6 +34,287 @@ class _Process:
 
     async def wait(self) -> int:
         return self.returncode
+
+
+def _image_id(digit):
+    return "sha256:" + digit * 64
+
+
+def _cleanup_docker(monkeypatch, adapter, images, current, *, used=(), failed=()):
+    calls = []
+    current_refs = dict(zip(current, list(images)[:3], strict=True))
+
+    async def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:4] == ["docker", "image", "inspect", "--format"]:
+            ref = argv[5]
+            image_id = current_refs.get(ref, ref)
+            for key, image in images.items():
+                if image_id == key or ref in image["RepoTags"] + image["RepoDigests"]:
+                    return json.dumps({"Id": key, **image}), ""
+            raise ImageCommandError(
+                "not found", argv=argv, returncode=1, stderr="No such image"
+            )
+        if argv[:3] == ["docker", "container", "ls"]:
+            return ("container-1\n" if used else ""), ""
+        if argv[:3] == ["docker", "container", "inspect"]:
+            return ("\n".join(used) + "\n"), ""
+        if argv[:3] == ["docker", "image", "ls"]:
+            return "\n".join(images) + "\n", ""
+        if argv[:3] == ["docker", "image", "rm"]:
+            assert argv[3] == "--no-prune"
+            ref = argv[4]
+            if ref in failed:
+                raise ImageCommandError("image in use", argv=argv, returncode=1)
+            if ref in images:
+                if len(images[ref]["RepoTags"]) > 1:
+                    raise ImageCommandError("multiple tags", argv=argv, returncode=1)
+                del images[ref]
+            else:
+                for key, image in list(images.items()):
+                    if ref in image["RepoTags"]:
+                        image["RepoTags"].remove(ref)
+                        if not image["RepoTags"]:
+                            del images[key]
+                        break
+                else:
+                    raise AssertionError(f"unexpected removal: {ref}")
+            return "Deleted", ""
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(adapter, "_run_command", run)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_cleanup_only_removes_unused_official_images(tmp_path, monkeypatch):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {
+            "RepoTags": [
+                f"{repo}:{'current' if digit in 'abc' else 'v1'}"
+            ] if digit != "6" else [],
+            "RepoDigests": [f"{repo}@sha256:{digit * 64}"],
+        }
+        for digit, repo in zip("abc456", (*REPOSITORIES.values(), *REPOSITORIES.values()), strict=True)
+    }
+    images[_image_id("7")] = {
+        "RepoTags": ["ghcr.io/sakura520222/sakura-ai-evil:v1"],
+        "RepoDigests": [],
+    }
+    images[_image_id("8")] = {
+        "RepoTags": [f"{REPOSITORIES['web']}:shared", "ghcr.io/unrelated/service:shared"],
+        "RepoDigests": [],
+    }
+    images[_image_id("9")] = {
+        "RepoTags": [f"{REPOSITORIES['web']}:in-use"],
+        "RepoDigests": [],
+    }
+    images[_image_id("0")] = {"RepoTags": [], "RepoDigests": []}
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(
+        monkeypatch, adapter, images, current, used=(_image_id("9"),)
+    )
+
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert warnings == []
+    assert {entry.split(" ", 1)[0] for entry in removed} == {
+        _image_id(digit) for digit in "456"
+    }
+    assert [call[4] for call in calls if call[:3] == ["docker", "image", "rm"]] == [
+        f"{REPOSITORIES['web']}:v1",
+        f"{REPOSITORIES['sandboxd']}:v1",
+        _image_id("6"),
+    ]
+    assert set(images) == {_image_id(digit) for digit in "abc7890"}
+    assert all("-f" not in call and "--force" not in call for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_untags_multiple_official_tags_without_force(tmp_path, monkeypatch):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    tags = [f"{REPOSITORIES['web']}:v1", f"{REPOSITORIES['web']}:old"]
+    images[_image_id("4")] = {"RepoTags": tags.copy(), "RepoDigests": []}
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current)
+
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert len(removed) == 1 and removed[0].startswith(_image_id("4"))
+    assert warnings == []
+    assert [call[4] for call in calls if call[:3] == ["docker", "image", "rm"]] == tags
+    assert _image_id("4") not in images
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removal_failure_continues_without_force(tmp_path, monkeypatch):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    for digit in "45":
+        images[_image_id(digit)] = {
+            "RepoTags": [f"{REPOSITORIES['web']}:v{digit}"], "RepoDigests": []
+        }
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    _cleanup_docker(
+        monkeypatch, adapter, images, current,
+        failed=(f"{REPOSITORIES['web']}:v4",),
+    )
+
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert len(removed) == 1 and removed[0].startswith(_image_id("5"))
+    assert len(warnings) == 1 and _image_id("4") in warnings[0]
+    assert _image_id("4") in images
+
+
+@pytest.mark.asyncio
+async def test_cleanup_single_tag_replaced_by_unrelated_repo_is_not_removed(
+    tmp_path, monkeypatch
+):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    old_tag = f"{REPOSITORIES['web']}:v1"
+    images[_image_id("4")] = {"RepoTags": [old_tag], "RepoDigests": []}
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current)
+    original_run = adapter._run_command
+
+    async def retag_before_removal(argv, **kwargs):
+        if argv[:3] == ["docker", "image", "rm"] and argv[4] == old_tag:
+            images[_image_id("4")]["RepoTags"] = ["ghcr.io/unrelated/service:now-owned"]
+            raise ImageCommandError("tag no longer exists", argv=argv, returncode=1)
+        return await original_run(argv, **kwargs)
+
+    monkeypatch.setattr(adapter, "_run_command", retag_before_removal)
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert removed == []
+    assert len(warnings) == 1
+    assert images[_image_id("4")]["RepoTags"] == [
+        "ghcr.io/unrelated/service:now-owned"
+    ]
+    assert not any(
+        call[:3] == ["docker", "image", "rm"] and call[4] == _image_id("4")
+        for call in calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_rechecks_remaining_references_before_removing_image_id(
+    tmp_path, monkeypatch
+):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    old_tag = f"{REPOSITORIES['web']}:v1"
+    images[_image_id("4")] = {
+        "RepoTags": [old_tag],
+        "RepoDigests": [f"{REPOSITORIES['web']}@sha256:{'4' * 64}"],
+    }
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current)
+    original_run = adapter._run_command
+
+    async def newly_shared_image(argv, **kwargs):
+        result = await original_run(argv, **kwargs)
+        if argv[:3] == ["docker", "image", "rm"] and argv[4] == old_tag:
+            images[_image_id("4")] = {
+                "RepoTags": ["ghcr.io/unrelated/service:new"],
+                "RepoDigests": [f"{REPOSITORIES['web']}@sha256:{'4' * 64}"],
+            }
+        return result
+
+    monkeypatch.setattr(adapter, "_run_command", newly_shared_image)
+    removed, warnings = await adapter.cleanup_unused_sakura_images(current)
+
+    assert removed == []
+    assert len(warnings) == 1 and "references changed" in warnings[0]
+    assert _image_id("4") in images
+    assert not any(
+        call[:3] == ["docker", "image", "rm"] and call[4] == _image_id("4")
+        for call in calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_fails_closed_when_container_inventory_is_incomplete(
+    tmp_path, monkeypatch
+):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    images = {
+        _image_id(digit): {"RepoTags": [], "RepoDigests": [ref]}
+        for digit, ref in zip("abc", current, strict=True)
+    }
+    images[_image_id("4")] = {
+        "RepoTags": [f"{REPOSITORIES['web']}:old"], "RepoDigests": []
+    }
+    adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
+    calls = _cleanup_docker(monkeypatch, adapter, images, current, used=(_image_id("4"),))
+    original_run = adapter._run_command
+
+    async def incomplete_inventory(argv, **kwargs):
+        if argv[:3] == ["docker", "container", "inspect"]:
+            return "", ""
+        return await original_run(argv, **kwargs)
+
+    monkeypatch.setattr(adapter, "_run_command", incomplete_inventory)
+    with pytest.raises(ImageAdapterError, match="invalid Docker container image inventory"):
+        await adapter.cleanup_unused_sakura_images(current)
+    assert not any(call[:3] == ["docker", "image", "rm"] for call in calls)
+    assert _image_id("4") in images
+
+
+@pytest.mark.asyncio
+async def test_cleanup_has_single_deadline_for_complete_image_scan(tmp_path, monkeypatch):
+    current = tuple(
+        f"{repo}@sha256:{digit * 64}"
+        for repo, digit in zip(REPOSITORIES.values(), "abc", strict=True)
+    )
+    adapter = ImageAdapter(
+        "compose.yml", str(tmp_path / "deployment.env"), command_timeout=0.01
+    )
+
+    async def slow_inventory(argv, **kwargs):
+        await asyncio.sleep(1)
+        raise AssertionError("cleanup deadline did not cancel the inventory command")
+
+    monkeypatch.setattr(adapter, "_run_command", slow_inventory)
+
+    with pytest.raises(ImageCommandError) as caught:
+        await adapter.cleanup_unused_sakura_images(current)
+
+    assert caught.value.error_code == "cleanup_timeout"
 
 
 @pytest.mark.asyncio
@@ -683,3 +966,127 @@ def test_production_start_script_rejects_symlink_and_outside_project(tmp_path):
         pytest.skip("symlink creation is unavailable on this platform")
     with pytest.raises(ImageAdapterError, match="symlinks"):
         _trusted_start_script(symlink, project, lstat=os.lstat)
+
+
+@pytest.mark.asyncio
+async def test_rollback_auto_pulls_missing_baseline_runner_on_reinstall_failure(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    start = project / "start.sh"
+    start.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    old_web = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+    old_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    old_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE={old_web}\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n"
+        f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    new_sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "c" * 64
+    new_runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "d" * 64
+    calls: list[tuple[str, ...]] = []
+    reinstall_attempts = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal reinstall_attempts
+        command = tuple(argv)
+        calls.append(command)
+        if command == ("docker", "image", "inspect", old_runner) and (
+            "docker", "pull", old_runner
+        ) not in calls:
+            return _Process(1, b"", b"runner image missing")
+        if command[0:4] == ("bash", str((project / "start.sh").resolve()), "sandboxd", "reinstall"):
+            reinstall_attempts += 1
+            if reinstall_attempts == 1:
+                # Activation reinstall fails (e.g. new sandboxd error)
+                return _Process(1, b"", b"[FAIL] sandboxd failed to start")
+            elif reinstall_attempts == 2:
+                # First rollback reinstall fails because old runner was deleted locally!
+                return _Process(1, b"", b"[FAIL] agent-runner image missing")
+            elif reinstall_attempts == 3:
+                # After auto-pull of runner, second rollback reinstall succeeds
+                return _Process()
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    # Activation will fail, but rollback should auto-pull old_runner and succeed!
+    with pytest.raises(ImageCommandError):
+        await adapter.activate("ghcr.io/sakura520222/sakura-ai:v3.1.0", new_sandboxd, new_runner)
+
+    content = env.read_text(encoding="utf-8")
+    assert f"SAKURA_AI_IMAGE={old_web}\n" in content
+    assert f"SAKURA_SANDBOXD_IMAGE_DIGEST={old_sandboxd}\n" in content
+    assert f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={old_runner}\n" in content
+    # Verify old_runner was pulled during rollback self-healing
+    assert ("docker", "pull", old_runner) in calls
+    assert reinstall_attempts == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("missing_runner", "pull_fails", "retry_fails", "expected", "reinstall_count"),
+    [
+        (False, False, False, "baseline images present", 1),
+        (True, True, False, "missing agent-runner image", 1),
+        (True, False, True, "retry: second reinstall failure", 2),
+    ],
+)
+async def test_rollback_reports_missing_image_and_retry_failure(
+    tmp_path, monkeypatch, missing_runner, pull_fails, retry_fails, expected, reinstall_count
+):
+    project = tmp_path / "project"
+    docker_dir = project / "docker"
+    docker_dir.mkdir(parents=True)
+    compose = docker_dir / "docker-compose.prod.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    (project / "start.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    runner = "ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:" + "b" * 64
+    sandboxd = "ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:" + "a" * 64
+    env = tmp_path / "deployment.env"
+    env.write_text(
+        f"SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0\n"
+        f"SAKURA_SANDBOXD_IMAGE_DIGEST={sandboxd}\n"
+        f"SAKURA_AGENT_RUNNER_IMAGE_DIGEST={runner}\n"
+        "COMPOSE_PROJECT_NAME=sakura-ai\n",
+        encoding="utf-8",
+    )
+    calls = []
+    reinstall = 0
+
+    async def fake_exec(*argv, **kwargs):
+        nonlocal reinstall
+        command = tuple(argv)
+        calls.append(command)
+        if command[0] == "bash":
+            reinstall += 1
+            detail = b"first reinstall failure" if reinstall == 1 else b"second reinstall failure"
+            return _Process(1 if reinstall == 1 or retry_fails else 0, b"", detail)
+        if command == ("docker", "image", "inspect", runner) and missing_runner:
+            if ("docker", "pull", runner) not in calls or pull_fails:
+                return _Process(1, b"", b"image missing")
+        if command == ("docker", "pull", runner) and pull_fails:
+            return _Process(1, b"", b"registry unavailable")
+        return _Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    adapter = ImageAdapter(str(compose), str(env))
+    snapshot = await adapter.capture_snapshot()
+    with pytest.raises(ImageAdapterError, match=expected) as error:
+        await adapter.rollback(snapshot)
+    assert "first reinstall failure" in str(error.value)
+    assert reinstall == reinstall_count
+    assert (("docker", "pull", runner) in calls) is missing_runner
+    assert ("docker", "pull", sandboxd) not in calls
+    if retry_fails:
+        assert "second reinstall failure" in str(error.value)
+    if pull_fails:
+        assert "registry unavailable" in str(error.value)

@@ -59,13 +59,36 @@ class GitHubCallResult:
     status_code: int | None = None
     rate_limit_reset_at: datetime | None = None
     rate_limit_remaining: int | None = None
+    retry_after_seconds: int | None = None
+    rate_limit_kind: str | None = None  # "primary" | "secondary" | None
     error_code: str | None = None
     error_message: str | None = None
     reauth_required: bool = False
     already_done: bool = False
     data: dict | None = field(default=None)
+    # Identity of the encrypted credential whose decrypted token was returned.
+    # Used only for compare-and-set reauthorization marking; never log this value.
+    credential_encrypted_access_token: str | None = None
 
 
+@dataclass
+class RepositoryListResult:
+    """用户公开仓库列表拉取结果 / User public repository listing result.
+
+    ``complete`` 为 True 时代表全部页面均已成功拉取，不存在被截断；
+    如果任何一页失败或遇到网络错误，则 ``complete`` 为 False，
+    禁止调用方进行破坏性 stale cleanup。
+    """
+
+    success: bool = False
+    complete: bool = False
+    repositories: list[dict] = field(default_factory=list)
+    status_code: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    rate_limited: bool = False
+    rate_limit_reset_at: datetime | None = None
+    retry_after_seconds: int | None = None
 def _common_headers(access_token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {access_token}",
@@ -74,18 +97,60 @@ def _common_headers(access_token: str) -> dict[str, str]:
     }
 
 
-def _parse_rate_limit(headers: httpx.Headers) -> tuple[int | None, datetime | None]:
-    """从响应头解析 remaining / reset。"""
+def _parse_rate_limit(
+    headers: httpx.Headers,
+) -> tuple[int | None, datetime | None, int | None]:
+    """从响应头解析 remaining / reset / retry-after。具备异常值容错保护。"""
     remaining_raw = headers.get("x-ratelimit-remaining")
     reset_raw = headers.get("x-ratelimit-reset")
-    remaining = (
-        int(remaining_raw) if remaining_raw and remaining_raw.isdigit() else None
-    )
+    retry_after_raw = headers.get("retry-after")
+
+    remaining: int | None = None
+    if remaining_raw:
+        try:
+            remaining = int(remaining_raw.strip())
+        except (ValueError, TypeError):
+            remaining = None
+
     reset_at: datetime | None = None
-    if reset_raw and reset_raw.isdigit():
-        # GitHub's rate-limit reset is a Unix instant; keep it aware UTC.
-        reset_at = datetime.fromtimestamp(int(reset_raw), tz=UTC)
-    return remaining, reset_at
+    if reset_raw:
+        try:
+            val = int(reset_raw.strip())
+            if val > 0:
+                reset_at = datetime.fromtimestamp(val, tz=UTC)
+        except (ValueError, TypeError, OSError):
+            reset_at = None
+
+    retry_after_seconds: int | None = None
+    if retry_after_raw:
+        try:
+            # 优先按正整数秒解析；若为浮点数取 ceil
+            parsed = float(retry_after_raw.strip())
+            if parsed >= 0:
+                retry_after_seconds = max(0, int(parsed))
+        except (ValueError, TypeError):
+            # 少数场景可能是 HTTP 日期格式，解析失败保持 None，不抛异常
+            retry_after_seconds = None
+
+    return remaining, reset_at, retry_after_seconds
+
+
+def _is_secondary_rate_limit(status_code: int, message: str, headers: httpx.Headers) -> bool:
+    """判断响应是否属于 GitHub Secondary Rate Limit / Abuse Detection。"""
+    msg_lower = message.lower()
+    return bool(
+        any(
+            pattern in msg_lower
+            for pattern in (
+                "secondary rate limit",
+                "abuse detection",
+                "please wait a few minutes",
+                "exceeded a secondary rate",
+                "too many requests",
+            )
+        )
+        or (status_code == 403 and "retry-after" in headers)
+    )
 
 
 def _sanitize_error_message(body: dict | str | None) -> str:
@@ -109,11 +174,18 @@ def _result_from_response(
     already_done_statuses: tuple[int, ...] = (),
 ) -> GitHubCallResult:
     """把 httpx 响应转成 ``GitHubCallResult``。"""
-    remaining, reset_at = _parse_rate_limit(resp.headers)
+    remaining, reset_at, retry_after = _parse_rate_limit(resp.headers)
+    now = now_utc()
+
+    # 若响应提供了 Retry-After，优先根据 now + Retry-After 计算 reset_at
+    if retry_after is not None and retry_after > 0:
+        reset_at = now + timedelta(seconds=retry_after)
+
     base = GitHubCallResult(
         status_code=resp.status_code,
         rate_limit_remaining=remaining,
         rate_limit_reset_at=reset_at,
+        retry_after_seconds=retry_after,
     )
 
     if resp.status_code in already_done_statuses:
@@ -142,10 +214,40 @@ def _result_from_response(
     if resp.status_code == 401:
         base.reauth_required = True
         base.error_code = "bad_credentials"
+    elif resp.status_code == 429:
+        base.error_code = "rate_limited"
+        base.rate_limit_kind = "secondary" if _is_secondary_rate_limit(resp.status_code, base.error_message, resp.headers) else "primary"
+        if base.rate_limit_reset_at is None:
+            fallback_secs = retry_after if retry_after is not None else 60
+            base.rate_limit_reset_at = now + timedelta(seconds=fallback_secs)
+            base.retry_after_seconds = fallback_secs
+        logger.warning(
+            "star_aid rate limited: status=429, kind={}, retry_after={}, reset_at={}",
+            base.rate_limit_kind,
+            base.retry_after_seconds,
+            base.rate_limit_reset_at,
+        )
     elif resp.status_code == 403:
-        # rate limit 命中：remaining=0
+        # rate limit 命中：remaining=0 或 secondary limit 提示
         if remaining == 0:
             base.error_code = "rate_limited"
+            base.rate_limit_kind = "primary"
+            logger.warning(
+                "star_aid rate limited: status=403, kind=primary, remaining=0, reset_at={}",
+                base.rate_limit_reset_at,
+            )
+        elif _is_secondary_rate_limit(resp.status_code, base.error_message, resp.headers):
+            base.error_code = "rate_limited"
+            base.rate_limit_kind = "secondary"
+            if base.rate_limit_reset_at is None:
+                fallback_secs = retry_after if retry_after is not None else 60
+                base.rate_limit_reset_at = now + timedelta(seconds=fallback_secs)
+                base.retry_after_seconds = fallback_secs
+            logger.warning(
+                "star_aid rate limited: status=403, kind=secondary, retry_after={}, reset_at={}",
+                base.retry_after_seconds,
+                base.rate_limit_reset_at,
+            )
         else:
             base.error_code = "forbidden"
     elif resp.status_code == 404:
@@ -156,7 +258,6 @@ def _result_from_response(
 
 
 # ========== 凭据管理 / Credential management ==========
-
 
 def _client_credentials() -> tuple[str, str]:
     """从配置取 GitHub App client id / secret。"""
@@ -220,24 +321,62 @@ async def get_credential(
     return result.scalar_one_or_none()
 
 
-async def mark_reauth_required(session: AsyncSession, user_id: int) -> None:
-    """标记用户需要重新授权：吊销凭据并把成员状态置为 reauth_required。"""
+async def mark_reauth_required(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    expected_encrypted_access_token: str | None = None,
+) -> bool:
+    """标记用户需要重新授权；可只在指定凭据仍是当前凭据时执行。"""
     now = now_utc()
-    cred = await get_credential(session, user_id)
+    # Read the *current* status under the row lock rather than trusting an
+    # already-loaded member in the identity map. Select columns here so a
+    # worker's pending daily-reset changes are not discarded by populate_existing.
+    with session.no_autoflush:
+        member_result = await session.execute(
+            select(StarAidMember.id, StarAidMember.status)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
+    locked_member = member_result.one_or_none()
+    credential_result = await session.execute(
+        select(StarAidCredential)
+        .where(StarAidCredential.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    cred = credential_result.scalar_one_or_none()
+    if (
+        expected_encrypted_access_token is not None
+        and (
+            cred is None
+            or cred.encrypted_access_token != expected_encrypted_access_token
+        )
+    ):
+        logger.info(
+            "star_aid reauth skipped because credential was replaced: user_id={}",
+            user_id,
+        )
+        return False
+
     if cred and cred.revoked_at is None:
         cred.revoked_at = now
-    member_result = await session.execute(
-        select(StarAidMember).where(StarAidMember.user_id == user_id)
-    )
-    member = member_result.scalar_one_or_none()
-    if member and member.status not in (
-        MEMBER_STATUS_REAUTH_REQUIRED,
-        "left",
-        "banned",
-    ):
-        member.status = MEMBER_STATUS_REAUTH_REQUIRED
+    if locked_member:
+        member = await session.get(StarAidMember, locked_member[0])
+        if member is not None:
+            # The identity map can still contain a pre-ban "active" member.
+            # Keep it aligned with the locking read without refreshing away
+            # unrelated pending fields (e.g. the worker's daily reset).
+            member.status = locked_member[1]
+            if locked_member[1] not in (
+                MEMBER_STATUS_REAUTH_REQUIRED,
+                "left",
+                "banned",
+            ):
+                member.status = MEMBER_STATUS_REAUTH_REQUIRED
     await session.flush()
     logger.warning("star_aid reauth required: user_id={}", user_id)
+    return True
 
 
 async def exchange_authorization_code(
@@ -270,6 +409,14 @@ async def exchange_authorization_code(
         )
         return None
 
+    # The callback may subsequently mark a mismatched identity for reauth.
+    # Keep its member -> credential lock order consistent with token refresh.
+    with session.no_autoflush:
+        await session.execute(
+            select(StarAidMember)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
     return await save_credential_from_token(
         session, user_id, github_username, token_payload
     )
@@ -278,10 +425,11 @@ async def exchange_authorization_code(
 async def get_effective_access_token(
     session: AsyncSession, user_id: int
 ) -> tuple[str | None, GitHubCallResult]:
-    """获取可用的 user access token，必要时自动刷新。
+    """获取可用的 user access token，必要时自动刷新（带同一 user 并发控制与 double-check）。
 
     Returns:
-        (token, result)。token 为 None 表示需要重新授权（result.reauth_required）。
+        (token, result)。token 为 None 时依据 result.reauth_required
+        区分凭据失效和可重试故障；刷新写入由调用方事务提交。
     """
     cred = await get_credential(session, user_id)
     if cred is None or cred.revoked_at is not None:
@@ -301,21 +449,63 @@ async def get_effective_access_token(
         and cred.access_token_expires_at <= now + timedelta(minutes=5)
     )
     if not expired:
-        return access_token, GitHubCallResult(success=True)
+        return access_token, GitHubCallResult(
+            success=True,
+            credential_encrypted_access_token=cred.encrypted_access_token,
+        )
 
-    # 需要刷新
-    refreshed, result = await _refresh_and_persist(session, cred)
+    # Keep credential and member updates in the caller's transaction. Opening
+    # another session while the caller owns a connection can exhaust the pool
+    # or wait on a member row that the caller itself has locked. Lock member
+    # before credential, matching the worker's post-reset row-lock order.
+    with session.no_autoflush:
+        await session.execute(
+            select(StarAidMember)
+            .where(StarAidMember.user_id == user_id)
+            .with_for_update()
+        )
+    locked = await session.execute(
+        select(StarAidCredential)
+        .where(StarAidCredential.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    latest_cred = locked.scalar_one_or_none()
+    if latest_cred is None or latest_cred.revoked_at is not None:
+        return None, GitHubCallResult(reauth_required=True, error_code="no_credential")
+
+    now = now_utc()
+    latest_expired = (
+        latest_cred.access_token_expires_at is not None
+        and latest_cred.access_token_expires_at <= now + timedelta(minutes=5)
+    )
+    if not latest_expired and latest_cred.encrypted_access_token:
+        try:
+            new_token = decrypt_secret(latest_cred.encrypted_access_token)
+            logger.info("star_aid token refresh: user_id={}, result=reused", user_id)
+            return new_token, GitHubCallResult(
+                success=True,
+                credential_encrypted_access_token=(
+                    latest_cred.encrypted_access_token
+                ),
+            )
+        except SecretCryptoError:
+            pass
+
+    refreshed, result = await _refresh_and_persist(session, latest_cred)
     if refreshed is None:
         return None, result
-    return refreshed, GitHubCallResult(success=True)
+    return refreshed, result
 
 
 async def _refresh_and_persist(
     session: AsyncSession, cred: StarAidCredential
 ) -> tuple[str | None, GitHubCallResult]:
-    """用 refresh_token 刷新并写库；失败标记 reauth_required。"""
+    """用 refresh_token 刷新并写库；真正失效才标记 reauth_required。"""
+    user_id = cred.user_id
     if not cred.encrypted_refresh_token:
-        await mark_reauth_required(session, cred.user_id)
+        await mark_reauth_required(session, user_id)
+        logger.warning("star_aid token refresh: user_id={}, result=reauth_required, reason=no_refresh_token", user_id)
         return None, GitHubCallResult(
             reauth_required=True, error_code="no_refresh_token"
         )
@@ -325,7 +515,8 @@ async def _refresh_and_persist(
         cred.refresh_token_expires_at is not None
         and cred.refresh_token_expires_at <= now
     ):
-        await mark_reauth_required(session, cred.user_id)
+        await mark_reauth_required(session, user_id)
+        logger.warning("star_aid token refresh: user_id={}, result=reauth_required, reason=refresh_expired", user_id)
         return None, GitHubCallResult(
             reauth_required=True, error_code="refresh_expired"
         )
@@ -333,7 +524,8 @@ async def _refresh_and_persist(
     try:
         refresh_token = decrypt_secret(cred.encrypted_refresh_token)
     except SecretCryptoError:
-        await mark_reauth_required(session, cred.user_id)
+        await mark_reauth_required(session, user_id)
+        logger.error("star_aid token refresh: user_id={}, result=reauth_required, reason=decrypt_failed", user_id)
         return None, GitHubCallResult(reauth_required=True, error_code="decrypt_failed")
 
     client_id, client_secret = _client_credentials()
@@ -343,13 +535,38 @@ async def _refresh_and_persist(
         )
     except Exception as exc:
         logger.error(
-            "star_aid token refresh failed: user_id={}, error={}", cred.user_id, exc
+            "star_aid token refresh failed: user_id={}, error={}", user_id, exc
         )
-        await mark_reauth_required(session, cred.user_id)
-        return None, GitHubCallResult(reauth_required=True, error_code="refresh_failed")
+        # 临时网络异常不直接标记 reauth_required，避免误封正常凭据
+        return None, GitHubCallResult(error_code="refresh_network_error", error_message=str(exc))
 
     if token_payload.get("error") or not token_payload.get("access_token"):
-        await mark_reauth_required(session, cred.user_id)
+        # 检查是否并发其他请求已经完成了刷新并保存了更新的凭据
+        refreshed_check = await get_credential(session, user_id)
+        if (
+            refreshed_check
+            and refreshed_check.encrypted_refresh_token != cred.encrypted_refresh_token
+            and refreshed_check.access_token_expires_at
+            and refreshed_check.access_token_expires_at > now_utc() + timedelta(minutes=5)
+        ):
+            try:
+                reused_token = decrypt_secret(refreshed_check.encrypted_access_token)
+                logger.info("star_aid token refresh: user_id={}, result=reused_after_race", user_id)
+                return reused_token, GitHubCallResult(
+                    success=True,
+                    credential_encrypted_access_token=(
+                        refreshed_check.encrypted_access_token
+                    ),
+                )
+            except SecretCryptoError:
+                pass
+
+        await mark_reauth_required(session, user_id)
+        logger.warning(
+            "star_aid token refresh: user_id={}, result=reauth_required, error={}",
+            user_id,
+            token_payload.get("error_description") or token_payload.get("error"),
+        )
         return None, GitHubCallResult(reauth_required=True, error_code="refresh_denied")
 
     # 刷新会签发新 refresh_token，旧 refresh_token 失效，必须覆盖
@@ -357,8 +574,11 @@ async def _refresh_and_persist(
         session, cred.user_id, cred.github_username or "", token_payload
     )
     new_access = token_payload.get("access_token") or ""
-    logger.info("star_aid token refreshed: user_id={}", cred.user_id)
-    return new_access, GitHubCallResult(success=True)
+    logger.info("star_aid token refresh: user_id={}, result=refreshed", cred.user_id)
+    return new_access, GitHubCallResult(
+        success=True,
+        credential_encrypted_access_token=cred.encrypted_access_token,
+    )
 
 
 # ========== GitHub REST 操作 / GitHub REST operations ==========
@@ -380,8 +600,10 @@ async def fetch_authenticated_user(access_token: str) -> dict | None:
     return resp.json()
 
 
-async def list_user_public_repositories(access_token: str) -> list[dict]:
-    """列出 user token 可访问的全部公开仓库（自动翻页）。"""
+async def list_user_public_repositories(
+    access_token: str,
+) -> RepositoryListResult:
+    """列出 user token 可访问的全部公开仓库（自动翻页，返回结构化结果）。"""
     repos: list[dict] = []
     page = 1
     try:
@@ -401,18 +623,71 @@ async def list_user_public_repositories(access_token: str) -> list[dict]:
                     timeout=_REQUEST_TIMEOUT,
                 )
                 if resp.status_code != 200:
+                    call_res = _result_from_response(resp)
                     logger.warning(
-                        "star_aid list repos failed: status={}", resp.status_code
+                        "star_aid list repos failed: page={}, status={}, error={}",
+                        page,
+                        resp.status_code,
+                        call_res.error_code,
                     )
-                    return repos
-                data = resp.json()
-                if not isinstance(data, list) or not data:
-                    return repos
+                    return RepositoryListResult(
+                        success=False,
+                        complete=False,
+                        repositories=repos,
+                        status_code=resp.status_code,
+                        error_code=call_res.error_code,
+                        error_message=call_res.error_message,
+                        rate_limited=(call_res.error_code == "rate_limited"),
+                        rate_limit_reset_at=call_res.rate_limit_reset_at,
+                        retry_after_seconds=call_res.retry_after_seconds,
+                    )
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return RepositoryListResult(
+                        success=False,
+                        complete=False,
+                        repositories=repos,
+                        status_code=resp.status_code,
+                        error_code="invalid_json",
+                    )
+                if not isinstance(data, list):
+                    return RepositoryListResult(
+                        success=False,
+                        complete=False,
+                        repositories=repos,
+                        status_code=resp.status_code,
+                        error_code="invalid_payload",
+                    )
+                if not data:
+                    # 翻页结束，所有页面成功获取
+                    return RepositoryListResult(
+                        success=True,
+                        complete=True,
+                        repositories=repos,
+                        status_code=200,
+                    )
                 repos.extend(data)
+                # GitHub's Link header is authoritative even when the final
+                # page happens to contain exactly per_page repositories.
+                has_next = 'rel="next"' in resp.headers.get("link", "")
+                if not has_next:
+                    return RepositoryListResult(
+                        success=True,
+                        complete=True,
+                        repositories=repos,
+                        status_code=200,
+                    )
                 page += 1
     except httpx.RequestError as exc:
-        logger.warning("star_aid list repos network error: {}", exc)
-        return repos
+        logger.warning("star_aid list repos network error: page={}, error={}", page, exc)
+        return RepositoryListResult(
+            success=False,
+            complete=False,
+            repositories=repos,
+            error_code="network_error",
+            error_message=str(exc),
+        )
 
 
 async def get_repository_metadata(

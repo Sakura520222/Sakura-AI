@@ -746,3 +746,114 @@ async def test_install_workspace_dependencies_skips_without_dependency_runner(tm
 
     executor.run.assert_not_awaited()
     assert not (workspace / ".venv").exists()
+
+
+from backend.services.agent_team.git_workspace_service import (
+    _pyproject_is_installable,
+)
+
+
+def test_pyproject_is_installable_with_build_system(tmp_path):
+    """A pyproject.toml with [build-system] is installable."""
+    p = tmp_path / "pyproject.toml"
+    p.write_text(
+        '[build-system]\nrequires = ["setuptools"]\n'
+        'build-backend = "setuptools.build_meta"\n'
+        "[project]\nname = 'pkg'\nversion = '0.1'\n"
+    )
+    assert _pyproject_is_installable(p) is True
+
+
+def test_pyproject_is_installable_without_build_system(tmp_path):
+    """PEP 518 defaults a missing build-system table to setuptools."""
+    p = tmp_path / "pyproject.toml"
+    p.write_text("[project]\nname = 'app'\nversion = '0.1'\n")
+    (tmp_path / "setup.py").write_text(
+        "from setuptools import setup\nsetup(name='app')\n"
+    )
+    assert _pyproject_is_installable(p) is True
+
+
+def test_pyproject_is_installable_returns_false_for_uv_virtual_project(tmp_path):
+    """A pyproject.toml with [tool.uv] package = false is NOT installable."""
+    p = tmp_path / "pyproject.toml"
+    p.write_text(
+        '[build-system]\nrequires = ["setuptools"]\n'
+        'build-backend = "setuptools.build_meta"\n'
+        "[project]\nname = 'virt'\nversion = '0.1'\n"
+        "\n[tool.uv]\npackage = false\n"
+    )
+    assert _pyproject_is_installable(p) is False
+
+
+def test_pyproject_is_installable_returns_false_for_missing_file(tmp_path):
+    """A non-existent pyproject.toml is not installable."""
+    assert _pyproject_is_installable(tmp_path / "pyproject.toml") is False
+
+
+def test_pyproject_is_installable_returns_false_for_malformed_toml(tmp_path):
+    """Malformed TOML should not crash; treat as not installable."""
+    p = tmp_path / "pyproject.toml"
+    p.write_text("[invalid\n")
+    assert _pyproject_is_installable(p) is False
+
+
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_falls_back_to_requirements_for_virtual_project(
+    monkeypatch, tmp_path
+):
+    """When pyproject.toml exists but is not installable, fall back to requirements.txt."""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+    # Write a virtual-project pyproject.toml (no build-system, uv package=false)
+    (workspace / "pyproject.toml").write_text(
+        "[project]\nname = 'sakura-ai'\nversion = '0.1'\n"
+        "\n[tool.uv]\npackage = false\n"
+    )
+    (workspace / "requirements.txt").write_text("example-package\n")
+
+    executor = LocalExecutionRunner(workspace, workspace_service)
+    requests: list = []
+
+    async def capture(request):
+        requests.append(request)
+        if len(requests) == 1:
+            # Simulate venv creation
+            venv = workspace / ".venv" / "local"
+            script_dir = venv / ("Scripts" if os.name == "nt" else "bin")
+            script_dir.mkdir(parents=True, exist_ok=True)
+            launcher = script_dir / ("python.exe" if os.name == "nt" else "python")
+            if os.name == "nt":
+                launcher.write_text("fake interpreter", encoding="utf-8")
+            else:
+                launcher.symlink_to(Path(sys.executable).resolve())
+            (script_dir / ("pip.exe" if os.name == "nt" else "pip")).write_text(
+                "fake pip", encoding="utf-8"
+            )
+            (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
+        return ExecutionResult(exit_code=0)
+
+    monkeypatch.setattr(executor, "execute", capture)
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        lambda _key: _async_value(True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_settings",
+        lambda: SimpleNamespace(agent_team_auto_install_deps=True),
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.FULL_ACCESS),
+    )
+
+    service = AgentTeamGitWorkspaceService(workspace_service=workspace_service)
+    await service.install_workspace_dependencies(workspace, executor)
+
+    # Should have 2 requests: venv creation + requirements.txt install
+    assert len(requests) == 2
+    dep_request = requests[1]
+    # The dependency install argv must use requirements.txt, NOT -e .
+    assert "-r" in dep_request.argv
+    assert "requirements.txt" in dep_request.argv
+    assert "-e" not in dep_request.argv

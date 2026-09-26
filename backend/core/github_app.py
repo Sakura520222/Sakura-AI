@@ -138,6 +138,7 @@ class GitHubAppClient:
             token, _ = await star_aid_github_service.get_effective_access_token(
                 session, int(user_id)
             )
+            await session.commit()
             return token
 
     async def get_user_client(self, user_id: int) -> Github | None:
@@ -217,6 +218,25 @@ class GitHubAppClient:
                     f"获取 installation {inst.id} 仓库失败: {e}", exc_info=True
                 )
         return result
+
+    def get_app_identity(self) -> tuple[str, str | None]:
+        """Return the review App slug and OAuth client ID from GitHub."""
+        if not self.integration:
+            self._init_integration()
+            if not self.integration:
+                return "", None
+        try:
+            app = self.integration.get_app()
+            raw = getattr(app, "raw_data", None) or getattr(app, "_rawData", {})
+            client_id = getattr(app, "client_id", None)
+            if not client_id and isinstance(raw, dict):
+                client_id = raw.get("client_id")
+            return str(getattr(app, "slug", "") or ""), (
+                str(client_id) if client_id else None
+            )
+        except Exception as e:
+            logger.error(f"获取 GitHub App 标识失败: {type(e).__name__}")
+            return "", None
 
     def check_user_installed(self, username: str | None) -> bool | None:
         """轻量检查指定用户/组织是否安装 GitHub App（不拉取仓库列表）

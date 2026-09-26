@@ -93,7 +93,7 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/services/star_aid_github_service.py",
-        "position": "backend/services/star_aid_github_service.py:87",
+        "position": "backend/services/star_aid_github_service.py:120",
         "category": "github-protocol-boundary",
         "reason": "GitHub rate-limit reset is a Unix epoch instant and is normalized to aware UTC.",
     },

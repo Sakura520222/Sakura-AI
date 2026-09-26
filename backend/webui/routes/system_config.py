@@ -69,8 +69,14 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
         "app_timezone",
         "smtp_security",
         "log_level",
+        "star_aid_github_app_discovery_timeout_seconds",
     }
 )
+
+# These optional text fields support an explicit clear action.  An empty value
+# is submitted only when the browser marks that field as user-changed; an
+# untouched empty field keeps the historical "leave unchanged" behavior.
+_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug"})
 
 
 @router.get("/")
@@ -141,7 +147,10 @@ async def save_system_config(
 
             val = str(raw).strip()
             if not val and key not in _SYSTEM_TYPED_VALUE_KEYS:
-                continue
+                clearable = key in _SYSTEM_CLEARABLE_VALUE_KEYS
+                changed_by_user = form.get(f"{key}_changed") == "true"
+                if not clearable or not changed_by_user:
+                    continue
 
             # 数据库连接字符串验证（接受所有可规范化的异步驱动格式）
             if key == "database_url":
@@ -311,6 +320,74 @@ async def test_connection(
         }
 
     return {"success": False, "message": "Unsupported test type"}
+
+
+async def _resolve_review_github_app_slug(
+    authorization_client_id: str,
+) -> tuple[str | None, str | None]:
+    """Resolve the review App slug only when it owns the authorization client ID."""
+    from backend.core.github_app import GitHubAppClient
+
+    try:
+        slug, review_client_id = await asyncio.to_thread(
+            GitHubAppClient().get_app_identity
+        )
+    except Exception as exc:
+        logger.warning(
+            "GitHub App slug lookup failed: {}",
+            type(exc).__name__,
+        )
+        return None, "github_app_slug_lookup_failed"
+
+    if not slug or slug == "unknown-bot" or not review_client_id:
+        return None, "github_app_slug_lookup_failed"
+    if review_client_id != authorization_client_id:
+        # GitHub has no API for reverse-looking-up a separate App from only
+        # its OAuth Client ID/Secret. Never fill this field with the review
+        # App slug when those are different Apps.
+        return None, "github_app_slug_requires_manual_entry"
+    return slug.removesuffix("[bot]"), None
+
+
+@router.post("/github-app-slug")
+async def fetch_github_app_slug(
+    request: Request,
+    _user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """Auto-fill the App slug when the user-authorization App is the review App."""
+    translate = make_translation_func(detect_language(user_prefs))
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+
+    client_id = (
+        str(body.get("clientId", "")).strip()
+        if isinstance(body, dict)
+        else ""
+    )
+    if not client_id:
+        return {
+            "success": False,
+            "error_code": "github_app_slug_client_id_required",
+            "message": translate("system_config.github_app_slug_client_id_required"),
+        }
+
+    slug, error_code = await _resolve_review_github_app_slug(client_id)
+    if error_code:
+        return {
+            "success": False,
+            "error_code": error_code,
+            "message": translate(f"system_config.{error_code}"),
+        }
+
+    return {
+        "success": True,
+        "slug": slug,
+        "message": translate("system_config.github_app_slug_filled"),
+    }
 
 
 def _schedule_application_restart(delay_seconds: float = 2.0) -> None:

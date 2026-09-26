@@ -36,9 +36,10 @@ class _FakeContent:
 
 
 class _FakeTreeEntry:
-    def __init__(self, path, type_="blob"):
+    def __init__(self, path, type_="blob", size=0):
         self.path = path
         self.type = type_
+        self.size = size
 
 
 class _FakeRequester:
@@ -54,8 +55,9 @@ class _FakeRequester:
 
 
 class _FakeTree:
-    def __init__(self, paths):
-        self.tree = [_FakeTreeEntry(p) for p in paths]
+    def __init__(self, paths, sizes=None):
+        sizes = sizes or {}
+        self.tree = [_FakeTreeEntry(p, size=sizes.get(p, 0)) for p in paths]
 
 
 class _FakeRepo:
@@ -231,6 +233,332 @@ async def test_read_file_non_pr_no_branch_uses_default(file_strategy):
     assert result["branch_used"] == "main"
     assert result["branch_requested"] is None
     assert "main-content" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_large_file_line_range_is_allowed(file_strategy):
+    """大文件按请求行范围读取，而不是按文件字节数直接拒绝。"""
+    content = "\n".join(f"line {i}" for i in range(1, 151))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=100
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "line_range"
+    assert result["returned_lines"] == 100
+    assert result["size"] == 262335
+    assert result["content"].splitlines()[0].endswith("line 1")
+    assert result["content"].splitlines()[-1].endswith("line 100")
+
+
+@pytest.mark.asyncio
+async def test_read_file_large_file_search_is_allowed(file_strategy):
+    """大文件搜索只返回匹配上下文，不因文件字节数提前跳过。"""
+    content = "\n".join(
+        f"line {i}" if i != 125 else "line 125 with keyword" for i in range(1, 151)
+    )
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh",
+        repo,
+        pr=None,
+        search_pattern="keyword",
+        context_lines=1,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search"
+    assert result["match_count"] == 1
+    assert result["returned_lines"] == 3
+    assert "keyword" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_large_file_full_read_is_line_truncated(file_strategy):
+    """大文件完整读取仍按输出行数截断，并保留任务无关的后续读取提示。"""
+    content = "\n".join(f"line {i}" for i in range(1, 551))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file("large.sh", repo, pr=None)
+
+    assert "error" not in result
+    assert result["mode"] == "full"
+    assert result["total_lines"] == 550
+    assert result["returned_lines"] == 500
+    assert result["truncated_lines"] == 500
+    assert result["content"].splitlines()[-1].endswith("line 500")
+    assert "PR" not in result["warning"]
+    assert "start_line/end_line" in result["warning"]
+    assert "search_pattern" in result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_line_range_output_is_capped_without_rejecting(
+    file_strategy,
+):
+    """超大行范围请求返回首个输出窗口，并给出下一段读取参数。"""
+    content = "\n".join(f"line {i}" for i in range(1, 601))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 1_000_000
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=600
+    )
+
+    assert "error" not in result
+    assert result["end_line"] == 500
+    assert result["returned_lines"] == 500
+    assert result["line_range"]["status"] == "output_truncated"
+    assert result["line_range"]["truncated"] is True
+    assert result["line_range"]["output_line_limit"] == 500
+    assert "start_line=501" in result["hint"]
+    assert "end_line=600" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_line_range_reports_combined_truncation(file_strategy):
+    """行范围同时越界并超过输出上限时，两种截断原因都保持可见。"""
+    content = "\n".join(f"line {i}" for i in range(1, 551))
+    fake_content = _FakeContent("large.sh", content)
+    fake_content.size = 1_000_000
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "large.sh", repo, pr=None, start_line=1, end_line=600
+    )
+
+    assert result["line_range"]["status"] == "end_line_and_output_truncated"
+    assert result["line_range"]["output_line_limit"] == 500
+    assert "超出当前文件总行数" in result["hint"]
+    assert "单次返回上限" in result["hint"]
+    assert "start_line=501" in result["hint"]
+    assert "end_line=550" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_char_budget_reports_actual_lines_and_recovery(
+    file_strategy,
+):
+    """Character truncation cannot claim selected lines that were not returned."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    content = "\n".join(f"line-{i}: {'x' * 30}" for i in range(1, 501))
+    repo = _FakeRepo(
+        branches={"main": {"long.txt": _FakeContent("long.txt", content)}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "long.txt", repo, pr=None, start_line=1, end_line=500
+    )
+
+    assert result["returned_lines"] == 3
+    assert result["end_line"] == 3
+    assert result["line_range"]["returned"] == {
+        "start_line": 1,
+        "end_line": 3,
+    }
+    assert result["partial_line"]["line"] == 3
+    assert result["partial_line"]["end_char"] > result["partial_line"]["start_char"]
+    assert result["line_range"]["status"] == "output_char_truncated"
+    assert result["recovery"]["retry_arguments"]["file_path"] == "long.txt"
+    assert result["recovery"]["retry_arguments"]["start_line"] == 3
+    assert result["recovery"]["retry_arguments"]["end_line"] == 3
+    assert result["recovery"]["retry_arguments"]["start_char"] > 0
+    assert result["recovery"]["retry_arguments"]["branch"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_read_file_partial_line_continuation_advances_character_offset(
+    file_strategy,
+):
+    """A minified line can be continued without repeatedly returning its prefix."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    line = "ab" * 500
+    repo = _FakeRepo(
+        branches={"main": {"minified.js": _FakeContent("minified.js", line)}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    first = await handler.read_file(
+        "minified.js", repo, pr=None, start_line=1, end_line=1
+    )
+    second = await handler.read_file(
+        "minified.js",
+        repo,
+        pr=None,
+        start_line=1,
+        end_line=1,
+        start_char=first["partial_line"]["end_char"],
+    )
+
+    assert first["returned_lines"] == 1
+    assert first["partial_line"]["line"] == 1
+    assert first["partial_line"]["start_char"] == 0
+    assert first["recovery"]["retry_arguments"]["start_line"] == 1
+    assert first["recovery"]["retry_arguments"]["start_char"] > 0
+    assert len(second["content"]) == 100
+    assert second["content"] != first["content"]
+    assert "b" in second["content"]
+    assert second["partial_line"]["start_char"] == first["partial_line"]["end_char"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_full_mode_char_budget_reports_actual_lines(file_strategy):
+    """Full-read metadata follows the rendered output, not the nominal line cap."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    content = "\n".join(f"{i}: {'x' * 30}" for i in range(1, 501))
+    repo = _FakeRepo(
+        branches={"main": {"full.txt": _FakeContent("full.txt", content)}},
+        default_branch="main",
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file("full.txt", repo, pr=None)
+
+    assert result["mode"] == "full"
+    assert result["total_lines"] == 500
+    assert result["returned_lines"] == 3
+    assert result["end_line"] == 3
+    assert result["recovery"]["retry_arguments"]["start_line"] == 3
+    assert result["recovery"]["retry_arguments"]["start_char"] > 0
+
+
+@pytest.mark.asyncio
+async def test_read_file_full_output_is_capped_by_characters(file_strategy):
+    """A single very long line cannot bypass the response-size limit."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file("minified.js", repo, pr=None)
+
+    assert "error" not in result
+    assert result["mode"] == "full"
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+
+
+@pytest.mark.asyncio
+async def test_read_file_range_output_is_capped_by_characters(file_strategy):
+    """One-line ranges are also bounded by response characters."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 20,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "minified.js", repo, pr=None, start_line=1, end_line=1
+    )
+
+    assert "error" not in result
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+    assert result["line_range"]["output_char_truncated"] is True
+    assert result["line_range"]["status"] == "output_char_truncated"
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_output_is_capped_by_characters(file_strategy):
+    """Search results cannot return an unbounded minified line."""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 0,
+        "max_context_lines": 200,
+    }
+    fake_content = _FakeContent("minified.js", "needle" + "x" * 1_000)
+    repo = _FakeRepo(branches={"main": {"minified.js": fake_content}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "minified.js", repo, pr=None, search_pattern="needle", context_lines=0
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search"
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+
+
+@pytest.mark.asyncio
+async def test_read_file_unexpected_error_hint_is_task_agnostic(
+    file_strategy, monkeypatch
+):
+    """异常兜底提示不得默认当前任务是 PR 审查。"""
+    handler = FileToolHandler()
+    monkeypatch.setattr(
+        handler,
+        "_fetch_contents",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = await handler.read_file("a.py", object(), pr=None)
+
+    assert "读取文件时发生错误" in result["error"]
+    assert "PR" not in result["hint"]
+    assert "start_line/end_line" in result["hint"]
+    assert "search_pattern" in result["hint"]
 
 
 @pytest.mark.asyncio
@@ -495,6 +823,175 @@ async def test_search_in_files_zero_matches_does_not_fall_back(search_strategy):
     assert result["tried_branches"] == ["feature/x"]
 
 
+@pytest.mark.asyncio
+async def test_search_in_files_scans_large_files(search_strategy):
+    """跨文件搜索不因文件字节数跳过，只返回匹配内容与上下文。"""
+    fake_content = _FakeContent("large.sh", "before\nkeyword here\nafter\n")
+    fake_content.size = 262335
+    repo = _FakeRepo(
+        branches={"main": {"large.sh": fake_content}},
+        trees={"main": _FakeTree(["large.sh"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert "error" not in result
+    assert result["total_matches"] == 1
+    assert result["results"][0]["file_path"] == "large.sh"
+    assert "keyword here" in result["results"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_reports_file_size_budget_skips(search_strategy):
+    """Files beyond the search-specific budget are visible, not silently lost."""
+    search_strategy.get_context_enhancement_config = lambda: {
+        "search_in_files": {
+            "default_context_lines": 1,
+            "default_max_results": 20,
+            "skip_binary": True,
+            "use_search_api": False,
+            "max_files_to_search": 100,
+            "concurrency": 2,
+            "max_file_bytes": 100,
+            "max_total_scan_bytes": 1_000,
+            "max_matches_per_file": 20,
+            "max_output_chars": 10_000,
+        }
+    }
+    large = _FakeContent("generated.txt", "keyword\n")
+    large.size = 500
+    repo = _FakeRepo(
+        branches={"main": {"generated.txt": large}},
+        trees={"main": _FakeTree(["generated.txt"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert "error" not in result
+    assert result["results"] == []
+    assert result["skipped_files"] == [
+        {
+            "file_path": "generated.txt",
+            "status": "skipped",
+            "reason": "file_size_limit",
+            "size": 500,
+            "limit": 100,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_preflight_tree_size_avoids_blob_fetch(
+    search_strategy,
+):
+    """Known-large traversal blobs are skipped before get_contents downloads them."""
+    search_strategy.get_context_enhancement_config = lambda: {
+        "search_in_files": {
+            "default_context_lines": 1,
+            "default_max_results": 20,
+            "skip_binary": True,
+            "use_search_api": False,
+            "max_files_to_search": 100,
+            "concurrency": 2,
+            "max_file_bytes": 100,
+            "max_total_scan_bytes": 1_000,
+            "max_matches_per_file": 20,
+            "max_output_chars": 10_000,
+        }
+    }
+
+    def _unexpected_get_contents(path, ref=None):
+        raise AssertionError(f"large blob must not be fetched: {path}")
+
+    repo = _FakeRepo(
+        branches={"main": {}},
+        trees={"main": _FakeTree(["generated.txt"], {"generated.txt": 100_000})},
+        default_branch="main",
+    )
+    repo.get_contents = _unexpected_get_contents
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert "error" not in result
+    assert result["skipped_files"][0]["reason"] == "file_size_limit"
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_total_scan_budget_bounds_work(search_strategy):
+    """The aggregate scan budget is enforced and reported as inexact completion."""
+    search_strategy.get_context_enhancement_config = lambda: {
+        "search_in_files": {
+            "default_context_lines": 0,
+            "default_max_results": 20,
+            "skip_binary": True,
+            "use_search_api": False,
+            "max_files_to_search": 100,
+            "concurrency": 4,
+            "max_file_bytes": 100,
+            "max_total_scan_bytes": 100,
+            "max_matches_per_file": 20,
+            "max_output_chars": 10_000,
+        }
+    }
+    repo = _FakeRepo(
+        branches={
+            "main": {
+                "a.txt": _FakeContent("a.txt", "x" * 72 + "\nkeyword\n"),
+                "b.txt": _FakeContent("b.txt", "x" * 72 + "\nkeyword\n"),
+            }
+        },
+        trees={"main": _FakeTree(["a.txt", "b.txt"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert "error" not in result
+    assert result["bytes_scanned"] <= 100
+    assert result["scan_complete"] is False
+    assert result["total_matches_exact"] is False
+    assert len(result["results"]) == 1
+    assert len(result["skipped_files"]) == 1
+    assert result["skipped_files"][0]["reason"] == "total_scan_budget"
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_match_budget_stops_and_marks_inexact(search_strategy):
+    """Per-file match capping avoids materializing every generated match."""
+    search_strategy.get_context_enhancement_config = lambda: {
+        "search_in_files": {
+            "default_context_lines": 0,
+            "default_max_results": 20,
+            "skip_binary": True,
+            "use_search_api": False,
+            "max_files_to_search": 100,
+            "concurrency": 2,
+            "max_file_bytes": 10_000,
+            "max_total_scan_bytes": 1_000_000,
+            "max_matches_per_file": 2,
+            "max_output_chars": 10_000,
+        }
+    }
+    content = "\n".join(f"keyword {i}" for i in range(20))
+    repo = _FakeRepo(
+        branches={"main": {"generated.txt": _FakeContent("generated.txt", content)}},
+        trees={"main": _FakeTree(["generated.txt"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files("keyword", repo, pr=None)
+
+    assert result["total_matches"] == 2
+    assert result["total_matches_exact"] is False
+    assert result["results"][0]["match_count"] == 2
+    assert result["results"][0]["matches_truncated"] is True
 # ── Search API 路径（ref-inaccessible 检测 + 降级）──────────
 
 
@@ -532,6 +1029,32 @@ async def test_search_via_api_normal_match_does_not_flag_inaccessible():
 
     assert "error" not in result
     assert any(r["file_path"] == "a.py" for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_search_via_api_uses_returned_size_before_blob_fetch():
+    """If Search API supplies size, over-limit blobs are not downloaded."""
+    requester = _FakeRequester(
+        {"items": [{"path": "generated.txt", "size": 3_000_000}]}
+    )
+    repo = _FakeRepo(
+        branches={"main": {}},
+        default_branch="main",
+        requester=requester,
+    )
+
+    def _unexpected_get_contents(path, ref=None):
+        raise AssertionError(f"large blob must not be fetched: {path}")
+
+    repo.get_contents = _unexpected_get_contents
+    handler = SearchFilesToolHandler()
+
+    result = await handler._search_via_api(
+        "keyword", repo, "main", [], True, None, None, 3, 20
+    )
+
+    assert "error" not in result
+    assert result["skipped_files"][0]["reason"] == "file_size_limit"
 
 
 @pytest.mark.asyncio

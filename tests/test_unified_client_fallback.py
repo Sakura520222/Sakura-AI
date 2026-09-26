@@ -472,7 +472,7 @@ async def test_non_json_response_exhausts_then_falls_back(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bad_request_retries_then_falls_back(monkeypatch):
-    """请求参数错误也应重试，耗尽后切换到备用候选。"""
+    """请求参数错误不得重复发送同一 candidate，但可以尝试备用协议。"""
     primary_stub = _StubAdapter(
         fail_categories=[AIErrorCategory.BAD_REQUEST, AIErrorCategory.BAD_REQUEST]
     )
@@ -510,7 +510,7 @@ async def test_bad_request_retries_then_falls_back(monkeypatch):
     )
 
     assert response.content == "fallback"
-    assert primary_stub.calls == 2
+    assert primary_stub.calls == 1
     assert fallback_stub.calls == 1
     await client.aclose()
 
@@ -567,11 +567,13 @@ async def test_identity_or_model_error_fails_over_without_retry(monkeypatch, cat
 
 
 def test_fallback_only_categories_are_not_retryable():
-    """认证、权限和模型不存在只允许故障转移，不允许重试当前候选。"""
+    """确定性候选错误只允许故障转移，不允许重试当前候选。"""
     for category in (
         AIErrorCategory.AUTH_INVALID,
         AIErrorCategory.PERMISSION_DENIED,
         AIErrorCategory.MODEL_NOT_FOUND,
+        AIErrorCategory.BAD_REQUEST,
+        AIErrorCategory.REFUSAL,
     ):
         error = AIError(category, "stub failure")
         assert not error.is_terminal
@@ -580,11 +582,16 @@ def test_fallback_only_categories_are_not_retryable():
 
 
 def test_other_ai_error_categories_are_retryable_and_non_terminal():
-    """除直接故障转移类别外，其余 AI 错误都允许重试。"""
+    """明确瞬时/未知错误允许有限重试，且不会阻断故障转移。"""
     fallback_only = {
         AIErrorCategory.AUTH_INVALID,
         AIErrorCategory.PERMISSION_DENIED,
         AIErrorCategory.MODEL_NOT_FOUND,
+        AIErrorCategory.BAD_REQUEST,
+        AIErrorCategory.REFUSAL,
+        # 上下文和空响应由上层恢复路径处理，不重复相同 payload。
+        AIErrorCategory.CONTEXT_OVERFLOW,
+        AIErrorCategory.EMPTY_RESPONSE,
     }
     for category in set(AIErrorCategory) - fallback_only:
         error = AIError(category, "stub failure")

@@ -498,6 +498,13 @@ class UnifiedResponseMeta:
     # candidate, so callers replay fields like reasoning_content based on
     # the real winner instead of catalog defaults.
     served_capabilities: ModelCapabilitySet | None = None
+    # Credential- and prompt-free effective request policy.  It makes parameter
+    # provenance inspectable without exposing message content or endpoints.
+    effective_request: dict[str, Any] = field(default_factory=dict)
+    # In-process winner context used by tool-loop callers to replace their
+    # local history after a successful candidate response.  Never serialize it:
+    # the field contains complete prompts and is intentionally excluded from logs.
+    effective_messages: list[UnifiedMessage] | None = None
 
 
 class _AttributeProxy:

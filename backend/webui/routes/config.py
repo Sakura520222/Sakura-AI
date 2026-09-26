@@ -158,6 +158,9 @@ async def save_strategies_section(
                     form.get("max_files_for_deep_strategy", 10)
                 ),
                 "max_file_lines": int(float(form.get("max_file_lines", 500))),
+                "max_file_output_chars": int(
+                    float(form.get("max_file_output_chars", 50000))
+                ),
                 "default_context_lines": int(
                     float(form.get("default_context_lines", 20))
                 ),
@@ -173,6 +176,21 @@ async def save_strategies_section(
                     ),
                     "max_files_to_search": int(
                         float(form.get("sif_max_files_to_search", 100))
+                    ),
+                    "concurrency": int(
+                        float(form.get("sif_concurrency", 8))
+                    ),
+                    "max_file_bytes": int(
+                        float(form.get("sif_max_file_bytes", 2_097_152))
+                    ),
+                    "max_total_scan_bytes": int(
+                        float(form.get("sif_max_total_scan_bytes", 16_777_216))
+                    ),
+                    "max_matches_per_file": int(
+                        float(form.get("sif_max_matches_per_file", 20))
+                    ),
+                    "max_output_chars": int(
+                        float(form.get("sif_max_output_chars", 50_000))
                     ),
                 },
                 "git_tools": {
@@ -1512,6 +1530,13 @@ async def save_general_config(
             from backend.workers.review_worker import reset_review_semaphore
 
             reset_review_semaphore()
+
+        if "star_aid_scheduler_enabled" in changed:
+            from backend.services.star_aid_scheduler import get_star_aid_scheduler
+
+            star_sched = get_star_aid_scheduler()
+            if star_sched is not None:
+                star_sched.restart_if_needed()
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）

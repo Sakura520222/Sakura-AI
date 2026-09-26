@@ -8,7 +8,6 @@ from typing import Any
 
 from loguru import logger
 
-from backend.services.ai_reviewer.constants import LABEL_RECOMMENDATION_TEMPERATURE
 from backend.services.ai_task_deadline import AITaskDeadline
 
 
@@ -119,7 +118,6 @@ class LabelRecommender:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=LABEL_RECOMMENDATION_TEMPERATURE,
                 role="summary",
                 context=invocation_context,
                 observer=observer,

@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -108,6 +108,7 @@
 - **Task Cancellation** — Cancel anytime with safe workspace cleanup
 - **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
 - **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas
+- **GitHub App Authorization Center** — Users view their own installations and repository access, then manage or extend authorization on GitHub
 
 ### Repository Aid
 
@@ -119,7 +120,7 @@
 - **Manual Star** — Manually star from the display list, sharing idempotency logic
 - **Member & Permission Governance** — Join / leave / pause / ban; offending repositories can be disabled
 - **Security Checks** — Rejects cross-user state reuse; GitHub account must match the logged-in user
-- **WebUI Management Page** — Members / displayed repositories / today's usage / feature toggles
+- **WebUI Management Page** — Members / displayed repositories / today's usage / feature toggles; member and repository filters and pagination retain each other's state, and searches treat `%` and `_` literally
 
 ### Management & Operations
 
@@ -132,7 +133,7 @@
 - **Persistent AI Account Configuration** — Multiple accounts + role bindings + fallback chains, per-model capability overrides
 - **Multi-Protocol Adaptation Layer** — Unified runtime for OpenAI / Anthropic / Gemini native / compatible endpoints
 - **Cross-Protocol Fallback** — Backoff retry + cross-vendor switch + context overflow compression
-- **GitHub App Installation Management** — Auto-syncs repository authorization status
+- **GitHub App Repository Management** — Administrators view global installations, indexing, and scan status
 - **Security Center & MFA** — TOTP / recovery codes / Passkeys / global or per-user MFA enforcement / failure lockout
 - **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
 - **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset
@@ -140,7 +141,7 @@
 - **External Payments & Refunds** — Stripe / Paddle / Alipay / NOWPayments / TRON USDT
 - **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
 - **Admin Action Audit** — Complete operation logs
-- **WebUI Dashboard** — Dashboard, PR, user, config, queue, scan, Agent, memory, Repository Aid, vector storage management
+- **WebUI Dashboard** — Navigation grouped into Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings; the PR review page includes repository and date filters, with old review-log URLs redirecting to it
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
@@ -181,6 +182,10 @@ The interactive menu's production deployment also asks for the channel on first 
 `start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file for the selected image channel (stable from `main`, development from `develop`; override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
 
 `sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs, enables, and starts the Host Updater systemd unit. Production binaries require a usable systemd as PID 1; otherwise the script fails clearly instead of claiming reboot self-start is configured. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+
+After a three-image update succeeds, the running deployment is verified, and the rollback transaction is finalized, the Host Updater attempts to remove old official Sakura-AI images unused by any container. It preserves the current deployment, images used by other containers, and unrelated images. Removals and warnings appear in the update job log; cleanup failures do not turn a successful update into a failure.
+
+Before activation, the Updater checks that local rollback images are available. If deployment state contains only one sandbox image digest, it reconstructs the complete pair from verified runtime identity and checks both images before activation, pulling either one if missing.
 
 Verify reboot self-start after installation:
 

@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.2.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -108,6 +108,7 @@
 - **任务取消支持** — 随时取消并安全释放工作区
 - **PR 创建闭环** — Draft PR + Sakura PR 审查 + 人工反馈迭代，不自动合并
 - **普通用户权限控制** — 仓库白名单 + 独立 Agent 配额
+- **GitHub App 授权中心** — 普通用户查看自己的安装与仓库访问范围，一键跳转 GitHub 管理/扩展授权
 
 ### 仓库互助
 
@@ -119,7 +120,7 @@
 - **手动点星** — 列表中手动点星，与自动共用幂等逻辑
 - **成员与权限治理** — 加入 / 退出 / 暂停 / 封禁，违规仓库可禁用
 - **安全校验** — 拒绝跨用户 state 复用，GitHub 账号必须与登录用户一致
-- **WebUI 管理页** — 成员 / 展示仓库 / 今日用量 / 功能开关
+- **WebUI 管理页** — 成员 / 展示仓库 / 今日用量 / 功能开关；成员和仓库筛选、分页互不覆盖，搜索中的 `%`、`_` 按字面匹配
 
 ### 管理与运维
 
@@ -132,7 +133,7 @@
 - **AI 账号持久化配置页** — 多账号 + 角色绑定 + 回退链，每模型独立覆盖能力
 - **多协议适配层** — OpenAI / Anthropic / Gemini 原生 / 兼容端点统一运行时
 - **跨协议故障转移** — 退避重试 + 跨厂商切换 + 上下文超限压缩
-- **GitHub App 安装管理** — 自动同步仓库授权状态
+- **GitHub App 仓库管理** — 管理员查看全局安装、索引与扫描状态
 - **安全中心与多因素认证** — TOTP / 恢复码 / Passkeys / 全局或单用户强制 MFA / 失败锁定
 - **SSE 实时推送** — 基于 Redis Pub/Sub 的多进程实时通信
 - **配额制访问控制** — 用户自注册 + UTC 日 / 周 / 月自动重置
@@ -140,7 +141,7 @@
 - **外部支付与退款** — Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT 直收
 - **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
 - **管理员操作审计** — 完整操作日志
-- **WebUI 管理界面** — 仪表盘、PR、用户、配置、队列、扫描、Agent、记忆、仓库互助、向量库管理
+- **WebUI 管理界面** — 按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口；PR 审查页统一提供仓库与日期筛选，旧审查日志地址重定向至 PR 页面
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
@@ -181,6 +182,10 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 `start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
 
 `sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装并启用 Host Updater 的 systemd unit。生产 binary 要求宿主机 PID 1 为可用的 systemd；不满足时脚本会明确失败，不会声称已配置重启自启。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+
+更新激活前，Updater 会检查本地回滚镜像；部署配置只记录一个沙箱镜像 digest 时，会从已验证的运行时恢复完整沙箱镜像对，并在激活前确认两者均可用（缺失时尝试拉取）。
+
+三镜像更新成功、运行状态验证通过并结束回滚事务后，Host Updater 会尝试清理本地不再被任何容器引用的旧版 Sakura-AI 官方镜像。当前部署镜像、其他容器仍在使用的镜像和非 Sakura-AI 镜像不会被删除；清理结果记入更新任务日志，清理失败只产生警告，不影响已成功的更新。
 
 安装完成后可验证宿主机重启自启状态：
 

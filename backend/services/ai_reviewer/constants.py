@@ -6,18 +6,16 @@
 # =============================================================================
 # API 调用参数
 # =============================================================================
-DEFAULT_MAX_TOKENS = 16000  # 默认最大输出 token 数
 
 # 总结/标签推荐参数
 SUMMARY_TIMEOUT = 60.0  # 总结阶段超时
-SUMMARY_MAX_TOKENS = 4000  # 总结阶段最大输出
 LABEL_RECOMMENDATION_TIMEOUT = 60.0  # 标签推荐超时
 
 # =============================================================================
-# 文件限制
+# 文件输出限制
 # =============================================================================
-MAX_FILE_SIZE_BYTES = 200000  # 最大文件大小（200KB）
 MAX_FILE_LINES = 500  # 最大文件行数（fallback 默认值，实际值从策略配置读取）
+MAX_FILE_OUTPUT_CHARS = 50_000  # 单次 read_file 返回的最大字符数
 DEFAULT_CONTEXT_LINES = 20  # 搜索匹配时的默认上下文行数
 MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 
@@ -61,11 +59,6 @@ SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory", "read_sakura_memory
 ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
 
 # =============================================================================
-# 上下文压缩配置
-# =============================================================================
-DEFAULT_COMPRESSION_KEEP_ROUNDS = 2  # 默认保留的对话轮数
-
-# =============================================================================
 # 工具调用配置
 # =============================================================================
 MAX_TOOL_ITERATIONS = 200  # 最大工具调用轮次
@@ -73,7 +66,6 @@ MAX_TOOL_ITERATIONS = 200  # 最大工具调用轮次
 # =============================================================================
 # 标签推荐配置
 # =============================================================================
-LABEL_RECOMMENDATION_TEMPERATURE = 0.3  # 标签推荐温度
 MAX_LABEL_RECOMMENDATIONS = 5  # 最大推荐标签数
 DEFAULT_LABEL_CONFIDENCE = 0.6  # 默认标签置信度
 
@@ -105,8 +97,10 @@ READ_FILE_TOOL = {
             "内容为准，不要沿用其他分支或旧提交中的行号。"
             "如果 start_line 超出当前文件范围，结果会保留原始请求、当前 total_lines"
             "和 recovery.retry_arguments；请根据 hint 使用新行号重试，工具不会自动重试。"
-            "如果 end_line 超出范围，工具会保留可用内容并在 line_range 中标明"
-            "实际返回范围和 truncated 状态，不会将其视为硬错误。"
+                    "如果 end_line 超出范围，工具会保留可用内容并在 line_range 中标明"
+                    "实际返回范围和 truncated 状态，不会将其视为硬错误。"
+                    "请求范围超过单次输出行数限制时，同样会返回可用窗口、"
+                    "truncated 状态和下一段读取参数。"
         ),
         "parameters": {
             "type": "object",
@@ -129,6 +123,18 @@ READ_FILE_TOOL = {
                         "结束行号（从1开始，包含该行）。仅当需要读取文件特定范围时指定。"
                         "超出当前文件长度时会截断到实际最后一行，并在返回的"
                         "line_range 元数据中注明实际范围和 truncated 状态。"
+                        "单次返回行数也会受 max_file_lines 输出限制保护。"
+                        "返回内容还会受单次字符上限保护。"
+                    ),
+                },
+                "start_char": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "起始行内的字符偏移（从0开始，不含行号前缀）。"
+                        "仅在 start_line/end_line 模式中使用；当 partial_line "
+                        "报告超长单行被截断时，把 partial_line.end_char 作为"
+                        "下一次请求的 start_char。"
                     ),
                 },
                 "search_pattern": {

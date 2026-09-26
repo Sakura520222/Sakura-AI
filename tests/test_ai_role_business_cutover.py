@@ -93,9 +93,6 @@ async def test_history_context_ignores_injected_legacy_client_and_model(monkeypa
     service = history_context_service.HistoryContextService(
         legacy_client, model="legacy-model"
     )
-    settings = SimpleNamespace(ai_max_tokens=1234)
-    monkeypatch.setattr(history_context_service, "get_settings", lambda: settings)
-
     result = await service._generate_ai_summary("history")
 
     assert result == "summary"
@@ -103,7 +100,8 @@ async def test_history_context_ignores_injected_legacy_client_and_model(monkeypa
     kwargs = clients[0].calls[0]
     assert kwargs["role"] == "summary"
     assert kwargs["model"] == ""
-    assert kwargs["max_tokens"] == 1234
+    assert "temperature" not in kwargs
+    assert "max_tokens" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -157,7 +155,6 @@ async def test_star_aid_summary_uses_summary_role_client(monkeypatch):
         primary_language="Python",
         readme_excerpt="README",
         lang="zh-CN",
-        max_tokens=1234,
     )
 
     assert result == "summary"

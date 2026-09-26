@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, get_args
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,7 +82,9 @@ SYSTEM_CONFIG_GROUPS = [
         "keys": [
             "star_aid_github_app_client_id",
             "star_aid_github_app_client_secret",
+            "star_aid_github_app_slug",
             "star_aid_github_app_callback_url",
+            "star_aid_github_app_discovery_timeout_seconds",
         ],
     },
     {
@@ -140,6 +143,7 @@ SYSTEM_CONFIG_KEYS = frozenset(
 SYSTEM_CONFIG_UPDATE_KEYS = SYSTEM_CONFIG_KEYS | frozenset({"star_aid_enabled"})
 
 _INTEGER_RE = re.compile(r"^[+-]?[0-9]+$")
+_GITHUB_APP_SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
 
 class SystemConfigValidationError(ValueError):
@@ -378,6 +382,14 @@ class SystemConfigService:
 
         if key == "app_domain" and value:
             value = sanitize_domain(value)
+        elif key == "star_aid_github_app_slug" and value:
+            if not _GITHUB_APP_SLUG_RE.fullmatch(value):
+                raise SystemConfigValidationError(
+                    key,
+                    "GitHub App Slug 格式无效",
+                    toast_key="system_config.invalid_github_app_slug",
+                    field_key=key,
+                )
 
         return value
 
@@ -505,6 +517,16 @@ class SystemConfigService:
                 continue
             if key in all_dynamic_keys or key in CORE_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
+
+        if "star_aid_scheduler_enabled" in changed:
+            try:
+                from backend.services.star_aid_scheduler import get_star_aid_scheduler
+
+                scheduler = get_star_aid_scheduler()
+                if scheduler is not None:
+                    scheduler.restart_if_needed()
+            except Exception as exc:
+                logger.warning("热更新仓库互助调度器失败: {}", exc)
 
     def build_audit_log(
         self, changed: dict[str, dict[str, str]]

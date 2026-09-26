@@ -14,7 +14,7 @@ from backend.services.ai_reviewer.constants import (
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
     MAX_FILE_LINES,
-    MAX_FILE_SIZE_BYTES,
+    MAX_FILE_OUTPUT_CHARS,
 )
 
 
@@ -42,6 +42,79 @@ def format_search_results(
         result_parts.append(f"{line_prefix}{lines[i]}")
 
     return "\n".join(result_parts)
+
+
+def _cap_output_chars(content: str, limit: int) -> tuple[str, bool]:
+    """Cap rendered tool output by Unicode characters."""
+    if len(content) <= limit:
+        return content, False
+    return content[:limit], True
+
+
+def _render_lines_with_budget(
+    lines: list[str],
+    *,
+    start_idx: int,
+    end_idx: int,
+    char_limit: int,
+    start_char: int = 0,
+) -> tuple[str, dict[str, Any]]:
+    """Render numbered lines while preserving truthful continuation metadata.
+
+    A line is either emitted completely or as an explicitly reported partial
+    line.  The returned metadata identifies the actual last line, whether it was
+    complete, and the next character/line position to request.
+    """
+    parts: list[str] = []
+    remaining = max(1, int(char_limit))
+    current_idx = start_idx
+    current_start_char = max(0, int(start_char))
+    partial_line: dict[str, int] | None = None
+
+    while current_idx < end_idx:
+        line = lines[current_idx]
+        prefix = f"{current_idx + 1:>6}\t"
+        separator = "\n" if parts else ""
+        fixed_length = len(separator) + len(prefix)
+        if remaining <= fixed_length:
+            break
+        available_line = line[current_start_char:]
+        capacity = remaining - fixed_length
+        emitted_length = min(len(available_line), capacity)
+        segment = available_line[:emitted_length]
+        parts.append(separator + prefix + segment)
+        remaining -= fixed_length + emitted_length
+
+        if emitted_length < len(available_line):
+            partial_line = {
+                "line": current_idx + 1,
+                "start_char": current_start_char,
+                "end_char": current_start_char + emitted_length,
+                "total_chars": len(line),
+            }
+            current_idx += 1
+            break
+
+        current_idx += 1
+        current_start_char = 0
+
+    emitted_count = len(parts)
+    output_char_truncated = partial_line is not None or current_idx < end_idx
+    next_start_idx = current_idx
+    next_start_char = 0
+    if partial_line is not None:
+        next_start_idx = current_idx - 1
+        next_start_char = partial_line["end_char"]
+
+    return "\n".join(parts), {
+        "returned_lines": emitted_count,
+        "end_idx": current_idx,
+        "last_line_complete": partial_line is None and emitted_count > 0,
+        "output_char_truncated": output_char_truncated,
+        "partial_line": partial_line,
+        "next_start_idx": next_start_idx,
+        "next_start_char": next_start_char,
+    }
 
 
 class _ContentsFetchResult:
@@ -102,6 +175,10 @@ class FileToolHandler:
         ce = get_strategy_config().get_context_enhancement_config()
         return {
             "max_file_lines": int(ce.get("max_file_lines", MAX_FILE_LINES)),
+            "max_file_output_chars": max(
+                8,
+                int(ce.get("max_file_output_chars", MAX_FILE_OUTPUT_CHARS)),
+            ),
             "default_context_lines": int(
                 ce.get("default_context_lines", DEFAULT_CONTEXT_LINES)
             ),
@@ -214,6 +291,7 @@ class FileToolHandler:
         pr: Any,
         start_line: int | None = None,
         end_line: int | None = None,
+        start_char: int | None = None,
         search_pattern: str | None = None,
         context_lines: int | None = None,
         branch: str | None = None,
@@ -231,6 +309,7 @@ class FileToolHandler:
             pr: GitHub PR对象
             start_line: 起始行号（从1开始，可选）
             end_line: 结束行号（从1开始，包含，可选）
+            start_char: 起始行内的字符偏移（从0开始，仅行范围模式可选）
             search_pattern: 搜索文本（可选，与行范围互斥）
             context_lines: 搜索上下文行数（可选，默认从配置读取）
             branch: 非 PR 场景下指定读取的分支名（可选）；PR 场景忽略此参数
@@ -254,6 +333,14 @@ class FileToolHandler:
                     "error": "不能同时指定 start_line/end_line 和 search_pattern",
                     "hint": "请选择行范围读取或内容搜索其中一种模式",
                 }
+            if start_char is not None and (
+                start_line is None or end_line is None or search_pattern is not None
+            ):
+                return {
+                    "file_path": file_path,
+                    "error": "start_char 只能和 start_line/end_line 一起使用",
+                    "hint": "请先指定行范围；start_char 用于继续读取超长单行。",
+                }
 
             # 行范围参数校验
             if start_line is not None or end_line is not None:
@@ -273,6 +360,11 @@ class FileToolHandler:
                         "file_path": file_path,
                         "error": "end_line 必须大于等于 start_line",
                         "hint": f"当前值: start_line={start_line}, end_line={end_line}",
+                    }
+                if start_char is not None and start_char < 0:
+                    return {
+                        "file_path": file_path,
+                        "error": "start_char 必须大于等于 0",
                     }
 
             # 读取工具限制配置
@@ -323,20 +415,6 @@ class FileToolHandler:
                     "tried_refs": fetch.tried_refs,
                 }
 
-            if content_file.size > MAX_FILE_SIZE_BYTES:
-                return {
-                    "file_path": file_path,
-                    "error": "文件过大",
-                    "size": content_file.size,
-                    "content": None,
-                    "tried_branches": tried_branches,
-                    "branch_requested": branch_requested,
-                    "branch_used": branch_used,
-                    "ref_used": fetch.ref_used,
-                    "tried_refs": fetch.tried_refs,
-                    "hint": "请基于PR diff中的patch进行审查，避免读取完整文件",
-                }
-
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
 
@@ -348,7 +426,13 @@ class FileToolHandler:
             if start_line is not None and end_line is not None:
                 # 转换为0-based索引
                 start_idx = max(0, start_line - 1)
-                end_idx = min(len(lines), end_line)
+                max_returned_lines = max(1, limits["max_file_lines"])
+                actual_end_line = min(
+                    end_line,
+                    total_lines,
+                    start_line + max_returned_lines - 1,
+                )
+                end_idx = actual_end_line
 
                 if start_idx >= len(lines):
                     retry_end_line = total_lines
@@ -401,11 +485,55 @@ class FileToolHandler:
                         ),
                     }
 
-                selected_lines = lines[start_idx:end_idx]
-                actual_end_line = min(end_line, total_lines)
                 end_line_truncated = end_line > total_lines
+                requested_end_in_file = min(end_line, total_lines)
+                effective_start_char = start_char or 0
+                if effective_start_char >= len(lines[start_idx]):
+                    return {
+                        "file_path": file_path,
+                        "error": (
+                            f"start_char {effective_start_char} 超出第 "
+                            f"{start_line} 行范围"
+                        ),
+                        "total_lines": total_lines,
+                        "branch": branch_used or "unknown",
+                        "branch_requested": branch_requested,
+                        "branch_used": branch_used,
+                        "tried_branches": tried_branches,
+                        "ref_used": fetch.ref_used,
+                        "tried_refs": fetch.tried_refs,
+                        "hint": (
+                            "请使用当前分支/提交中的行号和字符偏移重新请求；"
+                            "超长行续读时 end_char 是下一次 start_char。"
+                        ),
+                    }
+
+                numbered_content, rendered = _render_lines_with_budget(
+                    lines,
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    char_limit=limits["max_file_output_chars"],
+                    start_char=effective_start_char,
+                )
+                nominal_end_line = actual_end_line
+                actual_end_line = rendered["end_idx"]
+                returned_lines = rendered["returned_lines"]
+                output_char_truncated = rendered["output_char_truncated"]
+                output_line_truncated = nominal_end_line < requested_end_in_file
                 range_status = (
-                    "end_line_truncated" if end_line_truncated else "ok"
+                    "end_line_and_output_char_truncated"
+                    if end_line_truncated
+                    and output_line_truncated
+                    and output_char_truncated
+                    else "end_line_and_output_truncated"
+                    if end_line_truncated and output_line_truncated
+                    else "end_line_truncated"
+                    if end_line_truncated
+                    else "output_char_truncated"
+                    if output_char_truncated
+                    else "output_truncated"
+                    if output_line_truncated
+                    else "ok"
                 )
                 line_range = {
                     "requested": {
@@ -420,14 +548,21 @@ class FileToolHandler:
                     "status": range_status,
                     "start_line_valid": True,
                     "end_line_valid": not end_line_truncated,
-                    "truncated": end_line_truncated,
+                    "truncated": (
+                        end_line_truncated
+                        or output_line_truncated
+                        or output_char_truncated
+                    ),
                     "stale_context_suspected": False,
                 }
-                # 为每行添加行号前缀
-                numbered_content = "\n".join(
-                    f"{start_idx + i + 1:>6}\t{line}"
-                    for i, line in enumerate(selected_lines)
-                )
+                if effective_start_char:
+                    line_range["returned_start_char"] = effective_start_char
+                if output_line_truncated:
+                    line_range["output_line_limit"] = max_returned_lines
+                if output_char_truncated:
+                    line_range["output_char_truncated"] = True
+                if rendered["partial_line"] is not None:
+                    line_range["partial_line"] = rendered["partial_line"]
                 result = {
                     "file_path": file_path,
                     "content": numbered_content,
@@ -435,7 +570,7 @@ class FileToolHandler:
                     "start_line": start_line,
                     "end_line": actual_end_line,
                     "total_lines": total_lines,
-                    "returned_lines": len(selected_lines),
+                    "returned_lines": returned_lines,
                     "size": content_file.size,
                     "branch": branch_used or "unknown",
                     "branch_requested": branch_requested,
@@ -445,13 +580,82 @@ class FileToolHandler:
                     "tried_refs": fetch.tried_refs,
                     "line_range": line_range,
                 }
-                if end_line_truncated:
+                if output_char_truncated:
+                    result["output_truncated"] = True
+                    result["output_char_limit"] = limits["max_file_output_chars"]
+                    if rendered["partial_line"] is not None:
+                        result["partial_line"] = rendered["partial_line"]
+                    result["warning"] = (
+                        f"单次返回内容超过 {limits['max_file_output_chars']} 字符，"
+                        "已按行边界或超长单行部分内容截断。"
+                    )
+                    next_start_line = rendered["next_start_idx"] + 1
+                    next_end_line = (
+                        next_start_line
+                        if rendered["partial_line"] is not None
+                        else min(
+                            total_lines,
+                            next_start_line + max_returned_lines - 1,
+                        )
+                    )
+                    retry_arguments = {
+                        "file_path": file_path,
+                        "start_line": next_start_line,
+                        "end_line": next_end_line,
+                    }
+                    if rendered["next_start_char"]:
+                        retry_arguments["start_char"] = rendered["next_start_char"]
+                    if pr is None and branch_used:
+                        retry_arguments["branch"] = branch_used
+                    result["recovery"] = {
+                        "action": "retry_read_file",
+                        "automatic_retry": False,
+                        "reason": "output_char_truncated",
+                        "retry_arguments": retry_arguments,
+                    }
+                    result["hint"] = (
+                        f"返回内容受 {limits['max_file_output_chars']} 字符上限限制，"
+                        f"实际返回到第 {actual_end_line} 行"
+                        + (
+                            f"的第 {rendered['partial_line']['end_char']} 字符（不含）"
+                            if rendered["partial_line"] is not None
+                            else ""
+                        )
+                        + "。请使用 recovery.retry_arguments 继续读取。"
+                    )
+                elif end_line_truncated and not output_line_truncated:
                     result["hint"] = (
                         f"请求 end_line={end_line} 超出当前文件总行数 {total_lines}，"
                         f"已返回当前可用范围 start_line={start_line}, "
                         f"end_line={actual_end_line}。这是可用结果而非错误；"
                         "如需读取其他位置，请依据当前文件行号重新请求。"
                     )
+                elif output_line_truncated:
+                    next_start_line = actual_end_line + 1
+                    next_end_line = min(
+                        total_lines,
+                        next_start_line + max_returned_lines - 1,
+                    )
+                    if end_line_truncated:
+                        result["hint"] = (
+                            f"请求 end_line={end_line} 超出当前文件总行数 "
+                            f"{total_lines}，且请求范围超过单次返回上限 "
+                            f"{max_returned_lines} 行；已返回 start_line="
+                            f"{start_line}, end_line={actual_end_line}。"
+                            "如需继续读取，请使用 "
+                            f"start_line={next_start_line}, "
+                            f"end_line={next_end_line}。"
+                        )
+                    else:
+                        result["hint"] = (
+                            f"请求范围 start_line={start_line}, "
+                            f"end_line={end_line} "
+                            f"超过单次返回上限 {max_returned_lines} 行，"
+                            f"已返回 start_line={start_line}, "
+                            f"end_line={actual_end_line}。如需继续读取，请使用 "
+                            f"start_line={next_start_line}, "
+                            f"end_line={next_end_line}。"
+                        )
                 return result
 
             # 模式2: 内容搜索
@@ -479,17 +683,24 @@ class FileToolHandler:
                         "tried_refs": fetch.tried_refs,
                     }
 
+                max_returned_matches = max(1, limits["max_file_lines"])
+                returned_matches = matches[:max_returned_matches]
+                matches_truncated = len(returned_matches) < len(matches)
                 numbered_content = format_search_results(
-                    lines, matches, effective_context_lines
+                    lines, returned_matches, effective_context_lines
+                )
+                numbered_content, output_char_truncated = _cap_output_chars(
+                    numbered_content, limits["max_file_output_chars"]
                 )
 
-                return {
+                result = {
                     "file_path": file_path,
                     "content": numbered_content,
                     "mode": "search",
                     "search_pattern": search_pattern,
                     "total_lines": total_lines,
                     "match_count": len(matches),
+                    "returned_matches": len(returned_matches),
                     "context_lines": effective_context_lines,
                     "returned_lines": len(numbered_content.split("\n")),
                     "size": content_file.size,
@@ -499,55 +710,47 @@ class FileToolHandler:
                     "tried_branches": tried_branches,
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
-                    "hint": (
-                        f"共找到 {len(matches)} 处匹配。"
-                        f"如需查看更多上下文，可增大 context_lines 参数（当前 {effective_context_lines}）。"
-                        f"如需查看特定匹配附近的完整代码，请使用行范围读取。"
-                    ),
                 }
+                if matches_truncated:
+                    result["matches_truncated"] = True
+                if output_char_truncated:
+                    result["output_truncated"] = True
+                    result["output_char_limit"] = limits["max_file_output_chars"]
+                    result["returned_matches"] = numbered_content.count(">>>\t")
+                    result["matches_truncated"] = True
+                if matches_truncated or output_char_truncated:
+                    result["hint"] = (
+                        f"共找到 {len(matches)} 处匹配，本次结果受行数或字符上限截断。"
+                        "请使用更精确的 search_pattern，或基于已返回行号使用行范围读取。"
+                    )
+                else:
+                    result["hint"] = (
+                        f"共找到 {len(matches)} 处匹配。"
+                        "如需查看特定匹配附近的完整代码，请使用行范围读取。"
+                    )
+                return result
 
             # 模式3: 完整读取（默认，向后兼容）
             max_file_lines = limits["max_file_lines"]
-            if total_lines > max_file_lines:
-                truncated_lines = lines[:max_file_lines]
-                numbered_content = "\n".join(
-                    f"{i + 1:>6}\t{line}" for i, line in enumerate(truncated_lines)
-                )
-                logger.warning(
-                    f"文件 {file_path} 过大 ({total_lines} 行)，已截断为前 {max_file_lines} 行"
-                )
-                return {
-                    "file_path": file_path,
-                    "content": numbered_content,
-                    "mode": "full",
-                    "size": content_file.size,
-                    "total_lines": total_lines,
-                    "returned_lines": max_file_lines,
-                    "truncated_lines": max_file_lines,
-                    "warning": (
-                        f"文件过大，仅显示前 {max_file_lines} 行（共 {total_lines} 行）。"
-                        f"请使用 start_line/end_line 读取后续部分，"
-                        f"或使用 search_pattern 搜索特定内容。"
-                    ),
-                    "branch": branch_used or "unknown",
-                    "branch_requested": branch_requested,
-                    "branch_used": branch_used,
-                    "tried_branches": tried_branches,
-                    "ref_used": fetch.ref_used,
-                    "tried_refs": fetch.tried_refs,
-                }
-
-            # 正常大小文件 - 也添加行号
-            numbered_content = "\n".join(
-                f"{i + 1:>6}\t{line}" for i, line in enumerate(lines)
+            line_end_idx = min(total_lines, max_file_lines)
+            line_truncated = total_lines > max_file_lines
+            numbered_content, rendered = _render_lines_with_budget(
+                lines,
+                start_idx=0,
+                end_idx=line_end_idx,
+                char_limit=limits["max_file_output_chars"],
             )
-            return {
+            output_char_truncated = rendered["output_char_truncated"]
+            actual_end_line = rendered["end_idx"]
+            returned_lines = rendered["returned_lines"]
+            result = {
                 "file_path": file_path,
                 "content": numbered_content,
                 "mode": "full",
                 "size": content_file.size,
                 "total_lines": total_lines,
-                "returned_lines": total_lines,
+                "returned_lines": returned_lines,
+                "end_line": actual_end_line,
                 "branch": branch_used or "unknown",
                 "branch_requested": branch_requested,
                 "branch_used": branch_used,
@@ -555,13 +758,66 @@ class FileToolHandler:
                 "ref_used": fetch.ref_used,
                 "tried_refs": fetch.tried_refs,
             }
+            if line_truncated:
+                logger.warning(
+                    f"文件 {file_path} 过大 ({total_lines} 行)，"
+                    f"已截断为前 {max_file_lines} 行"
+                )
+                result["truncated_lines"] = returned_lines
+                result["warning"] = (
+                    f"文件过大，仅显示前 {returned_lines} 行（共 {total_lines} 行）。"
+                    "请使用 start_line/end_line 或 recovery.retry_arguments 读取后续部分，"
+                    "或使用 search_pattern 搜索特定内容。"
+                )
+            if output_char_truncated:
+                result["output_truncated"] = True
+                result["output_char_limit"] = limits["max_file_output_chars"]
+                if rendered["partial_line"] is not None:
+                    result["partial_line"] = rendered["partial_line"]
+                result["warning"] = (
+                    f"单次返回内容超过 {limits['max_file_output_chars']} 字符，"
+                    "已按行边界或超长单行部分内容截断。"
+                )
+            if line_truncated or output_char_truncated:
+                next_start_line = rendered["next_start_idx"] + 1
+                next_end_line = (
+                    next_start_line
+                    if rendered["partial_line"] is not None
+                    else min(
+                        total_lines,
+                        next_start_line + max_file_lines - 1,
+                    )
+                )
+                retry_arguments: dict[str, Any] = {
+                    "file_path": file_path,
+                    "start_line": next_start_line,
+                    "end_line": next_end_line,
+                }
+                if rendered["next_start_char"]:
+                    retry_arguments["start_char"] = rendered["next_start_char"]
+                if pr is None and branch_used:
+                    retry_arguments["branch"] = branch_used
+                result["recovery"] = {
+                    "action": "retry_read_file",
+                    "automatic_retry": False,
+                    "reason": (
+                        "output_char_truncated"
+                        if output_char_truncated
+                        else "output_line_truncated"
+                    ),
+                    "retry_arguments": retry_arguments,
+                }
+            return result
 
         except Exception as e:
             logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
             return {
                 "file_path": file_path,
                 "error": f"读取文件时发生错误: {e!s}",
-                "hint": "请检查文件路径是否正确，或基于PR diff进行审查",
+                "hint": (
+                    "请检查文件路径是否正确；如文件较大，请使用 "
+                    "start_line/end_line 分段读取，或使用 search_pattern 定位内容。"
+                ),
             }
 
     async def list_directory(

@@ -78,8 +78,7 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 | `pr_dependency_graph_mode` | `static` | 依赖图生成模式，可选 `ai` 或 `static` |
 | `pr_dependency_graph_max_nodes` | `25` | 依赖图最大节点数，避免图过大影响阅读 |
 | `pr_dependency_graph_max_files` | `50` | 参与依赖分析的最大文件数 |
-| `model_context_window` | 自动/手动 | 模型上下文窗口，用于判断 compact diff 与上下文压缩阈值 |
-| `context_safety_threshold` | 默认值 | 安全上下文比例，用于预留输出和工具调用空间 |
+| 单模型 `context_window_tokens` / `max_output_tokens` | 自动/手动 | AI 配置中的模型级上下文与输出上限，用于 compact diff、压缩预检和最终请求 |
 | `enable_context_compression` | `true` | 是否启用多轮审查历史压缩 |
 | `context_compression_threshold` | 默认值 | 压缩触发阈值 |
 | `ai_api_timeout_seconds` | 默认值 | 单次 AI 请求超时 |

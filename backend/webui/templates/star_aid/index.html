@@ -3,285 +3,396 @@
 {% block title %}{{ _('star_aid.title') }} - Sakura AI{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-
-    <!-- 页面标题 -->
-    <div>
-        <h1 class="text-2xl font-bold">{{ _('star_aid.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.description') }}</p>
-    </div>
-
-    {% if not state.feature_enabled %}
-    <!-- 功能已关闭 -->
-    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4 text-sm text-yellow-800 dark:text-yellow-300">
-        {{ _('star_aid.feature_disabled') }}
-    </div>
-    {% endif %}
-
-    <!-- 顶部状态条 -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
-            <div class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_feature') }}</div>
-            <div class="mt-1 text-sm font-semibold {% if state.feature_enabled %}text-green-600{% else %}text-gray-500{% endif %}">
-                {% if state.feature_enabled %}{{ _('common.enabled') }}{% else %}{{ _('common.disabled') }}{% endif %}
-            </div>
+<div class="space-y-4" x-data="{ publicSearch: '', mySearch: '' }">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight">{{ _('star_aid.title') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.description') }}</p>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
-            <div class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_membership') }}</div>
-            <div class="mt-1 text-sm font-semibold">
-                {% if state.member %}
-                    {% if state.member.status == 'active' %}<span class="text-green-600">{{ _('star_aid.member_active') }}</span>
-                    {% elif state.member.status == 'paused' %}<span class="text-yellow-600">{{ _('star_aid.member_paused') }}</span>
-                    {% elif state.member.status == 'banned' %}<span class="text-red-600">{{ _('star_aid.member_banned') }}</span>
-                    {% elif state.member.status == 'reauth_required' %}<span class="text-orange-600">{{ _('star_aid.reauthorize_required') }}</span>
-                    {% else %}{{ state.member.status }}{% endif %}
-                {% else %}
-                    <span class="text-gray-500">{{ _('star_aid.member_not_joined') }}</span>
-                {% endif %}
-            </div>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
-            <div class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_auth') }}</div>
-            <div class="mt-1 text-sm font-semibold">
-                {% if state.credential_status == 'authorized' %}<span class="text-green-600">{{ _('star_aid.auth_authorized') }}</span>
-                {% elif state.credential_status == 'reauth' %}<span class="text-orange-600">{{ _('star_aid.reauthorize_required') }}</span>
-                {% else %}<span class="text-gray-500">{{ _('star_aid.auth_none') }}</span>{% endif %}
-            </div>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
-            <div class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_today_usage') }}</div>
-            <div class="mt-1 text-sm font-semibold">{{ state.daily_star_used }} / {{ state.daily_star_limit }}</div>
-        </div>
-    </div>
-
-    <!-- 展示仓库列表 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h2 class="text-lg font-semibold mb-4">{{ _('star_aid.displayed_repos') }}</h2>
-        {% if state.public_repos %}
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {% for repo in state.public_repos %}
-            <div class="border border-gray-200 dark:border-gray-700 rounded-xl p-4 flex flex-col gap-2">
-                <div class="flex items-start justify-between gap-2">
-                    <a href="{{ repo.html_url }}" target="_blank" rel="noopener" class="font-semibold text-sakura-700 dark:text-sakura-300 hover:underline truncate">
-                        {{ repo.full_name }}
-                    </a>
-                    <span class="text-xs text-gray-500 shrink-0">{{ repo.stargazers_count }} {{ _('star_aid.stars_unit') }}</span>
-                </div>
-                {% if repo.description %}
-                <p class="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{{ repo.description }}</p>
-                {% endif %}
-                {% if repo.topics %}
-                <div class="flex flex-wrap gap-1">
-                    {% for t in repo.topics %}
-                    <span class="text-xs px-2 py-0.5 bg-sakura-50 dark:bg-sakura-900/20 text-sakura-700 dark:text-sakura-300 rounded">{{ t }}</span>
-                    {% endfor %}
-                </div>
-                {% endif %}
-                {% if repo.ai_summary_status == 'ready' and repo.ai_summary %}
-                <div class="text-sm text-gray-600 dark:text-gray-400">
-                    <div class="text-xs font-medium text-sakura-600 mb-0.5">{{ _('star_aid.ai_summary') }}</div>
-                    <p class="whitespace-pre-wrap">{{ repo.ai_summary }}</p>
-                </div>
-                {% elif repo.ai_summary_status == 'pending' %}
-                <p class="text-xs text-yellow-600">{{ _('star_aid.summary_pending') }}</p>
-                {% elif repo.ai_summary_status == 'failed' %}
-                <p class="text-xs text-red-500">{{ _('star_aid.summary_failed') }}</p>
-                {% endif %}
-                <div class="flex items-center justify-between mt-auto pt-2">
-                    <span class="text-xs text-gray-400">{{ repo.primary_language or '' }}</span>
-                    <form method="post" action="/star-aid/repositories/{{ repo.id }}/star">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit"
-                                {% if not state.feature_enabled %}disabled{% endif %}
-                                class="px-3 py-1 text-xs font-medium text-white bg-sakura-600 hover:bg-sakura-700 disabled:opacity-50 rounded transition">
-                            {{ _('star_aid.manual_star') }}
-                        </button>
-                    </form>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.no_displayed_repos') }}</p>
+        {% if not state.feature_enabled %}
+        <span class="inline-flex w-fit items-center rounded-full bg-yellow-50 px-3 py-1.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
+            {{ _('star_aid.feature_disabled') }}
+        </span>
         {% endif %}
     </div>
 
-    <!-- 我的互助计划 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 space-y-4">
-        <div class="flex items-center justify-between flex-wrap gap-3">
-            <h2 class="text-lg font-semibold">{{ _('star_aid.my_plan') }}</h2>
-            <div class="flex gap-2 flex-wrap">
+    <!-- 紧凑状态栏：桌面端一行，窄屏时自然换行。 -->
+    <section class="rounded-xl border border-sakura-100 bg-white px-3 py-2.5 shadow-sm dark:border-sakura-900/40 dark:bg-gray-800">
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <div class="flex items-baseline gap-2 whitespace-nowrap">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_membership') }}</span>
+                {% if state.member %}
+                    {% if state.member.status == 'active' %}<span class="font-medium text-green-600">{{ _('star_aid.member_active') }}</span>
+                    {% elif state.member.status == 'paused' %}<span class="font-medium text-yellow-600">{{ _('star_aid.member_paused') }}</span>
+                    {% elif state.member.status == 'banned' %}<span class="font-medium text-red-600">{{ _('star_aid.member_banned') }}</span>
+                    {% elif state.member.status == 'reauth_required' %}<span class="font-medium text-orange-600">{{ _('star_aid.reauthorize_required') }}</span>
+                    {% else %}<span class="font-medium">{{ state.member.status }}</span>{% endif %}
+                {% else %}<span class="font-medium text-gray-600 dark:text-gray-300">{{ _('star_aid.member_not_joined') }}</span>{% endif %}
+            </div>
+            <span class="hidden h-4 w-px bg-gray-200 dark:bg-gray-700 sm:block"></span>
+            <div class="flex items-baseline gap-2 whitespace-nowrap">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_auth') }}</span>
+                {% if state.credential_status == 'authorized' %}<span class="font-medium text-green-600">{{ _('star_aid.auth_authorized') }}</span>
+                {% elif state.credential_status == 'reauth' %}<span class="font-medium text-orange-600">{{ _('star_aid.reauthorize_required') }}</span>
+                {% else %}<span class="font-medium text-gray-600 dark:text-gray-300">{{ _('star_aid.auth_none') }}</span>{% endif %}
+            </div>
+            <span class="hidden h-4 w-px bg-gray-200 dark:bg-gray-700 sm:block"></span>
+            <div class="flex items-baseline gap-2 whitespace-nowrap">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_today_usage') }}</span>
+                <span class="font-medium">{{ state.daily_star_used }} / {{ state.daily_star_limit }}</span>
+            </div>
+            <span class="hidden h-4 w-px bg-gray-200 dark:bg-gray-700 sm:block"></span>
+            <div class="flex items-baseline gap-2 whitespace-nowrap">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.status_feature') }}</span>
+                <span class="font-medium {% if state.feature_enabled %}text-green-600{% else %}text-gray-500{% endif %}">{% if state.feature_enabled %}{{ _('common.enabled') }}{% else %}{{ _('common.disabled') }}{% endif %}</span>
+            </div>
+            <div class="ml-auto flex flex-wrap items-center gap-2">
                 {% if state.credential_status != 'authorized' %}
-                <a href="/star-aid/auth/start?intent=join&return_to=/star-aid/"
-                   class="inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-sakura-600 hover:bg-sakura-700 rounded-lg transition">
+                <a href="/star-aid/auth/start?intent=join&return_to=/star-aid/" class="rounded-lg bg-sakura-600 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-sakura-700">
                     {% if state.credential_status == 'reauth' %}{{ _('star_aid.reauthorize_required') }}{% else %}{{ _('star_aid.authorize_github_app') }}{% endif %}
                 </a>
                 {% endif %}
                 <form method="post" action="/star-aid/sync">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit"
-                            class="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                        {{ _('star_aid.refresh_available') }}
-                    </button>
+                    <button type="submit" class="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium transition hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">{{ _('star_aid.refresh_available') }}</button>
                 </form>
             </div>
         </div>
+    </section>
 
-        {% if state.credential_status == 'none' %}
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.authorize_hint') }}</p>
-        {% endif %}
-
-        <!-- 候选仓库选择 -->
-        {% if state.available_repos %}
-        <form method="post" action="{% if state.member and state.member.status == 'active' %}/star-aid/repositories{% else %}/star-aid/join{% endif %}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <div class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('star_aid.select_repositories') }}</div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
-                {% for repo in state.available_repos %}
-                <label class="flex items-start gap-2 p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-sakura-50 dark:hover:bg-gray-700/40 cursor-pointer">
-                    <input type="checkbox" name="repo_full_names" value="{{ repo.full_name }}"
-                           class="mt-0.5"
-                           {% if repo.is_displayed %}checked{% endif %}>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium truncate">{{ repo.full_name }}</div>
-                        <div class="text-xs text-gray-500">{{ repo.stargazers_count }} {{ _('star_aid.stars_unit') }} · {{ repo.primary_language or '-' }}</div>
-                    </div>
-                </label>
-                {% endfor %}
+    {% if state.public_repos %}
+    <section class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <h2 class="text-lg font-semibold">{{ _('star_aid.displayed_repos') }}</h2>
+                <p class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.description') }}</p>
             </div>
-            <div class="mt-4 flex gap-2 flex-wrap">
+            <label class="w-full sm:max-w-xs">
+                <span class="sr-only">{{ _('star_aid.search_repositories') }}</span>
+                <input type="search" x-model="publicSearch" placeholder="{{ _('star_aid.search_repositories') }}" class="min-h-9 w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-sakura-500 focus:ring-2 focus:ring-sakura-500/20 dark:border-gray-600 dark:bg-gray-900">
+            </label>
+        </div>
+        <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {% for repo in state.public_repos %}
+            <article x-show="!publicSearch || {{ (repo.full_name ~ ' ' ~ (repo.description or '') ~ ' ' ~ (repo.primary_language or ''))|lower|tojson|forceescape }}.includes(publicSearch.toLowerCase())" class="flex min-h-52 flex-col rounded-xl border border-gray-200 p-4 transition hover:border-sakura-200 hover:shadow-sm dark:border-gray-700 dark:hover:border-sakura-800">
+                <div class="flex items-start justify-between gap-3">
+                    <a href="{{ repo.html_url }}" target="_blank" rel="noopener" class="min-w-0 truncate font-semibold text-sakura-700 hover:underline dark:text-sakura-300">{{ repo.full_name }}</a>
+                    <span class="shrink-0 text-xs text-gray-500">★ {{ repo.stargazers_count }} {{ _('star_aid.stars_unit') }}</span>
+                </div>
+                <p class="mt-2 min-h-10 line-clamp-2 text-sm text-gray-600 dark:text-gray-400">{{ repo.description or '' }}</p>
+                <div class="mt-2 min-h-6">
+                    {% if repo.topics %}
+                    <div class="flex flex-wrap gap-1">
+                        {% for topic in repo.topics[:4] %}<span class="rounded bg-sakura-50 px-2 py-0.5 text-xs text-sakura-700 dark:bg-sakura-900/20 dark:text-sakura-300">{{ topic }}</span>{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% if repo.ai_summary_status == 'ready' and repo.ai_summary %}
+                <div class="mt-2 border-t border-gray-100 pt-2 dark:border-gray-700">
+                    <div class="text-xs font-medium text-sakura-600 dark:text-sakura-300">{{ _('star_aid.ai_summary') }}</div>
+                    <p class="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{{ repo.ai_summary }}</p>
+                </div>
+                {% elif repo.ai_summary_status == 'pending' %}<p class="mt-2 text-xs text-yellow-600">{{ _('star_aid.summary_pending') }}</p>
+                {% elif repo.ai_summary_status == 'failed' %}<p class="mt-2 text-xs text-red-500">{{ _('star_aid.summary_failed') }}</p>{% endif %}
+                <div class="mt-auto flex items-center justify-between gap-3 pt-3">
+                    <span class="text-xs text-gray-400">{{ repo.primary_language or '' }}</span>
+                    <form method="post" action="/star-aid/repositories/{{ repo.id }}/star">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" {% if not state.feature_enabled %}disabled{% endif %} class="rounded-lg bg-sakura-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sakura-700 disabled:opacity-50">☆ {{ _('star_aid.manual_star') }}</button>
+                    </form>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% else %}
+    <div class="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+        {{ _('star_aid.no_displayed_repos') }}
+    </div>
+    {% endif %}
+
+    <!-- 轻量 accordion：同一容器内用 divider 分隔，收起时每项约 56px。 -->
+    <section class="divide-y divide-gray-200 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+        <details class="group">
+            <summary class="flex h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
+                <div class="flex min-w-0 items-center gap-2">
+                    <h2 class="font-semibold">{{ _('star_aid.my_plan') }}</h2>
+                    {% if state.displayed_repos %}<span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ _('star_aid.displayed_count', count=state.displayed_repos|length) }}</span>{% endif %}
+                </div>
+                <span class="text-lg text-gray-400 transition group-open:rotate-180">⌄</span>
+            </summary>
+            <div class="space-y-4 border-t border-gray-100 px-4 py-4 dark:border-gray-700" x-data="{ mySearch: '' }">
+                <div class="flex flex-wrap items-center gap-2">
+                    {% if state.credential_status != 'authorized' %}
+                    <a href="/star-aid/auth/start?intent=join&return_to=/star-aid/" class="rounded-lg bg-sakura-600 px-3 py-2 text-sm font-medium text-white">{{ _('star_aid.reauthorize_required') if state.credential_status == 'reauth' else _('star_aid.authorize_github_app') }}</a>
+                    {% endif %}
+                    <form method="post" action="/star-aid/sync">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600">{{ _('star_aid.refresh_available') }}</button>
+                    </form>
+                </div>
+                {% if state.credential_status == 'none' %}<p class="text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.authorize_hint') }}</p>{% endif %}
+                {% if state.available_repos %}
+                <form method="post" action="{% if state.member and state.member.status == 'active' %}/star-aid/repositories{% else %}/star-aid/join{% endif %}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <input type="search" x-model="mySearch" placeholder="{{ _('star_aid.search_my_repositories') }}" class="min-h-9 w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900 sm:max-w-sm">
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" @click="$root.querySelectorAll('input[data-my-repo]').forEach(el => { if (!mySearch || el.dataset.name.includes(mySearch.toLowerCase())) el.checked = true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs dark:border-gray-600">{{ _('star_aid.select_all') }}</button>
+                            <button type="button" @click="$root.querySelectorAll('input[data-my-repo]').forEach(el => el.checked = false)" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs dark:border-gray-600">{{ _('star_aid.clear_all') }}</button>
+                        </div>
+                    </div>
+                    <div class="mt-3 grid max-h-80 grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+                        {% for repo in state.available_repos %}
+                        <label x-show="!mySearch || $el.dataset.name.includes(mySearch.toLowerCase())" data-name="{{ repo.full_name|lower }}" class="flex cursor-pointer items-center gap-3 rounded-lg border border-gray-200 p-3 transition hover:border-sakura-300 dark:border-gray-700">
+                            <input data-my-repo data-name="{{ repo.full_name|lower }}" type="checkbox" name="repo_full_names" value="{{ repo.full_name }}" {% if repo.is_displayed %}checked{% endif %} class="rounded border-gray-300 text-sakura-600 focus:ring-sakura-500">
+                            <span class="min-w-0 flex-1 truncate text-sm">{{ repo.full_name }}</span>
+                            <span class="shrink-0 text-xs text-gray-500">★ {{ repo.stargazers_count }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <div class="mt-3"><button type="submit" {% if not state.feature_enabled %}disabled{% endif %} class="rounded-lg bg-sakura-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{% if state.member and state.member.status == 'active' %}{{ _('star_aid.save_selection') }}{% else %}{{ _('star_aid.join') }}{% endif %}</button></div>
+                </form>
+                {% else %}<p class="text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.no_available_repos') }}</p>{% endif %}
                 {% if state.member and state.member.status == 'active' %}
-                <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-sakura-600 hover:bg-sakura-700 rounded-lg transition">
-                    {{ _('common.save') }}
-                </button>
-                {% else %}
-                <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition"
-                        {% if not state.feature_enabled %}disabled{% endif %}>
-                    {{ _('star_aid.join') }}
-                </button>
+                <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <form method="post" action="/star-aid/leave">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <label class="mb-3 flex cursor-pointer items-start gap-2 text-sm text-gray-600 dark:text-gray-400"><input type="checkbox" name="unstar_created" value="true" class="mt-0.5 rounded"><span>{{ _('star_aid.exit_unstar_option') }}</span></label>
+                        <button type="submit" class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20">{{ _('star_aid.leave') }}</button>
+                    </form>
+                </div>
                 {% endif %}
             </div>
-        </form>
-        {% else %}
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('star_aid.no_available_repos') }}</p>
+        </details>
+
+        {% if state.is_admin %}
+        {% set admin_page = state.admin_repository_page or {} %}
+        {% set member_page = state.admin_member_page or {} %}
+        {% set admin_items = admin_page["items"] if admin_page else state.admin_repositories %}
+        {% set member_params = '&member_q=' ~ (member_page.q|urlencode) ~ '&member_status=' ~ member_page.status ~ '&member_page=' ~ member_page.page ~ '&member_page_size=' ~ member_page.page_size %}
+        {% set repository_params = '&q=' ~ (admin_page.q|urlencode) ~ '&status=' ~ admin_page.status ~ '&sort=' ~ admin_page.sort ~ '&order=' ~ admin_page.order ~ '&page=' ~ admin_page.page ~ '&page_size=' ~ admin_page.page_size %}
+        <details class="group" {% if request.query_params.get('member_page') %}open{% endif %}>
+            <summary class="flex h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
+                <div class="flex min-w-0 items-center gap-2">
+                    <h2 class="font-semibold">{{ _('star_aid.admin_area') }}</h2>
+                    <span class="truncate text-xs text-sakura-700 dark:text-sakura-300">{{ _('star_aid.admin_members_count', count=member_page.all_total if member_page else state.admin_members|length) }} · {{ _('star_aid.admin_repositories_count', count=admin_page.total if admin_page else state.admin_repositories|length) }}</span>
+                </div>
+                <span class="text-lg text-gray-400 transition group-open:rotate-180">⌄</span>
+            </summary>
+            <div class="space-y-4 border-t border-gray-100 px-4 py-4 dark:border-gray-700">
+                <details class="rounded-lg border border-gray-200 dark:border-gray-700" {% if request.query_params.get('member_page') %}open{% endif %}>
+                    <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_members') }} · {{ member_page.all_total }}</summary>
+                    <form id="star-aid-admin-member-filters" method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
+                        <input type="hidden" name="q" value="{{ admin_page.q }}">
+                        <input type="hidden" name="status" value="{{ admin_page.status }}">
+                        <input type="hidden" name="sort" value="{{ admin_page.sort }}">
+                        <input type="hidden" name="order" value="{{ admin_page.order }}">
+                        <input type="hidden" name="page" value="{{ admin_page.page }}">
+                        <input type="hidden" name="page_size" value="{{ admin_page.page_size }}">
+                        <input type="hidden" name="member_page" value="1">
+                        <label class="min-w-48 flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.search_members') }}
+                            <input type="search" name="member_q" value="{{ member_page.q }}" class="mt-1 min-h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.status_filter') }}
+                            <select name="member_status" class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                                {% for status in ['all', 'active', 'paused', 'banned', 'reauth_required'] %}
+                                <option value="{{ status }}" {% if member_page.status == status %}selected{% endif %}>{{ _('star_aid.member_filter_' ~ status) }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ _('star_aid.page_size') }}
+                            <select name="member_page_size" class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900">
+                                {% for size in [20, 50, 100] %}<option value="{{ size }}" {% if member_page.page_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+                            </select>
+                        </label>
+                        <button type="submit" class="min-h-9 rounded-lg bg-sakura-600 px-3 text-sm text-white">{{ _('star_aid.apply_filters') }}</button>
+                    </form>
+                    {% if state.admin_members %}
+                    <div class="overflow-x-auto border-t border-gray-200 dark:border-gray-700">
+                        <table class="w-full min-w-[620px] text-left text-sm">
+                            <thead><tr class="text-gray-500 dark:text-gray-400"><th class="px-3 py-2">{{ _('star_aid.admin_member_user') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_status') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_today') }}</th><th class="px-3 py-2">{{ _('star_aid.admin_member_actions') }}</th></tr></thead>
+                            <tbody>{% for member in state.admin_members %}<tr class="border-t border-gray-100 dark:border-gray-700/60"><td class="px-3 py-2">{{ member.github_username or member.user_id }}</td><td class="px-3 py-2">{{ member.status }}</td><td class="px-3 py-2">{{ member.daily_star_used }} / {{ member.daily_star_limit }}</td><td class="px-3 py-2">{% if member.status == 'banned' %}<form method="post" action="/star-aid/admin/members/{{ member.user_id }}/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-green-300 px-2 py-1 text-xs text-green-700 dark:border-green-800">{{ _('star_aid.unban_member') }}</button></form>{% else %}<form method="post" action="/star-aid/admin/members/{{ member.user_id }}/ban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800">{{ _('star_aid.ban_member') }}</button></form>{% endif %}</td></tr>{% endfor %}</tbody>
+                        </table>
+                    </div>
+                    {% else %}<p class="border-t border-gray-200 p-3 text-sm text-gray-500 dark:border-gray-700">{{ _('star_aid.no_matching_members') }}</p>{% endif %}
+                    {% if member_page.pages > 1 %}
+                    <nav class="flex items-center justify-between gap-3 border-t border-gray-200 p-3 text-sm dark:border-gray-700">
+                        <span>{{ _('star_aid.page_of', page=member_page.page, pages=member_page.pages) }}</span>
+                        <div class="flex gap-2">
+                            {% if member_page.page > 1 %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page - 1 }}&member_page_size={{ member_page.page_size }}{{ repository_params }}" class="rounded border px-2 py-1">{{ _('star_aid.previous_page') }}</a>{% endif %}
+                            {% if member_page.page < member_page.pages %}<a href="/star-aid/?member_q={{ member_page.q|urlencode }}&member_status={{ member_page.status }}&member_page={{ member_page.page + 1 }}&member_page_size={{ member_page.page_size }}{{ repository_params }}" class="rounded border px-2 py-1">{{ _('star_aid.next_page') }}</a>{% endif %}
+                        </div>
+                    </nav>
+                    {% endif %}
+                </details>
+
+                <details id="star-aid-admin-repositories" class="rounded-lg border border-gray-200 dark:border-gray-700">
+                    <summary class="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">{{ _('star_aid.admin_repositories') }} · {{ admin_page.total if admin_page else state.admin_repositories|length }}</summary>
+                    <form id="star-aid-admin-repository-filters" method="get" action="/star-aid/" class="flex flex-wrap items-end gap-2 border-t border-gray-200 p-3 dark:border-gray-700">
+                        <input type="hidden" name="page" value="{{ admin_page.page or 1 }}">
+                        <label class="min-w-48 flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                            {{ _('star_aid.search_repositories') }}
+                            <input type="search" name="q" value="{{ admin_page.q or '' }}" data-admin-repository-search class="mt-1 min-h-9 w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white">
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                            {{ _('star_aid.status_filter') }}
+                            <select name="status" data-admin-repository-filter class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900"><option value="all" {% if admin_page.status == 'all' or not admin_page.status %}selected{% endif %}>{{ _('star_aid.filter_all') }}</option><option value="displayed" {% if admin_page.status == 'displayed' %}selected{% endif %}>{{ _('star_aid.filter_displayed') }}</option><option value="not_displayed" {% if admin_page.status == 'not_displayed' %}selected{% endif %}>{{ _('star_aid.filter_not_displayed') }}</option><option value="disabled" {% if admin_page.status == 'disabled' %}selected{% endif %}>{{ _('star_aid.filter_disabled') }}</option></select>
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                            {{ _('star_aid.sort_by') }}
+                            <select name="sort" data-admin-repository-filter class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900"><option value="name" {% if admin_page.sort == 'name' %}selected{% endif %}>{{ _('star_aid.sort_name') }}</option><option value="stars" {% if admin_page.sort == 'stars' %}selected{% endif %}>{{ _('star_aid.sort_stars') }}</option><option value="pushed_at" {% if admin_page.sort == 'pushed_at' %}selected{% endif %}>{{ _('star_aid.sort_pushed_at') }}</option><option value="created_at" {% if admin_page.sort == 'created_at' %}selected{% endif %}>{{ _('star_aid.sort_created_at') }}</option></select>
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                            {{ _('star_aid.ascending') }} / {{ _('star_aid.descending') }}
+                            <select name="order" data-admin-repository-filter class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900"><option value="asc" {% if admin_page.order == 'asc' %}selected{% endif %}>{{ _('star_aid.ascending') }}</option><option value="desc" {% if admin_page.order == 'desc' %}selected{% endif %}>{{ _('star_aid.descending') }}</option></select>
+                        </label>
+                        <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                            {{ _('star_aid.page_size') }}
+                            <select name="page_size" data-admin-repository-filter class="mt-1 min-h-9 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900"><option value="10" {% if admin_page.page_size == 10 %}selected{% endif %}>10</option><option value="20" {% if admin_page.page_size == 20 or not admin_page.page_size %}selected{% endif %}>20</option><option value="50" {% if admin_page.page_size == 50 %}selected{% endif %}>50</option><option value="100" {% if admin_page.page_size == 100 %}selected{% endif %}>100</option></select>
+                        </label>
+                    </form>
+                    <div class="flex flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-700">
+                        <span>{{ _('star_aid.bulk_actions_later') }}</span>
+                        <button type="button" disabled class="rounded border px-2 py-1 opacity-50">{{ _('star_aid.bulk_enable') }}</button>
+                        <button type="button" disabled class="rounded border px-2 py-1 opacity-50">{{ _('star_aid.bulk_disable') }}</button>
+                    </div>
+                    <div id="star-aid-admin-repository-results">
+                    {% if admin_items %}
+                    <div class="overflow-x-auto">
+                        <table class="w-full min-w-[760px] text-left text-sm">
+                            <thead><tr class="border-t border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"><th class="px-3 py-2">{{ _('star_aid.repository') }}</th><th class="px-3 py-2">{{ _('star_aid.sort_stars') }}</th><th class="px-3 py-2">{{ _('star_aid.sort_pushed_at') }}</th><th class="px-3 py-2">{{ _('common.status') }}</th><th class="px-3 py-2">{{ _('common.actions') }}</th></tr></thead>
+                            <tbody>{% for repo in admin_items %}<tr class="border-t border-gray-100 dark:border-gray-700/60"><td class="px-3 py-2 font-medium">{{ repo.full_name }}</td><td class="px-3 py-2">★ {{ repo.stargazers_count }}</td><td class="px-3 py-2 text-xs text-gray-500">{{ repo.pushed_at or '—' }}</td><td class="px-3 py-2">{% if repo.disabled_by_admin %}<span class="text-red-600">{{ _('common.disabled') }}</span>{% elif repo.is_displayed %}<span class="text-green-600">{{ _('common.enabled') }}</span>{% else %}{{ _('star_aid.not_displayed') }}{% endif %}</td><td class="px-3 py-2"><div class="flex flex-wrap gap-2">{% if repo.disabled_by_admin %}<form method="post" action="/star-aid/admin/repositories/{{ repo.id }}/enable"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-green-300 px-2 py-1 text-xs text-green-700 dark:border-green-800">{{ _('star_aid.enable_repository') }}</button></form>{% else %}<form method="post" action="/star-aid/admin/repositories/{{ repo.id }}/disable"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800">{{ _('star_aid.disable_repository') }}</button></form>{% endif %}<form method="post" action="/star-aid/repositories/{{ repo.id }}/summary/refresh"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="rounded border border-sakura-300 px-2 py-1 text-xs text-sakura-700 dark:border-sakura-800">{{ _('star_aid.refresh_summary') }}</button></form></div></td></tr>{% endfor %}</tbody>
+                        </table>
+                    </div>
+                    {% else %}<p class="border-t border-gray-200 p-3 text-sm text-gray-500 dark:border-gray-700">{{ _('star_aid.no_matching_repositories') }}</p>{% endif %}
+                    {% if admin_page.pages and admin_page.pages > 1 %}
+                    <nav class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 p-3 text-sm dark:border-gray-700">
+                        <span class="text-gray-500">{{ _('star_aid.page_of', page=admin_page.page, pages=admin_page.pages) }}</span>
+                        <div class="flex gap-2">
+                            {% if admin_page.page > 1 %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page - 1 }}&page_size={{ admin_page.page_size }}{{ member_params }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.previous_page') }}</a>{% endif %}
+                            {% if admin_page.page < admin_page.pages %}<a data-admin-repository-page href="/star-aid/?q={{ admin_page.q|urlencode }}&status={{ admin_page.status }}&sort={{ admin_page.sort }}&order={{ admin_page.order }}&page={{ admin_page.page + 1 }}&page_size={{ admin_page.page_size }}{{ member_params }}" class="rounded border border-gray-300 px-3 py-1.5 dark:border-gray-600">{{ _('star_aid.next_page') }}</a>{% endif %}
+                        </div>
+                    </nav>
+                    {% endif %}
+                    </div>
+                </details>
+            </div>
+        </details>
         {% endif %}
-
-        {% if state.member and state.member.status == 'active' %}
-        <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
-            <form method="post" action="/star-aid/leave">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <label class="flex items-center gap-2 mb-3 cursor-pointer">
-                    <input type="checkbox" name="unstar_created" value="true" class="mt-0.5">
-                    <span class="text-sm text-gray-600 dark:text-gray-400">{{ _('star_aid.exit_unstar_option') }}</span>
-                </label>
-                <button type="submit" class="px-4 py-2 text-sm font-medium text-red-600 border border-red-300 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">
-                    {{ _('star_aid.leave') }}
-                </button>
-            </form>
-        </div>
-        {% endif %}
-    </div>
-
-    {% if state.is_admin and state.admin_members %}
-    <!-- 成员管理 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h2 class="text-lg font-semibold mb-4">{{ _('star_aid.admin_members') }}</h2>
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                        <th class="py-2 pr-3">{{ _('star_aid.admin_member_user') }}</th>
-                        <th class="py-2 pr-3">{{ _('star_aid.admin_member_status') }}</th>
-                        <th class="py-2 pr-3">{{ _('star_aid.admin_member_today') }}</th>
-                        <th class="py-2">{{ _('star_aid.admin_member_actions') }}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for m in state.admin_members %}
-                    <tr class="border-b border-gray-100 dark:border-gray-700/60">
-                        <td class="py-2 pr-3">{{ m.github_username or m.user_id }}</td>
-                        <td class="py-2 pr-3">{{ m.status }}</td>
-                        <td class="py-2 pr-3">{{ m.daily_star_used }} / {{ m.daily_star_limit }}</td>
-                        <td class="py-2">
-                            {% if m.status == 'banned' %}
-                            <form method="post" action="/star-aid/admin/members/{{ m.user_id }}/unban" class="inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="text-xs px-2 py-1 text-green-700 border border-green-300 dark:border-green-800 rounded hover:bg-green-50 dark:hover:bg-green-900/20">{{ _('star_aid.unban_member') }}</button>
-                            </form>
-                            {% else %}
-                            <form method="post" action="/star-aid/admin/members/{{ m.user_id }}/ban" class="inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="text-xs px-2 py-1 text-red-700 border border-red-300 dark:border-red-800 rounded hover:bg-red-50 dark:hover:bg-red-900/20">{{ _('star_aid.ban_member') }}</button>
-                            </form>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% endif %}
-
-    {% if state.is_admin and state.admin_repositories %}
-    <!-- 仓库管理 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h2 class="text-lg font-semibold mb-4">{{ _('star_aid.admin_repositories') }}</h2>
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                        <th class="py-2 pr-3">{{ _('star_aid.repository') }}</th>
-                        <th class="py-2 pr-3">{{ _('common.status') }}</th>
-                        <th class="py-2">{{ _('common.actions') }}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for repo in state.admin_repositories %}
-                    <tr class="border-b border-gray-100 dark:border-gray-700/60">
-                        <td class="py-2 pr-3">{{ repo.full_name }}</td>
-                        <td class="py-2 pr-3">
-                            {% if repo.disabled_by_admin %}{{ _('common.disabled') }}{% elif repo.is_displayed %}{{ _('common.enabled') }}{% else %}{{ _('star_aid.not_displayed') }}{% endif %}
-                        </td>
-                        <td class="py-2 flex gap-2 flex-wrap">
-                            {% if repo.disabled_by_admin %}
-                            <form method="post" action="/star-aid/admin/repositories/{{ repo.id }}/enable" class="inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="text-xs px-2 py-1 text-green-700 border border-green-300 dark:border-green-800 rounded hover:bg-green-50 dark:hover:bg-green-900/20">{{ _('star_aid.enable_repository') }}</button>
-                            </form>
-                            {% else %}
-                            <form method="post" action="/star-aid/admin/repositories/{{ repo.id }}/disable" class="inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="text-xs px-2 py-1 text-red-700 border border-red-300 dark:border-red-800 rounded hover:bg-red-50 dark:hover:bg-red-900/20">{{ _('star_aid.disable_repository') }}</button>
-                            </form>
-                            {% endif %}
-                            <form method="post" action="/star-aid/repositories/{{ repo.id }}/summary/refresh" class="inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="text-xs px-2 py-1 text-sakura-700 border border-sakura-300 dark:border-sakura-800 rounded hover:bg-sakura-50 dark:hover:bg-sakura-900/20">{{ _('star_aid.refresh_summary') }}</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% endif %}
-
-    {% if state.is_super_admin %}
-    <!-- 全局开关 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h2 class="text-lg font-semibold mb-4">{{ _('star_aid.feature_toggle') }}</h2>
-        <form method="post" action="/star-aid/admin/feature" class="flex items-center gap-3 flex-wrap">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" name="enabled" value="true" {% if state.feature_enabled %}checked{% endif %}>
-                <span class="text-sm">{{ _('common.enabled') }}</span>
-            </label>
-            <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-sakura-600 hover:bg-sakura-700 rounded-lg transition">{{ _('common.save') }}</button>
-        </form>
-    </div>
-    {% endif %}
-
+    </section>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+(() => {
+    let controller = null;
+    let searchTimer = null;
+
+    function resetPage(form) {
+        const page = form.querySelector('[name="page"]');
+        if (page) page.value = '1';
+    }
+
+    async function refreshRepositoryList(url, { pushHistory = true } = {}) {
+        if (controller) controller.abort();
+        const requestController = new AbortController();
+        controller = requestController;
+
+        try {
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: requestController.signal,
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const documentFragment = new DOMParser().parseFromString(
+                await response.text(),
+                'text/html',
+            );
+            const nextPanel = documentFragment.querySelector(
+                '#star-aid-admin-repositories',
+            );
+            const currentPanel = document.querySelector(
+                '#star-aid-admin-repositories',
+            );
+            if (!nextPanel || !currentPanel) throw new Error('Missing repository panel');
+
+            const nextResults = nextPanel.querySelector('#star-aid-admin-repository-results');
+            const currentResults = currentPanel.querySelector('#star-aid-admin-repository-results');
+            if (!nextResults || !currentResults) throw new Error('Missing repository results');
+            // Keep the live filter form and its focused input in the DOM.
+            currentResults.replaceWith(nextResults);
+            currentPanel.querySelector('summary').textContent =
+                nextPanel.querySelector('summary').textContent;
+            currentPanel.querySelector('[name="page"]').value =
+                nextPanel.querySelector('[name="page"]').value;
+            if (pushHistory) history.replaceState(null, '', url);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('Failed to refresh Star Aid repository list:', error);
+            }
+        } finally {
+            if (controller === requestController) controller = null;
+        }
+    }
+
+    function refreshFromForm(form) {
+        const url = new URL(form.action);
+        url.search = new URL(window.location.href).search;
+        for (const [key, value] of new FormData(form)) {
+            url.searchParams.set(key, value);
+        }
+        return refreshRepositoryList(url.toString());
+    }
+
+    document.addEventListener('submit', (event) => {
+        const memberForm = event.target.closest('#star-aid-admin-member-filters');
+        if (memberForm) {
+            const params = new URL(window.location.href).searchParams;
+            for (const key of ['q', 'status', 'sort', 'order', 'page', 'page_size']) {
+                const input = memberForm.querySelector(`[name="${key}"]`);
+                if (input && params.has(key)) input.value = params.get(key);
+            }
+        }
+        const form = event.target.closest('#star-aid-admin-repository-filters');
+        if (!form) return;
+        event.preventDefault();
+        refreshFromForm(form);
+    });
+
+    document.addEventListener('change', (event) => {
+        const input = event.target.closest('[data-admin-repository-filter]');
+        if (!input) return;
+        const form = input.form;
+        if (!form) return;
+        resetPage(form);
+        refreshFromForm(form);
+    });
+
+    document.addEventListener('input', (event) => {
+        const input = event.target.closest('[data-admin-repository-search]');
+        if (!input) return;
+        const form = input.form;
+        if (!form) return;
+        resetPage(form);
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => refreshFromForm(form), 350);
+    });
+
+    document.addEventListener('click', (event) => {
+        const link = event.target.closest('[data-admin-repository-page]');
+        if (!link) return;
+        event.preventDefault();
+        const url = new URL(link.href);
+        const current = new URL(window.location.href);
+        for (const [key, value] of current.searchParams) {
+            if (key.startsWith('member_')) url.searchParams.set(key, value);
+        }
+        refreshRepositoryList(url.toString());
+    });
+})();
+</script>
 {% endblock %}
