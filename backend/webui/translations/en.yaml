@@ -497,6 +497,7 @@ dashboard:
 
 # ========== PR Reviews ==========
 pr:
+  all_owners: "All owners"
   title: "PR Reviews"
   list: "Review List"
   detail: "Review Detail"
