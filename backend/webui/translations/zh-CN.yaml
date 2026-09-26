@@ -114,6 +114,17 @@ auth:
 
 # ========== 导航 / Navigation =========="
 nav:
+  main_navigation: "主导航"
+  section_navigation: "功能导航"
+  review_domain: "审查与分析"
+  repository_domain: "仓库"
+  agent_tasks: "任务与工作区"
+  observability_domain: "可观测性"
+  administration_domain: "管理"
+  settings_domain: "设置"
+  review_config: "审查与分析策略"
+  billing_overview: "概览"
+  account_menu: "账户菜单"
   global_config: "全局配置"
   toggle_sidebar: "切换侧边栏"
   toggle_dark: "切换到暗色模式"
