@@ -58,7 +58,7 @@ def test_dev_group_installs_updater_editable() -> None:
 
 
 def test_uv_lock_declares_supported_environments() -> None:
-    """锁文件显式限定 Linux 与 Apple Silicon macOS 平台范围。
+    """锁文件显式限定 Windows、Linux 与 Apple Silicon macOS 平台范围。
 
     Intel Mac / macOS <=13 不在覆盖内:上游 onnxruntime 未发布对应
     Python 3.14 wheel(且无 sdist),pip 方式同样不可用。
@@ -66,7 +66,15 @@ def test_uv_lock_declares_supported_environments() -> None:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     environments = data["tool"]["uv"]["environments"]
     assert "sys_platform == 'linux'" in environments
+    assert "sys_platform == 'win32'" in environments
     assert "sys_platform == 'darwin' and platform_machine == 'arm64'" in environments
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    for field in ("resolution-markers", "supported-markers"):
+        markers = lock[field]
+        assert "sys_platform == 'linux'" in markers
+        assert "sys_platform == 'win32'" in markers
+        assert "platform_machine == 'arm64' and sys_platform == 'darwin'" in markers
     assert not any("x86_64' and sys_platform == 'darwin'" in e or
                    "darwin' and platform_machine == 'x86_64'" in e
                    for e in environments)
