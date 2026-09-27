@@ -693,16 +693,11 @@
         /* === 统一 Modal / ConfirmDialog 层 === */
         /* 打开弹窗时锁定 body 滚动（由 Sakura.lockScroll 引用计数控制） */
         body.sakura-scroll-locked { overflow: hidden; }
-        /* 统一入场动画：150-200ms，容器淡入+轻微上浮，遮罩淡入 */
+        /* 统一入场动画：仅整体淡入，面板不做上滑/缩放动画。 */
         .sakura-modal-shell { animation: sakura-modal-fade-in 160ms ease-out; }
-        .sakura-modal-shell > div { animation: sakura-modal-panel-in 180ms ease-out; }
         @keyframes sakura-modal-fade-in { from { opacity: 0; } }
-        @keyframes sakura-modal-panel-in {
-            from { opacity: 0; transform: translateY(8px) scale(.985); }
-        }
         @media (prefers-reduced-motion: reduce) {
-            .sakura-modal-shell,
-            .sakura-modal-shell > div { animation: none; }
+            .sakura-modal-shell { animation: none; }
         }
     </style>
     {% block extra_head %}{% endblock %}
@@ -808,7 +803,8 @@
              min-w-0 / max-w-full / overflow-x-hidden: 防止长内容（宽表格列、
              长 URL、代码块）把 <main> 乃至整页横向撑开；内部 overflow-x-auto
              容器（如各列表表格）仍可独立横向滚动。 -->
-        <main class="flex-1 min-w-0 max-w-full overflow-x-hidden ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative z-10">
+        <!-- 不要在 main 上创建 z-index 层叠上下文：页面内 z-[110] Modal 必须能覆盖导航栏/侧边栏。 -->
+        <main class="flex-1 min-w-0 max-w-full overflow-x-hidden ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative">
             {% block content %}{% endblock %}
         </main>
     </div>
