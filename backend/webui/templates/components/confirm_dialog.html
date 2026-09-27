@@ -14,7 +14,7 @@
                      期间禁止任何关闭（destructive 防误关）
 
    视觉规范（与 modal.html modal_shell 一致）：
-     rounded-2xl / glass / shadow-2xl / z-[110] / bg-gray-950/50 backdrop
+     rounded-2xl / glass / shadow-2xl / z-[110] / 全屏 bg-gray-950/80 backdrop
      统一 150-200ms 过渡；prefers-reduced-motion 下经全局
      .sakura-modal-shell 动画规则自动禁用非必要动画。
    可访问性：
@@ -33,7 +33,7 @@
      aria-describedby="sakura-confirm-dialog-message"
      tabindex="-1">
     <!-- backdrop：loading / persistent 状态下点击不关闭 -->
-    <div class="absolute inset-0 bg-gray-950/50 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
+    <div class="absolute inset-0 bg-gray-950/80 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
 
     <div class="relative w-full max-w-md rounded-2xl border border-sakura-200 bg-white/95 p-6 text-gray-900 shadow-2xl backdrop-blur-sm dark:border-sakura-800/60 dark:bg-[#1e1028]/95 dark:text-gray-100">
         <div class="flex items-start gap-4">

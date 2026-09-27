@@ -108,10 +108,11 @@ def test_data_confirm_replays_submit_lifecycle_without_cancel_loading() -> None:
 
 
 def test_base_unified_modal_visual_and_reduced_motion() -> None:
-    """统一视觉层：rounded-2xl / z-[110] / 统一动画 + prefers-reduced-motion。"""
+    """统一视觉层：rounded-2xl / z-[110] / 淡入 + prefers-reduced-motion。"""
     assert ".sakura-modal-shell" in BASE_HTML
     assert "sakura-modal-fade-in" in BASE_HTML
-    assert "sakura-modal-panel-in" in BASE_HTML
+    assert "sakura-modal-panel-in" not in BASE_HTML
+    assert "translateY(8px)" not in BASE_HTML
     reduced_motion = re.search(
         r"@media \(prefers-reduced-motion: reduce\) \{[^}]*sakura-modal-shell",
         BASE_HTML,
@@ -181,8 +182,28 @@ def test_confirm_dialog_uses_unified_visual_language() -> None:
     assert "rounded-2xl" in CONFIRM_DIALOG
     assert "shadow-2xl" in CONFIRM_DIALOG
     assert "sakura-modal-shell" in CONFIRM_DIALOG
-    assert "bg-gray-950/50 backdrop-blur-sm" in CONFIRM_DIALOG
+    assert "bg-gray-950/80 backdrop-blur-sm" in CONFIRM_DIALOG
     assert "dark:" in CONFIRM_DIALOG  # Dark Mode
+
+
+def test_all_unified_dialog_backdrops_match_restart_overlay() -> None:
+    """所有统一 Dialog 遮罩都使用全屏 gray-950/80 + blur。"""
+    cases = {
+        "components/modal.html": 1,
+        "components/confirm_dialog.html": 1,
+        "agent_team.html": 2,
+        "version_manager.html": 1,
+    }
+    for name, expected_count in cases.items():
+        source = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+        assert source.count("bg-gray-950/80 backdrop-blur-sm") == expected_count
+        assert "bg-gray-950/50 backdrop-blur-sm" not in source
+
+
+def test_page_content_does_not_trap_modal_below_nav_and_sidebar() -> None:
+    """main 不能创建 z-index 层叠上下文，否则页面内 z-[110] Modal 会被压住。"""
+    assert 'relative z-10">' not in BASE_HTML
+    assert 'min-h-[calc(100vh-4rem)] relative">' in BASE_HTML
 
 
 # ============ 3. Modal 宏 ============
