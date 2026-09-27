@@ -242,7 +242,7 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
 
 ### 源码开发
 
-> 源码开发平台：Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。其余平台因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
+> 源码开发平台：Windows 11 x86_64、Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。Intel Mac、macOS ≤13、musl/Alpine 与 glibc <2.28 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
 
 **uv 方式（推荐）**：
 
