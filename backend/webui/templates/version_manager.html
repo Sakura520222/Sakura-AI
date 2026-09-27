@@ -493,7 +493,6 @@ let progressTargetVersion = '';
 let progressTarget = null;
 let progressJobId = '';
 let progressTerminal = false;
-let progressPreviousFocus = null;
 let refreshTimer = null;
 let activePoll = null;
 
@@ -538,7 +537,6 @@ function renderProgress({state = '', step = '', kind = 'active', message = ''} =
 
 function openProgressModal({jobId = '', targetVersion = '', initial = false} = {}) {
   if (!updateProgressModal.classList.contains('hidden')) return;
-  progressPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (initial) {
     lastProgress = 0;
     progressJobId = '';
@@ -549,25 +547,26 @@ function openProgressModal({jobId = '', targetVersion = '', initial = false} = {
   progressJobId = jobId || progressJobId;
   progressTargetVersion = targetVersion || progressTargetVersion;
   progressTerminal = false;
-  document.body.classList.add('overflow-hidden');
   updateProgressModal.classList.remove('hidden');
   updateProgressModal.setAttribute('aria-hidden', 'false');
+  window.Sakura?.openDialog(updateProgressModal, {
+    canDismiss: () => progressTerminal,
+    onClose: () => closeProgressModal(),
+    focusTarget: () => updateProgressModal,
+  });
   updateProgressTarget.textContent = progressTargetVersion
     ? vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion})
     : '';
   updateProgressClose.classList.add('hidden');
   updateProgressError.classList.add('hidden');
   renderProgress({message: initial ? VM_I18N.progressPreparing : ''});
-  updateProgressModal.focus();
 }
 
 function closeProgressModal() {
   if (!progressTerminal) return;
   updateProgressModal.classList.add('hidden');
   updateProgressModal.setAttribute('aria-hidden', 'true');
-  document.body.classList.remove('overflow-hidden');
-  if (progressPreviousFocus && typeof progressPreviousFocus.focus === 'function') progressPreviousFocus.focus();
-  progressPreviousFocus = null;
+  window.Sakura?.closeDialog(updateProgressModal);
 }
 
 function normalizedProgressTarget(value) {
@@ -928,17 +927,6 @@ async function pollJob(jobId) {
 }
 
 updateProgressClose.addEventListener('click', closeProgressModal);
-updateProgressModal.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && progressTerminal) {
-    event.preventDefault();
-    closeProgressModal();
-  } else if (event.key === 'Tab') {
-    // The active dialog intentionally has no dismiss action. Keep keyboard
-    // focus inside it until a terminal error exposes the sole close button.
-    event.preventDefault();
-    (progressTerminal ? updateProgressClose : updateProgressModal).focus();
-  }
-});
 
 updateButton.addEventListener('click', async function() {
   if (updateButton.disabled) return;

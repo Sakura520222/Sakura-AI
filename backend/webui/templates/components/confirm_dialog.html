@@ -31,7 +31,7 @@
      aria-modal="true"
      aria-labelledby="sakura-confirm-dialog-title"
      aria-describedby="sakura-confirm-dialog-message"
-     @keydown.escape.window="dismiss()">
+     tabindex="-1">
     <!-- backdrop：loading / persistent 状态下点击不关闭 -->
     <div class="absolute inset-0 bg-gray-950/50 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
 
