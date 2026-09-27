@@ -33,7 +33,7 @@
 {% macro modal_shell(id, title, description="", size="md", persistent=false,
                      close_sr="Close") -%}
 <div data-sakura-modal="{{ id }}"
-     x-data="sakuraModal({ id: {{ id | tojson }}, persistent: {{ 'true' if persistent else 'false' }} })"
+     x-data='sakuraModal({ id: {{ id | tojson }}, persistent: {{ 'true' if persistent else 'false' }} })'
      x-show="open"
      x-cloak
      class="sakura-modal-shell fixed inset-0 z-[110] flex items-center justify-center p-4"
@@ -41,7 +41,7 @@
      aria-modal="true"
      aria-labelledby="{{ id }}-title"
      {% if description %}aria-describedby="{{ id }}-description"{% endif %}
-     @keydown.escape.window="dismiss()">
+     tabindex="-1">
     <div class="absolute inset-0 bg-gray-950/50 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
 
     <div class="relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-sakura-200 bg-white/95 text-gray-900 shadow-2xl backdrop-blur-sm dark:border-sakura-800/60 dark:bg-[#1e1028]/95 dark:text-gray-100
