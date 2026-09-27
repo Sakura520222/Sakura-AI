@@ -110,7 +110,9 @@ def test_version_manager_failure_path_is_closeable_without_refresh():
         "readiness.update_ready === false || readiness.update_available === false"
         in template
     )
-    assert "updateProgressModal.addEventListener('keydown'" in template
+    assert "window.Sakura?.openDialog(updateProgressModal" in template
+    assert "canDismiss: () => progressTerminal" in template
+    assert "window.Sakura?.closeDialog(updateProgressModal" in template
     assert "scheduleRefresh();" in template
     assert template.index("markProgressError(") < template.index("scheduleRefresh();")
 

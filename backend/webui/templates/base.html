@@ -185,6 +185,113 @@
         'use strict';
         var scrollLockCount = 0;
         var modalRegistry = {};
+        var dialogStack = [];
+
+        function visibleFocusables(root) {
+            return Array.prototype.filter.call(
+                root.querySelectorAll(
+                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                ),
+                function (node) {
+                    if (!root.contains(node)) return false;
+                    var style = window.getComputedStyle(node);
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && node.getClientRects().length > 0;
+                }
+            );
+        }
+
+        function topDialog() {
+            return dialogStack[dialogStack.length - 1] || null;
+        }
+
+        function openDialog(element, options) {
+            if (!element) return;
+            var settings = options || {};
+            var existingIndex = dialogStack.findIndex(function (controller) {
+                return controller.element === element;
+            });
+            if (existingIndex !== -1) {
+                var existing = dialogStack[existingIndex];
+                existing.canDismiss = typeof settings.canDismiss === 'function'
+                    ? settings.canDismiss
+                    : existing.canDismiss;
+                existing.onClose = typeof settings.onClose === 'function'
+                    ? settings.onClose
+                    : existing.onClose;
+                existing.focusTarget = typeof settings.focusTarget === 'function'
+                    ? settings.focusTarget
+                    : existing.focusTarget;
+                return;
+            }
+            var controller = {
+                element: element,
+                canDismiss: typeof settings.canDismiss === 'function'
+                    ? settings.canDismiss
+                    : function () { return true; },
+                onClose: typeof settings.onClose === 'function' ? settings.onClose : null,
+                focusTarget: typeof settings.focusTarget === 'function' ? settings.focusTarget : null,
+                previousFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+                focusBound: null,
+            };
+            controller.focusBound = function (event) {
+                if (topDialog() !== controller) return;
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    if (controller.canDismiss() && controller.onClose) controller.onClose();
+                    return;
+                }
+                if (event.key !== 'Tab') return;
+                var focusables = visibleFocusables(element);
+                if (!focusables.length) return;
+                var first = focusables[0];
+                var last = focusables[focusables.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                } else if (!element.contains(document.activeElement)) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            };
+            document.addEventListener('keydown', controller.focusBound, true);
+            dialogStack.push(controller);
+            lockScroll();
+            window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(function () {
+                    if (topDialog() !== controller || !element.isConnected) return;
+                    var target = controller.focusTarget
+                        ? controller.focusTarget()
+                        : visibleFocusables(element)[0];
+                    if (target && typeof target.focus === 'function') target.focus();
+                });
+            });
+        }
+
+        function closeDialog(element) {
+            if (!element) return;
+            var index = dialogStack.findIndex(function (controller) {
+                return controller.element === element;
+            });
+            if (index === -1) return;
+            var controller = dialogStack[index];
+            var wasTopDialog = topDialog() === controller;
+            dialogStack.splice(index, 1);
+            document.removeEventListener('keydown', controller.focusBound, true);
+            unlockScroll();
+            if (
+                wasTopDialog
+                && controller.previousFocus
+                && typeof controller.previousFocus.focus === 'function'
+            ) {
+                controller.previousFocus.focus();
+            }
+        }
 
         function lockScroll() {
             scrollLockCount += 1;
@@ -212,6 +319,8 @@
             lockScroll: lockScroll,
             unlockScroll: unlockScroll,
             resetScrollLock: resetScrollLock,
+            openDialog: openDialog,
+            closeDialog: closeDialog,
             registerModal: function (id, instance) { if (id) modalRegistry[id] = instance; },
             unregisterModal: function (id) { if (id) delete modalRegistry[id]; },
             openModal: function (id) {
@@ -328,9 +437,12 @@
             persistent: false,
             _callback: null,
             _resolver: null,
-            _previousFocus: null,
-            _focusBound: null,
             ask(options) {
+                // 防止重复调用 ask 时旧调用方 Promise 永远挂起。
+                if (this.active && this._resolver) {
+                    this._resolver(false);
+                    this._resolver = null;
+                }
                 this.title = options.title || _t('confirm_action');
                 this.message = options.message || _t('are_you_sure');
                 this.warning = options.warning || '';
@@ -358,7 +470,8 @@
                 }
             },
             cancel() {
-                if (this.loading || this.persistent) return;
+                // persistent 只阻止 ESC / backdrop 误关；显式取消仍然可用。
+                if (this.loading) return;
                 this.close(false);
             },
             /* dismissGuard：loading / persistent 状态下禁止 ESC 与 backdrop 关闭。 */
@@ -367,49 +480,22 @@
                 this.close(false);
             },
             open() {
-                if (document.activeElement instanceof HTMLElement) {
-                    this._previousFocus = document.activeElement;
+                if (window.Sakura) {
+                    window.Sakura.openDialog(this.$root, {
+                        canDismiss: () => !this.loading && !this.persistent,
+                        onClose: () => this.close(false),
+                        focusTarget: () => this.confirmButton(),
+                    });
                 }
-                if (window.Sakura) window.Sakura.lockScroll();
-                this._focusBound = this.handleTab.bind(this);
-                document.addEventListener('keydown', this._focusBound, true);
-                this.$nextTick(() => this.focusConfirm());
             },
-            focusConfirm() {
+            confirmButton() {
                 var buttons = this.$root.querySelectorAll('button[data-sakura-confirm-button]');
                 var target = buttons[buttons.length - 1];
-                if (target && typeof target.focus === 'function') target.focus();
-            },
-            handleTab(event) {
-                if (event.key !== 'Tab' || !this.active) return;
-                var focusables = this.$root.querySelectorAll(
-                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-                );
-                if (!focusables.length) return;
-                var first = focusables[0];
-                var last = focusables[focusables.length - 1];
-                if (event.shiftKey && document.activeElement === first) {
-                    event.preventDefault();
-                    last.focus();
-                } else if (!event.shiftKey && document.activeElement === last) {
-                    event.preventDefault();
-                    first.focus();
-                } else if (!this.$root.contains(document.activeElement)) {
-                    event.preventDefault();
-                    first.focus();
-                }
+                return target || null;
             },
             close(confirmed) {
                 this.active = false;
-                if (this._focusBound) {
-                    document.removeEventListener('keydown', this._focusBound, true);
-                    this._focusBound = null;
-                }
-                if (window.Sakura) window.Sakura.unlockScroll();
-                if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
-                    this._previousFocus.focus();
-                }
-                this._previousFocus = null;
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
                 if (this._resolver) {
                     this._resolver(confirmed === true);
                     this._resolver = null;
@@ -426,30 +512,27 @@
             open: false,
             persistent: Boolean(options && options.persistent),
             loading: false,
-            _focusBound: null,
-            _previousFocus: null,
             init() {
                 if (this.id && window.Sakura) window.Sakura.registerModal(this.id, this);
             },
             destroy() {
                 if (this.id && window.Sakura) window.Sakura.unregisterModal(this.id);
-                this._release();
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
             },
             show() {
                 if (this.open) return;
-                if (document.activeElement instanceof HTMLElement) {
-                    this._previousFocus = document.activeElement;
-                }
                 this.open = true;
-                if (window.Sakura) window.Sakura.lockScroll();
-                this._focusBound = this._handleTab.bind(this);
-                document.addEventListener('keydown', this._focusBound, true);
-                this.$nextTick(() => this._focusFirst());
+                if (window.Sakura) {
+                    window.Sakura.openDialog(this.$root, {
+                        canDismiss: () => !this.loading && !this.persistent,
+                        onClose: () => this.hide(),
+                    });
+                }
             },
             hide() {
                 if (!this.open) return;
                 this.open = false;
-                this._release();
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
             },
             /* dismissGuard：loading / persistent 状态下禁止 ESC 与 backdrop 关闭。 */
             dismiss() {
@@ -457,42 +540,6 @@
                 this.hide();
             },
             setLoading(value) { this.loading = Boolean(value); },
-            _release() {
-                if (this._focusBound) {
-                    document.removeEventListener('keydown', this._focusBound, true);
-                    this._focusBound = null;
-                }
-                if (window.Sakura) window.Sakura.unlockScroll();
-                if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
-                    this._previousFocus.focus();
-                }
-                this._previousFocus = null;
-            },
-            _focusFirst() {
-                var target = this.$root.querySelector(
-                    'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-                );
-                if (target && typeof target.focus === 'function') target.focus();
-            },
-            _handleTab(event) {
-                if (event.key !== 'Tab' || !this.open) return;
-                var focusables = this.$root.querySelectorAll(
-                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-                );
-                if (!focusables.length) return;
-                var first = focusables[0];
-                var last = focusables[focusables.length - 1];
-                if (event.shiftKey && document.activeElement === first) {
-                    event.preventDefault();
-                    last.focus();
-                } else if (!event.shiftKey && document.activeElement === last) {
-                    event.preventDefault();
-                    first.focus();
-                } else if (!this.$root.contains(document.activeElement)) {
-                    event.preventDefault();
-                    first.focus();
-                }
-            },
         }));
     });
     </script>
@@ -794,7 +841,13 @@
             }).then(function(confirmed) {
                 if (confirmed) {
                     form._confirmed = true;
-                    form.submit();
+                    // requestSubmit 会重新触发 submit 生命周期，让 loading
+                    // 处理器正常执行；旧浏览器回退到原生 submit。
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
                 }
             });
         }
@@ -802,6 +855,8 @@
 
     /* === 按钮 Loading 状态 === */
     document.addEventListener('submit', function(e) {
+        // data-confirm 拦截的提交已 cancelable；取消确认时不能进入 loading。
+        if (e.defaultPrevented) return;
         var form = e.target;
         if (form.method && form.method.toUpperCase() === 'POST') {
             var btn = form.querySelector('[type="submit"]');

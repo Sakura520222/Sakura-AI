@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -79,8 +80,31 @@ def test_base_dismiss_guard_blocks_loading_and_persistent() -> None:
     """loading / persistent 状态下 ESC 与 backdrop 不得关闭弹窗（行为端在
     base.html 的 Alpine 组件中，组件模板只负责 dismiss 事件绑定）。"""
     assert "if (this.loading || this.persistent) return;" in BASE_HTML
-    assert '@keydown.escape.window="dismiss()"' in CONFIRM_DIALOG
+    assert "canDismiss: () => !this.loading && !this.persistent" in BASE_HTML
     assert '@click="dismiss()"' in CONFIRM_DIALOG
+
+
+def test_confirm_dialog_allows_explicit_cancel_while_persistent() -> None:
+    """persistent 仅阻止 ESC / 遮罩误关，不得禁用显式取消按钮。"""
+    assert re.search(
+        r"cancel\(\)\s*\{\s*(?://[^\n]*\s*)?if \(this\.loading\) return;\s*this\.close\(false\);",
+        BASE_HTML,
+    )
+    assert "this.loading || this.persistent" not in BASE_HTML.split(
+        "cancel() {", 1
+    )[1].split("dismiss()", 1)[0]
+
+
+def test_repeated_confirm_requests_do_not_leave_old_promise_pending() -> None:
+    """重复 ask 时先 fail-closed 旧 Promise，再挂载新请求。"""
+    assert "if (this.active && this._resolver)" in BASE_HTML
+    assert "this._resolver(false);" in BASE_HTML
+
+
+def test_data_confirm_replays_submit_lifecycle_without_cancel_loading() -> None:
+    """确认通过后重新触发 submit；确认取消时不能把原提交按钮锁死。"""
+    assert "form.requestSubmit()" in BASE_HTML
+    assert "if (e.defaultPrevented) return;" in BASE_HTML
 
 
 def test_base_unified_modal_visual_and_reduced_motion() -> None:
@@ -97,6 +121,17 @@ def test_base_unified_modal_visual_and_reduced_motion() -> None:
 
 def test_base_includes_confirm_dialog_component() -> None:
     assert '{% include "components/confirm_dialog.html" %}' in BASE_HTML
+
+
+def test_global_dialog_stack_is_shared_by_all_modal_kinds() -> None:
+    """页面 Modal、ConfirmDialog 与特殊 Modal 共用焦点 / 滚动 / ESC 栈。"""
+    assert "var dialogStack = [];" in BASE_HTML
+    assert "openDialog: openDialog" in BASE_HTML
+    assert "closeDialog: closeDialog" in BASE_HTML
+    assert "window.Sakura.openDialog(this.$root" in BASE_HTML
+    assert "window.Sakura.closeDialog(this.$root" in BASE_HTML
+    assert "event.stopImmediatePropagation();" in BASE_HTML
+    assert "visibleFocusables(element)" in BASE_HTML
 
 
 def test_data_confirm_handler_supports_variant_and_uses_public_api() -> None:
@@ -131,9 +166,9 @@ def test_confirm_dialog_supports_semantic_variants() -> None:
 
 
 def test_confirm_dialog_backdrop_click_uses_dismiss_guard() -> None:
-    """backdrop 与 ESC 均走 dismiss()，由 persistent/loading 守卫统一拒绝。"""
+    """backdrop 走 dismiss()；ESC 由全局 dialog 栈统一守卫。"""
     assert '@click="dismiss()"' in CONFIRM_DIALOG
-    assert '@keydown.escape.window="dismiss()"' in CONFIRM_DIALOG
+    assert "canDismiss: () => !this.loading && !this.persistent" in BASE_HTML
 
 
 def test_confirm_dialog_focus_targets_are_marked() -> None:
@@ -191,6 +226,35 @@ def test_modal_shell_renders_aria_and_dismiss_contract() -> None:
     assert 'aria-describedby="aria-modal-description"' in html
     assert "persistent: true" in html
     assert 'aria-label="Close"' in html
+
+
+def test_modal_shell_renders_one_valid_alpine_x_data_attribute() -> None:
+    """Alpine 参数必须留在一个 HTML 属性内，防止页面加载时弹窗自动显示。
+
+    ``id | tojson`` 输出双引号；如果外层 ``x-data`` 也使用双引号，浏览器会把
+    JSON 字符串截断成多个无效属性，导致 ``x-show="open"`` 不生效。
+    """
+    templates = get_templates()
+    template = templates.env.from_string(
+        '{% from "components/modal.html" import modal_shell %}'
+        "{% call modal_shell(id='alpine-modal', title='Hello') %}"
+        "content{% endcall %}"
+    )
+    html = template.render()
+    modal_attrs = None
+
+    class ModalParser(HTMLParser):
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            nonlocal modal_attrs
+            values = dict(attrs)
+            if values.get("data-sakura-modal") == "alpine-modal":
+                modal_attrs = values
+
+    parser = ModalParser()
+    parser.feed(html)
+    assert modal_attrs is not None
+    assert modal_attrs["x-data"] == "sakuraModal({ id: \"alpine-modal\", persistent: false })"
+    assert modal_attrs["x-show"] == "open"
 
 
 def test_migration_pages_use_modal_shell_instead_of_hand_written_modals() -> None:
@@ -309,6 +373,17 @@ def test_agent_team_drawers_are_separated_from_modals() -> None:
     assert "z-[120]" not in source and "z-[125]" not in source
 
 
+def test_agent_team_custom_modals_use_shared_dialog_behavior() -> None:
+    """Issue 预览 / base branch Modal 不因特殊业务而绕过焦点与滚动契约。"""
+    source = (TEMPLATES_DIR / "agent_team.html").read_text(encoding="utf-8")
+    assert source.count("window.Sakura.openDialog(") == 2
+    assert source.count("window.Sakura.closeDialog(") == 3
+    assert 'x-ref="issuePreviewDialog"' in source
+    assert "canDismiss: () => !this.issuePreview.creating" in source
+    assert "canDismiss: () => !this.loading" in source
+    assert "cancel() { if (this.loading) return;" in source
+
+
 def test_version_manager_progress_modal_uses_unified_visual_layer() -> None:
     """Host updater 进度弹窗对齐统一视觉层（z-[110] / sakura-modal-shell），
     但保留其特殊关闭策略：仅终态错误允许关闭。"""
@@ -319,3 +394,6 @@ def test_version_manager_progress_modal_uses_unified_visual_layer() -> None:
     assert "z-[110]" in progress_block
     assert "sakura-modal-shell" in progress_block
     assert "progressTerminal" in source
+    assert "window.Sakura?.openDialog(updateProgressModal" in source
+    assert "window.Sakura?.closeDialog(updateProgressModal" in source
+    assert "document.body.classList.add('overflow-hidden')" not in source
