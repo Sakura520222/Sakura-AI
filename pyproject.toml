@@ -14,7 +14,7 @@ requires-python = ">=3.14"
 dependencies = [
     # Web框架
     "fastapi>=0.141.1,<1.0.0",
-    "starlette>=1.6.0,<2.0.0",
+    "starlette>=1.7.0,<2.0.0",
     "uvicorn[standard]>=0.53.0",
     "python-multipart>=0.0.32",
 
@@ -27,8 +27,8 @@ dependencies = [
     "httpx>=0.28.1",
 
     # 数据库
-    "sqlalchemy>=2.0.54,<2.1",
-    "asyncmy>=0.2.14",
+    "sqlalchemy[asyncio]>=2.1.0,<2.2",
+    "asyncmy>=0.2.15",
     "asyncpg>=0.31.0",
     "alembic>=1.19.2",
 
@@ -54,7 +54,7 @@ dependencies = [
     # RAG 功能
     "chromadb>=1.5.9",
     "watchfiles>=1.2.0",
-    "python-slugify>=9.0.0",
+    "python-slugify>=9.1.1",
 
     # 支付网关
     "stripe>=15.6.1",
@@ -76,7 +76,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.8",
+    "ruff>=0.16.9",
     "pytest>=9.1.1",
 ]
 
