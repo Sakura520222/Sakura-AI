@@ -89,18 +89,20 @@ READ_FILE_TOOL = {
         "name": "read_file",
         "description": (
             "读取指定文件的内容，用于理解代码实现细节。"
-            "支持三种模式：\n"
-            "1. 完整读取（仅指定file_path）\n"
-            "2. 行范围读取（指定start_line和end_line）\n"
-            "3. 内容搜索（指定search_pattern，返回匹配行及上下文）\n"
+            "支持四种模式：\n"
+            "1. 完整读取：仅指定file_path\n"
+            "2. 行范围读取：指定start_line和end_line\n"
+            "3. 全文件搜索：指定search_pattern，返回匹配行及上下文\n"
+            "4. 范围内搜索：同时指定start_line、end_line和search_pattern，"
+            "仅在指定行范围内搜索，上下文也不会越过范围边界\n"
             "返回内容始终包含行号，方便定位；返回的行号以本次读取到的当前分支/提交"
             "内容为准，不要沿用其他分支或旧提交中的行号。"
             "如果 start_line 超出当前文件范围，结果会保留原始请求、当前 total_lines"
             "和 recovery.retry_arguments；请根据 hint 使用新行号重试，工具不会自动重试。"
-                    "如果 end_line 超出范围，工具会保留可用内容并在 line_range 中标明"
-                    "实际返回范围和 truncated 状态，不会将其视为硬错误。"
-                    "请求范围超过单次输出行数限制时，同样会返回可用窗口、"
-                    "truncated 状态和下一段读取参数。"
+            "如果 end_line 超出范围，工具会保留可用内容并在元数据中标明"
+            "实际返回范围和 truncated 状态，不会将其视为硬错误。"
+            "请求范围超过单次输出行数限制时，同样会返回可用窗口、"
+            "truncated 状态和下一段读取参数。"
         ),
         "parameters": {
             "type": "object",
@@ -115,6 +117,7 @@ READ_FILE_TOOL = {
                         "起始行号（从1开始）。仅当需要读取文件特定范围时指定。"
                         "行号必须依据当前分支/提交的文件内容；若返回越界结果，"
                         "请按 total_lines、hint 或 recovery.retry_arguments 重新定位。"
+                        "可与 search_pattern 组合，用于限制搜索范围。"
                     ),
                 },
                 "end_line": {
@@ -142,7 +145,8 @@ READ_FILE_TOOL = {
                     "description": (
                         "在文件中搜索包含此文本的行（简单文本匹配，非正则），"
                         "返回所有匹配行及其周围的上下文行，带行号。"
-                        "与start_line/end_line互斥。"
+                        "单独使用时搜索整个文件；与 start_line/end_line 一起"
+                        "使用时仅在指定行范围内搜索。"
                     ),
                 },
                 "context_lines": {
