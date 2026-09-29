@@ -1177,3 +1177,193 @@ async def test_handle_tool_call_without_branch_keeps_old_behavior():
 
     _, kwargs = file_tool.read_file.call_args
     assert kwargs.get("branch") is None
+
+
+# ── read_file 范围内搜索（search_range）──────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_with_line_range(file_strategy):
+    """范围内搜索只返回范围内的匹配，范围外的同名内容不可见。"""
+    content = (
+        "needle outside\n"
+        "line 2\n"
+        "line 3\n"
+        "needle inside\n"
+        "line 5\n"
+        "needle outside"
+    )
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=2,
+        end_line=5,
+        search_pattern="needle",
+        context_lines=0,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search_range"
+    assert result["match_count"] == 1
+    assert "needle inside" in result["content"]
+    assert "needle outside" not in result["content"]
+    assert result["search_range"]["requested"] == {"start_line": 2, "end_line": 5}
+    assert result["search_range"]["searched"] == {"start_line": 2, "end_line": 5}
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_context_stays_within_range(file_strategy):
+    """范围内搜索的上下文行不会越过指定行范围边界。"""
+    lines = [f"line {i}" for i in range(1, 21)]
+    lines[3] = "line 4 with needle"
+    lines[7] = "line 8 with needle"
+    repo = _FakeRepo(
+        branches={"main": {"a.py": _FakeContent("a.py", "\n".join(lines))}}
+    )
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=4,
+        end_line=8,
+        search_pattern="needle",
+        context_lines=2,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search_range"
+    assert result["match_count"] == 2
+    line_numbers = [
+        int(line.split("\t")[0]) for line in result["content"].splitlines()
+    ]
+    assert min(line_numbers) >= 4
+    assert max(line_numbers) <= 8
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_end_line_beyond_eof_is_clamped(file_strategy):
+    """范围内搜索的 end_line 超出文件时自动裁剪到最后一行。"""
+    content = "\n".join(
+        f"line {i}" if i != 9 else "line 9 with needle" for i in range(1, 11)
+    )
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=5,
+        end_line=999,
+        search_pattern="needle",
+        context_lines=0,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search_range"
+    assert result["match_count"] == 1
+    assert result["search_range"]["searched"] == {"start_line": 5, "end_line": 10}
+    assert "line 9 with needle" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_start_line_beyond_eof_returns_error(
+    file_strategy,
+):
+    """范围内搜索的 start_line 超出文件时返回结构化错误与重试参数。"""
+    content = "\n".join(f"line {i}" for i in range(1, 11))
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=50,
+        end_line=80,
+        search_pattern="needle",
+    )
+
+    assert "error" in result
+    assert result["mode"] == "search_range"
+    assert result["total_lines"] == 10
+    assert result["search_range"]["status"] == "start_line_out_of_range"
+    assert result["search_range"]["stale_context_suspected"] is True
+    assert result["recovery"]["reason"] == "start_line_out_of_range"
+    assert result["recovery"]["retry_arguments"]["search_pattern"] == "needle"
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_requires_both_bounds(file_strategy):
+    """只传单个行号时范围内搜索沿用既有行范围校验错误。"""
+    content = "\n".join(f"line {i}" for i in range(1, 11))
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    only_start = await handler.read_file(
+        "a.py", repo, pr=None, start_line=2, search_pattern="needle"
+    )
+    only_end = await handler.read_file(
+        "a.py", repo, pr=None, end_line=5, search_pattern="needle"
+    )
+
+    assert "start_line 和 end_line 必须同时指定" in only_start["error"]
+    assert "start_line 和 end_line 必须同时指定" in only_end["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_rejects_start_char(file_strategy):
+    """start_char 是行范围读取续读专用参数，与 search_pattern 组合仍被拒绝。"""
+    content = "\n".join(f"line {i}" for i in range(1, 11))
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=2,
+        end_line=5,
+        start_char=0,
+        search_pattern="needle",
+    )
+
+    assert "start_char 只能用于行范围读取模式" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_search_range_output_is_capped_by_characters(file_strategy):
+    """范围内搜索结果同样受单次输出字符上限保护。"""
+    file_strategy.get_context_enhancement_config = lambda: {
+        "max_file_lines": 500,
+        "max_file_output_chars": 100,
+        "default_context_lines": 0,
+        "max_context_lines": 200,
+    }
+    content = "\n".join(f"line {i} needle" for i in range(1, 31))
+    repo = _FakeRepo(branches={"main": {"a.py": _FakeContent("a.py", content)}})
+    handler = FileToolHandler()
+
+    result = await handler.read_file(
+        "a.py",
+        repo,
+        pr=None,
+        start_line=1,
+        end_line=30,
+        search_pattern="needle",
+        context_lines=0,
+    )
+
+    assert "error" not in result
+    assert result["mode"] == "search_range"
+    assert len(result["content"]) == 100
+    assert result["output_truncated"] is True
+    assert result["output_char_limit"] == 100
+    assert result["matches_truncated"] is True
+    assert "行范围 1-30 内共找到" in result["hint"]
