@@ -171,7 +171,6 @@ async def test_agent_ready_for_review_auto_submits_review_and_marks_external_rev
         monkeypatch.setattr(
             "backend.workers.review_worker.get_worker", lambda: fake_worker
         )
-        monkeypatch.setattr(webhook, "get_notification_sender", lambda: None)
         monkeypatch.setattr(webhook, "get_async_session", lambda: _FakeSession())
         monkeypatch.setattr(webhook, "TelegramService", _FakeTelegramService)
         monkeypatch.setattr(webhook, "submit_review_task", fake_submit_review_task)
@@ -240,7 +239,6 @@ async def test_original_pr_head_agent_sync_is_not_filtered_as_bot_pr(monkeypatch
         monkeypatch.setattr(
             "backend.workers.review_worker.get_worker", lambda: fake_worker
         )
-        monkeypatch.setattr(webhook, "get_notification_sender", lambda: None)
         monkeypatch.setattr(webhook, "get_async_session", lambda: _FakeSession())
         monkeypatch.setattr(webhook, "TelegramService", _FakeTelegramService)
         monkeypatch.setattr(webhook, "GitHubAppClient", _FakeGithubApp)

@@ -412,7 +412,6 @@ class Settings(BaseSettings):
         le=3600,
         description="Telegram 一次性绑定链接有效期（秒）",
     )
-    telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
     email_enabled: bool = Field(
         True,
         description="是否启用 Email 通知 Provider",
@@ -776,7 +775,6 @@ class Settings(BaseSettings):
     scan_interval_minutes: int = 360  # 扫描间隔（分钟，默认6小时）
     scan_cooldown_hours: int = 24  # 同一仓库扫描冷却时间（小时）
     scan_max_concurrent: int = 1  # 最大并发扫描数
-    scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
     # ========== Agent 模式配置 ==========
@@ -1270,14 +1268,12 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_repo_scan": "启用后，系统将定期扫描已安装仓库的代码，检测潜在问题",
                     "scan_interval_minutes": "定时扫描的间隔时间（分钟），默认 360 分钟（6小时）",
                     "scan_cooldown_hours": "同一仓库两次扫描之间的最小间隔（小时）",
-                    "scan_send_telegram": "扫描完成后是否发送 Telegram 通知",
                     "scan_min_severity_for_issue": "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）",
                 },
                 "keys": [
                     "enable_repo_scan",
                     "scan_interval_minutes",
                     "scan_cooldown_hours",
-                    "scan_send_telegram",
                     "scan_min_severity_for_issue",
                 ],
             },
@@ -1713,7 +1709,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_repo_scan": "启用仓库扫描",
     "scan_interval_minutes": "扫描间隔（分钟）",
     "scan_cooldown_hours": "扫描冷却时间（小时）",
-    "scan_send_telegram": "发送 Telegram 通知",
     "scan_min_severity_for_issue": "创建 Issue 最低严重性",
     # Sakura 记忆系统
     # 国际化配置

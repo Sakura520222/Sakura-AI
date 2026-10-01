@@ -172,7 +172,6 @@ async def test_full_review_forwards_repository_identity_to_review_worker(monkeyp
     monkeypatch.setattr(webhook, "GitHubAppClient", FakeGitHubApp)
     monkeypatch.setattr(webhook, "get_async_session", lambda: SessionContext())
     monkeypatch.setattr(webhook, "TelegramService", FakeTelegramService)
-    monkeypatch.setattr(webhook, "get_notification_sender", lambda: None)
     monkeypatch.setattr(webhook, "submit_review_task", capture_task)
 
     response = await webhook.handle_issue_comment_event(_full_review_payload())

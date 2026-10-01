@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser
-from backend.services.mfa_notification_service import notify_mfa_event
 from backend.services.security_admin_service import (
     delete_user_passkey,
     delete_user_passkeys,
@@ -151,7 +150,6 @@ async def reset_totp_route(
         request=request,
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "totp_reset_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_totp_reset"
     )
@@ -179,7 +177,6 @@ async def require_mfa_route(
         request=request,
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "mfa_required_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_mfa_required"
     )
@@ -207,7 +204,6 @@ async def unrequire_mfa_route(
         request=request,
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "mfa_unrequired_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_mfa_unrequired"
     )
@@ -236,7 +232,6 @@ async def delete_all_passkeys_route(
         detail={"deleted_count": deleted_count},
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "passkey_deleted_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_passkeys_deleted"
     )
@@ -266,7 +261,6 @@ async def delete_passkey_route(
         detail={"credential_db_id": credential_id},
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "passkey_deleted_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_passkey_deleted"
     )
@@ -294,7 +288,6 @@ async def reset_mfa_route(
         request=request,
     )
     await db.commit()
-    await notify_mfa_event(db, target_user_id, "mfa_reset_by_admin")
     return toast_redirect(
         f"/security/users/{target_user_id}", "toast.security_mfa_reset"
     )

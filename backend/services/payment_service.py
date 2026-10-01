@@ -26,12 +26,6 @@ from backend.models.payment_models import (
     UserSubscription,
 )
 from backend.models.telegram_models import TelegramUser
-from backend.services.refund_notification_service import (
-    notify_refund_request_approved,
-    notify_refund_request_failed,
-    notify_refund_request_rejected,
-    notify_refund_request_submitted,
-)
 
 
 class PaymentError(Exception):
@@ -1101,7 +1095,6 @@ class PaymentService:
 
         self.session.add(refund_request)
         await self.session.flush()
-        await notify_refund_request_submitted(self.session, refund_request)
         logger.info(
             "Refund request submitted: request_id={}, order_id={}, user_id={}",
             refund_request.id,
@@ -1216,7 +1209,6 @@ class PaymentService:
             refund_request.processed_at = now_utc()
             refund_request.error_message = None
             await self.session.flush()
-            await notify_refund_request_approved(self.session, refund_request)
             logger.info(
                 "Refund request approved: request_id={}, reviewer_id={}",
                 request_id,
@@ -1238,9 +1230,7 @@ class PaymentService:
                     request_id,
                     flush_exc,
                 )
-                await notify_refund_request_failed(self.session, refund_request)
                 raise
-            await notify_refund_request_failed(self.session, refund_request)
 
         return refund_request
 
@@ -1269,7 +1259,6 @@ class PaymentService:
         refund_request.review_note = (review_note or "").strip() or None
         refund_request.error_message = None
         await self.session.flush()
-        await notify_refund_request_rejected(self.session, refund_request)
         logger.info(
             "Refund request rejected: request_id={}, reviewer_id={}",
             request_id,

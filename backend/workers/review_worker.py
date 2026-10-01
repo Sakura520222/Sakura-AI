@@ -1784,9 +1784,6 @@ class ReviewWorker:
                         str(e),
                     )
 
-                # 12. 发送Telegram审查完成通知
-                await self._send_review_complete_notification(pr_info, review_result)
-
                 await _finish_execution("completed")
 
                 logger.info(
@@ -2540,61 +2537,6 @@ class ReviewWorker:
             captured.setdefault("inline_published", 0)
             captured.setdefault("fallback_body_only", False)
         return succeeded, captured
-
-    async def _send_review_complete_notification(
-        self, pr_info: dict[str, Any], review_result: dict[str, Any]
-    ):
-        """发送审查完成通知到Telegram"""
-        try:
-            from backend.models.database import async_session
-            from backend.services.telegram_service import TelegramService
-            from backend.telegram.notifications import get_notification_sender
-
-            notification_sender = get_notification_sender()
-            if not notification_sender:
-                logger.debug("Telegram通知发送器未初始化，跳过通知")
-                return
-
-            # 计算严重问题数量（使用 issues 字典，与 decision_engine 保持一致）
-            issues = review_result.get("issues", {})
-            critical_count = len(issues.get("critical", []))
-
-            # 获取评分
-            score = review_result.get("overall_score", 0)
-
-            # 构建PR URL
-            pr_url = f"https://github.com/{pr_info['repo_full_name']}/pull/{pr_info['pr_number']}"
-
-            # 收集通知目标：作者 + 订阅者
-            chat_ids = []
-            async with async_session() as session:
-                service = TelegramService(session)
-                chat_ids = await service.get_notification_targets(
-                    pr_info["repo_full_name"], pr_info.get("author", "")
-                )
-
-            if not chat_ids:
-                logger.debug(
-                    f"无通知目标: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
-                )
-                return
-
-            # 发送通知
-            await notification_sender.send_review_complete(
-                repo_name=pr_info["repo_full_name"],
-                pr_number=pr_info["pr_number"],
-                score=score,
-                critical_count=critical_count,
-                pr_url=pr_url,
-                chat_ids=chat_ids,
-            )
-
-            logger.info(
-                f"已发送审查完成通知: {pr_info['repo_full_name']}#{pr_info['pr_number']} → {len(chat_ids)} 人"
-            )
-
-        except Exception as e:
-            logger.error("发送Telegram通知失败: {}", str(e), exc_info=True)
 
 
 # 全局Worker实例

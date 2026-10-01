@@ -81,7 +81,7 @@
 
 | 键 | 移除后行为 |
 |---|---|
-| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；管理员 Telegram 通知与 Bot 命令权限以数据库 `super_admin` 用户的已绑定通知端点为准（Setup Wizard 绑定、Bot `/start` 绑定，或管理员在用户管理中填写 Telegram ID 时自动落库）。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
+| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；角色与权限以数据库用户身份及其 `super_admin` 等角色为准，Telegram ID 仅用于通知端点绑定，不授予登录或 Bot 管理权限。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
 
 ## 配置备份
 
@@ -340,10 +340,11 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
+| WebUI「系统核心配置」 | `telegram_enabled` | 是否启用公告投递的 Telegram Provider；**修改后需重启服务生效** |
 | Setup Wizard 第 3 步 / WebUI「系统核心配置」 | `telegram_bot_token` | Bot Token；**修改后需重启服务生效**（Bot 实例在服务启动时构造） |
-| 环境变量（启动默认值） | `TELEGRAM_DEFAULT_CHAT_ID` | 默认通知聊天 ID |
+| WebUI「系统核心配置」 | `telegram_bind_token_expire_seconds` | 一次性绑定令牌有效期，单位秒 |
 
-> 注意：`telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
+Bot 设置、通知端点绑定与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。Telegram 不参与账号角色或权限判断。
 
 ## 国际化
 

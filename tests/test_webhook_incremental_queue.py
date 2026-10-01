@@ -78,7 +78,6 @@ def _enable_auto_review(settings):
 
 
 def _patch_common(monkeypatch):
-    monkeypatch.setattr(webhook, "get_notification_sender", lambda: None)
     monkeypatch.setattr(webhook, "get_async_session", lambda: _FakeSession())
     monkeypatch.setattr(webhook, "TelegramService", _FakeTelegramService)
     monkeypatch.setattr(webhook, "GitHubAppClient", _FakeGitHubAppClient)

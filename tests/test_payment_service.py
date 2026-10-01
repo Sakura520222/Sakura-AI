@@ -847,15 +847,11 @@ class TestRefundRequests:
 
         mock_session.get = AsyncMock(side_effect=mock_get)
 
-        with patch(
-            "backend.services.payment_service.notify_refund_request_submitted",
-            new=AsyncMock(),
-        ) as mock_notify:
-            refund_request = await svc.submit_refund_request(
-                order_id=order.id,
-                user_id=sample_user.id,
-                reason="不再需要",
-            )
+        refund_request = await svc.submit_refund_request(
+            order_id=order.id,
+            user_id=sample_user.id,
+            reason="不再需要",
+        )
 
         assert refund_request.status == RefundRequestStatus.PENDING.value
         assert refund_request.order_id == order.id
@@ -863,7 +859,6 @@ class TestRefundRequests:
         assert refund_request.reason == "不再需要"
         mock_session.add.assert_called_once_with(refund_request)
         mock_session.flush.assert_awaited()
-        mock_notify.assert_awaited_once_with(mock_session, refund_request)
 
     async def test_submit_refund_request_rejects_foreign_order(self, svc, mock_session):
         order = Order(
@@ -954,15 +949,11 @@ class TestRefundRequests:
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock(return_value=order)
 
-        with patch(
-            "backend.services.payment_service.notify_refund_request_approved",
-            new=AsyncMock(),
-        ) as mock_notify:
-            result = await svc.approve_refund_request(
-                request_id=1,
-                reviewer_id=2,
-                review_note="同意退款",
-            )
+        result = await svc.approve_refund_request(
+            request_id=1,
+            reviewer_id=2,
+            review_note="同意退款",
+        )
 
         assert result.status == RefundRequestStatus.APPROVED.value
         assert result.reviewed_by == 2
@@ -973,7 +964,6 @@ class TestRefundRequests:
             amount_cents=refund_request.amount_cents,
             operator_id=2,
         )
-        mock_notify.assert_awaited_once_with(svc.session, refund_request)
 
     async def test_approve_refund_request_marks_failed_on_refund_error(self, svc):
         refund_request = RefundRequest(
@@ -986,15 +976,10 @@ class TestRefundRequests:
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock(side_effect=PaymentError("gateway down"))
 
-        with patch(
-            "backend.services.payment_service.notify_refund_request_failed",
-            new=AsyncMock(),
-        ) as mock_notify:
-            result = await svc.approve_refund_request(request_id=1, reviewer_id=2)
+        result = await svc.approve_refund_request(request_id=1, reviewer_id=2)
 
         assert result.status == RefundRequestStatus.FAILED.value
         assert result.error_message == "gateway down"
-        mock_notify.assert_awaited_once_with(svc.session, refund_request)
 
     async def test_reject_refund_request(self, svc):
         refund_request = RefundRequest(
@@ -1007,18 +992,13 @@ class TestRefundRequests:
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock()
 
-        with patch(
-            "backend.services.payment_service.notify_refund_request_rejected",
-            new=AsyncMock(),
-        ) as mock_notify:
-            result = await svc.reject_refund_request(
-                request_id=1,
-                reviewer_id=2,
-                review_note="不符合退款条件",
-            )
+        result = await svc.reject_refund_request(
+            request_id=1,
+            reviewer_id=2,
+            review_note="不符合退款条件",
+        )
 
         assert result.status == RefundRequestStatus.REJECTED.value
         assert result.reviewed_by == 2
         assert result.review_note == "不符合退款条件"
         svc.process_refund.assert_not_called()
-        mock_notify.assert_awaited_once_with(svc.session, refund_request)
