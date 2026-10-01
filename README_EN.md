@@ -102,6 +102,7 @@
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
 - **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with no network, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
 - **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
+- **Dependency Install Recovery** — Transient network failures get up to 3 attempts by default, with 2- and 4-second backoff; permanent errors are not retried. Final failures retain sanitized diagnostics for the Agent to repair installation or continue static analysis and report tests it could not run. Attempts and delay are adjustable on the unified configuration page
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
