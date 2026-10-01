@@ -531,7 +531,7 @@ async def test_dependency_installation_uses_dependency_profile_only(
     assert all(item.profile is ExecutionProfile.DEPENDENCY for item in requests)
     assert requests[0].command == "python -m venv --copies /workspace/.venv/sandbox"
     assert requests[1].command == (
-        "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
+        "/workspace/.venv/sandbox/bin/pip install -r requirements.txt"
     )
 
 

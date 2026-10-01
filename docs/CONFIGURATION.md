@@ -226,6 +226,8 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止与手动取消 |
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_dependency_install_attempts` | 瞬时依赖网络故障的最大安装尝试次数（含首次），默认 3，范围 1–5；版本冲突、确实缺包及未知错误不重试 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_dependency_retry_delay_seconds` | 重试初始等待秒数，默认 2，范围 0–60；指数退避，默认等待 2、4 秒，可随任务取消中断 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
 | 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 完全隔离；`web_tools`（默认）仅授权受控 Web 工具；`full_access` 允许 Agent/Dependency runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
