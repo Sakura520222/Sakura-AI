@@ -1,63 +1,45 @@
 # 项目记忆
 
-累计反思 32 次
+累计反思 5 次
 
 ## 核心审查原则
 
-- **"无评论"≠"无问题"**：空结果可能源于工具故障；"无问题"结论须附验证依据（搜索命令、CI 链接）
-- **高分警惕确认偏误**：高分仍须负向用例验证；已有 major 未决项时，即使增量干净也须保持阻断，勿被高分掩盖
-- **审查策略动态升级**：≥30 commits / >500 行、或增量 ≥3 轮 / 累计 >1000 行时须切 full；最简变更也宜 medium
+- **"无评论"≠"无问题"**：空结果可能源于工具故障；结论须附验证依据（搜索命令、CI 链接）
+- **高分警惕确认偏误**：高分仍须负向用例验证；已有 major 未决项时，即使增量干净也须保持阻断
+- **审查策略动态升级**：≥30 commits / >500 行、或增量 ≥3 轮 / 累计 >1000 行时切 full；最简变更宜 medium
 - **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据
-- **大块改动分层审查**：单文件 >100 行拆分 PR 或专项审查，辅以 shellcheck/actionlint
-- **报告结构化**：摘要→关键风险→修复建议；阻断项须在摘要阶段可见，勿埋在后续评论
+- **报告结构化**：摘要→关键风险→修复建议；阻断项须在摘要阶段可见
 
-## 依赖与锁文件（高频主题）
+## 依赖与锁文件
 
-- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；漂移须标 error；CI 加 `uv sync --locked && uv pip check` 或 `uv lock --check`
-- **子项目依赖须与根项目一致**（如 updater/pyproject.toml），差异须附兼容性说明
-- **升级必附 Release Notes**：核对 Breaking Changes 与 Python 版本；snapshot 对比关键输入输出 + 兼容测试（pydantic 2.x、redis RESP3 行为差异）
-- **递归调用禁令**：网络封装层禁同方法递归 _request（超时叠加/资源泄漏）；审查用 AST 静态分析检测自调用；统一封装低层请求函数
+- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；CI 加 `uv lock --check`
+- **升级必附 Release Notes**：核对 Minor/Major 升级 Breaking Changes 与隐式 Extra（如 SQLAlchemy [asyncio] / greenlet 解耦）
+- **依赖清理契机**：依赖集中合并 PR 需全库检索无引用包（如闲置依赖 python-slugify），及时清退降低攻击面；子项目依赖须与根项目一致
 
-## 会话认证与中间件（PR579/580 高频主题）
+## 大规模删除与重构
 
-- **Cookie 写入统一走 ASGI 中间件**（http.response.start 阶段）；须显式 Secure/HttpOnly/SameSite；幂等守卫防重复写；多中间件顺序文档化
-- **续期前刷新权威 Claims**：重查 DB 防禁用用户续命；新增 DB 查询须评估负载与缓存
+- **配置与清理完备度**：移除配置项须同步核验 5 要素：`config.py`、`DYNAMIC_CONFIG_GROUPS`、WebUI 模板 (`templates/`)、多语言字典 (`translations/`) 及 `.deploy/*.env.example`
+- **契约变更防线**：显式移除/解耦业务路径时，须包含负向断言测试（Negative Tests），防逻辑回退；删后统一跑格式化（`ruff format`）
+- **有意的架构收敛**：若删除了某底层功能且无直接替代，只要文档同步+负向测试覆盖+符合既定蓝图，判定为“有意的架构收敛”，不作无谓阻断
+
+## 语法、静态解析与异常防护
+
+- **CI 语法与全模块导入硬防线**：语法错误（如 Python 2 遗留 `except A, B:`）会导致 pytest 收集阶段崩溃；须在 CI 前置执行 `python -m py_compile` 及全模块 import 校验，0 容忍阻断
+- **Best-Effort 防御规范**：辅助落库/诊断逻辑若用宽泛捕获，须收敛为具体基类异常（如 `SQLAlchemyError`/`OSError`），注释标注 `#INTERNAL_ERROR` 与 `best-effort` 说明，严禁裸用 `except Exception`
+- **AI 工具与索引防御**：外部/模型传入的行号切片参数须物理钳制：`0 <= min_idx <= max_idx <= len(sequence)`，严禁依赖 Python 切片静默容错（防负索引倒序切片）；校验 1-based 与 0-based 映射转换
+
+## 会话认证与中间件
+
+- **Cookie 写入统一走 ASGI 中间件**（http.response.start 阶段）；显式 Secure/HttpOnly/SameSite；幂等守卫防重复写
+- **续期前刷新权威 Claims**：重查 DB 防禁用用户续命；新增 DB 查询评估负载与缓存
 - **特权入口单一校验**：管理员 API 不得绕过 MFA 链；401 处理器须删 Cookie 防死循环
-- **行号白名单脆弱**：改用装饰器等语义标记 + CI 自动校验
-- **Bearer/Query 不滑动续期**属需求决策，文档须明示边界
 
-## 函数签名与常量
+## CI/工作流与 Issue 治理
 
-- **改公开函数签名前全库搜调用点**（含直接调用的单测）；新增参数宜提供默认值/包装层；CI 加 type-check 捕获不匹配
-- **常量集中定义防漂移**：604800 等硬编码须 CI 检测；测试黑盒验证（断言 Set-Cookie Max-Age）勿依赖内部常量
+- **Epic 级重构 Issue 治理**：跨周期大重构重点在于拆解路径与双轨共存风险；重复检测时严格区分整体架构提案与单业务域 Issue，避免误报
+- **最小权限+契约测试**：workflow 显式 `permissions: {}` 并配套断言测试；正则扫 secrets./sudo
 
-## CI/工作流与协议变更（PR578/580）
+## 增量审查与协作
 
-- **合约/协议变更全链路影响**：端到端兼容检查+灰度发布；CI 步骤须幂等+资源清理；doc-sync 比对文档与代码
-- **最小权限+契约测试**：workflow 显式 `permissions: {}` 并配套断言测试；改动须附影响矩阵；正则扫 secrets./sudo
-- **脚本→CI 耦合**：脚本影响 CI 须统一 JSON 输出；业务层勿裸抛异常（返回值+CI 捕获）
-- **测试高覆盖≠安全**：成功路径 3000+ 通过仍需故障注入
-
-## 核心模块与并发
-
-- **无界循环须物理硬约束**；状态写入幂等+并发防护；迁移/服务脚本幂等+回退路径测试
-- **配置项须有真实消费点**；环境变量须在容器镜像/部署模板声明
-
-## 安全与守护进程
-
-- **异常脱敏分级**：用户输入错误可透传，内部错误脱敏；禁止裸 except
-- **系统级资源防御式校验**：路径/权限/所有者检查集中到统一抽象
-- **systemd/脚本幂等**：原子写入 os.replace、PIDFile 残留清理须有测试、非 systemd 环境显式回退；User=/CapabilityBoundingSet= 最小化
-
-## 增量审查与协作（核心经验）
-
-- **增量+全局双模**：每轮增量后全局抽查（grep 关键常量/函数全部调用点），复查前轮 major 项闭环状态，结束后全局回归
+- **增量+全局双模**：每轮增量后全局抽查全部调用点，复查前轮 major 项闭环状态，结束后全局回归
 - **模板强制列"前置未解决问题"**：未解决 → 阻断合并
-- **merge commit 噪声**：增量审查过滤合并提交；引导 rebase/squash
-
-## Issue 分析
-
-- **分类避免笼统 other**（如 gitflow 冲突应为 workflow/git）；标签统一防碎片（automation≠automated），最多 4-5 个核心标签
-- **重复检测**：关键字组合+模糊匹配+近 30 天过滤，防误/漏报
-- **低优 Issue 关闭前附解决 commit 注释**；优先级纳入影响范围与恢复成本（数据永久缺失升 high）
-- **AI 审查改进**：adversarial pass 仅高风险文件触发；历史 PR 构建回归套件
