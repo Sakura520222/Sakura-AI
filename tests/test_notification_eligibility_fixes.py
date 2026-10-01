@@ -22,9 +22,8 @@ from backend.models.announcement_models import (
     NotificationDelivery,
 )
 from backend.models.identity_models import NotificationEndpoint
-from backend.models.payment_models import RefundRequest
 from backend.models.telegram_models import TelegramUser
-from backend.services import notification_service, refund_notification_service
+from backend.services import notification_service
 
 
 class _AsyncSQLiteSession:
@@ -398,6 +397,57 @@ async def test_rebound_endpoint_is_resolved_after_claim(sqlite_database, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_telegram_announcement_uses_current_endpoint_and_keeps_legacy_mirror(
+    sqlite_database, monkeypatch
+):
+    session, engine = sqlite_database
+    announcement, _delivery = await _seed_delivery(
+        session,
+        channel="telegram",
+        endpoint=NotificationEndpoint(
+            id=1, user_id=1, provider="telegram", address="111", enabled=False
+        ),
+    )
+    user = await session.get(TelegramUser, 1)
+    user.telegram_id = 111
+    session._session.add_all(
+        [
+            NotificationEndpoint(
+                id=2, user_id=1, provider="telegram", address="222", enabled=True
+            ),
+            NotificationEndpoint(
+                id=3,
+                user_id=1,
+                provider="email",
+                address="person@example.invalid",
+                enabled=True,
+            ),
+        ]
+    )
+    await session.commit()
+    _settings(monkeypatch, telegram_enabled=True, telegram_bot_token="token")
+    bot = object()
+    monkeypatch.setattr("backend.telegram.bot.get_telegram_bot", lambda: bot)
+    sent_to = []
+
+    async def send_rich(current_bot, *, chat_id, **_kwargs):
+        assert current_bot is bot
+        sent_to.append(chat_id)
+        return True
+
+    monkeypatch.setattr(notification_service, "_send_telegram_rich", send_rich)
+    result = await notification_service.NotificationService().broadcast_announcement(
+        session, announcement, expected_version=1
+    )
+
+    assert result == {"sent": 1, "failed": 0, "skipped": 0}
+    assert sent_to == [222]
+    with Session(engine) as other:
+        assert other.get(TelegramUser, 1).telegram_id == 111
+        assert other.get(NotificationDelivery, 1).status == DeliveryStatus.SENT.value
+
+
+@pytest.mark.asyncio
 async def test_disabled_endpoint_releases_claim_for_immediate_retry(
     sqlite_database, monkeypatch
 ):
@@ -439,77 +489,6 @@ async def test_disabled_endpoint_releases_claim_for_immediate_retry(
         assert current.status == DeliveryStatus.PENDING.value
         assert current.claim_token is None
         assert current.claim_until is None
-
-
-@pytest.mark.asyncio
-async def test_refund_notifications_send_all_enabled_valid_endpoints(
-    sqlite_database, monkeypatch
-):
-    session, _engine = sqlite_database
-    session._session.add(TelegramUser(id=1, is_active=True))
-    session._session.add_all(
-        [
-            NotificationEndpoint(
-                user_id=1,
-                provider="telegram",
-                address="101",
-                enabled=True,
-            ),
-            NotificationEndpoint(
-                user_id=1,
-                provider="telegram",
-                address="0101",
-                enabled=True,
-            ),
-            NotificationEndpoint(
-                user_id=1,
-                provider="telegram",
-                address="102",
-                enabled=True,
-            ),
-            NotificationEndpoint(
-                user_id=1,
-                provider="telegram",
-                address="103",
-                enabled=False,
-            ),
-            NotificationEndpoint(
-                user_id=1,
-                provider="telegram",
-                address="not-a-chat-id",
-                enabled=True,
-            ),
-            NotificationEndpoint(
-                user_id=1,
-                provider="email",
-                address="person@example.invalid",
-                enabled=True,
-            ),
-        ]
-    )
-    await session.commit()
-    sender = SimpleNamespace(targets=[])
-
-    async def send_to_targets(text, chat_ids):
-        sender.targets.append((text, chat_ids))
-
-    sender.send_to_targets = send_to_targets
-    monkeypatch.setattr(
-        refund_notification_service, "get_notification_sender", lambda: sender
-    )
-    request = RefundRequest(
-        id=1,
-        order_id=9,
-        user_id=1,
-        amount_cents=1000,
-        currency="CNY",
-        reason="duplicate",
-    )
-
-    await refund_notification_service.notify_refund_request_approved(session, request)
-    await refund_notification_service.notify_refund_request_rejected(session, request)
-
-    assert [chat_ids for _text, chat_ids in sender.targets] == [[101, 102], [101, 102]]
 
 
 def test_retry_after_normalizes_numbers_and_timedelta():

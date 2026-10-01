@@ -80,7 +80,7 @@
 - **自动创建 Issue** — AI 总结 + 趋势对比 + 严重性/类别矩阵 + 热点文件 + 折叠明细；自动关闭被取代的旧报告 Issue
 - **灵活扫描配置** — 间隔、冷却、Token 预算、并发等；扫描提示词 focus 在统一配置页 `strategy.scan` 节编辑
 - **扫描管理界面** — WebUI 查看列表、详情、统计
-- **扫描通知** — Telegram Bot 推送完成通知（含 AI 总结）
+- **扫描结果** — 通过 GitHub 报告 Issue 和 WebUI 查看
 
 ### Issue 分析
 
@@ -146,7 +146,7 @@
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
-- **可选通知渠道** — Telegram 与 Email/SMTP 可独立启停，个人设置支持一次性绑定/解绑 Telegram；公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）
+- **可选通知渠道** — Telegram 作为统一公告投递的可选 Provider，与 Email/SMTP 可独立启停；个人设置支持一次性绑定/解绑 Telegram。公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）。PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除；本次变更未实现替代的业务事件通知层
 - **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
 - **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
 
@@ -279,10 +279,6 @@ python -m backend.main
 <img src="res/Issues分析.png" width="1707" alt="Issue分析">
 
 <img src="res/WebUI.png" width="1707" alt="WebUI管理界面">
-
-<img src="res/Telegram通知-1.png" width="627" alt="Telegram通知">
-
-<img src="res/Telegram通知-2.png" width="537" alt="Telegram通知">
 
 </div>
 

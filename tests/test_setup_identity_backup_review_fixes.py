@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from backend.core.setup_service import SetupService
+from backend.models.announcement_models import NotificationDelivery
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.telegram_models import (
@@ -24,9 +25,9 @@ from backend.services.identity_service import (
     NotificationEndpointConflictError,
     migrate_legacy_identity_data,
 )
+from backend.services.notification_service import NotificationService
 from backend.services.system_config_service import SystemConfigValidationError
 from backend.services.user_backup_service import parse_user_backup, restore_user_backup
-from backend.telegram.notifications import NotificationSender
 
 
 class _AsyncSQLiteSession:
@@ -619,7 +620,7 @@ async def test_identity_migration_adds_telegram_when_email_endpoint_exists(sqlit
 
 
 @pytest.mark.asyncio
-async def test_restore_preserves_legacy_fk_and_routes_new_telegram_endpoint(sqlite_db, monkeypatch):
+async def test_restore_preserves_legacy_fk_and_routes_new_telegram_endpoint(sqlite_db):
     user = TelegramUser(id=1, telegram_id=111, github_username="alice")
     sqlite_db.add(user)
     sqlite_db.add(
@@ -671,11 +672,12 @@ async def test_restore_preserves_legacy_fk_and_routes_new_telegram_endpoint(sqli
         ("222", True),
     ]
 
-    monkeypatch.setattr(
-        "backend.models.database.async_session", lambda: sqlite_db
+    delivery = NotificationDelivery(user_id=1, channel="telegram")
+    endpoint = await NotificationService()._resolve_enabled_endpoint(
+        sqlite_db, delivery
     )
-    sender = NotificationSender(object())
-    assert await sender._enabled_telegram_targets([111]) == [222]
+    assert endpoint is not None
+    assert endpoint.address == "222"
 
     # Startup migration sees the retained disabled mirror and must not
     # reactivate it or create another endpoint for the old address.

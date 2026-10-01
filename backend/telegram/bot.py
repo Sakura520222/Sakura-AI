@@ -8,7 +8,6 @@ from telegram.ext import Application, CommandHandler
 
 from backend.core.config import get_settings
 from backend.telegram.handlers import cmd_bind, cmd_start
-from backend.telegram.notifications import NotificationSender, set_notification_sender
 
 settings = get_settings()
 
@@ -84,10 +83,6 @@ async def start_telegram_bot():
         # for compatibility imports but are intentionally unreachable here.
         _telegram_app.add_handler(CommandHandler("start", cmd_start))
         _telegram_app.add_handler(CommandHandler("bind", cmd_bind))
-
-        # 设置通知发送器
-        notification_sender = NotificationSender(_telegram_bot)
-        set_notification_sender(notification_sender)
 
         # 注册错误处理器
         _telegram_app.add_error_handler(_telegram_error_handler)

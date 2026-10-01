@@ -74,19 +74,6 @@ async def record_mfa_failure(user_id: int) -> int:
                 count,
                 lock_ttl,
             )
-            # Fire-and-forget notification owns a short-lived DB session; keep
-            # it in the reset supervisor so DROP cannot race its commit.
-            from backend.services.database_reset_runtime_service import (
-                DatabaseResetRuntimeAdmissionClosed,
-                create_registered_background_task,
-            )
-
-            try:
-                create_registered_background_task(
-                    _notify_lockout(user_id), "mfa_lockout_notification"
-                )
-            except DatabaseResetRuntimeAdmissionClosed:
-                logger.info("跳过清库静默期内的 MFA lockout 通知: user_id={}", user_id)
         return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
@@ -126,19 +113,6 @@ def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) ->
         logger.warning(
             "MFA account locked (fallback): user_id={}, failures={}", user_id, count_val
         )
-        # The fallback still sends a notification through a short-lived DB
-        # session; register it so reset quiesce can reject/await it as well.
-        from backend.services.database_reset_runtime_service import (
-            DatabaseResetRuntimeAdmissionClosed,
-            create_registered_background_task,
-        )
-
-        try:
-            create_registered_background_task(
-                _notify_lockout(user_id), "mfa_lockout_notification"
-            )
-        except DatabaseResetRuntimeAdmissionClosed:
-            logger.info("跳过清库静默期内的 MFA fallback 通知: user_id={}", user_id)
     return count_val
 
 
@@ -170,26 +144,6 @@ def _check_mfa_lockout_fallback(user_id: int) -> None:
         raise AccountLockedError(int(remaining))
     # Lock expired, clean up
     _lock_fallback.pop(user_id, None)
-
-
-async def _notify_lockout(user_id: int) -> None:
-    """Send a Telegram notification when MFA lockout is triggered.
-
-    Creates its own short-lived DB session since the lockout service
-    does not receive one from callers.
-    """
-    try:
-        from backend.models import database as db_module
-        from backend.services.mfa_notification_service import notify_mfa_event
-
-        async with db_module.async_session() as session:
-            await notify_mfa_event(session, user_id, "mfa_lockout")
-    except Exception as exc:
-        logger.warning(
-            "Failed to send MFA lockout notification: user_id={}, error={}",
-            user_id,
-            exc,
-        )
 
 
 async def reset_mfa_failures(user_id: int) -> None:
