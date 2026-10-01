@@ -538,7 +538,6 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
         "install",
         "-r",
         "requirements.txt",
-        "--quiet",
     )
     assert all("/workspace/" not in " ".join(item.argv or ()) for item in requests)
 

@@ -26,6 +26,7 @@ from backend.services.agent_team.conversation_checkpoint import (
 from backend.services.agent_team.conversation_context import (
     AgentTeamConversationContextService,
 )
+from backend.services.agent_team.dependency_bootstrap import DependencySetupReport
 from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
@@ -109,6 +110,7 @@ class IterationLoopService:
         # migration.  Product execution no longer reads or enforces it.
         max_iterations: int | None = None,
         skip_internal_review: bool = False,
+        dependency_setup: DependencySetupReport | None = None,
     ) -> IterationOutcome:
         """Execute exactly one Agent.
 
@@ -119,6 +121,13 @@ class IterationLoopService:
         state machine.
         """
         del github_repo, sakura_ref, max_iterations, skip_internal_review
+
+        if dependency_setup is not None:
+            reference_context = "\n\n".join(
+                value
+                for value in (reference_context, dependency_setup.agent_context())
+                if value
+            )
 
         tracker = TokenTracker()
         resume_cursor = self.resume_cursor
@@ -167,6 +176,16 @@ class IterationLoopService:
         )
         self._active_agent = agent
         try:
+            # Save full sanitized diagnostics before any model request so an
+            # Agent/provider error does not discard the bootstrap evidence.
+            session_id = getattr(agent, "session_id", None)
+            if self.checkpoint and session_id and dependency_setup is not None:
+                try:
+                    await self.checkpoint.save_session_result(
+                        session_id, {"dependency_setup": dependency_setup.to_dict()}
+                    )
+                except Exception as exc:
+                    logger.warning("保存 Agent 依赖安装诊断失败: {}", exc)
             result = await agent.execute(
                 task_title=task_title,
                 task_summary=task_summary,
@@ -203,6 +222,11 @@ class IterationLoopService:
                         "test_result": result.test_result,
                         "tool_calls_count": result.tool_calls_count,
                         "error": result.error,
+                        **(
+                            {"dependency_setup": dependency_setup.to_dict()}
+                            if dependency_setup is not None
+                            else {}
+                        ),
                     },
                 )
             except Exception as exc:
