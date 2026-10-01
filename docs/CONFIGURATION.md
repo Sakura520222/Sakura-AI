@@ -134,7 +134,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
-| WebUI 配置管理 | `enable_auto_review` | PR webhook（opened/synchronize/reopened）是否自动入队；关闭后仍可命令或手动触发 |
+| WebUI 配置管理 | `enable_auto_review` | PR webhook（opened/synchronize/reopened）是否自动入队；关闭后仍可通过 GitHub PR 评论 `/full-review` 手动触发 |
 | WebUI 审查策略 | 四种策略 | 快速 / 标准 / 深度 / 大 PR |
 | WebUI 审查策略 | 文件过滤 | 跳过的文件扩展名和路径 |
 | WebUI 审查策略 | `review_policy` | 审查批准阈值与仓库级覆盖 |
@@ -367,4 +367,4 @@ Bot 设置、通知端点绑定与命令参考详见 [Telegram Bot 集成指南]
 
 ---
 
-*最后更新：2026-9-25 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

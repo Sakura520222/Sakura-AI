@@ -18,7 +18,7 @@
 |---|---|
 | [审查协议规范](PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 标签化审查输出协议、字段校验与修复降级 |
 | [审查批准功能](APPROVAL_FEATURE_SUMMARY.md) | 智能审查批准系统详细说明 |
-| [手动审查功能](MANUAL_REVIEW_FEATURE.md) | 超级管理员手动触发审查 |
+| [手动审查功能](MANUAL_REVIEW_FEATURE.md) | GitHub PR 评论 `/full-review` 触发全量审查，WebUI/API 查看结果 |
 | [模型上下文管理](MODEL_CONTEXT_FEATURE.md) | AI 模型上下文和压缩功能 |
 | [PR 功能指南](PR_FEATURES_GUIDE.md) | PR 变更总结与依赖图配置说明 |
 | [项目记忆系统使用指南](SAKURA_MEMORY_GUIDE.md) | `.sakura/` 目录结构、生命周期与配置说明 |
@@ -47,4 +47,4 @@
 
 > `superpowers/` 目录是开发流程工作产物（设计稿、实施计划），不属于用户文档。
 
-*最后更新：2026-8-26 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

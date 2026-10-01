@@ -24,8 +24,7 @@
 
 `enable_auto_review` 控制 GitHub PR webhook 是否在 `opened`、`synchronize`、`reopened` 等事件中自动创建审查任务。关闭后，系统不会自动入队新 PR 审查，但仍保留以下触发方式：
 
-- PR 评论命令触发，例如 `/full-review`。
-- WebUI 或管理入口手动触发。
+- GitHub PR 评论命令 `/full-review`；权限和操作步骤见 [手动审查功能](MANUAL_REVIEW_FEATURE.md)。
 - 其他显式调用审查服务的内部流程。
 
 该开关适合在成本控制、灰度发布、只希望人工挑选 PR 审查时使用。
@@ -122,7 +121,7 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 - 队列、配额或权限检查阻止了任务创建。
 - GitHub App webhook 或安装权限异常。
 
-可通过 PR 评论命令或 WebUI 手动触发一次，确认审查流程本身是否正常。
+可在 GitHub PR 中发布 `/full-review` 评论触发一次审查，并通过 GitHub Checks 或 WebUI 查看结果，确认审查流程本身是否正常。
 
 ### 大型 PR 审查提示上下文不足
 
@@ -151,4 +150,4 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 
 ---
 
-*最后更新：2026-8-22 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
