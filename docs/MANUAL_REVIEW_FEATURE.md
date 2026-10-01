@@ -1,352 +1,81 @@
-# 手动触发审查功能说明
+# 手动触发 PR 全量审查
 
-> 超级管理员通过 Telegram Bot 手动触发 GitHub PR 的 AI 代码审查功能说明。
+> 在 GitHub PR 中发布 `/full-review` 评论触发审查，通过 GitHub、WebUI 或 API 查看结果。
 
 ← [文档索引](README.md) · [README](../README.md)
 
 ---
 
-## 功能概述
-
-超级管理员可以通过 Telegram Bot 手动触发对任意 GitHub Pull Request 的 AI 代码审查。
-
 ## 使用方法
 
-### 命令格式
+1. 打开需要审查的 GitHub Pull Request。
+2. 确认 PR 处于打开状态、已退出草稿状态且尚未合并。
+3. 在 PR 的普通评论区发布一条新评论，内容为：
 
-```
-/review <pr_url>
-```
+   ```text
+   /full-review
+   ```
 
-### 参数说明
+4. 查看 Sakura AI 在 PR 中回复的提交确认，以及后续 Check Runs 和审查报告。
 
-- `pr_url`: GitHub Pull Request 的完整 URL
-  - 支持格式: `https://github.com/owner/repo/pull/123`
-  - 也支持: `https://github.com/owner/repo/pull/123/files`
-  - 不需要包含 `/files` 后缀
+命令作用于当前 PR，无需附带 PR URL。修改已有评论不会触发审查，需要发布新评论。该命令在 `enable_auto_review` 关闭时仍可使用。
 
-### 使用示例
+全量审查会清理 Bot 之前发布的评论、撤回旧 Review，并尝试清理对应的本地旧审查记录，再提交新一轮审查。需要保留旧结果时，请先保存报告或通过 WebUI/API 导出。
 
-```
-/review https://github.com/Sakura520222/Sakura-AI/pull/42
-```
+## 权限与前置条件
 
-## 权限要求
+- 触发者必须是 PR 作者，或拥有目标仓库 `write` / `admin` 权限的 GitHub 协作者。
+- 权限按 GitHub PR 作者身份和仓库权限判断，不要求触发者具有 Sakura AI 超级管理员角色。
+- GitHub App 已安装到目标仓库，且有读取 PR、发布审查报告所需的权限。
+- GitHub App 的 Webhook 已订阅 `Issue comment` 事件，部署的 Webhook 地址和签名配置正确。
+- AI 模型配置可用，Sakura AI 服务正常运行。
 
-- **仅超级管理员可用** (SUPER_ADMIN)
-- 超级管理员由数据库用户角色（`super_admin`）决定，通过 Setup Wizard 或 WebUI 用户管理分配
-- 超级管理员可以审查任何仓库，不受仓库白名单限制
-- 超级管理员不受配额限制
+GitHub 权限查询暂时失败时，系统不会跳过权限检查继续审查；请根据 PR 中的提示稍后发布新评论重试。
 
-## 执行流程
+## 查看进度与结果
 
-### 1. URL 解析
+| 入口 | 使用方式 |
+|---|---|
+| GitHub PR | 查看提交确认、Checks 中的进度，以及 Bot 发布的 Review 和评论 |
+| WebUI | 登录后打开「PR 审查」页面（`/pr/`），搜索仓库或 PR，进入审查详情 |
+| API | 使用已登录账号的 Bearer Token 或 WebUI Cookie 查询 `/api/v1/reviews` 等接口 |
 
-- 从 PR URL 中提取 `owner`、`repo` 和 `pr_number`
-- 支持多种 URL 格式
+API 的常用查询接口：
 
-### 2. PR 信息获取
+| 接口 | 用途 |
+|---|---|
+| `GET /api/v1/reviews` | 查询可访问的审查记录列表 |
+| `GET /api/v1/reviews/{review_id}` | 查看审查详情与评论 |
+| `GET /api/v1/reviews/{review_id}/files` | 查看文件级问题统计 |
+| `GET /api/v1/reviews/{review_id}/comments` | 查看审查评论 |
+| `GET /api/v1/reviews/export` | 导出可访问的审查记录 |
 
-- 通过 GitHub API 获取 PR 详细信息
-- 自动获取 `installation_id`（用于 GitHub App 认证）
-- 验证 PR 是否存在
+`review_id` 是审查记录 ID，可从列表响应中获取。WebUI 和 API 按登录用户的数据范围过滤记录，具体认证与响应格式见 [API v1 参考](api-v1-reference.md)。这些入口用于查看和导出；当前手动发起 PR 全量审查使用上述 GitHub 评论命令。
 
-### 3. 状态检查
+## Telegram 功能边界
 
-检查以下条件，任一不满足则拒绝审查：
+Telegram Bot 仅注册 `/start` 与 `/bind`，用于可选通知端点绑定。历史 `/review <pr_url>` 命令已停用，旧版 PR 审查开始和完成的 Telegram 专用通知也已移除。
 
-- ❌ PR 必须是 `open` 状态
-- ❌ PR 不能是草稿 (draft)
-- ❌ PR 不能已合并 (merged)
-
-### 4. 审查启动
-
-- 发送 Telegram 通知（审查开始）
-- 提交审查任务到异步队列
-- 返回任务 ID 给用户
-
-### 5. 异步执行
-
-- 审查在后台异步执行（使用 `asyncio.create_task`）
-- 不阻塞 Telegram Bot
-- 执行时间: 通常 30s - 2min
-
-### 6. 完成通知
-
-- 审查完成后自动发送 Telegram 通知
-- 包含评分、决策等信息
-
-## 响应消息
-
-### 成功提交
-
-```
-✅ 审查任务已提交
-
-📋 PR: owner/repo#123
-👤 作者: username
-📝 标题: Fix bug in authentication...
-🆔 任务ID: abc123-def456-...
-
-⏳ 审查完成后将通过Telegram通知您
-```
-
-### 错误提示
-
-#### URL 格式错误
-
-```
-❌ 无效的PR URL格式: https://example.com/bad-url
-正确格式: https://github.com/owner/repo/pull/123
-```
-
-#### PR 未打开
-
-```
-❌ PR未打开
-
-📋 PR: owner/repo#123
-状态: closed
-```
-
-#### 草稿 PR
-
-```
-❌ 这是草稿PR，跳过审查
-
-📋 PR: owner/repo#123
-```
-
-#### PR 已合并
-
-```
-❌ PR已合并，跳过审查
-
-📋 PR: owner/repo#123
-```
-
-#### 无权限访问
-
-```
-❌ 无法访问仓库
-
-可能原因：
-• GitHub App 未安装到目标仓库
-• 仓库不存在或无权限访问
-
-错误详情: Failed to get installation...
-```
-
-#### PR 不存在
-
-```
-❌ PR不存在
-
-请检查PR URL是否正确
-错误详情: Not Found
-```
-
-## 技术实现
-
-### 核心函数
-
-#### `get_pr_info_from_url(pr_url: str)`
-
-位置: `backend/core/github_app.py`
-
-功能：
-
-- 解析 PR URL
-- 通过 GitHub API 获取 PR 信息
-- 获取 `installation_id`
-- 构造与 webhook 一致的 `pr_info` 字典
-
-#### `cmd_review(update, context)`
-
-位置: `backend/telegram/handlers.py`
-
-功能：
-
-- 权限检查
-- 参数验证
-- 调用 `get_pr_info_from_url()`
-- 状态验证
-- 提交审查任务
-- 错误处理
-
-### 数据流程
-
-```
-Telegram Bot
-    ↓
-cmd_review (handlers.py)
-    ↓
-get_pr_info_from_url (github_app.py)
-    ↓
-submit_review_task (review_worker.py)
-    ↓
-process_review_task (review_worker.py)
-    ↓
-AI Review & Submit to GitHub
-    ↓
-_send_review_complete_notification (review_worker.py)
-    ↓
-Telegram Notification
-```
-
-### 关键特性
-
-#### 1. 等效性构造
-
-手动触发的 `pr_info` 字典与 webhook payload 格式完全一致：
-
-```python
-{
-    "action": "manual",  # 标记为手动触发
-    "pr_id": ...,
-    "pr_number": ...,
-    "repo_owner": ...,
-    "repo_name": ...,
-    "repo_full_name": ...,
-    "installation_id": ...,  # 关键字段
-    "author": ...,
-    "title": ...,
-    "branch": ...,
-    "base_branch": ...,
-    "diff_url": ...,
-    "patch_url": ...,
-    "html_url": ...,
-    "state": ...,
-    "draft": ...,
-    "merged": ...,
-}
-```
-
-#### 2. 异步处理
-
-使用 `asyncio.create_task()` 实现非阻塞：
-
-```python
-task_id = await submit_review_task(pr_info)
-# 立即返回，不等待审查完成
-```
-
-#### 3. 完整的审查流程
-
-手动触发与 webhook 触发使用相同的审查逻辑：
-
-- PR 分析
-- AI 审查
-- 标签推荐
-- 决策引擎
-- 提交 Review 到 GitHub
-
-## 前置条件
-
-### 必需配置
-
-1. **GitHub App 已安装到目标仓库**
-   - 手动触发需要 GitHub App 有访问权限
-   - 如果未安装，会提示"无法访问仓库"
-
-2. **超级管理员配置**
-
-   超级管理员由数据库角色（`super_admin`）决定，通过 Setup Wizard 或 WebUI 用户管理分配；如需通过 Bot 触发手动审查，管理员还需在 Bot 中完成 Telegram 绑定（`/start` 后按指南 `/bind`）。
-
-3. **Telegram Bot 配置**
-   - Bot Token 已配置
-   - Bot 已启动并运行
-
-### 可选配置
-
-- Telegram 通知配置（用于接收审查完成通知）
-
-## 使用场景
-
-### 适用场景
-
-1. **重新审查已修改的 PR**
-   - PR 作者修改后希望重新审查
-   - 不需要关闭重开 PR
-
-2. **测试审查功能**
-   - 测试新的审查策略
-   - 验证 AI 审查效果
-
-3. **补充审查**
-   - Webhook 触发失败时的补救措施
-   - 手动触发跳过的 PR
-
-4. **特殊仓库审查**
-   - 审查未在白名单中的仓库
-   - 临时需要审查某个 PR
-
-### 不适用场景
-
-- ❌ 已关闭的 PR
-- ❌ 已合并的 PR
-- ❌ 草稿 PR (Draft PR)
-- ❌ 不存在的 PR
+手动审查无需配置 Telegram Bot 或绑定 Telegram。Telegram Provider 仍支持通过统一通知服务投递公告，绑定说明见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
 
 ## 故障排查
 
-### 常见问题
-
-#### 1. "无法访问仓库"
-
-**原因**: GitHub App 未安装到目标仓库
-
-**解决**:
-
-1. 访问 GitHub App 设置页面
-2. 安装 App 到目标仓库
-3. 确保有正确的权限
-
-#### 2. "PR不存在"
-
-**原因**: URL 错误或 PR 编码错误
-
-**解决**:
-
-1. 检查 URL 是否正确
-2. 确认 PR 编号正确
-3. 确认仓库存在
-
-#### 3. 审查超时
-
-**原因**: PR 太大或 API 响应慢
-
-**解决**:
-
-1. 检查 PR 规模是否超过限制
-2. 查看 Bot 日志
-3. 耐心等待（可能需要 2-5 分钟）
-
-## 日志查看
-
-审查过程的日志会记录到应用日志中：
-
-```
-[INFO] 超级管理员手动触发审查: 123456789 -> owner/repo#42
-[INFO] 解析PR URL成功: owner/repo#42
-[INFO] 成功获取PR信息: owner/repo#42, author=username, state=open
-[INFO] 手动审查任务已提交: owner/repo#42, task_id=abc123, triggered_by=123456789
-```
+| 现象 | 检查方式 |
+|---|---|
+| 发布命令后没有确认或新审查记录 | 确认发布位置是 PR 普通评论区、命令为 `/full-review`，并检查 GitHub App 的 Webhook 投递记录和服务日志 |
+| 提示没有权限 | 使用 PR 作者账号，或由拥有仓库 `write` / `admin` 权限的协作者发布命令 |
+| 提示权限检查暂不可用 | 检查 GitHub App 连接状态，恢复后发布新评论重试 |
+| PR 被跳过 | 确认 PR 已打开、已退出草稿状态且尚未合并 |
+| 无法读取仓库或 PR | 检查 GitHub App 的安装范围与目标仓库权限 |
+| 审查执行失败或结果未发布 | 查看 GitHub Checks、WebUI 审查详情和服务日志，检查 AI/GitHub 连接及配置 |
+| WebUI/API 中看不到记录 | 确认登录账号有对应数据的访问权限，并核对搜索条件和审查记录 ID |
 
 ## 相关文档
 
-- [Telegram Bot 设置](./TELEGRAM_SETUP.md)
-- [审查策略配置](CONFIGURATION.md)
-- [API v1 参考文档](api-v1-reference.md)
-
-## 更新历史
-
-- **2026-03-06**: 初始版本
-  - 实现基本的 `/review` 命令
-  - 支持 URL 解析和 PR 信息获取
-  - 完整的错误处理和用户反馈
-  - 异步执行和 Telegram 通知
+- [PR 功能指南](PR_FEATURES_GUIDE.md)：自动审查开关、审查策略与配置。
+- [审查协议规范](PR_REVIEW_PROTOCOL.md)：审查报告的结构与输出契约。
+- [部署指南](DEPLOYMENT.md)：GitHub App、Webhook 和服务部署。
 
 ---
 
-*最后更新：2026-8-16 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-02 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
