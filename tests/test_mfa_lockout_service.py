@@ -1,8 +1,6 @@
-"""MFA lockout fallback runtime-task regression tests."""
+"""MFA lockout state survives runtime quiescence without background delivery."""
 
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 
@@ -29,36 +27,19 @@ def runtime_supervisor():
 
 
 @pytest.mark.asyncio
-async def test_mfa_fallback_notification_is_registered(runtime_supervisor, monkeypatch):
-    notified = asyncio.Event()
-
-    async def notify(_user_id):
-        notified.set()
-
-    monkeypatch.setattr(mfa, "_notify_lockout", notify)
-
+async def test_mfa_fallback_locks_account_without_background_work(runtime_supervisor):
     assert mfa._record_mfa_failure_fallback(42, threshold=1, lock_ttl=60) == 1
-    assert len(runtime_supervisor.tasks) == 1
-    await asyncio.wait_for(notified.wait(), timeout=0.1)
-    await asyncio.sleep(0)
+    with pytest.raises(mfa.AccountLockedError):
+        mfa._check_mfa_lockout_fallback(42)
     assert not runtime_supervisor.tasks
 
 
 @pytest.mark.asyncio
-async def test_mfa_fallback_notification_is_rejected_after_quiesce(
+async def test_mfa_fallback_locks_account_after_quiesce(
     runtime_supervisor,
-    monkeypatch,
 ):
-    called = False
-
-    async def notify(_user_id):
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(mfa, "_notify_lockout", notify)
     runtime_supervisor.begin_quiesce()
-
     assert mfa._record_mfa_failure_fallback(43, threshold=1, lock_ttl=60) == 1
-    await asyncio.sleep(0)
-    assert not called
+    with pytest.raises(mfa.AccountLockedError):
+        mfa._check_mfa_lockout_fallback(43)
     assert not runtime_supervisor.tasks

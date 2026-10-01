@@ -80,7 +80,7 @@
 - **Auto-create Issues** — AI summary, trend comparison, severity/category matrix, hotspot files, and folded details; superseded report issues are closed automatically
 - **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.; the scan prompt focus is editable in the unified config page `strategy.scan` section
 - **Scan Management UI** — View scan list, details, and statistics in WebUI
-- **Scan Notifications** — Telegram Bot notifications on completion (with AI summary)
+- **Scan Results** — Available through GitHub report Issues and WebUI
 
 ### Issue Analysis
 
@@ -145,7 +145,7 @@
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
-- **Optional Notification Channels** — Telegram and Email/SMTP can be enabled independently; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI)
+- **Optional Notification Channels** — Telegram remains an optional Provider for unified announcement delivery and can be enabled independently of Email/SMTP; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI). Telegram-only business messages for PR reviews, Issue analysis, scans, MFA, and refunds have been removed; this change does not implement a replacement business event notification layer
 - **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
 - **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
 
@@ -278,10 +278,6 @@ python -m backend.main
 <img src="res/Issues分析.png" width="1707" alt="Issue analysis">
 
 <img src="res/WebUI.png" width="1707" alt="WebUI dashboard">
-
-<img src="res/Telegram通知-1.png" width="627" alt="Telegram notification">
-
-<img src="res/Telegram通知-2.png" width="537" alt="Telegram notification">
 
 </div>
 

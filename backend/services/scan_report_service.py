@@ -2,13 +2,11 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from telegram.helpers import escape_markdown
 
 from backend.core.branding import SAKURA_AI_REPO_URL
 from backend.core.config import get_settings
 from backend.core.time_service import get_time_service
 from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
-from backend.webui.deps import get_webui_url
 
 if TYPE_CHECKING:
     from backend.models.scan_models import RepoScan, ScanFinding
@@ -25,7 +23,7 @@ _CATEGORY_ORDER = [
     "architecture",
 ]
 
-# 双语文案（服务端生成 GitHub Issue / Telegram 文本；协议枚举值保持英文）
+# 双语文案（服务端生成 GitHub Issue 文本；协议枚举值保持英文）
 _TEXT = {
     "zh-CN": {
         "title": "Sakura AI 仓库扫描报告",
@@ -61,15 +59,6 @@ _TEXT = {
         "repo_wide": "仓库级",
         "footer": f"*此报告由 [Sakura AI]({SAKURA_AI_REPO_URL}) 自动生成*",
         "superseded": ("此报告 Issue 已被最新一次扫描报告取代，自动关闭。"),
-        "tg_title": "Sakura AI 仓库扫描完成",
-        "tg_summary": "总结",
-        "tg_files": "扫描文件",
-        "tg_health": "健康评分",
-        "tg_stats": "问题统计",
-        "tg_tokens": "Token 消耗",
-        "tg_clean": "未发现问题，代码质量良好",
-        "tg_view": "查看详细报告",
-        "tg_webui": "WebUI 查看详情",
     },
     "en": {
         "title": "Sakura AI Repository Scan Report",
@@ -105,15 +94,6 @@ _TEXT = {
         "repo_wide": "repository-wide",
         "footer": f"*This report was generated automatically by [Sakura AI]({SAKURA_AI_REPO_URL})*",
         "superseded": "This report issue has been superseded by a newer scan report and is closed automatically.",
-        "tg_title": "Sakura AI repository scan completed",
-        "tg_summary": "Summary",
-        "tg_files": "Files scanned",
-        "tg_health": "Health score",
-        "tg_stats": "Findings",
-        "tg_tokens": "Token usage",
-        "tg_clean": "No findings. Code quality looks good.",
-        "tg_view": "View full report",
-        "tg_webui": "Open in WebUI",
     },
 }
 
@@ -137,16 +117,6 @@ def _format_duration(scan) -> str:
     return f"{int(delta // 3600)}h{int((delta % 3600) // 60)}m"
 
 
-def _escape_telegram_markdown(value: str, max_length: int) -> str:
-    """Escape untrusted Markdown and avoid ending on a dangling escape."""
-    escaped = escape_markdown(value, version=1)
-    truncated = escaped[:max_length]
-    trailing_slashes = len(truncated) - len(truncated.rstrip("\\"))
-    if trailing_slashes % 2:
-        truncated = truncated[:-1]
-    return truncated
-
-
 def _finding_key(f) -> tuple[str, str]:
     return (getattr(f, "file_path", None) or "", getattr(f, "title", "") or "")
 
@@ -157,7 +127,7 @@ class ScanReportService:
     async def generate_and_deliver(
         self, scan_id: int, report_data: dict | None = None
     ) -> dict:
-        """生成报告并交付到所有渠道
+        """生成报告并交付到 GitHub
 
         Args:
             scan_id: 扫描记录 ID
@@ -226,15 +196,6 @@ class ScanReportService:
             if issue_info:
                 report_info.update(issue_info)
 
-        # 发送 Telegram 通知（使用刚创建的 Issue URL）
-        if settings.scan_send_telegram:
-            logger.info(f"正在发送扫描 Telegram 通知: {scan.repo_name}")
-            issue_url = report_info.get("issue_url") or scan.report_issue_url
-            await self._send_telegram_notification(
-                scan, issue_url=issue_url, language=language
-            )
-        else:
-            logger.info("Telegram 扫描通知已禁用")
 
         return report_info
 
@@ -440,73 +401,6 @@ class ScanReportService:
 
         return "\n".join(lines)
 
-    def generate_telegram_message(
-        self, scan, issue_url: str | None = None, language: str = "zh-CN"
-    ) -> str:
-        """生成 Telegram 通知消息"""
-        t = _text(language)
-        health = scan.overall_health_score or 0
-        health_emoji = "🟢" if health >= 80 else "🟡" if health >= 60 else "🔴"
-
-        summary = (getattr(scan, "summary", None) or "").strip()
-        lines = [
-            f"*{t['tg_title']}*",
-            "",
-            f"仓库: `{scan.repo_name}`",
-        ]
-
-        if scan.commit_sha:
-            lines.append(f"Commit: `{scan.commit_sha[:7]}`")
-        duration = _format_duration(scan)
-        if duration != "-":
-            lines.append(f"{t['duration']}: {duration}")
-        lines.append(f"{t['tg_files']}: {scan.code_file_count or 0}")
-        lines.append("")
-
-        if summary:
-            safe_summary = _escape_telegram_markdown(summary, 300)
-            lines.append(f"{t['tg_summary']}: {safe_summary}")
-            lines.append("")
-
-        lines.append(f"{health_emoji} {t['tg_health']}: *{health}/100*")
-        lines.append("")
-
-        total = scan.total_findings or 0
-        if total > 0:
-            lines.append(f"*{t['tg_stats']}*")
-            if scan.critical_count or 0:
-                lines.append(f" 🔴 Critical: {scan.critical_count}")
-            if scan.major_count or 0:
-                lines.append(f" 🟡 Major: {scan.major_count}")
-            if scan.minor_count or 0:
-                lines.append(f" 🟠 Minor: {scan.minor_count}")
-            if scan.suggestion_count or 0:
-                lines.append(f" 💡 Suggestion: {scan.suggestion_count}")
-            lines.append("")
-
-            total_tokens = (getattr(scan, "prompt_tokens", 0) or 0) + (
-                getattr(scan, "completion_tokens", 0) or 0
-            )
-            if total_tokens > 0:
-                lines.append(f"{t['tg_tokens']}: {total_tokens:,}")
-                lines.append("")
-        else:
-            lines.append(f"✅ {t['tg_clean']}")
-            lines.append("")
-
-        # 链接：如有 Issue 链接则展示；始终提供 WebUI 链接（若 app_domain 已配置）
-        webui_url = get_webui_url(f"/scans/{scan.id}")
-        logger.debug(f"WebUI URL for scan {scan.id}: {webui_url!r}")
-        link_url = issue_url or scan.report_issue_url
-        if link_url:
-            lines.append(f"[{t['tg_view']}]({link_url})")
-        if webui_url:
-            lines.append(f"[{t['tg_webui']}]({webui_url})")
-        else:
-            logger.warning(f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan.id})")
-
-        return "\n".join(lines)
-
     async def _close_previous_issue(
         self, repo, scan, previous_scan, language: str
     ) -> None:
@@ -663,90 +557,3 @@ class ScanReportService:
                 f"创建 GitHub Issue 失败: {type(e).__name__}: {e}", exc_info=True
             )
             return None
-
-    async def _send_telegram_notification(
-        self, scan, issue_url: str | None = None, language: str = "zh-CN"
-    ):
-        """发送 Telegram 通知"""
-        try:
-            from sqlalchemy import select
-
-            from backend.models.database import async_session
-            from backend.models.telegram_models import (
-                UserRepoSubscription,
-            )
-            from backend.telegram.notifications import get_notification_sender
-
-            sender = get_notification_sender()
-            if not sender or not sender.bot:
-                logger.warning("Telegram Bot 未就绪，跳过扫描通知")
-                return
-
-            # 获取订阅该仓库的 Telegram 用户 telegram_id
-            chat_ids: list[int] = []
-            async with async_session() as session:
-                # 1. 查询 UserRepoSubscription（用户主动订阅）
-                result = await session.execute(
-                    select(UserRepoSubscription.telegram_id)
-                    .where(UserRepoSubscription.repo_name == scan.repo_name)
-                    .distinct()
-                )
-                chat_ids = [r[0] for r in result.all() if r[0]]
-
-            # 兜底：无订阅用户时查询所有管理员
-            if not chat_ids:
-                chat_ids = await self._get_all_admin_telegram_ids()
-
-            # 添加默认管理员通知
-            from backend.core.config import get_settings
-
-            s = get_settings()
-            system_chat_ids: list[int] = []
-            if s.telegram_default_chat_id:
-                try:
-                    default_chat_id = int(s.telegram_default_chat_id)
-                    # The configured default may be a group/channel (negative
-                    # Telegram id).  Pass it explicitly so the notification
-                    # sender does not mistake a legacy negative mirror value
-                    # for a user endpoint.
-                    system_chat_ids.append(default_chat_id)
-                except ValueError:
-                    pass
-
-            if not chat_ids and not system_chat_ids:
-                logger.warning(f"无 Telegram 通知目标: {scan.repo_name}")
-                return
-
-            text = self.generate_telegram_message(
-                scan, issue_url=issue_url, language=language
-            )
-            if system_chat_ids:
-                await sender.send_to_targets(
-                    text, chat_ids, system_chat_ids=system_chat_ids
-                )
-            else:
-                await sender.send_to_targets(text, chat_ids)
-
-            logger.info(
-                f"✅ 扫描通知已发送: {scan.repo_name} → "
-                f"{len(chat_ids) + len(system_chat_ids)} 个目标"
-            )
-
-        except Exception as e:
-            logger.error(f"发送 Telegram 扫描通知失败: {e}")
-
-    @classmethod
-    async def _get_all_admin_telegram_ids(cls) -> list[int]:
-        """查询所有管理员的 telegram_id"""
-        from sqlalchemy import select
-
-        from backend.models.database import async_session
-        from backend.models.telegram_models import TelegramUser
-
-        async with async_session() as session:
-            result = await session.execute(
-                select(TelegramUser.telegram_id).where(
-                    TelegramUser.role.in_(("admin", "super_admin"))
-                )
-            )
-            return [r[0] for r in result.all() if r[0]]

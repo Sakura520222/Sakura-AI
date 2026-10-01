@@ -1053,7 +1053,6 @@ config:
     enable_repo_scan: "Enable Repo Scan"
     scan_interval_minutes: "Scan Interval (minutes)"
     scan_cooldown_hours: "Scan Cooldown (hours)"
-    scan_send_telegram: "Send Telegram Notification"
     scan_min_severity_for_issue: "Min Severity for Issue Creation"
     sakura_reflection_model: "Reflection role binding (model comes from the main role binding)"
     sakura_issue_reflection_model: "Issue reflection role binding (model comes from the main role binding)"
@@ -1121,7 +1120,6 @@ config:
     enable_repo_scan: "Periodically scan installed repos for potential issues"
     scan_interval_minutes: "Scheduled scan interval in minutes, default 360 (6 hours)"
     scan_cooldown_hours: "Minimum interval between two scans of the same repo (hours)"
-    scan_send_telegram: "Send a Telegram notification after scan"
     scan_min_severity_for_issue: "Create Issue only at or above this severity (critical/major/minor/suggestion)"
     sakura_reflection_model: "Reflection role binding (model comes from the main role binding)"
     sakura_issue_reflection_model: "Issue reflection role binding (model comes from the main role binding)"
@@ -1950,29 +1948,6 @@ toast:
   payment_cancelled: "Order Cancelled"
   payment_error: "Payment error: {error}"
 
-# ========== Telegram MFA Notifications ====
-telegram_mfa:
-  totp_enabled: "Two-factor authentication enabled"
-  totp_disabled: "Two-factor authentication disabled"
-  recovery_codes_regenerated: "Recovery codes regenerated"
-  passkey_registered: "Passkey registered"
-  passkey_deleted: "Passkey deleted"
-  mfa_reset_by_admin: "MFA reset by admin"
-  totp_reset_by_admin: "TOTP reset by admin"
-  passkey_deleted_by_admin: "Passkey deleted by admin"
-  mfa_lockout: "Account temporarily locked"
-  mfa_required_by_admin: "MFA enrollment required by admin"
-  mfa_unrequired_by_admin: "MFA requirement removed"
-  footer: "Sakura AI Security Notification"
-
-# ========== Telegram Refund Notifications ====
-telegram_refund:
-  admin_new_request: "🔔 New refund request\n\nRequest ID: {request_id}\nOrder: {order_no}\nUser: {user}\nPlan: {plan}\nAmount: {amount}\nReason: {reason}\n\nPlease review it in the WebUI refund review page."
-  approved: "✅ Refund request approved\n\nRequest ID: {request_id}\nOrder: {order_no}\nPlan: {plan}\nAmount: {amount}\nNote: {review_note}\n\nThe refund has been processed. Please check the original payment channel for settlement."
-  rejected: "❌ Refund request rejected\n\nRequest ID: {request_id}\nOrder: {order_no}\nPlan: {plan}\nAmount: {amount}\nReason: {reason}\nReview note: {review_note}"
-  failed: "⚠️ Refund execution failed\n\nRequest ID: {request_id}\nOrder: {order_no}\nUser: {user}\nPlan: {plan}\nAmount: {amount}\nError: {error}\n\nPlease check the WebUI and retry or handle manually."
-  footer: "Sakura AI Refund Notification"
-
 # ========== API Error Messages ==========
 api:
   invalid_mfa_token: "Invalid or expired MFA token"
@@ -2530,7 +2505,7 @@ setup:
   rag_rerank_url: "Reranking API Base URL"
   rag_rerank_model: "Reranking Model"
   telegram_label: "Telegram Bot Token"
-  telegram_help_1: "Optional provider for review notifications. Create a bot via"
+  telegram_help_1: "Optional provider for announcement notifications. Create a bot via"
   telegram_help_2: "to get the token."
   test_telegram: "Test Telegram Bot"
 

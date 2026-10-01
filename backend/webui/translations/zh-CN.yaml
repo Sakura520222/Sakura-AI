@@ -1053,7 +1053,6 @@ config:
     enable_repo_scan: "启用仓库扫描"
     scan_interval_minutes: "扫描间隔（分钟）"
     scan_cooldown_hours: "扫描冷却时间（小时）"
-    scan_send_telegram: "发送 Telegram 通知"
     scan_min_severity_for_issue: "创建 Issue 最低严重性"
     sakura_reflection_model: "反思 role binding（模型由 main role binding 决定）"
     sakura_issue_reflection_model: "Issue 反思 role binding（模型由 main role binding 决定）"
@@ -1121,7 +1120,6 @@ config:
     enable_repo_scan: "启用后，系统将定期扫描已安装仓库的代码，检测潜在问题"
     scan_interval_minutes: "定时扫描的间隔时间（分钟），默认 360 分钟（6小时）"
     scan_cooldown_hours: "同一仓库两次扫描之间的最小间隔（小时）"
-    scan_send_telegram: "扫描完成后是否发送 Telegram 通知"
     scan_min_severity_for_issue: "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）"
     sakura_reflection_model: "反思 role binding（模型由 main role binding 决定）"
     sakura_issue_reflection_model: "Issue 反思 role binding（模型由 main role binding 决定）"
@@ -1951,29 +1949,6 @@ toast:
   payment_cancelled: "订单已取消"
   payment_error: "支付错误: {error}"
 
-# ========== Telegram MFA 通知 / Telegram MFA Notifications ===="
-telegram_mfa:
-  totp_enabled: "两步验证已启用"
-  totp_disabled: "两步验证已禁用"
-  recovery_codes_regenerated: "恢复码已重新生成"
-  passkey_registered: "通行密钥已注册"
-  passkey_deleted: "通行密钥已删除"
-  mfa_reset_by_admin: "MFA 已被管理员重置"
-  totp_reset_by_admin: "TOTP 已被管理员重置"
-  passkey_deleted_by_admin: "通行密钥已被管理员删除"
-  mfa_lockout: "账户已临时锁定"
-  mfa_required_by_admin: "已被要求开启 MFA"
-  mfa_unrequired_by_admin: "MFA 要求已取消"
-  footer: "Sakura AI 安全通知"
-
-# ========== Telegram 退款通知 / Telegram Refund Notifications ====
-telegram_refund:
-  admin_new_request: "🔔 新退款申请\n\n申请ID：{request_id}\n订单号：{order_no}\n用户：{user}\n套餐：{plan}\n金额：{amount}\n原因：{reason}\n\n请前往 WebUI 退款审核页面处理。"
-  approved: "✅ 退款申请已批准\n\n申请ID：{request_id}\n订单号：{order_no}\n套餐：{plan}\n金额：{amount}\n备注：{review_note}\n\n退款已处理完成，请留意原支付渠道到账情况。"
-  rejected: "❌ 退款申请已驳回\n\n申请ID：{request_id}\n订单号：{order_no}\n套餐：{plan}\n金额：{amount}\n原因：{reason}\n审核备注：{review_note}"
-  failed: "⚠️ 退款执行失败\n\n申请ID：{request_id}\n订单号：{order_no}\n用户：{user}\n套餐：{plan}\n金额：{amount}\n错误：{error}\n\n请在 WebUI 中检查并重试或人工处理。"
-  footer: "Sakura AI 退款通知"
-
 # ========== API 错误消息 / API Error Messages ==========
 api:
   invalid_mfa_token: "无效或已过期的二次验证凭证"
@@ -2531,7 +2506,7 @@ setup:
   rag_rerank_url: "重排序 API 地址"
   rag_rerank_model: "重排序模型"
   telegram_label: "Telegram Bot Token"
-  telegram_help_1: "可选的审查通知提供方。通过"
+  telegram_help_1: "可选的公告通知提供方。通过"
   telegram_help_2: "创建 Bot 获取。"
   test_telegram: "测试 Telegram Bot"
 

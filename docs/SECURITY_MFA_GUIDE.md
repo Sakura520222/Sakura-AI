@@ -20,7 +20,7 @@ Sakura AI 支持以下安全能力：
 - **多 Origin WebAuthn**：支持 `passkeys_allowed_origins` 配置额外允许 Origin，适配 Android 原生 Passkey 等非浏览器 Web Origin 场景。
 - **移动端 OAuth 回调白名单**：`/api/v1/auth/github/mobile` 支持自定义 `redirect_uri`，并通过 `mobile_oauth_allowed_redirect_uris` 防止 open redirect。
 - **OAuth 后二次验证**：GitHub OAuth 认证成功后，如用户已启用 MFA，会先进入二次验证流程。
-- **MFA 失败锁定**：连续 MFA 验证失败达到阈值后临时锁定账户，并通过 Telegram 通知管理员。
+- **MFA 失败锁定**：连续 MFA 验证失败达到阈值后临时锁定账户。
 - **API Passkey 二次验证**：移动端 API 登录支持使用 Passkey 完成 MFA 二次验证，与 TOTP/恢复码并列可选。
 - **全局 MFA 要求**：超级管理员可要求所有普通访问用户先注册至少一种 MFA 方法。
 - **单用户 MFA 要求**：超级管理员可对指定用户强制要求注册 MFA。
@@ -129,7 +129,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 
 - 基于 Redis 追踪每个用户的 MFA 验证失败次数（Redis 不可用时自动降级为内存追踪）。
 - 验证成功后自动清除失败计数。
-- 锁定触发后发送 Telegram 通知给管理员。
+- 旧版 Telegram 专用安全消息已移除；锁定检查、失败计数、锁定时长和安全审计行为保留。
 - `/auth/2fa/verify`、`/auth/2fa/passkey/options`、`/auth/2fa/passkey/verify` 三个端点均集成锁定检查。
 
 ---
