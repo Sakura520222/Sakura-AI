@@ -123,6 +123,8 @@ _TRANSIENT_FAILURES = (
 
 def classify_dependency_failure(result: ExecutionResult) -> DependencyFailure:
     """Classify command output; a runner deadline is not a network timeout."""
+    if result.timed_out:
+        return DependencyFailure("UNKNOWN_DEPENDENCY_FAILURE", False)
     diagnostic = result.stdout + "\n" + result.stderr
     if re.search(
         r"ResolutionImpossible|conflicting dependencies|dependency conflict|"

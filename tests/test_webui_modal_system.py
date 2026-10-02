@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -35,6 +37,203 @@ PRODUCTION_TEMPLATES = sorted(
     str(path.relative_to(TEMPLATES_DIR))
     for path in TEMPLATES_DIR.rglob("*.html")
 )
+
+
+def _run_modal_javascript(
+    assertions: str, *, close_handler: str = "", extra_scripts: tuple[str, ...] = ()
+) -> None:
+    """Execute the actual template scripts with a minimal DOM event harness."""
+    scripts = re.findall(r"<script>(.*?)</script>", BASE_HTML, re.DOTALL)
+    payload = {
+        "scripts": [
+            next(script for script in scripts if "var dialogStack" in script),
+            next(script for script in scripts if "Alpine.data('sakuraModal'" in script),
+            *extra_scripts,
+        ],
+        "closeHandler": close_handler,
+    }
+    harness = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const listeners = new Map();
+const components = {};
+global.window = globalThis;
+global.document = {
+    activeElement: null,
+    body: {classList: {add() {}, remove() {}}},
+    addEventListener(name, callback) {
+        if (!listeners.has(name)) listeners.set(name, new Set());
+        listeners.get(name).add(callback);
+    },
+    removeEventListener(name, callback) { listeners.get(name)?.delete(callback); },
+};
+global.HTMLElement = class {
+    children = [];
+    isConnected = true;
+    display = 'block';
+    visibility = 'visible';
+    focus() { document.activeElement = this; }
+    contains(node) { return node === this || this.children.includes(node); }
+    querySelectorAll() { return this.children.filter(node => !node.disabled); }
+    getClientRects() { return this.display === 'none' ? [] : [{}]; }
+};
+global.getComputedStyle = node => node;
+global.requestAnimationFrame = callback => callback();
+global.Alpine = {data(name, factory) { components[name] = factory; }};
+for (const script of payload.scripts) vm.runInThisContext(script);
+for (const callback of listeners.get('alpine:init')) callback();
+function pressTab(shiftKey) {
+    const event = {key: 'Tab', shiftKey, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; }};
+    for (const callback of listeners.get('keydown')) callback(event);
+    return event;
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", harness + assertions],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(("loading", "persistent"), [(True, False), (False, True), (True, True)])
+def test_modal_header_close_respects_dismiss_guard(loading, persistent) -> None:
+    template = get_templates().env.from_string(
+        '{% from "components/modal.html" import modal_shell %}'
+        "{% call modal_shell(id='guarded-modal', title='Guarded') %}body{% endcall %}"
+    )
+    buttons = []
+
+    class ButtonParser(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "button":
+                buttons.append(dict(attrs))
+
+    ButtonParser().feed(template.render())
+    _run_modal_javascript(
+        f"""
+const modal = components.sakuraModal({{id: 'guarded-modal'}});
+modal.$root = new HTMLElement();
+modal.init();
+modal.show();
+modal.setLoading({json.dumps(loading)});
+modal.persistent = {json.dumps(persistent)};
+const clickClose = new Function('with (this) {{ ' + payload.closeHandler + '; }}');
+clickClose.call(modal);
+assert.equal(modal.open, true, 'header close bypassed the dismiss guard');
+modal.setLoading(false);
+modal.persistent = false;
+clickClose.call(modal);
+assert.equal(modal.open, false, 'idle modal must remain dismissible');
+modal.show();
+modal.persistent = true;
+Sakura.closeModal(modal.id);
+assert.equal(modal.open, false, 'programmatic close must remain available');
+""",
+        close_handler=buttons[0]["@click"],
+    )
+
+
+@pytest.mark.parametrize("controls", ["empty", "hidden", "disabled"])
+def test_empty_dialog_traps_tab_in_both_directions(controls) -> None:
+    _run_modal_javascript(
+        f"""
+const trigger = new HTMLElement();
+trigger.focus();
+const underneath = new HTMLElement();
+underneath.children = [new HTMLElement()];
+Sakura.openDialog(underneath);
+const dialog = new HTMLElement();
+const control = new HTMLElement();
+control.display = {json.dumps('none' if controls == 'hidden' else 'block')};
+control.disabled = {json.dumps(controls == 'disabled')};
+dialog.children = {"[]" if controls == "empty" else "[control]"};
+Sakura.openDialog(dialog, {{focusTarget: () => dialog}});
+for (const start of [dialog, trigger]) {{
+    for (const backwards of [false, true]) {{
+        start.focus();
+        assert.equal(pressTab(backwards).defaultPrevented, true, 'Tab must be intercepted');
+        assert.equal(document.activeElement, dialog, 'focus must stay in the top dialog');
+    }}
+}}
+control.display = 'block';
+control.disabled = false;
+const lastControl = new HTMLElement();
+dialog.children = [control, lastControl];
+for (const backwards of [false, true]) {{
+    dialog.focus();
+    assert.equal(pressTab(backwards).defaultPrevented, true);
+    assert.equal(document.activeElement, backwards ? lastControl : control,
+        'focus must enter newly enabled controls from the dialog root');
+}}
+lastControl.focus();
+assert.equal(pressTab(false).defaultPrevented, true);
+assert.equal(document.activeElement, control, 'terminal button must be reachable');
+assert.equal(pressTab(true).defaultPrevented, true);
+assert.equal(document.activeElement, lastControl);
+Sakura.closeDialog(dialog);
+assert.equal(document.activeElement, underneath.children[0]);
+Sakura.closeDialog(underneath);
+assert.equal(document.activeElement, trigger);
+"""
+    )
+
+
+@pytest.mark.parametrize("failure", ["server", "network", "invalid-json"])
+def test_failed_database_reset_releases_modal_loading_guard(failure) -> None:
+    source = (TEMPLATES_DIR / "system_config.html").read_text(encoding="utf-8")
+    script = next(
+        script
+        for script in re.findall(r"<script>(.*?)</script>", source, re.DOTALL)
+        if "function systemConfig()" in script
+    )
+    rendered = get_templates().env.from_string(script).render(
+        _=lambda key: key,
+        csrf_token="test",
+        database_reset_confirmation="RESET TEST DATABASE",
+        lang="en",
+    )
+    _run_modal_javascript(
+        f"""
+(async () => {{
+    const modal = components.sakuraModal({{id: 'database-reset-modal'}});
+    modal.$root = new HTMLElement();
+    modal.init();
+    modal.show();
+    document.querySelector = () => modal.$root;
+    Alpine.$data = () => modal;
+    const settings = systemConfig();
+    settings.databaseResetConfirmation = settings.databaseResetConfirmationPhrase;
+    const failure = {json.dumps(failure)};
+    global.fetch = async url => {{
+        if (url === '/health') return {{ok: true, json: async () => ({{}})}};
+        assert.equal(url, '/system-config/reset-database');
+        assert.equal(modal.loading, true);
+        if (failure === 'network') throw new Error('Network unavailable');
+        return {{json: async () => {{
+            if (failure === 'invalid-json') throw new SyntaxError('Invalid JSON');
+            return {{message: 'Simulated reset failure'}};
+        }}}};
+    }};
+    await settings.resetDatabase();
+    assert.equal(settings.resetting, false);
+    assert.ok(settings.databaseResetError, 'failure feedback must be retained');
+    assert.equal(modal.open, true, 'failure feedback must stay visible');
+    assert.equal(modal.loading, false, 'failed reset must release loading guard');
+    modal.dismiss();
+    assert.equal(modal.open, false, 'header/ESC/backdrop may close after failure');
+    modal.show();
+    modal.dismiss();
+    assert.equal(modal.open, false, 'reopened modal must remain dismissible');
+}})();
+""",
+        extra_scripts=(rendered,),
+    )
 
 
 # ============ 1. 基础设施：base.html ============

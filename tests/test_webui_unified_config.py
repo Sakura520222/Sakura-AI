@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -380,6 +381,107 @@ def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
 
 
 # ---------- general/save 通用循环 ----------
+
+
+@pytest.mark.parametrize("saved_delay", ["0", "60", "0.001"])
+@pytest.mark.asyncio
+async def test_dependency_retry_inputs_render_bounds_and_typed_steps(
+    monkeypatch, saved_delay
+):
+    monkeypatch.setattr(config_routes, "detect_language", lambda prefs: "zh-CN")
+    db = _FakeSession()
+
+    async def read_saved_config(_stmt):
+        row = SimpleNamespace(
+            key_name="agent_team_dependency_retry_delay_seconds", key_value=saved_delay
+        )
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
+
+    monkeypatch.setattr(db, "execute", read_saved_config)
+    response = await config_routes.unified_config_page(
+        _make_request(),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        user_prefs={"language": "zh-CN"},
+    )
+    inputs = {}
+
+    class InputParser(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "input":
+                values = dict(attrs)
+                inputs[values.get("name")] = values
+
+    InputParser().feed(response.body.decode("utf-8"))
+    for key, minimum, maximum, step in (
+        ("agent_team_dependency_install_attempts", "1", "5", "1"),
+        ("agent_team_dependency_retry_delay_seconds", "0", "60", "any"),
+    ):
+        assert inputs[key]["type"] == "number"
+        assert inputs[key].get("min") == minimum
+        assert inputs[key].get("max") == maximum
+        assert inputs[key].get("step") == step
+    assert inputs["agent_team_dependency_retry_delay_seconds"]["value"] == saved_delay
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("agent_team_dependency_install_attempts", "0"),
+        ("agent_team_dependency_install_attempts", "6"),
+        ("agent_team_dependency_retry_delay_seconds", "-0.1"),
+        ("agent_team_dependency_retry_delay_seconds", "60.1"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_general_save_rejects_dependency_retry_out_of_range(
+    monkeypatch, key, value
+):
+    _patch_save_deps(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        config_routes,
+        "toast_redirect",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    db = _FakeSession()
+    await config_routes.save_general_config(
+        _FormRequest({"csrf_token": "t", key: value}),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert not db.committed
+    assert db.added == []
+    assert calls[0][0][1:3] == ("toast.value_range", "error")
+    assert calls[0][1]["field_key"] == key
+
+
+@pytest.mark.parametrize(("attempts", "delay"), [("1", "0"), ("5", "60"), ("3", "0.25")])
+@pytest.mark.asyncio
+async def test_general_save_accepts_dependency_retry_bounds_and_fractional_delay(
+    monkeypatch, attempts, delay
+):
+    _patch_save_deps(monkeypatch)
+    form = {
+        "csrf_token": "t",
+        "agent_team_dependency_install_attempts": attempts,
+        "agent_team_dependency_retry_delay_seconds": delay,
+    }
+    db = _FakeSession()
+    response = await config_routes.save_general_config(
+        _FormRequest(form),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="t",
+    )
+
+    assert response.status_code == 302
+    assert db.committed
+    saved = {row.key_name: row.key_value for row in db.added}
+    assert int(saved["agent_team_dependency_install_attempts"]) == int(attempts)
+    assert float(saved["agent_team_dependency_retry_delay_seconds"]) == float(delay)
 
 
 def _patch_save_deps(monkeypatch: pytest.MonkeyPatch):
