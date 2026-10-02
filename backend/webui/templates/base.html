@@ -245,7 +245,11 @@
                 }
                 if (event.key !== 'Tab') return;
                 var focusables = visibleFocusables(element);
-                if (!focusables.length) return;
+                if (!focusables.length) {
+                    event.preventDefault();
+                    element.focus();
+                    return;
+                }
                 var first = focusables[0];
                 var last = focusables[focusables.length - 1];
                 if (event.shiftKey && document.activeElement === first) {
@@ -254,9 +258,9 @@
                 } else if (!event.shiftKey && document.activeElement === last) {
                     event.preventDefault();
                     first.focus();
-                } else if (!element.contains(document.activeElement)) {
+                } else if (document.activeElement === element || !element.contains(document.activeElement)) {
                     event.preventDefault();
-                    first.focus();
+                    (event.shiftKey ? last : first).focus();
                 }
             };
             document.addEventListener('keydown', controller.focusBound, true);

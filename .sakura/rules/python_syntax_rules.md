@@ -2,10 +2,14 @@
 
 ## 核心规则
 
+### Python 3.14+ 运行时基线
+- **多异常捕获允许省略括号**：未使用 `as` 子句时，`except A, B:` 与 `except (A, B):` 等价，`except*` 同样适用，不得据此报告语法错误、导入失败或阻断合并。
+- **绑定异常对象时保留括号**：多异常类型带 `as` 时使用 `except (A, B) as e:`；`except Exception, e:` 不会绑定异常对象，应按实际名称和类型检查运行时语义。
+- **核验依据**：[Python 3.14 / PEP 758 官方说明](https://docs.python.org/3/whatsnew/3.14.html#pep-758-allow-except-and-except-expressions-without-brackets)；语法结论须由目标版本解释器验证。
+
 ### Python 2/3 兼容性
 - **禁止 Python 2 语法**：新引入代码不得包含已废弃的 Python 2 语法
   - `print` 语句（必须使用 `print()` 函数）
-  - `except Exception, e:` 逗号语法（必须使用 `as`）
   - 旧式字符串格式化（`%` 操作符）
 - **违反级别**：Critical（阻断整个模块导入链）
 
@@ -17,7 +21,7 @@
 ## 审查要点
 
 ### 语法检查
-- [ ] 是否有 `except Exception, e:` 逗号语法
+- [ ] 是否使用 Python 3.14+ 验证语法，避免将合法的无括号多异常捕获误报为错误
 - [ ] 是否有 `print` 语句
 - [ ] 是否有旧式字符串格式化
 - [ ] 是否有 `xrange`、`raw_input` 等 Python 2 函数

@@ -53,7 +53,7 @@
                        value="{{ item.value }}"
                        {% if item.min_val is not none %}min="{{ item.min_val }}"{% endif %}
                        {% if item.max_val is not none %}max="{{ item.max_val }}"{% endif %}
-                       step="{% if '.' in item.value|string %}0.01{% else %}1{% endif %}"
+                       step="{{ item.step }}"
                        class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
 
                 {% else %}
