@@ -39,11 +39,39 @@ PRODUCTION_TEMPLATES = sorted(
 )
 
 
+def _extract_inline_scripts(source: str) -> list[str]:
+    """Read inline script bodies using HTML tag and attribute parsing."""
+
+    class ScriptParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.scripts: list[str] = []
+            self.script_parts: list[str] | None = None
+
+        def handle_starttag(self, tag, attrs) -> None:
+            if tag == "script" and "src" not in dict(attrs):
+                self.script_parts = []
+
+        def handle_data(self, data: str) -> None:
+            if self.script_parts is not None:
+                self.script_parts.append(data)
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "script" and self.script_parts is not None:
+                self.scripts.append("".join(self.script_parts))
+                self.script_parts = None
+
+    parser = ScriptParser()
+    parser.feed(source)
+    parser.close()
+    return parser.scripts
+
+
 def _run_modal_javascript(
     assertions: str, *, close_handler: str = "", extra_scripts: tuple[str, ...] = ()
 ) -> None:
     """Execute the actual template scripts with a minimal DOM event harness."""
-    scripts = re.findall(r"<script>(.*?)</script>", BASE_HTML, re.DOTALL)
+    scripts = _extract_inline_scripts(BASE_HTML)
     payload = {
         "scripts": [
             next(script for script in scripts if "var dialogStack" in script),
@@ -189,7 +217,7 @@ def test_failed_database_reset_releases_modal_loading_guard(failure) -> None:
     source = (TEMPLATES_DIR / "system_config.html").read_text(encoding="utf-8")
     script = next(
         script
-        for script in re.findall(r"<script>(.*?)</script>", source, re.DOTALL)
+        for script in _extract_inline_scripts(source)
         if "function systemConfig()" in script
     )
     rendered = get_templates().env.from_string(script).render(
