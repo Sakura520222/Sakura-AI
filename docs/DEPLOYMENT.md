@@ -65,16 +65,22 @@ sudo ./start.sh sandboxd stop
 
 生产 workspace 使用宿主 bind 目录（默认 `/opt/sakura-ai/workplace`），Web 内仍显示为 `/app/workplace`。`SAKURA_SANDBOX_WORKSPACE_ROOT` 是宿主路径身份，必须由 `start.sh` 计算和注入，不要手工改成容器路径。sandboxd 的稳定 instance ID、双镜像 digest、release version、固定 egress 网络和 workspace identity 保存在 `.deploy/deployment.env`；不要提交该文件。
 
-Agent 网络访问由 WebUI 超级管理员配置 `agent_team_network_policy` 控制。`offline` 和 `web_tools` 的 Agent/Dependency runner 均使用 `network none`；`web_tools` 仅授权 `search_web`/`fetch_url`，并继续服从既有 Web 开关与 SSRF 防护。`full_access` 才会把两类 runner 映射为 UDS `network_mode=egress`。sandboxd 将该能力映射到部署侧固定的 `SAKURA_SANDBOX_EGRESS_NETWORK`，默认是 Docker 内置 `bridge`，因此全新 Docker 环境无需额外创建网络即可实际出网。若管理员需要独立出口或包仓库 allowlist，可配置一个 named network，例如：
+Agent 网络访问由 WebUI 超级管理员配置 `agent_team_network_policy` 控制。`offline` 禁止 runner 出网，跳过自动依赖安装并拒绝显式出口请求。`web_tools`（默认）允许受控 `search_web`/`fetch_url`（继续服从既有开关与 SSRF 防护），普通 Shell 保持 `network_mode=none`；Dependency profile 隐式申请出口，`run_command` 可显式设置 `network_capability=dependency_egress`，使当前一次性执行使用 `network_mode=egress`。`full_access` 允许所有 runner 出网。
+
+临时出口可访问任意公网目标，不设命令分类、命令/域名/IP/包仓库白名单；任意显式申请能力的 Shell 命令及包安装钩子、构建脚本、子进程均共享本次出口。执行结束即销毁容器，`web_tools` 下后续普通 Shell 仍离线。Python `pip install`、Node `npm ci`、Rust `cargo test`、Go `go test ./...` 和 JVM `./gradlew test`/`mvn test` 的显式工具参数示例见[配置文档](CONFIGURATION.md#agent-专家团队)。
+
+sandboxd 将已授权的 `egress` 映射到部署侧固定的 `SAKURA_SANDBOX_EGRESS_NETWORK`，默认是 Docker 内置 `bridge`，因此全新 Docker 环境无需额外创建网络即可实际出网。若管理员需要独立出口，可配置一个预先管理的 named network；网络名本身不会提供域名白名单，例如：
 
 ```bash
 docker network create sakura-ai-egress
 sudo env SAKURA_SANDBOX_EGRESS_NETWORK=sakura-ai-egress ./start.sh --prod
 ```
 
-网络名只允许 `bridge` 或符合 sandboxd 校验的 named network（字母/数字、`.`、`_`、`-`，最长 63 个字符）；`host`、`container:*`、`ns:*`、路径/选项字符串及空值均拒绝。脚本会将它持久化并纳入 sandboxd 容器 label/identity drift 检查；不存在的 named network 会使 sandboxd 启动失败。请求和模型不能改变任何网络策略或 Docker 参数。旧版本的 `SAKURA_SANDBOX_DEPENDENCY_NETWORK` 仅作 deployment.env 迁移兼容，不应作为新配置入口。
+网络名只允许 `bridge` 或符合 sandboxd 校验的 named network（字母/数字、`.`、`_`、`-`，最长 63 个字符）；`host`、`container:*`、`ns:*`、路径/选项字符串及空值均拒绝。脚本会将它持久化并纳入 sandboxd 容器 label/identity drift 检查；不存在的 named network 会使 sandboxd 启动失败。模型只能请求抽象执行能力，不能改变管理员策略、Docker 网络名或其他运行参数。旧版本的 `SAKURA_SANDBOX_DEPENDENCY_NETWORK` 仅作 deployment.env 迁移兼容，不应作为新配置入口。
 
-源码开发只有在 `SAKURA_DEPLOY_MODE=source` 且显式选择 `agent_team_execution_backend=local` 时才允许本地执行，此模式**不提供 OS 隔离**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
+源码开发只有在 `SAKURA_DEPLOY_MODE=source`、显式选择 `agent_team_execution_backend=local` 且网络策略为 `full_access` 时才允许本地执行，此模式使用宿主网络，**不提供 OS 隔离或临时沙箱出口**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
+
+WebUI 分别显示普通执行就绪与临时依赖出口可用；后者要求 sandboxd 就绪且提供 `egress`，仅策略授权不代表出口可用。local 显示授权模式不适用、临时依赖出口不可用，并单独提示宿主网络。
 
 Agent 依赖环境只使用每个任务工作区内固定的 `.venv/local` 和
 `.venv/sandbox` 路径。这两个目录是 Agent 内部的临时目录，不承载用户数据；切换执行后端时，

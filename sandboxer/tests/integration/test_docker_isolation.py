@@ -10,14 +10,19 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
+from sakura_ai_sandboxer.app import create_app
 from sakura_ai_sandboxer.config import SandboxdConfig
 from sakura_ai_sandboxer.docker_runtime import (
     DockerRuntimeAdapter,
@@ -37,6 +42,484 @@ _DOCKER_SECRET_RE = re.compile(
 )
 _DOCKER_DIGEST_RE = re.compile(r"(?i)sha256:[0-9a-f]{64}")
 _DOCKER_PROBE_ATTEMPTS = 5
+
+
+async def _docker_output(config: SandboxdConfig, tmp_path: Path, *args: str) -> bytes:
+    """Observe the real daemon; a failed probe must never prove removal."""
+
+    process = await asyncio.create_subprocess_exec(
+        config.docker_binary,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+    except BaseException:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        raise
+    assert process.returncode == 0, _redact_docker_stderr(stderr, tmp_path=tmp_path)
+    return stdout
+
+
+async def _assert_request_container_removed(
+    config: SandboxdConfig,
+    tmp_path: Path,
+    request_id: str,
+    *,
+    container_id: str | None = None,
+) -> None:
+    filters = (
+        ("--filter", f"id={container_id}")
+        if container_id is not None
+        else (
+            "--filter",
+            f"label=ai.sakura.instance-id={config.instance_id}",
+            "--filter",
+            f"label=ai.sakura.request-id={request_id}",
+        )
+    )
+    remaining = await _docker_output(
+        config,
+        tmp_path,
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        *filters,
+    )
+    assert not remaining.strip(), "one-shot request container remains in Docker"
+
+
+@asynccontextmanager
+async def _observe_created_containers(adapter: DockerRuntimeAdapter, tmp_path: Path):
+    """Inspect actual created containers without faking any Docker result."""
+
+    original_run_command = adapter._run_command
+    observed = []
+    created_ids: list[str] = []
+    primary_error: BaseException | None = None
+
+    async def observe(argv: tuple[str, ...], deadline: float):
+        result = await original_run_command(argv, deadline)
+        if len(argv) > 1 and argv[1] == "create" and result.returncode == 0:
+            container_id = result.stdout.decode().strip()
+            assert re.fullmatch(r"[0-9a-f]{64}", container_id)
+            # Record the exact daemon-returned ID before inspect can fail.
+            created_ids.append(container_id)
+            inspected = await _docker_output(
+                adapter.config, tmp_path, "inspect", container_id
+            )
+            observed.append(json.loads(inspected)[0])
+        return result
+
+    adapter._run_command = observe
+    try:
+        yield observed
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        adapter._run_command = original_run_command
+        try:
+            # The runtime-removal assertion runs before this safety net.  A
+            # runtime regression must fail the test, but cannot leave a child
+            # behind after the disposable test controller exits.
+            async with asyncio.timeout(adapter.config.cleanup_margin_seconds):
+                for container_id in dict.fromkeys(created_ids):
+                    remaining = await _docker_output(
+                        adapter.config,
+                        tmp_path,
+                        "ps",
+                        "--all",
+                        "--quiet",
+                        "--no-trunc",
+                        "--filter",
+                        f"id={container_id}",
+                    )
+                    if remaining.strip():
+                        await _docker_output(
+                            adapter.config,
+                            tmp_path,
+                            "rm",
+                            "--force",
+                            "--volumes",
+                            container_id,
+                        )
+        except BaseException as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                "test-owned Docker teardown failed "
+                f"({type(cleanup_error).__name__}); original failure preserved"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["inspect", "assertion"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_container_observer_teardown_preserves_primary_failure(
+    monkeypatch, tmp_path: Path, failure_stage: str, cleanup_fails: bool
+):
+    """Test only the observer safety net, including failure before yield returns."""
+
+    container_id = "a" * 64
+    primary_error = AssertionError("original isolation failure")
+    cleanup_calls = []
+
+    async def create(*_args):
+        return SimpleNamespace(returncode=0, stdout=container_id.encode())
+
+    async def docker_output(_config, _tmp_path, *args):
+        if args[0] == "inspect":
+            if failure_stage == "inspect":
+                raise primary_error
+            return json.dumps([{"Id": container_id}]).encode()
+        cleanup_calls.append(args)
+        if args[0] == "ps":
+            return container_id.encode()
+        if cleanup_fails:
+            raise RuntimeError("teardown failure")
+        return b""
+
+    monkeypatch.setattr(f"{__name__}._docker_output", docker_output)
+    adapter = SimpleNamespace(config=SandboxdConfig(), _run_command=create)
+    with pytest.raises(AssertionError) as caught:
+        async with _observe_created_containers(adapter, tmp_path):
+            await adapter._run_command(("docker", "create"), 0)
+            raise primary_error
+
+    assert caught.value is primary_error
+    assert adapter._run_command is create
+    assert cleanup_calls == [
+        ("ps", "--all", "--quiet", "--no-trunc", "--filter", f"id={container_id}"),
+        ("rm", "--force", "--volumes", container_id),
+    ]
+    if cleanup_fails:
+        assert primary_error.__notes__ == [
+            "test-owned Docker teardown failed (RuntimeError); original failure preserved"
+        ]
+    else:
+        assert not getattr(primary_error, "__notes__", [])
+
+
+@pytest.mark.asyncio
+async def test_container_observer_teardown_failure_does_not_pass_successful_body(
+    monkeypatch, tmp_path: Path
+):
+    container_id = "b" * 64
+
+    async def create(*_args):
+        return SimpleNamespace(returncode=0, stdout=container_id.encode())
+
+    async def docker_output(_config, _tmp_path, *args):
+        if args[0] == "inspect":
+            return json.dumps([{"Id": container_id}]).encode()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(f"{__name__}._docker_output", docker_output)
+    adapter = SimpleNamespace(
+        config=SandboxdConfig(cleanup_margin_seconds=0.05), _run_command=create
+    )
+    outer_deadline = asyncio.timeout(1)
+    with pytest.raises(TimeoutError):
+        async with outer_deadline, _observe_created_containers(adapter, tmp_path):
+            await adapter._run_command(("docker", "create"), 0)
+    assert not outer_deadline.expired()
+    assert adapter._run_command is create
+
+
+@pytest.mark.asyncio
+async def test_real_docker_observer_teardown_removes_untracked_child_on_assertion_failure(
+    tmp_path: Path,
+):
+    """Even a child absent from _active is removed without hiding a failed gate."""
+
+    config, _key = _integration_config(tmp_path)
+    adapter = DockerRuntimeAdapter(config)
+    container_name = "sakura-observer-teardown-" + hashlib.sha256(
+        str(tmp_path).encode()
+    ).hexdigest()[:12]
+    with pytest.raises(AssertionError, match="one-shot request container remains"):
+        async with _observe_created_containers(adapter, tmp_path) as observed:
+            result = await adapter._run_command(
+                (
+                    config.docker_binary,
+                    "create",
+                    "--pull",
+                    "never",
+                    "--name",
+                    container_name,
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--user",
+                    "65532:65532",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges:true",
+                    config.runner_image_digest or "",
+                    "true",
+                ),
+                asyncio.get_running_loop().time() + 15,
+            )
+            assert result.returncode == 0
+            assert len(observed) == 1
+            container_id = observed[0]["Id"]
+            assert not adapter._active
+            # This must fail before the observer's safety net runs.
+            await _assert_request_container_removed(
+                config, tmp_path, "observer-teardown", container_id=container_id
+            )
+    await _assert_request_container_removed(
+        config, tmp_path, "observer-teardown", container_id=container_id
+    )
+
+
+def _assert_egress_container_is_hardened(
+    container: dict, config: SandboxdConfig, workspace: Path
+) -> None:
+    """Egress must not relax the server-owned OCI isolation/resource policy."""
+
+    host = container["HostConfig"]
+    assert host["NetworkMode"] == "bridge"
+    assert host["ReadonlyRootfs"] is True
+    assert host["Privileged"] is False
+    assert host["CapDrop"] == ["ALL"]
+    assert not host["CapAdd"]
+    assert "no-new-privileges:true" in host["SecurityOpt"]
+    assert host["PidMode"] != "host"
+    assert host["IpcMode"] != "host"
+    assert host["PidsLimit"] == config.pids_limit
+    assert host["Memory"] == config.memory_bytes
+    assert host["MemorySwap"] == config.memory_bytes
+    assert host["NanoCpus"] == int(config.cpus * 1_000_000_000)
+    assert container["Config"]["User"] == "65532:65532"
+    assert container["Config"]["Image"] == config.runner_image_digest
+    assert host["Ulimits"] == [
+        {"Name": "nofile", "Soft": config.nofile_soft, "Hard": config.nofile_hard}
+    ]
+    binds = [mount for mount in container["Mounts"] if mount["Type"] == "bind"]
+    assert len(binds) == 1
+    assert binds[0]["Source"] == str(workspace)
+    assert binds[0]["Destination"] == "/workspace"
+    assert binds[0]["RW"] is True
+    assert binds[0]["Propagation"] == "rprivate"
+    assert "noexec" in host["Tmpfs"]["/tmp"].split(",")
+    assert f"size={config.tmpfs_bytes}" in host["Tmpfs"]["/tmp"].split(",")
+
+
+@pytest.mark.asyncio
+async def test_real_docker_wire_egress_is_one_shot_across_execution_profiles(
+    tmp_path: Path,
+):
+    """Existing v2 modes isolate successive requests; Backend mapping is separate.
+
+    Catch accidentally sticky networking, skipped rm, or relaxed hardening on
+    either Dependency or Agent egress without relying on Backend helpers.
+    """
+
+    config, key = _integration_config(tmp_path)
+    workspace = tmp_path / "workplace/owner/repo/worktrees/42-integration"
+    sibling = workspace.with_name("43-other-task")
+    sibling.mkdir()
+    (sibling / "private-marker").write_text("other-task-secret", encoding="utf-8")
+    adapter = DockerRuntimeAdapter(config)
+    app = create_app(config, runtime=adapter)
+    hardening_probe = (
+        "set -eu; "
+        'test "$(id -u)" = 65532; '
+        'test "$(pwd)" = /workspace; '
+        "test ! -w /etc/passwd; "
+        "test ! -e /var/run/docker.sock; "
+        "test ! -e /run/sakura-ai-sandbox/sandboxd.sock; "
+        "test ! -e /workspace/../43-other-task/private-marker; "
+        "python -c 'from pathlib import Path; "
+        'status = dict(line.split(":", 1) for line in '
+        'Path("/proc/self/status").read_text().splitlines() if ":" in line); '
+        'assert int(status["CapEff"].strip(), 16) == 0; '
+        'assert status["NoNewPrivs"].strip() == "1"\'; '
+    )
+    cases = (
+        (
+            "integration-agent-before",
+            "agent",
+            "none",
+            "if getent hosts example.com; then exit 1; fi",
+        ),
+        (
+            "integration-dependency-egress",
+            "dependency",
+            "egress",
+            "getent hosts example.com",
+        ),
+        ("integration-agent-egress", "agent", "egress", "getent hosts example.com"),
+        (
+            "integration-agent-after",
+            "agent",
+            "none",
+            "if getent hosts example.com; then exit 1; fi",
+        ),
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        _observe_created_containers(adapter, tmp_path) as observed,
+        httpx.AsyncClient(transport=transport, base_url="http://sandboxd") as client,
+    ):
+        for index, (request_id, profile, mode, network_probe) in enumerate(cases):
+            response = await client.post(
+                "/v1/executions",
+                json={
+                    "request_id": request_id,
+                    "workspace_key": key,
+                    "command": hardening_probe + network_probe + "; echo isolation-ok",
+                    "profile": profile,
+                    "network_mode": mode,
+                    "timeout_seconds": 20,
+                },
+            )
+            assert response.status_code == 200, response.json()
+            result = response.json()["data"]
+            assert result["exit_code"] == 0, result["stderr"]
+            assert "isolation-ok" in result["stdout"]
+            assert result["cancelled"] is False
+            assert result["timed_out"] is False
+            assert len(observed) == index + 1
+            container = observed[-1]
+            assert container["HostConfig"]["NetworkMode"] == (
+                "bridge" if mode == "egress" else "none"
+            )
+            if mode == "egress":
+                assert result["stdout"].strip() != "isolation-ok"
+                _assert_egress_container_is_hardened(container, config, workspace)
+            await _assert_request_container_removed(
+                config, tmp_path, request_id, container_id=container["Id"]
+            )
+            assert not adapter._active
+    assert len({container["Id"] for container in observed}) == 4
+    assert (sibling / "private-marker").read_text(
+        encoding="utf-8"
+    ) == "other-task-secret"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["timeout", "cancel", "requester_cancel"])
+async def test_real_docker_egress_terminal_paths_remove_started_container(
+    tmp_path: Path, terminal: str
+):
+    """A running egress container must disappear before a terminal response."""
+
+    config, key = _integration_config(tmp_path)
+    workspace = tmp_path / "workplace/owner/repo/worktrees/42-integration"
+    ready = workspace / "started"
+    request_id = f"integration-egress-{terminal}"
+    adapter = DockerRuntimeAdapter(config)
+    app = create_app(config, runtime=adapter)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        _observe_created_containers(adapter, tmp_path) as observed,
+        httpx.AsyncClient(transport=transport, base_url="http://sandboxd") as client,
+    ):
+        execution = asyncio.create_task(
+            client.post(
+                "/v1/executions",
+                json={
+                    "request_id": request_id,
+                    "workspace_key": key,
+                    "command": "printf started > /workspace/started; sleep 60",
+                    "profile": "agent",
+                    "network_mode": "egress",
+                    "timeout_seconds": 8 if terminal == "timeout" else 20,
+                },
+            )
+        )
+        try:
+            async with asyncio.timeout(12):
+                while not ready.exists():
+                    assert not execution.done(), (
+                        "execution ended before command startup"
+                    )
+                    await asyncio.sleep(0.05)
+            assert len(observed) == 1
+            container = observed[0]
+            _assert_egress_container_is_hardened(container, config, workspace)
+            current = json.loads(
+                await _docker_output(config, tmp_path, "inspect", container["Id"])
+            )[0]
+            assert current["State"]["Running"] is True
+            if terminal == "cancel":
+                cancellation = await client.post(f"/v1/executions/{request_id}/cancel")
+                assert cancellation.status_code == 200
+                assert cancellation.json()["data"]["cancelled"] is True
+            elif terminal == "requester_cancel":
+                execution.cancel()
+            if terminal == "requester_cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(execution, timeout=15)
+            else:
+                response = await asyncio.wait_for(execution, timeout=15)
+                assert response.status_code == 200, response.json()
+                result = response.json()["data"]
+                assert result["timed_out"] is (terminal == "timeout")
+                assert result["cancelled"] is (terminal == "cancel")
+                assert result["exit_code"] is None
+            await _assert_request_container_removed(
+                config, tmp_path, request_id, container_id=container["Id"]
+            )
+            assert not adapter._active
+        finally:
+            if not execution.done():
+                execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_real_docker_rejects_request_runtime_overrides_before_container_creation(
+    tmp_path: Path,
+):
+    """Strict HTTP rejection must leave no real container or workspace side effect."""
+
+    config, key = _integration_config(tmp_path)
+    workspace = tmp_path / "workplace/owner/repo/worktrees/42-integration"
+    adapter = DockerRuntimeAdapter(config)
+    app = create_app(config, runtime=adapter)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        _observe_created_containers(adapter, tmp_path) as observed,
+        httpx.AsyncClient(transport=transport, base_url="http://sandboxd") as client,
+    ):
+        for index, override in enumerate(
+            (
+                {"runtime_options": {"privileged": True, "network": "host"}},
+                {"network_mode": "host"},
+                {"mounts": [{"source": "/", "target": "/host"}]},
+            )
+        ):
+            request_id = f"integration-runtime-override-{index}"
+            response = await client.post(
+                "/v1/executions",
+                json={
+                    "request_id": request_id,
+                    "workspace_key": key,
+                    "command": "touch /workspace/should-not-execute",
+                    "profile": "agent",
+                    "network_mode": "egress",
+                    "timeout_seconds": 10,
+                    **override,
+                },
+            )
+            assert response.status_code == 422
+            assert response.json()["error"] == "INVALID_REQUEST"
+            await _assert_request_container_removed(config, tmp_path, request_id)
+        assert observed == []
+        assert not (workspace / "should-not-execute").exists()
+        assert not adapter._active
 
 
 def _redact_docker_stderr(value: bytes | str, *, tmp_path: Path) -> str:

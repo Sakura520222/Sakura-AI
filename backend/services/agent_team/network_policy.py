@@ -13,6 +13,41 @@ from enum import StrEnum
 from typing import Any
 
 
+class NetworkCapability(StrEnum):
+    """Backend-only capability requested for one execution."""
+
+    NONE = "none"
+    DEPENDENCY_EGRESS = "dependency_egress"
+
+
+class NetworkCapabilityDenied(ValueError):
+    """A valid execution capability was denied by the fresh policy."""
+
+
+def parse_network_capability(value: Any) -> NetworkCapability:
+    """Validate exact capability values without echoing untrusted input."""
+
+    if not isinstance(value, str):
+        raise ValueError("network_capability must be a string")
+    try:
+        return NetworkCapability(value)
+    except ValueError as exc:
+        raise ValueError(
+            "network_capability must be none or dependency_egress"
+        ) from exc
+
+
+def execution_network_capability(
+    profile: str, capability: NetworkCapability | str = NetworkCapability.NONE
+) -> NetworkCapability:
+    """Resolve the Dependency profile's implicit execution capability."""
+
+    selected = parse_network_capability(capability)
+    if profile == "trusted_control" and selected is not NetworkCapability.NONE:
+        raise ValueError("trusted_control cannot request network_capability")
+    return NetworkCapability.DEPENDENCY_EGRESS if profile == "dependency" else selected
+
+
 class AgentTeamNetworkPolicy(StrEnum):
     """Administrator-selected network policy for Agent work."""
 
@@ -24,8 +59,8 @@ class AgentTeamNetworkPolicy(StrEnum):
     def network_mode(self) -> str:
         """Return the only network capability that may cross the UDS.
 
-        ``web_tools`` deliberately keeps shell/build/test runners offline;
-        only ``full_access`` enables the daemon's server-owned egress network.
+        Ordinary Agent commands remain offline under ``web_tools``. Explicit
+        dependency authorization is handled by ``network_mode_for_policy``.
         """
 
         return "egress" if self is self.FULL_ACCESS else "none"
@@ -36,7 +71,7 @@ class AgentTeamNetworkPolicy(StrEnum):
 
     @property
     def allows_dependency_network(self) -> bool:
-        return self is self.FULL_ACCESS
+        return self is not self.OFFLINE
 
     @property
     def allows_local_backend(self) -> bool:
@@ -58,7 +93,9 @@ AgentNetworkPolicy = AgentTeamNetworkPolicy
 
 
 DEFAULT_AGENT_TEAM_NETWORK_POLICY = AgentTeamNetworkPolicy.WEB_TOOLS
-AGENT_TEAM_NETWORK_POLICY_VALUES = frozenset(item.value for item in AgentTeamNetworkPolicy)
+AGENT_TEAM_NETWORK_POLICY_VALUES = frozenset(
+    item.value for item in AgentTeamNetworkPolicy
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,10 +123,30 @@ def parse_agent_team_network_policy(value: Any) -> AgentTeamNetworkPolicy:
         ) from exc
 
 
-def network_mode_for_policy(policy: AgentTeamNetworkPolicy | str) -> str:
-    """Map a policy to the constrained sandbox protocol enum."""
+def network_mode_for_policy(
+    policy: AgentTeamNetworkPolicy | str,
+    *,
+    profile: str = "agent",
+    capability: NetworkCapability | str = NetworkCapability.NONE,
+) -> str:
+    """Authorize one execution and map it to the unchanged v2 wire enum.
 
-    return parse_agent_team_network_policy(policy).network_mode
+    The implicit offline Dependency mapping remains ``none`` for existing
+    callers; automatic bootstrap skips it. Explicit egress fails observably.
+    """
+
+    selected = parse_agent_team_network_policy(policy)
+    requested = parse_network_capability(capability)
+    effective = execution_network_capability(profile, requested)
+    if selected is AgentTeamNetworkPolicy.OFFLINE:
+        if requested is NetworkCapability.DEPENDENCY_EGRESS:
+            raise NetworkCapabilityDenied(
+                "offline denies dependency_egress network_capability"
+            )
+        return "none"
+    if effective is NetworkCapability.DEPENDENCY_EGRESS:
+        return "egress"
+    return selected.network_mode
 
 
 async def get_agent_team_network_policy() -> AgentTeamNetworkPolicy:
@@ -156,11 +213,15 @@ __all__ = [
     "AgentNetworkPolicy",
     "AgentTeamNetworkPolicy",
     "AgentTeamNetworkPolicyState",
+    "NetworkCapability",
+    "NetworkCapabilityDenied",
+    "execution_network_capability",
     "get_agent_team_network_policy",
     "get_agent_team_network_policy_state",
     "get_agent_tool_switch",
     "network_mode_for_policy",
     "parse_agent_team_network_policy",
+    "parse_network_capability",
     "resolve_agent_team_network_policy",
     "web_tool_denial_reason",
 ]

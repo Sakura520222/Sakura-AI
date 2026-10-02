@@ -100,7 +100,8 @@
 - **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
 - **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
 - **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认策略下普通 Shell 断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **单次依赖出口** — 默认 `web_tools` 允许受控 Web 工具及 Dependency 自动依赖出口；`run_command` 可显式指定 `network_capability=dependency_egress`，为任意当前命令及包安装钩子开放公网出口，不设命令或域名白名单。容器执行结束出口即结束，下一次普通 Shell 仍离线。`offline` 禁止出口，`full_access` 允许全部 runner 出网；local 仅源码开发且要求 `full_access`，使用宿主网络而无 OS 隔离。[Python、Node、Rust、Go 与 JVM 示例](docs/CONFIGURATION.md#agent-专家团队)
 - **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
 - **依赖安装容错** — 瞬时网络故障默认最多尝试 3 次，按 2、4 秒退避；永久错误不重试。最终失败会保留脱敏诊断并交给 Agent 修复或继续静态分析，明确报告无法运行的测试；可在统一配置页调整重试次数和等待时间
 - **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复

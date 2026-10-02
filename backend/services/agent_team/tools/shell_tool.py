@@ -20,6 +20,10 @@ from backend.services.agent_team.execution import (
     execution_workspace_key,
     resolve_execution_runner,
 )
+from backend.services.agent_team.network_policy import (
+    NetworkCapability,
+    parse_network_capability,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 
@@ -66,6 +70,10 @@ class ShellTool(BaseTool):
                 "请直接运行目标命令，例如 pytest -q、ruff check、npm test。"
                 "\n\n命令会在当前 workspace-scoped 执行器中运行；Docker 部署的"
                 "网络、权限、进程和文件系统边界由 sandboxd/OCI 策略提供。"
+                "\n依赖安装以及构建/测试中的依赖解析需要联网时，请设置"
+                " network_capability=dependency_egress。web_tools 下只为当前命令"
+                "临时开放不受域名限制的出站网络；下一次普通命令仍离线。"
+                "offline 策略拒绝该请求。"
                 "\n当前工作目录已经是工作区根目录，请不要添加 cd 前缀。"
             ),
             "parameters": {
@@ -82,6 +90,12 @@ class ShellTool(BaseTool):
                         "description": "超时秒数，默认 120。长命令如测试可设为 300。",
                         "default": 120,
                     },
+                    "network_capability": {
+                        "type": "string",
+                        "enum": ["none", "dependency_egress"],
+                        "default": "none",
+                        "description": "依赖安装或构建/测试依赖解析时请求当前命令临时联网；省略时使用普通 Agent 网络策略。",
+                    },
                 },
                 "required": ["command"],
             },
@@ -94,9 +108,18 @@ class ShellTool(BaseTool):
     def validate_input(self, args: dict[str, Any], ctx: ToolContext) -> str | None:
         if not args.get("command"):
             return "缺少 command 参数"
+        try:
+            parse_network_capability(
+                args.get("network_capability", NetworkCapability.NONE)
+            )
+        except ValueError as exc:
+            return str(exc)
         return None
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        validation_error = self.validate_input(args, ctx)
+        if validation_error:
+            return ToolResult(success=False, error=validation_error)
         command = args["command"]
         timeout = min(int(args.get("timeout", 120)), 600)  # 最大 600 秒
 
@@ -129,6 +152,7 @@ class ShellTool(BaseTool):
             profile=ExecutionProfile.AGENT,
             timeout_seconds=timeout,
             cancel_event=ctx.cancel_event,
+            network_capability=args.get("network_capability", NetworkCapability.NONE),
         )
 
         try:
