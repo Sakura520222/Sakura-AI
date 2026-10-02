@@ -188,6 +188,16 @@ async def issue_detail_page(
     except json.JSONDecodeError, TypeError:
         pass
 
+    issue_relations = {}
+    try:
+        parsed = (
+            json.loads(analysis.issue_relations) if analysis.issue_relations else {}
+        )
+        if isinstance(parsed, dict):
+            issue_relations = parsed
+    except json.JSONDecodeError, TypeError:
+        pass
+
     return render_template(
         "issue_detail.html",
         request,
@@ -197,6 +207,7 @@ async def issue_detail_page(
         suggested_labels=suggested_labels,
         suggested_assignees=suggested_assignees,
         related_prs=related_prs,
+        issue_relations=issue_relations,
         active_page="issues",
     )
 
@@ -256,6 +267,7 @@ async def reanalyze_issue(
         "author": analysis.author,
         "title": analysis.title,
         "body": analysis.body,
+        "state": analysis.issue_state,
     }
 
     # 计算分析版本号

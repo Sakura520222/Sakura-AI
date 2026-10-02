@@ -9,6 +9,7 @@ import pytest
 
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import get_settings
+from backend.models.database import PRStatus
 from backend.services.activity_observability import (
     integration_service as _activity_integration_module,
 )
@@ -1552,3 +1553,426 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("succeeded", [True, False])
+@pytest.mark.parametrize("summary_enabled", [False, True])
+async def test_process_review_runs_optional_relations_and_preserves_outcome(
+    monkeypatch, succeeded, summary_enabled
+):
+    """The actual worker pipeline consumes verified empty vs failed results."""
+    from backend.services.issues import pr_link_sync
+    from backend.services.issues.pr_verifier import PRVerificationResult
+
+    execution = _RecordingExecutionBundle()
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    context = {"files": []}
+    analysis = SimpleNamespace(
+        pr_id=618,
+        pr_number=618,
+        repo_full_name="o/r",
+        total_files=1,
+        total_changes=2,
+        code_file_count=1,
+        code_files=[],
+        strategy="standard",
+        should_skip=False,
+        is_incremental=False,
+        changed_lines_map={},
+        hunk_boundaries={},
+    )
+    worker.analyzer = SimpleNamespace(
+        analyze_pr=AsyncMock(return_value=analysis),
+        prepare_review_context=AsyncMock(return_value=context),
+    )
+    worker._cancel_events = {}
+    worker.comment_service = SimpleNamespace(
+        create_placeholder_comment=AsyncMock(return_value=SimpleNamespace(id=1)),
+        delete_placeholder_comment=AsyncMock(),
+    )
+    worker.check_run_service = SimpleNamespace(
+        report_queued=AsyncMock(),
+        report_stage_progress=AsyncMock(),
+        cancel_active_runs_by_sha=AsyncMock(),
+    )
+    worker.ai_reviewer = SimpleNamespace(
+        _refresh_ai_clients=lambda: None, api_client=None
+    )
+
+    class PR:
+        body = (
+            "Human Fixes #123\n<!-- sakura-ai-issue-links-start -->\nCloses #612\n<!-- sakura-ai-issue-links-end -->\n"
+            "<!-- sakura-ai-depgraph-start -->\nExisting graph\n<!-- sakura-ai-depgraph-end -->"
+        )
+
+        def edit(self, *, body):
+            self.body = body
+
+    pr = PR()
+    repo = SimpleNamespace(get_pull=lambda _: pr)
+    from backend.services.ai_reviewer.pr_summary import PRSummaryService
+
+    monkeypatch.setattr(
+        PRSummaryService, "generate_summary", AsyncMock(return_value="New summary")
+    )
+    worker.github_app = SimpleNamespace(
+        get_repo_client=lambda *_: SimpleNamespace(get_repo=lambda _: repo)
+    )
+    worker._create_review_record = AsyncMock(return_value=1)
+    worker._update_review_status = AsyncMock()
+    worker._log_activity = AsyncMock()
+    worker._save_error_record = AsyncMock()
+    worker._inject_external_ci_failures = AsyncMock()
+    called = False
+
+    async def synchronize(*args, **kwargs):
+        nonlocal called
+        called = True
+        return PRVerificationResult(succeeded, [], None if succeeded else "provider")
+
+    monkeypatch.setattr(
+        pr_link_sync,
+        "PRRelationSyncService",
+        lambda: SimpleNamespace(synchronize=synchronize),
+    )
+    # Stop at the existing post-relation cancellation checkpoint. The real
+    # pipeline must reach optional relations without invoking a main provider.
+    worker._check_cancelled = lambda _: called
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        review_worker, "get_dynamic_config", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
+    for key in (
+        "enable_code_index",
+        "enable_rag",
+        "enable_pr_summary",
+        "enable_pr_dependency_graph",
+        "enable_pr_issue_linking",
+    ):
+        monkeypatch.setattr(review_worker.settings, key, False)
+    monkeypatch.setattr(review_worker.settings, "enable_pr_summary", summary_enabled)
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
+    await worker.process_review_task(
+        {
+            "repo_full_name": "o/r",
+            "repo_owner": "o",
+            "repo_name": "r",
+            "pr_id": 618,
+            "pr_number": 618,
+            "action": "opened",
+        }
+    )
+    assert called
+    assert context["pr_issue_relation_status"] == (
+        "verified" if succeeded else "provider"
+    )
+    assert ("semantically_linked_issues" in context) is succeeded
+    assert execution.finish_calls == [("cancelled", None)]
+    if summary_enabled:
+        assert "New summary" in pr.body
+        assert "Closes #612" in pr.body
+        assert "Existing graph" in pr.body
+        assert "Human Fixes #123" in pr.body
+
+
+@pytest.fixture
+def pr_relation_runtime_worker(monkeypatch):
+    """Real pipeline through optional relations and into the main review call."""
+    execution = _RecordingExecutionBundle()
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.activity_integration = _RecordingActivityIntegration(execution)
+    context = {"files": []}
+    analysis = SimpleNamespace(
+        pr_id=618,
+        pr_number=618,
+        repo_full_name="o/r",
+        total_files=1,
+        total_changes=2,
+        code_file_count=1,
+        code_files=[],
+        strategy="standard",
+        should_skip=False,
+        is_incremental=False,
+        changed_lines_map={},
+        hunk_boundaries={},
+    )
+    worker.analyzer = SimpleNamespace(
+        analyze_pr=AsyncMock(return_value=analysis),
+        prepare_review_context=AsyncMock(return_value=context),
+    )
+    worker._cancel_events = {}
+    worker.comment_service = SimpleNamespace(
+        create_placeholder_comment=AsyncMock(return_value=SimpleNamespace(id=1)),
+        delete_placeholder_comment=AsyncMock(),
+    )
+    worker.check_run_service = SimpleNamespace(
+        report_queued=AsyncMock(),
+        report_stage_progress=AsyncMock(),
+        cancel_active_runs_by_sha=AsyncMock(),
+    )
+    worker.ai_reviewer = SimpleNamespace(
+        _refresh_ai_clients=lambda: None,
+        api_client=None,
+        review_pr=AsyncMock(
+            side_effect=ReviewCancelledError("stop after main call starts")
+        ),
+    )
+    repo = SimpleNamespace(get_pull=lambda _: SimpleNamespace())
+    worker.github_app = SimpleNamespace(
+        get_repo_client=lambda *_: SimpleNamespace(get_repo=lambda _: repo)
+    )
+    worker._create_review_record = AsyncMock(return_value=1)
+    worker._update_review_status = AsyncMock()
+    worker._log_activity = AsyncMock()
+    worker._save_error_record = AsyncMock()
+    worker._inject_external_ci_failures = AsyncMock()
+    worker._check_cancelled = lambda _: False
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
+    for key in (
+        "enable_code_index",
+        "enable_rag",
+        "enable_pr_summary",
+        "enable_pr_dependency_graph",
+        "enable_pr_issue_linking",
+        "enable_ai_tools",
+    ):
+        monkeypatch.setattr(review_worker.settings, key, False)
+    monkeypatch.setattr(
+        review_worker,
+        "get_sakura_memory_config",
+        lambda: {"enabled": False, "reflection": {"enabled": False}},
+    )
+    info = {
+        "repo_full_name": "o/r",
+        "repo_owner": "o",
+        "repo_name": "r",
+        "pr_id": 618,
+        "pr_number": 618,
+        "action": "opened",
+    }
+    return worker, info, context, execution
+
+
+@pytest.mark.asyncio
+async def test_actual_worker_fresh_optional_config_failure_reaches_main_review(
+    monkeypatch, pr_relation_runtime_worker
+):
+    from backend.core import config
+    from backend.models import database
+    from backend.services.issues import pr_link_sync
+
+    worker, info, context, execution = pr_relation_runtime_worker
+
+    class DB:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def execute(self, stmt):
+            if (
+                stmt.compile().params.get("key_name_1")
+                == "enable_semantic_issue_linking"
+            ):
+                raise RuntimeError("optional semantic setting unavailable")
+            return SimpleNamespace(one_or_none=lambda: None)
+
+    monkeypatch.setattr(database, "async_session", DB)
+    monkeypatch.setattr(review_worker, "get_dynamic_config", config.get_dynamic_config)
+    inference = AsyncMock()
+    monkeypatch.setattr(pr_link_sync, "PRRelationSyncService", inference)
+    await worker.process_review_task(info)
+    worker.ai_reviewer.review_pr.assert_awaited_once()
+    inference.assert_not_called()
+    assert context["pr_issue_relation_status"] == "configuration:RuntimeError"
+    assert PRStatus.FAILED not in [
+        call.args[1] for call in worker._update_review_status.await_args_list
+    ]
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+async def test_actual_worker_expired_deadline_skips_optional_policy_read(
+    monkeypatch, pr_relation_runtime_worker
+):
+    from backend.services.ai_task_deadline import AITaskDeadline
+
+    worker, info, _, _ = pr_relation_runtime_worker
+    policy = AsyncMock(side_effect=RuntimeError("must not read optional policy"))
+    monkeypatch.setattr(review_worker, "get_dynamic_config", policy)
+    await worker.process_review_task(info, deadline=AITaskDeadline.from_timeout(0))
+    policy.assert_not_awaited()
+    worker.ai_reviewer.review_pr.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_actual_worker_relation_event_cancellation_persists_cancelled(
+    monkeypatch, pr_relation_runtime_worker
+):
+    from backend.services.issues import pr_link_sync
+
+    worker, info, _, execution = pr_relation_runtime_worker
+    original = pr_link_sync.PRRelationSyncService
+
+    async def signal(*args, **kwargs):
+        kwargs["cancel_event"].set()
+        return await original(
+            retriever=object(), verifier=object(), linker=object()
+        ).synchronize(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pr_link_sync,
+        "PRRelationSyncService",
+        lambda: SimpleNamespace(synchronize=signal),
+    )
+    monkeypatch.setattr(
+        review_worker, "get_dynamic_config", AsyncMock(return_value=True)
+    )
+    await worker.process_review_task(info)
+    statuses = [call.args[1] for call in worker._update_review_status.await_args_list]
+    assert PRStatus.CANCELLED in statuses
+    assert PRStatus.FAILED not in statuses
+    worker.ai_reviewer.review_pr.assert_not_awaited()
+    worker.comment_service.delete_placeholder_comment.assert_awaited_once()
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+async def test_actual_worker_task_cancel_survives_failed_drained_relation_edit(
+    monkeypatch, pr_relation_runtime_worker
+):
+    import threading
+
+    from backend.core import config
+    from backend.services.issues import pr_link_sync
+    from backend.services.issues.pr_verifier import PRVerificationResult
+    from backend.services.pr_issue_linker import PRIssueLinker
+
+    worker, info, _, execution = pr_relation_runtime_worker
+    started, release = threading.Event(), threading.Event()
+    rollback = AsyncMock()
+
+    class DB:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def execute(self, stmt):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=list))
+
+        flush = AsyncMock()
+        commit = AsyncMock()
+
+    DB.rollback = rollback
+
+    def edit(**kwargs):
+        started.set()
+        assert release.wait(3)
+        raise RuntimeError("GitHub edit failed after cancellation")
+
+    pr = SimpleNamespace(
+        head=SimpleNamespace(sha="head"),
+        base=SimpleNamespace(sha="base", repo=SimpleNamespace()),
+        title="PR",
+        body="Human\n<!-- sakura-ai-issue-links-start -->Closes #1<!-- sakura-ai-issue-links-end -->",
+        changed_files=0,
+        get_files=list,
+        edit=edit,
+    )
+    repo = SimpleNamespace(get_pull=lambda _: pr)
+    worker.github_app = SimpleNamespace(
+        get_repo_client=lambda *_: SimpleNamespace(get_repo=lambda _: repo)
+    )
+    linker = PRIssueLinker.__new__(PRIssueLinker)
+    linker.parse_issue_references = AsyncMock(return_value=[])
+    service = pr_link_sync.PRRelationSyncService(
+        retriever=SimpleNamespace(retrieve=AsyncMock(return_value=[])),
+        verifier=SimpleNamespace(
+            verify=AsyncMock(return_value=PRVerificationResult(True))
+        ),
+        session_factory=DB,
+        linker=linker,
+    )
+    monkeypatch.setattr(pr_link_sync, "PRRelationSyncService", lambda: service)
+    monkeypatch.setattr(
+        review_worker, "get_dynamic_config", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        config,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: 5 if key == "semantic_issue_max_links" else 0.8
+        ),
+    )
+    task = asyncio.create_task(worker.process_review_task(info))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+        assert isinstance(caught.value.__cause__, RuntimeError)
+    finally:
+        release.set()
+        if not task.done():
+            await task
+    rollback.assert_awaited_once()
+    worker.ai_reviewer.review_pr.assert_not_awaited()
+    assert execution.finish_calls == [("cancelled", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["domain", "task"])
+async def test_actual_worker_optional_policy_preserves_cancellation(
+    monkeypatch, pr_relation_runtime_worker, mode
+):
+    worker, info, _, execution = pr_relation_runtime_worker
+    started = asyncio.Event()
+
+    async def policy(*args, **kwargs):
+        started.set()
+        if mode == "domain":
+            raise ReviewCancelledError("ordinary cancellation")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(review_worker, "get_dynamic_config", policy)
+    task = asyncio.create_task(worker.process_review_task(info))
+    await started.wait()
+    if mode == "task":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        await task
+    worker.ai_reviewer.review_pr.assert_not_awaited()
+    assert execution.finish_calls == [("cancelled", None)]
+    statuses = [call.args[1] for call in worker._update_review_status.await_args_list]
+    if mode == "domain":
+        assert PRStatus.CANCELLED in statuses
+        assert PRStatus.FAILED not in statuses

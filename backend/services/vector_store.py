@@ -4,6 +4,7 @@
 支持多租户隔离，每个仓库使用独立的 Collection
 """
 
+import asyncio
 import hashlib
 import re
 from pathlib import Path
@@ -117,7 +118,8 @@ class VectorStore:
             collection_name = self._slugify_collection_name(repo_full_name)
 
             # 获取或创建 Collection
-            collection = self.client.get_or_create_collection(
+            collection = await asyncio.to_thread(
+                self.client.get_or_create_collection,
                 name=collection_name,
                 metadata={
                     "repo_full_name": repo_full_name,  # 保存原始仓库名

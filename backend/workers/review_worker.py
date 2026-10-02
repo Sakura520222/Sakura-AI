@@ -22,7 +22,6 @@ from backend.core.time_service import now_utc
 from backend.models.database import (
     CommentSeverity,
     CommentType,
-    PRIssueLink,
     PRReview,
     PRStatus,
     ReviewComment,
@@ -482,6 +481,53 @@ class ReviewWorker:
                     await session.commit()
         except Exception as exc:
             logger.debug("持久化 error_reference 失败: {}", exc)
+
+    async def _sync_pr_issue_relations(
+        self, repo, pr_info, context, task_id, task_key, deadline, execution
+    ):
+        from backend.services.issues.pr_link_sync import PRRelationSyncService
+        from backend.services.issues.pr_verifier import PRVerificationResult
+
+        event = self._cancel_events.get(task_key)
+        if event is not None and event.is_set():
+            raise ReviewCancelledError()
+        if deadline is not None and deadline.is_expired():
+            result = PRVerificationResult(False, failure="deadline")
+        else:
+            try:
+                enabled = await get_dynamic_config(
+                    "enable_semantic_issue_linking", fresh=True
+                )
+            except asyncio.CancelledError, ReviewCancelledError:
+                raise
+            except Exception as exc:
+                # Unknown auxiliary admission policy must not guess enabled or
+                # abort an otherwise available main review.
+                result = PRVerificationResult(
+                    False, failure=f"configuration:{type(exc).__name__}"
+                )
+            else:
+                if enabled:
+                    result = await PRRelationSyncService().synchronize(
+                        repo,
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        pr_info["pr_number"],
+                        cancel_event=event,
+                        deadline=deadline,
+                        context=getattr(execution, "invocation_context", None),
+                        observer=getattr(execution, "observer", None),
+                    )
+                else:
+                    result = PRVerificationResult(False, failure="disabled")
+        context["pr_issue_relation_status"] = (
+            "verified" if result.succeeded else result.failure
+        )
+        if result.succeeded:
+            context["semantically_linked_issues"] = result.relations
+        else:
+            logger.warning("[{}] PR relations unavailable: {}", task_id, result.failure)
+        return result
 
     async def process_review_task(
         self,
@@ -1005,112 +1051,18 @@ class ReviewWorker:
                             str(e),
                         )
 
-                # 6.6 语义 Issue 关联（如果启用）
-                if (
-                    hasattr(settings, "enable_semantic_issue_linking")
-                    and settings.enable_semantic_issue_linking
-                ):
-                    try:
-                        from backend.services.issue_embedding_service import (
-                            IssueEmbeddingService,
-                        )
-                        from backend.services.pr_issue_linker import PRIssueLinker
-
-                        issue_emb_service = IssueEmbeddingService()
-                        max_links = getattr(settings, "semantic_issue_max_links", 5)
-                        threshold = getattr(
-                            settings, "semantic_issue_similarity_threshold", 0.65
-                        )
-
-                        # 已显式引用的 issues（排除）
-                        explicit_numbers = context.get("linked_issue_numbers", [])
-                        # 排除 PR 自身编号（PR 在 GitHub 中也是 issue）
-                        explicit_numbers = list(
-                            set(explicit_numbers + [pr_info["pr_number"]])
-                        )
-
-                        related_issues = await issue_emb_service.search_related_issues(
-                            repo_owner=pr_info["repo_owner"],
-                            repo_name=pr_info["repo_name"],
-                            pr_title=pr_info.get("title", ""),
-                            pr_body=pr_info.get("body", ""),
-                            exclude_numbers=explicit_numbers,
-                            top_k=max_links,
-                            similarity_threshold=threshold,
-                        )
-
-                        if related_issues:
-                            # AI 验证：过滤误判的候选 issues
-                            # 构建变更文件列表（含 patch 摘要）
-                            file_list = ""
-                            if analysis and analysis.code_files:
-                                file_parts = []
-                                total_len = 0
-                                for f in analysis.code_files:
-                                    part = f"- {f.path} ({f.status})"
-                                    if f.patch:
-                                        part += f"\n```diff\n{f.patch}\n```"
-                                    file_parts.append(part)
-                                    total_len += len(part)
-                                    if total_len > 4000:
-                                        break
-                                file_list = "\n".join(file_parts)
-                            related_issues = (
-                                await issue_emb_service.verify_related_issues(
-                                    pr_title=pr_info.get("title", ""),
-                                    pr_body=pr_info.get("body", ""),
-                                    candidates=related_issues,
-                                    pr_summary=context.get("pr_summary", ""),
-                                    pr_files=file_list,
-                                )
-                            )
-
-                        if related_issues:
-                            # 更新 PR body（添加 "Resolves #xxx"）
-                            # 重新获取最新 PR body（PR Summary / Dependency Graph 可能已修改）
-                            semantic_linker = PRIssueLinker()
-
-                            latest_pr = await asyncio.to_thread(
-                                repo.get_pull, pr_info["pr_number"]
-                            )
-                            current_body = latest_pr.body or ""
-                            new_body = semantic_linker.build_updated_pr_body(
-                                current_body, related_issues
-                            )
-                            if new_body != current_body:
-                                await asyncio.to_thread(latest_pr.edit, body=new_body)
-
-                            # 注入上下文
-                            context["semantically_linked_issues"] = related_issues
-
-                            # 保存到数据库
-                            AsyncSession = get_async_session()
-                            async with AsyncSession() as db_session:
-                                for issue in related_issues:
-                                    link = PRIssueLink(
-                                        pr_id=pr_info["pr_number"],
-                                        repo_name=pr_info["repo_full_name"],
-                                        issue_number=issue["number"],
-                                        link_type="semantic",
-                                        reference_text=(f"Resolves #{issue['number']}"),
-                                        inference_reason=(
-                                            f"similarity: {issue['similarity']}"
-                                        ),
-                                    )
-                                    db_session.add(link)
-                                await db_session.commit()
-
-                            logger.info(
-                                f"[{task_id}] 语义关联了 {len(related_issues)} 个 Issues: "
-                                f"{[i['number'] for i in related_issues]}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "[{}] 语义 Issue 关联失败（不影响审查）: {}",
-                            task_id,
-                            e,
-                            exc_info=True,
-                        )
+                # 6.6 Evidence-based semantic relations; successful empty sets
+                # retract previous machine links. Failures preserve prior state.
+                if not task_deadline.is_expired():
+                    await self._sync_pr_issue_relations(
+                        repo,
+                        pr_info,
+                        context,
+                        task_id,
+                        task_key,
+                        task_deadline,
+                        execution,
+                    )
 
                 # Cancel checkpoint: before AI review (critical — most expensive step)
                 if self._check_cancelled(task_key):

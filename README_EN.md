@@ -92,7 +92,29 @@
 - **Title Rewriting** — Auto-improves vague or inaccurate titles
 - **Analysis Comment Publishing** — Auto-publishes results and reports status via user-scoped events
 - **PR-Issue Linking** — Parses Issue references and injects context
-- **Semantic Issue Linking** — Discovers related Issues via vector similarity
+- **Semantic PR-Issue Linking** — Recall open candidates from the shared Issue corpus, then independently verify the human description, actual patch and Issue requirements. Complete fixes emit `Closes`; partial relationships emit `Related to`. Successful verification replaces or clears the old machine link block while preserving human references. Retrieval, reranking or verification failures never infer new links.
+- **Issue Relationship Pre-analysis** — Before main analysis, compare open Issues as `duplicate` / `related` / `none`. Only when no open duplicate is verified, compare closed Issues as `previously_resolved`, `regression`, `duplicate_closed`, `previously_rejected` or `related` historical context. Independent occurrences such as different workflow executions cannot become duplicates on title similarity alone. Decisions require confidence, reason, similarities, differences and traceable source quotes. The main model cannot override verification. API responses, comments and detail pages expose additive `issue_relations`, retaining compatible `duplicate_of`.
+
+Relationship settings can be changed dynamically on the unified `/config` page. Settings supplies the defaults:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
+| `issue_include_comments` | `true` | Reuse current Issue comments in both analysis phases |
+| `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase |
+| `issue_relation_similarity_threshold` | `0.75` | Issue relationship recall cosine threshold |
+| `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
+| `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
+| `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
+| `semantic_issue_similarity_threshold` | `0.8` | PR candidate cosine threshold |
+| `semantic_issue_max_links` | `5` | PR candidate limit |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold |
+| `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
+| `issue_corpus_batch_size` | `100` | Corpus embedding/write batch limit |
+| `issue_candidate_pool_multiplier` | `3` | Initial recall multiplier |
+
+Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
 
 ### Agent Expert Team
 

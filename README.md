@@ -92,7 +92,29 @@
 - **Issue 标题改写** — 自动优化模糊标题
 - **分析评论发布** — 自动发布结果并报告状态
 - **PR-Issue 关联** — 解析 Issue 引用注入上下文
-- **语义 Issue 关联** — 向量相似度发现并关联相关 Issue
+- **PR 语义 Issue 关联** — 共享 Issue 语料召回开放候选，再用独立协议核验人工描述、实际补丁与 Issue 要求。完整修复输出 `Closes`，部分关联输出 `Related to`；成功验证会替换或清空旧机器关联区块，保留人工引用。检索、重排或验证失败不推断新关联。
+- **Issue 关系预分析** — 主分析前先判断开放 Issue 的 `duplicate` / `related` / `none`；只有未验证出开放重复项时才分析关闭 Issue 的 `previously_resolved`、`regression`、`duplicate_closed`、`previously_rejected`、`related` 历史关系。不同工作流执行等独立事件不会仅凭相似标题成为重复；关系需要置信度、原因、相同点、差异及可追溯原文引用。主模型不能覆盖验证结果，历史关系保存在 `issue_relations` 并展示于 API、评论和详情页，兼容保留 `duplicate_of`。
+
+关系配置可在统一 `/config` 页面动态修改，默认值来自 Settings：
+
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
+| `issue_include_comments` | `true` | 主分析与关系阶段复用当前 Issue 评论 |
+| `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限 |
+| `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
+| `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
+| `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
+| `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
+| `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值 |
+| `semantic_issue_max_links` | `5` | PR 候选上限 |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值 |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值 |
+| `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
+| `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
+| `issue_candidate_pool_multiplier` | `3` | 初步召回数量倍数 |
+
+语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
 
 ### Agent 专家团队
 

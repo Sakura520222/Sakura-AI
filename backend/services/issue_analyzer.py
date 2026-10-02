@@ -41,6 +41,10 @@ from backend.services.issue_protocol import (
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
+from backend.services.issues.relation_analyzer import (
+    IssueRelationAnalyzer,
+    IssueRelationResult,
+)
 from backend.services.protocol_repair import (
     append_skipped_tool_results,
     run_protocol_repair_loop,
@@ -206,6 +210,10 @@ class IssueAnalyzer:
                 "confidence between 0 and 1 with a reason.",
                 "- SUGGESTED_TITLE is optional; set it only when the original title is "
                 "unclear or malformed, using the form [CATEGORY][PRIORITY] concise summary.",
+                "- Consume the supplied relation_context as established comparison facts. "
+                "DUPLICATE_OF must equal its verified open duplicate_of, or NONE when absent. "
+                "Closed historical relations inform feasibility and handling, never open duplication. "
+                "Do not invent or override relation decisions.",
                 "",
                 "## Tool use",
                 "- Use tools when needed to establish evidence; tool results remain "
@@ -310,15 +318,18 @@ class IssueAnalyzer:
                 repo_owner,
                 repo_name,
                 issue_number,
+                raise_on_error=True,
             )
         except ReviewCancelledError:
             raise
         except Exception as e:
-            logger.warning("GitHub API 获取评论失败: {}", e)
+            logger.warning("GitHub API 获取评论失败: {}", type(e).__name__)
             return None
 
-        if not comments:
+        if comments is None:
             return None
+        if not comments:
+            return []
 
         raw_comments = []
         for c in comments:
@@ -454,6 +465,7 @@ class IssueAnalyzer:
         observer: Any = None,
         cancel_event: Any = None,
         deadline: AITaskDeadline | None = None,
+        relation_context: IssueRelationResult | None = None,
     ) -> dict[str, Any]:
         """分析 Issue
 
@@ -512,16 +524,58 @@ class IssueAnalyzer:
 
         # 获取评论对话（受配置控制）
         comments = None
-        include_comments = await get_dynamic_config("issue_include_comments")
-        if include_comments:
-            try:
-                comments = await self._fetch_issue_comments(
-                    github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
-                )
-            except ReviewCancelledError:
-                raise
-            except Exception as e:
-                logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
+        # Fresh policy reads can fail against a live DB. Unknown policy admits
+        # no optional inference; main analysis still owns its separate failures.
+        try:
+            include_comments = await get_dynamic_config(
+                "issue_include_comments", fresh=True
+            )
+            if include_comments:
+                try:
+                    comments = await self._fetch_issue_comments(
+                        github_app,
+                        repo_owner,
+                        repo_name,
+                        issue_info.get("issue_number", 0),
+                    )
+                except ReviewCancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        "获取 Issue 评论失败（不影响分析）: {}", type(e).__name__
+                    )
+
+            self._raise_if_cancelled(cancel_event)
+            if relation_context is None:
+                if await get_dynamic_config("issue_detect_duplicates", fresh=True):
+                    if include_comments and comments is None:
+                        relation_context = IssueRelationResult(
+                            status="failed", failure="comments_unavailable"
+                        )
+                    else:
+                        relation_context = await IssueRelationAnalyzer(
+                            client=self.api_client
+                        ).analyze(
+                            repo_owner,
+                            repo_name,
+                            issue_info,
+                            comments=comments,
+                            cancel_event=cancel_event,
+                            deadline=task_deadline,
+                            context=invocation_context,
+                            observer=observer,
+                            output_language=output_language or "zh-CN",
+                        )
+                else:
+                    relation_context = IssueRelationResult(status="disabled")
+        except ReviewCancelledError:
+            raise
+        except Exception as exc:
+            self._raise_if_cancelled(cancel_event)
+            failure = type(exc).__name__
+            relation_context = IssueRelationResult(status="failed", failure=failure)
+            logger.warning("Issue relation prephase admission failed: {}", failure)
+        self._raise_if_cancelled(cancel_event)
 
         # 注入 .sakura/ 记忆上下文（先获取，再放入用户消息的 untrusted 边界内）
         # / Inject .sakura/ memory context first so it lands inside the untrusted
@@ -563,9 +617,7 @@ class IssueAnalyzer:
         primary_candidate = role_candidates[0] if role_candidates else None
         role_model = primary_candidate.model.model_id if primary_candidate else None
         role_context_window = (
-            primary_candidate.model.context_window_tokens
-            if primary_candidate
-            else None
+            primary_candidate.model.context_window_tokens if primary_candidate else None
         )
         supports_vision = any(
             candidate.model.capabilities.vision for candidate in role_candidates
@@ -616,6 +668,11 @@ class IssueAnalyzer:
             project_knowledge=sakura_section,
             image_count=len(images_payload),
         )
+        user_message += (
+            "\n=== VERIFIED ISSUE RELATION CONTEXT (FACTS ONLY) ===\n"
+            + json.dumps(relation_context.to_dict(), ensure_ascii=False)
+            + "\n=== END ISSUE RELATION CONTEXT ==="
+        )
 
         # 初始化消息列表（含多模态图片附件）
         user_entry: dict[str, Any] = {"role": "user", "content": user_message}
@@ -642,6 +699,8 @@ class IssueAnalyzer:
         # （无工具调用即交付最终结果）。
         iteration = 0
         tracker = TokenTracker()
+        tracker.prompt_tokens = relation_context.prompt_tokens
+        tracker.completion_tokens = relation_context.completion_tokens
         model_ctx_mgr = get_model_context_manager()
         context_model = role_model
         safe_context = (
@@ -664,6 +723,8 @@ class IssueAnalyzer:
             )
             self._raise_if_cancelled(cancel_event)
 
+            result["duplicate_of"] = relation_context.duplicate_of
+            result["issue_relations"] = relation_context.to_dict()
             result["prompt_tokens"] = tracker.prompt_tokens
             result["completion_tokens"] = tracker.completion_tokens
             result["tool_rounds"] = iteration
@@ -671,10 +732,7 @@ class IssueAnalyzer:
                 settings.issue_price_per_1k_prompt,
                 settings.issue_price_per_1k_completion,
             )
-            if (
-                publication_coordinator is not None
-                and invocation_context is not None
-            ):
+            if publication_coordinator is not None and invocation_context is not None:
                 result = await coordinate_publication(
                     publication_coordinator,
                     kind="issue_analysis",
@@ -743,6 +801,12 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                api_error_result["issue_relations"] = relation_context.to_dict()
+                api_error_result["duplicate_of"] = relation_context.duplicate_of
+                api_error_result["estimated_cost"] = tracker.calculate_cost(
+                    settings.issue_price_per_1k_prompt,
+                    settings.issue_price_per_1k_completion,
+                )
                 self._raise_if_cancelled(cancel_event)
                 return api_error_result
 
@@ -768,6 +832,12 @@ class IssueAnalyzer:
                     "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
+                empty_response_result["issue_relations"] = relation_context.to_dict()
+                empty_response_result["duplicate_of"] = relation_context.duplicate_of
+                empty_response_result["estimated_cost"] = tracker.calculate_cost(
+                    settings.issue_price_per_1k_prompt,
+                    settings.issue_price_per_1k_completion,
+                )
                 self._raise_if_cancelled(cancel_event)
                 return empty_response_result
 
@@ -905,9 +975,7 @@ class IssueAnalyzer:
                                 )
                                 requested_range = line_range.get("requested")
                                 returned_range = line_range.get("returned")
-                                start_line_valid = line_range.get(
-                                    "start_line_valid"
-                                )
+                                start_line_valid = line_range.get("start_line_valid")
                                 end_line_valid = line_range.get("end_line_valid")
                                 total_lines = line_range.get("total_lines")
                             else:

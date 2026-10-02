@@ -1526,7 +1526,12 @@ class GitHubAppClient:
             return None
 
     def get_issue_comments(
-        self, repo_owner: str, repo_name: str, issue_number: int
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        *,
+        raise_on_error: bool = False,
     ) -> list:
         """获取 Issue 的评论列表"""
         client = self.get_repo_client(repo_owner, repo_name)
@@ -1535,6 +1540,8 @@ class GitHubAppClient:
             issue = repo.get_issue(issue_number)
             return list(issue.get_comments())
         except Exception as e:
+            if raise_on_error:
+                raise
             logger.error(
                 f"获取 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
             )
