@@ -30,7 +30,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, Self, runtime_checkable
 from urllib.parse import unquote, urlsplit
 
-from backend.services.agent_team.network_policy import get_agent_team_network_policy
+from backend.services.agent_team.network_policy import (
+    NetworkCapability,
+    execution_network_capability,
+    get_agent_team_network_policy,
+    parse_network_capability,
+)
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
@@ -237,6 +242,8 @@ class ExecutionRequest:
         repr=False,
         compare=False,
     )
+    # Backend authorization metadata; never added to the sandboxd payload.
+    network_capability: NetworkCapability = NetworkCapability.NONE
 
     def __post_init__(self) -> None:
         has_command = self.command is not None
@@ -280,6 +287,9 @@ class ExecutionRequest:
         except ValueError as exc:
             raise ValueError(f"未知执行 profile: {self.profile}") from exc
         object.__setattr__(self, "profile", profile)
+        capability = parse_network_capability(self.network_capability)
+        execution_network_capability(profile, capability)
+        object.__setattr__(self, "network_capability", capability)
         normalized_env = dict(self.env)
         if profile is not ExecutionProfile.TRUSTED_CONTROL and normalized_env:
             raise ValueError("Agent/Dependency 执行不允许调用方注入环境变量")

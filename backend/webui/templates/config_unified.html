@@ -26,18 +26,22 @@
     <section id="agent-network-status"
              class="rounded-xl border border-sakura-200 bg-sakura-50/70 p-4 dark:border-sakura-800 dark:bg-sakura-950/30"
              role="status" aria-live="polite">
-        <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0">
+        <div class="flex flex-col items-start justify-between gap-4 sm:flex-row">
+            <div class="min-w-0 w-full [overflow-wrap:anywhere] sm:w-auto">
                 <h2 class="text-sm font-semibold text-sakura-900 dark:text-sakura-100">
                     {{ _('config.agent_network_status_title') }}
                 </h2>
                 <p id="agent-network-status-detail" class="mt-1 text-xs text-sakura-800 dark:text-sakura-200">
                     {{ _('config.agent_network_status_loading') }}
                 </p>
+                <p id="agent-network-status-dependency" class="mt-1 text-xs text-sakura-800 dark:text-sakura-200"></p>
+                <p id="agent-network-status-temporary" class="mt-2 hidden text-xs text-sakura-800 dark:text-sakura-200">
+                    {{ _('config.agent_network_temporary_hint') }}
+                </p>
                 <p id="agent-network-status-risk" class="mt-2 hidden text-xs font-medium text-amber-800 dark:text-amber-300"></p>
             </div>
             <span id="agent-network-status-badge"
-                  class="shrink-0 rounded-full bg-gray-200 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                  class="self-start shrink-0 max-w-full rounded-full bg-gray-200 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
                 …
             </span>
         </div>
@@ -1102,14 +1106,20 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 (function () {
     const detail = document.getElementById('agent-network-status-detail');
+    const dependency = document.getElementById('agent-network-status-dependency');
+    const temporary = document.getElementById('agent-network-status-temporary');
     const risk = document.getElementById('agent-network-status-risk');
     const badge = document.getElementById('agent-network-status-badge');
-    if (!detail || !risk || !badge) return;
+    if (!detail || !dependency || !temporary || !risk || !badge) return;
     const labels = {
         backend: {{ _('config.agent_network_backend') | tojson }},
         sandboxReady: {{ _('config.agent_network_sandbox_ready') | tojson }},
         egress: {{ _('config.agent_network_egress') | tojson }},
         policy: {{ _('config.agent_network_policy') | tojson }},
+        agentMode: {{ _('config.agent_network_agent_mode') | tojson }},
+        dependencyMode: {{ _('config.agent_network_dependency_mode') | tojson }},
+        dependencyReady: {{ _('config.agent_network_dependency_ready') | tojson }},
+        backendReady: {{ _('config.agent_network_backend_ready') | tojson }},
         available: {{ _('config.agent_network_available') | tojson }},
         unavailable: {{ _('config.agent_network_unavailable') | tojson }},
         notApplicable: {{ _('config.agent_network_not_applicable') | tojson }},
@@ -1132,11 +1142,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const backend = backendLabels[data.backend] || labels.unavailable;
             const policy = policyLabels[data.policy] || labels.unavailable;
             const capability = capabilityLabels[data.egress_capability] || labels.unavailable;
-            detail.textContent = `${labels.backend}: ${backend} · ${labels.policy}: ${policy} · ${labels.sandboxReady}: ${yesNo(data.sandbox_ready)} · ${labels.egress}: ${capability} (${yesNo(data.egress_available)})`;
-            badge.textContent = data.backend_ready ? labels.available : labels.unavailable;
+            const agentMode = capabilityLabels[data.agent_network_mode] || labels.unavailable;
+            const dependencyMode = capabilityLabels[data.dependency_network_mode] || labels.unavailable;
+            detail.textContent = `${labels.backend}: ${backend} · ${labels.policy}: ${policy} · ${labels.agentMode}: ${agentMode} · ${labels.sandboxReady}: ${yesNo(data.sandbox_ready)}`;
+            dependency.textContent = `${labels.dependencyMode}: ${dependencyMode} · ${labels.dependencyReady}: ${yesNo(data.dependency_egress_available)} · ${labels.egress}: ${capability} (${yesNo(data.egress_available)})`;
+            temporary.classList.toggle('hidden', data.backend !== 'sandbox' || data.dependency_network_mode !== 'egress');
+            badge.textContent = `${labels.backendReady}: ${yesNo(data.backend_ready)}`;
             badge.className = data.backend_ready
-                ? 'shrink-0 rounded-full bg-green-100 px-2 py-1 text-xs text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                : 'shrink-0 rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
+                ? 'self-start shrink-0 max-w-full rounded-full bg-green-100 px-2 py-1 text-xs text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                : 'self-start shrink-0 max-w-full rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
             const warnings = [];
             if (data.full_access_risk) warnings.push(labels.fullRisk);
             if (data.local_host_network) warnings.push(labels.localRisk);
@@ -1144,8 +1158,10 @@ document.addEventListener('DOMContentLoaded', function() {
             risk.classList.toggle('hidden', warnings.length === 0);
         } catch (error) {
             detail.textContent = labels.failed;
-            badge.textContent = labels.unavailable;
-            badge.className = 'shrink-0 rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
+            dependency.textContent = `${labels.dependencyReady}: ${labels.unavailable}`;
+            temporary.classList.add('hidden');
+            badge.textContent = `${labels.backendReady}: ${labels.unavailable}`;
+            badge.className = 'self-start shrink-0 max-w-full rounded-full bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/30 dark:text-red-300';
             risk.textContent = labels.failed;
             risk.classList.remove('hidden');
         }

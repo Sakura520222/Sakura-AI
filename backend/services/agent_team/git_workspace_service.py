@@ -447,10 +447,9 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             )
             return
 
-        # ``full_access`` is the only policy that may run untrusted package
-        # hooks online.  The sandbox runner maps this policy to its fixed
-        # server-owned egress capability; no deployment network name is read
-        # or accepted by this Backend service.
+        # Dependency executions may use temporary egress under web_tools or
+        # full_access. The runner authorizes every request against fresh policy;
+        # no deployment network name is read or accepted by this service.
         egress_capability = getattr(executor, "egress_capability", None)
         if egress_capability != "egress":
             raise ExecutionError(
@@ -504,8 +503,8 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
 
         # sandboxd runner images are Linux OCI images even when the Web
         # process is developed on Windows; use the container-visible path.
-        # The daemon maps this full-access dependency request to its
-        # server-owned egress network.  No request or model field can select
+        # The Backend maps this authorized dependency request to the daemon's
+        # server-owned egress mode. No request or model field can select
         # or widen that network.
         pip_cmd = "/workspace/.venv/sandbox/bin/pip"
         # A pyproject.toml that is not installable (no [build-system], or

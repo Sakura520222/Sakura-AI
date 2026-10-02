@@ -26,7 +26,9 @@ from backend.core.time_service import filename_timestamp
 from backend.models.database import AppConfig, _settings_default_to_str
 from backend.services.agent_team.network_policy import (
     AgentTeamNetworkPolicy,
+    NetworkCapability,
     get_agent_team_network_policy_state,
+    network_mode_for_policy,
 )
 from backend.services.agent_team.sandbox_client import (
     read_sandbox_capability_status,
@@ -1342,6 +1344,9 @@ async def agent_network_status(
                 "policy_revision": "unavailable",
                 "full_access_risk": False,
                 "local_host_network": False,
+                "agent_network_mode": "unavailable",
+                "dependency_network_mode": "unavailable",
+                "dependency_egress_available": False,
             },
             status_code=503,
         )
@@ -1355,7 +1360,13 @@ async def agent_network_status(
     # failure.
     egress_capability = "not_applicable" if local_host_network else "unavailable"
     egress_available: bool | None = None if local_host_network else False
+    agent_network_mode = "not_applicable"
+    dependency_network_mode = "not_applicable"
     if backend == "sandbox":
+        agent_network_mode = network_mode_for_policy(
+            policy, capability=NetworkCapability.NONE
+        )
+        dependency_network_mode = network_mode_for_policy(policy, profile="dependency")
         sandbox_status = await read_sandbox_capability_status()
         sandbox_ready = bool(sandbox_status.get("available"))
         egress_capability = str(
@@ -1382,6 +1393,13 @@ async def agent_network_status(
             "policy_revision": policy_state.revision,
             "full_access_risk": policy is AgentTeamNetworkPolicy.FULL_ACCESS,
             "local_host_network": local_host_network,
+            "agent_network_mode": agent_network_mode,
+            "dependency_network_mode": dependency_network_mode,
+            "dependency_egress_available": bool(
+                sandbox_ready
+                and egress_available
+                and dependency_network_mode == "egress"
+            ),
         }
     )
 

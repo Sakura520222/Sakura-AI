@@ -347,7 +347,106 @@ async def test_agent_network_status_local_full_access_is_host_ready(
         "policy_revision": "revision-42",
         "full_access_risk": True,
         "local_host_network": True,
+        "agent_network_mode": "not_applicable",
+        "dependency_network_mode": "not_applicable",
+        "dependency_egress_available": False,
     }
+
+
+@pytest.mark.parametrize(
+    (
+        "policy",
+        "sandbox_ready",
+        "egress",
+        "agent_mode",
+        "dependency_mode",
+        "dependency_available",
+        "backend_ready",
+    ),
+    [
+        ("web_tools", True, "egress", "none", "egress", True, True),
+        ("web_tools", True, "none", "none", "egress", False, True),
+        ("web_tools", False, "egress", "none", "egress", False, False),
+        ("web_tools", False, "unavailable", "none", "egress", False, False),
+        ("offline", True, "egress", "none", "none", False, True),
+        ("full_access", True, "egress", "egress", "egress", True, True),
+        ("full_access", True, "none", "egress", "egress", False, False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_agent_network_status_separates_authorized_modes_from_readiness(
+    monkeypatch,
+    policy,
+    sandbox_ready,
+    egress,
+    agent_mode,
+    dependency_mode,
+    dependency_available,
+    backend_ready,
+):
+    """An advertised egress mode alone must not imply a ready dependency runner."""
+
+    async def fresh_policy_state():
+        return SimpleNamespace(
+            policy=AgentTeamNetworkPolicy(policy), revision="revision-604"
+        )
+
+    async def fresh_config(_key):
+        return "sandbox"
+
+    async def sandbox_status():
+        return {"available": sandbox_ready, "egress_capability": egress}
+
+    monkeypatch.setattr(
+        config_routes, "get_agent_team_network_policy_state", fresh_policy_state
+    )
+    monkeypatch.setattr(config_routes, "get_dynamic_config_fresh", fresh_config)
+    monkeypatch.setattr(config_routes, "read_sandbox_capability_status", sandbox_status)
+
+    response = await config_routes.agent_network_status(user={})
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload == {
+        "backend": "sandbox",
+        "backend_ready": backend_ready,
+        "sandbox_ready": sandbox_ready,
+        "egress_capability": egress,
+        "egress_available": egress == "egress",
+        "policy": policy,
+        "policy_revision": "revision-604",
+        "full_access_risk": policy == "full_access",
+        "local_host_network": False,
+        "agent_network_mode": agent_mode,
+        "dependency_network_mode": dependency_mode,
+        "dependency_egress_available": dependency_available,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_network_status_failed_config_marks_new_modes_unavailable(
+    monkeypatch,
+):
+    async def failed_policy_state():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(
+        config_routes, "get_agent_team_network_policy_state", failed_policy_state
+    )
+    response = await config_routes.agent_network_status(user={})
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["backend_ready"] is False
+    assert payload["agent_network_mode"] == "unavailable"
+    assert payload["dependency_network_mode"] == "unavailable"
+    assert payload["dependency_egress_available"] is False
+
+
+def test_agent_network_status_requires_super_admin():
+    assert require_super_admin in _dependency_calls(
+        _route("/config/agent-network-status", "GET")
+    )
 
 
 def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
