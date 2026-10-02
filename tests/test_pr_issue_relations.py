@@ -67,6 +67,7 @@ RELATION = {
     "evidence": [
         {
             "path": "dependency.py",
+            "change": "added",
             "code_quote": "retry_tls_eof()",
             "issue_quote": "Retry transient TLS EOF",
         }
@@ -100,8 +101,8 @@ async def verify(monkeypatch, payload=None, error=None, **kwargs):
     result = await pr_verifier.PRRelationVerifier(client).verify(
         pr_title="TLS retry PR",
         pr_body="Human\n<!-- sakura-ai-summary-start -->Fixes #570<!-- sakura-ai-summary-end -->",
-        candidates=[CANDIDATE],
-        files=FILES,
+        candidates=kwargs.pop("candidates", [CANDIDATE]),
+        files=kwargs.pop("files", FILES),
         **kwargs,
     )
     return result, client
@@ -133,6 +134,7 @@ async def test_grounded_tls_retry_protocol_closes_and_summary_is_not_evidence(
             "evidence": [
                 {
                     "path": "dependency.py",
+                    "change": "added",
                     "code_quote": "invented()",
                     "issue_quote": "Retry transient TLS EOF",
                 }
@@ -1062,3 +1064,214 @@ async def test_verifier_ordinary_event_uses_domain_cancellation(monkeypatch, pha
             files=FILES,
             cancel_event=event,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patch,change,quote,accepted",
+    [
+        (
+            "@@ -1 +1 @@\n-retry_tls_eof()\n+fail_fast()",
+            "added",
+            "retry_tls_eof()",
+            False,
+        ),
+        ("@@ -1 +1 @@\n-old\n+retry_tls_eof()", None, "retry_tls_eof()", False),
+        ("@@ -1 +1 @@\n-retry_tls_eof()\n+fail_fast()", None, "retry_tls_eof()", False),
+        ("@@ -1 +1 @@\n-old\n+retry_tls_eof()", "removed", "retry_tls_eof()", False),
+        (
+            "@@ -1,2 +1,2 @@\n+first()\n-removed()\n+second()",
+            "added",
+            "first()\nsecond()",
+            False,
+        ),
+        (
+            "@@ -1,2 +1,3 @@\n+first()\n context\n+second()",
+            "added",
+            "first()\nsecond()",
+            False,
+        ),
+        (
+            "@@ -1 +1 @@\n+first()\n@@ -4 +4 @@\n+second()",
+            "added",
+            "first()\nsecond()",
+            False,
+        ),
+        ("@@ -1 +1,2 @@\n+first()\n+second()", "added", "first()\nsecond()", True),
+        ("@@ -1,2 +1 @@\n-first()\n-second()", "removed", "first()\nsecond()", True),
+        (
+            "@@ -1 +1 @@\n-    fail_on_transient_tls()",
+            "removed",
+            "fail_on_transient_tls()",
+            True,
+        ),
+    ],
+)
+async def test_evidence_direction_and_contiguous_hunk_runs(
+    monkeypatch, patch, change, quote, accepted
+):
+    evidence = {
+        "path": "dependency.py",
+        "code_quote": quote,
+        "issue_quote": "Retry transient TLS EOF",
+    }
+    if change is not None:
+        evidence["change"] = change
+    relation = {
+        **RELATION,
+        "reason": "Fix transient failures using the stated change",
+        "evidence": [evidence],
+    }
+    result, _ = await verify(
+        monkeypatch,
+        {"relations": [relation]},
+        files=[{"path": "dependency.py", "patch": patch, "complete": True}],
+    )
+    assert result.succeeded is accepted
+    if accepted:
+        assert result.relations[0]["evidence"] == [evidence]
+    else:
+        assert result.relations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario", ["small_proof", "oversized_proof", "removed_as_added", "valid_removed"]
+)
+async def test_sync_persists_only_bounded_decision_and_preserves_large_source_context(
+    monkeypatch, scenario
+):
+    from sqlalchemy import text
+
+    from backend.models.database import PRIssueLink
+    from backend.services.issues import pr_link_sync, pr_verifier
+
+    engine = create_engine("sqlite:///:memory:")
+    PRIssueLink.__table__.create(engine)
+    # SQLite otherwise accepts oversized TEXT; enforce the deployed MySQL byte
+    # invariant with a real SQL trigger while exercising the real ORM writes.
+    with engine.begin() as conn:
+        conn.execute(
+            text("""CREATE TRIGGER inference_reason_text_limit BEFORE INSERT ON pr_issue_links
+            WHEN length(CAST(NEW.inference_reason AS BLOB)) > 65535
+            BEGIN SELECT RAISE(ABORT, 'TEXT byte capacity exceeded'); END""")
+        )
+    session = Session(engine)
+    session.add(
+        PRIssueLink(
+            repo_name="o/r",
+            pr_id=618,
+            issue_number=570,
+            link_type="semantic",
+            inference_reason="old proof",
+        )
+    )
+    session.commit()
+
+    class DB:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def execute(self, stmt):
+            return session.execute(stmt)
+
+        def add(self, row):
+            session.add(row)
+
+        async def delete(self, row):
+            session.delete(row)
+
+        async def flush(self):
+            session.flush()
+
+        async def commit(self):
+            session.commit()
+
+        async def rollback(self):
+            session.rollback()
+
+    candidate = {**CANDIDATE, "body": CANDIDATE["body"] + "多字节正文" * 15000}
+    candidate["content"] = candidate["title"] + "\n" + candidate["body"]
+    relation = {**RELATION}
+    if scenario == "oversized_proof":
+        relation["evidence"] = [
+            {**RELATION["evidence"][0], "issue_quote": candidate["body"][:30000]}
+        ]
+        # Character-count guards would admit this proof; TEXT capacity is bytes.
+        proof_json = json.dumps(relation, ensure_ascii=False)
+        assert len(proof_json) < 65535 < len(proof_json.encode("utf-8"))
+    elif scenario == "valid_removed":
+        relation["reason"] = (
+            "Removes the faulty immediate failure on transient TLS errors"
+        )
+        relation["evidence"] = [
+            {
+                **RELATION["evidence"][0],
+                "change": "removed",
+                "code_quote": "fail_on_transient_tls()",
+            }
+        ]
+
+    async def call(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=json.dumps({"relations": [relation]})
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr(pr_verifier, "get_dynamic_config", AsyncMock(return_value=0.85))
+    pr = PR(
+        "Human\n<!-- sakura-ai-issue-links-start -->Closes #570<!-- sakura-ai-issue-links-end -->"
+    )
+    if scenario in {"removed_as_added", "valid_removed"}:
+        removed = (
+            "retry_tls_eof()"
+            if scenario == "removed_as_added"
+            else "fail_on_transient_tls()"
+        )
+        pr.get_files = lambda: [
+            SimpleNamespace(
+                filename="dependency.py",
+                status="modified",
+                patch=f"@@ -1 +0,0 @@\n-{removed}",
+                additions=0,
+                deletions=1,
+            )
+        ]
+    original_body = pr.body
+    result = await pr_link_sync.PRRelationSyncService(
+        retriever=SimpleNamespace(retrieve=AsyncMock(return_value=[candidate])),
+        verifier=pr_verifier.PRRelationVerifier(SimpleNamespace(call_with_retry=call)),
+        session_factory=DB,
+        linker=linker(),
+    ).synchronize(SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618)
+    rows = session.scalars(select(PRIssueLink)).all()
+    if scenario in {"oversized_proof", "removed_as_added"}:
+        assert not result.succeeded
+        assert result.failure == (
+            "SemanticLinkEvidenceTooLargeError"
+            if scenario == "oversized_proof"
+            else "ValueError"
+        )
+        assert result.relations == []
+        assert pr.body == original_body and not pr.edits
+        assert len(rows) == 1 and rows[0].issue_number == 570
+        assert rows[0].inference_reason == "old proof"
+    else:
+        assert result.succeeded
+        assert result.relations[0]["body"] == candidate["body"]
+        assert result.relations[0]["content"] == candidate["content"]
+        assert "Closes #612" in pr.body and "Closes #570" not in pr.body
+        assert len(rows) == 1 and rows[0].issue_number == 612
+        stored = json.loads(rows[0].inference_reason)
+        assert stored == relation
+        assert "body" not in stored and "content" not in stored
+        assert len(rows[0].inference_reason.encode("utf-8")) <= 65535
+    session.close()

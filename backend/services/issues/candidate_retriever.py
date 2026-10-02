@@ -3,6 +3,8 @@
 import asyncio
 import math
 
+from github import UnknownObjectException
+
 from backend.core.config import get_dynamic_config
 from backend.services.issues.corpus_service import IssueCorpusService, snapshot_issue
 
@@ -87,9 +89,18 @@ class IssueCandidateRetriever:
             )
             if similarity < similarity_threshold:
                 continue
-            facts = await asyncio.to_thread(
-                lambda number=number: snapshot_issue(repo.get_issue(number))
-            )
+            try:
+                facts = await asyncio.to_thread(
+                    lambda number=number: snapshot_issue(repo.get_issue(number))
+                )
+            except UnknownObjectException as error:
+                if error.status != 404:
+                    raise
+                # A missed deletion webhook can leave a recalled row behind.
+                # Recheck under shared writer ownership: the unlocked 404 must
+                # not delete an Issue that reappeared while another writer ran.
+                await self.corpus.remove_issue(repo_owner, repo_name, number)
+                continue
             if not facts:
                 continue
             if facts["number"] != number:

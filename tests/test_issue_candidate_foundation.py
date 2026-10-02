@@ -925,3 +925,229 @@ async def test_cancellation_during_final_count_cannot_leave_committed_checkpoint
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+async def retrieve_candidates(service, *, caller="issue"):
+    if caller == "pr":
+        return await service.search_related_issues(
+            "owner", "repo", "query", "human body", [], top_k=1
+        )
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+
+    return await IssueCandidateRetriever(service).retrieve(
+        "owner",
+        "repo",
+        text="query",
+        state="all",
+        exclude_numbers=[],
+        top_k=1,
+        similarity_threshold=0.8,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["pr", "issue"])
+@pytest.mark.parametrize("force", [False, True])
+async def test_deleted_recalled_candidate_is_pruned_without_losing_valid_candidate(
+    foundation, monkeypatch, caller, force
+):
+    service, collection, repo, values = foundation
+    origin, clock = timestamped_source(monkeypatch, repo)
+    repo.rows.append(issue(2))
+    clock[0] = origin + timedelta(seconds=5)
+    await service.index_repo_issues("owner", "repo")
+    # The deleted row ranks ahead of a still-valid result. Its missed webhook
+    # cannot be repaired by either an incremental fetch or all-state upserts.
+    collection.docs["issue_2"]["embedding"] = [0.9, 0.1]
+    repo.rows = [issue(2)]
+    clock[0] = origin + timedelta(seconds=10)
+    await service.index_repo_issues("owner", "repo", force=force)
+    assert "issue_1" in collection.docs
+    collection.docs["issue_2"]["embedding"] = [0.9, 0.1]
+    checkpoint = deepcopy(collection.metadata)
+    values["issue_corpus_freshness_seconds"] = 3600
+    for _ in range(2):
+        rows = await retrieve_candidates(service, caller=caller)
+        assert [row["number"] for row in rows] == [2]
+        assert "issue_1" not in collection.docs
+        assert collection.metadata == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_recalled_404_rechecks_after_newer_writer_and_preserves_reappeared_issue(
+    foundation, monkeypatch
+):
+    from github import UnknownObjectException
+
+    from backend.services.issues.corpus_service import IssueCorpusService
+
+    service, collection, repo, values = foundation
+    origin, clock = timestamped_source(monkeypatch, repo)
+    repo.rows.append(issue(2))
+    await service.index_repo_issues("owner", "repo")
+    values["issue_corpus_freshness_seconds"] = 3600
+    initial_read, release_read = threading.Event(), threading.Event()
+    writer_started, release_writer = asyncio.Event(), asyncio.Event()
+    writer_finished = threading.Event()
+    original_get = repo.get_issue
+    first = True
+
+    def read(number):
+        nonlocal first
+        if number == 1 and first:
+            first = False
+            initial_read.set()
+            assert release_read.wait(5)
+            raise UnknownObjectException(404, {"message": "Not Found"}, {})
+        if number == 1 and initial_read.is_set() and release_read.is_set():
+            assert writer_finished.is_set(), "Recheck ran outside writer ownership"
+        return original_get(number)
+
+    async def blocked_embedding(text):
+        writer_started.set()
+        await release_writer.wait()
+        return [1.0, 0.0]
+
+    monkeypatch.setattr(repo, "get_issue", read)
+    pending = asyncio.create_task(retrieve_candidates(service))
+    writer = None
+    try:
+        assert await asyncio.to_thread(initial_read.wait, 5)
+        repo.rows[0] = issue(
+            body="newer reappeared source",
+            updated_at=(origin + timedelta(seconds=2)).isoformat(),
+        )
+        service._embedding_service.embed_query.side_effect = blocked_embedding
+        writer = asyncio.create_task(
+            IssueCorpusService(service).update_issue("owner", "repo", 1)
+        )
+        await asyncio.wait_for(writer_started.wait(), 5)
+        release_read.set()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(pending), 0.1)
+        writer_finished.set()
+        release_writer.set()
+        await writer
+        rows = await pending
+        assert [row["number"] for row in rows] == [2]
+        assert (
+            collection.docs["issue_1"]["metadata"]["body"] == "newer reappeared source"
+        )
+        clock[0] = origin + timedelta(seconds=10)
+        values["issue_corpus_freshness_seconds"] = 0
+        await service.index_repo_issues("owner", "repo")
+        assert (
+            collection.docs["issue_1"]["metadata"]["body"] == "newer reappeared source"
+        )
+        service._embedding_service.embed_query.side_effect = None
+        current = await retrieve_candidates(service)
+        assert [row["number"] for row in current] == [1]
+        assert current[0]["body"] == "newer reappeared source"
+    finally:
+        release_read.set()
+        release_writer.set()
+        await asyncio.gather(
+            pending, *([writer] if writer else []), return_exceptions=True
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["hydration", "recheck"])
+@pytest.mark.parametrize("failure", ["permission", "server", "network", "unavailable"])
+async def test_candidate_failure_is_observable_and_never_prunes_rows(
+    foundation, monkeypatch, phase, failure
+):
+    from github import GithubException, UnknownObjectException
+
+    service, collection, repo, values = foundation
+    await service.index_repo_issues("owner", "repo")
+    values["issue_corpus_freshness_seconds"] = 3600
+    previous = deepcopy(collection.docs)
+    checkpoint = deepcopy(collection.metadata)
+    calls = 0
+
+    def fail(number):
+        nonlocal calls
+        calls += 1
+        if phase == "recheck" and calls == 1:
+            if failure == "unavailable":
+                service.github_app.get_repo_client = lambda *args: None
+            raise UnknownObjectException(404, {"message": "Not Found"}, {})
+        if failure == "permission":
+            raise GithubException(403, {"message": "Forbidden"}, {})
+        if failure == "server":
+            raise UnknownObjectException(500, {"message": "Server failure"}, {})
+        raise RuntimeError("network unavailable")
+
+    if failure == "unavailable" and phase == "hydration":
+        service.github_app.get_repo_client = lambda *args: None
+    monkeypatch.setattr(repo, "get_issue", fail)
+    expected = GithubException if failure in {"permission", "server"} else RuntimeError
+    with pytest.raises(expected) as raised:
+        await retrieve_candidates(service)
+    if failure in {"permission", "server"}:
+        assert raised.value.status == (403 if failure == "permission" else 500)
+    assert collection.docs == previous
+    assert collection.metadata == checkpoint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_fails", [False, True])
+async def test_cancelled_candidate_pruning_drains_delete_before_next_writer(
+    foundation, monkeypatch, delete_fails
+):
+    service, collection, repo, values = foundation
+    origin, clock = timestamped_source(monkeypatch, repo)
+    repo.rows.append(issue(2))
+    await service.index_repo_issues("owner", "repo")
+    repo.rows = [issue(2)]
+    values["issue_corpus_freshness_seconds"] = 3600
+    started, release = threading.Event(), threading.Event()
+    original = collection.delete
+
+    def blocked_delete(**kwargs):
+        started.set()
+        assert release.wait(5)
+        if delete_fails:
+            raise RuntimeError("delete unavailable")
+        original(**kwargs)
+
+    monkeypatch.setattr(collection, "delete", blocked_delete)
+    pending = asyncio.create_task(retrieve_candidates(service))
+    retry = None
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        pending.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not pending.done(), (
+            "Cancellation released ownership before deletion drained"
+        )
+        repo.rows.insert(
+            0,
+            issue(
+                body="new after deletion",
+                updated_at=(origin + timedelta(seconds=2)).isoformat(),
+            ),
+        )
+        clock[0] = origin + timedelta(seconds=5)
+        values["issue_corpus_freshness_seconds"] = 0
+        retry = asyncio.create_task(service.index_repo_issues("owner", "repo"))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(retry), 0.1)
+        pending.cancel()
+        await asyncio.sleep(0)
+        assert not pending.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        await retry
+        assert collection.docs["issue_1"]["metadata"]["body"] == "new after deletion"
+        clock[0] = origin + timedelta(seconds=10)
+        await service.index_repo_issues("owner", "repo")
+        assert collection.docs["issue_1"]["metadata"]["body"] == "new after deletion"
+    finally:
+        release.set()
+        await asyncio.gather(
+            pending, *([retry] if retry else []), return_exceptions=True
+        )

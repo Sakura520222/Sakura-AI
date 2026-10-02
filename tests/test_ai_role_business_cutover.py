@@ -115,7 +115,7 @@ async def test_issue_verification_uses_summary_role_without_flat_model(monkeypat
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content='{"relations": [{"number": 1, "relation": "related", "confidence": 0.99, "reason": "partial fix", "evidence": [{"path": "legacy", "code_quote": "details", "issue_quote": "details"}]}]}'
+                            content='{"relations": [{"number": 1, "relation": "related", "confidence": 0.99, "reason": "partial fix", "evidence": [{"path": "legacy", "change": "added", "code_quote": "details", "issue_quote": "details"}]}]}'
                         )
                     )
                 ]
@@ -128,7 +128,7 @@ async def test_issue_verification_uses_summary_role_without_flat_model(monkeypat
     candidates = [{"number": 1, "title": "issue", "body": "details", "state": "open"}]
 
     result = await service.verify_related_issues(
-        "PR", "body", candidates, pr_files="+details"
+        "PR", "body", candidates, pr_files="@@ -0,0 +1 @@\n+details"
     )
 
     assert result[0]["number"] == 1

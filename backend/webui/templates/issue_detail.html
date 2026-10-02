@@ -177,11 +177,21 @@
     {% endif %}
 
     <!-- 操作按钮 -->
-    <div class="flex gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+        {% if analysis.issue_state == 'closed' %}
+        <button disabled aria-describedby="reanalysis-unavailable"
+                class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed">
+            {{ _('common.reanalyze') }}
+        </button>
+        <p id="reanalysis-unavailable" class="text-sm text-gray-500 dark:text-gray-400">
+            {{ _('issue.reanalyze_closed') }}
+        </p>
+        {% else %}
         <button onclick="reanalyze({{ analysis.id }})"
                 class="px-4 py-2 rounded-lg text-sm font-medium bg-pink-500 text-white hover:bg-pink-600 transition-colors">
             {{ _('common.reanalyze') }}
         </button>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
