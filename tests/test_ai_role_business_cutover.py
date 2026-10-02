@@ -114,7 +114,9 @@ async def test_issue_verification_uses_summary_role_without_flat_model(monkeypat
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(content='{"verified": [1]}')
+                        message=SimpleNamespace(
+                            content='{"relations": [{"number": 1, "relation": "related", "confidence": 0.99, "reason": "partial fix", "evidence": [{"path": "legacy", "code_quote": "details", "issue_quote": "details"}]}]}'
+                        )
                     )
                 ]
             )
@@ -123,11 +125,14 @@ async def test_issue_verification_uses_summary_role_without_flat_model(monkeypat
     service = issue_embedding_service.IssueEmbeddingService.__new__(
         issue_embedding_service.IssueEmbeddingService
     )
-    candidates = [{"number": 1, "title": "issue", "content": "details"}]
+    candidates = [{"number": 1, "title": "issue", "body": "details", "state": "open"}]
 
-    result = await service.verify_related_issues("PR", "body", candidates)
+    result = await service.verify_related_issues(
+        "PR", "body", candidates, pr_files="+details"
+    )
 
-    assert result == candidates
+    assert result[0]["number"] == 1
+    assert result[0]["relation"] == "related"
     assert calls[0]["role"] == "summary"
     assert calls[0]["model"] == ""
 
@@ -179,7 +184,7 @@ async def test_issue_verification_propagates_missing_summary_role(monkeypatch):
         await service.verify_related_issues(
             "PR",
             "body",
-            [{"number": 1, "title": "issue", "content": "details"}],
+            [{"number": 1, "title": "issue", "body": "details", "state": "open"}],
         )
 
 

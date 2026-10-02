@@ -16,6 +16,10 @@ from backend.core.config import get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
+from backend.services.pr_body import (
+    replace_sakura_generated_section,
+    strip_sakura_generated_sections,
+)
 from backend.services.section_config_service import section_config_service
 
 # 各语言的 import 语句正则模式；预编译到模块级别，避免每次扫描重复编译。
@@ -233,20 +237,10 @@ class PRDependencyGraphService:
         从 GitHub 读取最新 body，避免用过期的 pr.body 缓存。
         """
         current_body = await asyncio.to_thread(lambda: pr.body or "")
-        original = self._extract_original_body(current_body)
         graph_block = self._build_graph_block(mermaid_graph)
-
-        # 保留 PR Summary 块（如果存在）
-        summary_block = self._extract_summary_block(current_body)
-
-        parts = []
-        if original.strip():
-            parts.append(original)
-        if summary_block:
-            parts.append(summary_block)
-        parts.append(graph_block)
-
-        new_body = "\n\n".join(parts)
+        new_body = replace_sakura_generated_section(
+            current_body, "depgraph", graph_block
+        )
         await asyncio.to_thread(pr.edit, body=new_body)
         logger.info("PR body 已更新（注入依赖图）")
 
@@ -917,25 +911,8 @@ class PRDependencyGraphService:
         )
 
     def _extract_original_body(self, body: str) -> str:
-        """从 PR body 中提取不含任何 AI 注入区域的原始内容"""
-        if not body:
-            return ""
-
-        # 移除依赖图标记区域
-        depgraph_pattern = (
-            re.escape(self.START_MARKER) + r".*?" + re.escape(self.END_MARKER)
-        )
-        clean = re.sub(depgraph_pattern, "", body, flags=re.DOTALL)
-
-        # 移除 PR Summary 标记区域
-        summary_pattern = (
-            re.escape(PRSummaryService.START_MARKER)
-            + r".*?"
-            + re.escape(PRSummaryService.END_MARKER)
-        )
-        clean = re.sub(summary_pattern, "", clean, flags=re.DOTALL).strip()
-
-        return clean
+        """Extract human evidence, separate from this writer's ownership."""
+        return strip_sakura_generated_sections(body)
 
     @staticmethod
     def _extract_summary_block(body: str) -> str | None:

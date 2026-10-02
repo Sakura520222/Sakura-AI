@@ -605,6 +605,7 @@ class IssueAnalysis(Base):
     suggested_labels = Column(Text, nullable=True)
     suggested_milestone = Column(String(255), nullable=True)
     duplicate_of = Column(BigInteger, nullable=True, index=True)
+    issue_relations = Column(Text, nullable=True)
     related_prs = Column(Text, nullable=True)
     analysis_detail = Column(Text, nullable=True)
 
@@ -644,6 +645,15 @@ class PRIssueLink(Base):
     """PR-Issue 关联表"""
 
     __tablename__ = "pr_issue_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "repo_name",
+            "pr_id",
+            "issue_number",
+            "link_type",
+            name="uq_pr_issue_link_key",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pr_id = Column(BigInteger, nullable=False, index=True)
@@ -1346,6 +1356,55 @@ async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
     logger.info("[auto-migrate] telegram_users.telegram_id 已改为可为空")
 
 
+async def _ensure_pr_issue_link_unique_index(conn, logger) -> bool:
+    """Preserve latest exact-key row and install uniqueness on legacy schemas."""
+    from sqlalchemy import inspect, select
+
+    table = PRIssueLink.__table__
+    keys = ("repo_name", "pr_id", "issue_number", "link_type")
+
+    def ensure(sync_conn):
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table.name):
+            return False
+        unique_sets = [
+            tuple(i.get("column_names") or ())
+            for i in inspector.get_indexes(table.name)
+            if i.get("unique")
+        ]
+        unique_sets += [
+            tuple(c.get("column_names") or ())
+            for c in inspector.get_unique_constraints(table.name)
+        ]
+        if keys in unique_sets:
+            return False
+        if any(i.get("name") == "uq_pr_issue_link_key" for i in inspector.get_indexes(table.name)):
+            raise RuntimeError("uq_pr_issue_link_key already exists but is not unique on the required key")
+        # Exact-key ownership only; never collapse explicit and semantic links
+        # or rows from different PRs/repositories. Keep the latest evidence.
+        seen = set()
+        rows = sync_conn.execute(
+            select(table.c.id, *(table.c[k] for k in keys)).order_by(table.c.id.desc())
+        ).all()
+        for row in rows:
+            key = tuple(row[1:])
+            if key in seen:
+                sync_conn.execute(table.delete().where(table.c.id == row[0]))
+            else:
+                seen.add(key)
+        index = Index("uq_pr_issue_link_key", *(table.c[k] for k in keys), unique=True)
+        try:
+            index.create(sync_conn, checkfirst=True)
+        finally:
+            table.indexes.discard(index)
+        return True
+
+    created = await conn.run_sync(ensure)
+    if created:
+        logger.info("[auto-migrate] Created pr_issue_links exact-key unique index")
+    return created
+
+
 async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
@@ -1411,7 +1470,9 @@ async def _auto_migrate():
             conn, _logger
         )
 
-        if not missing and not unique_index_created:
+        pr_link_index_created = await _ensure_pr_issue_link_unique_index(conn, _logger)
+
+        if not missing and not unique_index_created and not pr_link_index_created:
             return
 
         # 记录迁移版本

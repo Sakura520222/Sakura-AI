@@ -220,7 +220,9 @@ class AgentTeamPRService:
                 ref = repo.get_git_ref(f"heads/{branch_name}")
             except GithubException as exc:
                 if exc.status == 404:
-                    raise RuntimeError("PR head 分支不存在，无法确认 no-op 状态") from exc
+                    raise RuntimeError(
+                        "PR head 分支不存在，无法确认 no-op 状态"
+                    ) from exc
                 raise
             if ref.object.sha.lower() != expected_head_sha.lower():
                 raise RuntimeError(
@@ -307,7 +309,10 @@ class AgentTeamPRService:
                     sha=base_sha,
                 )
 
-            if expected_head_sha and ref.object.sha.lower() != expected_head_sha.lower():
+            if (
+                expected_head_sha
+                and ref.object.sha.lower() != expected_head_sha.lower()
+            ):
                 raise RuntimeError(
                     "PR head 分支已在 Agent 执行期间发生变化，拒绝覆盖其他提交"
                 )
@@ -521,6 +526,34 @@ class AgentTeamPRService:
             return "修复来源 PR"
         return "关联 Issue"
 
+    @staticmethod
+    def _ensure_source_closes(body: str, source_type: str, number: int | None) -> str:
+        from backend.services.pr_body import remove_sakura_generated_sections
+
+        issue_origins = {"issue_analysis", "scan_report_issue", "manual_issue"}
+        if source_type not in issue_origins or type(number) is not int or number <= 0:
+            return body
+        canonical = f"Closes #{number}"
+        fence = None
+        for line in remove_sakura_generated_sections(body).splitlines():
+            match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+            if match:
+                marker, suffix = match.groups()
+                if fence is None:
+                    fence = marker
+                elif (
+                    marker[0] == fence[0]
+                    and len(marker) >= len(fence)
+                    and not suffix.strip()
+                ):
+                    fence = None
+                continue
+            if fence is None and line == canonical:
+                return body
+        # Prefixing guarantees the trusted reference is outside any unterminated
+        # generated block or fenced code supplied by a model/custom fallback.
+        return canonical + "\n\n" + body
+
     def build_pr_body(
         self,
         task_title: str,
@@ -554,7 +587,9 @@ class AgentTeamPRService:
             f"包含全栈专家的代码修改和专业审查角色的审查。*\n"
             "*请仔细审查后合并。*\n"
         )
-        return "\n".join(parts)
+        return self._ensure_source_closes(
+            "\n".join(parts), source_type, source_issue_number
+        )
 
     def _build_metadata_header(
         self,
@@ -591,17 +626,21 @@ class AgentTeamPRService:
 
         生成失败时回退到 fallback_body（硬编码模板）。
         """
+        fallback_body = fallback_body or self.build_pr_body(
+            task_title=task_title,
+            task_summary=task_summary,
+            fullstack_analysis=fullstack_analysis,
+            fullstack_plan="",
+            review_summary=review_summary,
+            iteration_count=iteration_count,
+            source_type=source_type,
+            source_issue_number=source_issue_number,
+        )
+        fallback_body = self._ensure_source_closes(
+            fallback_body, source_type, source_issue_number
+        )
         if not modified_files:
-            return fallback_body or self.build_pr_body(
-                task_title=task_title,
-                task_summary=task_summary,
-                fullstack_analysis=fullstack_analysis,
-                fullstack_plan="",
-                review_summary=review_summary,
-                iteration_count=iteration_count,
-                source_type=source_type,
-                source_issue_number=source_issue_number,
-            )
+            return fallback_body
 
         try:
             from backend.services.agent_team.ai_client import (
@@ -675,7 +714,9 @@ class AgentTeamPRService:
                 source_issue_number,
                 iteration_count,
             )
-            return header + "\n\n" + body
+            return self._ensure_source_closes(
+                header + "\n\n" + body, source_type, source_issue_number
+            )
 
         except Exception as e:
             logger.warning("AI 生成 PR body 失败，使用硬编码模板: {}", e)

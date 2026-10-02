@@ -160,6 +160,7 @@ async def reanalyze_issue(
         "author": analysis.author,
         "title": analysis.title,
         "body": analysis.body,
+        "state": analysis.issue_state,
     }
 
     # 计算分析版本号

@@ -14,6 +14,10 @@ from loguru import logger
 from backend.core.config import get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.pr_analyzer import PRAnalysis
+from backend.services.pr_body import (
+    replace_sakura_generated_section,
+    strip_sakura_generated_sections,
+)
 
 
 class PRSummaryService:
@@ -76,10 +80,9 @@ class PRSummaryService:
         """
         # 从 GitHub 读取最新 body，避免用过期的 pr_info 缓存
         current_body = await asyncio.to_thread(lambda: pr.body or "")
-        original = self._extract_original_body(current_body)
         summary_block = self._build_summary_block(summary)
-        new_body = (
-            f"{original}\n\n{summary_block}" if original.strip() else summary_block
+        new_body = replace_sakura_generated_section(
+            current_body, "summary", summary_block
         )
 
         await asyncio.to_thread(pr.edit, body=new_body)
@@ -194,26 +197,8 @@ class PRSummaryService:
         )
 
     def _extract_original_body(self, body: str) -> str:
-        """从 PR body 中提取不含任何 AI 注入区域的原始内容"""
-        if not body:
-            return ""
-
-        clean = body
-        # 移除 PR Summary 标记区域
-        summary_pattern = (
-            re.escape(self.START_MARKER) + r".*?" + re.escape(self.END_MARKER)
-        )
-        clean = re.sub(summary_pattern, "", clean, flags=re.DOTALL)
-
-        # 移除依赖图标记区域
-        depgraph_pattern = r"<!--\s*sakura-ai-depgraph-start\s*-->.*?<!--\s*sakura-ai-depgraph-end\s*-->"
-        clean = re.sub(depgraph_pattern, "", clean, flags=re.DOTALL)
-
-        # 移除 Issue 关联标记区域
-        issue_links_pattern = r"<!--\s*sakura-ai-issue-links-start\s*-->.*?<!--\s*sakura-ai-issue-links-end\s*-->"
-        clean = re.sub(issue_links_pattern, "", clean, flags=re.DOTALL)
-
-        return clean.strip()
+        """Extract human evidence; body publication removes only its own section."""
+        return strip_sakura_generated_sections(body)
 
     def _extract_previous_summary(self, body: str) -> str | None:
         """从 PR body 中提取上一次的 AI 摘要内容（不含标题行）"""
