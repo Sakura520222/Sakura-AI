@@ -319,7 +319,7 @@ async def test_local_worker_admission_installs_python_dependencies_with_local_ru
         lambda: SimpleNamespace(agent_team_auto_install_deps=True),
     )
 
-    async def install_enabled(_key: str):
+    async def install_enabled(_key: str, *, fresh=False):
         return True
 
     monkeypatch.setattr(
@@ -508,7 +508,7 @@ async def test_dependency_installation_uses_dependency_profile_only(
         lambda: SimpleNamespace(agent_team_auto_install_deps=True),
     )
 
-    async def install_enabled(_key):
+    async def install_enabled(_key, *, fresh=False):
         return True
 
     monkeypatch.setattr(

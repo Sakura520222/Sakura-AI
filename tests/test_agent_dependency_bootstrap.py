@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -38,7 +39,7 @@ def dependency_workspace(monkeypatch, tmp_path):
         agent_team_dependency_retry_delay_seconds=0,
     )
 
-    async def config(key):
+    async def config(key, *, fresh=False):
         return True if key == "agent_team_auto_install_deps" else None
 
     async def policy():
@@ -232,24 +233,43 @@ async def test_retry_backoff_is_interruptible(dependency_workspace, monkeypatch)
     assert len(requests) == 2
 
 
+@pytest.mark.parametrize("backend", ["sandbox", "local"])
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("", ""),
+        ("ReadTimeoutError: registry.example timed out", ""),
+        ("", "npm ERR! ECONNRESET"),
+        ("", "Could not fetch URL https://registry.example: connection error"),
+        ("SSLError: unexpected EOF during TLS handshake", ""),
+    ],
+)
 @pytest.mark.asyncio
 async def test_execution_timeout_does_not_claim_network_failure(
-    dependency_workspace, monkeypatch
+    dependency_workspace, monkeypatch, backend, stdout, stderr
 ):
     service, workspace, _settings = dependency_workspace
     runner, requests = dependency_runner(
         service,
         workspace,
-        "sandbox",
-        [ExecutionResult(exit_code=-9, timed_out=True)],
+        backend,
+        [
+            ExecutionResult(
+                exit_code=-9, timed_out=True, stdout=stdout, stderr=stderr
+            ),
+            ExecutionResult(exit_code=0),
+        ],
         monkeypatch,
     )
 
     report = await service.install_workspace_dependencies(workspace, runner)
 
     assert report.status == "failed"
+    assert len(report.attempts) == 1
     assert report.attempts[0].timed_out is True
     assert report.attempts[0].category == "UNKNOWN_DEPENDENCY_FAILURE"
+    assert report.attempts[0].retryable is False
+    assert report.attempts[0].stdout == stdout
     assert len(requests) == 2
 
 
@@ -438,7 +458,7 @@ async def test_retry_policy_uses_dynamic_config_and_settings_defaults(
 ):
     service, workspace, _settings = dependency_workspace
 
-    async def config(key):
+    async def config(key, *, fresh=False):
         if key == "agent_team_auto_install_deps":
             return True
         if key == "agent_team_dependency_install_attempts":
@@ -456,6 +476,55 @@ async def test_retry_policy_uses_dynamic_config_and_settings_defaults(
     )
     report = await service.install_workspace_dependencies(workspace, runner)
     assert len(report.attempts) == (2 if attempts == 2 else 3)
+
+
+@pytest.mark.parametrize("backend", ["sandbox", "local"])
+@pytest.mark.asyncio
+async def test_retry_policy_reads_saved_values_at_each_admission(
+    dependency_workspace, monkeypatch, backend
+):
+    from backend.core import config as config_module
+    from backend.services.agent_team import git_workspace_service as workspace_module
+
+    service, workspace, _settings = dependency_workspace
+    attempts_key = "agent_team_dependency_install_attempts"
+    delay_key = "agent_team_dependency_retry_delay_seconds"
+    saved_values = {
+        "agent_team_auto_install_deps": True,
+        attempts_key: 1,
+        delay_key: 0,
+    }
+    # A save by another worker leaves this worker's unexpired cache untouched.
+    monkeypatch.setattr(
+        config_module,
+        "_dynamic_config_cache",
+        {
+            attempts_key: (5, monotonic() + 60),
+            delay_key: (59, monotonic() + 60),
+        },
+    )
+
+    async def read_saved_value(key, *, fail_closed=False):
+        return saved_values.get(key)
+
+    monkeypatch.setattr(config_module, "_read_config_from_db", read_saved_value)
+    monkeypatch.setattr(
+        workspace_module, "get_dynamic_config", config_module.get_dynamic_config
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(workspace_module.asyncio, "sleep", sleep)
+    failure = ExecutionResult(exit_code=1, stderr="ECONNRESET")
+
+    for attempts, delay in ((1, 0), (3, 0.25)):
+        saved_values.update({attempts_key: attempts, delay_key: delay})
+        runner, _requests = dependency_runner(
+            service, workspace, backend, [failure] * 5, monkeypatch
+        )
+        report = await service.install_workspace_dependencies(workspace, runner)
+        assert report.status == "failed"
+        assert len(report.attempts) == attempts
+
+    assert [call.args[0] for call in sleep.await_args_list] == [0.25, 0.5]
 
 
 def test_sanitization_covers_headers_json_and_credential_urls():

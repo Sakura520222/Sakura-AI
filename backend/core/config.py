@@ -1581,6 +1581,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "semantic_issue_similarity_threshold": (0.0, 1.0),
     "semantic_issue_max_links": (1, 200),
     "agent_team_candidate_cache_ttl": (0, 3600),
+    "agent_team_dependency_install_attempts": (1, 5),
+    "agent_team_dependency_retry_delay_seconds": (0, 60),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
     "agent_team_pr_review_pass_score": (1, 10),

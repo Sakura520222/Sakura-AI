@@ -687,7 +687,7 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         ):
             field = Settings.model_fields[key]
             default = field.default
-            value = await get_dynamic_config(key)
+            value = await get_dynamic_config(key, fresh=True)
             if value is None:
                 value = getattr(settings, key, default)
             try:
