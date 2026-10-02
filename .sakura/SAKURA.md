@@ -18,7 +18,7 @@
 - 增量审查：增量须结案历史项并触发全库引用搜索；历史 major 未解决须保持阻断。
 
 ## 4. 硬规则（重点）
-- CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；多异常捕获禁止 Python 2 遗留 `except A, B:` 语法，强制 `except (A, B):`。
+- CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；语法判断以 Python 3.14+ 为准；多异常捕获未使用 `as` 时可省略括号（PEP 758）。
 - 异步与配置：async 路由同步 I/O 用 `asyncio.to_thread()`；配置/函数签名增删改须全库 rg 校验；env 统一配置模块，禁止业务代码 `setdefault`。
 - 辅助落库/诊断：非主流程防御性捕获需收敛为底层基类异常（如 `SQLAlchemyError`），标注 `#INTERNAL_ERROR` 与 best-effort 说明，严禁裸 `except Exception:`。
 - 幂等与锁：守护进程/扫描唯一约束与锁防并发重复；updater/daemon 操作幂等且原子写入+fsync。
@@ -37,7 +37,7 @@
 
 ## 7. 最新反思要点
 - PR642：大范围删减重构需验证配置/UI/i18n/环境 5 要素；移除废弃通知路径配齐负向断言测试守护契约。
-- PR641：基础语法错误与导入失败须在 CI 最早期（`py_compile` / `import-all`）0 容忍阻断；多异常捕获禁用 Python 2 语法；辅助落库限制底层异常类并显式标记 best-effort。
+- PR641：辅助落库限制底层异常类并显式标记 best-effort。
 - PR637：大模型工具切片防负数倒序索引；重试契约参数必须通过自动化测试闭环验证。
 - PR636：依赖集中清理合并时静态检测闲置依赖；库升级核对 Release Notes 防止隐式 Extra 缺失。
 - ISSUE638：Epic 级重构评估双轨共存风险与阶段拆解，优化分类标签与重复检测识别。
