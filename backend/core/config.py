@@ -412,7 +412,6 @@ class Settings(BaseSettings):
         le=3600,
         description="Telegram 一次性绑定链接有效期（秒）",
     )
-    telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
     email_enabled: bool = Field(
         True,
         description="是否启用 Email 通知 Provider",
@@ -776,7 +775,6 @@ class Settings(BaseSettings):
     scan_interval_minutes: int = 360  # 扫描间隔（分钟，默认6小时）
     scan_cooldown_hours: int = 24  # 同一仓库扫描冷却时间（小时）
     scan_max_concurrent: int = 1  # 最大并发扫描数
-    scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
     # ========== Agent 模式配置 ==========
@@ -818,6 +816,8 @@ class Settings(BaseSettings):
     agent_team_pr_review_blocking_severities: str = "critical,major"
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
+    agent_team_dependency_install_attempts: int = Field(3, ge=1, le=5)
+    agent_team_dependency_retry_delay_seconds: float = Field(2.0, ge=0, le=60)
     agent_team_skills_enabled: bool = True
     agent_team_skills_root: str = "./Skills"
     # Module G: 候选池缓存
@@ -1268,14 +1268,12 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_repo_scan": "启用后，系统将定期扫描已安装仓库的代码，检测潜在问题",
                     "scan_interval_minutes": "定时扫描的间隔时间（分钟），默认 360 分钟（6小时）",
                     "scan_cooldown_hours": "同一仓库两次扫描之间的最小间隔（小时）",
-                    "scan_send_telegram": "扫描完成后是否发送 Telegram 通知",
                     "scan_min_severity_for_issue": "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）",
                 },
                 "keys": [
                     "enable_repo_scan",
                     "scan_interval_minutes",
                     "scan_cooldown_hours",
-                    "scan_send_telegram",
                     "scan_min_severity_for_issue",
                 ],
             },
@@ -1298,6 +1296,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
+                    "agent_team_dependency_install_attempts": "依赖安装遇到瞬时网络故障时的最大尝试次数（含首次，1-5）；永久错误不重试",
+                    "agent_team_dependency_retry_delay_seconds": "依赖安装重试的初始等待秒数（0-60），后续等待按指数增加；支持任务取消",
                     "agent_team_run_tests": "提交前自动运行验证命令检查代码",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
@@ -1318,6 +1318,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_pr_review_blocking_severities",
                     "agent_team_run_tests",
                     "agent_team_auto_install_deps",
+                    "agent_team_dependency_install_attempts",
+                    "agent_team_dependency_retry_delay_seconds",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
                     "agent_team_candidate_cache_ttl",
@@ -1579,6 +1581,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "semantic_issue_similarity_threshold": (0.0, 1.0),
     "semantic_issue_max_links": (1, 200),
     "agent_team_candidate_cache_ttl": (0, 3600),
+    "agent_team_dependency_install_attempts": (1, 5),
+    "agent_team_dependency_retry_delay_seconds": (0, 60),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
     "agent_team_pr_review_pass_score": (1, 10),
@@ -1707,7 +1711,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_repo_scan": "启用仓库扫描",
     "scan_interval_minutes": "扫描间隔（分钟）",
     "scan_cooldown_hours": "扫描冷却时间（小时）",
-    "scan_send_telegram": "发送 Telegram 通知",
     "scan_min_severity_for_issue": "创建 Issue 最低严重性",
     # Sakura 记忆系统
     # 国际化配置
@@ -1752,6 +1755,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_pr_review_blocking_severities": "Agent PR 阻塞严重级别",
     "agent_team_run_tests": "自动运行验证命令",
     "agent_team_auto_install_deps": "自动安装项目依赖",
+    "agent_team_dependency_install_attempts": "依赖安装最大尝试次数",
+    "agent_team_dependency_retry_delay_seconds": "依赖重试初始等待秒数",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
     "agent_team_candidate_cache_ttl": "候选池缓存 TTL（秒）",

@@ -24,7 +24,7 @@
 
 ## 语法、静态解析与异常防护
 
-- **CI 语法与全模块导入硬防线**：语法错误（如 Python 2 遗留 `except A, B:`）会导致 pytest 收集阶段崩溃；须在 CI 前置执行 `python -m py_compile` 及全模块 import 校验，0 容忍阻断
+- **CI 语法与全模块导入硬防线**：经 Python 3.14+ 确认的语法错误可能导致 pytest 收集阶段失败；须在相同版本的 CI 环境前置执行 `python -m py_compile` 及全模块 import 校验，0 容忍阻断
 - **Best-Effort 防御规范**：辅助落库/诊断逻辑若用宽泛捕获，须收敛为具体基类异常（如 `SQLAlchemyError`/`OSError`），注释标注 `#INTERNAL_ERROR` 与 `best-effort` 说明，严禁裸用 `except Exception`
 - **AI 工具与索引防御**：外部/模型传入的行号切片参数须物理钳制：`0 <= min_idx <= max_idx <= len(sequence)`，严禁依赖 Python 切片静默容错（防负索引倒序切片）；校验 1-based 与 0-based 映射转换
 

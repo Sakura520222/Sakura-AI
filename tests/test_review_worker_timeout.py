@@ -1154,7 +1154,6 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
             fake_make_decision,
         )
         monkeypatch.setattr(worker, "_notify_agent_team_review_completed", fake_noop)
-        monkeypatch.setattr(worker, "_send_review_complete_notification", fake_noop)
 
         pr_info = {
             "repo_owner": "owner",
@@ -1351,7 +1350,6 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
         monkeypatch.setattr(worker, "_save_review_results", fake_noop)
         monkeypatch.setattr(worker, "_make_and_submit_decision", fake_make_decision)
         monkeypatch.setattr(worker, "_notify_agent_team_review_completed", fake_noop)
-        monkeypatch.setattr(worker, "_send_review_complete_notification", fake_noop)
 
         pr_info = {
             "repo_owner": "owner",
@@ -1528,7 +1526,6 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
         monkeypatch.setattr(worker, "_save_review_results", fake_noop)
         monkeypatch.setattr(worker, "_make_and_submit_decision", fake_make_decision)
         monkeypatch.setattr(worker, "_notify_agent_team_review_completed", fake_noop)
-        monkeypatch.setattr(worker, "_send_review_complete_notification", fake_noop)
 
         pr_info = {
             "repo_owner": "owner",

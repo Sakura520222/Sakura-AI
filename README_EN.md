@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -80,7 +80,7 @@
 - **Auto-create Issues** — AI summary, trend comparison, severity/category matrix, hotspot files, and folded details; superseded report issues are closed automatically
 - **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.; the scan prompt focus is editable in the unified config page `strategy.scan` section
 - **Scan Management UI** — View scan list, details, and statistics in WebUI
-- **Scan Notifications** — Telegram Bot notifications on completion (with AI summary)
+- **Scan Results** — Available through GitHub report Issues and WebUI
 
 ### Issue Analysis
 
@@ -102,6 +102,7 @@
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
 - **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with no network, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
 - **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
+- **Dependency Install Recovery** — Transient network failures get up to 3 attempts by default, with 2- and 4-second backoff; permanent errors are not retried. Final failures retain sanitized diagnostics for the Agent to repair installation or continue static analysis and report tests it could not run. Attempts and delay are adjustable on the unified configuration page
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
@@ -145,7 +146,7 @@
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
-- **Optional Notification Channels** — Telegram and Email/SMTP can be enabled independently; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI)
+- **Optional Notification Channels** — Telegram remains an optional Provider for unified announcement delivery and can be enabled independently of Email/SMTP; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI). Telegram-only business messages for PR reviews, Issue analysis, scans, MFA, and refunds have been removed; this change does not implement a replacement business event notification layer
 - **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
 - **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
 
@@ -242,7 +243,7 @@ The main menu's **View previous runtime logs** entry reads persisted DEBUG logs.
 
 ### Source Development
 
-> Source-development platforms: Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported) or Apple Silicon macOS 14+. Other platforms cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
+> Source-development platforms: Windows 11 x86_64, Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported), or Apple Silicon macOS 14+. Intel Macs, macOS <=13, musl/Alpine, and glibc <2.28 cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
 
 **With uv (recommended)**:
 
@@ -278,10 +279,6 @@ python -m backend.main
 <img src="res/Issues分析.png" width="1707" alt="Issue analysis">
 
 <img src="res/WebUI.png" width="1707" alt="WebUI dashboard">
-
-<img src="res/Telegram通知-1.png" width="627" alt="Telegram notification">
-
-<img src="res/Telegram通知-2.png" width="537" alt="Telegram notification">
 
 </div>
 

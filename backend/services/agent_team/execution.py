@@ -1025,6 +1025,9 @@ class LocalExecutionRunner:
                 "LocalExecutionRunner 的 pip 参数不受支持"
             )
         if args[4:] not in {
+            ("-e", "."),
+            ("-r", "requirements.txt"),
+            # Accept the previous exact forms for source-compatible callers.
             ("-e", ".", "--quiet"),
             ("-r", "requirements.txt", "--quiet"),
         }:

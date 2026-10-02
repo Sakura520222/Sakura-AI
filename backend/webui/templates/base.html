@@ -172,6 +172,184 @@
     }
     </script>
     <script>
+    /* === Sakura 前端基础设施：统一 Modal / ConfirmDialog 公共 API ===
+       交互契约（见 components/modal.html / components/confirm_dialog.html）：
+         - Sakura.confirm(options) -> Promise<boolean>：全局统一确认弹窗，
+           支持 title/message/warning/confirmText/variant('default'|'warning'|'danger')/onConfirm。
+         - Sakura.openModal(id) / closeModal(id) / isModalOpen(id)：驱动页面级
+           声明式 Modal（x-data="sakuraModal()"，结构由 modal_shell 宏渲染）。
+         - 统一行为：ESC / backdrop dismiss（persistent 与 loading 状态拒绝关闭）、
+           focus trap、focus restore、body scroll lock（引用计数，支持弹窗叠加）。
+       注意：Alpine 未就绪时 confirm 解析为 false（fail-closed，操作被阻止）。 */
+    (function () {
+        'use strict';
+        var scrollLockCount = 0;
+        var modalRegistry = {};
+        var dialogStack = [];
+
+        function visibleFocusables(root) {
+            return Array.prototype.filter.call(
+                root.querySelectorAll(
+                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                ),
+                function (node) {
+                    if (!root.contains(node)) return false;
+                    var style = window.getComputedStyle(node);
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && node.getClientRects().length > 0;
+                }
+            );
+        }
+
+        function topDialog() {
+            return dialogStack[dialogStack.length - 1] || null;
+        }
+
+        function openDialog(element, options) {
+            if (!element) return;
+            var settings = options || {};
+            var existingIndex = dialogStack.findIndex(function (controller) {
+                return controller.element === element;
+            });
+            if (existingIndex !== -1) {
+                var existing = dialogStack[existingIndex];
+                existing.canDismiss = typeof settings.canDismiss === 'function'
+                    ? settings.canDismiss
+                    : existing.canDismiss;
+                existing.onClose = typeof settings.onClose === 'function'
+                    ? settings.onClose
+                    : existing.onClose;
+                existing.focusTarget = typeof settings.focusTarget === 'function'
+                    ? settings.focusTarget
+                    : existing.focusTarget;
+                return;
+            }
+            var controller = {
+                element: element,
+                canDismiss: typeof settings.canDismiss === 'function'
+                    ? settings.canDismiss
+                    : function () { return true; },
+                onClose: typeof settings.onClose === 'function' ? settings.onClose : null,
+                focusTarget: typeof settings.focusTarget === 'function' ? settings.focusTarget : null,
+                previousFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+                focusBound: null,
+            };
+            controller.focusBound = function (event) {
+                if (topDialog() !== controller) return;
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    if (controller.canDismiss() && controller.onClose) controller.onClose();
+                    return;
+                }
+                if (event.key !== 'Tab') return;
+                var focusables = visibleFocusables(element);
+                if (!focusables.length) {
+                    event.preventDefault();
+                    element.focus();
+                    return;
+                }
+                var first = focusables[0];
+                var last = focusables[focusables.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                } else if (document.activeElement === element || !element.contains(document.activeElement)) {
+                    event.preventDefault();
+                    (event.shiftKey ? last : first).focus();
+                }
+            };
+            document.addEventListener('keydown', controller.focusBound, true);
+            dialogStack.push(controller);
+            lockScroll();
+            window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(function () {
+                    if (topDialog() !== controller || !element.isConnected) return;
+                    var target = controller.focusTarget
+                        ? controller.focusTarget()
+                        : visibleFocusables(element)[0];
+                    if (target && typeof target.focus === 'function') target.focus();
+                });
+            });
+        }
+
+        function closeDialog(element) {
+            if (!element) return;
+            var index = dialogStack.findIndex(function (controller) {
+                return controller.element === element;
+            });
+            if (index === -1) return;
+            var controller = dialogStack[index];
+            var wasTopDialog = topDialog() === controller;
+            dialogStack.splice(index, 1);
+            document.removeEventListener('keydown', controller.focusBound, true);
+            unlockScroll();
+            if (
+                wasTopDialog
+                && controller.previousFocus
+                && typeof controller.previousFocus.focus === 'function'
+            ) {
+                controller.previousFocus.focus();
+            }
+        }
+
+        function lockScroll() {
+            scrollLockCount += 1;
+            if (scrollLockCount === 1) document.body.classList.add('sakura-scroll-locked');
+        }
+
+        function unlockScroll() {
+            if (scrollLockCount <= 0) return;
+            scrollLockCount -= 1;
+            if (scrollLockCount === 0) document.body.classList.remove('sakura-scroll-locked');
+        }
+
+        function resetScrollLock() {
+            scrollLockCount = 0;
+            document.body.classList.remove('sakura-scroll-locked');
+        }
+
+        function confirmDialogInstance() {
+            var el = document.querySelector('[data-sakura-confirm-dialog]');
+            if (!el || !window.Alpine) return null;
+            return window.Alpine.$data(el);
+        }
+
+        window.Sakura = {
+            lockScroll: lockScroll,
+            unlockScroll: unlockScroll,
+            resetScrollLock: resetScrollLock,
+            openDialog: openDialog,
+            closeDialog: closeDialog,
+            registerModal: function (id, instance) { if (id) modalRegistry[id] = instance; },
+            unregisterModal: function (id) { if (id) delete modalRegistry[id]; },
+            openModal: function (id) {
+                var instance = modalRegistry[id];
+                if (instance) { instance.show(); return true; }
+                return false;
+            },
+            closeModal: function (id) {
+                var instance = modalRegistry[id];
+                if (instance) { instance.hide(); return true; }
+                return false;
+            },
+            isModalOpen: function (id) {
+                var instance = modalRegistry[id];
+                return Boolean(instance && instance.open);
+            },
+            confirm: function (options) {
+                var instance = confirmDialogInstance();
+                if (!instance || typeof instance.ask !== 'function') return Promise.resolve(false);
+                return Promise.resolve(instance.ask(options || {}));
+            },
+        };
+    })();
+    </script>
+    <script>
     document.addEventListener('alpine:init', () => {
         Alpine.data('toastManager', () => ({
             toasts: [],
@@ -250,24 +428,38 @@
             },
         }));
 
-        Alpine.data('confirmDialog', () => ({
+        Alpine.data('sakuraConfirmDialog', () => ({
             active: false,
             title: _t('confirm_action'),
             message: _t('are_you_sure'),
             warning: '',
+            variant: 'default',
             confirmText: _t('confirm'),
             cancelText: _t('cancel'),
             processingText: _t('processing'),
             loading: false,
+            persistent: false,
             _callback: null,
+            _resolver: null,
             ask(options) {
+                // 防止重复调用 ask 时旧调用方 Promise 永远挂起。
+                if (this.active && this._resolver) {
+                    this._resolver(false);
+                    this._resolver = null;
+                }
                 this.title = options.title || _t('confirm_action');
                 this.message = options.message || _t('are_you_sure');
                 this.warning = options.warning || '';
+                this.variant = options.variant || (options.warning ? 'warning' : 'default');
                 this.confirmText = options.confirmText || _t('confirm');
                 this.loading = false;
-                this.active = true;
+                // 破坏性操作默认 persistent：ESC / backdrop 不得误关。
+                this.persistent = options.persistent !== undefined
+                    ? Boolean(options.persistent)
+                    : this.variant === 'danger';
                 this._callback = options.onConfirm || null;
+                this.active = true;
+                this.open();
                 return new Promise((resolve) => { this._resolver = resolve; });
             },
             confirm() {
@@ -275,18 +467,83 @@
                 if (this._callback) {
                     this.loading = true;
                     Promise.resolve(this._callback())
-                        .then(() => { this.active = false; this._resolver?.(true); })
+                        .then(() => { this.close(true); })
                         .catch(() => { this.loading = false; });
                 } else {
-                    this.active = false;
-                    this._resolver?.(true);
+                    this.close(true);
                 }
             },
             cancel() {
+                // persistent 只阻止 ESC / backdrop 误关；显式取消仍然可用。
                 if (this.loading) return;
-                this.active = false;
-                this._resolver?.(false);
+                this.close(false);
             },
+            /* dismissGuard：loading / persistent 状态下禁止 ESC 与 backdrop 关闭。 */
+            dismiss() {
+                if (this.loading || this.persistent) return;
+                this.close(false);
+            },
+            open() {
+                if (window.Sakura) {
+                    window.Sakura.openDialog(this.$root, {
+                        canDismiss: () => !this.loading && !this.persistent,
+                        onClose: () => this.close(false),
+                        focusTarget: () => this.confirmButton(),
+                    });
+                }
+            },
+            confirmButton() {
+                var buttons = this.$root.querySelectorAll('button[data-sakura-confirm-button]');
+                var target = buttons[buttons.length - 1];
+                return target || null;
+            },
+            close(confirmed) {
+                this.active = false;
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
+                if (this._resolver) {
+                    this._resolver(confirmed === true);
+                    this._resolver = null;
+                }
+            },
+        }));
+
+        /* === 统一页面级 Modal：components/modal.html modal_shell 的行为端 ===
+           通过 Sakura.openModal(id)/closeModal(id) 驱动，提供与
+           ConfirmDialog 相同的 dismiss 守卫 / focus trap / focus restore /
+           body scroll lock 契约。 */
+        Alpine.data('sakuraModal', (options) => ({
+            id: (options && options.id) || '',
+            open: false,
+            persistent: Boolean(options && options.persistent),
+            loading: false,
+            init() {
+                if (this.id && window.Sakura) window.Sakura.registerModal(this.id, this);
+            },
+            destroy() {
+                if (this.id && window.Sakura) window.Sakura.unregisterModal(this.id);
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
+            },
+            show() {
+                if (this.open) return;
+                this.open = true;
+                if (window.Sakura) {
+                    window.Sakura.openDialog(this.$root, {
+                        canDismiss: () => !this.loading && !this.persistent,
+                        onClose: () => this.hide(),
+                    });
+                }
+            },
+            hide() {
+                if (!this.open) return;
+                this.open = false;
+                if (window.Sakura) window.Sakura.closeDialog(this.$root);
+            },
+            /* dismissGuard：loading / persistent 状态下禁止 ESC 与 backdrop 关闭。 */
+            dismiss() {
+                if (this.loading || this.persistent) return;
+                this.hide();
+            },
+            setLoading(value) { this.loading = Boolean(value); },
         }));
     });
     </script>
@@ -437,6 +694,15 @@
             animation: none;
             mix-blend-mode: normal;
         }
+        /* === 统一 Modal / ConfirmDialog 层 === */
+        /* 打开弹窗时锁定 body 滚动（由 Sakura.lockScroll 引用计数控制） */
+        body.sakura-scroll-locked { overflow: hidden; }
+        /* 统一入场动画：仅整体淡入，面板不做上滑/缩放动画。 */
+        .sakura-modal-shell { animation: sakura-modal-fade-in 160ms ease-out; }
+        @keyframes sakura-modal-fade-in { from { opacity: 0; } }
+        @media (prefers-reduced-motion: reduce) {
+            .sakura-modal-shell { animation: none; }
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -526,56 +792,8 @@
         </template>
     </div>
 
-    <!-- 确认弹窗 -->
-    <div x-data="confirmDialog()"
-         x-show="active" x-cloak
-         x-transition:enter="transition ease-out duration-200"
-         x-transition:enter-start="opacity-0"
-         x-transition:enter-end="opacity-100"
-         x-transition:leave="transition ease-in duration-150"
-         x-transition:leave-start="opacity-100"
-         x-transition:leave-end="opacity-0"
-         class="fixed inset-0 z-[110] flex items-center justify-center"
-         @keydown.escape.window="cancel()">
-        <div x-show="active" class="absolute inset-0 bg-black/50"
-             @click="cancel()"
-             x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0"
-             x-transition:enter-end="opacity-100"></div>
-        <div x-show="active"
-             x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0 scale-95"
-             x-transition:enter-end="opacity-100 scale-100"
-             x-transition:leave="transition ease-in duration-150"
-             x-transition:leave-start="opacity-100 scale-100"
-             x-transition:leave-end="opacity-0 scale-95"
-             class="relative glass rounded-2xl shadow-2xl border border-sakura-200 dark:border-sakura-800/50 max-w-md w-full mx-4 p-6">
-            <div class="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30">
-                <svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-                </svg>
-            </div>
-            <h3 class="text-lg font-semibold text-center text-gray-900 dark:text-gray-100" x-text="title"></h3>
-            <p class="mt-2 text-sm text-center text-gray-500 dark:text-gray-400" x-text="message"></p>
-            <p x-show="warning" x-text="warning" class="mt-3 text-xs text-center text-red-600 dark:text-red-400 font-medium"></p>
-            <div class="mt-6 flex gap-3 justify-center">
-                <button @click="cancel()"
-                        class="px-4 py-2 rounded-xl text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white/80 dark:bg-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors"
-                        x-text="cancelText">
-                </button>
-                <button @click="confirm()"
-                        :disabled="loading"
-                        :class="loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600'"
-                        class="px-4 py-2 rounded-xl text-sm font-medium bg-red-500 text-white transition-colors shadow-md shadow-red-500/25">
-                    <span x-show="!loading" x-text="confirmText"></span>
-                    <span x-show="loading" class="flex items-center gap-2">
-                        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        <span x-text="processingText"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
-    </div>
+    <!-- 统一确认弹窗（Sakura.confirm 公共 API 的载体） -->
+    {% include "components/confirm_dialog.html" %}
 
     <!-- 导航栏 -->
     {% include "components/navbar.html" %}
@@ -589,7 +807,8 @@
              min-w-0 / max-w-full / overflow-x-hidden: 防止长内容（宽表格列、
              长 URL、代码块）把 <main> 乃至整页横向撑开；内部 overflow-x-auto
              容器（如各列表表格）仍可独立横向滚动。 -->
-        <main class="flex-1 min-w-0 max-w-full overflow-x-hidden ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative z-10">
+        <!-- 不要在 main 上创建 z-index 层叠上下文：页面内 z-[110] Modal 必须能覆盖导航栏/侧边栏。 -->
+        <main class="flex-1 min-w-0 max-w-full overflow-x-hidden ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -613,18 +832,22 @@
         var form = e.target.closest('[data-confirm]');
         if (form && form._confirmed !== true) {
             e.preventDefault();
-            // 获取确认弹窗实例
-            var dialogEl = document.querySelector('[x-data="confirmDialog()"]');
-            if (!dialogEl || !Alpine) return;
-            var dialogData = Alpine.$data(dialogEl);
-            dialogData.ask({
-                message: form.dataset.confirm || '确定要执行此操作吗？',
+            if (!window.Sakura || !window.Sakura.confirm) return;
+            window.Sakura.confirm({
+                message: form.dataset.confirm || _t('are_you_sure'),
                 warning: form.dataset.confirmWarning || '',
-                confirmText: form.dataset.confirmText || '确认',
+                confirmText: form.dataset.confirmText || _t('confirm'),
+                variant: form.dataset.confirmVariant || 'default',
             }).then(function(confirmed) {
                 if (confirmed) {
                     form._confirmed = true;
-                    form.submit();
+                    // requestSubmit 会重新触发 submit 生命周期，让 loading
+                    // 处理器正常执行；旧浏览器回退到原生 submit。
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
                 }
             });
         }
@@ -632,6 +855,8 @@
 
     /* === 按钮 Loading 状态 === */
     document.addEventListener('submit', function(e) {
+        // data-confirm 拦截的提交已 cancelable；取消确认时不能进入 loading。
+        if (e.defaultPrevented) return;
         var form = e.target;
         if (form.method && form.method.toUpperCase() === 'POST') {
             var btn = form.querySelector('[type="submit"]');

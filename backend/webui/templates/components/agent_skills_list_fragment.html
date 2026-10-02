@@ -55,7 +55,9 @@
                 <input type="hidden" name="enabled" value="{% if skill.enabled %}0{% else %}1{% endif %}">
                 <button type="submit" class="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">{% if skill.enabled %}{{ _('agent_skills.disable') }}{% else %}{{ _('agent_skills.enable') }}{% endif %}</button>
             </form>
-            <form method="post" action="/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
+            <form method="post" action="/agent-skills/{{ skill.id }}/delete"
+                  data-confirm="{{ _('agent_skills.confirm_delete') }}"
+                  data-confirm-variant="danger">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="rounded-lg px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:text-red-300 dark:hover:bg-red-950/30">{{ _('common.delete') }}</button>
             </form>

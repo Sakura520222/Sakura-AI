@@ -49,28 +49,31 @@ var loadPage = function(n) { loadListPage('scan-list-container', '/scans/list-fr
 initFilterForm('scan-filter-form', 'scan-list-container', '/scans/list-fragment');
 
 function triggerScan() {
-    if (!confirm('{{ _('scan.confirm_trigger') }}')) return;
-    fetch('/scans/trigger', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'}
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
+    window.Sakura.confirm({
+        message: '{{ _('scan.confirm_trigger') }}',
+        variant: 'warning',
+        onConfirm: () => fetch('/scans/trigger', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'}
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: {message: data.message, type: 'success', duration: 3000}
+                }));
+                setTimeout(() => htmx.trigger('scan-list-container', 'load'), 2000);
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', {
+                    detail: {message: data.message, type: 'error', duration: 3000}
+                }));
+            }
+        })
+        .catch(e => {
             window.dispatchEvent(new CustomEvent('show-toast', {
-                detail: {message: data.message, type: 'success', duration: 3000}
+                detail: {message: '触发扫描失败: ' + e, type: 'error', duration: 3000}
             }));
-            setTimeout(() => htmx.trigger('scan-list-container', 'load'), 2000);
-        } else {
-            window.dispatchEvent(new CustomEvent('show-toast', {
-                detail: {message: data.message, type: 'error', duration: 3000}
-            }));
-        }
-    })
-    .catch(e => {
-        window.dispatchEvent(new CustomEvent('show-toast', {
-            detail: {message: '触发扫描失败: ' + e, type: 'error', duration: 3000}
-        }));
+        }),
     });
 }
 </script>

@@ -1,0 +1,75 @@
+{# ============================================================
+   Sakura AI 统一 Modal 基础组件
+   ------------------------------------------------------------
+   用法（业务页面禁止再手写完整 fixed inset-0 弹窗结构）：
+
+     {% from "components/modal.html" import modal_shell %}
+
+     {% call modal_shell(id="my-modal", title=_("xx.title"),
+                         description=_("xx.desc"), size="lg",
+                         close_sr=_("common.close")) %}
+         ...body...
+     {% endcall %}
+
+   参数：
+     - id:           必填，页面内唯一；Sakura.openModal/closeModal 的键
+     - title:        标题（aria-labelledby 指向）
+     - description:  可选描述（aria-describedby 指向）
+     - size:         sm | md | lg | xl | full
+     - persistent:   true 时禁止 ESC / backdrop 关闭（破坏性/进行中操作）
+     - close_sr:     关闭按钮的可访问名称
+
+   行为契约：
+     - 打开：Sakura.openModal('my-modal')；或触发按钮 @click
+     - 关闭：Sakura.closeModal('my-modal') / ESC / 点击遮罩（persistent 除外）
+     - body scroll lock（Sakura.lockScroll 引用计数，支持弹窗叠加）
+     - focus trap（Tab 循环）+ focus restore（回到触发元素）
+     - aria: role="dialog" + aria-modal + aria-labelledby (+ aria-describedby)
+   视觉规范：rounded-2xl / glass / shadow-2xl / 统一 backdrop / 150-200ms 过渡
+             （动画由 base.html 中 .sakura-modal-shell 定义，
+              prefers-reduced-motion 下自动禁用）
+   ============================================================ #}
+
+{% macro modal_shell(id, title, description="", size="md", persistent=false,
+                     close_sr="Close") -%}
+<div data-sakura-modal="{{ id }}"
+     x-data='sakuraModal({ id: {{ id | tojson }}, persistent: {{ 'true' if persistent else 'false' }} })'
+     x-show="open"
+     x-cloak
+     class="sakura-modal-shell fixed inset-0 z-[110] flex items-center justify-center p-4"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="{{ id }}-title"
+     {% if description %}aria-describedby="{{ id }}-description"{% endif %}
+     tabindex="-1">
+    <div class="absolute inset-0 bg-gray-950/80 backdrop-blur-sm" @click="dismiss()" aria-hidden="true"></div>
+
+    <div class="relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-sakura-200 bg-white/95 text-gray-900 shadow-2xl backdrop-blur-sm dark:border-sakura-800/60 dark:bg-[#1e1028]/95 dark:text-gray-100
+                {{ 'max-w-md' if size == 'sm' else
+                   'max-w-lg' if size == 'md' else
+                   'max-w-3xl' if size == 'lg' else
+                   'max-w-5xl' if size == 'xl' else
+                   'max-w-[calc(100vw-2rem)]' }}">
+        <header class="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200/70 px-5 py-4 dark:border-gray-700/70">
+            <div class="min-w-0">
+                <h2 id="{{ id }}-title" class="text-lg font-semibold leading-tight">{{ title }}</h2>
+                {% if description %}
+                <p id="{{ id }}-description" class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ description }}</p>
+                {% endif %}
+            </div>
+            <button type="button"
+                    @click="dismiss()"
+                    class="shrink-0 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:hover:bg-gray-700 dark:hover:text-white"
+                    aria-label="{{ close_sr }}">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </header>
+
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {{ caller() }}
+        </div>
+    </div>
+</div>
+{%- endmacro %}

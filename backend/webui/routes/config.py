@@ -1174,6 +1174,7 @@ async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
         DYNAMIC_CONFIG_RANGES,
         DYNAMIC_CONFIG_SELECT_OPTIONS,
         DYNAMIC_CONFIG_SENSITIVE_KEYS,
+        _get_field_type,
         get_dynamic_config_input_type,
         get_settings,
         mask_sensitive_value,
@@ -1236,6 +1237,7 @@ async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
                         )
                     ),
                     "input_type": input_type,
+                    "step": "any" if _get_field_type(key) is float else "1",
                     "value": display_value,
                     "default": mask_sensitive_value(default_val)
                     if (is_sensitive and default_val)

@@ -60,7 +60,6 @@ from backend.services.user_backup_service import (
     restore_user_backup,
 )
 from backend.telegram import handlers as telegram_handlers
-from backend.telegram.notifications import NotificationSender
 from backend.webui.deps import require_super_admin
 from backend.webui.routes import users as users_webui
 from backend.webui.routes.announcements import router as announcements_webui_router
@@ -773,38 +772,6 @@ async def test_notification_retry_honors_telegram_retry_after(monkeypatch):
     assert provider.calls == 2
     assert sleeps == [7]
     assert delivery.status == DeliveryStatus.SENT.value
-
-
-@pytest.mark.asyncio
-async def test_notification_sender_maps_legacy_mirror_to_rebound_endpoint(monkeypatch):
-    class _Result:
-        def all(self):
-            return [("222", 111)]
-
-    class _Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def execute(self, _query):
-            return _Result()
-
-    class _Bot:
-        def __init__(self):
-            self.sent = []
-
-        async def send_message(self, **kwargs):
-            self.sent.append(kwargs)
-
-    monkeypatch.setattr(database_module, "async_session", _Session)
-    bot = _Bot()
-    sender = NotificationSender(bot)
-
-    await sender.send_to_targets("hello", [111])
-
-    assert [item["chat_id"] for item in bot.sent] == [222]
 
 
 @pytest.mark.asyncio

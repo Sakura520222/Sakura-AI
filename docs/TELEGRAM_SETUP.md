@@ -1,6 +1,6 @@
 # 🤖 Telegram Bot 集成指南
 
-> Telegram 仅作为可选的通知渠道和一次性绑定入口。账号登录、GitHub 身份、角色权限、配额、仓库和系统配置均在 WebUI 中管理。
+> Telegram 仅作为统一公告投递的可选 Provider 和一次性绑定入口。账号登录、GitHub 身份、角色权限、配额、仓库和系统配置均在 WebUI 中管理。
 
 ← [文档索引](README.md) · [README](../README.md)
 
@@ -41,12 +41,7 @@ Sakura AI 的 Telegram Bot 目前只注册以下两个命令：
 - `telegram_bot_token`：BotFather 生成的 Token；
 - `telegram_bind_token_expire_seconds`：WebUI 绑定令牌的有效期。
 
-修改启用状态或 Bot Token 后需要重启服务，新的 Bot 实例才会加载配置。若部署环境配置了默认系统通知聊天目标，请按部署文件中的 `TELEGRAM_DEFAULT_CHAT_ID` 设置；该目标是通知目的地，不是管理员身份来源。
-
-```env
-TELEGRAM_BOT_TOKEN=你的_Bot_Token
-TELEGRAM_DEFAULT_CHAT_ID=可选的通知聊天ID
-```
+修改启用状态或 Bot Token 后需要重启服务，新的 Bot 实例才会加载配置。
 
 > 管理员账号和权限请通过 WebUI 配置。数据库动态配置和备份导入会自动兼容历史字段名，但新配置应使用上面的规范键名。
 
@@ -69,18 +64,16 @@ TELEGRAM_DEFAULT_CHAT_ID=可选的通知聊天ID
 | 用户、角色、启用状态和配额 | 超级管理员 WebUI「用户管理」 |
 | 仓库白名单与订阅 | WebUI 仓库/订阅管理 |
 | Bot Token、Provider 开关 | 超级管理员 WebUI「系统核心配置」 |
-| 审查、扫描和公告通知 | WebUI/API 及配置的通知渠道 |
+| PR 审查、Issue 分析和扫描结果 | GitHub PR/Issue 和 WebUI |
+| 公告及其通知投递 | WebUI 公告中心及已启用的通知 Providers |
 
 Telegram Bot 不提供用户、管理员、仓库、配额或审查命令。需要执行这些操作时，请使用 WebUI；需要自动化时，请使用受保护的 API。
 
 ## 📦 通知目标说明
 
-Telegram 通知目标分为两类：
+用户在 WebUI 个人设置中绑定的私聊目标存储为 `NotificationEndpoint`。公告投递通过 `NotificationService` 解析已启用的端点，并由 `TelegramNotificationProvider` 发送到绑定的 Telegram 私聊。投递结果保留在公告投递记录中，发送失败不会改变账号权限。
 
-1. 用户在 WebUI 个人设置中绑定的私聊通知端点；
-2. 部署配置提供的系统级默认通知聊天目标，可用于扫描等系统通知。
-
-群组或频道的聊天 ID 可能是负数，这是 Telegram 的正常格式。它只能作为显式配置的系统通知目标使用，不应伪装成某个用户的个人绑定端点。通知发送失败会记录在应用日志中，应用不会因此改变账号权限。
+PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除。本次变更未实现替代的业务事件通知层；PR/Issue 和扫描结果仍通过 GitHub 与 WebUI 查看。
 
 ## 🛡️ 安全建议
 
@@ -110,7 +103,7 @@ A: Telegram Bot 在服务启动时构造。保存配置后重启服务，再检�
 
 ### Q: 如何查看 Telegram ID？
 
-A: 绑定流程会使用 Telegram 私聊上下文自动识别 ID，一般不需要手工填写。只有配置系统级默认通知目标时，才需按部署入口填写目标 chat ID。
+A: 绑定流程会使用 Telegram 私聊上下文自动识别 ID，不需要手工填写。请在 WebUI「个人设置」中查看绑定状态或解绑。
 
 ## 📚 更多信息
 
@@ -130,4 +123,4 @@ Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
 ---
 
-*最后更新：2026-09-04 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-02 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

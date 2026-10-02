@@ -165,7 +165,7 @@ async def test_incomplete_local_venv_is_rebuilt_before_pip(
     monkeypatch.setattr(executor, "execute", execute)
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -216,7 +216,7 @@ async def test_failed_local_bootstrap_is_retried_on_next_admission(
     monkeypatch.setattr(executor, "execute", execute)
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -284,7 +284,7 @@ async def test_dependency_venvs_are_backend_specific_and_cancel_is_forwarded(
     (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -360,7 +360,7 @@ async def test_cancelled_dependency_result_stops_before_pip(
     (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -408,7 +408,7 @@ async def test_unannounced_cancelled_dependency_result_fails_closed(
     (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -469,7 +469,7 @@ async def test_cancel_event_wins_over_nonzero_dependency_result(
     (workspace / "requirements.txt").write_text("example-package\n", encoding="utf-8")
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",

@@ -6,9 +6,11 @@
 <div class="max-w-4xl mx-auto px-4 py-6 space-y-6">
   <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">{{ _("version_manager.title") }}</h1>
 
-  {# Host updater progress dialog. It stays modal while the destructive operation is active. #}
+  {# Host updater progress dialog. It stays modal while the destructive operation is active.
+     视觉遵循统一 Modal 层规范（sakura-modal-shell / rounded-2xl / z-[110]）；
+     关闭策略为特例：更新进行中 persistent，仅在终态错误时允许关闭。 #}
   <div id="update-progress-modal"
-       class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 px-4"
+       class="sakura-modal-shell hidden fixed inset-0 z-[110] flex items-center justify-center bg-gray-950/80 backdrop-blur-sm px-4"
        role="dialog"
        aria-modal="true"
        aria-labelledby="update-progress-title"
@@ -16,7 +18,7 @@
        aria-hidden="true"
        tabindex="-1">
     <div id="update-progress-card"
-         class="w-full max-w-lg rounded-2xl border border-sakura-200/60 bg-white p-6 shadow-xl dark:border-sakura-800/40 dark:bg-gray-800">
+         class="w-full max-w-lg rounded-2xl border border-sakura-200/60 bg-white/95 p-6 shadow-2xl backdrop-blur-sm dark:border-sakura-800/60 dark:bg-[#1e1028]/95">
       <div class="flex items-start justify-between gap-4">
         <h2 id="update-progress-title" class="text-lg font-semibold text-gray-800 dark:text-gray-100"></h2>
         <span id="update-progress-percent" class="shrink-0 font-mono text-lg font-semibold text-sakura-600 dark:text-sakura-300">0%</span>
@@ -295,17 +297,25 @@ function renderRegistryPanel(channel) {
         tag: image.canonical_tag, digest: image.digest
       };
       const channelSwitch = CURRENT_BUILD_CHANNEL !== image.channel;
-      const confirmation = image.channel === 'development'
-        ? VM_I18N.developmentRisk
-        : VM_I18N.channelSwitchRisk;
-      if ((image.channel === 'development' || channelSwitch) && !window.confirm(confirmation)) {
+      const needsConfirmation = image.channel === 'development' || channelSwitch;
+      const applySelection = () => {
+        selectedRegistryTarget = candidate;
+        selectedRegistryVersion = image.version;
+        selectedRegistryConfirmed = needsConfirmation;
+        setStatus(VM_I18N.registrySelected, 'ok');
+        preflightButton.disabled = false;
+      };
+      if (!needsConfirmation) {
+        applySelection();
         return;
       }
-      selectedRegistryTarget = candidate;
-      selectedRegistryVersion = image.version;
-      selectedRegistryConfirmed = image.channel === 'development' || channelSwitch;
-      setStatus(VM_I18N.registrySelected, 'ok');
-      preflightButton.disabled = false;
+      // 统一确认弹窗：fail-closed（Alpine 未就绪时不会执行选中）。
+      window.Sakura.confirm({
+        message: image.channel === 'development'
+          ? VM_I18N.developmentRisk
+          : VM_I18N.channelSwitchRisk,
+        variant: 'danger',
+      }).then((confirmed) => { if (confirmed) applySelection(); });
     });
     title.appendChild(action);
     row.appendChild(title);
@@ -483,7 +493,6 @@ let progressTargetVersion = '';
 let progressTarget = null;
 let progressJobId = '';
 let progressTerminal = false;
-let progressPreviousFocus = null;
 let refreshTimer = null;
 let activePoll = null;
 
@@ -528,7 +537,6 @@ function renderProgress({state = '', step = '', kind = 'active', message = ''} =
 
 function openProgressModal({jobId = '', targetVersion = '', initial = false} = {}) {
   if (!updateProgressModal.classList.contains('hidden')) return;
-  progressPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (initial) {
     lastProgress = 0;
     progressJobId = '';
@@ -539,25 +547,26 @@ function openProgressModal({jobId = '', targetVersion = '', initial = false} = {
   progressJobId = jobId || progressJobId;
   progressTargetVersion = targetVersion || progressTargetVersion;
   progressTerminal = false;
-  document.body.classList.add('overflow-hidden');
   updateProgressModal.classList.remove('hidden');
   updateProgressModal.setAttribute('aria-hidden', 'false');
+  window.Sakura?.openDialog(updateProgressModal, {
+    canDismiss: () => progressTerminal,
+    onClose: () => closeProgressModal(),
+    focusTarget: () => updateProgressModal,
+  });
   updateProgressTarget.textContent = progressTargetVersion
     ? vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion})
     : '';
   updateProgressClose.classList.add('hidden');
   updateProgressError.classList.add('hidden');
   renderProgress({message: initial ? VM_I18N.progressPreparing : ''});
-  updateProgressModal.focus();
 }
 
 function closeProgressModal() {
   if (!progressTerminal) return;
   updateProgressModal.classList.add('hidden');
   updateProgressModal.setAttribute('aria-hidden', 'true');
-  document.body.classList.remove('overflow-hidden');
-  if (progressPreviousFocus && typeof progressPreviousFocus.focus === 'function') progressPreviousFocus.focus();
-  progressPreviousFocus = null;
+  window.Sakura?.closeDialog(updateProgressModal);
 }
 
 function normalizedProgressTarget(value) {
@@ -918,17 +927,6 @@ async function pollJob(jobId) {
 }
 
 updateProgressClose.addEventListener('click', closeProgressModal);
-updateProgressModal.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && progressTerminal) {
-    event.preventDefault();
-    closeProgressModal();
-  } else if (event.key === 'Tab') {
-    // The active dialog intentionally has no dismiss action. Keep keyboard
-    // focus inside it until a terminal error exposes the sole close button.
-    event.preventDefault();
-    (progressTerminal ? updateProgressClose : updateProgressModal).focus();
-  }
-});
 
 updateButton.addEventListener('click', async function() {
   if (updateButton.disabled) return;

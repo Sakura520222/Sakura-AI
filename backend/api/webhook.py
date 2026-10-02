@@ -24,7 +24,6 @@ from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
 )
 from backend.services.telegram_service import TelegramService
-from backend.telegram.notifications import get_notification_sender
 from backend.workers.review_worker import submit_review_task
 
 settings = get_settings()
@@ -714,8 +713,7 @@ async def handle_pull_request_event(
                     e,
                 )
 
-        # Telegram 权限检查
-        notification_sender = get_notification_sender()
+        # 用户权限检查
         async with get_async_session() as session:
             service = TelegramService(session)
 
@@ -732,12 +730,6 @@ async def handle_pull_request_event(
             user = await service.get_user_by_github_username(github_username)
             if not user:
                 logger.warning(f"仓库所有者未注册: {github_username}")
-                if notification_sender:
-                    await notification_sender.send_unauthorized_user(
-                        repo_name=pr_info["repo_full_name"],
-                        pr_number=pr_info["pr_number"],
-                        github_username=github_username,
-                    )
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered repo owner"}
                 )
@@ -752,14 +744,6 @@ async def handle_pull_request_event(
 
             if not allowed:
                 logger.warning(f"配额不足: {github_username} (仓库所有者) - {reason}")
-                if notification_sender:
-                    await notification_sender.send_quota_exceeded(
-                        repo_name=pr_info["repo_full_name"],
-                        item_type="PR",
-                        item_number=pr_info["pr_number"],
-                        reason=reason,
-                        chat_id=user.telegram_id,
-                    )
                 return JSONResponse(
                     content={
                         "status": "skipped",
@@ -767,26 +751,6 @@ async def handle_pull_request_event(
                         "detail": reason,
                     }
                 )
-
-            # 4. 发送审查开始通知
-            if notification_sender:
-                # 收集通知目标：作者 + 订阅者
-                start_chat_ids = []
-                if user:
-                    start_chat_ids.append(user.telegram_id)
-                repo_subscribers = await service.get_repo_subscribers(
-                    pr_info["repo_full_name"]
-                )
-                start_chat_ids = list(dict.fromkeys(start_chat_ids + repo_subscribers))
-
-                if start_chat_ids:
-                    await notification_sender.send_review_start(
-                        repo_name=pr_info["repo_full_name"],
-                        pr_number=pr_info["pr_number"],
-                        pr_title=pr_info.get("title", ""),
-                        author=github_username,
-                        chat_ids=start_chat_ids,
-                    )
 
         # Synchronize event: immediately dismiss stale bot reviews
         # to prevent old APPROVE from being exploited while the review
@@ -1148,33 +1112,6 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                     )
         except Exception as e:
             logger.warning(f"删除旧审查记录失败（将继续审查）: {e}")
-
-        # 发送审查开始通知
-        notification_sender = get_notification_sender()
-        if notification_sender:
-            # 收集通知目标：作者 + 订阅者
-            manual_chat_ids = []
-            try:
-                async with get_async_session() as session:
-                    svc = TelegramService(session)
-                    author_name = pr_info.get("author", "")
-                    if author_name:
-                        author_user = await svc.get_user_by_github_username(author_name)
-                        if author_user:
-                            manual_chat_ids.append(author_user.telegram_id)
-                    subscribers = await svc.get_repo_subscribers(repo_full_name)
-                    manual_chat_ids = list(dict.fromkeys(manual_chat_ids + subscribers))
-            except Exception as e:
-                logger.warning(f"获取通知目标失败: {e}", exc_info=True)
-
-            if manual_chat_ids:
-                await notification_sender.send_review_start(
-                    repo_name=repo_full_name,
-                    pr_number=pr_number,
-                    pr_title=pr_info.get("title", ""),
-                    author=pr_info["author"],
-                    chat_ids=manual_chat_ids,
-                )
 
         # 提交全量审查任务
         task_key = await submit_review_task(pr_info)
@@ -1887,8 +1824,7 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
                 content={"status": "skipped", "reason": "feature disabled"}
             )
 
-        # Telegram 权限检查
-        notification_sender = get_notification_sender()
+        # 用户权限检查
         async with get_async_session() as session:
             service = TelegramService(session)
 
@@ -1917,14 +1853,6 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
                 logger.warning(
                     f"Issue 配额不足: {github_username} (仓库所有者) - {reason}"
                 )
-                if notification_sender:
-                    await notification_sender.send_quota_exceeded(
-                        repo_name=issue_info["repo_full_name"],
-                        item_type="Issue",
-                        item_number=issue_info["issue_number"],
-                        reason=reason,
-                        chat_id=user.telegram_id,
-                    )
                 return JSONResponse(
                     content={
                         "status": "skipped",
@@ -1985,7 +1913,6 @@ async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
             )
 
         # 权限和配额检查
-        notification_sender = get_notification_sender()
         async with get_async_session() as session:
             service = TelegramService(session)
             user = await service.get_user_by_github_username(commenter)
@@ -2002,14 +1929,6 @@ async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
             )
             if not allowed:
                 logger.warning(f"Issue 配额不足: {commenter} - {reason}")
-                if notification_sender:
-                    await notification_sender.send_quota_exceeded(
-                        repo_name=issue_info["repo_full_name"],
-                        item_type="Issue",
-                        item_number=issue_info["issue_number"],
-                        reason=reason,
-                        chat_id=user.telegram_id,
-                    )
                 return JSONResponse(
                     content={
                         "status": "skipped",

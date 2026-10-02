@@ -501,7 +501,7 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
     monkeypatch.setattr(executor, "execute", capture)
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -538,7 +538,6 @@ async def test_install_workspace_dependencies_uses_local_venv_with_full_access(
         "install",
         "-r",
         "requirements.txt",
-        "--quiet",
     )
     assert all("/workspace/" not in " ".join(item.argv or ()) for item in requests)
 
@@ -661,7 +660,7 @@ async def test_install_workspace_dependencies_rebuilds_invalid_reserved_venv(
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",
@@ -836,7 +835,7 @@ async def test_install_workspace_dependencies_falls_back_to_requirements_for_vir
     monkeypatch.setattr(executor, "execute", capture)
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
-        lambda _key: _async_value(True),
+        lambda _key, **_kwargs: _async_value(True),
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_settings",

@@ -81,7 +81,7 @@
 
 | 键 | 移除后行为 |
 |---|---|
-| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；管理员 Telegram 通知与 Bot 命令权限以数据库 `super_admin` 用户的已绑定通知端点为准（Setup Wizard 绑定、Bot `/start` 绑定，或管理员在用户管理中填写 Telegram ID 时自动落库）。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
+| `telegram_admin_user_ids` | 超级管理员不再由启动环境变量定义；角色与权限以数据库用户身份及其 `super_admin` 等角色为准，Telegram ID 仅用于通知端点绑定，不授予登录或 Bot 管理权限。该键从未入库，旧 `.env` 中的残留值启动时直接忽略 |
 
 ## 配置备份
 
@@ -134,7 +134,7 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
-| WebUI 配置管理 | `enable_auto_review` | PR webhook（opened/synchronize/reopened）是否自动入队；关闭后仍可命令或手动触发 |
+| WebUI 配置管理 | `enable_auto_review` | PR webhook（opened/synchronize/reopened）是否自动入队；关闭后仍可通过 GitHub PR 评论 `/full-review` 手动触发 |
 | WebUI 审查策略 | 四种策略 | 快速 / 标准 / 深度 / 大 PR |
 | WebUI 审查策略 | 文件过滤 | 跳过的文件扩展名和路径 |
 | WebUI 审查策略 | `review_policy` | 审查批准阈值与仓库级覆盖 |
@@ -226,6 +226,8 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | —（无上限） | `agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`（已移除） | 全栈专家与审查专家工具循环不设轮次与时长上限，依赖模型自然停止与手动取消 |
 | —（无上限） | `agent_team_max_files_changed` / `agent_team_max_lines_changed`（已移除） | 修改文件数/行数不再受限（原硬检查已删除，含 PR 服务 >20 文件硬编码检查） |
 | 全局配置页「Agent 专家团队」组 | `agent_team_auto_install_deps` | 自动安装依赖 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_dependency_install_attempts` | 瞬时依赖网络故障的最大安装尝试次数（含首次），默认 3，范围 1–5；版本冲突、确实缺包及未知错误不重试 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_dependency_retry_delay_seconds` | 重试初始等待秒数，默认 2，范围 0–60；指数退避，默认等待 2、4 秒，可随任务取消中断 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
 | 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 完全隔离；`web_tools`（默认）仅授权受控 Web 工具；`full_access` 允许 Agent/Dependency runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
@@ -338,10 +340,11 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 | 位置 | 键名 | 说明 |
 |---|---|---|
+| WebUI「系统核心配置」 | `telegram_enabled` | 是否启用公告投递的 Telegram Provider；**修改后需重启服务生效** |
 | Setup Wizard 第 3 步 / WebUI「系统核心配置」 | `telegram_bot_token` | Bot Token；**修改后需重启服务生效**（Bot 实例在服务启动时构造） |
-| 环境变量（启动默认值） | `TELEGRAM_DEFAULT_CHAT_ID` | 默认通知聊天 ID |
+| WebUI「系统核心配置」 | `telegram_bind_token_expire_seconds` | 一次性绑定令牌有效期，单位秒 |
 
-> 注意：`telegram_default_chat_id` 不是 WebUI 动态配置键，以启动时环境变量 / Setup 配置为准。Bot 设置、权限体系与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。
+Bot 设置、通知端点绑定与命令参考详见 [Telegram Bot 集成指南](TELEGRAM_SETUP.md)。Telegram 不参与账号角色或权限判断。
 
 ## 国际化
 
@@ -366,4 +369,4 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 
 ---
 
-*最后更新：2026-9-25 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

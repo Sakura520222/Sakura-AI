@@ -8,10 +8,19 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Annotated
 from urllib.parse import urlsplit, urlunsplit
 
-from backend.core.config import get_dynamic_config, get_settings
+from pydantic import TypeAdapter, ValidationError
+
+from backend.core.config import Settings, get_dynamic_config, get_settings
 from backend.core.github_app import GitHubAppClient
+from backend.services.agent_team.dependency_bootstrap import (
+    DependencyAttempt,
+    DependencySetupReport,
+    classify_dependency_failure,
+    sanitize_dependency_diagnostic,
+)
 from backend.services.agent_team.dependency_venv import (
     DependencyVenvLifecycleMixin,
 )
@@ -117,6 +126,7 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
     ):
         self.github_app = github_app or GitHubAppClient()
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
+        self.dependency_setup_report: DependencySetupReport | None = None
 
     @staticmethod
     def _dependency_result_was_cancelled(
@@ -134,7 +144,8 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
 
         if result.infrastructure_error:
             raise ExecutionError(
-                f"Agent 依赖安装执行清理失败: {result.infrastructure_error}"
+                "Agent 依赖安装执行清理失败: "
+                + sanitize_dependency_diagnostic(result.infrastructure_error)
             )
         if cancel_event is not None and cancel_event.is_set():
             return True
@@ -349,7 +360,7 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         execution_runner: ExecutionRunner,
         *,
         cancel_event: asyncio.Event | None = None,
-    ) -> None:
+    ) -> DependencySetupReport | None:
         """安装工作区依赖 after the workspace-scoped runner is admitted.
 
         The worker deliberately calls this only after Git has determined the
@@ -359,11 +370,13 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         explicit local-development path is separately gated by ``full_access``.
         """
 
+        self.dependency_setup_report = None
         await self._install_workspace_dependencies(
             execution_runner,
             self._safe_workspace_path(workspace),
             cancel_event=cancel_event,
         )
+        return self.dependency_setup_report
 
     async def _install_workspace_dependencies(
         self,
@@ -475,7 +488,10 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 return
             if result.returncode != 0:
                 raise ExecutionError(
-                    f"创建 Agent 依赖 venv 失败: {result.stderr or result.stdout}"
+                    "创建 Agent 依赖 venv 失败: "
+                    + sanitize_dependency_diagnostic(
+                        result.stderr + "\n" + result.stdout
+                    )
                 )
             venv_dir = self._agent_dependency_venv_path(workspace, "sandbox")
             if not self._dependency_venv_has_launchers(venv_dir, "sandbox"):
@@ -499,42 +515,31 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             self._resolve_dependency_path(workspace, "pyproject.toml")
         )
         if installable_pyproject:
-            result = await execute_request(
-                executor,
-                ExecutionRequest(
-                    workspace_key=execution_workspace_key(
-                        workspace, self.workspace_service
-                    ),
-                    command=f"{pip_cmd} install -e . --quiet",
-                    profile=ExecutionProfile.DEPENDENCY,
-                    timeout_seconds=600,
-                    cancel_event=cancel_event,
-                ),
-            )
+            command = f"{pip_cmd} install -e ."
+            manifest = "pyproject.toml"
         elif has_requirements:
-            result = await execute_request(
-                executor,
-                ExecutionRequest(
-                    workspace_key=execution_workspace_key(
-                        workspace, self.workspace_service
-                    ),
-                    command=(f"{pip_cmd} install -r requirements.txt --quiet"),
-                    profile=ExecutionProfile.DEPENDENCY,
-                    timeout_seconds=600,
-                    cancel_event=cancel_event,
-                ),
-            )
+            command = f"{pip_cmd} install -r requirements.txt"
+            manifest = "requirements.txt"
         else:
             logger.info(
                 "Agent 工作区 pyproject.toml 不可安装且无 requirements.txt，跳过依赖安装"
             )
             return
-        if self._dependency_result_was_cancelled(result, cancel_event):
-            return
-        if result.returncode != 0:
-            raise ExecutionError(
-                f"安装 Agent 工作区依赖失败: {result.stderr or result.stdout}"
-            )
+        self.dependency_setup_report = await self._run_dependency_install(
+            executor,
+            workspace,
+            "sandbox",
+            manifest,
+            ExecutionRequest(
+                workspace_key=execution_workspace_key(
+                    workspace, self.workspace_service
+                ),
+                command=command,
+                profile=ExecutionProfile.DEPENDENCY,
+                timeout_seconds=600,
+                cancel_event=cancel_event,
+            ),
+        )
 
     async def _install_local_workspace_dependencies(
         self,
@@ -596,7 +601,10 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 return
             if result.returncode != 0:
                 raise ExecutionError(
-                    f"创建 Agent 本地依赖 venv 失败: {result.stderr or result.stdout}"
+                    "创建 Agent 本地依赖 venv 失败: "
+                    + sanitize_dependency_diagnostic(
+                        result.stderr + "\n" + result.stdout
+                    )
                 )
 
         # Re-resolve after the bootstrap request before deriving the host
@@ -623,8 +631,8 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 "install",
                 "-e",
                 ".",
-                "--quiet",
             )
+            manifest = "pyproject.toml"
         elif (workspace / "requirements.txt").is_file():
             dependency_args = (
                 str(dependency_python),
@@ -633,15 +641,18 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 "install",
                 "-r",
                 "requirements.txt",
-                "--quiet",
             )
+            manifest = "requirements.txt"
         else:
             logger.info(
                 "Agent 工作区 pyproject.toml 不可安装且无 requirements.txt，跳过依赖安装"
             )
             return
-        result = await execute_request(
+        self.dependency_setup_report = await self._run_dependency_install(
             executor,
+            workspace,
+            "local",
+            manifest,
             ExecutionRequest(
                 workspace_key=workspace_key,
                 argv=dependency_args,
@@ -651,12 +662,127 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
                 cancel_event=cancel_event,
             ),
         )
-        if self._dependency_result_was_cancelled(result, cancel_event):
-            return
-        if result.returncode != 0:
-            raise ExecutionError(
-                f"安装 Agent 本地工作区依赖失败: {result.stderr or result.stdout}"
+
+    async def _run_dependency_install(
+        self,
+        executor: ExecutionRunner,
+        workspace: Path,
+        backend: str,
+        manifest: str,
+        request: ExecutionRequest,
+    ) -> DependencySetupReport:
+        """Retry transport failures; retain ordinary install failure for the Agent.
+
+        Runner exceptions, infrastructure failures, unsafe paths and unexplained
+        cancellation remain fatal admission errors. Only completed dependency
+        command results may degrade to a failed setup report.
+        """
+        from loguru import logger
+
+        settings = get_settings()
+        policy = {}
+        for key in (
+            "agent_team_dependency_install_attempts",
+            "agent_team_dependency_retry_delay_seconds",
+        ):
+            field = Settings.model_fields[key]
+            default = field.default
+            value = await get_dynamic_config(key, fresh=True)
+            if value is None:
+                value = getattr(settings, key, default)
+            try:
+                if isinstance(value, bool):
+                    raise ValueError("boolean retry setting")
+                policy[key] = TypeAdapter(
+                    Annotated[field.annotation, *field.metadata]
+                ).validate_python(value)
+            except TypeError, ValueError, ValidationError:
+                logger.warning(
+                    "Agent 依赖安装重试配置 {} 无效，使用 Settings 默认值", key
+                )
+                policy[key] = default
+
+        max_attempts = policy["agent_team_dependency_install_attempts"]
+        delay = policy["agent_team_dependency_retry_delay_seconds"]
+        attempts: list[DependencyAttempt] = []
+        command = sanitize_dependency_diagnostic(
+            request.command or shlex.join(request.argv or ())
+        )
+
+        def report(status: str) -> DependencySetupReport:
+            return DependencySetupReport(status, command, tuple(attempts))
+
+        for number in range(1, max_attempts + 1):
+            if request.cancel_event is not None and request.cancel_event.is_set():
+                return report("cancelled")
+            # Recheck after every wait: package hooks may have replaced paths.
+            venv = self._agent_dependency_venv_path(workspace, backend)
+            if not self._dependency_venv_has_launchers(venv, backend):
+                raise ExecutionError("Agent 依赖安装重试前 venv 路径不安全或不完整")
+            self._resolve_dependency_path(workspace, manifest)
+            result = await execute_request(executor, request)
+            if self._dependency_result_was_cancelled(result, request.cancel_event):
+                return report("cancelled")
+            succeeded = result.returncode == 0 and not result.timed_out
+            failure = classify_dependency_failure(result)
+            attempt = DependencyAttempt(
+                number=number,
+                category="SUCCEEDED" if succeeded else failure.category,
+                retryable=not succeeded and failure.retryable,
+                exit_code=result.exit_code,
+                timed_out=result.timed_out,
+                output_truncated=result.output_truncated,
+                stdout=sanitize_dependency_diagnostic(result.stdout),
+                stderr=sanitize_dependency_diagnostic(result.stderr),
             )
+            attempts.append(attempt)
+            if succeeded:
+                logger.info(
+                    "Agent dependency_setup=succeeded: workspace={}, attempts={}",
+                    workspace,
+                    number,
+                )
+                return report("succeeded")
+            logger.warning(
+                "Agent dependency install failed: workspace={}, attempt={}/{}, category={}, "
+                "retryable={}, exit_code={}, timed_out={}, output_truncated={}\nstdout:\n{}\nstderr:\n{}",
+                workspace,
+                number,
+                max_attempts,
+                attempt.category,
+                attempt.retryable,
+                attempt.exit_code,
+                attempt.timed_out,
+                attempt.output_truncated,
+                attempt.stdout,
+                attempt.stderr,
+            )
+            if not attempt.retryable or number == max_attempts:
+                logger.warning(
+                    "Agent dependency_setup=failed: workspace={}; handing diagnostics to Agent",
+                    workspace,
+                )
+                return report("failed")
+            # Settings bounds (at most five attempts) keep exponential backoff
+            # finite. Wait on the task event so cancellation interrupts sleep.
+            wait_seconds = delay * (2 ** (number - 1))
+            logger.info(
+                "Agent dependency retry: workspace={}, next_attempt={}, delay_seconds={}",
+                workspace,
+                number + 1,
+                wait_seconds,
+            )
+            if request.cancel_event is None:
+                await asyncio.sleep(wait_seconds)
+            else:
+                try:
+                    await asyncio.wait_for(
+                        request.cancel_event.wait(), timeout=wait_seconds
+                    )
+                    return report("cancelled")
+                except TimeoutError:
+                    pass
+        raise AssertionError("dependency retry policy must allow an attempt")
 
     def _resolve_dependency_path(self, workspace: Path, relative_path: str) -> Path:
         """Resolve a dependency path and reject links escaping the workspace."""

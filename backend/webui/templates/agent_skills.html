@@ -2,33 +2,35 @@
 
 {% block title %}{{ _('agent_skills.title') }} - Sakura AI{% endblock %}
 
+{% from "components/modal.html" import modal_shell %}
+
 {% block content %}
-<div x-data="{ installTab: 'github' }" class="mx-auto max-w-[1480px] space-y-4">
-    <header class="rounded-2xl border border-gray-200 bg-white px-4 py-4 dark:border-gray-700 dark:bg-gray-800 sm:px-5">
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div class="min-w-0">
-                <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-                    <h1 class="text-2xl font-bold tracking-tight text-gray-950 dark:text-white">{{ _('agent_skills.title') }}</h1>
-                    <dl class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                        <div class="flex items-baseline gap-1"><dt>{{ _('agent_skills.total_count') }}</dt><dd class="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{{ total_skills }}</dd></div>
-                        <span aria-hidden="true" class="text-gray-300 dark:text-gray-600">/</span>
-                        <div class="flex items-baseline gap-1"><dt>{{ _('agent_skills.enabled_count') }}</dt><dd class="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{{ enabled_skills }}</dd></div>
-                    </dl>
+    <div x-data="{ installTab: 'github' }" class="mx-auto max-w-[1480px] space-y-4">
+        <header class="rounded-2xl border border-gray-200 bg-white px-4 py-4 dark:border-gray-700 dark:bg-gray-800 sm:px-5">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div class="min-w-0">
+                    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                        <h1 class="text-2xl font-bold tracking-tight text-gray-950 dark:text-white">{{ _('agent_skills.title') }}</h1>
+                        <dl class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                            <div class="flex items-baseline gap-1"><dt>{{ _('agent_skills.total_count') }}</dt><dd class="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{{ total_skills }}</dd></div>
+                            <span aria-hidden="true" class="text-gray-300 dark:text-gray-600">/</span>
+                            <div class="flex items-baseline gap-1"><dt>{{ _('agent_skills.enabled_count') }}</dt><dd class="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{{ enabled_skills }}</dd></div>
+                        </dl>
+                    </div>
+                    <p class="mt-1 max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">{{ _('agent_skills.description') }}</p>
+                    <div class="mt-2 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span class="shrink-0">{{ _('agent_skills.root_path') }}</span>
+                        <code class="truncate rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700 dark:bg-gray-900 dark:text-gray-300" title="{{ skills_root }}">{{ skills_root }}</code>
+                    </div>
                 </div>
-                <p class="mt-1 max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">{{ _('agent_skills.description') }}</p>
-                <div class="mt-2 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                    <span class="shrink-0">{{ _('agent_skills.root_path') }}</span>
-                    <code class="truncate rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700 dark:bg-gray-900 dark:text-gray-300" title="{{ skills_root }}">{{ skills_root }}</code>
-                </div>
+                <button type="button"
+                        @click="installTab = 'github'; Sakura.openModal('agent-skill-install'); $nextTick(() => $refs.githubUrl?.focus())"
+                        class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-sakura-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">
+                    <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    {{ _('agent_skills.install_skill') }}
+                </button>
             </div>
-            <button type="button"
-                    @click="installTab = 'github'; $refs.installDialog.showModal(); $nextTick(() => $refs.githubUrl.focus())"
-                    class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-sakura-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">
-                <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                {{ _('agent_skills.install_skill') }}
-            </button>
-        </div>
-    </header>
+        </header>
 
     <section aria-labelledby="skills-ledger-title" class="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
         <div class="border-b border-gray-200 px-4 py-3 dark:border-gray-700 sm:px-5">
@@ -73,56 +75,44 @@
         <div id="agent-skills-list" aria-live="polite">{% include "components/agent_skills_list_fragment.html" %}</div>
     </section>
 
-    <dialog x-ref="installDialog" @close="installTab = 'github'"
-            aria-labelledby="agent-skill-install-title" aria-describedby="agent-skill-install-description"
-            class="m-auto w-[calc(100%-2rem)] max-w-2xl overflow-hidden rounded-2xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl backdrop:bg-gray-950/55 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
-        <div class="border-b border-gray-200 px-4 py-4 dark:border-gray-700 sm:px-5">
-            <div class="flex items-start justify-between gap-4">
-                <div><h2 id="agent-skill-install-title" class="text-lg font-semibold">{{ _('agent_skills.install_dialog_title') }}</h2><p id="agent-skill-install-description" class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_skills.install_dialog_desc') }}</p></div>
-                <button type="button" @click="$refs.installDialog.close()" aria-label="{{ _('agent_skills.close_dialog') }}" class="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:hover:bg-gray-700 dark:hover:text-white"><svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12"/></svg></button>
-            </div>
-            <div role="tablist" aria-label="{{ _('agent_skills.install_method') }}" class="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-900">
-                <button id="agent-skill-github-tab" type="button" role="tab" aria-controls="agent-skill-github-panel" :aria-selected="installTab === 'github'" @click="installTab = 'github'; $nextTick(() => $refs.githubUrl.focus())" :class="installTab === 'github' ? 'bg-white text-gray-950 shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-600 hover:text-gray-950 dark:text-gray-400 dark:hover:text-white'" class="flex-1 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500">{{ _('agent_skills.github_tab') }}</button>
-                <button id="agent-skill-upload-tab" type="button" role="tab" aria-controls="agent-skill-upload-panel" :aria-selected="installTab === 'upload'" @click="installTab = 'upload'; $nextTick(() => $refs.uploadFile.focus())" :class="installTab === 'upload' ? 'bg-white text-gray-950 shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-600 hover:text-gray-950 dark:text-gray-400 dark:hover:text-white'" class="flex-1 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500">{{ _('agent_skills.upload_tab') }}</button>
-            </div>
-        </div>
+    <!-- 安装技能弹窗（统一 Modal） -->
+    {% call modal_shell(id="agent-skill-install", title=_('agent_skills.install_dialog_title'),
+                        description=_('agent_skills.install_dialog_desc'),
+                        size="lg", close_sr=_('agent_skills.close_dialog')) %}
+            <div>
+                <div role="tablist" aria-label="{{ _('agent_skills.install_method') }}" class="mb-4 flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-900">
+                    <button id="agent-skill-github-tab" type="button" role="tab" aria-controls="agent-skill-github-panel" :aria-selected="installTab === 'github'" @click="installTab = 'github'; $nextTick(() => $refs.githubUrl.focus())" :class="installTab === 'github' ? 'bg-white text-gray-950 shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-600 hover:text-gray-950 dark:text-gray-400 dark:hover:text-white'" class="flex-1 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500">{{ _('agent_skills.github_tab') }}</button>
+                    <button id="agent-skill-upload-tab" type="button" role="tab" aria-controls="agent-skill-upload-panel" :aria-selected="installTab === 'upload'" @click="installTab = 'upload'; $nextTick(() => $refs.uploadFile.focus())" :class="installTab === 'upload' ? 'bg-white text-gray-950 shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-600 hover:text-gray-950 dark:text-gray-400 dark:hover:text-white'" class="flex-1 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500">{{ _('agent_skills.upload_tab') }}</button>
+                </div>
 
-        <div class="px-4 py-5 sm:px-5">
-            <form id="agent-skill-github-panel" x-show="installTab === 'github'" role="tabpanel" aria-labelledby="agent-skill-github-tab" method="post" action="/agent-skills/install-github" class="space-y-4">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div>
-                    <label for="github-skill-url" class="block text-sm font-medium">{{ _('agent_skills.github_url') }}</label>
-                    <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('agent_skills.install_github_desc') }}</p>
-                    <input x-ref="githubUrl" id="github-skill-url" name="github_url" type="url" required placeholder="https://github.com/owner/repo/blob/main/path/SKILL.md" class="mt-2 w-full rounded-lg border border-gray-300 bg-white text-sm focus:border-sakura-500 focus:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900">
-                </div>
-                <div class="flex justify-end gap-2">
-                    <button type="button" @click="$refs.installDialog.close()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:hover:bg-gray-700">{{ _('common.cancel') }}</button>
-                    <button type="submit" class="rounded-lg bg-sakura-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">{{ _('agent_skills.install') }}</button>
-                </div>
-            </form>
+                <form id="agent-skill-github-panel" x-show="installTab === 'github'" role="tabpanel" aria-labelledby="agent-skill-github-tab" method="post" action="/agent-skills/install-github" class="space-y-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div>
+                        <label for="github-skill-url" class="block text-sm font-medium">{{ _('agent_skills.github_url') }}</label>
+                        <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('agent_skills.install_github_desc') }}</p>
+                        <input x-ref="githubUrl" id="github-skill-url" name="github_url" type="url" required placeholder="https://github.com/owner/repo/blob/main/path/SKILL.md" class="mt-2 w-full rounded-lg border border-gray-300 bg-white text-sm focus:border-sakura-500 focus:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900">
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" @click="Sakura.closeModal('agent-skill-install')" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:hover:bg-gray-700">{{ _('common.cancel') }}</button>
+                        <button type="submit" class="rounded-lg bg-sakura-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">{{ _('agent_skills.install') }}</button>
+                    </div>
+                </form>
 
-            <form id="agent-skill-upload-panel" x-show="installTab === 'upload'" x-cloak role="tabpanel" aria-labelledby="agent-skill-upload-tab" method="post" action="/agent-skills/upload" enctype="multipart/form-data" class="space-y-4">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div><label for="skill-display-name" class="block text-sm font-medium">{{ _('agent_skills.display_name') }}</label><input id="skill-display-name" name="name" type="text" placeholder="{{ _('agent_skills.name_placeholder') }}" class="mt-2 w-full rounded-lg border border-gray-300 bg-white text-sm focus:border-sakura-500 focus:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900"></div>
-                <div>
-                    <label for="skill-upload-file" class="block text-sm font-medium">{{ _('agent_skills.skill_file') }}</label>
-                    <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('agent_skills.upload_skill_desc') }}</p>
-                    <input x-ref="uploadFile" id="skill-upload-file" name="skill_file" type="file" accept=".md,.zip,text/markdown,text/plain,application/zip" required class="mt-2 block w-full rounded-lg border border-gray-300 bg-white p-2 text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-800 hover:file:bg-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:file:bg-gray-700 dark:file:text-gray-100">
-                </div>
-                <div class="flex justify-end gap-2">
-                    <button type="button" @click="$refs.installDialog.close()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:hover:bg-gray-700">{{ _('common.cancel') }}</button>
-                    <button type="submit" class="rounded-lg bg-sakura-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">{{ _('agent_skills.upload') }}</button>
-                </div>
-            </form>
-        </div>
-    </dialog>
+                <form id="agent-skill-upload-panel" x-show="installTab === 'upload'" x-cloak role="tabpanel" aria-labelledby="agent-skill-upload-tab" method="post" action="/agent-skills/upload" enctype="multipart/form-data" class="space-y-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div><label for="skill-display-name" class="block text-sm font-medium">{{ _('agent_skills.display_name') }}</label><input id="skill-display-name" name="name" type="text" placeholder="{{ _('agent_skills.name_placeholder') }}" class="mt-2 w-full rounded-lg border border-gray-300 bg-white text-sm focus:border-sakura-500 focus:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900"></div>
+                    <div>
+                        <label for="skill-upload-file" class="block text-sm font-medium">{{ _('agent_skills.skill_file') }}</label>
+                        <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('agent_skills.upload_skill_desc') }}</p>
+                        <input x-ref="uploadFile" id="skill-upload-file" name="skill_file" type="file" accept=".md,.zip,text/markdown,text/plain,application/zip" required class="mt-2 block w-full rounded-lg border border-gray-300 bg-white p-2 text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-800 hover:file:bg-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:file:bg-gray-700 dark:file:text-gray-100">
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" @click="Sakura.closeModal('agent-skill-install')" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 dark:border-gray-600 dark:hover:bg-gray-700">{{ _('common.cancel') }}</button>
+                        <button type="submit" class="rounded-lg bg-sakura-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sakura-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sakura-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800">{{ _('agent_skills.upload') }}</button>
+                    </div>
+                </form>
+            </div>
+    {% endcall %}
 </div>
 
-<style>
-    dialog[open] { animation: agent-skills-dialog-in 140ms ease-out; }
-    dialog::backdrop { animation: agent-skills-backdrop-in 140ms ease-out; }
-    @keyframes agent-skills-dialog-in { from { opacity: 0; transform: translateY(8px) scale(.99); } }
-    @keyframes agent-skills-backdrop-in { from { opacity: 0; } }
-    @media (prefers-reduced-motion: reduce) { dialog[open], dialog::backdrop { animation: none; } }
-</style>
 {% endblock %}

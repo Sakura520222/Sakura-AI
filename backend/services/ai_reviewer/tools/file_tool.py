@@ -19,16 +19,24 @@ from backend.services.ai_reviewer.constants import (
 
 
 def format_search_results(
-    lines: list[str], match_indices: list[int], context_lines: int
+    lines: list[str],
+    match_indices: list[int],
+    context_lines: int,
+    min_idx: int = 0,
+    max_idx: int | None = None,
 ) -> str:
     """Format search results with line numbers and match markers.
 
-    Shared utility for search-related tools.
+    Shared utility for search-related tools. ``min_idx``/``max_idx`` bound the
+    rendered context to a 0-based half-open line window so range-restricted
+    searches do not leak lines outside the requested range.
     """
+    if max_idx is None:
+        max_idx = len(lines)
     included_indices: set[int] = set()
     for match_idx in match_indices:
-        ctx_start = max(0, match_idx - context_lines)
-        ctx_end = min(len(lines), match_idx + context_lines + 1)
+        ctx_start = max(min_idx, match_idx - context_lines)
+        ctx_end = min(max_idx, match_idx + context_lines + 1)
         for i in range(ctx_start, ctx_end):
             included_indices.add(i)
 
@@ -298,19 +306,22 @@ class FileToolHandler:
     ) -> dict[str, Any]:
         """读取文件内容的工具实现
 
-        支持三种模式：
+        支持四种模式：
         1. 完整读取（仅指定 file_path）
         2. 行范围读取（指定 start_line 和 end_line）
         3. 内容搜索（指定 search_pattern，返回匹配行及上下文）
+        4. 范围内搜索（同时指定 start_line/end_line 和 search_pattern，
+           仅在指定行范围内搜索，上下文也不会越过范围边界）
 
         Args:
             file_path: 文件路径
             repo: GitHub仓库对象
             pr: GitHub PR对象
-            start_line: 起始行号（从1开始，可选）
+            start_line: 起始行号（从1开始，可选；可与 search_pattern 组合限定搜索范围）
             end_line: 结束行号（从1开始，包含，可选）
-            start_char: 起始行内的字符偏移（从0开始，仅行范围模式可选）
-            search_pattern: 搜索文本（可选，与行范围互斥）
+            start_char: 起始行内的字符偏移（从0开始，仅行范围读取模式可选）
+            search_pattern: 搜索文本（可选；单独使用时搜索整个文件，
+                与 start_line/end_line 组合时仅搜索指定行范围）
             context_lines: 搜索上下文行数（可选，默认从配置读取）
             branch: 非 PR 场景下指定读取的分支名（可选）；PR 场景忽略此参数
 
@@ -326,20 +337,17 @@ class FileToolHandler:
                     "error": "该路径在跳过列表中，无法访问",
                 }
 
-            # 参数互斥校验
-            if start_line is not None and search_pattern is not None:
-                return {
-                    "file_path": file_path,
-                    "error": "不能同时指定 start_line/end_line 和 search_pattern",
-                    "hint": "请选择行范围读取或内容搜索其中一种模式",
-                }
+            # start_char 仅用于行范围读取的超长单行续读，搜索模式下无意义
             if start_char is not None and (
                 start_line is None or end_line is None or search_pattern is not None
             ):
                 return {
                     "file_path": file_path,
-                    "error": "start_char 只能和 start_line/end_line 一起使用",
-                    "hint": "请先指定行范围；start_char 用于继续读取超长单行。",
+                    "error": "start_char 只能用于行范围读取模式",
+                    "hint": (
+                        "请仅搭配 start_line/end_line 使用 start_char 续读超长单行；"
+                        "搜索模式无需 start_char。"
+                    ),
                 }
 
             # 行范围参数校验
@@ -422,8 +430,12 @@ class FileToolHandler:
             lines = content.split("\n")
             total_lines = len(lines)
 
-            # 模式1: 行范围读取
-            if start_line is not None and end_line is not None:
+            # 模式1: 行范围读取（search_pattern 存在时走模式2的范围内搜索）
+            if (
+                start_line is not None
+                and end_line is not None
+                and search_pattern is None
+            ):
                 # 转换为0-based索引
                 start_idx = max(0, start_line - 1)
                 max_returned_lines = max(1, limits["max_file_lines"])
@@ -658,18 +670,72 @@ class FileToolHandler:
                         )
                 return result
 
-            # 模式2: 内容搜索
+            # 模式2: 内容搜索（全文件搜索 / 指定行范围内搜索）
             if search_pattern is not None:
-                matches = []
+                range_requested = start_line is not None and end_line is not None
+                search_mode = "search_range" if range_requested else "search"
+                search_start_idx = 0
+                search_end_idx = total_lines
+                if range_requested:
+                    search_start_idx = start_line - 1
+                    search_end_idx = min(end_line, total_lines)
+                    if search_start_idx >= total_lines:
+                        retry_start_line = max(
+                            1, total_lines - (end_line - start_line)
+                        )
+                        retry_arguments: dict[str, Any] = {
+                            "file_path": file_path,
+                            "start_line": retry_start_line,
+                            "end_line": total_lines,
+                            "search_pattern": search_pattern,
+                        }
+                        if pr is None and branch_used:
+                            retry_arguments["branch"] = branch_used
+                        return {
+                            "file_path": file_path,
+                            "mode": "search_range",
+                            "search_pattern": search_pattern,
+                            "error": f"start_line {start_line} 超出文件范围",
+                            "total_lines": total_lines,
+                            "branch": branch_used or "unknown",
+                            "branch_requested": branch_requested,
+                            "branch_used": branch_used,
+                            "tried_branches": tried_branches,
+                            "ref_used": fetch.ref_used,
+                            "tried_refs": fetch.tried_refs,
+                            "search_range": {
+                                "requested": {
+                                    "start_line": start_line,
+                                    "end_line": end_line,
+                                },
+                                "status": "start_line_out_of_range",
+                                "stale_context_suspected": True,
+                            },
+                            "recovery": {
+                                "action": "retry_read_file",
+                                "automatic_retry": False,
+                                "reason": "start_line_out_of_range",
+                                "retry_arguments": retry_arguments,
+                            },
+                            "hint": (
+                                f"请求范围 start_line={start_line}, "
+                                f"end_line={end_line} 超出当前文件总行数 "
+                                f"{total_lines}，行号可能来自已更新的分支或提交。"
+                                "请先根据当前文件重新定位，再使用 "
+                                "recovery.retry_arguments 重试范围内搜索。"
+                            ),
+                        }
+
+                matches: list[int] = []
                 search_lower = search_pattern.lower()
-                for idx, line in enumerate(lines):
-                    if search_lower in line.lower():
+                for idx in range(search_start_idx, search_end_idx):
+                    if search_lower in lines[idx].lower():
                         matches.append(idx)  # 0-based index
 
                 if not matches:
-                    return {
+                    no_match: dict[str, Any] = {
                         "file_path": file_path,
-                        "mode": "search",
+                        "mode": search_mode,
                         "search_pattern": search_pattern,
                         "total_lines": total_lines,
                         "match_count": 0,
@@ -682,13 +748,38 @@ class FileToolHandler:
                         "ref_used": fetch.ref_used,
                         "tried_refs": fetch.tried_refs,
                     }
+                    if range_requested:
+                        no_match["search_range"] = {
+                            "requested": {
+                                "start_line": start_line,
+                                "end_line": end_line,
+                            },
+                            "searched": {
+                                "start_line": start_line,
+                                "end_line": search_end_idx,
+                            },
+                        }
+                        no_match["message"] = (
+                            f"未在行范围 {start_line}-{search_end_idx} 内"
+                            f"找到包含 '{search_pattern}' 的行"
+                        )
+                    return no_match
 
                 max_returned_matches = max(1, limits["max_file_lines"])
                 returned_matches = matches[:max_returned_matches]
                 matches_truncated = len(returned_matches) < len(matches)
-                numbered_content = format_search_results(
-                    lines, returned_matches, effective_context_lines
-                )
+                if range_requested:
+                    numbered_content = format_search_results(
+                        lines,
+                        returned_matches,
+                        effective_context_lines,
+                        min_idx=search_start_idx,
+                        max_idx=search_end_idx,
+                    )
+                else:
+                    numbered_content = format_search_results(
+                        lines, returned_matches, effective_context_lines
+                    )
                 numbered_content, output_char_truncated = _cap_output_chars(
                     numbered_content, limits["max_file_output_chars"]
                 )
@@ -696,7 +787,7 @@ class FileToolHandler:
                 result = {
                     "file_path": file_path,
                     "content": numbered_content,
-                    "mode": "search",
+                    "mode": search_mode,
                     "search_pattern": search_pattern,
                     "total_lines": total_lines,
                     "match_count": len(matches),
@@ -711,6 +802,17 @@ class FileToolHandler:
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
                 }
+                if range_requested:
+                    result["search_range"] = {
+                        "requested": {
+                            "start_line": start_line,
+                            "end_line": end_line,
+                        },
+                        "searched": {
+                            "start_line": start_line,
+                            "end_line": search_end_idx,
+                        },
+                    }
                 if matches_truncated:
                     result["matches_truncated"] = True
                 if output_char_truncated:
@@ -718,7 +820,22 @@ class FileToolHandler:
                     result["output_char_limit"] = limits["max_file_output_chars"]
                     result["returned_matches"] = numbered_content.count(">>>\t")
                     result["matches_truncated"] = True
-                if matches_truncated or output_char_truncated:
+                if range_requested:
+                    if matches_truncated or output_char_truncated:
+                        result["hint"] = (
+                            f"行范围 {start_line}-{search_end_idx} 内共找到 "
+                            f"{len(matches)} 处匹配，本次结果受行数或字符上限截断。"
+                            "请使用更精确的 search_pattern，或缩小行范围后重试。"
+                        )
+                    else:
+                        result["hint"] = (
+                            f"行范围 {start_line}-{search_end_idx} 内共找到 "
+                            f"{len(matches)} 处匹配，搜索及其上下文均未超出"
+                            "该范围。如需查看范围外内容，请调整 start_line/"
+                            "end_line 后重新搜索；如需查看匹配附近的完整代码，"
+                            "请改用行范围读取。"
+                        )
+                elif matches_truncated or output_char_truncated:
                     result["hint"] = (
                         f"共找到 {len(matches)} 处匹配，本次结果受行数或字符上限截断。"
                         "请使用更精确的 search_pattern，或基于已返回行号使用行范围读取。"

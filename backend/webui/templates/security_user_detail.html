@@ -57,15 +57,15 @@
         <h2 class="text-base font-semibold text-red-700 dark:text-red-300">{{ _('security.danger_zone') }}</h2>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('security.danger_zone_desc') }}</p>
         <div class="mt-4 flex flex-wrap gap-3">
-            <form method="POST" action="/security/users/{{ target_user.id }}/totp/reset" onsubmit="return confirm('{{ _('security.confirm_reset_totp') }}')">
+            <form method="POST" action="/security/users/{{ target_user.id }}/totp/reset" data-confirm="{{ _('security.confirm_reset_totp') }}" data-confirm-variant="warning">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600">{{ _('security.reset_totp') }}</button>
             </form>
-            <form method="POST" action="/security/users/{{ target_user.id }}/passkeys/delete-all" onsubmit="return confirm('{{ _('security.confirm_delete_all_passkeys') }}')">
+            <form method="POST" action="/security/users/{{ target_user.id }}/passkeys/delete-all" data-confirm="{{ _('security.confirm_delete_all_passkeys') }}" data-confirm-variant="warning">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600">{{ _('security.delete_all_passkeys') }}</button>
             </form>
-            <form method="POST" action="/security/users/{{ target_user.id }}/mfa/reset" onsubmit="return confirm('{{ _('security.confirm_reset_all_mfa') }}')">
+            <form method="POST" action="/security/users/{{ target_user.id }}/mfa/reset" data-confirm="{{ _('security.confirm_reset_all_mfa') }}" data-confirm-variant="danger">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">{{ _('security.reset_all_mfa') }}</button>
             </form>
@@ -81,7 +81,7 @@
                     <p class="text-sm font-medium">{{ passkey.device_name or _('settings.passkey_default_name') }}</p>
                     <p class="text-xs text-gray-500">{{ _('common.created_at') }}: {{ passkey.created_at|format_datetime_short }}{% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at|format_datetime_short }}{% endif %}</p>
                 </div>
-                <form method="POST" action="/security/users/{{ target_user.id }}/passkeys/{{ passkey.id }}/delete" onsubmit="return confirm('{{ _('security.confirm_delete_passkey') }}')">
+                <form method="POST" action="/security/users/{{ target_user.id }}/passkeys/{{ passkey.id }}/delete" data-confirm="{{ _('security.confirm_delete_passkey') }}" data-confirm-variant="danger">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">{{ _('common.delete') }}</button>
                 </form>

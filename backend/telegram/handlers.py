@@ -656,18 +656,6 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
             )
 
-        # 7. 发送审查开始通知
-        from backend.telegram.notifications import get_notification_sender
-
-        notification_sender = get_notification_sender()
-        if notification_sender:
-            await notification_sender.send_review_start(
-                repo_name=pr_info["repo_full_name"],
-                pr_number=pr_info["pr_number"],
-                pr_title=pr_info.get("title", ""),
-                author=pr_info["author"],
-            )
-
         # 8. 提交审查任务（异步执行）
         from backend.workers.review_worker import submit_review_task
 
@@ -695,7 +683,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 作者: {pr_info['author']}\n"
             f"📝 标题: {pr_info['title'][:50]}{'...' if len(pr_info['title']) > 50 else ''}\n"
             f"🆔 任务标识: `{task_key}`\n\n"
-            f"⏳ 审查完成后将通过Telegram通知您",
+            f"⏳ 请在 GitHub PR 页面查看审查结果",
             parse_mode="Markdown",
         )
 
