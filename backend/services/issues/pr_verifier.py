@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +16,31 @@ from backend.core.ai_protocol.errors import (
 from backend.core.config import get_dynamic_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.pr_body import strip_sakura_generated_sections
+
+
+def _changed_runs(patch: str) -> dict[str, list[str]]:
+    """Keep diff direction and contiguous runs within each unified-diff hunk."""
+    runs = {"added": [], "removed": []}
+    direction, lines, in_hunk = None, [], False
+
+    def finish():
+        if lines:
+            runs[direction].append("\n".join(lines))
+            lines.clear()
+
+    for line in patch.splitlines():
+        if re.match(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", line):
+            finish()
+            direction, in_hunk = None, True
+            continue
+        change = {"+": "added", "-": "removed"}.get(line[:1]) if in_hunk else None
+        if change is None or change != direction:
+            finish()
+            direction = change
+        if change is not None:
+            lines.append(line[1:])
+    finish()
+    return runs
 
 
 @dataclass
@@ -79,7 +105,11 @@ class PRRelationVerifier:
                             "the actual patch to fully satisfy every Issue requirement. Missing/truncated patches cannot establish closes. "
                             'Return exactly JSON {"relations": [{"number": integer, "relation": "closes" or "related", '
                             '"confidence": number 0..1, "reason": nonempty text, "evidence": [{"path": changed path, '
-                            '"code_quote": exact changed code excerpt without diff prefix, "issue_quote": exact Issue title/body excerpt}]}]}. '
+                            '"change": "added" or "removed", "code_quote": exact changed code excerpt without diff prefix, '
+                            '"issue_quote": exact Issue title/body excerpt}]}]}. '
+                            "added means code introduced by '+' lines; removed means code deleted by '-' lines, never newly implemented behavior. "
+                            "Quote a contiguous run of the stated direction within one hunk; do not stitch across context, opposite-direction lines, or hunks. "
+                            "Removing faulty code can resolve an Issue when the removal itself satisfies the requirements; explain that deletion in the reason. "
                             "Omit unsupported candidates. An empty relations list is valid."
                         ),
                     },
@@ -130,6 +160,10 @@ class PRRelationVerifier:
                 raise ValueError("invalid relation envelope")
             accepted, seen = [], set()
             patches = {f["path"]: f for f in files}
+            changed_runs = {
+                path: _changed_runs(source.get("patch") or "")
+                for path, source in patches.items()
+            }
             for relation in data["relations"]:
                 if not isinstance(relation, dict) or set(relation) != {
                     "number",
@@ -169,6 +203,7 @@ class PRRelationVerifier:
                 for item in evidence:
                     if not isinstance(item, dict) or set(item) != {
                         "path",
+                        "change",
                         "code_quote",
                         "issue_quote",
                     }:
@@ -178,18 +213,17 @@ class PRRelationVerifier:
                         for value in item.values()
                     ):
                         raise ValueError("empty evidence")
+                    if item["change"] not in {"added", "removed"}:
+                        raise ValueError("invalid change direction")
                     source = patches.get(item["path"])
                     if source is None:
                         raise ValueError("unobserved changed path")
-                    changed = "\n".join(
-                        line[1:]
-                        for line in (source.get("patch") or "").splitlines()
-                        if line.startswith(("+", "-"))
-                        and not line.startswith(("+++", "---"))
-                    )
                     issue_text = facts[number]["title"] + "\n" + facts[number]["body"]
                     if (
-                        item["code_quote"] not in changed
+                        not any(
+                            item["code_quote"] in run
+                            for run in changed_runs[item["path"]][item["change"]]
+                        )
                         or item["issue_quote"] not in issue_text
                     ):
                         raise ValueError("ungrounded evidence")

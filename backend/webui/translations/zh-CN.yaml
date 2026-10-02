@@ -570,6 +570,7 @@ issue:
   analyzing_status: "分析中"
   pending_status: "待处理"
   reanalyze: "重新分析"
+  reanalyze_closed: "已关闭的 Issue 不支持重新分析，请先在 GitHub 上重新打开"
   ai_summary: "AI 摘要"
   no_summary: "暂无摘要"
   no_feasibility: "暂无评估"

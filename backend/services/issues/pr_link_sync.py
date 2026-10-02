@@ -11,6 +11,24 @@ from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.models.database import PRIssueLink
 
 _LOCKS = weakref.WeakKeyDictionary()
+# PRIssueLink.inference_reason is MySQL TEXT: capacity is bytes, not characters.
+_INFERENCE_REASON_MAX_BYTES = 65535
+
+
+class SemanticLinkEvidenceTooLargeError(ValueError):
+    """The complete decision/proof cannot fit its persisted TEXT column."""
+
+
+def _serialize_decision(relation: dict) -> str:
+    decision = {
+        key: relation[key]
+        for key in ("number", "relation", "confidence", "reason", "evidence")
+    }
+    serialized = json.dumps(decision, ensure_ascii=False, allow_nan=False)
+    if len(serialized.encode("utf-8")) > _INFERENCE_REASON_MAX_BYTES:
+        # Never truncate proof or drop evidence to fit storage.
+        raise SemanticLinkEvidenceTooLargeError()
+    return serialized
 
 
 @asynccontextmanager
@@ -24,6 +42,11 @@ async def pr_relation_ownership(repo_name: str, pr_number: int):
 async def replace_semantic_links(
     db, repo_name: str, pr_number: int, relations: list[dict]
 ):
+    # Validate the entire projected set before deleting or modifying any rows.
+    wanted = {
+        relation["number"]: (relation, _serialize_decision(relation))
+        for relation in relations
+    }
     result = await db.execute(
         select(PRIssueLink).where(
             PRIssueLink.repo_name == repo_name,
@@ -32,12 +55,11 @@ async def replace_semantic_links(
         )
     )
     existing = {row.issue_number: row for row in result.scalars().all()}
-    wanted = {relation["number"]: relation for relation in relations}
     for number, row in existing.items():
         if number not in wanted:
             # AsyncSession.delete is async; sync test facade can expose it too.
             await db.delete(row)
-    for number, relation in wanted.items():
+    for number, (relation, serialized) in wanted.items():
         row = existing.get(number)
         if row is None:
             row = PRIssueLink(
@@ -49,7 +71,7 @@ async def replace_semantic_links(
             db.add(row)
         prefix = "Closes" if relation["relation"] == "closes" else "Related to"
         row.reference_text = f"{prefix} #{number}"
-        row.inference_reason = json.dumps(relation, ensure_ascii=False, allow_nan=False)
+        row.inference_reason = serialized
     await db.flush()
 
 

@@ -259,6 +259,15 @@ async def reanalyze_issue(
             status_code=404,
         )
 
+    if analysis.issue_state == "closed":
+        return JSONResponse(
+            content={
+                "success": False,
+                "message": "已关闭的 Issue 不支持重新分析，请先在 GitHub 上重新打开",
+            },
+            status_code=409,
+        )
+
     # 构造 issue_info
     issue_info = {
         "issue_number": analysis.issue_number,

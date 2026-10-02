@@ -131,11 +131,13 @@ async def test_source_grounded_pr_pairs_flow_through_retrieval_verification_and_
                 "evidence": [
                     {
                         "path": "backend/webui/routes/github_app.py",
+                        "change": "added",
                         "code_quote": "user: dict = Depends(require_auth),",
                         "issue_quote": "普通用户不再因为 `require_admin` 无法管理自己的 App installation",
                     },
                     {
                         "path": "backend/services/github_user_authorization_service.py",
+                        "change": "added",
                         "code_quote": 'f"{_GITHUB_API_BASE}/user/installations/{installation_id}/repositories"',
                         "issue_quote": "用户只能看到自己有权访问的 GitHub App installations",
                     },

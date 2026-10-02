@@ -570,6 +570,7 @@ issue:
   analyzing_status: "Analyzing"
   pending_status: "Pending"
   reanalyze: "Re-analyze"
+  reanalyze_closed: "Closed Issues cannot be re-analyzed. Reopen the Issue on GitHub first."
   ai_summary: "AI Summary"
   no_summary: "No summary yet"
   no_feasibility: "No assessment yet"
