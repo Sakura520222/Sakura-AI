@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.models.database import PRIssueLink
+from backend.services.issues.pr_budget import PRBudgetError, check_boundary, read_source
 
 _LOCKS = weakref.WeakKeyDictionary()
 # PRIssueLink.inference_reason is MySQL TEXT: capacity is bytes, not characters.
@@ -128,38 +129,78 @@ class PRRelationSyncService:
                 self.verifier = self.verifier or PRRelationVerifier()
                 self.linker = self.linker or PRIssueLinker()
 
-                # Fetch the source used by this inference, independently of the
-                # possibly outdated webhook or AI analyzer subset of files.
-                def snapshot():
-                    pr = repo.get_pull(number)
-                    raw_files = list(pr.get_files())
-                    files = []
-                    count_complete = len(raw_files) == pr.changed_files
-                    for f in raw_files:
-                        patch = f.patch or ""
-                        additions = sum(
-                            line.startswith("+") and not line.startswith("+++")
-                            for line in patch.splitlines()
-                        )
-                        deletions = sum(
-                            line.startswith("-") and not line.startswith("---")
-                            for line in patch.splitlines()
-                        )
-                        files.append(
-                            {
-                                "path": f.filename,
-                                "status": f.status,
-                                "patch": patch,
-                                "complete": count_complete
-                                and bool(patch)
-                                and additions == f.additions
-                                and deletions == f.deletions,
-                            }
-                        )
-                    return pr.head.sha, pr.base.sha, pr.title, pr.body or "", files
-
-                sha, base_sha, title, body, files = await asyncio.to_thread(snapshot)
+                budget_verifier = (
+                    self.verifier
+                    if callable(getattr(self.verifier, "resolve_budget", None))
+                    else PRRelationVerifier()
+                )
+                budget = await budget_verifier.resolve_budget(
+                    cancel_event=cancel_event, deadline=deadline
+                )
+                # Only one lazy iterator read is allowed between boundary checks.
+                # Do not materialize PaginatedList: that requests every GitHub page.
+                pr = await read_source(repo.get_pull, number)
+                check_boundary(cancel_event, deadline)
+                sha, base_sha, title, body = (
+                    pr.head.sha,
+                    pr.base.sha,
+                    pr.title,
+                    pr.body or "",
+                )
                 human = strip_sakura_generated_sections(body)
+                budget.messages(pr_title=title, pr_body=human, files=[], candidates=[])
+                expected = pr.changed_files
+                if type(expected) is not int or expected < 0:
+                    raise PRBudgetError("snapshot_incomplete")
+                iterator = await read_source(lambda: iter(pr.get_files()))
+                files, end = [], object()
+                while len(files) < expected:
+                    check_boundary(cancel_event, deadline)
+                    if len(files) >= budget.max_files:
+                        raise PRBudgetError("snapshot_incomplete")
+                    # If even the smallest file envelope cannot fit, do not
+                    # trigger another network page merely to discover overflow.
+                    budget.messages(
+                        pr_title=title,
+                        pr_body=human,
+                        files=[
+                            *files,
+                            {"path": "", "status": "", "patch": "", "complete": False},
+                        ],
+                        candidates=[],
+                    )
+                    f = await read_source(next, iterator, end)
+                    check_boundary(cancel_event, deadline)
+                    if f is end:
+                        raise PRBudgetError("snapshot_incomplete")
+                    patch = f.patch or ""
+                    source = {
+                        "path": f.filename,
+                        "status": f.status,
+                        "patch": patch,
+                        "complete": False,
+                    }
+                    # Bound before splitting/retaining a potentially enormous patch.
+                    budget.messages(
+                        pr_title=title,
+                        pr_body=human,
+                        files=[*files, source],
+                        candidates=[],
+                    )
+                    additions = deletions = 0
+                    for line in patch.splitlines():
+                        additions += line.startswith("+") and not line.startswith("+++")
+                        deletions += line.startswith("-") and not line.startswith("---")
+                    source["complete"] = (
+                        bool(patch)
+                        and additions == f.additions
+                        and deletions == f.deletions
+                    )
+                    if not source["complete"]:
+                        # Partial evidence must never replace a previously verified set.
+                        raise PRBudgetError("snapshot_incomplete")
+                    files.append(source)
+                check_boundary(cancel_event, deadline)
                 explicit = await self.linker.parse_issue_references(human)
                 check_cancelled()
                 if deadline is not None and deadline.is_expired():
@@ -261,6 +302,10 @@ class PRRelationSyncService:
             except Exception as exc:
                 from loguru import logger
 
-                failure = type(exc).__name__
+                failure = (
+                    exc.failure
+                    if isinstance(exc, PRBudgetError)
+                    else type(exc).__name__
+                )
                 logger.warning("PR relation synchronization failed: {}", failure)
                 return PRVerificationResult(False, failure=failure)

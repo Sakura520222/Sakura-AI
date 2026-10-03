@@ -16,6 +16,7 @@ from sqlalchemy import (
     event,
     text,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT, MEDIUMTEXT, TINYTEXT
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -605,9 +606,9 @@ class IssueAnalysis(Base):
     suggested_labels = Column(Text, nullable=True)
     suggested_milestone = Column(String(255), nullable=True)
     duplicate_of = Column(BigInteger, nullable=True, index=True)
-    issue_relations = Column(Text, nullable=True)
+    issue_relations = Column(Text().with_variant(LONGTEXT(), "mysql"), nullable=True)
     related_prs = Column(Text, nullable=True)
-    analysis_detail = Column(Text, nullable=True)
+    analysis_detail = Column(Text().with_variant(LONGTEXT(), "mysql"), nullable=True)
 
     # 版本
     analysis_version = Column(Integer, default=1, nullable=False)
@@ -1310,6 +1311,55 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
             )
 
 
+async def _ensure_issue_analysis_longtext_columns(conn, logger) -> bool:
+    """Expand legacy MySQL Issue evidence columns without repeated ALTERs.
+
+    Relation proofs are retained both in issue_relations and analysis_detail.
+    A verified excerpt can exceed TEXT's byte limit, including when the
+    relation alone fits but the complete analysis does not. Missing columns
+    are added by the normal additive migration before this helper runs.
+    """
+    if conn.dialect.name != "mysql":
+        return False
+    from sqlalchemy import inspect
+
+    table_name = "issue_analyses"
+
+    def _columns(sync_conn):
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table_name):
+            return {}
+        return {column["name"]: column for column in inspector.get_columns(table_name)}
+
+    columns = await conn.run_sync(_columns)
+    changed = False
+    for name in ("issue_relations", "analysis_detail"):
+        column = columns.get(name)
+        if column is None:
+            continue
+        current_type = column["type"]
+        if isinstance(current_type, LONGTEXT):
+            continue
+        if not isinstance(current_type, (Text, TINYTEXT, MEDIUMTEXT)):
+            raise RuntimeError(
+                f"cannot expand {table_name}.{name}: expected a legacy text column"
+            )
+        expanded_type = LONGTEXT(
+            charset=getattr(current_type, "charset", None),
+            collation=getattr(current_type, "collation", None),
+        ).compile(dialect=conn.dialect)
+        nullability = "NULL" if column["nullable"] else "NOT NULL"
+        await conn.execute(
+            text(
+                f"ALTER TABLE `{table_name}` MODIFY COLUMN `{name}` "
+                f"{expanded_type} {nullability}"
+            )
+        )
+        changed = True
+        logger.info("[auto-migrate] 扩展列为 LONGTEXT: %s.%s", table_name, name)
+    return changed
+
+
 async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
     """Allow GitHub-only users on old MySQL schemas.
 
@@ -1344,13 +1394,11 @@ async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
         return
     if dialect_name in {"mysql", "mariadb"}:
         statement = (
-            "ALTER TABLE `telegram_users` "
-            "MODIFY COLUMN `telegram_id` BIGINT NULL"
+            "ALTER TABLE `telegram_users` MODIFY COLUMN `telegram_id` BIGINT NULL"
         )
     else:
         statement = (
-            'ALTER TABLE "telegram_users" '
-            'ALTER COLUMN "telegram_id" DROP NOT NULL'
+            'ALTER TABLE "telegram_users" ALTER COLUMN "telegram_id" DROP NOT NULL'
         )
     await conn.execute(text(statement))
     logger.info("[auto-migrate] telegram_users.telegram_id 已改为可为空")
@@ -1378,8 +1426,13 @@ async def _ensure_pr_issue_link_unique_index(conn, logger) -> bool:
         ]
         if keys in unique_sets:
             return False
-        if any(i.get("name") == "uq_pr_issue_link_key" for i in inspector.get_indexes(table.name)):
-            raise RuntimeError("uq_pr_issue_link_key already exists but is not unique on the required key")
+        if any(
+            i.get("name") == "uq_pr_issue_link_key"
+            for i in inspector.get_indexes(table.name)
+        ):
+            raise RuntimeError(
+                "uq_pr_issue_link_key already exists but is not unique on the required key"
+            )
         # Exact-key ownership only; never collapse explicit and semantic links
         # or rows from different PRs/repositories. Keep the latest evidence.
         seen = set()
@@ -1409,7 +1462,7 @@ async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
     用 Inspector 对比 SQLAlchemy 模型定义与数据库实际列，
-    自动 ALTER TABLE 添加缺失的列（仅 ADD COLUMN，不做 DROP 或 MODIFY）。
+    自动 ALTER TABLE 添加缺失的列，并执行显式、兼容的历史 schema 升级。
     """
     import logging
 
@@ -1464,6 +1517,10 @@ async def _auto_migrate():
             await conn.execute(text(sql))
             _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
 
+        issue_storage_changed = await _ensure_issue_analysis_longtext_columns(
+            conn, _logger
+        )
+
         await _ensure_legacy_telegram_id_nullable(conn, _logger)
 
         unique_index_created = await _ensure_observability_trigger_unique_index(
@@ -1472,7 +1529,12 @@ async def _auto_migrate():
 
         pr_link_index_created = await _ensure_pr_issue_link_unique_index(conn, _logger)
 
-        if not missing and not unique_index_created and not pr_link_index_created:
+        if (
+            not missing
+            and not unique_index_created
+            and not pr_link_index_created
+            and not issue_storage_changed
+        ):
             return
 
         # 记录迁移版本

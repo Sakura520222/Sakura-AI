@@ -110,11 +110,15 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `semantic_issue_max_links` | `5` | PR candidate limit |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold |
+| `pr_issue_max_files` | `128` | Lazy PR verification file limit; preserve existing links when exceeded or patches are incomplete |
+| `pr_issue_max_input_tokens` | `64000` | Estimated input token limit for the entire verification request (description, Issues, JSON, system prompt); also bounded by context, configured output, and protocol reserve of all summary-role candidates |
 | `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
 | `issue_corpus_batch_size` | `100` | Corpus embedding/write batch limit |
 | `issue_candidate_pool_multiplier` | `3` | Initial recall multiplier |
 
 Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
+
+Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
 
 ### Agent Expert Team
 

@@ -110,11 +110,15 @@
 | `semantic_issue_max_links` | `5` | PR 候选上限 |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值 |
+| `pr_issue_max_files` | `128` | PR 关系验证的惰性文件读取上限；超限或补丁不完整时保留原关联 |
+| `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
 | `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
 | `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
 | `issue_candidate_pool_multiplier` | `3` | 初步召回数量倍数 |
 
 语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
+
+已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
 
 ### Agent 专家团队
 

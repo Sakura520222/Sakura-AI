@@ -64,9 +64,18 @@ async def test_source_grounded_pr_pairs_flow_through_retrieval_verification_and_
             "semantic_issue_similarity_threshold": 0.8,
             "pr_issue_related_confidence_threshold": 0.85,
             "pr_issue_closing_confidence_threshold": 0.95,
+            "pr_issue_max_files": 128,
+            "pr_issue_max_input_tokens": 64000,
         }
     )
-    from backend.services.issues import pr_verifier
+    from backend.services.issues import pr_budget, pr_verifier
+    from tests.test_pr_issue_budget import summary_candidate
+
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(side_effect=lambda key, **_: settings[key]),
+    )
 
     monkeypatch.setattr(
         pr_verifier,
@@ -154,7 +163,10 @@ async def test_source_grounded_pr_pairs_flow_through_retrieval_verification_and_
             ]
         )
 
-    client = SimpleNamespace(call_with_retry=AsyncMock(side_effect=call))
+    client = SimpleNamespace(
+        call_with_retry=AsyncMock(side_effect=call),
+        resolve_role_candidates=AsyncMock(return_value=[summary_candidate()]),
+    )
     engine = create_engine("sqlite:///:memory:")
     PRIssueLink.__table__.create(engine)
     session = Session(engine)

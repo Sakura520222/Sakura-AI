@@ -12,6 +12,37 @@ from sqlalchemy.orm import Session
 from backend.services.pr_issue_linker import PRIssueLinker
 
 
+@pytest.fixture(autouse=True)
+def configured_pr_budget(monkeypatch):
+    from backend.services.ai_reviewer.api_client import AIApiClient
+    from backend.services.issues import pr_budget
+    from tests.test_pr_issue_budget import summary_candidate
+
+    monkeypatch.setattr(
+        AIApiClient,
+        "resolve_role_candidates",
+        AsyncMock(return_value=[summary_candidate()]),
+    )
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: {
+                "pr_issue_max_files": 128,
+                "pr_issue_max_input_tokens": 64000,
+            }[key]
+        ),
+    )
+
+
+def configured_client(**kwargs):
+    from tests.test_pr_issue_budget import summary_candidate
+
+    return SimpleNamespace(
+        resolve_role_candidates=AsyncMock(return_value=[summary_candidate()]), **kwargs
+    )
+
+
 def linker():
     obj = PRIssueLinker.__new__(PRIssueLinker)
     import re
@@ -97,7 +128,7 @@ async def verify(monkeypatch, payload=None, error=None, **kwargs):
             }[key]
         ),
     )
-    client = SimpleNamespace(call_with_retry=AsyncMock(side_effect=call))
+    client = configured_client(call_with_retry=AsyncMock(side_effect=call))
     result = await pr_verifier.PRRelationVerifier(client).verify(
         pr_title="TLS retry PR",
         pr_body="Human\n<!-- sakura-ai-summary-start -->Fixes #570<!-- sakura-ai-summary-end -->",
@@ -389,7 +420,7 @@ async def test_sync_status_controls_real_body_and_persistence(
 async def test_incomplete_diff_cannot_close(monkeypatch):
     from backend.services.issues import pr_verifier
 
-    client = SimpleNamespace(
+    client = configured_client(
         call_with_retry=AsyncMock(
             return_value=SimpleNamespace(
                 choices=[
@@ -897,7 +928,9 @@ async def test_agent_model_and_fallback_paths_keep_stable_source_metadata(
     monkeypatch.setattr(
         ai_client,
         "create_agent_team_summary_client",
-        AsyncMock(return_value=(SimpleNamespace(call_with_retry=call), "summary", {})),
+        AsyncMock(
+            return_value=(configured_client(call_with_retry=call), "summary", {})
+        ),
     )
     obj = AgentTeamPRService.__new__(AgentTeamPRService)
     body = await obj.generate_pr_body(
@@ -1056,7 +1089,7 @@ async def test_verifier_ordinary_event_uses_domain_cancellation(monkeypatch, pha
     monkeypatch.setattr(pr_verifier, "get_dynamic_config", AsyncMock(return_value=0.95))
     with pytest.raises(ReviewCancelledError):
         await pr_verifier.PRRelationVerifier(
-            SimpleNamespace(call_with_retry=call)
+            configured_client(call_with_retry=call)
         ).verify(
             pr_title="PR",
             pr_body="human",
@@ -1248,7 +1281,9 @@ async def test_sync_persists_only_bounded_decision_and_preserves_large_source_co
     original_body = pr.body
     result = await pr_link_sync.PRRelationSyncService(
         retriever=SimpleNamespace(retrieve=AsyncMock(return_value=[candidate])),
-        verifier=pr_verifier.PRRelationVerifier(SimpleNamespace(call_with_retry=call)),
+        verifier=pr_verifier.PRRelationVerifier(
+            configured_client(call_with_retry=call)
+        ),
         session_factory=DB,
         linker=linker(),
     ).synchronize(SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618)
