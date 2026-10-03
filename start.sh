@@ -1757,9 +1757,19 @@ sandbox_instance_id() {
         return 0
     fi
     if command -v openssl >/dev/null 2>&1; then
-        value="sandbox-$(openssl rand -hex 16 2>/dev/null || true)"
-    elif command -v python3 >/dev/null 2>&1; then
-        value="sandbox-$(python3 -c 'import secrets; print(secrets.token_hex(16))' 2>/dev/null || true)"
+        if ! value=$(openssl rand -hex 16) || [[ ! "$value" =~ ^[a-f0-9]{32}$ ]]; then
+            warn "openssl instance id generation failed; trying python3" >&2
+            value=""
+        else
+            value="sandbox-$value"
+        fi
+    fi
+    if [[ -z "$value" ]] && command -v python3 >/dev/null 2>&1; then
+        if value=$(python3 -c 'import secrets; print(secrets.token_hex(16))'); then
+            value="sandbox-$value"
+        else
+            value=""
+        fi
     fi
     [[ "$value" =~ ^sandbox-[a-z0-9-]{8,55}$ ]] || {
         fail "cannot create stable sandboxd instance id" >&2
@@ -2468,6 +2478,9 @@ sandbox_start_container() {
     sandbox_prepare_directories || return 1
     sandbox_ensure_egress_network_exists || return 1
     instance=$(sandbox_instance_id) || return 1
+    # Command substitution runs in a subshell; retain its result before
+    # persisting the deployment identity in the parent shell.
+    SANDBOX_CONFIGURED_INSTANCE_ID="$instance"
     runner_ref=$(sandbox_runner_reference) || return 1
     daemon_ref=$(sandbox_daemon_reference) || return 1
     sandbox_persist_runtime_identity || return 1

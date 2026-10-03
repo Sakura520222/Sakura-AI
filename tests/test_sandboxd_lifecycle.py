@@ -6,6 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -18,6 +20,118 @@ def _bash(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+@pytest.mark.parametrize(
+    "openssl_body",
+    [
+        "printf 'OPENSSL_3.4.0 not found\\n' >&2; return 1",
+        "return 0",
+        "printf 'invalid random output\\n'; return 0",
+    ],
+)
+def test_instance_id_recovers_with_python_when_openssl_is_broken(openssl_body):
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_STATE_DIR="$(mktemp -d)"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_CONFIGURED_INSTANCE_ID=""
+trap 'rm -rf "$SANDBOX_STATE_DIR"' EXIT
+sandbox_recover_missing_state_instance() { return 1; }
+openssl() { OPENSSL_BODY; }
+instance=$(sandbox_instance_id)
+[[ "$instance" =~ ^sandbox-[a-f0-9]{32}$ ]]
+[[ "$(cat "$SANDBOX_INSTANCE_ID_FILE")" == "$instance" ]]
+[[ "$(stat -c %a "$SANDBOX_INSTANCE_ID_FILE")" == 600 ]]
+'''.replace("OPENSSL_BODY", openssl_body)
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert b"openssl" in result.stderr.lower()
+
+
+def test_instance_id_keeps_generator_errors_when_both_generators_fail():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_STATE_DIR="$(mktemp -d)"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_CONFIGURED_INSTANCE_ID=""
+trap 'rm -rf "$SANDBOX_STATE_DIR"' EXIT
+sandbox_recover_missing_state_instance() { return 1; }
+openssl() { printf 'OPENSSL_3.4.0 not found\n' >&2; return 1; }
+python3() { printf 'python random source failed\n' >&2; return 1; }
+if sandbox_instance_id; then
+    echo 'failed generators produced an instance id' >&2
+    exit 1
+fi
+[[ ! -e "$SANDBOX_INSTANCE_ID_FILE" ]]
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert b"OPENSSL_3.4.0 not found" in result.stderr
+    assert b"python random source failed" in result.stderr
+    assert b"cannot create stable sandboxd instance id" in result.stderr
+
+
+def test_instance_id_reuses_durable_identity_without_random_generation():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+SANDBOX_STATE_DIR="$(mktemp -d)"
+SANDBOX_INSTANCE_ID_FILE="$SANDBOX_STATE_DIR/instance.id"
+SANDBOX_CONFIGURED_INSTANCE_ID=""
+trap 'rm -rf "$SANDBOX_STATE_DIR"' EXIT
+printf 'sandbox-existing1234\n' > "$SANDBOX_INSTANCE_ID_FILE"
+openssl() { echo 'unexpected generator invocation' >&2; return 1; }
+python3() { echo 'unexpected generator invocation' >&2; return 1; }
+instance=$(sandbox_instance_id)
+[[ "$instance" == sandbox-existing1234 ]]
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert b"unexpected generator invocation" not in result.stderr
+
+
+def test_sandbox_start_persists_the_instance_id_returned_from_subshell():
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir="$(mktemp -d)"
+trap 'rm -rf "$case_dir"' EXIT
+SANDBOX_INSTANCE_ID_FILE="$case_dir/instance.id"
+printf 'sandbox-existing1234\n' > "$SANDBOX_INSTANCE_ID_FILE"
+SANDBOX_CONFIGURED_INSTANCE_ID=""
+SANDBOX_EGRESS_NETWORK=bridge
+SANDBOX_WORKSPACE_ROOT="$case_dir/workspace"
+SANDBOX_IMAGE_DIGEST='ghcr.io/sakura520222/sakura-ai-sandboxd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+SANDBOX_RUNNER_DIGEST='ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf 'SAKURA_DEPLOY_MODE=image\nSAKURA_SANDBOX_INSTANCE_ID=\n' > "$DEPLOYMENT_ENV_FILE"
+export SAKURA_DEPLOY_CHANNEL=development
+sandbox_prepare_directories() { :; }
+sandbox_ensure_egress_network_exists() { :; }
+sandbox_read_container_id() { printf '%064d\n' 1; }
+sandbox_identity_matches() { return 0; }
+sandbox_container_matches_expected() { return 0; }
+sandbox_health_ready() { return 0; }
+sandbox_start_container true
+grep -Fxq 'SAKURA_SANDBOX_INSTANCE_ID=sandbox-existing1234' "$DEPLOYMENT_ENV_FILE"
+'''
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_source_build_uses_content_addressed_daemon_and_runner_ids():
