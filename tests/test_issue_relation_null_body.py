@@ -18,6 +18,8 @@ TITLE = "Version 1 crashes on input x during import"
 def title_only_relation(monkeypatch):
     values = {
         "issue_relation_max_candidates": 5,
+        "issue_include_comments": True,
+        "issue_relation_max_input_tokens": 64000,
         "issue_relation_similarity_threshold": 0.75,
         "issue_relation_confidence_threshold": 0.85,
         "issue_duplicate_confidence_threshold": 0.95,
@@ -29,6 +31,9 @@ def title_only_relation(monkeypatch):
 
     monkeypatch.setattr(
         "backend.services.issues.relation_analyzer.get_dynamic_config", config
+    )
+    monkeypatch.setattr(
+        "backend.services.issues.issue_budget.get_dynamic_config", config
     )
     info = extract_issue_info_from_webhook(
         {
@@ -68,7 +73,10 @@ def title_only_relation(monkeypatch):
         "evidence": [{"current_quote": TITLE, "candidate_quote": TITLE}],
     }
     retriever = SimpleNamespace(retrieve=AsyncMock(side_effect=[[candidate], []]))
+    from tests.test_pr_issue_budget import summary_candidate
+
     client = SimpleNamespace(
+        resolve_role_candidates=AsyncMock(return_value=[summary_candidate()]),
         call_with_retry=AsyncMock(
             return_value=SimpleNamespace(
                 usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5),
@@ -80,7 +88,7 @@ def title_only_relation(monkeypatch):
                     )
                 ],
             )
-        )
+        ),
     )
     return IssueRelationAnalyzer(retriever, client), info, candidate, relation, values
 

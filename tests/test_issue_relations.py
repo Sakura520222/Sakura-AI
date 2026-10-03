@@ -409,6 +409,8 @@ def setup_relation(monkeypatch):
     module = importlib.import_module("backend.services.issues.relation_analyzer")
     values = {
         "issue_relation_max_candidates": 5,
+        "issue_include_comments": True,
+        "issue_relation_max_input_tokens": 64000,
         "issue_relation_similarity_threshold": 0.75,
         "issue_relation_confidence_threshold": 0.85,
         "issue_duplicate_confidence_threshold": 0.95,
@@ -419,9 +421,15 @@ def setup_relation(monkeypatch):
         return values[key]
 
     monkeypatch.setattr(module, "get_dynamic_config", config)
+    monkeypatch.setattr(
+        "backend.services.issues.issue_budget.get_dynamic_config", config
+    )
     retriever = SimpleNamespace(retrieve=AsyncMock(side_effect=[[candidate()], []]))
+    from tests.test_pr_issue_budget import summary_candidate
+
     client = SimpleNamespace(
-        call_with_retry=AsyncMock(return_value=response([decision()]))
+        resolve_role_candidates=AsyncMock(return_value=[summary_candidate()]),
+        call_with_retry=AsyncMock(return_value=response([decision()])),
     )
     analyzer = module.IssueRelationAnalyzer(retriever=retriever, client=client)
     current = {
@@ -973,3 +981,31 @@ def test_comment_exposes_history_without_duplicate_warning(
     assert label in comment and "#2" in comment
     assert "Same input and failure" in comment
     assert "Duplicate" not in comment and "重复" not in comment
+
+
+@pytest.mark.asyncio
+async def test_real_budget_failure_preserves_usage_and_main_analysis(
+    setup_relation, main_analyzer, monkeypatch
+):
+    analyzer, current, retriever, client, values = setup_relation
+    retriever.retrieve.side_effect = [[candidate()], [candidate(state="closed")]]
+
+    async def summary(**kwargs):
+        values["issue_relation_max_input_tokens"] = 1
+        return response([decision("related")])
+
+    client.call_with_retry.side_effect = summary
+    monkeypatch.setattr(
+        "backend.services.issue_analyzer.IssueRelationAnalyzer", lambda **k: analyzer
+    )
+    monkeypatch.setattr(
+        "backend.services.issue_analyzer.get_dynamic_config",
+        lambda key, **_: value(key == "issue_detect_duplicates"),
+    )
+    result = await main_analyzer.analyze_issue(current, "owner", "repo")
+    assert result["category"] == "bug" and result["duplicate_of"] is None
+    assert result["issue_relations"]["failure"] == "input_budget"
+    assert result["issue_relations"]["primary"] is None
+    assert result["issue_relations"]["related"] == []
+    assert result["prompt_tokens"] == 6 and result["completion_tokens"] == 10
+    assert main_analyzer.api_client.call_with_retry.await_count == 1

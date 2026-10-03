@@ -102,6 +102,9 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
 | `issue_include_comments` | `true` | Reuse current Issue comments in both analysis phases |
 | `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase |
+| `issue_relation_max_input_tokens` | `64000` | Estimated complete request input limit per open/historical phase, including bodies, comments, JSON, language and system instructions; all summary candidates context, output and reserve limits also apply. Exceeded or unknown budgets admit no duplicate, retain usage, and continue main analysis |
+| `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit per candidate when `issue_include_comments` is enabled; inference receives provenance and omitted discussion bounds |
+| `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
 | `issue_relation_similarity_threshold` | `0.75` | Issue relationship recall cosine threshold |
 | `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
 | `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |

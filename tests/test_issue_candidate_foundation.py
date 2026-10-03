@@ -275,6 +275,7 @@ async def test_retriever_hydrates_current_facts_excludes_pr_and_current_issue(
         "state_reason": "completed",
         "similarity": 1.0,
         "content": "current title\ncurrent body",
+        "updated_at": "2026-10-02T00:00:00Z",
     }
 
 
@@ -1151,3 +1152,509 @@ async def test_cancelled_candidate_pruning_drains_delete_before_next_writer(
         await asyncio.gather(
             pending, *([retry] if retry else []), return_exceptions=True
         )
+
+
+class MutableDeadline:
+    expired = False
+
+    def is_expired(self):
+        return self.expired
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["raw", "embedding", "write", "count", "checkpoint"])
+async def test_reconcile_soft_expiry_retains_previous_cursor(foundation, stage):
+    from backend.services.issues.corpus_service import IssueCorpusService
+
+    service, collection, repo, _ = foundation
+    await service.index_repo_issues("owner", "repo")
+    previous = deepcopy(collection.metadata)
+    deadline = MutableDeadline()
+    repo.rows = [issue(i) for i in range(1, 1001)]
+    raw_reads = []
+    original_source = repo.get_issues
+
+    def source(**kwargs):
+        for row in original_source(**kwargs):
+            raw_reads.append(row)
+            if stage == "raw":
+                deadline.expired = True
+            yield row
+
+    repo.get_issues = source
+    original_embed = service._embedding_service.embed_texts.side_effect
+
+    async def embed(texts):
+        if stage == "embedding":
+            deadline.expired = True
+        return original_embed(texts)
+
+    service._embedding_service.embed_texts.side_effect = embed
+    original_write = collection.upsert
+
+    def write(**kwargs):
+        original_write(**kwargs)
+        if stage == "write":
+            deadline.expired = True
+
+    collection.upsert = write
+    original_count = collection.count
+    count_calls = 0
+
+    def count():
+        nonlocal count_calls
+        count_calls += 1
+        if stage == "count" and count_calls > 1:
+            deadline.expired = True
+        return original_count()
+
+    collection.count = count
+    original_modify = collection.modify
+
+    def modify(**kwargs):
+        original_modify(**kwargs)
+        if stage == "checkpoint":
+            deadline.expired = True
+
+    collection.modify = modify
+    with pytest.raises(TimeoutError, match="deadline"):
+        await IssueCorpusService(service).reconcile("owner", "repo", deadline=deadline)
+    assert collection.metadata == previous
+    assert len(raw_reads) <= (1000 if stage in {"count", "checkpoint"} else 1)
+    if stage in {"raw", "embedding"}:
+        assert len(collection.docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pr_only_pages_stop_at_raw_boundary(foundation):
+    from backend.core.ai_protocol.errors import ReviewCancelledError
+    from backend.services.issues.corpus_service import IssueCorpusService
+
+    service, collection, repo, _ = foundation
+    event = asyncio.Event()
+    reads = []
+
+    def source(**kwargs):
+        for number in range(10000):
+            reads.append(number)
+            event.set()
+            yield SimpleNamespace(
+                raw_data=issue(number + 1, pull_request={"url": "pr"})
+            )
+
+    repo.get_issues = source
+    with pytest.raises(ReviewCancelledError):
+        await IssueCorpusService(service).reconcile("owner", "repo", cancel_event=event)
+    assert reads == [0]
+    assert not collection.docs
+    assert "issue_corpus_cursor" not in collection.metadata
+
+
+def test_relation_domain_cancellation_precedes_soft_deadline():
+    from backend.core.ai_protocol.errors import ReviewCancelledError
+    from backend.services.issues.relation_runtime import check_relation_boundary
+
+    event = asyncio.Event()
+    event.set()
+    deadline = MutableDeadline()
+    deadline.expired = True
+    with pytest.raises(ReviewCancelledError):
+        check_relation_boundary(event, deadline)
+
+
+class NewestComments:
+    def __init__(self, rows):
+        self.rows = rows
+        self.reads = 0
+
+    def __iter__(self):
+        raise AssertionError("forward comment scan forbidden")
+
+    def __reversed__(self):
+        for row in reversed(self.rows):
+            self.reads += 1
+            yield SimpleNamespace(raw_data=row)
+
+
+@pytest.mark.asyncio
+async def test_candidate_newest_bounded_discussion_retains_version_after_rerank(
+    foundation,
+):
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+
+    service, _, repo, values = foundation
+    repo.rows += [issue(2)]
+    values.update(
+        issue_relation_candidate_max_comments=2,
+        issue_relation_candidate_comment_max_chars=12,
+    )
+    comments = NewestComments(
+        [
+            {
+                "id": i,
+                "body": f"decision {i}: accepted and explained",
+                "html_url": f"https://github.com/owner/repo/issues/1#issuecomment-{i}",
+                "user": {"login": "maintainer"},
+                "created_at": "2026-10-02T00:00:00Z",
+                "updated_at": "2026-10-02T00:00:00Z",
+            }
+            for i in range(100)
+        ]
+    )
+    original_get = repo.get_issue
+
+    def get_issue(number):
+        assert number == 1 or not service._reranker_service.rerank.await_count
+        obj = original_get(number)
+        obj.raw_data = {**obj.raw_data, "comments": 100}
+
+        def get_comments():
+            assert service._reranker_service.rerank.await_count == 1
+            assert number == 1
+            return comments
+
+        obj.get_comments = get_comments
+        return obj
+
+    repo.get_issue = get_issue
+    results = await IssueCandidateRetriever(service).retrieve(
+        "owner",
+        "repo",
+        text="query",
+        state="all",
+        exclude_numbers=[],
+        top_k=1,
+        similarity_threshold=0.8,
+        include_comments=True,
+    )
+    candidate = results[0]
+    assert candidate["updated_at"] == "2026-10-02T00:00:00Z"
+    assert [c["id"] for c in candidate["comments"]] == [99, 98]
+    assert candidate["comments"][0]["body"] == "decision 99:"
+    assert candidate["comments"][0]["body_truncated"] is True
+    assert candidate["comments_context"]["truncated"] is True
+    assert candidate["comments_context"]["total_count"] == 100
+    assert comments.reads <= 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_candidate_empty_discussion_differs_from_unavailable(foundation, failure):
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+
+    service, _, repo, values = foundation
+    values.update(
+        issue_relation_candidate_max_comments=2,
+        issue_relation_candidate_comment_max_chars=12,
+    )
+    original_get = repo.get_issue
+
+    def get_issue(number):
+        obj = original_get(number)
+        obj.raw_data = {**obj.raw_data, "comments": 0}
+
+        def get_comments():
+            if failure:
+                raise RuntimeError("comments unavailable")
+            return NewestComments([])
+
+        obj.get_comments = get_comments
+        return obj
+
+    repo.get_issue = get_issue
+    kwargs = {
+        "text": "query",
+        "state": "all",
+        "exclude_numbers": [],
+        "top_k": 1,
+        "similarity_threshold": 0.8,
+        "include_comments": True,
+    }
+    if failure:
+        with pytest.raises(RuntimeError, match="comments unavailable"):
+            await IssueCandidateRetriever(service).retrieve("owner", "repo", **kwargs)
+    else:
+        result = await IssueCandidateRetriever(service).retrieve(
+            "owner", "repo", **kwargs
+        )
+        assert result[0]["comments"] == []
+        assert result[0]["comments_context"]["truncated"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["query_embedding", "hydration", "rerank", "prune"])
+@pytest.mark.parametrize("signal", ["deadline", "domain"])
+async def test_retriever_controls_cover_all_candidate_boundaries(
+    foundation, stage, signal
+):
+    from github import UnknownObjectException
+
+    from backend.core.ai_protocol.errors import ReviewCancelledError
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+    from backend.services.issues.relation_runtime import RelationDeadlineExceeded
+
+    service, collection, repo, values = foundation
+    await service.index_repo_issues("owner", "repo")
+    values["issue_corpus_freshness_seconds"] = 3600
+    event = asyncio.Event()
+    deadline = MutableDeadline()
+
+    def stop():
+        if signal == "deadline":
+            deadline.expired = True
+        else:
+            event.set()
+
+    async def embed(text):
+        if stage == "query_embedding":
+            stop()
+        return [1.0, 0.0]
+
+    service._embedding_service.embed_query.side_effect = embed
+    original_get = repo.get_issue
+    reads = []
+
+    def get_issue(number):
+        reads.append(number)
+        if stage == "hydration":
+            stop()
+        if stage == "prune":
+            stop()
+            raise UnknownObjectException(404, {"message": "Not Found"}, {})
+        return original_get(number)
+
+    repo.get_issue = get_issue
+
+    async def rerank(**kwargs):
+        if stage == "rerank":
+            stop()
+        return kwargs["docs"]
+
+    service._reranker_service.rerank.side_effect = rerank
+    expected = (
+        RelationDeadlineExceeded if signal == "deadline" else ReviewCancelledError
+    )
+    with pytest.raises(expected):
+        await IssueCandidateRetriever(service).retrieve(
+            "owner",
+            "repo",
+            text="query",
+            state="all",
+            exclude_numbers=[],
+            top_k=1,
+            similarity_threshold=0.8,
+            cancel_event=event,
+            deadline=deadline,
+        )
+    assert "issue_1" in collection.docs
+    if stage == "query_embedding":
+        assert not reads
+    elif stage == "prune":
+        assert reads == [1]  # No pruning source read/mutation after control signal.
+
+
+@pytest.mark.asyncio
+async def test_task_cancellation_drains_raw_page_read_under_writer_lock(foundation):
+    from backend.services.issues.corpus_service import IssueCorpusService
+
+    service, collection, repo, values = foundation
+    values["issue_corpus_batch_size"] = 100
+    await service.index_repo_issues("owner", "repo")
+    previous = deepcopy(collection.metadata)
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    reads = []
+
+    def source(**kwargs):
+        for number in range(1, 1001):
+            reads.append(number)
+            if number == 1:
+                started.set()
+                release.wait(5)
+                completed.set()
+            yield SimpleNamespace(raw_data=issue(number))
+
+    repo.get_issues = source
+    corpus = IssueCorpusService(service)
+    task = asyncio.create_task(corpus.reconcile("owner", "repo"))
+    await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    acquired = asyncio.Event()
+
+    async def successor():
+        async with corpus.ownership("owner", "repo"):
+            acquired.set()
+
+    next_writer = asyncio.create_task(successor())
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert not acquired.is_set()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await next_writer
+    assert completed.is_set()
+    assert reads == [1]
+    assert collection.metadata == previous
+
+
+@pytest.mark.asyncio
+async def test_comments_use_installed_pygithub_last_page_without_full_scan(foundation):
+    from github.IssueComment import IssueComment
+    from github.PaginatedList import PaginatedList
+
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+
+    service, _, repo, values = foundation
+    values.update(
+        issue_relation_candidate_max_comments=2,
+        issue_relation_candidate_comment_max_chars=4000,
+    )
+    first = "https://api.github.com/repos/owner/repo/issues/1/comments"
+    last = first + "?page=1000"
+    urls = []
+
+    def row(number):
+        return {
+            "id": number,
+            "url": f"https://api.github.com/repos/owner/repo/issues/comments/{number}",
+            "body": "maintainer: accepted because protocol changed",
+            "html_url": f"https://github.com/owner/repo/issues/1#issuecomment-{number}",
+            "user": {"login": "maintainer", "type": "User"},
+            "created_at": "2026-10-02T00:00:00Z",
+            "updated_at": "2026-10-02T00:00:00Z",
+        }
+
+    class Requester:
+        is_not_lazy = False
+        per_page = 30
+
+        def requestJsonAndCheck(self, method, url, **kwargs):
+            urls.append(url)
+            if url == first:
+                return {
+                    "link": f'<{first}?page=2>; rel="next", <{last}>; rel="last"'
+                }, [row(1)]
+            assert url == last
+            return {"link": f'<{first}?page=999>; rel="prev"'}, [row(29999), row(30000)]
+
+    original_get = repo.get_issue
+
+    def get_issue(number):
+        obj = original_get(number)
+        obj.raw_data = {**obj.raw_data, "comments": 30000}
+        obj.get_comments = lambda: PaginatedList(IssueComment, Requester(), first, {})
+        return obj
+
+    repo.get_issue = get_issue
+    result = await IssueCandidateRetriever(service).retrieve(
+        "owner",
+        "repo",
+        text="query",
+        state="all",
+        exclude_numbers=[],
+        top_k=1,
+        similarity_threshold=0.8,
+        include_comments=True,
+    )
+    assert [comment["id"] for comment in result[0]["comments"]] == [30000, 29999]
+    assert urls == [first, last]
+    assert result[0]["comments_context"]["truncated"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal", ["deadline", "domain", "task"])
+async def test_reconcile_drains_inflight_embedding_without_forced_cancellation(
+    foundation, signal
+):
+    from backend.core.ai_protocol.errors import ReviewCancelledError
+    from backend.services.issues.corpus_service import IssueCorpusService
+    from backend.services.issues.relation_runtime import RelationDeadlineExceeded
+
+    service, collection, _, _ = foundation
+    await service.index_repo_issues("owner", "repo")
+    previous = deepcopy(collection.metadata)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    event = asyncio.Event()
+    deadline = MutableDeadline()
+
+    async def embed(texts):
+        started.set()
+        await release.wait()
+        finished.set()
+        return [[1.0, 0.0] for _ in texts]
+
+    service._embedding_service.embed_texts.side_effect = embed
+    task = asyncio.create_task(
+        IssueCorpusService(service).reconcile(
+            "owner", "repo", cancel_event=event, deadline=deadline
+        )
+    )
+    await started.wait()
+    if signal == "deadline":
+        deadline.expired = True
+    elif signal == "domain":
+        event.set()
+    else:
+        task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert not finished.is_set()
+    release.set()
+    error = {
+        "deadline": RelationDeadlineExceeded,
+        "domain": ReviewCancelledError,
+        "task": asyncio.CancelledError,
+    }[signal]
+    with pytest.raises(error):
+        await task
+    assert finished.is_set()
+    assert collection.metadata == previous
+
+
+@pytest.mark.asyncio
+async def test_comments_check_deadline_between_raw_records(foundation):
+    from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+    from backend.services.issues.relation_runtime import RelationDeadlineExceeded
+
+    service, _, repo, values = foundation
+    values.update(
+        issue_relation_candidate_max_comments=20,
+        issue_relation_candidate_comment_max_chars=4000,
+    )
+    deadline = MutableDeadline()
+    reads = []
+
+    class Comments:
+        def __reversed__(self):
+            for number in range(100):
+                reads.append(number)
+                deadline.expired = True
+                yield SimpleNamespace(raw_data={})
+
+    original_get = repo.get_issue
+
+    def get_issue(number):
+        obj = original_get(number)
+        obj.raw_data = {**obj.raw_data, "comments": 100}
+        obj.get_comments = Comments
+        return obj
+
+    repo.get_issue = get_issue
+    with pytest.raises(RelationDeadlineExceeded):
+        await IssueCandidateRetriever(service).retrieve(
+            "owner",
+            "repo",
+            text="query",
+            state="all",
+            exclude_numbers=[],
+            top_k=1,
+            similarity_threshold=0.8,
+            include_comments=True,
+            deadline=deadline,
+        )
+    assert reads == [0]

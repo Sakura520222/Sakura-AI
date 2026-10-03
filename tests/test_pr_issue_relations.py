@@ -82,6 +82,7 @@ CANDIDATE = {
     "state": "open",
     "labels": [],
     "state_reason": None,
+    "updated_at": "2026-10-02T00:00:00Z",
 }
 FILES = [
     {
@@ -104,6 +105,21 @@ RELATION = {
         }
     ],
 }
+
+
+def repo_with_candidate(pr, candidate=CANDIDATE):
+    """Repository-scoped source double with complete candidate version facts."""
+
+    def get_issue(number):
+        assert number == candidate["number"]
+        return SimpleNamespace(
+            raw_data={
+                **candidate,
+                "labels": [{"name": label} for label in candidate["labels"]],
+            }
+        )
+
+    return SimpleNamespace(get_pull=lambda _: pr, get_issue=get_issue)
 
 
 async def verify(monkeypatch, payload=None, error=None, **kwargs):
@@ -703,7 +719,9 @@ async def test_cancellation_drains_real_thread_edit_before_next_sync():
         session_factory=DB,
         linker=linker(),
     )
-    repo = SimpleNamespace(get_pull=get_pull)
+    service.retriever.retrieve.return_value = [CANDIDATE]
+    repo = repo_with_candidate(pr)
+    repo.get_pull = get_pull
     first = asyncio.create_task(service.synchronize(repo, "o", "r", 618))
     second = None
     try:
@@ -1286,7 +1304,7 @@ async def test_sync_persists_only_bounded_decision_and_preserves_large_source_co
         ),
         session_factory=DB,
         linker=linker(),
-    ).synchronize(SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618)
+    ).synchronize(repo_with_candidate(pr, candidate), "o", "r", 618)
     rows = session.scalars(select(PRIssueLink)).all()
     if scenario in {"oversized_proof", "removed_as_added"}:
         assert not result.succeeded

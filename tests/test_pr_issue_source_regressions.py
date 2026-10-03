@@ -215,7 +215,10 @@ async def test_source_grounded_pr_pairs_flow_through_retrieval_verification_and_
         session_factory=DB,
         linker=linker,
     ).synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "Sakura520222", "Sakura-AI", pr_number
+        SimpleNamespace(get_pull=lambda _: pr, get_issue=issue_repo.get_issue),
+        "Sakura520222",
+        "Sakura-AI",
+        pr_number,
     )
     assert result.succeeded
     # The real query and raw-source index receive original source facts.

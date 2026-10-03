@@ -220,6 +220,8 @@ def install_retrieval_provider(foundation, provider, monkeypatch, result_count):
     settings.update(
         semantic_issue_max_links=2,
         semantic_issue_similarity_threshold=0.8,
+        issue_include_comments=False,
+        issue_relation_max_input_tokens=64_000,
         issue_relation_max_candidates=2,
         issue_relation_similarity_threshold=0.8,
         issue_relation_confidence_threshold=0.85,
@@ -227,10 +229,15 @@ def install_retrieval_provider(foundation, provider, monkeypatch, result_count):
         pr_issue_max_files=128,
         pr_issue_max_input_tokens=64_000,
     )
-    from backend.services.issues import pr_budget, relation_analyzer
+    from backend.services.issues import issue_budget, pr_budget, relation_analyzer
 
     monkeypatch.setattr(
         relation_analyzer,
+        "get_dynamic_config",
+        AsyncMock(side_effect=lambda key, **_: settings[key]),
+    )
+    monkeypatch.setattr(
+        issue_budget,
         "get_dynamic_config",
         AsyncMock(side_effect=lambda key, **_: settings[key]),
     )
@@ -371,6 +378,11 @@ async def test_real_issue_prephase_reports_incomplete_rerank_without_stopping_ma
             retriever=IssueCandidateRetriever(service), **kwargs
         ),
     )
+    from tests.test_pr_issue_budget import summary_candidate
+
+    main_analyzer.api_client.resolve_role_candidates.return_value = [
+        summary_candidate()
+    ]
     result = await main_analyzer.analyze_issue(
         {
             "issue_number": 99,
