@@ -422,7 +422,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str | None = None
     smtp_from_name: str = "Sakura-AI"  # 邮件 From 显示昵称
-    smtp_security: str = "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    smtp_security: str = (
+        "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    )
     notification_max_concurrency: int = Field(5, ge=1, le=100)
     notification_retry_max_attempts: int = Field(3, ge=1, le=20)
     notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
@@ -621,6 +623,9 @@ class Settings(BaseSettings):
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
     issue_relation_max_candidates: int = 5
+    issue_relation_max_input_tokens: int = Field(64000, ge=1)
+    issue_relation_candidate_max_comments: int = Field(20, ge=1)
+    issue_relation_candidate_comment_max_chars: int = Field(4000, ge=1)
     issue_relation_similarity_threshold: float = 0.75
     issue_relation_confidence_threshold: float = 0.85
     issue_duplicate_confidence_threshold: float = 0.95
@@ -640,7 +645,9 @@ class Settings(BaseSettings):
     issue_include_comments: bool = True
     # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
     issue_vision_enabled: bool = True  # 总开关；模型能力仍需勾选"支持图片多模态"
-    issue_vision_max_image_size_bytes: int = 10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    issue_vision_max_image_size_bytes: int = (
+        10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    )
     issue_vision_allowed_image_domains: str = (
         # 允许下载的图片域名（逗号分隔，段内支持 ``*`` 通配）；仅 GitHub
         # 资产域，私有仓库经 installation 凭据下载，避免向任意外链发起请求
@@ -1254,6 +1261,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
                     "issue_detect_duplicates": "主分析前验证开放重复及关联关系，无开放重复时验证关闭 Issue 历史关系",
                     "issue_relation_max_candidates": "每个开放或历史阶段最多验证的 Issue 数量",
+                    "issue_relation_max_input_tokens": "开放及历史阶段完整请求的估算输入 token 上限，包含正文、评论、语言、JSON 和系统提示；同时受全部摘要候选模型上下文、输出与协议预留限制，超限或未知时失败并继续主分析",
+                    "issue_relation_candidate_max_comments": "启用评论时每个候选最多惰性读取的最新评论数量；较早讨论可能被省略，提示中保留来源及范围",
+                    "issue_relation_candidate_comment_max_chars": "候选单条评论保留的原文字符上限；截断状态显式传给关系分析，不将缺失内容作为证据",
                     "issue_relation_similarity_threshold": "关系候选的最低余弦相似度，检索本身不决定关系",
                     "issue_relation_confidence_threshold": "普通及历史关系的最低验证置信度",
                     "issue_duplicate_confidence_threshold": "开放重复 Issue 的最低验证置信度",
@@ -1266,7 +1276,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_corpus_batch_size": "每批同步并嵌入的 Issue 数量",
                     "issue_candidate_pool_multiplier": "初步召回的候选数量相对于目标结果数量的倍数",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
-                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
+                    "issue_vision_enabled": '启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"）',
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -1276,6 +1286,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_auto_assign_max",
                     "issue_detect_duplicates",
                     "issue_relation_max_candidates",
+                    "issue_relation_max_input_tokens",
+                    "issue_relation_candidate_max_comments",
+                    "issue_relation_candidate_comment_max_chars",
                     "issue_relation_similarity_threshold",
                     "issue_relation_confidence_threshold",
                     "issue_duplicate_confidence_threshold",
@@ -1620,6 +1633,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "issue_corpus_freshness_seconds": (0, None),
     "issue_corpus_batch_size": (1, None),
     "issue_relation_max_candidates": (1, None),
+    "issue_relation_max_input_tokens": (1, None),
+    "issue_relation_candidate_max_comments": (1, None),
+    "issue_relation_candidate_comment_max_chars": (1, None),
     "issue_relation_similarity_threshold": (0.0, 1.0),
     "issue_relation_confidence_threshold": (0.0, 1.0),
     "issue_duplicate_confidence_threshold": (0.0, 1.0),
@@ -1782,6 +1798,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_auto_assign_max": "最大指派人数",
     "issue_detect_duplicates": "检测重复 Issue",
     "issue_relation_max_candidates": "Issue 关系候选上限",
+    "issue_relation_max_input_tokens": "Issue 关系完整请求输入 token 上限",
+    "issue_relation_candidate_max_comments": "Issue 候选最新评论上限",
+    "issue_relation_candidate_comment_max_chars": "Issue 候选单条评论字符上限",
     "issue_relation_similarity_threshold": "Issue 关系候选相似度阈值",
     "issue_relation_confidence_threshold": "Issue 关联及历史关系置信度阈值",
     "issue_duplicate_confidence_threshold": "Issue 开放重复置信度阈值",

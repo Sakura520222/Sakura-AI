@@ -5,11 +5,15 @@ import json
 import math
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from itertools import islice
 from weakref import WeakKeyDictionary
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import get_dynamic_config
 from backend.core.time_service import now_utc
+from backend.services.issues.relation_runtime import (
+    RelationDeadlineExceeded,
+    check_relation_boundary,
+)
 
 _locks = WeakKeyDictionary()
 _CURSOR = "issue_corpus_cursor"
@@ -38,6 +42,26 @@ async def _await_owned(operation):
         except Exception as error:
             raise cancelled from error
         raise
+
+
+async def _controlled(operation_factory, cancel_event=None, deadline=None):
+    """Check both sides and drain cancellation before releasing ownership."""
+    check_relation_boundary(cancel_event, deadline)
+    try:
+        result = await _await_owned(operation_factory())
+    except ReviewCancelledError:
+        raise
+    except Exception as error:
+        # The operation can fail concurrently with a control signal. Preserve
+        # genuine Task cancellation (BaseException), and retain the operational
+        # cause when domain cancellation or soft expiry takes precedence.
+        try:
+            check_relation_boundary(cancel_event, deadline)
+        except (ReviewCancelledError, RelationDeadlineExceeded) as interrupted:
+            raise interrupted from error
+        raise
+    check_relation_boundary(cancel_event, deadline)
+    return result
 
 
 async def _mutate(callback, **kwargs):
@@ -95,12 +119,22 @@ class IssueCorpusService:
     def __init__(self, issue_embedding_service):
         self.service = issue_embedding_service
 
-    async def collection(self, owner: str, name: str):
+    async def collection(
+        self, owner: str, name: str, *, cancel_event=None, deadline=None
+    ):
         # Store construction can initialize persistent Chroma and must also run
         # outside the event loop. get_or_create returns fresh server metadata.
-        store = await asyncio.to_thread(lambda: self.service.vector_store)
-        return await _await_owned(
-            store.get_or_create_collection(self.service._collection_key(owner, name))
+        store = await _controlled(
+            lambda: asyncio.to_thread(lambda: self.service.vector_store),
+            cancel_event,
+            deadline,
+        )
+        return await _controlled(
+            lambda: store.get_or_create_collection(
+                self.service._collection_key(owner, name)
+            ),
+            cancel_event,
+            deadline,
         )
 
     def get_repo(self, owner: str, name: str):
@@ -118,9 +152,21 @@ class IssueCorpusService:
         async with lock:
             yield
 
-    async def reconcile(self, owner: str, name: str, *, force: bool = False) -> dict:
+    async def reconcile(
+        self,
+        owner: str,
+        name: str,
+        *,
+        force: bool = False,
+        cancel_event=None,
+        deadline=None,
+    ) -> dict:
+        check_relation_boundary(cancel_event, deadline)
         async with self.ownership(owner, name):
-            return await self._reconcile(owner, name, force=force)
+            check_relation_boundary(cancel_event, deadline)
+            return await self._reconcile(
+                owner, name, force=force, cancel_event=cancel_event, deadline=deadline
+            )
 
     async def update_issue(
         self, owner: str, name: str, number: int, *, enrichment: dict | None = None
@@ -137,25 +183,49 @@ class IssueCorpusService:
                 collection, [facts], enrichment=enrichment, single=True
             )
 
-    async def remove_issue(self, owner: str, name: str, number: int) -> bool:
+    async def remove_issue(
+        self, owner: str, name: str, number: int, *, cancel_event=None, deadline=None
+    ) -> bool:
         from github import UnknownObjectException
 
         async with self.ownership(owner, name):
-            repo = await asyncio.to_thread(self.get_repo, owner, name)
-            collection = await self.collection(owner, name)
+            repo = await _controlled(
+                lambda: asyncio.to_thread(self.get_repo, owner, name),
+                cancel_event,
+                deadline,
+            )
+            collection = await self.collection(
+                owner, name, cancel_event=cancel_event, deadline=deadline
+            )
             try:
-                facts = await asyncio.to_thread(
-                    lambda: snapshot_issue(repo.get_issue(number))
+                facts = await _controlled(
+                    lambda: asyncio.to_thread(
+                        lambda: snapshot_issue(repo.get_issue(number))
+                    ),
+                    cancel_event,
+                    deadline,
                 )
             except UnknownObjectException as error:
                 if error.status != 404:
                     raise
-                await _mutate(collection.delete, ids=[f"issue_{number}"])
+                await _controlled(
+                    lambda: asyncio.to_thread(
+                        collection.delete, ids=[f"issue_{number}"]
+                    ),
+                    cancel_event,
+                    deadline,
+                )
                 return True
             if not facts or facts["number"] != number:
                 raise ValueError("Invalid GitHub Issue deletion target")
             # A deferred deletion event must not erase a currently present Issue.
-            await self._write_facts(collection, [facts], single=True)
+            await self._write_facts(
+                collection,
+                [facts],
+                single=True,
+                cancel_event=cancel_event,
+                deadline=deadline,
+            )
             return False
 
     async def _write_facts(
@@ -165,15 +235,31 @@ class IssueCorpusService:
         *,
         enrichment: dict | None = None,
         single: bool = False,
+        cancel_event=None,
+        deadline=None,
     ) -> tuple[int, int]:
         ids = [f"issue_{facts['number']}" for facts in facts_batch]
-        old = await asyncio.to_thread(collection.get, ids=ids, include=["metadatas"])
+        old = await _controlled(
+            lambda: asyncio.to_thread(collection.get, ids=ids, include=["metadatas"]),
+            cancel_event,
+            deadline,
+        )
         existing = dict(zip(old["ids"], old["metadatas"], strict=True))
         texts = [f"{facts['title']}\n{facts['body']}" for facts in facts_batch]
         embeddings = (
-            [await self.service.embedding_service.embed_query(texts[0])]
+            [
+                await _controlled(
+                    lambda: self.service.embedding_service.embed_query(texts[0]),
+                    cancel_event,
+                    deadline,
+                )
+            ]
             if single
-            else await self.service.embedding_service.embed_texts(texts)
+            else await _controlled(
+                lambda: self.service.embedding_service.embed_texts(texts),
+                cancel_event,
+                deadline,
+            )
         )
         if len(embeddings) != len(texts) or any(
             not emb
@@ -208,19 +294,27 @@ class IssueCorpusService:
                     {key: str(value) for key, value in enrichment.items() if value}
                 )
             metadatas.append(meta)
-        await _mutate(
-            collection.upsert,
-            ids=ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=metadatas,
+        await _controlled(
+            lambda: asyncio.to_thread(
+                collection.upsert,
+                ids=ids,
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas,
+            ),
+            cancel_event,
+            deadline,
         )
         return sum(doc_id not in existing for doc_id in ids), sum(
             doc_id in existing for doc_id in ids
         )
 
-    async def _reconcile(self, owner: str, name: str, *, force: bool) -> dict:
-        collection = await self.collection(owner, name)
+    async def _reconcile(
+        self, owner: str, name: str, *, force: bool, cancel_event=None, deadline=None
+    ) -> dict:
+        collection = await self.collection(
+            owner, name, cancel_event=cancel_event, deadline=deadline
+        )
         metadata = dict(collection.metadata or {})
         cursor = None
         if metadata.get(_CURSOR):
@@ -243,39 +337,73 @@ class IssueCorpusService:
             or freshness < 0
         ):
             raise ValueError("Invalid Issue corpus freshness")
-        count = await asyncio.to_thread(collection.count)
+        count = await _controlled(
+            lambda: asyncio.to_thread(collection.count), cancel_event, deadline
+        )
         if not force and cursor and 0 <= (started - cursor).total_seconds() < freshness:
             return {"status": "cached" if count else "no_issues", "count": count}
-        repo = await asyncio.to_thread(self.get_repo, owner, name)
+        repo = await _controlled(
+            lambda: asyncio.to_thread(self.get_repo, owner, name),
+            cancel_event,
+            deadline,
+        )
         kwargs = {"state": "all", "sort": "updated", "direction": "asc"}
         if cursor and not force:
             # GitHub timestamps have second precision; overlap the boundary.
             kwargs["since"] = cursor - timedelta(seconds=1)
 
-        def source():
-            for raw_issue in repo.get_issues(**kwargs):
-                facts = snapshot_issue(raw_issue)
-                if facts:
-                    yield facts
-
-        iterator = source()
+        iterator = await _controlled(
+            lambda: asyncio.to_thread(lambda: iter(repo.get_issues(**kwargs))),
+            cancel_event,
+            deadline,
+        )
         added = updated = 0
-        while facts_batch := await asyncio.to_thread(
-            lambda: list(islice(iterator, batch_size))
-        ):
+        exhausted = False
+        while not exhausted:
+            facts_batch = []
+            for _ in range(batch_size):
+                # Each shielded operation drains only the current source read.
+                # Keep enumeration on the caller side so genuine Task.cancel()
+                # cannot fetch the rest of a batch or start another HTTP page.
+                raw_issue = await _controlled(
+                    lambda: asyncio.to_thread(next, iterator, None),
+                    cancel_event,
+                    deadline,
+                )
+                if raw_issue is None:
+                    exhausted = True
+                    break
+                facts = await _controlled(
+                    lambda raw_issue=raw_issue: asyncio.to_thread(
+                        snapshot_issue, raw_issue
+                    ),
+                    cancel_event,
+                    deadline,
+                )
+                if facts:
+                    facts_batch.append(facts)
+            if not facts_batch:
+                continue
             batch_added, batch_updated = await self._write_facts(
-                collection, facts_batch
+                collection, facts_batch, cancel_event=cancel_event, deadline=deadline
             )
             added += batch_added
             updated += batch_updated
-        total = await asyncio.to_thread(collection.count)
+        total = await _controlled(
+            lambda: asyncio.to_thread(collection.count), cancel_event, deadline
+        )
         # Fetch and all embedding/writes completed. Commit is the final await so
         # cancellation cannot arrive during a later read after advancing it.
         try:
-            await _mutate(
-                collection.modify, metadata={**metadata, _CURSOR: started.isoformat()}
+            await _controlled(
+                lambda: asyncio.to_thread(
+                    collection.modify,
+                    metadata={**metadata, _CURSOR: started.isoformat()},
+                ),
+                cancel_event,
+                deadline,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError, ReviewCancelledError, RelationDeadlineExceeded:
             # The commit thread was drained under ownership. Restore the prior
             # cursor before a retry may acquire the repository and read it.
             await _mutate(collection.modify, metadata=metadata)

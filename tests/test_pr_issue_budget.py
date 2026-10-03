@@ -23,7 +23,13 @@ from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.models.database import PRIssueLink
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.issues import pr_link_sync, pr_verifier
-from tests.test_pr_issue_relations import CANDIDATE, FILES, RELATION, linker
+from tests.test_pr_issue_relations import (
+    CANDIDATE,
+    FILES,
+    RELATION,
+    linker,
+    repo_with_candidate,
+)
 
 
 def summary_candidate(context=128000, output=4096):
@@ -188,9 +194,7 @@ async def test_lazy_snapshot_does_not_request_file_after_configured_limit(
         raise AssertionError("requested another GitHub page beyond workload cap")
 
     pr = Pull(files, count=2)
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not result.succeeded and result.failure == "snapshot_incomplete"
     assert consumed == [1]
     call.assert_not_awaited()
@@ -207,9 +211,7 @@ async def test_incomplete_snapshot_preserves_links_and_cannot_close(
     budgets[0]["pr_issue_max_input_tokens"] = 2000
     patch = "@@ -1 +1 @@\n-old\n+" + "x" * 1000000 if mode == "huge_patch" else ""
     pr = Pull(lambda: [changed_file(patch)], count=2 if mode == "missing_file" else 1)
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not result.succeeded
     assert result.failure in {"snapshot_incomplete", "input_budget"}
     call.assert_not_awaited()
@@ -223,15 +225,11 @@ async def test_snapshot_and_final_request_read_dynamic_limits_each_run(
     service, session, call, _ = sync_harness
     pr = Pull(lambda: [changed_file()])
     budgets[0]["pr_issue_max_input_tokens"] = 1
-    first = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    first = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not first.succeeded and first.failure == "input_budget"
     assert_old_state(pr, session)
     budgets[0]["pr_issue_max_input_tokens"] = 64000
-    second = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    second = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert second.succeeded and second.relations[0]["relation"] == "closes"
     assert "Closes #612" in pr.body
     call.assert_awaited_once()
@@ -294,9 +292,7 @@ async def test_unknown_summary_metadata_preserves_links(sync_harness, budgets):
     service, session, call, _ = sync_harness
     budgets[1].return_value = []
     pr = Pull(lambda: (_ for _ in ()))
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not result.succeeded and result.failure == "budget_unavailable"
     call.assert_not_awaited()
     assert_old_state(pr, session)
@@ -307,9 +303,7 @@ async def test_complete_under_budget_empty_verification_clears_old_links(sync_ha
     service, session, call, _ = sync_harness
     call.return_value.choices[0].message.content = '{"relations":[]}'
     pr = Pull(lambda: [changed_file()])
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert result.succeeded and result.relations == []
     assert not session.scalars(select(PRIssueLink)).all()
     assert "Closes #570" not in pr.body
@@ -330,7 +324,7 @@ async def test_soft_deadline_between_file_reads_stops_pagination(sync_harness):
     pr = Pull(files, count=3)
     deadline = SimpleNamespace(is_expired=lambda: expired)
     result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618, deadline=deadline
+        repo_with_candidate(pr), "o", "r", 618, deadline=deadline
     )
     assert not result.succeeded and result.failure == "deadline"
     call.assert_not_awaited()
@@ -355,7 +349,7 @@ async def test_task_cancellation_drains_active_read_and_never_continues_iterator
 
     pr = Pull(files, count=2)
     task = asyncio.create_task(
-        service.synchronize(SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618)
+        service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     )
     try:
         assert await asyncio.to_thread(started.wait, 2)
@@ -412,9 +406,7 @@ async def test_verifier_rechecks_changed_summary_metadata_after_snapshot(
 
     retriever.retrieve.side_effect = retrieve
     pr = Pull(lambda: [changed_file()])
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not result.succeeded and result.failure == "input_budget"
     assert budgets[1].await_count == 2
     call.assert_not_awaited()
@@ -436,7 +428,7 @@ async def test_domain_cancel_between_reads_does_not_read_next_file(sync_harness)
     pr = Pull(files, count=2)
     with pytest.raises(ReviewCancelledError):
         await service.synchronize(
-            SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618, cancel_event=event
+            repo_with_candidate(pr), "o", "r", 618, cancel_event=event
         )
     call.assert_not_awaited()
     assert_old_state(pr, session)
@@ -481,7 +473,7 @@ async def test_actual_worker_continues_main_review_after_optional_budget_failure
         pr = Pull(lambda: [changed_file()])
     worker.github_app = SimpleNamespace(
         get_repo_client=lambda *_: SimpleNamespace(
-            get_repo=lambda _: SimpleNamespace(get_pull=lambda _: pr)
+            get_repo=lambda _: repo_with_candidate(pr)
         )
     )
     monkeypatch.setattr(pr_link_sync, "PRRelationSyncService", lambda: service)
@@ -523,9 +515,7 @@ async def test_snapshot_stops_before_next_page_when_input_budget_is_exhausted(
         raise AssertionError("requested another page after input budget reached")
 
     pr = Pull(files, count=2)
-    result = await service.synchronize(
-        SimpleNamespace(get_pull=lambda _: pr), "o", "r", 618
-    )
+    result = await service.synchronize(repo_with_candidate(pr), "o", "r", 618)
     assert not result.succeeded and result.failure == "input_budget"
     assert consumed == [1]
     call.assert_not_awaited()

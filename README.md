@@ -102,6 +102,9 @@
 | `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
 | `issue_include_comments` | `true` | 主分析与关系阶段复用当前 Issue 评论 |
 | `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限 |
+| `issue_relation_max_input_tokens` | `64000` | 开放与历史阶段完整请求的估算输入上限，包含正文、评论、JSON、语言和系统提示；同时受全部摘要候选上下文、输出及协议预留限制。超限或未知时无重复结论，保留已用 token 并继续主分析 |
+| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时每个候选惰性读取的最新评论上限，提示中标注来源及省略范围 |
+| `issue_relation_candidate_comment_max_chars` | `4000` | 每条候选评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
 | `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
 | `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
 | `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |

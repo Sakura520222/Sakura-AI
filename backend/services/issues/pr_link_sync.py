@@ -10,6 +10,11 @@ from sqlalchemy import select
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.models.database import PRIssueLink
 from backend.services.issues.pr_budget import PRBudgetError, check_boundary, read_source
+from backend.services.issues.pr_candidate_freshness import (
+    capture_candidate_versions,
+    revalidate_candidates,
+)
+from backend.services.issues.relation_runtime import RelationDeadlineExceeded
 
 _LOCKS = weakref.WeakKeyDictionary()
 # PRIssueLink.inference_reason is MySQL TEXT: capacity is bytes, not characters.
@@ -217,8 +222,11 @@ class PRRelationSyncService:
                     exclude_numbers=[number, *explicit],
                     top_k=top_k,
                     similarity_threshold=threshold,
+                    cancel_event=cancel_event,
+                    deadline=deadline,
                 )
-                check_cancelled()
+                check_boundary(cancel_event, deadline)
+                candidate_versions = capture_candidate_versions(candidates)
                 result = await self.verifier.verify(
                     pr_title=title,
                     pr_body=human,
@@ -234,7 +242,8 @@ class PRRelationSyncService:
                 check_cancelled()
                 if deadline is not None and deadline.is_expired():
                     return PRVerificationResult(False, failure="deadline")
-                latest = await asyncio.to_thread(repo.get_pull, number)
+                latest = await read_source(repo.get_pull, number)
+                check_boundary(cancel_event, deadline)
                 if (
                     latest.head.sha != sha
                     or latest.base.sha != base_sha
@@ -242,15 +251,31 @@ class PRRelationSyncService:
                     or strip_sakura_generated_sections(latest.body) != human
                 ):
                     return PRVerificationResult(False, failure="stale_source")
-                check_cancelled()
+                await revalidate_candidates(
+                    repo,
+                    candidate_versions,
+                    result.relations,
+                    cancel_event=cancel_event,
+                    deadline=deadline,
+                )
 
                 async def publish():
+                    check_boundary(cancel_event, deadline)
                     async with self.session_factory() as db:
                         try:
                             await replace_semantic_links(
                                 db, f"{owner}/{name}", number, result.relations
                             )
-                            fresh = await asyncio.to_thread(repo.get_pull, number)
+                            check_boundary(cancel_event, deadline)
+                            await revalidate_candidates(
+                                repo,
+                                candidate_versions,
+                                result.relations,
+                                cancel_event=cancel_event,
+                                deadline=deadline,
+                            )
+                            fresh = await read_source(repo.get_pull, number)
+                            check_boundary(cancel_event, deadline)
                             if (
                                 fresh.head.sha != sha
                                 or fresh.base.sha != base_sha
@@ -305,6 +330,8 @@ class PRRelationSyncService:
                 failure = (
                     exc.failure
                     if isinstance(exc, PRBudgetError)
+                    else "deadline"
+                    if isinstance(exc, RelationDeadlineExceeded)
                     else type(exc).__name__
                 )
                 logger.warning("PR relation synchronization failed: {}", failure)

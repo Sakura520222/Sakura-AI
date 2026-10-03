@@ -17,6 +17,14 @@ from backend.core.config import get_dynamic_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+from backend.services.issues.issue_budget import (
+    IssueBudgetError,
+    resolve_issue_input_budget,
+)
+from backend.services.issues.relation_runtime import (
+    RelationDeadlineExceeded,
+    check_relation_boundary,
+)
 from backend.services.pr_body import strip_sakura_generated_sections
 
 OPEN_RELATIONS = {"duplicate", "related", "none"}
@@ -36,6 +44,8 @@ ISSUE_RELATION_PROMPT = (
     "The open phase allows duplicate, related, none. The closed phase allows previously_resolved (a proven applicable prior fix), regression "
     "(a proven resolved problem recurring), duplicate_closed (the same already closed problem), previously_rejected (same rejected request), related, none. "
     "A completed state alone does not prove a fix or regression; cite the available fix references and distinguish uncertainty. "
+    "Candidate discussion is a bounded newest-comment sample; comments_context and body_truncated mark its limits and provenance. "
+    "Missing older comments or omitted/truncated text is not evidence that a fix or rejection never occurred. Quote only exact supplied text. "
     'Return exactly JSON {"relations": [{"number": integer, "relation": enum, "confidence": number 0..1, '
     '"reason": nonempty text, "similarities": [text], "differences": [text], '
     '"evidence": [{"current_quote": exact current title/body/comment excerpt, "candidate_quote": exact candidate title/body/comment excerpt}]}]}. '
@@ -185,9 +195,7 @@ class IssueRelationAnalyzer:
         tracker = TokenTracker()
         phase = "open"
         try:
-            _check_cancelled(cancel_event)
-            if deadline is not None and deadline.is_expired():
-                return IssueRelationResult(status="skipped", failure="deadline")
+            check_relation_boundary(cancel_event, deadline)
             number = issue_info.get("issue_number", issue_info.get("number"))
             body = issue_info.get("body")
             # GitHub uses null for title-only Issues; absent facts remain invalid.
@@ -202,6 +210,12 @@ class IssueRelationAnalyzer:
                 or issue_info.get("pull_request") is not None
             ):
                 raise ValueError("incomplete current Issue")
+            include_comments = await get_dynamic_config(
+                "issue_include_comments", fresh=True
+            )
+            if type(include_comments) is not bool:
+                raise ValueError("invalid discussion policy")
+            check_relation_boundary(cancel_event, deadline)
             current = {
                 "number": number,
                 "title": issue_info["title"],
@@ -209,7 +223,7 @@ class IssueRelationAnalyzer:
                 "state": issue_info["state"],
                 "labels": issue_info.get("labels", []),
                 "state_reason": issue_info.get("state_reason"),
-                "comments": comments or [],
+                "comments": (comments or []) if include_comments else [],
             }
             _source(current)
             config = {
@@ -237,17 +251,10 @@ class IssueRelationAnalyzer:
             if type(limit) is not int or limit <= 0:
                 raise ValueError("invalid candidate limit")
             retriever = self.retriever or IssueCandidateRetriever()
+            client = self.client or AIApiClient()
             accepted = []
             for phase in ("open", "closed"):
-                _check_cancelled(cancel_event)
-                if deadline is not None and deadline.is_expired():
-                    return IssueRelationResult(
-                        status="skipped",
-                        failure="deadline",
-                        phase=phase,
-                        prompt_tokens=tracker.prompt_tokens,
-                        completion_tokens=tracker.completion_tokens,
-                    )
+                check_relation_boundary(cancel_event, deadline)
                 candidates = await retriever.retrieve(
                     repo_owner,
                     repo_name,
@@ -256,8 +263,11 @@ class IssueRelationAnalyzer:
                     exclude_numbers=[number],
                     top_k=limit,
                     similarity_threshold=config["issue_relation_similarity_threshold"],
+                    cancel_event=cancel_event,
+                    deadline=deadline,
+                    include_comments=include_comments,
                 )
-                _check_cancelled(cancel_event)
+                check_relation_boundary(cancel_event, deadline)
                 sanitized, seen = [], set()
                 for candidate in candidates:
                     n = candidate.get("number")
@@ -290,45 +300,39 @@ class IssueRelationAnalyzer:
                             "labels",
                             "state_reason",
                             "comments",
+                            "comments_context",
+                            "updated_at",
                         )
                     }
+                    if not include_comments:
+                        fact["comments"] = []
+                        fact.pop("comments_context", None)
                     fact["body"] = strip_sakura_generated_sections(fact["body"])
                     _source(fact)
                     sanitized.append(fact)
                 if not sanitized:
                     continue
-                if deadline is not None and deadline.is_expired():
-                    return IssueRelationResult(
-                        status="skipped",
-                        failure="deadline",
-                        phase=phase,
-                        prompt_tokens=tracker.prompt_tokens,
-                        completion_tokens=tracker.completion_tokens,
-                    )
-                response = await (self.client or AIApiClient()).call_with_retry(
+                budget = await resolve_issue_input_budget(
+                    client, cancel_event=cancel_event, deadline=deadline
+                )
+                messages = budget.messages(
+                    system_prompt=ISSUE_RELATION_PROMPT,
+                    phase=phase,
+                    output_language=output_language,
+                    current=current,
+                    candidates=sanitized,
+                )
+                check_relation_boundary(cancel_event, deadline)
+                response = await client.call_with_retry(
                     model="",
                     role="summary",
                     cancel_event=cancel_event,
                     context=context,
                     observer=observer,
-                    messages=[
-                        {"role": "system", "content": ISSUE_RELATION_PROMPT},
-                        {
-                            "role": "user",
-                            "content": json.dumps(
-                                {
-                                    "phase": phase,
-                                    "output_language": output_language,
-                                    "current": current,
-                                    "candidates": sanitized,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    ],
+                    messages=messages,
                 )
                 tracker.accumulate(response)
-                _check_cancelled(cancel_event)
+                check_relation_boundary(cancel_event, deadline)
                 verified = parse_issue_relations(
                     response.choices[0].message.content,
                     current,
@@ -361,10 +365,15 @@ class IssueRelationAnalyzer:
             raise
         except Exception as exc:
             _check_cancelled(cancel_event)
-            failure = type(exc).__name__
+            if isinstance(exc, RelationDeadlineExceeded):
+                failure = "deadline"
+            elif isinstance(exc, IssueBudgetError):
+                failure = exc.failure
+            else:
+                failure = type(exc).__name__
             logger.warning("Issue relation analysis failed in {}: {}", phase, failure)
             return IssueRelationResult(
-                status="failed",
+                status="skipped" if failure == "deadline" else "failed",
                 failure=failure,
                 phase=phase,
                 prompt_tokens=tracker.prompt_tokens,

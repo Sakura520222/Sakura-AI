@@ -30,6 +30,10 @@ from backend.workers.review_worker import (
     _run_review_task_with_timeout,
     submit_review_task,
 )
+from tests import test_pr_candidate_freshness, test_pr_issue_budget
+
+freshness = test_pr_candidate_freshness.freshness
+budgets = test_pr_issue_budget.budgets
 
 
 @pytest.fixture(autouse=True)
@@ -1994,3 +1998,44 @@ async def test_actual_worker_optional_policy_preserves_cancellation(
     if mode == "domain":
         assert PRStatus.CANCELLED in statuses
         assert PRStatus.FAILED not in statuses
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", ["stale_candidate", "candidate_facts_unavailable", "deadline"]
+)
+async def test_actual_worker_preserves_old_candidate_links_and_continues_main_review(
+    monkeypatch,
+    pr_relation_runtime_worker,
+    freshness,
+    failure,
+):
+    from backend.services.issues import pr_link_sync
+    from backend.services.issues.relation_runtime import RelationDeadlineExceeded
+    from tests.test_pr_candidate_freshness import assert_preserved
+
+    worker, info, context, _ = pr_relation_runtime_worker
+    if failure == "stale_candidate":
+        freshness.actions.model = lambda: freshness.sources[612].update(
+            updated_at="2026-10-02T00:01:00Z"
+        )
+    elif failure == "candidate_facts_unavailable":
+        freshness.actions.flush = lambda: freshness.sources[612].pop("updated_at")
+    else:
+        freshness.retriever.retrieve.side_effect = RelationDeadlineExceeded()
+    worker.github_app = SimpleNamespace(
+        get_repo_client=lambda *_: SimpleNamespace(get_repo=lambda _: freshness.repo)
+    )
+    monkeypatch.setattr(
+        pr_link_sync, "PRRelationSyncService", lambda: freshness.service
+    )
+    monkeypatch.setattr(
+        review_worker, "get_dynamic_config", AsyncMock(return_value=True)
+    )
+    await worker.process_review_task(info)
+    assert context["pr_issue_relation_status"] == failure
+    worker.ai_reviewer.review_pr.assert_awaited_once()
+    assert PRStatus.FAILED not in [
+        call.args[1] for call in worker._update_review_status.await_args_list
+    ]
+    assert_preserved(freshness)
