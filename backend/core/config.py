@@ -747,6 +747,8 @@ class Settings(BaseSettings):
     semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
     pr_issue_related_confidence_threshold: float = 0.85
     pr_issue_closing_confidence_threshold: float = 0.95
+    pr_issue_max_files: int = 128  # PR 关系验证的惰性读取文件上限
+    pr_issue_max_input_tokens: int = 64000  # 完整请求的估算输入 token 上限
     semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
 
     # 支持的编程语言
@@ -1224,12 +1226,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "语义 Issue 关联",
                 "icon": "link",
+                "descriptions": {
+                    "pr_issue_max_files": "逐项读取 PR 文件的上限；超限、缺页或补丁不完整时跳过验证并保留已有语义关联",
+                    "pr_issue_max_input_tokens": "完整验证请求的估算输入 token 上限，包含 PR 说明、Issue、JSON 和系统提示；同时受摘要角色候选模型的上下文、输出预算与协议预留限制",
+                },
                 "keys": [
                     "enable_semantic_issue_linking",
                     "semantic_issue_similarity_threshold",
                     "semantic_issue_max_links",
                     "pr_issue_related_confidence_threshold",
                     "pr_issue_closing_confidence_threshold",
+                    "pr_issue_max_files",
+                    "pr_issue_max_input_tokens",
                 ],
             },
         ),
@@ -1607,6 +1615,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "semantic_issue_max_links": (1, 200),
     "pr_issue_related_confidence_threshold": (0.0, 1.0),
     "pr_issue_closing_confidence_threshold": (0.0, 1.0),
+    "pr_issue_max_files": (1, 3000),
+    "pr_issue_max_input_tokens": (1, 1000000),
     "issue_corpus_freshness_seconds": (0, None),
     "issue_corpus_batch_size": (1, None),
     "issue_relation_max_candidates": (1, None),
@@ -1689,6 +1699,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "semantic_issue_max_links": "最大关联 Issue 数量",
     "pr_issue_related_confidence_threshold": "PR 关联关系置信度阈值",
     "pr_issue_closing_confidence_threshold": "PR 关闭关系置信度阈值",
+    "pr_issue_max_files": "PR 关系验证文件上限（超限时保留原关联）",
+    "pr_issue_max_input_tokens": "PR 关系验证完整请求输入 token 上限（同时受摘要模型上下文限制）",
     "payment_enabled": "启用付费配额系统",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",

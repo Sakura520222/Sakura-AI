@@ -412,9 +412,12 @@ class RerankerService:
     ) -> list[dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
+            if strict and (type(top_k) is not int or top_k <= 0):
+                raise ValueError("Invalid strict reranker top_k")
             settings = get_settings()
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
+            top_n = min(top_k, len(texts))
 
             # 调用 Rerank API
             logical_call_id = str(uuid4())
@@ -424,7 +427,7 @@ class RerankerService:
                     "model": settings.rerank_model,
                     "query": query,
                     "documents": texts,
-                    "top_k": min(top_k, len(texts)),
+                    "top_n": top_n,
                 },
             )
 
@@ -459,6 +462,10 @@ class RerankerService:
             if strict:
                 import math
 
+                # Validate the requested provider count before threshold filtering:
+                # complete low scores may filter to empty, a partial response may not.
+                if len(results["results"]) != top_n:
+                    raise ValueError("Malformed reranker result count")
                 seen = set()
                 for result in results["results"]:
                     if (

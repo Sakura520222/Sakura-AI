@@ -64,10 +64,22 @@ def test_auto_migrate_standard_logging_messages_are_percent_formatted():
             ):
                 migration_calls.append((message.value, len(node.args) - 1))
 
-    assert len(migration_calls) == 3
+    assert migration_calls
     for message, argument_count in migration_calls:
         assert "{}" not in message
-        assert message.count("%s") >= argument_count
+        arguments = tuple(f"migration-value-{i}" for i in range(argument_count))
+        record = logging.LogRecord(
+            name="backend.models.database",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=arguments,
+            exc_info=None,
+        )
+        rendered = record.getMessage()
+        assert all(argument in rendered for argument in arguments)
+        assert "%s" not in rendered
 
 
 def test_intercept_handler_preserves_logger_name_message_and_exception(monkeypatch):

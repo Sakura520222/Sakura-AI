@@ -189,11 +189,15 @@ class IssueRelationAnalyzer:
             if deadline is not None and deadline.is_expired():
                 return IssueRelationResult(status="skipped", failure="deadline")
             number = issue_info.get("issue_number", issue_info.get("number"))
+            body = issue_info.get("body")
+            # GitHub uses null for title-only Issues; absent facts remain invalid.
+            if "body" in issue_info and body is None:
+                body = ""
             if (
                 type(number) is not int
                 or number <= 0
                 or not isinstance(issue_info.get("title"), str)
-                or not isinstance(issue_info.get("body"), str)
+                or not isinstance(body, str)
                 or issue_info.get("state") not in {"open", "closed"}
                 or issue_info.get("pull_request") is not None
             ):
@@ -201,7 +205,7 @@ class IssueRelationAnalyzer:
             current = {
                 "number": number,
                 "title": issue_info["title"],
-                "body": strip_sakura_generated_sections(issue_info["body"]),
+                "body": strip_sakura_generated_sections(body),
                 "state": issue_info["state"],
                 "labels": issue_info.get("labels", []),
                 "state_reason": issue_info.get("state_reason"),

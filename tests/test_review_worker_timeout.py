@@ -1867,9 +1867,27 @@ async def test_actual_worker_task_cancel_survives_failed_drained_relation_edit(
     import threading
 
     from backend.core import config
-    from backend.services.issues import pr_link_sync
+    from backend.services.ai_reviewer.api_client import AIApiClient
+    from backend.services.issues import pr_budget, pr_link_sync
     from backend.services.issues.pr_verifier import PRVerificationResult
     from backend.services.pr_issue_linker import PRIssueLinker
+    from tests.test_pr_issue_budget import summary_candidate
+
+    monkeypatch.setattr(
+        AIApiClient,
+        "resolve_role_candidates",
+        AsyncMock(return_value=[summary_candidate()]),
+    )
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: {
+                "pr_issue_max_files": 128,
+                "pr_issue_max_input_tokens": 64000,
+            }[key]
+        ),
+    )
 
     worker, info, _, execution = pr_relation_runtime_worker
     started, release = threading.Event(), threading.Event()
