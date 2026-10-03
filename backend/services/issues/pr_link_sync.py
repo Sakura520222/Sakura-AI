@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import weakref
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from backend.services.issues.pr_candidate_freshness import (
     revalidate_candidates,
 )
 from backend.services.issues.relation_runtime import RelationDeadlineExceeded
-from backend.services.issues.unified_diff import parse_unified_diff
+from backend.services.issues.unified_diff import parse_file_patch
 
 _LOCKS = weakref.WeakKeyDictionary()
 # PRIssueLink.inference_reason is MySQL TEXT: capacity is bytes, not characters.
@@ -191,7 +192,14 @@ class PRRelationSyncService:
                         pr_body=human,
                         files=[
                             *files,
-                            {"path": "", "status": "", "patch": "", "complete": False},
+                            {
+                                "path": "",
+                                "status": "",
+                                "patch": "",
+                                "complete": False,
+                                "additions": 0,
+                                "deletions": 0,
+                            },
                         ],
                         candidates=[],
                     )
@@ -199,12 +207,16 @@ class PRRelationSyncService:
                     check_boundary(cancel_event, deadline)
                     if f is end:
                         raise PRBudgetError("snapshot_incomplete")
-                    patch = f.patch or ""
+                    patch = f.patch
+                    if patch is None:
+                        patch = ""
                     source = {
                         "path": f.filename,
                         "status": f.status,
                         "patch": patch,
                         "complete": False,
+                        "additions": f.additions,
+                        "deletions": f.deletions,
                     }
                     # Bound before splitting/retaining a potentially enormous patch.
                     budget.messages(
@@ -214,17 +226,15 @@ class PRRelationSyncService:
                         candidates=[],
                     )
                     try:
-                        parsed = parse_unified_diff(patch)
+                        parse_file_patch(
+                            patch,
+                            additions=source["additions"],
+                            deletions=source["deletions"],
+                        )
                     except ValueError as exc:
                         raise PRBudgetError("snapshot_incomplete") from exc
-                    source["complete"] = (
-                        bool(patch)
-                        and parsed.additions == f.additions
-                        and parsed.deletions == f.deletions
-                    )
-                    if not source["complete"]:
-                        # Partial evidence must never replace a previously verified set.
-                        raise PRBudgetError("snapshot_incomplete")
+                    # Zero-line changes are complete metadata, never code quotes.
+                    source["complete"] = True
                     files.append(source)
                 check_boundary(cancel_event, deadline)
                 explicit = await self.linker.parse_issue_references(human)
@@ -232,9 +242,17 @@ class PRRelationSyncService:
                 if deadline is not None and deadline.is_expired():
                     return PRVerificationResult(False, failure="deadline")
                 top_k = await get_dynamic_config("semantic_issue_max_links", fresh=True)
+                check_boundary(cancel_event, deadline)
                 threshold = await get_dynamic_config(
                     "semantic_issue_similarity_threshold", fresh=True
                 )
+                check_boundary(cancel_event, deadline)
+                if (
+                    type(threshold) not in (float, int)
+                    or not math.isfinite(threshold)
+                    or not 0 <= threshold <= 1
+                ):
+                    raise ValueError("invalid semantic Issue recall threshold")
                 candidates = await self.retriever.retrieve(
                     owner,
                     name,
@@ -348,6 +366,10 @@ class PRRelationSyncService:
             except Exception as exc:
                 from loguru import logger
 
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ReviewCancelledError() from exc
+                if deadline is not None and deadline.is_expired():
+                    return PRVerificationResult(False, failure="deadline")
                 failure = (
                     exc.failure
                     if isinstance(exc, PRBudgetError)

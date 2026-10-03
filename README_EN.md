@@ -109,7 +109,7 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
 | `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
 | `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
-| `semantic_issue_similarity_threshold` | `0.8` | PR candidate cosine threshold |
+| `semantic_issue_similarity_threshold` | `0.8` | PR candidate cosine threshold; must be a finite number from 0 to 1, checked before retrieval |
 | `semantic_issue_max_links` | `5` | PR candidate limit |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold; must be a finite number from 0 to 1 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold; must be a finite number from 0 to 1 |
@@ -121,7 +121,7 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 
 Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
 
-Invalid PR confidence settings explicitly fail verification, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
+Invalid PR confidence or semantic recall thresholds explicitly fail synchronization, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
 
 Calls to `IssueService.detect_duplicates` must supply a positive integer `current_issue_number` so the actual Issue source can be hydrated and revalidated. Omitting the argument or passing an invalid number such as `None` raises an error instead of returning a success-shaped empty list. Calls with a valid number retain their argument and duplicate-result formats.
 
@@ -129,7 +129,7 @@ Relationship pre-analysis freshly reads the current Issue body, state, labels, c
 
 For legacy records with NULL Issue state, reanalysis checks database repository ownership before resolving the current GitHub state. Only a confirmed open Issue is queued; a closed source returns 409, and unavailable or malformed sources return an explicit safe error. Historical short and full repository names share owner-scoped analysis version numbering. The queued payload retains historical title, body and author, while the relation phase independently uses the fresh source above.
 
-PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Missing, truncated or malformed patches admit no new relations and preserve existing links.
+PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Files explicitly reported by GitHub with zero additions and deletions may have absent or metadata-only patches, such as pure renames or mode changes. They still consume snapshot budgets but cannot supply changed-code evidence. Reported line changes still require complete matching hunks; missing, truncated, malformed or inconsistent patches fail synchronization and preserve existing links.
 
 Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
 

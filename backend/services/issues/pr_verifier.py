@@ -19,12 +19,22 @@ from backend.services.issues.pr_budget import (
     check_boundary,
     resolve_pr_input_budget,
 )
-from backend.services.issues.unified_diff import parse_unified_diff
+from backend.services.issues.unified_diff import parse_file_patch, parse_unified_diff
 from backend.services.pr_body import strip_sakura_generated_sections
 
 
-def _changed_runs(patch: str) -> dict[str, list[str]]:
-    """Keep diff direction and contiguous runs within each unified-diff hunk."""
+def _changed_runs(source: dict) -> dict[str, list[str]]:
+    """Metadata has no code runs; absent hunks require verified zero counts."""
+    patch = source.get("patch")
+    if patch is None:
+        patch = ""
+    if "additions" in source or "deletions" in source:
+        return parse_file_patch(
+            patch,
+            additions=source.get("additions"),
+            deletions=source.get("deletions"),
+        ).runs
+    # Legacy direct callers can still supply a complete ordinary unified patch.
     return parse_unified_diff(patch).runs
 
 
@@ -124,8 +134,7 @@ class PRRelationVerifier:
             accepted, seen = [], set()
             patches = {f["path"]: f for f in files}
             changed_runs = {
-                path: _changed_runs(source.get("patch") or "")
-                for path, source in patches.items()
+                path: _changed_runs(source) for path, source in patches.items()
             }
             for relation in data["relations"]:
                 if not isinstance(relation, dict) or set(relation) != {
