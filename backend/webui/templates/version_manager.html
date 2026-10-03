@@ -389,6 +389,8 @@ const VM_I18N = {
   progressRefreshing: {{ _("version_manager.update_progress_refreshing") | tojson }},
   progressClose: {{ _("version_manager.update_progress_close") | tojson }},
   progressTarget: {{ _("version_manager.update_progress_target") | tojson }},
+  channelStable: {{ _("version_manager.channel_stable") | tojson }},
+  channelDevelopment: {{ _("version_manager.channel_development") | tojson }},
   progressFailedTitle: {{ _("version_manager.update_progress_failed_title") | tojson }},
   progressHealthMismatch: {{ _("version_manager.update_progress_health_mismatch") | tojson }},
   progressPollFailed: {{ _("version_manager.update_progress_poll_failed") | tojson }},
@@ -535,6 +537,21 @@ function renderProgress({state = '', step = '', kind = 'active', message = ''} =
   updateProgressClose.disabled = !canClose;
 }
 
+// Target line with channel + short build commit, degrading to version only
+// when the target object (or its revision) is not known yet.
+// 目标行附加版本通道与构建 commit 短写；目标对象或 revision 未知时仅显示版本号。
+function progressTargetText() {
+  if (!progressTargetVersion) return '';
+  const target = progressTarget && typeof progressTarget === 'object' ? progressTarget : null;
+  const channel = target && (target.channel === 'stable' ? VM_I18N.channelStable
+    : target.channel === 'development' ? VM_I18N.channelDevelopment : null);
+  const revision = target && typeof target.revision === 'string'
+    && /^[0-9a-f]{40}$/.test(target.revision)
+    ? '@' + target.revision.slice(0, 8) : null;
+  return [vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion}), channel, revision]
+    .filter(Boolean).join(' · ');
+}
+
 function openProgressModal({jobId = '', targetVersion = '', initial = false} = {}) {
   if (!updateProgressModal.classList.contains('hidden')) return;
   if (initial) {
@@ -554,9 +571,7 @@ function openProgressModal({jobId = '', targetVersion = '', initial = false} = {
     onClose: () => closeProgressModal(),
     focusTarget: () => updateProgressModal,
   });
-  updateProgressTarget.textContent = progressTargetVersion
-    ? vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion})
-    : '';
+  updateProgressTarget.textContent = progressTargetText();
   updateProgressClose.classList.add('hidden');
   updateProgressError.classList.add('hidden');
   renderProgress({message: initial ? VM_I18N.progressPreparing : ''});
@@ -860,7 +875,7 @@ async function pollJob(jobId) {
             digest: job.target_digest
           } : job.target_version;
           persistJob(jobId, progressTarget);
-          updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: progressTargetVersion});
+          updateProgressTarget.textContent = progressTargetText();
         }
         transientSince = null;
         setUpdateProgress(progressForJob(job));
@@ -973,7 +988,7 @@ updateButton.addEventListener('click', async function() {
   updateButton.disabled = true;
   progressTargetVersion = target;
   progressTarget = operationTarget || target;
-  updateProgressTarget.textContent = vmFormat(VM_I18N.progressTarget, {version: target});
+  updateProgressTarget.textContent = progressTargetText();
   try {
     const body = await requestJson('/version/update', {
       method: 'POST', headers: {'X-CSRF-Token': CSRF_TOKEN, 'Content-Type': 'application/json', 'Accept': 'application/json'},
