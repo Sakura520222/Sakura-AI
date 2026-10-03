@@ -1406,7 +1406,7 @@ async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
 
 async def _ensure_pr_issue_link_unique_index(conn, logger) -> bool:
     """Preserve latest exact-key row and install uniqueness on legacy schemas."""
-    from sqlalchemy import inspect, select
+    from sqlalchemy import func, inspect, select
 
     table = PRIssueLink.__table__
     keys = ("repo_name", "pr_id", "issue_number", "link_type")
@@ -1433,18 +1433,16 @@ async def _ensure_pr_issue_link_unique_index(conn, logger) -> bool:
             raise RuntimeError(
                 "uq_pr_issue_link_key already exists but is not unique on the required key"
             )
-        # Exact-key ownership only; never collapse explicit and semantic links
-        # or rows from different PRs/repositories. Keep the latest evidence.
-        seen = set()
-        rows = sync_conn.execute(
-            select(table.c.id, *(table.c[k] for k in keys)).order_by(table.c.id.desc())
-        ).all()
-        for row in rows:
-            key = tuple(row[1:])
-            if key in seen:
-                sync_conn.execute(table.delete().where(table.c.id == row[0]))
-            else:
-                seen.add(key)
+        # Keep the greatest id using database key/collation semantics. Grouping
+        # stays on the server, so neither history nor duplicate ids reach Python.
+        # The aggregate derived table cannot be merged by MySQL/MariaDB: this
+        # extra SELECT layer avoids their target-table restriction (error 1093).
+        latest = (
+            select(func.max(table.c.id).label("id"))
+            .group_by(*(table.c[k] for k in keys))
+            .subquery("latest_pr_issue_links")
+        )
+        sync_conn.execute(table.delete().where(table.c.id.not_in(select(latest.c.id))))
         index = Index("uq_pr_issue_link_key", *(table.c[k] for k in keys), unique=True)
         try:
             index.create(sync_conn, checkfirst=True)

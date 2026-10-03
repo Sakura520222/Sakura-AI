@@ -75,16 +75,25 @@ class PRRelationVerifier:
                 ):
                     raise ValueError("incomplete candidate facts")
                 facts[number] = candidate
-            if not facts:
-                return PRVerificationResult(True)
             related_threshold = await get_dynamic_config(
                 "pr_issue_related_confidence_threshold", fresh=True
             )
+            check_boundary(cancel_event, deadline)
             closing_threshold = await get_dynamic_config(
                 "pr_issue_closing_confidence_threshold", fresh=True
             )
-            if deadline is not None and deadline.is_expired():
-                return PRVerificationResult(False, failure="deadline")
+            check_boundary(cancel_event, deadline)
+            for threshold in (related_threshold, closing_threshold):
+                if (
+                    type(threshold) not in (float, int)
+                    or not math.isfinite(threshold)
+                    or not 0 <= threshold <= 1
+                ):
+                    raise ValueError("invalid PR relation confidence threshold")
+            # Empty success authorizes removing prior links, so it needs valid
+            # configuration just as a provider-backed replacement does.
+            if not facts:
+                return PRVerificationResult(True)
             budget = await self.resolve_budget(
                 cancel_event=cancel_event, deadline=deadline
             )
@@ -194,6 +203,10 @@ class PRRelationVerifier:
         except asyncio.CancelledError, ReviewCancelledError:
             raise
         except Exception as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError() from exc
+            if deadline is not None and deadline.is_expired():
+                return PRVerificationResult(False, failure="deadline")
             if raise_configuration_error and isinstance(exc, AllCandidatesFailedError):
                 raise
             if (

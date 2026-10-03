@@ -7,13 +7,16 @@ from pathlib import Path
 from typing import Any, Literal, get_origin
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
+# Bounds apply before Issue corpus recall and source hydration, independent of
+# the later model input budget. Keep Settings, dynamic forms and runtime aligned.
+ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -117,7 +120,7 @@ class Settings(BaseSettings):
     )
     enable_findings_check: bool = Field(
         True,
-        description="是否启用副 Findings Check（发现统计），仅有 publishable findings 时出现",
+        description="是否启用副 Findings Check（发现一些问题），仅有 publishable findings 时出现",
     )
     analysis_min_interval_sec: int = Field(
         3,
@@ -622,7 +625,11 @@ class Settings(BaseSettings):
     issue_assignee_confidence_threshold: float = 0.8
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
-    issue_relation_max_candidates: int = 5
+    issue_relation_max_candidates: int = Field(
+        5,
+        ge=ISSUE_RELATION_MAX_CANDIDATES_RANGE[0],
+        le=ISSUE_RELATION_MAX_CANDIDATES_RANGE[1],
+    )
     issue_relation_max_input_tokens: int = Field(64000, ge=1)
     issue_relation_candidate_max_comments: int = Field(20, ge=1)
     issue_relation_candidate_comment_max_chars: int = Field(4000, ge=1)
@@ -752,11 +759,29 @@ class Settings(BaseSettings):
     # ========== 语义 Issue 关联配置 ==========
     enable_semantic_issue_linking: bool = True  # 是否启用语义 Issue 关联
     semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
-    pr_issue_related_confidence_threshold: float = 0.85
-    pr_issue_closing_confidence_threshold: float = 0.95
+    pr_issue_related_confidence_threshold: float = Field(
+        0.85, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    pr_issue_closing_confidence_threshold: float = Field(
+        0.95, ge=0.0, le=1.0, allow_inf_nan=False
+    )
     pr_issue_max_files: int = 128  # PR 关系验证的惰性读取文件上限
     pr_issue_max_input_tokens: int = 64000  # 完整请求的估算输入 token 上限
     semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
+
+    @field_validator(
+        "issue_relation_max_candidates",
+        "pr_issue_related_confidence_threshold",
+        "pr_issue_closing_confidence_threshold",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_relation_config(cls, value: Any) -> Any:
+        # Reject before Pydantic turns bool into an indistinguishable 0/1.
+        # Numeric strings remain valid for environment-backed Settings.
+        if isinstance(value, bool):
+            raise ValueError("relation numeric configuration cannot be boolean")
+        return value
 
     # 支持的编程语言
     code_index_languages: list[str] = [
@@ -1104,7 +1129,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_auto_review": "启用后，Webhook 触发的 PR 变更将自动进入审查",
                     "enable_check_runs": "启用 GitHub Check Runs 审查进度可视化",
                     "enable_analysis_check": "启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
-                    "enable_findings_check": "启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                    "enable_findings_check": "启用副 Findings Check（发现一些问题），仅有可发布 findings 时出现",
                     "analysis_min_interval_sec": "Analysis Check 快照写入 GitHub 的最小间隔（秒）",
                     "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
                 },
@@ -1260,7 +1285,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
                     "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
                     "issue_detect_duplicates": "主分析前验证开放重复及关联关系，无开放重复时验证关闭 Issue 历史关系",
-                    "issue_relation_max_candidates": "每个开放或历史阶段最多验证的 Issue 数量",
+                    "issue_relation_max_candidates": "每个开放或历史阶段最多验证的 Issue 数量（1-200，默认 5）；无效配置使关系阶段失败并继续主分析",
                     "issue_relation_max_input_tokens": "开放及历史阶段完整请求的估算输入 token 上限，包含正文、评论、语言、JSON 和系统提示；同时受全部摘要候选模型上下文、输出与协议预留限制，超限或未知时失败并继续主分析",
                     "issue_relation_candidate_max_comments": "启用评论时每个候选最多惰性读取的最新评论数量；较早讨论可能被省略，提示中保留来源及范围",
                     "issue_relation_candidate_comment_max_chars": "候选单条评论保留的原文字符上限；截断状态显式传给关系分析，不将缺失内容作为证据",
@@ -1632,7 +1657,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "pr_issue_max_input_tokens": (1, 1000000),
     "issue_corpus_freshness_seconds": (0, None),
     "issue_corpus_batch_size": (1, None),
-    "issue_relation_max_candidates": (1, None),
+    "issue_relation_max_candidates": ISSUE_RELATION_MAX_CANDIDATES_RANGE,
     "issue_relation_max_input_tokens": (1, None),
     "issue_relation_candidate_max_comments": (1, None),
     "issue_relation_candidate_comment_max_chars": (1, None),

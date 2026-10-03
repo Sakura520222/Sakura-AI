@@ -831,7 +831,7 @@ class CheckRunService:
             return
         try:
             is_en = self._is_english(output_language)
-            title = "Sakura AI Findings Summary" if is_en else "Sakura AI 发现统计"
+            title = "Sakura AI Found Some Issues" if is_en else "Sakura AI 发现一些问题"
             summary = self._findings_summary(severity_counts, total_count, is_en)
             text = self._render_findings(
                 severity_counts=severity_counts,
@@ -878,7 +878,7 @@ class CheckRunService:
         try:
             is_en = self._is_english(output_language)
             if conclusion == "neutral":
-                title = "Sakura AI Findings Summary" if is_en else "Sakura AI 发现统计"
+                title = "Sakura AI Found Some Issues" if is_en else "Sakura AI 发现一些问题"
             elif conclusion == "cancelled":
                 title = (
                     "Sakura AI Findings Cancelled" if is_en else "Sakura AI 发现已取消"

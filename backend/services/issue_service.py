@@ -787,9 +787,16 @@ class IssueService:
         repo_name: str,
         title: str,
         body: str,
-        current_issue_number: int | None = None,
+        current_issue_number: int,
     ) -> list[dict[str, Any]]:
-        """Compatibility helper: return only a verified open duplicate."""
+        """Return only a verified open duplicate for an existing Issue.
+
+        A positive Issue number is required for source hydration and revalidation;
+        missing or invalid identity is a caller error, not a negative decision.
+        """
+        if type(current_issue_number) is not int or current_issue_number <= 0:
+            raise ValueError("current_issue_number must be a positive integer")
+
         from backend.services.issues.candidate_retriever import IssueCandidateRetriever
         from backend.services.issues.relation_analyzer import IssueRelationAnalyzer
 
