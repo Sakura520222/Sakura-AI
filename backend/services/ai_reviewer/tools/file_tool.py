@@ -412,16 +412,51 @@ class FileToolHandler:
 
             # GitHub API returns a list when the path is a directory
             if isinstance(content_file, list):
-                return {
+                result: dict[str, Any] = {
                     "file_path": file_path,
-                    "error": "该路径是目录而非文件，请使用 list_directory 工具",
-                    "hint": f"目录包含 {len(content_file)} 个项目",
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
                 }
+                if search_pattern:
+                    # 目录搜索意图：结构化 recovery 指向 search_in_files 等价调用
+                    retry_arguments: dict[str, Any] = {
+                        "keyword": search_pattern,
+                        "directory": file_path,
+                    }
+                    if context_lines is not None:
+                        retry_arguments["context_lines"] = context_lines
+                    if pr is None and branch_used:
+                        retry_arguments["branch"] = branch_used
+                    result.update(
+                        {
+                            "error": (
+                                "该路径是目录而非文件，read_file 不支持目录搜索"
+                            ),
+                            "hint": (
+                                f"目录包含 {len(content_file)} 个项目。在目录或"
+                                "整个仓库中搜索关键词请改用 search_in_files"
+                                "（recovery.retry_arguments 已给出等价参数）；"
+                                "如需浏览目录结构请使用 list_directory。"
+                            ),
+                            "recovery": {
+                                "action": "retry_search_in_files",
+                                "automatic_retry": False,
+                                "reason": "path_is_directory",
+                                "retry_arguments": retry_arguments,
+                            },
+                        }
+                    )
+                else:
+                    result.update(
+                        {
+                            "error": "该路径是目录而非文件，请使用 list_directory 工具",
+                            "hint": f"目录包含 {len(content_file)} 个项目",
+                        }
+                    )
+                return result
 
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
