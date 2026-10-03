@@ -758,7 +758,9 @@ class Settings(BaseSettings):
 
     # ========== 语义 Issue 关联配置 ==========
     enable_semantic_issue_linking: bool = True  # 是否启用语义 Issue 关联
-    semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
+    semantic_issue_similarity_threshold: float = Field(
+        0.8, ge=0.0, le=1.0, allow_inf_nan=False
+    )  # 语义相似度阈值
     pr_issue_related_confidence_threshold: float = Field(
         0.85, ge=0.0, le=1.0, allow_inf_nan=False
     )
@@ -771,6 +773,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "issue_relation_max_candidates",
+        "semantic_issue_similarity_threshold",
         "pr_issue_related_confidence_threshold",
         "pr_issue_closing_confidence_threshold",
         mode="before",

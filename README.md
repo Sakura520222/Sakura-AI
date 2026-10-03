@@ -109,7 +109,7 @@
 | `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
 | `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
 | `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
-| `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值 |
+| `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
 | `semantic_issue_max_links` | `5` | PR 候选上限 |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
@@ -121,7 +121,7 @@
 
 语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
 
-非法 PR 置信度配置会使验证明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
+非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
 
 调用 `IssueService.detect_duplicates` 时必须提供正整数 `current_issue_number`，以便读取和复核真实 Issue 来源。省略参数或传入 `None` 等无效编号会直接报错，不再返回看似成功的空列表；传入有效编号的调用方式和重复项结果格式保持不变。
 
@@ -129,7 +129,7 @@
 
 旧记录的 Issue 状态为 NULL 时，重新分析入口先在数据库校验仓库归属，再读取 GitHub 当前状态；仅明确开放时入队，关闭返回 409，不可用或畸形源返回显式安全错误。短仓库名与完整仓库名的历史记录按同一所有者作用域计算分析版本。入队 payload 保留历史标题、正文和作者，关系阶段独立使用上述新鲜源。
 
-PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。缺失、截断或畸形补丁不建立新关系并保留已有链接。
+PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。GitHub 明确报告新增、删除均为零的文件允许空补丁或纯元数据补丁，例如纯重命名或权限变化；这些文件仍计入快照预算，但不能提供代码修复证据。报告有代码行变更时，缺失、截断、畸形或行数不符的补丁仍使同步失败并保留已有链接。
 
 已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
 

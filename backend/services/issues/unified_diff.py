@@ -28,12 +28,15 @@ class UnifiedDiff:
     runs: dict[str, list[str]]
 
 
-def parse_unified_diff(patch: str) -> UnifiedDiff:
+def parse_unified_diff(patch: str, *, allow_no_hunk: bool = False) -> UnifiedDiff:
     """Require complete old/new spans, preserving ++/-- source within hunks.
 
     GitHub file patches usually omit file headers. A signed line is source only
     while the hunk has unconsumed spans; metadata outside hunks is never evidence.
+    Callers may allow absent hunks only with authoritative zero-line counts.
     """
+    if not isinstance(patch, str):
+        raise ValueError("Invalid unified-diff text")
     runs = {"added": [], "removed": []}
     direction, run = None, []
     old_left = new_left = additions = deletions = 0
@@ -105,7 +108,17 @@ def parse_unified_diff(patch: str) -> UnifiedDiff:
             raise ValueError("Unexpected content outside unified-diff hunk")
         finish()
         direction, marker_allowed = None, False
-    if not saw_hunk or old_left or new_left:
+    if (not saw_hunk and not allow_no_hunk) or old_left or new_left:
         raise ValueError("Missing or truncated unified-diff hunk")
     finish()
     return UnifiedDiff(additions, deletions, runs)
+
+
+def parse_file_patch(patch: str, *, additions: int, deletions: int) -> UnifiedDiff:
+    """Validate line coverage, including complete metadata-only file changes."""
+    if any(type(count) is not int or count < 0 for count in (additions, deletions)):
+        raise ValueError("Invalid file change counts")
+    parsed = parse_unified_diff(patch, allow_no_hunk=additions == 0 and deletions == 0)
+    if (parsed.additions, parsed.deletions) != (additions, deletions):
+        raise ValueError("File change counts do not match patch")
+    return parsed
