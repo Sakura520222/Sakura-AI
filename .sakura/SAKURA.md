@@ -5,46 +5,38 @@
 
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
-- 语言统计: Python: 8714382, HTML: 1115469, Shell: 357518, Dockerfile: 3135
+- 语言统计: Python: 8744585, HTML: 1130029, Shell: 357518, Dockerfile: 3135
 - 累计反思 5 次
 
 ## 3. 核心审查原则
-- 完整性验证：PR描述/提交/文件/diff一致核对；功能逐项勾选，差异>10%标minor。
-- 删减类/重构核验：批量清理逻辑后须跑格式化（如 ruff format）；移除配置项须核验 config.py、DYNAMIC_CONFIG_GROUPS、templates/、translations/、.env 五要素；验证路径遵从代码引用 -> 配置声明 -> UI渲染 -> i18n -> CI/部署环境。
-- 双轨评分：增量+整体；历史 major 未清零上限 8；quick 上限 8。
-- 批准规范：approve 须声明未解决问题；request_changes 须对应 major/blocking。行为变更符合收敛意图且有文档/测试守护的不阻断。
-- 高分审视：10/10≠无风险，须主动找安全/测试遗漏，警惕确认偏误。
-- 痕迹与边界：无评论须附验证依据；AI 工具索引必须物理钳制 `0 <= min_idx <= max_idx <= len` 防负切片；重试契约须单测断言闭环。
-- 增量审查：增量须结案历史项并触发全库引用搜索；历史 major 未解决须保持阻断。
+- 完整性验证：PR 描述/提交/文件/diff 一致核对；功能逐项勾选，差异 >10% 标 minor。
+- 删减与配置核验：批量清理逻辑后须跑格式化（如 `ruff format`）；移除配置项须核验 `config.py`、`DYNAMIC_CONFIG_GROUPS`、`templates/`、`translations/`、`.env` 五要素；校验路径遵从代码引用 -> 配置声明 -> UI 渲染 -> i18n -> CI/部署环境；配置合法性校验物理前置于任何空数据/空候选逻辑早退分支（Guard Before Early-Exit）。
+- 纯元数据/零行 Patch 隔离：解析器若放宽零行文件（`allow_no_hunk=True`），须强制伴随“底层结构禁绝文本引用（ungrounded）”断言；计数/切片入参须以 `type(val) is not int` 严防 `bool` 隐式转换伪装。
+- 双轨评分与高分审视：增量+整体双轨；历史 major 未清零上限 8；quick 上限 8；10/10≠无风险，须主动查找安全/测试遗漏。
+- 批准与增量规范：approve 须声明未解决问题；request_changes 对应 major/blocking；历史 major 未解决保持阻断，已闭环须结案并触发全库引用搜索；无新证据不重复报告历史未变代码项。
 
 ## 4. 硬规则（重点）
 - CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；语法判断以 Python 3.14+ 为准。
-- 已确认的语法误报（PR641/PR643）：Python 3.14+ 依据 PEP 758 允许不带 `as` 的多异常捕获省略括号，`except TypeError, ValueError, ValidationError:` 与 `except (TypeError, ValueError, ValidationError):` 等价，`except*` 同样适用。禁止将其报告为“Python 2 遗留语法”“硬 SyntaxError”“模块无法导入”，或据此定级 Critical/Blocker、要求加括号、阻断合并。
-- 语法误报防复发：继承历史阻断项前须按当前目标运行时复核，已确认的误报不得继续作为“未修复缺陷”传播；多异常捕获带 `as` 时仍须写为 `except (A, B) as e:`，不能混淆两种情况。详见 [Python 语法规则](rules/python_syntax_rules.md)。
-- 异步与配置：async 路由同步 I/O 用 `asyncio.to_thread()`；配置/函数签名增删改须全库 rg 校验；env 统一配置模块，禁止业务代码 `setdefault`。
-- 辅助落库/诊断：非主流程防御性捕获需收敛为底层基类异常（如 `SQLAlchemyError`），标注 `#INTERNAL_ERROR` 与 best-effort 说明，严禁裸 `except Exception:`。
-- 幂等与锁：守护进程/扫描唯一约束与锁防并发重复；updater/daemon 操作幂等且原子写入+fsync。
-- 依赖管理：pyproject/requirements/uv.lock 同步（CI `uv lock --check`）；依赖 minor 升级须查 Release Notes（如 SQLAlchemy 2.1 解耦 greenlet 的 extra 标记）；升级排查闲置依赖（Unused Dependencies）。
-- 认证与安全：响应副作用统一 ASGI 中间件，JWT 续期前刷新 DB claims；Set-Cookie 必检 Secure/HttpOnly/SameSite。
-- 网络请求：禁止方法内递归 `self._request`；超时与重试参数校验防死循环。
+- PEP 758 语法识别：Python 3.14+ 允许不带 `as` 的多异常捕获省略括号，`except TypeError, ValueError:` 与 `except (TypeError, ValueError):` 等价。禁止将其识别为“Python 2 遗留语法”、“硬 SyntaxError”或据此阻断合并。误报防复发按当前运行时复核，带 `as` 时仍须为 `except (A, B) as e:`。
+- 并发与锁生命周期：并发所有权锁 (Ownership Lock) / Users 计数器递增必须在进入 acquire 等待队列前同步完成，清理/删键严格约束为 `users == 0`，禁止持有者 release 即删键，防止交接期竞争造成分裂锁。
+- 异步与数据迁移：async 路由同步 I/O 用 `asyncio.to_thread()`；大数据去重/清理迁移必须下推至 DB（配多方言 AST 编译断言防 MySQL 1093 错误），禁用全表拉入内存。
+- 契约与防御：防御性捕获需收敛为底层基类异常（如 `SQLAlchemyError`）且显式标记 best-effort，严禁裸 `except Exception:`；底层 AI 工具错误须返回结构化 recovery（含 action/retry_arguments），防纯文本重试消耗 Token。
+- 依赖与格式：pyproject/requirements/uv.lock 同步（CI `uv lock --check`）；静态检测排查闲置依赖，升级核对 Release Notes；键值/元组契约变更需防范调用方无条件解包 TypeError 及“三态归一”（混淆拒绝与网络异常）隐患。
 
-## 5. Agent/Worker/Webhook/Issue 治理
-- Shell 安全：检查 `$()` 反引号及逻辑运算符；白名单+双层限额输出。
-- Worker：禁止无日志无退避的异常忽略；统一复用 `_cancel_events` 幂等取消。
-- Epic 级 Issue 治理：大版本/架构迁移重点放在拆解路径（Phases）与双轨共存兼容（认证/路由/状态）；区分 Epic 提案与单点优化防误报重复；规范标题保留无改写。
+## 5. Agent/Worker/Issue 治理
+- Worker 与恢复机制：禁用无日志无退避的异常忽略；通知与任务恢复循环中禁绝尾部 `asyncio.sleep(0)` 死循环；统一复用 `_cancel_events` 幂等取消。
+- Epic 级 Issue 拆解：兼具架构演进与 Bug 修复的 Epic，须强制拆解“即时修复项（Quick Wins）”与“阶段性目标”双轨推进；重复检测严格区分整体架构提案与单业务域 Issue，保留规范标题防无谓改写。
 
 ## 6. 知识库与集中配置
-- .sakura/ 增量追加或精确修改，禁止覆盖式重写。
+- `.sakura/` 增量追加或精确修改，禁止覆盖式重写。
 - 行号白名单改用语义化标记；单点真值源。配置集中 `backend/core/config.py`，新配置 env+文件双入口并 CI 校验。
 
 ## 7. 最新反思要点
-- PR642：大范围删减重构需验证配置/UI/i18n/环境 5 要素；移除废弃通知路径配齐负向断言测试守护契约。
-- PR641：辅助落库限制底层异常类并显式标记 best-effort。
-- PR637：大模型工具切片防负数倒序索引；重试契约参数必须通过自动化测试闭环验证。
-- PR636：依赖集中清理合并时静态检测闲置依赖；库升级核对 Release Notes 防止隐式 Extra 缺失。
-- ISSUE638：Epic 级重构评估双轨共存风险与阶段拆解，优化分类标签与重复检测识别。
+- PR644（incr1~incr3）：零行补丁配严格 ungrounded 断言与 `type(count) is not int` 防线；配置校验优先于逻辑早退；并发 Ownership 锁所有权移交必须在 acquire 等待前完成计数递增；DB 迁移 SQL 必须下推且带方言 AST 编译断言。
+- ISSUE646：Epic 级 Issue 拆解即时修复与分阶段演进；规范 `_eligibility_snapshot` 三态区分（明确拒绝 vs 检查失败）；元组契约变更须防范解包 TypeError。
+- ISSUE645：AI 工具报错优先返回结构化 recovery 契约引导重试；涉及到 Prompt/Recovery 的微小 Issue 不应挂 `good first issue` 标签。
 
 ## 8. 技术栈
-FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议 AI（OpenAI / Anthropic / Gemini） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
+FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
 
-*最后更新：基于 PR642/PR641/PR637/PR636/ISSUE638 最新反思整合，精确标注累计反思 5 次*
+*最后更新：基于 PR644(incr1-3)/ISSUE646/ISSUE645 最新反思整合，精确标注累计反思 5 次*
