@@ -898,7 +898,7 @@ class IssueWorker:
                     max_version = await db.scalar(
                         select(func.max(IssueAnalysis.analysis_version)).where(
                             and_(
-                                IssueAnalysis.repo_name == repo_name,
+                                IssueAnalysis.repo_name.in_([repo_name, repo_full_name]),
                                 IssueAnalysis.repo_owner == repo_owner,
                                 IssueAnalysis.issue_number == issue_number,
                             )
@@ -1123,7 +1123,7 @@ class IssueWorker:
                                 "feasibility": analysis_result.get("feasibility", ""),
                             }
                             self._raise_if_cancelled(cancel_event)
-                            await emb_service.upsert_issue(
+                            updated = await emb_service.upsert_issue(
                                 repo_owner,
                                 repo_name,
                                 issue_number,
@@ -1132,7 +1132,10 @@ class IssueWorker:
                                 state=issue_info.get("state", "open"),
                                 analysis_metadata=analysis_metadata,
                             )
-                            logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
+                            if updated:
+                                logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
+                            else:
+                                logger.warning(f"[{task_id}] Issue 向量更新未完成")
                         elif summary:
                             logger.info(
                                 f"[{task_id}] 软 deadline 已到达，"
@@ -1142,31 +1145,6 @@ class IssueWorker:
                         raise
                     except Exception as e:
                         logger.warning(f"[{task_id}] 使用 AI 摘要更新向量失败: {e}")
-
-                    # 6. 重复检测（优先使用 AI 摘要）
-                    self._raise_if_cancelled(cancel_event)
-                    if (
-                        not task_deadline.is_expired()
-                        and await get_dynamic_config("issue_detect_duplicates")
-                    ):
-                        self._raise_if_cancelled(cancel_event)
-                        try:
-                            summary = analysis_result.get("summary", "")
-                            duplicates = await issue_service.detect_duplicates(
-                                repo_owner,
-                                repo_name,
-                                issue_info.get("title", ""),
-                                summary or issue_info.get("body", ""),
-                                current_issue_number=issue_number,
-                            )
-                            if duplicates:
-                                analysis_record.duplicate_of = duplicates[0].get(
-                                    "issue_number"
-                                )
-                        except ReviewCancelledError:
-                            raise
-                        except Exception as e:
-                            logger.warning(f"[{task_id}] 重复检测失败: {e}")
 
                     # 7. 查找关联 PR
                     self._raise_if_cancelled(cancel_event)

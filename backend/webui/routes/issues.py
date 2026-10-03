@@ -9,6 +9,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import IssueAnalysis
+from backend.services.issues.reanalysis_admission import (
+    IssueReanalysisAdmissionError,
+    prepare_issue_reanalysis,
+)
 from backend.webui.deps import (
     build_user_scope_filter,
     error_page,
@@ -20,6 +24,7 @@ from backend.webui.deps import (
     render_template,
     require_auth,
 )
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/issues", tags=["WebUI Issues"])
 templates = get_templates()
@@ -188,6 +193,16 @@ async def issue_detail_page(
     except json.JSONDecodeError, TypeError:
         pass
 
+    issue_relations = {}
+    try:
+        parsed = (
+            json.loads(analysis.issue_relations) if analysis.issue_relations else {}
+        )
+        if isinstance(parsed, dict):
+            issue_relations = parsed
+    except json.JSONDecodeError, TypeError:
+        pass
+
     return render_template(
         "issue_detail.html",
         request,
@@ -197,6 +212,7 @@ async def issue_detail_page(
         suggested_labels=suggested_labels,
         suggested_assignees=suggested_assignees,
         related_prs=related_prs,
+        issue_relations=issue_relations,
         active_page="issues",
     )
 
@@ -248,15 +264,13 @@ async def reanalyze_issue(
             status_code=404,
         )
 
-    # 构造 issue_info
-    issue_info = {
-        "issue_number": analysis.issue_number,
-        "repo_name": analysis.repo_name,
-        "repo_owner": analysis.repo_owner,
-        "author": analysis.author,
-        "title": analysis.title,
-        "body": analysis.body,
-    }
+    try:
+        issue_info = await prepare_issue_reanalysis(analysis)
+    except IssueReanalysisAdmissionError as error:
+        return JSONResponse(
+            content={"success": False, "message": i18n.t(error.translation_key)},
+            status_code=error.status_code,
+        )
 
     # 计算分析版本号
     from backend.models.database import IssueAnalysis as IssueAnalysisModel
@@ -264,7 +278,13 @@ async def reanalyze_issue(
     max_version_result = await db.execute(
         select(func.max(IssueAnalysisModel.analysis_version)).where(
             IssueAnalysisModel.issue_number == analysis.issue_number,
-            IssueAnalysisModel.repo_name == analysis.repo_name,
+            IssueAnalysisModel.repo_owner == analysis.repo_owner,
+            IssueAnalysisModel.repo_name.in_(
+                [
+                    issue_info["repo_name"],
+                    f"{issue_info['repo_owner']}/{issue_info['repo_name']}",
+                ]
+            ),
         )
     )
     max_version = max_version_result.scalar() or 0

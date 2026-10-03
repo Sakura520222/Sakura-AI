@@ -92,7 +92,51 @@
 - **Issue 标题改写** — 自动优化模糊标题
 - **分析评论发布** — 自动发布结果并报告状态
 - **PR-Issue 关联** — 解析 Issue 引用注入上下文
-- **语义 Issue 关联** — 向量相似度发现并关联相关 Issue
+- **PR 语义 Issue 关联** — 共享 Issue 语料召回开放候选，再用独立协议核验人工描述、实际补丁与 Issue 要求。完整修复输出 `Closes`，部分关联输出 `Related to`；成功验证会替换或清空旧机器关联区块，保留人工引用。检索、重排或验证失败不推断新关联。
+- **Issue 关系预分析** — 主分析前先判断开放 Issue 的 `duplicate` / `related` / `none`；只有未验证出开放重复项时才分析关闭 Issue 的 `previously_resolved`、`regression`、`duplicate_closed`、`previously_rejected`、`related` 历史关系。不同工作流执行等独立事件不会仅凭相似标题成为重复；关系需要置信度、原因、相同点、差异及可追溯原文引用。主模型不能覆盖验证结果，历史关系保存在 `issue_relations` 并展示于 API、评论和详情页，兼容保留 `duplicate_of`。
+
+关系配置可在统一 `/config` 页面动态修改，默认值来自 Settings：
+
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
+| `issue_include_comments` | `true` | 启用主分析评论与关系模型的新鲜有界评论样本 |
+| `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限，允许 1–200；运行时在读取来源和检索前校验 |
+| `issue_relation_max_input_tokens` | `64000` | 开放与历史阶段完整请求的估算输入上限，包含正文、评论、JSON、语言和系统提示；同时受全部摘要候选上下文、输出及协议预留限制。超限或未知时无重复结论，保留已用 token 并继续主分析 |
+| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时当前 Issue 与每个候选惰性读取的最新评论上限（保留原配置名），提示中标注来源及省略范围 |
+| `issue_relation_candidate_comment_max_chars` | `4000` | 当前 Issue 与候选每条评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
+| `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
+| `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
+| `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
+| `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
+| `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
+| `semantic_issue_max_links` | `5` | PR 候选上限，允许 1–200；Settings 与检索前运行时校验保持一致 |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
+| `pr_issue_max_files` | `128` | PR 关系验证的惰性文件读取上限；超限或补丁不完整时保留原关联 |
+| `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
+| `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
+| `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
+| `issue_candidate_pool_multiplier` | `3` | 允许 1–10，语料同步前校验；固定召回池为候选上限 × 此倍数（不超过语料数量），排除项不会扩大查询或补翻页 |
+| `rerank_score_threshold` | `0.6` | PR/Issue 关系重排阈值，须为 0–1 的有限数值；启用重排时，无效阈值在提供商请求前失败 |
+
+语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
+
+非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
+
+PR 与 Issue 关系流程的目标候选数均不超过 200，召回倍数不超过 10，因此初步候选池最多 2,000 条。数量和倍数在 Settings、动态配置及运行时采用相同上限，不会把非法值静默截断。严格重排在发送请求前校验有效阈值；失败会保留已有 PR 关系，Issue 关系阶段记录失败并继续主分析。显式关闭重排和普通 RAG 的非严格降级行为保持不变。
+
+调用 `IssueService.detect_duplicates` 时必须提供正整数 `current_issue_number`，以便读取和复核真实 Issue 来源。省略参数或传入 `None` 等无效编号会直接报错，不再返回看似成功的空列表；传入有效编号的调用方式和重复项结果格式保持不变。
+
+关系预分析会重新读取当前 Issue 的 GitHub 正文、状态、标签、关闭原因和更新时间，关系模型使用这一确切源；不会改写调用者 payload 或主分析的历史正文。启用评论时，当前 Issue 与候选均按上述 `candidate_*` 配置读取最新评论样本，并保留评论 ID、正文、创建/更新时间、总数及截断范围。模型返回后再次读取当前 Issue 和已接受候选；后续历史阶段也会复查先前开放关系，空/none 判断仍需当前源一致。源变化返回可观察的 `stale_source`，缺失、不可用或畸形事实返回 `source_unavailable`；不输出重复结论，保留已用 token 并继续主分析。这是返回边界上的源比较，GitHub 不提供覆盖之后远程发布的原子条件写入。
+
+旧记录的 Issue 状态为 NULL 时，重新分析入口先在数据库校验仓库归属，再读取 GitHub 当前状态；仅明确开放时入队，关闭返回 409，不可用或畸形源返回显式安全错误。短仓库名与完整仓库名的历史记录按同一所有者作用域计算分析版本。入队 payload 保留历史标题、正文和作者，关系阶段独立使用上述新鲜源。
+
+PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。GitHub 明确报告新增、删除均为零的文件允许空补丁或纯元数据补丁，例如纯重命名或权限变化；这些文件仍计入快照预算，但不能提供代码修复证据。报告有代码行变更时，缺失、截断、畸形或行数不符的补丁仍使同步失败并保留已有链接。
+
+已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
+
+安装 PR-Issue 唯一索引前，历史重复关联由数据库按仓库、PR、Issue 和关联类型分组去重，保留每组 ID 最大的记录及证据；无需将整表加载进 Python 或逐条删除。不同关联类型及仓库范围保持独立。
 
 ### Agent 专家团队
 

@@ -7,13 +7,19 @@ from pathlib import Path
 from typing import Any, Literal, get_origin
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
+# Bounds apply before Issue corpus recall and source hydration, independent of
+# the later model input budget. Keep Settings, dynamic forms and runtime aligned.
+ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
+# Operational recall bounds, shared by Settings, forms and request admission.
+ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE = (1, 10)
+PR_ISSUE_MAX_LINKS_RANGE = (1, 200)
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -117,7 +123,7 @@ class Settings(BaseSettings):
     )
     enable_findings_check: bool = Field(
         True,
-        description="是否启用副 Findings Check（发现统计），仅有 publishable findings 时出现",
+        description="是否启用副 Findings Check（发现一些问题），仅有 publishable findings 时出现",
     )
     analysis_min_interval_sec: int = Field(
         3,
@@ -422,7 +428,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str | None = None
     smtp_from_name: str = "Sakura-AI"  # 邮件 From 显示昵称
-    smtp_security: str = "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    smtp_security: str = (
+        "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    )
     notification_max_concurrency: int = Field(5, ge=1, le=100)
     notification_retry_max_attempts: int = Field(3, ge=1, le=20)
     notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
@@ -596,7 +604,7 @@ class Settings(BaseSettings):
     rerank_base_url: str = "https://api.siliconflow.cn/v1/rerank"
     rerank_api_key: str = ""
     rerank_top_k: int = 10
-    rerank_score_threshold: float = 0.6
+    rerank_score_threshold: float = Field(0.6, ge=0.0, le=1.0, allow_inf_nan=False)
 
     # 文档分块配置
     chunk_size: int = 1000
@@ -620,6 +628,17 @@ class Settings(BaseSettings):
     issue_assignee_confidence_threshold: float = 0.8
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
+    issue_relation_max_candidates: int = Field(
+        5,
+        ge=ISSUE_RELATION_MAX_CANDIDATES_RANGE[0],
+        le=ISSUE_RELATION_MAX_CANDIDATES_RANGE[1],
+    )
+    issue_relation_max_input_tokens: int = Field(64000, ge=1)
+    issue_relation_candidate_max_comments: int = Field(20, ge=1)
+    issue_relation_candidate_comment_max_chars: int = Field(4000, ge=1)
+    issue_relation_similarity_threshold: float = 0.75
+    issue_relation_confidence_threshold: float = 0.85
+    issue_duplicate_confidence_threshold: float = 0.95
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = True
     protocol_repair_max_attempts: int = 3
@@ -629,11 +648,20 @@ class Settings(BaseSettings):
     issue_price_per_1k_completion: float = 0.0
     # Module A: 向量存储元数据增强
     issue_vector_store_rich_metadata: bool = True
+    issue_corpus_freshness_seconds: int = 60
+    issue_corpus_batch_size: int = 100
+    issue_candidate_pool_multiplier: int = Field(
+        3,
+        ge=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[0],
+        le=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[1],
+    )
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
     # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
     issue_vision_enabled: bool = True  # 总开关；模型能力仍需勾选"支持图片多模态"
-    issue_vision_max_image_size_bytes: int = 10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    issue_vision_max_image_size_bytes: int = (
+        10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    )
     issue_vision_allowed_image_domains: str = (
         # 允许下载的图片域名（逗号分隔，段内支持 ``*`` 通配）；仅 GitHub
         # 资产域，私有仓库经 installation 凭据下载，避免向任意外链发起请求
@@ -737,8 +765,38 @@ class Settings(BaseSettings):
 
     # ========== 语义 Issue 关联配置 ==========
     enable_semantic_issue_linking: bool = True  # 是否启用语义 Issue 关联
-    semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
-    semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
+    semantic_issue_similarity_threshold: float = Field(
+        0.8, ge=0.0, le=1.0, allow_inf_nan=False
+    )  # 语义相似度阈值
+    pr_issue_related_confidence_threshold: float = Field(
+        0.85, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    pr_issue_closing_confidence_threshold: float = Field(
+        0.95, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    pr_issue_max_files: int = 128  # PR 关系验证的惰性读取文件上限
+    pr_issue_max_input_tokens: int = 64000  # 完整请求的估算输入 token 上限
+    semantic_issue_max_links: int = Field(
+        5, ge=PR_ISSUE_MAX_LINKS_RANGE[0], le=PR_ISSUE_MAX_LINKS_RANGE[1]
+    )  # 最大关联 Issue 数量
+
+    @field_validator(
+        "issue_relation_max_candidates",
+        "issue_candidate_pool_multiplier",
+        "semantic_issue_max_links",
+        "semantic_issue_similarity_threshold",
+        "rerank_score_threshold",
+        "pr_issue_related_confidence_threshold",
+        "pr_issue_closing_confidence_threshold",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_relation_config(cls, value: Any) -> Any:
+        # Reject before Pydantic turns bool into an indistinguishable 0/1.
+        # Numeric strings remain valid for environment-backed Settings.
+        if isinstance(value, bool):
+            raise ValueError("relation numeric configuration cannot be boolean")
+        return value
 
     # 支持的编程语言
     code_index_languages: list[str] = [
@@ -1086,7 +1144,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_auto_review": "启用后，Webhook 触发的 PR 变更将自动进入审查",
                     "enable_check_runs": "启用 GitHub Check Runs 审查进度可视化",
                     "enable_analysis_check": "启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
-                    "enable_findings_check": "启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                    "enable_findings_check": "启用副 Findings Check（发现一些问题），仅有可发布 findings 时出现",
                     "analysis_min_interval_sec": "Analysis Check 快照写入 GitHub 的最小间隔（秒）",
                     "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
                 },
@@ -1215,10 +1273,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "语义 Issue 关联",
                 "icon": "link",
+                "descriptions": {
+                    "pr_issue_max_files": "逐项读取 PR 文件的上限；超限、缺页或补丁不完整时跳过验证并保留已有语义关联",
+                    "pr_issue_max_input_tokens": "完整验证请求的估算输入 token 上限，包含 PR 说明、Issue、JSON 和系统提示；同时受摘要角色候选模型的上下文、输出预算与协议预留限制",
+                },
                 "keys": [
                     "enable_semantic_issue_linking",
                     "semantic_issue_similarity_threshold",
                     "semantic_issue_max_links",
+                    "pr_issue_related_confidence_threshold",
+                    "pr_issue_closing_confidence_threshold",
+                    "pr_issue_max_files",
+                    "pr_issue_max_input_tokens",
                 ],
             },
         ),
@@ -1233,14 +1299,24 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_auto_rewrite_title": "AI 生成规范化标题并自动修改 Issue 标题（默认关闭）",
                     "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
                     "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
-                    "issue_detect_duplicates": "启用后自动检测重复 Issue",
+                    "issue_detect_duplicates": "主分析前验证开放重复及关联关系，无开放重复时验证关闭 Issue 历史关系",
+                    "issue_relation_max_candidates": "每个开放或历史阶段最多验证的 Issue 数量（1-200，默认 5）；无效配置使关系阶段失败并继续主分析",
+                    "issue_relation_max_input_tokens": "开放及历史阶段完整请求的估算输入 token 上限，包含正文、评论、语言、JSON 和系统提示；同时受全部摘要候选模型上下文、输出与协议预留限制，超限或未知时失败并继续主分析",
+                    "issue_relation_candidate_max_comments": "启用评论时每个候选最多惰性读取的最新评论数量；较早讨论可能被省略，提示中保留来源及范围",
+                    "issue_relation_candidate_comment_max_chars": "候选单条评论保留的原文字符上限；截断状态显式传给关系分析，不将缺失内容作为证据",
+                    "issue_relation_similarity_threshold": "关系候选的最低余弦相似度，检索本身不决定关系",
+                    "issue_relation_confidence_threshold": "普通及历史关系的最低验证置信度",
+                    "issue_duplicate_confidence_threshold": "开放重复 Issue 的最低验证置信度",
                     "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
                     "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
+                    "issue_corpus_freshness_seconds": "Issue 语料同步的最小间隔（秒），0 表示每次检索都同步",
+                    "issue_corpus_batch_size": "每批同步并嵌入的 Issue 数量",
+                    "issue_candidate_pool_multiplier": "初步召回的候选数量相对于目标结果数量的倍数（1-10，默认 3）；无效配置在语料同步前失败",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
-                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
+                    "issue_vision_enabled": '启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"）',
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -1249,11 +1325,21 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_assignee_confidence_threshold",
                     "issue_auto_assign_max",
                     "issue_detect_duplicates",
+                    "issue_relation_max_candidates",
+                    "issue_relation_max_input_tokens",
+                    "issue_relation_candidate_max_comments",
+                    "issue_relation_candidate_comment_max_chars",
+                    "issue_relation_similarity_threshold",
+                    "issue_relation_confidence_threshold",
+                    "issue_duplicate_confidence_threshold",
                     "issue_suggest_assignees",
                     "issue_suggest_milestones",
                     "issue_max_files_per_analysis",
                     "max_concurrent_issues",
                     "issue_vector_store_rich_metadata",
+                    "issue_corpus_freshness_seconds",
+                    "issue_corpus_batch_size",
+                    "issue_candidate_pool_multiplier",
                     "issue_include_comments",
                     "issue_vision_enabled",
                 ],
@@ -1579,7 +1665,21 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "pr_dependency_graph_max_nodes": (5, 100),
     "pr_dependency_graph_max_files": (5, 500),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
-    "semantic_issue_max_links": (1, 200),
+    "semantic_issue_max_links": PR_ISSUE_MAX_LINKS_RANGE,
+    "pr_issue_related_confidence_threshold": (0.0, 1.0),
+    "pr_issue_closing_confidence_threshold": (0.0, 1.0),
+    "pr_issue_max_files": (1, 3000),
+    "pr_issue_max_input_tokens": (1, 1000000),
+    "issue_corpus_freshness_seconds": (0, None),
+    "issue_corpus_batch_size": (1, None),
+    "issue_relation_max_candidates": ISSUE_RELATION_MAX_CANDIDATES_RANGE,
+    "issue_relation_max_input_tokens": (1, None),
+    "issue_relation_candidate_max_comments": (1, None),
+    "issue_relation_candidate_comment_max_chars": (1, None),
+    "issue_relation_similarity_threshold": (0.0, 1.0),
+    "issue_relation_confidence_threshold": (0.0, 1.0),
+    "issue_duplicate_confidence_threshold": (0.0, 1.0),
+    "issue_candidate_pool_multiplier": ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
     "agent_team_candidate_cache_ttl": (0, 3600),
     "agent_team_dependency_install_attempts": (1, 5),
     "agent_team_dependency_retry_delay_seconds": (0, 60),
@@ -1653,6 +1753,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_semantic_issue_linking": "启用语义 Issue 关联",
     "semantic_issue_similarity_threshold": "语义相似度阈值",
     "semantic_issue_max_links": "最大关联 Issue 数量",
+    "pr_issue_related_confidence_threshold": "PR 关联关系置信度阈值",
+    "pr_issue_closing_confidence_threshold": "PR 关闭关系置信度阈值",
+    "pr_issue_max_files": "PR 关系验证文件上限（超限时保留原关联）",
+    "pr_issue_max_input_tokens": "PR 关系验证完整请求输入 token 上限（同时受摘要模型上下文限制）",
     "payment_enabled": "启用付费配额系统",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
@@ -1733,11 +1837,21 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_assignee_confidence_threshold": "指派人置信度阈值",
     "issue_auto_assign_max": "最大指派人数",
     "issue_detect_duplicates": "检测重复 Issue",
+    "issue_relation_max_candidates": "Issue 关系候选上限",
+    "issue_relation_max_input_tokens": "Issue 关系完整请求输入 token 上限",
+    "issue_relation_candidate_max_comments": "Issue 候选最新评论上限",
+    "issue_relation_candidate_comment_max_chars": "Issue 候选单条评论字符上限",
+    "issue_relation_similarity_threshold": "Issue 关系候选相似度阈值",
+    "issue_relation_confidence_threshold": "Issue 关联及历史关系置信度阈值",
+    "issue_duplicate_confidence_threshold": "Issue 开放重复置信度阈值",
     "issue_suggest_assignees": "推荐指派人",
     "issue_suggest_milestones": "推荐里程碑",
     "issue_max_files_per_analysis": "单次分析最大文件数",
     "max_concurrent_issues": "最大并发分析数",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
+    "issue_corpus_freshness_seconds": "Issue 语料同步间隔（秒）",
+    "issue_corpus_batch_size": "Issue 语料同步批次大小",
+    "issue_candidate_pool_multiplier": "Issue 候选召回倍数",
     "issue_include_comments": "分析时包含评论对话",
     "issue_vision_enabled": "Issue 分析读取图片（需模型支持图片多模态）",
     # Agent

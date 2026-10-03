@@ -163,6 +163,7 @@ async def test_issue_reanalysis_hides_worker_exception(monkeypatch):
         author="alice",
         title="title",
         body="body",
+        issue_state="open",
     )
     analysis_result = SimpleNamespace(scalar_one_or_none=lambda: analysis)
     version_result = SimpleNamespace(scalar=lambda: 2)

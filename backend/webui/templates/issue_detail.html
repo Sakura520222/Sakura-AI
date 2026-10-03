@@ -140,6 +140,25 @@
     </div>
     {% endif %}
 
+    {% if issue_relations %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+        <h3 class="text-base font-medium mb-3">{{ _('issue.relations') }}</h3>
+        <p class="text-sm text-gray-500">{{ _('issue.relation_status_' ~ issue_relations.status) }}</p>
+        {% set entries = ([issue_relations.primary] if issue_relations.primary else []) + (issue_relations.related or []) %}
+        {% for relation in entries %}
+        <div class="mt-3 text-sm">
+            <p class="font-medium">{{ _('issue.relation_' ~ relation.relation) }} #{{ relation.number }} ({{ (relation.confidence * 100) | round(1) }}%)</p>
+            <p class="whitespace-pre-wrap">{{ relation.reason }}</p>
+            {% if relation.similarities %}<p>{{ _('issue.relation_similarities') }}: {{ relation.similarities | join('; ') }}</p>{% endif %}
+            {% if relation.differences %}<p>{{ _('issue.relation_differences') }}: {{ relation.differences | join('; ') }}</p>{% endif %}
+            {% for evidence in relation.evidence %}
+            <blockquote class="mt-1 border-l-2 border-gray-300 pl-2 whitespace-pre-wrap">{{ evidence.current_quote }} / {{ evidence.candidate_quote }}</blockquote>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- 重复检测 -->
     {% if analysis.duplicate_of %}
     <div class="bg-yellow-50 dark:bg-yellow-900/20 rounded-xl border border-yellow-200 dark:border-yellow-800 p-4">
@@ -158,11 +177,21 @@
     {% endif %}
 
     <!-- 操作按钮 -->
-    <div class="flex gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+        {% if analysis.issue_state == 'closed' %}
+        <button disabled aria-describedby="reanalysis-unavailable"
+                class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed">
+            {{ _('common.reanalyze') }}
+        </button>
+        <p id="reanalysis-unavailable" class="text-sm text-gray-500 dark:text-gray-400">
+            {{ _('issue.reanalyze_closed') }}
+        </p>
+        {% else %}
         <button onclick="reanalyze({{ analysis.id }})"
                 class="px-4 py-2 rounded-lg text-sm font-medium bg-pink-500 text-white hover:bg-pink-600 transition-colors">
             {{ _('common.reanalyze') }}
         </button>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

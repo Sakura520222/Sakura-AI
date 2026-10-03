@@ -1,0 +1,118 @@
+[
+  {
+    "url": "https://github.com/Sakura520222/Sakura-AI/issues/581",
+    "title": "Gitflow sync conflict: main -> develop",
+    "issue_number": 581,
+    "body": "自动同步 main 到 develop 失败，可能存在合并冲突。\n\n请维护者手动执行同步并解决冲突。\n\nWorkflow run: https://github.com/Sakura520222/Sakura-AI/actions/runs/35041115462",
+    "state": "closed",
+    "user": {
+      "login": "github-actions[bot]",
+      "name": "github-actions[bot]",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+      "id": 41898282
+    },
+    "assignees": [
+      {
+        "login": "Sakura520222",
+        "name": "Sakura520222",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/148863330?v=4",
+        "id": 148863330
+      }
+    ],
+    "labels": [
+      {
+        "name": "automated",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "gitflow",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "maintenance",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "github_actions",
+        "color": "000000",
+        "description": "Pull requests that update GitHub Actions code"
+      }
+    ],
+    "milestone": null,
+    "state_reason": "completed",
+    "comments": [
+      {
+        "url": "https://github.com/Sakura520222/Sakura-AI/issues/581#issuecomment-5690302502",
+        "body": "## 🌸 Sakura AI Issue 分析报告\n\n### 📋 分析结果\n- **分类**: other\n- **优先级**: low\n- **可行性**: 可行性高，工作量极低。\n1. 现状核验：经检查 git commit 历史，main 的最新提交（1593bb0 fix(ci): minimize mirror job permissions）已被 merge commit（b824a73 Merge remote-tracking branch 'origin/main' into develop）合并至 develop 分支，develop 分支已包含 main 的所有更新。\n2. 处置建议：维护者只需在本地或远程执行 `git fetch && git log origin/main..origin/develop` 确认 develop 已包含 main 的全部提交，即可直接关闭该 Issue。\n\n\n### 📝 摘要\n该 Issue 由 GitHub Actions 的 Gitflow 自动同步工作流（gitflow-sync-main-to-develop.yml）自动创建。工作流在尝试自动将 main 分支合并回 develop 分支时检测到失败（通常因 develop 分支存在并发提交如机器人反思记录或历史差异导致合并冲突）并报警。经仓库最新提交历史排查，develop 分支已于后续通过提交 b824a73dc6bcbdd8f7d4ab93a42518b981038e4f 成功合入了 main 分支的最新提交（1593bb00398fe4cea9ccc0cd9da03959386e2861），当前同步阻塞已解除。\n\n### 🏷️ 建议标签\n`gitflow`, `maintenance`, `github_actions`, `automated`\n\n### 👥 建议指派人\n@Sakura520222\n\n\n⚠️ 可能与 #532 相关\n\n\n---\n*此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。*\n\n\n<!-- sakura-activity:62608a6dbf51a8e9d39ab293f4402ca6488b4c2489a9991a2d666eedbda6b4ba -->"
+      }
+    ],
+    "created_at": "2026-09-16T00:42:38Z",
+    "updated_at": "2026-09-16T00:59:45Z",
+    "closed_at": "2026-09-16T00:59:45Z",
+    "display_url": "https://github.com/Sakura520222/Sakura-AI/issues/581",
+    "display_title": "Gitflow sync conflict: main -> develop"
+  },
+  {
+    "url": "https://github.com/Sakura520222/Sakura-AI/issues/584",
+    "title": "Gitflow sync conflict: main -> develop",
+    "issue_number": 584,
+    "body": "自动同步 main 到 develop 失败，可能存在合并冲突。\n\n请维护者手动执行同步并解决冲突。\n\nWorkflow run: https://github.com/Sakura520222/Sakura-AI/actions/runs/35041531386",
+    "state": "closed",
+    "user": {
+      "login": "github-actions[bot]",
+      "name": "github-actions[bot]",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+      "id": 41898282
+    },
+    "assignees": [
+      {
+        "login": "Sakura520222",
+        "name": "Sakura520222",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/148863330?v=4",
+        "id": 148863330
+      }
+    ],
+    "labels": [
+      {
+        "name": "automated",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "gitflow",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "maintenance",
+        "color": "ededed",
+        "description": null
+      },
+      {
+        "name": "github_actions",
+        "color": "000000",
+        "description": "Pull requests that update GitHub Actions code"
+      }
+    ],
+    "milestone": null,
+    "state_reason": "completed",
+    "comments": [
+      {
+        "url": "https://github.com/Sakura520222/Sakura-AI/issues/584#issuecomment-5690347949",
+        "body": "## 🌸 Sakura AI Issue 分析报告\n\n### 📋 分析结果\n- **分类**: other\n- **优先级**: medium\n- **可行性**: 可行性极高，工作量小（预计耗时 10-20 分钟）。\n修复步骤清晰明确：\n1. 维护者在本地拉取最新代码：git fetch origin；\n2. 检出 develop 分支并对齐远程最新状态：git checkout develop && git pull origin develop；\n3. 执行合并操作：git merge origin/main；\n4. 检查并解决冲突文件（主要集中在 .sakura/ 知识与记忆文件，注意同时保留 main 分支新增的反思与 develop 分支整理的结构化知识）；\n5. 运行基础校验（如 python run_ruff.py --check）；\n6. 提交合并并将 develop 分支推送到远程：git push origin develop，随后可关闭该 Issue。\n\n\n### 📝 摘要\nGitHub Actions 工作流（gitflow-sync-main-to-develop.yml）在将 main 分支合并回 develop 分支时发生冲突，自动同步失败并创建了本工单。检查仓库分支状态可知，近期 main 分支合入了多个 Issue 反思文件（#581、#582、#583），而 develop 分支同时合入了结构化知识提取提交，两分支均对 .sakura/ 目录产生了独立修改，导致自动 git merge 无法无冲突快进或合并，需要维护者手动合并并解决冲突。\n\n### 🏷️ 建议标签\n`gitflow`, `maintenance`, `github_actions`, `automated`\n\n### 👥 建议指派人\n@Sakura520222, @Firefly520222\n\n\n⚠️ 可能与 #581 相关\n\n\n---\n*此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。*\n\n\n<!-- sakura-activity:263efebfec36e1f5c911352c1871f91f40ac2fd4033b5564b9b80cc1befa374a -->"
+      }
+    ],
+    "created_at": "2026-09-16T00:48:42Z",
+    "updated_at": "2026-09-16T01:00:04Z",
+    "closed_at": "2026-09-16T01:00:04Z",
+    "display_url": "https://github.com/Sakura520222/Sakura-AI/issues/584",
+    "display_title": "Gitflow sync conflict: main -> develop"
+  }
+]

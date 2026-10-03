@@ -349,6 +349,8 @@ class RerankerService:
         docs: list[dict[str, any]],
         top_k: int | None = None,
         score_threshold: float | None = None,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, any]]:
         """对检索结果重新排序
 
@@ -357,6 +359,8 @@ class RerankerService:
             docs: 待重排序的文档列表
             top_k: 返回前 K 个结果（默认使用配置值）
             score_threshold: 相似度阈值（默认使用配置值）
+            strict: 配置的提供商失败、不可用或返回无效结果时抛出异常；
+                    显式禁用提供商仍返回原结果。默认保留 RAG 的回退行为。
 
         Returns:
             重排序后的文档列表，如果所有文档都低于阈值，返回空列表
@@ -367,23 +371,33 @@ class RerankerService:
         self._refresh_client()
         settings = get_settings()
         # 使用配置的默认值
-        top_k = top_k or settings.rerank_top_k
-        score_threshold = score_threshold or settings.rerank_score_threshold
+        top_k = settings.rerank_top_k if top_k is None else top_k
+        score_threshold = (
+            settings.rerank_score_threshold
+            if score_threshold is None
+            else score_threshold
+        )
 
         # 如果重排序服务未启用，直接返回原结果
         if self.client is None:
+            if strict and self.provider != "none":
+                raise RuntimeError("Configured reranker unavailable")
             logger.debug("重排序服务未启用，返回原始结果")
             return docs[:top_k]
 
         try:
             if self.provider == "siliconflow":
                 return await self._rerank_via_siliconflow(
-                    query, docs, top_k, score_threshold
+                    query, docs, top_k, score_threshold, strict=strict
                 )
             else:
+                if strict:
+                    raise RuntimeError("Configured reranker unsupported")
                 return docs[:top_k]
 
         except Exception as e:
+            if strict:
+                raise
             logger.warning("⚠️  重排序失败: {}，返回原始结果", e)
             return docs[:top_k]
 
@@ -393,12 +407,28 @@ class RerankerService:
         docs: list[dict[str, any]],
         top_k: int,
         score_threshold: float,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
+            if strict:
+                import math
+
+                if type(top_k) is not int or top_k <= 0:
+                    raise ValueError("Invalid strict reranker top_k")
+                # Invalid policy must not turn valid provider results into an
+                # authoritative empty set or incur a request before failing.
+                if (
+                    type(score_threshold) not in (float, int)
+                    or not 0 <= score_threshold <= 1
+                    or not math.isfinite(score_threshold)
+                ):
+                    raise ValueError("Invalid strict reranker score_threshold")
             settings = get_settings()
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
+            top_n = min(top_k, len(texts))
 
             # 调用 Rerank API
             logical_call_id = str(uuid4())
@@ -408,7 +438,7 @@ class RerankerService:
                     "model": settings.rerank_model,
                     "query": query,
                     "documents": texts,
-                    "top_k": min(top_k, len(texts)),
+                    "top_n": top_n,
                 },
             )
 
@@ -432,9 +462,31 @@ class RerankerService:
             )
 
             # 解析结果
-            if "results" not in results:
+            if not isinstance(results, dict) or not isinstance(
+                results.get("results"), list
+            ):
+                if strict:
+                    raise ValueError("Malformed reranker response")
                 logger.warning("Rerank API 返回格式异常")
                 return docs[:top_k]
+
+            if strict:
+                # Validate the requested provider count before threshold filtering:
+                # complete low scores may filter to empty, a partial response may not.
+                if len(results["results"]) != top_n:
+                    raise ValueError("Malformed reranker result count")
+                seen = set()
+                for result in results["results"]:
+                    if (
+                        not isinstance(result, dict)
+                        or type(result.get("index")) is not int
+                        or not 0 <= result["index"] < len(docs)
+                        or result["index"] in seen
+                        or type(result.get("relevance_score")) not in (float, int)
+                        or not math.isfinite(result["relevance_score"])
+                    ):
+                        raise ValueError("Malformed reranker result")
+                    seen.add(result["index"])
 
             # 过滤低于阈值的文档
             filtered_results = [
@@ -457,9 +509,13 @@ class RerankerService:
             return reranked_docs
 
         except httpx.HTTPError as e:
+            if strict:
+                raise
             logger.warning("SiliconFlow Rerank API 请求失败: {}", e)
             return docs[:top_k]
         except Exception as e:
+            if strict:
+                raise
             logger.warning("SiliconFlow 重排序失败: {}", e)
             return docs[:top_k]
 
