@@ -25,6 +25,9 @@
 ## 语法、静态解析与异常防护
 
 - **CI 语法与全模块导入硬防线**：经 Python 3.14+ 确认的语法错误可能导致 pytest 收集阶段失败；须在相同版本的 CI 环境前置执行 `python -m py_compile` 及全模块 import 校验，0 容忍阻断
+- **已确认误报：无括号多异常捕获（PR641/PR643）**：本项目运行时为 Python 3.14+；依据 PEP 758，`except TypeError, ValueError, ValidationError:` 是合法语法，与带括号的 `except (TypeError, ValueError, ValidationError):` 等价，`except*` 同样适用。历史审查将其判为“Python 2 遗留语法、硬 SyntaxError、模块无法导入”，并扩展为“全库 15+/17 处 Critical 阻断”，这些结论均为误报，不得复用或要求为此修改合法代码。
+- **适用边界**：省略括号仅适用于不带 `as` 的异常类型列表；带 `as` 时使用 `except (A, B) as e:`。`except Exception, e:` 在 Python 3.14 中也不会绑定异常对象，应核对名称和类型的运行时语义，而非直接判为语法错误。
+- **历史结论须先验真**：增量审查、反思及知识提取不得把上述误报继续记录为“历史未修复缺陷”，也不得继承由此推导的导入失败、测试收集失败或合并阻断结论；须先以目标解释器核验。详见 [Python 语法规则](rules/python_syntax_rules.md)。
 - **Best-Effort 防御规范**：辅助落库/诊断逻辑若用宽泛捕获，须收敛为具体基类异常（如 `SQLAlchemyError`/`OSError`），注释标注 `#INTERNAL_ERROR` 与 `best-effort` 说明，严禁裸用 `except Exception`
 - **AI 工具与索引防御**：外部/模型传入的行号切片参数须物理钳制：`0 <= min_idx <= max_idx <= len(sequence)`，严禁依赖 Python 切片静默容错（防负索引倒序切片）；校验 1-based 与 0-based 映射转换
 
