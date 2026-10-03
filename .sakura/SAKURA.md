@@ -18,7 +18,9 @@
 - 增量审查：增量须结案历史项并触发全库引用搜索；历史 major 未解决须保持阻断。
 
 ## 4. 硬规则（重点）
-- CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；语法判断以 Python 3.14+ 为准；多异常捕获未使用 `as` 时可省略括号（PEP 758）。
+- CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；语法判断以 Python 3.14+ 为准。
+- 已确认的语法误报（PR641/PR643）：Python 3.14+ 依据 PEP 758 允许不带 `as` 的多异常捕获省略括号，`except TypeError, ValueError, ValidationError:` 与 `except (TypeError, ValueError, ValidationError):` 等价，`except*` 同样适用。禁止将其报告为“Python 2 遗留语法”“硬 SyntaxError”“模块无法导入”，或据此定级 Critical/Blocker、要求加括号、阻断合并。
+- 语法误报防复发：继承历史阻断项前须按当前目标运行时复核，已确认的误报不得继续作为“未修复缺陷”传播；多异常捕获带 `as` 时仍须写为 `except (A, B) as e:`，不能混淆两种情况。详见 [Python 语法规则](rules/python_syntax_rules.md)。
 - 异步与配置：async 路由同步 I/O 用 `asyncio.to_thread()`；配置/函数签名增删改须全库 rg 校验；env 统一配置模块，禁止业务代码 `setdefault`。
 - 辅助落库/诊断：非主流程防御性捕获需收敛为底层基类异常（如 `SQLAlchemyError`），标注 `#INTERNAL_ERROR` 与 best-effort 说明，严禁裸 `except Exception:`。
 - 幂等与锁：守护进程/扫描唯一约束与锁防并发重复；updater/daemon 操作幂等且原子写入+fsync。
