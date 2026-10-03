@@ -25,6 +25,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from sakura_ai_updater.process_env import host_process_env
+
 
 class ImageAdapterError(RuntimeError):
     """Base class for adapter failures."""
@@ -960,6 +962,7 @@ class ImageAdapter:
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=host_process_env(),
             )
         except asyncio.CancelledError:
             raise

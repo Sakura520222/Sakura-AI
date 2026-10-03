@@ -23,6 +23,8 @@ import sys
 import tempfile
 import time
 
+from sakura_ai_updater.process_env import host_process_env
+
 DEFAULT_BINARY_NAME = "sakura-ai-updater"
 DEFAULT_SOCKET_PATH = "/run/sakura-ai/updater.sock"
 DEFAULT_RUN_DIR = "/run/sakura-ai"
@@ -953,7 +955,9 @@ class DaemonBackend:
             self._validate_production_paths()
             argv_exe = [self.binary_path]
         argv = argv_exe + self._serve_args()
-        child_env = os.environ.copy()
+        # A fresh bootloader supplies its own libraries. Do not retain this
+        # parent's extraction path while startup recovery invokes host tools.
+        child_env = host_process_env()
         if identity == IDENTITY_BINARY:
             # ``backend start`` is itself running inside the PyInstaller onefile
             # executable and launches a second, long-lived instance of that same

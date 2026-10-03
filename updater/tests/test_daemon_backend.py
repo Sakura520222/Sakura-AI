@@ -1573,6 +1573,12 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
 
     生产模式 socket uid=0、gid=9472（root:sakura-ai）。
     """
+    extraction_dir = tmp_path / "_MEIparent"
+    extraction_dir.mkdir()
+    injected_path = f"{extraction_dir}:/opt/host/lib"
+    monkeypatch.setenv("LD_LIBRARY_PATH", injected_path)
+    monkeypatch.setenv("SAKURA_HOST_MARKER", "required")
+    monkeypatch.setattr(daemon_mod.sys, "_MEIPASS", str(extraction_dir), raising=False)
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
@@ -1607,6 +1613,11 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     gid_idx = argv.index("--socket-gid")
     assert argv[gid_idx + 1] == str(daemon_mod.DEFAULT_GID)
     assert popen_kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    # The new bootloader adds its own extraction path. Keeping this parent's
+    # path would reintroduce bundled libraries during startup recovery.
+    assert popen_kwargs["env"]["LD_LIBRARY_PATH"] == "/opt/host/lib"
+    assert popen_kwargs["env"]["SAKURA_HOST_MARKER"] == "required"
+    assert os.environ["LD_LIBRARY_PATH"] == injected_path
     assert popen_kwargs["cwd"] == os.path.abspath(os.sep)
 
 

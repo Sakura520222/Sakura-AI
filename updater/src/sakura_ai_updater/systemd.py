@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 from sakura_ai_updater.backends.daemon import (
     DaemonBackend,
@@ -28,12 +27,12 @@ from sakura_ai_updater.backends.daemon import (
     backend_cli_flags,
     pid_file_path,
 )
+from sakura_ai_updater.process_env import host_process_env
 
 UNIT_NAME = "sakura-ai-updater.service"
 UNIT_INSTALL_DIR = "/etc/systemd/system"
 _UNIT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service\Z")
 _UNIT_PATH_UNSAFE_CHARS = frozenset("%$'\\\";")
-_LOADER_ENV_VARS = ("LD_LIBRARY_PATH", "LD_PRELOAD")
 
 # 超时契约：TimeoutStartSec 必须大于 backend readiness gate（--startup-timeout
 # 渲染值，默认 DEFAULT_STARTUP_TIMEOUT=5s），否则 systemd 会先杀 Exec 命令、打断
@@ -59,43 +58,10 @@ def _host_systemctl_env(
     base_env: dict[str, str] | None = None,
     pyinstaller_root: str | None = None,
 ) -> dict[str, str]:
-    """Return host-process env without PyInstaller's dynamic-loader injection.
-
-    PyInstaller onefile prepends its ``_MEI`` extraction directory to
-    ``LD_LIBRARY_PATH``.  If a command inside that onefile runs the host's
-    ``systemctl``, the host binary can instead resolve the bundled OpenSSL and
-    fail its versioned symbol check.  Strip only entries inside the current
-    extraction directory so host-provided loader settings continue to work.
-    """
-    env = dict(os.environ if base_env is None else base_env)
+    """Use the same host-process environment as deployment commands."""
     if pyinstaller_root is None:
         pyinstaller_root = getattr(sys, "_MEIPASS", None)
-    if pyinstaller_root is None:
-        return env
-
-    root = Path(pyinstaller_root).resolve(strict=False)
-
-    def is_pyinstaller_entry(entry: str) -> bool:
-        try:
-            path = Path(entry).resolve(strict=False)
-        except (OSError, RuntimeError):
-            return False
-        return path == root or root in path.parents
-
-    for name in _LOADER_ENV_VARS:
-        value = env.get(name)
-        if value is None:
-            continue
-        host_entries = [
-            entry
-            for entry in value.split(os.pathsep)
-            if not is_pyinstaller_entry(entry)
-        ]
-        if host_entries:
-            env[name] = os.pathsep.join(host_entries)
-        else:
-            env.pop(name, None)
-    return env
+    return host_process_env(base_env, pyinstaller_root)
 
 
 def _run_systemctl(*args: str) -> subprocess.CompletedProcess:
