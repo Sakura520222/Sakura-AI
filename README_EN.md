@@ -100,11 +100,11 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
-| `issue_include_comments` | `true` | Reuse current Issue comments in both analysis phases |
+| `issue_include_comments` | `true` | Enable main-analysis comments and a fresh bounded comment sample for the relation model |
 | `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase |
 | `issue_relation_max_input_tokens` | `64000` | Estimated complete request input limit per open/historical phase, including bodies, comments, JSON, language and system instructions; all summary candidates context, output and reserve limits also apply. Exceeded or unknown budgets admit no duplicate, retain usage, and continue main analysis |
-| `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit per candidate when `issue_include_comments` is enabled; inference receives provenance and omitted discussion bounds |
-| `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
+| `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit for the current Issue and each candidate when `issue_include_comments` is enabled (the existing setting name is retained); inference receives provenance and omitted discussion bounds |
+| `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per current-Issue or candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
 | `issue_relation_similarity_threshold` | `0.75` | Issue relationship recall cosine threshold |
 | `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
 | `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
@@ -117,9 +117,15 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `pr_issue_max_input_tokens` | `64000` | Estimated input token limit for the entire verification request (description, Issues, JSON, system prompt); also bounded by context, configured output, and protocol reserve of all summary-role candidates |
 | `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
 | `issue_corpus_batch_size` | `100` | Corpus embedding/write batch limit |
-| `issue_candidate_pool_multiplier` | `3` | Initial recall multiplier |
+| `issue_candidate_pool_multiplier` | `3` | Fixed recall pool is the candidate limit × this multiplier, capped by corpus count; exclusions never enlarge the query or trigger paging refill |
 
 Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
+
+Relationship pre-analysis freshly reads the current Issue body, state, labels, closure reason and update version from GitHub and gives that exact source to the relation model. The caller payload and historical body used by main analysis remain intact. When comments are enabled, the current Issue and candidates use the existing `candidate_*` bounds for a newest-comment sample with IDs, bodies, creation/update versions, total counts and truncation context. After inference, current and accepted candidate sources are read again; a later historical phase rechecks earlier accepted open relations, and empty/none decisions still require current-source consistency. Changed sources return observable `stale_source`; missing, unavailable or malformed facts return `source_unavailable`. These failures admit no duplicate, retain token usage and leave main analysis running. The comparison holds at the return boundary; GitHub offers no atomic conditional write covering later remote publication.
+
+For legacy records with NULL Issue state, reanalysis checks database repository ownership before resolving the current GitHub state. Only a confirmed open Issue is queued; a closed source returns 409, and unavailable or malformed sources return an explicit safe error. Historical short and full repository names share owner-scoped analysis version numbering. The queued payload retains historical title, body and author, while the relation phase independently uses the fresh source above.
+
+PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Missing, truncated or malformed patches admit no new relations and preserve existing links.
 
 Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
 

@@ -19,6 +19,7 @@ from backend.models.database import PRIssueLink
 from backend.services.issues.candidate_retriever import IssueCandidateRetriever
 from backend.services.issues.pr_link_sync import PRRelationSyncService
 from backend.services.issues.pr_verifier import PRRelationVerifier
+from backend.services.issues.unified_diff import parse_unified_diff
 from backend.services.pr_body import strip_sakura_generated_sections
 from backend.services.pr_issue_linker import PRIssueLinker
 from tests import test_issue_candidate_foundation
@@ -252,17 +253,6 @@ def test_source_fixture_contains_complete_actual_file_diffs(captured_cases):
         for file in case["files"]:
             patch = file["patch"]
             assert patch
-            assert (
-                sum(
-                    line.startswith("+") and not line.startswith("+++")
-                    for line in patch.splitlines()
-                )
-                == file["additions"]
-            )
-            assert (
-                sum(
-                    line.startswith("-") and not line.startswith("---")
-                    for line in patch.splitlines()
-                )
-                == file["deletions"]
-            )
+            parsed = parse_unified_diff(patch)
+            assert parsed.additions == file["additions"]
+            assert parsed.deletions == file["deletions"]

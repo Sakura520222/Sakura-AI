@@ -233,6 +233,7 @@ async def test_prephase_reuses_comments_before_main_and_accounts_cost(
 ):
     analyzer, current, _, client, _ = setup_relation
     comments = [{"author": "maintainer", "body": "A crashes on input x"}]
+    analyzer.source_reader.comments = comments
     main_analyzer._fetch_issue_comments = AsyncMock(return_value=comments)
     monkeypatch.setattr(
         "backend.services.issue_analyzer.get_dynamic_config",
@@ -251,7 +252,9 @@ async def test_prephase_reuses_comments_before_main_and_accounts_cost(
     relation_data = json.loads(
         client.call_with_retry.call_args.kwargs["messages"][1]["content"]
     )
-    assert relation_data["current"]["comments"] == comments
+    from tests.issue_source_fixtures import discussion
+
+    assert relation_data["current"]["comments"] == discussion(comments)[0]
     assert (
         '"duplicate_of": 2'
         in main_analyzer.api_client.call_with_retry.call_args.kwargs["messages"][1][
@@ -371,6 +374,18 @@ def candidate(number=2, state="open", **overrides):
         "state_reason": "completed" if state == "closed" else None,
         "labels": ["bug"],
         "similarity": 0.99,
+        "updated_at": "2026-10-02T00:00:00Z",
+        "comments": [],
+        "comments_context": {
+            "source": "github_issue_comments",
+            "order": "newest_first",
+            "total_count": 0,
+            "included_count": 0,
+            "max_comments": 20,
+            "max_chars": 2000,
+            "bounded": True,
+            "truncated": False,
+        },
         **overrides,
     }
 
@@ -408,6 +423,8 @@ def response(relations):
 def setup_relation(monkeypatch):
     module = importlib.import_module("backend.services.issues.relation_analyzer")
     values = {
+        "issue_relation_candidate_max_comments": 20,
+        "issue_relation_candidate_comment_max_chars": 2000,
         "issue_relation_max_candidates": 5,
         "issue_include_comments": True,
         "issue_relation_max_input_tokens": 64000,
@@ -438,6 +455,9 @@ def setup_relation(monkeypatch):
         "body": "A crashes on input x",
         "state": "open",
     }
+    from tests.issue_source_fixtures import PacketSourceReader
+
+    analyzer.source_reader = PacketSourceReader(current, client)
     return analyzer, current, retriever, client, values
 
 
@@ -509,6 +529,11 @@ async def test_actual_gitflow_occurrences_remain_related(setup_relation):
         "number": prior["issue_number"],
         "labels": [x["name"] for x in prior["labels"]],
     }
+    from tests.issue_source_fixtures import PacketSourceReader, complete_source
+
+    prior = complete_source(prior)
+    analyzer.source_reader = PacketSourceReader(current, client)
+    analyzer.source_reader.comments = current["comments"]
     retriever.retrieve.side_effect = [[], [prior]]
     current_run = current["body"].split("Workflow run: ")[1]
     prior_run = prior["body"].split("Workflow run: ")[1]
@@ -529,7 +554,9 @@ async def test_actual_gitflow_occurrences_remain_related(setup_relation):
     )
     assert result.duplicate_of is None and result.primary["relation"] == "related"
     sent = json.loads(client.call_with_retry.call_args.kwargs["messages"][1]["content"])
-    assert sent["current"]["comments"] == current["comments"]
+    assert [c["body"] for c in sent["current"]["comments"]] == [
+        c["body"] for c in current["comments"]
+    ]
     assert sent["candidates"][0]["state_reason"] == "completed"
 
 
@@ -988,7 +1015,10 @@ async def test_real_budget_failure_preserves_usage_and_main_analysis(
     setup_relation, main_analyzer, monkeypatch
 ):
     analyzer, current, retriever, client, values = setup_relation
-    retriever.retrieve.side_effect = [[candidate()], [candidate(state="closed")]]
+    retriever.retrieve.side_effect = [
+        [candidate()],
+        [candidate(number=3, state="closed")],
+    ]
 
     async def summary(**kwargs):
         values["issue_relation_max_input_tokens"] = 1

@@ -571,6 +571,7 @@ issue:
   pending_status: "Pending"
   reanalyze: "Re-analyze"
   reanalyze_closed: "Closed Issues cannot be re-analyzed. Reopen the Issue on GitHub first."
+  reanalyze_source_unavailable: "Unable to confirm the current GitHub Issue state. Please try again later."
   ai_summary: "AI Summary"
   no_summary: "No summary yet"
   no_feasibility: "No assessment yet"

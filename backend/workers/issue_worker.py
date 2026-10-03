@@ -898,7 +898,7 @@ class IssueWorker:
                     max_version = await db.scalar(
                         select(func.max(IssueAnalysis.analysis_version)).where(
                             and_(
-                                IssueAnalysis.repo_name == repo_name,
+                                IssueAnalysis.repo_name.in_([repo_name, repo_full_name]),
                                 IssueAnalysis.repo_owner == repo_owner,
                                 IssueAnalysis.issue_number == issue_number,
                             )

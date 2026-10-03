@@ -161,11 +161,13 @@ class IssueCandidateRetriever:
         )
         if type(multiplier) is not int or multiplier <= 0:
             raise ValueError("Invalid Issue candidate pool multiplier")
+        # Explicit references are untrusted PR/Issue content, not a work budget.
+        pool_size = min(count, top_k * multiplier)
         found = await _controlled(
             lambda: asyncio.to_thread(
                 collection.query,
                 query_embeddings=[query],
-                n_results=min(count, (top_k + len(exclude_numbers)) * multiplier),
+                n_results=pool_size,
                 where=None if state == "all" else {"state": state},
                 include=["documents", "metadatas", "embeddings"],
             ),
@@ -180,7 +182,7 @@ class IssueCandidateRetriever:
         excluded = set(exclude_numbers)
         docs = []
         seen = set()
-        for i, doc_id in enumerate(found["ids"][0]):
+        for i, doc_id in enumerate(found["ids"][0][:pool_size]):
             check_relation_boundary(cancel_event, deadline)
             number = self.service._safe_parse_number(
                 found["metadatas"][0][i].get("number")

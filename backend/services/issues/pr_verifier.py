@@ -3,7 +3,6 @@
 import asyncio
 import json
 import math
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,32 +19,13 @@ from backend.services.issues.pr_budget import (
     check_boundary,
     resolve_pr_input_budget,
 )
+from backend.services.issues.unified_diff import parse_unified_diff
 from backend.services.pr_body import strip_sakura_generated_sections
 
 
 def _changed_runs(patch: str) -> dict[str, list[str]]:
     """Keep diff direction and contiguous runs within each unified-diff hunk."""
-    runs = {"added": [], "removed": []}
-    direction, lines, in_hunk = None, [], False
-
-    def finish():
-        if lines:
-            runs[direction].append("\n".join(lines))
-            lines.clear()
-
-    for line in patch.splitlines():
-        if re.match(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", line):
-            finish()
-            direction, in_hunk = None, True
-            continue
-        change = {"+": "added", "-": "removed"}.get(line[:1]) if in_hunk else None
-        if change is None or change != direction:
-            finish()
-            direction = change
-        if change is not None:
-            lines.append(line[1:])
-    finish()
-    return runs
+    return parse_unified_diff(patch).runs
 
 
 @dataclass

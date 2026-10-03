@@ -23,6 +23,8 @@ from tests.test_pr_issue_budget import summary_candidate
 @pytest.fixture
 def bounded_relation(monkeypatch):
     values = {
+        "issue_relation_candidate_max_comments": 20,
+        "issue_relation_candidate_comment_max_chars": 2000,
         "issue_relation_max_candidates": 5,
         "issue_relation_similarity_threshold": 0.75,
         "issue_relation_confidence_threshold": 0.85,
@@ -51,6 +53,9 @@ def bounded_relation(monkeypatch):
         "body": "A crashes on input x",
         "state": "open",
     }
+    from tests.issue_source_fixtures import PacketSourceReader
+
+    analyzer.source_reader = PacketSourceReader(current, client)
     return analyzer, current, values, read
 
 
@@ -75,20 +80,30 @@ async def test_full_summary_packet_is_bounded_before_provider(
     fact = candidate()
     comments = None
     kwargs = {}
+    from tests.issue_source_fixtures import discussion
+
+    if source in {"current_comment", "candidate_comment"}:
+        # This test exercises total request bounds independently of sample caps.
+        bounded_relation[2]["issue_relation_candidate_comment_max_chars"] = len(huge)
     if source == "current":
         current["body"] = huge
     elif source == "candidate":
         fact["body"] = huge
     elif source == "current_comment":
         comments = [{"body": huge}]
+        analyzer.source_reader.comments = comments
     elif source == "candidate_comment":
-        fact["comments"] = [{"body": huge}]
+        fact["comments"], fact["comments_context"] = discussion(
+            [{"body": huge}], max_chars=len(huge)
+        )
     elif source == "labels":
         fact["labels"] = [huge]
     elif source == "language":
         kwargs["output_language"] = huge
     else:
         monkeypatch.setattr(relation_analyzer, "ISSUE_RELATION_PROMPT", huge)
+    if source in {"current_comment", "candidate_comment"}:
+        fact["comments_context"]["max_chars"] = len(huge)
     analyzer.retriever.retrieve.side_effect = [[fact], []]
     result = await analyzer.analyze(
         "owner", "repo", current, comments=comments, **kwargs
@@ -127,7 +142,7 @@ async def test_closed_phase_refreshes_budget_and_retains_open_usage(bounded_rela
     analyzer, current, values, read = bounded_relation
     analyzer.retriever.retrieve.side_effect = [
         [candidate()],
-        [candidate(state="closed")],
+        [candidate(number=3, state="closed")],
     ]
 
     async def first(**kwargs):
@@ -154,7 +169,7 @@ async def test_closed_phase_refreshes_model_metadata(bounded_relation):
     analyzer, current, _, _ = bounded_relation
     analyzer.retriever.retrieve.side_effect = [
         [candidate()],
-        [candidate(state="closed")],
+        [candidate(number=3, state="closed")],
     ]
     analyzer.client.call_with_retry.return_value = response([decision("related")])
     analyzer.client.resolve_role_candidates.side_effect = [
@@ -172,9 +187,12 @@ async def test_valid_request_uses_full_uncropped_packet_and_controls(bounded_rel
     analyzer, current, values, _ = bounded_relation
     fact = candidate()
     fact["comments"] = [{"body": "fixed by commit abc", "body_truncated": True}]
-    fact["comments_context"] = {"bounded": True, "truncated": True, "max_comments": 20}
+    from tests.issue_source_fixtures import discussion
+
+    fact["comments"], fact["comments_context"] = discussion(fact["comments"])
     analyzer.retriever.retrieve.side_effect = [[fact], []]
     comments = [{"body": "A crashes on input x", "author": "reporter"}]
+    analyzer.source_reader.comments = comments
     event = asyncio.Event()
     deadline = SimpleNamespace(is_expired=lambda: False)
     result = await analyzer.analyze(
@@ -193,7 +211,7 @@ async def test_valid_request_uses_full_uncropped_packet_and_controls(bounded_rel
         <= values["issue_relation_max_input_tokens"]
     )
     packet = json.loads(messages[1]["content"])
-    assert packet["current"]["comments"] == comments
+    assert packet["current"]["comments"] == discussion(comments)[0]
     assert packet["candidates"][0]["comments"] == fact["comments"]
     assert packet["candidates"][0]["comments_context"] == fact["comments_context"]
     call = analyzer.retriever.retrieve.call_args.kwargs
@@ -289,6 +307,10 @@ async def test_closed_comment_fix_quotes_are_grounded_in_actual_bounded_source(
 
     service, _, repo, values = foundation
     analyzer, current, _, _ = bounded_relation
+    bounded_relation[2].update(
+        issue_relation_candidate_max_comments=1,
+        issue_relation_candidate_comment_max_chars=40,
+    )
     values.update(
         issue_relation_candidate_max_comments=1,
         issue_relation_candidate_comment_max_chars=40,
@@ -395,7 +417,9 @@ async def test_closed_comment_invented_omitted_quote_fails_with_usage(bounded_re
     analyzer, current, _, _ = bounded_relation
     fact = candidate(state="closed")
     fact["comments"] = [{"body": "Fixed by commit", "body_truncated": True}]
-    fact["comments_context"] = {"bounded": True, "truncated": True}
+    from tests.issue_source_fixtures import discussion
+
+    fact["comments"], fact["comments_context"] = discussion(fact["comments"])
     analyzer.retriever.retrieve.side_effect = [[], [fact]]
     analyzer.client.call_with_retry.return_value = response(
         [
