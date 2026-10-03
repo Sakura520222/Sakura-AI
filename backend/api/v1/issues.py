@@ -15,11 +15,16 @@ from backend.api.v1.responses import (
 )
 from backend.api.v1.schemas import IssueAnalysisResponse
 from backend.models.database import IssueAnalysis
+from backend.services.issues.reanalysis_admission import (
+    IssueReanalysisAdmissionError,
+    prepare_issue_reanalysis,
+)
 from backend.webui.deps import (
     build_user_scope_filter,
     get_db,
     paginate,
 )
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/issues", tags=["Issues"])
 
@@ -152,27 +157,24 @@ async def reanalyze_issue(
     if not analysis:
         return error_response("记录不存在或无权访问", status_code=404)
 
-    if analysis.issue_state == "closed":
+    try:
+        issue_info = await prepare_issue_reanalysis(analysis)
+    except IssueReanalysisAdmissionError as error:
         return error_response(
-            "已关闭的 Issue 不支持重新分析，请先在 GitHub 上重新打开", status_code=409
+            i18n.t(error.translation_key), status_code=error.status_code
         )
-
-    # 构造 issue_info
-    issue_info = {
-        "issue_number": analysis.issue_number,
-        "repo_name": analysis.repo_name,
-        "repo_owner": analysis.repo_owner,
-        "author": analysis.author,
-        "title": analysis.title,
-        "body": analysis.body,
-        "state": analysis.issue_state,
-    }
 
     # 计算分析版本号
     max_version_result = await db.execute(
         select(func.max(IssueAnalysis.analysis_version)).where(
             IssueAnalysis.issue_number == analysis.issue_number,
-            IssueAnalysis.repo_name == analysis.repo_name,
+            IssueAnalysis.repo_owner == analysis.repo_owner,
+            IssueAnalysis.repo_name.in_(
+                [
+                    issue_info["repo_name"],
+                    f"{issue_info['repo_owner']}/{issue_info['repo_name']}",
+                ]
+            ),
         )
     )
     max_version = max_version_result.scalar() or 0

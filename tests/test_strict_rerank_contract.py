@@ -366,6 +366,14 @@ async def test_real_issue_prephase_reports_incomplete_rerank_without_stopping_ma
     service = install_retrieval_provider(
         foundation, provider, monkeypatch, result_count
     )
+    from backend.services.issues.issue_source_freshness import IssueSourceReader
+
+    repo = foundation[2]
+    repo.rows.append(
+        test_issue_candidate_foundation.issue(
+            99, title="Current issue", body="Human problem"
+        )
+    )
     monkeypatch.setattr(
         "backend.services.issue_analyzer.get_dynamic_config",
         lambda key, **kwargs: test_issue_relations.value(
@@ -375,7 +383,9 @@ async def test_real_issue_prephase_reports_incomplete_rerank_without_stopping_ma
     monkeypatch.setattr(
         "backend.services.issue_analyzer.IssueRelationAnalyzer",
         lambda **kwargs: IssueRelationAnalyzer(
-            retriever=IssueCandidateRetriever(service), **kwargs
+            retriever=IssueCandidateRetriever(service),
+            source_reader=IssueSourceReader(repo=repo),
+            **kwargs,
         ),
     )
     from tests.test_pr_issue_budget import summary_candidate

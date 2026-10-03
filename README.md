@@ -100,11 +100,11 @@
 | 配置 | 默认值 | 用途 |
 | --- | --- | --- |
 | `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
-| `issue_include_comments` | `true` | 主分析与关系阶段复用当前 Issue 评论 |
+| `issue_include_comments` | `true` | 启用主分析评论与关系模型的新鲜有界评论样本 |
 | `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限 |
 | `issue_relation_max_input_tokens` | `64000` | 开放与历史阶段完整请求的估算输入上限，包含正文、评论、JSON、语言和系统提示；同时受全部摘要候选上下文、输出及协议预留限制。超限或未知时无重复结论，保留已用 token 并继续主分析 |
-| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时每个候选惰性读取的最新评论上限，提示中标注来源及省略范围 |
-| `issue_relation_candidate_comment_max_chars` | `4000` | 每条候选评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
+| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时当前 Issue 与每个候选惰性读取的最新评论上限（保留原配置名），提示中标注来源及省略范围 |
+| `issue_relation_candidate_comment_max_chars` | `4000` | 当前 Issue 与候选每条评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
 | `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
 | `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
 | `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
@@ -117,9 +117,15 @@
 | `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
 | `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
 | `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
-| `issue_candidate_pool_multiplier` | `3` | 初步召回数量倍数 |
+| `issue_candidate_pool_multiplier` | `3` | 固定召回池为候选上限 × 此倍数（不超过语料数量）；排除项不会扩大查询或补翻页 |
 
 语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
+
+关系预分析会重新读取当前 Issue 的 GitHub 正文、状态、标签、关闭原因和更新时间，关系模型使用这一确切源；不会改写调用者 payload 或主分析的历史正文。启用评论时，当前 Issue 与候选均按上述 `candidate_*` 配置读取最新评论样本，并保留评论 ID、正文、创建/更新时间、总数及截断范围。模型返回后再次读取当前 Issue 和已接受候选；后续历史阶段也会复查先前开放关系，空/none 判断仍需当前源一致。源变化返回可观察的 `stale_source`，缺失、不可用或畸形事实返回 `source_unavailable`；不输出重复结论，保留已用 token 并继续主分析。这是返回边界上的源比较，GitHub 不提供覆盖之后远程发布的原子条件写入。
+
+旧记录的 Issue 状态为 NULL 时，重新分析入口先在数据库校验仓库归属，再读取 GitHub 当前状态；仅明确开放时入队，关闭返回 409，不可用或畸形源返回显式安全错误。短仓库名与完整仓库名的历史记录按同一所有者作用域计算分析版本。入队 payload 保留历史标题、正文和作者，关系阶段独立使用上述新鲜源。
+
+PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。缺失、截断或畸形补丁不建立新关系并保留已有链接。
 
 已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
 

@@ -97,11 +97,10 @@ async def test_closed_reanalysis_conflicts_before_version_lookup_or_enqueue(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["api", "webui"])
-@pytest.mark.parametrize("state", ["open", None])
-async def test_open_and_legacy_null_reanalysis_submit_with_next_version(
-    monkeypatch, analysis_db, surface, state
+async def test_open_reanalysis_submit_with_next_version(
+    monkeypatch, analysis_db, surface
 ):
-    analysis_db.record.issue_state = state
+    analysis_db.record.issue_state = "open"
     analysis_db.session.commit()
     submit = AsyncMock(return_value="task-7")
     monkeypatch.setattr(
@@ -123,7 +122,7 @@ async def test_open_and_legacy_null_reanalysis_submit_with_next_version(
             "author": "alice",
             "title": "Current issue",
             "body": "Raw body",
-            "state": state,
+            "state": "open",
             "analysis_version": 3,
         }
     )

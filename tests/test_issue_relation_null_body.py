@@ -17,6 +17,8 @@ TITLE = "Version 1 crashes on input x during import"
 @pytest.fixture
 def title_only_relation(monkeypatch):
     values = {
+        "issue_relation_candidate_max_comments": 20,
+        "issue_relation_candidate_comment_max_chars": 2000,
         "issue_relation_max_candidates": 5,
         "issue_include_comments": True,
         "issue_relation_max_input_tokens": 64000,
@@ -90,7 +92,13 @@ def title_only_relation(monkeypatch):
             )
         ),
     )
-    return IssueRelationAnalyzer(retriever, client), info, candidate, relation, values
+    from tests.issue_source_fixtures import PacketSourceReader, complete_source
+
+    candidate.update(complete_source(candidate))
+    analyzer = IssueRelationAnalyzer(
+        retriever, client, PacketSourceReader(info, client)
+    )
+    return analyzer, info, candidate, relation, values
 
 
 @pytest.mark.asyncio

@@ -571,6 +571,7 @@ issue:
   pending_status: "待处理"
   reanalyze: "重新分析"
   reanalyze_closed: "已关闭的 Issue 不支持重新分析，请先在 GitHub 上重新打开"
+  reanalyze_source_unavailable: "无法确认 GitHub Issue 的当前状态，请稍后重试"
   ai_summary: "AI 摘要"
   no_summary: "暂无摘要"
   no_feasibility: "暂无评估"

@@ -15,6 +15,7 @@ from backend.services.issues.pr_candidate_freshness import (
     revalidate_candidates,
 )
 from backend.services.issues.relation_runtime import RelationDeadlineExceeded
+from backend.services.issues.unified_diff import parse_unified_diff
 
 _LOCKS = weakref.WeakKeyDictionary()
 # PRIssueLink.inference_reason is MySQL TEXT: capacity is bytes, not characters.
@@ -192,14 +193,14 @@ class PRRelationSyncService:
                         files=[*files, source],
                         candidates=[],
                     )
-                    additions = deletions = 0
-                    for line in patch.splitlines():
-                        additions += line.startswith("+") and not line.startswith("+++")
-                        deletions += line.startswith("-") and not line.startswith("---")
+                    try:
+                        parsed = parse_unified_diff(patch)
+                    except ValueError as exc:
+                        raise PRBudgetError("snapshot_incomplete") from exc
                     source["complete"] = (
                         bool(patch)
-                        and additions == f.additions
-                        and deletions == f.deletions
+                        and parsed.additions == f.additions
+                        and parsed.deletions == f.deletions
                     )
                     if not source["complete"]:
                         # Partial evidence must never replace a previously verified set.

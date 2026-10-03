@@ -7,6 +7,7 @@ candidate source text; an operational or protocol failure admits no relations.
 import asyncio
 import json
 import math
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -21,11 +22,17 @@ from backend.services.issues.issue_budget import (
     IssueBudgetError,
     resolve_issue_input_budget,
 )
+from backend.services.issues.issue_source_freshness import (
+    IssueSourceReader,
+    IssueSourceSnapshot,
+    model_source,
+    read_snapshot,
+    revalidate_sources,
+)
 from backend.services.issues.relation_runtime import (
     RelationDeadlineExceeded,
     check_relation_boundary,
 )
-from backend.services.pr_body import strip_sakura_generated_sections
 
 OPEN_RELATIONS = {"duplicate", "related", "none"}
 CLOSED_RELATIONS = {
@@ -175,9 +182,10 @@ def parse_issue_relations(
 
 
 class IssueRelationAnalyzer:
-    def __init__(self, retriever=None, client=None):
+    def __init__(self, retriever=None, client=None, source_reader=None):
         self.retriever = retriever
         self.client = client
+        self.source_reader = source_reader
 
     async def analyze(
         self,
@@ -216,16 +224,6 @@ class IssueRelationAnalyzer:
             if type(include_comments) is not bool:
                 raise ValueError("invalid discussion policy")
             check_relation_boundary(cancel_event, deadline)
-            current = {
-                "number": number,
-                "title": issue_info["title"],
-                "body": strip_sakura_generated_sections(body),
-                "state": issue_info["state"],
-                "labels": issue_info.get("labels", []),
-                "state_reason": issue_info.get("state_reason"),
-                "comments": (comments or []) if include_comments else [],
-            }
-            _source(current)
             config = {
                 key: await get_dynamic_config(key, fresh=True)
                 for key in (
@@ -252,6 +250,29 @@ class IssueRelationAnalyzer:
                 raise ValueError("invalid candidate limit")
             retriever = self.retriever or IssueCandidateRetriever()
             client = self.client or AIApiClient()
+            reader = self.source_reader or IssueSourceReader()
+            max_comments = max_chars = 0
+            if include_comments:
+                max_comments = await get_dynamic_config(
+                    "issue_relation_candidate_max_comments", fresh=True
+                )
+                max_chars = await get_dynamic_config(
+                    "issue_relation_candidate_comment_max_chars", fresh=True
+                )
+                if any(type(v) is not int or v <= 0 for v in (max_comments, max_chars)):
+                    raise ValueError("invalid discussion limits")
+            controls = {
+                "include_comments": include_comments,
+                "max_comments": max_comments,
+                "max_chars": max_chars,
+                "cancel_event": cancel_event,
+                "deadline": deadline,
+            }
+            facts, current_snapshot = await read_snapshot(
+                reader, repo_owner, repo_name, number, **controls
+            )
+            current = model_source(facts, include_comments)
+            snapshots = {number: current_snapshot}
             accepted = []
             for phase in ("open", "closed"):
                 check_relation_boundary(cancel_event, deadline)
@@ -290,24 +311,26 @@ class IssueRelationAnalyzer:
                     ):
                         raise ValueError("incomplete candidate facts")
                     seen.add(n)
-                    fact = {
-                        k: candidate.get(k)
-                        for k in (
-                            "number",
-                            "title",
-                            "body",
-                            "state",
-                            "labels",
-                            "state_reason",
-                            "comments",
-                            "comments_context",
-                            "updated_at",
+                    try:
+                        candidate_snapshot = IssueSourceSnapshot.capture(
+                            candidate,
+                            include_comments=include_comments,
+                            max_comments=max_comments,
+                            max_chars=max_chars,
                         )
-                    }
-                    if not include_comments:
-                        fact["comments"] = []
-                        fact.pop("comments_context", None)
-                    fact["body"] = strip_sakura_generated_sections(fact["body"])
+                        # A candidate can close between phases and be recalled twice.
+                        # Never replace the baseline of an already accepted open relation.
+                        if (
+                            any(r["number"] == n for r in accepted)
+                            and snapshots[n] != candidate_snapshot
+                        ):
+                            raise IssueBudgetError("stale_source")
+                        snapshots[n] = candidate_snapshot
+                        fact = model_source(candidate, include_comments)
+                    except IssueBudgetError:
+                        raise
+                    except (ValueError, TypeError, KeyError) as exc:
+                        raise IssueBudgetError("source_unavailable") from exc
                     _source(fact)
                     sanitized.append(fact)
                 if not sanitized:
@@ -319,8 +342,8 @@ class IssueRelationAnalyzer:
                     system_prompt=ISSUE_RELATION_PROMPT,
                     phase=phase,
                     output_language=output_language,
-                    current=current,
-                    candidates=sanitized,
+                    current=deepcopy(current),
+                    candidates=deepcopy(sanitized),
                 )
                 check_relation_boundary(cancel_event, deadline)
                 response = await client.call_with_retry(
@@ -342,6 +365,14 @@ class IssueRelationAnalyzer:
                     config["issue_duplicate_confidence_threshold"],
                 )
                 accepted.extend(verified)
+                await revalidate_sources(
+                    reader,
+                    repo_owner,
+                    repo_name,
+                    snapshots,
+                    [number, *(r["number"] for r in accepted)],
+                    **controls,
+                )
                 duplicates = [r for r in verified if r["relation"] == "duplicate"]
                 if duplicates:
                     primary = max(duplicates, key=lambda r: r["confidence"])
@@ -353,6 +384,14 @@ class IssueRelationAnalyzer:
                         prompt_tokens=tracker.prompt_tokens,
                         completion_tokens=tracker.completion_tokens,
                     )
+            await revalidate_sources(
+                reader,
+                repo_owner,
+                repo_name,
+                snapshots,
+                [number, *(r["number"] for r in accepted)],
+                **controls,
+            )
             accepted.sort(key=lambda r: r["confidence"], reverse=True)
             return IssueRelationResult(
                 primary=accepted[0] if accepted else None,
