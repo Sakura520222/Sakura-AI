@@ -14,7 +14,10 @@ from typing import Any
 from loguru import logger
 
 from backend.core.ai_protocol.errors import ReviewCancelledError
-from backend.core.config import get_dynamic_config
+from backend.core.config import (
+    ISSUE_RELATION_MAX_CANDIDATES_RANGE,
+    get_dynamic_config,
+)
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.issues.candidate_retriever import IssueCandidateRetriever
@@ -233,6 +236,7 @@ class IssueRelationAnalyzer:
                     "issue_duplicate_confidence_threshold",
                 )
             }
+            check_relation_boundary(cancel_event, deadline)
             for key in (
                 "issue_relation_similarity_threshold",
                 "issue_relation_confidence_threshold",
@@ -246,7 +250,8 @@ class IssueRelationAnalyzer:
                 ):
                     raise ValueError("invalid relation configuration")
             limit = config["issue_relation_max_candidates"]
-            if type(limit) is not int or limit <= 0:
+            minimum, maximum = ISSUE_RELATION_MAX_CANDIDATES_RANGE
+            if type(limit) is not int or not minimum <= limit <= maximum:
                 raise ValueError("invalid candidate limit")
             retriever = self.retriever or IssueCandidateRetriever()
             client = self.client or AIApiClient()

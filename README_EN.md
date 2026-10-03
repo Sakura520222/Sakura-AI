@@ -101,7 +101,7 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | --- | --- | --- |
 | `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
 | `issue_include_comments` | `true` | Enable main-analysis comments and a fresh bounded comment sample for the relation model |
-| `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase |
+| `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase, from 1 to 200; validated before source reads and retrieval |
 | `issue_relation_max_input_tokens` | `64000` | Estimated complete request input limit per open/historical phase, including bodies, comments, JSON, language and system instructions; all summary candidates context, output and reserve limits also apply. Exceeded or unknown budgets admit no duplicate, retain usage, and continue main analysis |
 | `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit for the current Issue and each candidate when `issue_include_comments` is enabled (the existing setting name is retained); inference receives provenance and omitted discussion bounds |
 | `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per current-Issue or candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
@@ -111,8 +111,8 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
 | `semantic_issue_similarity_threshold` | `0.8` | PR candidate cosine threshold |
 | `semantic_issue_max_links` | `5` | PR candidate limit |
-| `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold |
-| `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold; must be a finite number from 0 to 1 |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold; must be a finite number from 0 to 1 |
 | `pr_issue_max_files` | `128` | Lazy PR verification file limit; preserve existing links when exceeded or patches are incomplete |
 | `pr_issue_max_input_tokens` | `64000` | Estimated input token limit for the entire verification request (description, Issues, JSON, system prompt); also bounded by context, configured output, and protocol reserve of all summary-role candidates |
 | `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
@@ -121,6 +121,10 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 
 Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
 
+Invalid PR confidence settings explicitly fail verification, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
+
+Calls to `IssueService.detect_duplicates` must supply a positive integer `current_issue_number` so the actual Issue source can be hydrated and revalidated. Omitting the argument or passing an invalid number such as `None` raises an error instead of returning a success-shaped empty list. Calls with a valid number retain their argument and duplicate-result formats.
+
 Relationship pre-analysis freshly reads the current Issue body, state, labels, closure reason and update version from GitHub and gives that exact source to the relation model. The caller payload and historical body used by main analysis remain intact. When comments are enabled, the current Issue and candidates use the existing `candidate_*` bounds for a newest-comment sample with IDs, bodies, creation/update versions, total counts and truncation context. After inference, current and accepted candidate sources are read again; a later historical phase rechecks earlier accepted open relations, and empty/none decisions still require current-source consistency. Changed sources return observable `stale_source`; missing, unavailable or malformed facts return `source_unavailable`. These failures admit no duplicate, retain token usage and leave main analysis running. The comparison holds at the return boundary; GitHub offers no atomic conditional write covering later remote publication.
 
 For legacy records with NULL Issue state, reanalysis checks database repository ownership before resolving the current GitHub state. Only a confirmed open Issue is queued; a closed source returns 409, and unavailable or malformed sources return an explicit safe error. Historical short and full repository names share owner-scoped analysis version numbering. The queued payload retains historical title, body and author, while the relation phase independently uses the fresh source above.
@@ -128,6 +132,8 @@ For legacy records with NULL Issue state, reanalysis checks database repository 
 PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Missing, truncated or malformed patches admit no new relations and preserve existing links.
 
 Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
+
+Before installing the PR-Issue unique index, the database deduplicates historical links by repository, PR, Issue and link type, retaining the greatest-ID row and its evidence per group. The migration does not load the whole table into Python or delete duplicates one at a time. Distinct link types and repository scopes remain separate.
 
 ### Agent Expert Team
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import weakref
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 
@@ -38,12 +39,31 @@ def _serialize_decision(relation: dict) -> str:
     return serialized
 
 
+@dataclass
+class _PROwnership:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
 @asynccontextmanager
 async def pr_relation_ownership(repo_name: str, pr_number: int):
+    """Serialize one PR within this process and event loop."""
     locks = _LOCKS.setdefault(asyncio.get_running_loop(), {})
-    lock = locks.setdefault((repo_name.casefold(), pr_number), asyncio.Lock())
-    async with lock:
-        yield
+    key = (repo_name.casefold(), pr_number)
+    entry = locks.get(key)
+    if entry is None:
+        entry = locks[key] = _PROwnership()
+    # Count queued acquirers before awaiting: releasing a holder must preserve
+    # the same lock through handoff, even before the next waiter resumes.
+    entry.users += 1
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        # Also runs if acquisition is cancelled. Bookkeeping never suspends.
+        entry.users -= 1
+        if entry.users == 0:
+            del locks[key]
 
 
 async def replace_semantic_links(
