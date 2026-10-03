@@ -6,7 +6,10 @@ import math
 from github import UnknownObjectException
 from github.GithubObject import GithubObject
 
-from backend.core.config import get_dynamic_config
+from backend.core.config import (
+    ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
+    get_dynamic_config,
+)
 from backend.services.issues.corpus_service import (
     IssueCorpusService,
     _controlled,
@@ -135,6 +138,14 @@ class IssueCandidateRetriever:
             raise ValueError("Invalid Issue candidate state")
         if top_k <= 0 or not math.isfinite(similarity_threshold):
             raise ValueError("Invalid Issue candidate retrieval limits")
+        multiplier = await _controlled(
+            lambda: get_dynamic_config("issue_candidate_pool_multiplier", fresh=True),
+            cancel_event,
+            deadline,
+        )
+        minimum, maximum = ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE
+        if type(multiplier) is not int or not minimum <= multiplier <= maximum:
+            raise ValueError("Invalid Issue candidate pool multiplier")
         await self.corpus.reconcile(
             repo_owner, repo_name, cancel_event=cancel_event, deadline=deadline
         )
@@ -156,11 +167,6 @@ class IssueCandidateRetriever:
         query_norm = math.hypot(*query)
         if not math.isfinite(query_norm):
             raise ValueError("Invalid Issue query embedding norm")
-        multiplier = await get_dynamic_config(
-            "issue_candidate_pool_multiplier", fresh=True
-        )
-        if type(multiplier) is not int or multiplier <= 0:
-            raise ValueError("Invalid Issue candidate pool multiplier")
         # Explicit references are untrusted PR/Issue content, not a work budget.
         pool_size = min(count, top_k * multiplier)
         found = await _controlled(

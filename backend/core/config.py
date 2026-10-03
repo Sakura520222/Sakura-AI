@@ -17,6 +17,9 @@ DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/
 # Bounds apply before Issue corpus recall and source hydration, independent of
 # the later model input budget. Keep Settings, dynamic forms and runtime aligned.
 ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
+# Operational recall bounds, shared by Settings, forms and request admission.
+ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE = (1, 10)
+PR_ISSUE_MAX_LINKS_RANGE = (1, 200)
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -601,7 +604,7 @@ class Settings(BaseSettings):
     rerank_base_url: str = "https://api.siliconflow.cn/v1/rerank"
     rerank_api_key: str = ""
     rerank_top_k: int = 10
-    rerank_score_threshold: float = 0.6
+    rerank_score_threshold: float = Field(0.6, ge=0.0, le=1.0, allow_inf_nan=False)
 
     # 文档分块配置
     chunk_size: int = 1000
@@ -647,7 +650,11 @@ class Settings(BaseSettings):
     issue_vector_store_rich_metadata: bool = True
     issue_corpus_freshness_seconds: int = 60
     issue_corpus_batch_size: int = 100
-    issue_candidate_pool_multiplier: int = 3
+    issue_candidate_pool_multiplier: int = Field(
+        3,
+        ge=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[0],
+        le=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[1],
+    )
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
     # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
@@ -769,11 +776,16 @@ class Settings(BaseSettings):
     )
     pr_issue_max_files: int = 128  # PR 关系验证的惰性读取文件上限
     pr_issue_max_input_tokens: int = 64000  # 完整请求的估算输入 token 上限
-    semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
+    semantic_issue_max_links: int = Field(
+        5, ge=PR_ISSUE_MAX_LINKS_RANGE[0], le=PR_ISSUE_MAX_LINKS_RANGE[1]
+    )  # 最大关联 Issue 数量
 
     @field_validator(
         "issue_relation_max_candidates",
+        "issue_candidate_pool_multiplier",
+        "semantic_issue_max_links",
         "semantic_issue_similarity_threshold",
+        "rerank_score_threshold",
         "pr_issue_related_confidence_threshold",
         "pr_issue_closing_confidence_threshold",
         mode="before",
@@ -1302,7 +1314,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_corpus_freshness_seconds": "Issue 语料同步的最小间隔（秒），0 表示每次检索都同步",
                     "issue_corpus_batch_size": "每批同步并嵌入的 Issue 数量",
-                    "issue_candidate_pool_multiplier": "初步召回的候选数量相对于目标结果数量的倍数",
+                    "issue_candidate_pool_multiplier": "初步召回的候选数量相对于目标结果数量的倍数（1-10，默认 3）；无效配置在语料同步前失败",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
                     "issue_vision_enabled": '启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"）',
                 },
@@ -1653,7 +1665,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "pr_dependency_graph_max_nodes": (5, 100),
     "pr_dependency_graph_max_files": (5, 500),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
-    "semantic_issue_max_links": (1, 200),
+    "semantic_issue_max_links": PR_ISSUE_MAX_LINKS_RANGE,
     "pr_issue_related_confidence_threshold": (0.0, 1.0),
     "pr_issue_closing_confidence_threshold": (0.0, 1.0),
     "pr_issue_max_files": (1, 3000),
@@ -1667,7 +1679,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "issue_relation_similarity_threshold": (0.0, 1.0),
     "issue_relation_confidence_threshold": (0.0, 1.0),
     "issue_duplicate_confidence_threshold": (0.0, 1.0),
-    "issue_candidate_pool_multiplier": (1, None),
+    "issue_candidate_pool_multiplier": ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
     "agent_team_candidate_cache_ttl": (0, 3600),
     "agent_team_dependency_install_attempts": (1, 5),
     "agent_team_dependency_retry_delay_seconds": (0, 60),
