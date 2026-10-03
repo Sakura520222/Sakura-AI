@@ -412,8 +412,19 @@ class RerankerService:
     ) -> list[dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
-            if strict and (type(top_k) is not int or top_k <= 0):
-                raise ValueError("Invalid strict reranker top_k")
+            if strict:
+                import math
+
+                if type(top_k) is not int or top_k <= 0:
+                    raise ValueError("Invalid strict reranker top_k")
+                # Invalid policy must not turn valid provider results into an
+                # authoritative empty set or incur a request before failing.
+                if (
+                    type(score_threshold) not in (float, int)
+                    or not 0 <= score_threshold <= 1
+                    or not math.isfinite(score_threshold)
+                ):
+                    raise ValueError("Invalid strict reranker score_threshold")
             settings = get_settings()
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
@@ -460,8 +471,6 @@ class RerankerService:
                 return docs[:top_k]
 
             if strict:
-                import math
-
                 # Validate the requested provider count before threshold filtering:
                 # complete low scores may filter to empty, a partial response may not.
                 if len(results["results"]) != top_n:

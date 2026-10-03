@@ -1164,7 +1164,7 @@ config:
     issue_relation_similarity_threshold: "最低召回余弦相似度；检索本身不决定关系"
     issue_relation_confidence_threshold: "普通及历史关系的最低验证置信度"
     issue_duplicate_confidence_threshold: "开放重复 Issue 的最低验证置信度"
-    issue_candidate_pool_multiplier: "排除与余弦过滤前，按目标候选数量的此倍数进行初步召回"
+    issue_candidate_pool_multiplier: "排除与余弦过滤前，按目标候选数量的此倍数进行初步召回（1-10，默认 3）；无效配置在语料同步前失败"
     issue_auto_rewrite_title: "开启后，AI 分析 Issue 时会生成规范化标题并自动修改（默认关闭）"
     issue_vision_enabled: "启用后，Issue 正文与评论中的图片将经过安全下载和压缩，并作为多模态输入交给支持图片的 AI 模型"
     enable_repo_scan: "启用后，系统将定期扫描已安装仓库的代码，检测潜在问题"

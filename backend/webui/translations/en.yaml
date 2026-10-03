@@ -1164,7 +1164,7 @@ config:
     issue_relation_similarity_threshold: "Minimum cosine similarity for recall; retrieval alone never decides a relation"
     issue_relation_confidence_threshold: "Minimum confidence for related and historical relationships"
     issue_duplicate_confidence_threshold: "Minimum confidence for verified open duplicates"
-    issue_candidate_pool_multiplier: "Recall this multiple of the target candidate count before exclusions and cosine filtering"
+    issue_candidate_pool_multiplier: "Recall this multiple of the target candidate count before exclusions and cosine filtering (1-10, default 3); invalid configuration fails before corpus reconciliation"
     issue_auto_rewrite_title: "When enabled, AI generates a normalized title and auto-modifies it during Issue analysis (disabled by default)"
     issue_vision_enabled: "Safely download and compress images from Issue bodies and comments, then send them to image-capable AI models as multimodal input"
     enable_repo_scan: "Periodically scan installed repos for potential issues"

@@ -110,18 +110,21 @@
 | `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
 | `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
 | `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
-| `semantic_issue_max_links` | `5` | PR 候选上限 |
+| `semantic_issue_max_links` | `5` | PR 候选上限，允许 1–200；Settings 与检索前运行时校验保持一致 |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
 | `pr_issue_max_files` | `128` | PR 关系验证的惰性文件读取上限；超限或补丁不完整时保留原关联 |
 | `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
 | `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
 | `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
-| `issue_candidate_pool_multiplier` | `3` | 固定召回池为候选上限 × 此倍数（不超过语料数量）；排除项不会扩大查询或补翻页 |
+| `issue_candidate_pool_multiplier` | `3` | 允许 1–10，语料同步前校验；固定召回池为候选上限 × 此倍数（不超过语料数量），排除项不会扩大查询或补翻页 |
+| `rerank_score_threshold` | `0.6` | PR/Issue 关系重排阈值，须为 0–1 的有限数值；启用重排时，无效阈值在提供商请求前失败 |
 
 语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
 
 非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
+
+PR 与 Issue 关系流程的目标候选数均不超过 200，召回倍数不超过 10，因此初步候选池最多 2,000 条。数量和倍数在 Settings、动态配置及运行时采用相同上限，不会把非法值静默截断。严格重排在发送请求前校验有效阈值；失败会保留已有 PR 关系，Issue 关系阶段记录失败并继续主分析。显式关闭重排和普通 RAG 的非严格降级行为保持不变。
 
 调用 `IssueService.detect_duplicates` 时必须提供正整数 `current_issue_number`，以便读取和复核真实 Issue 来源。省略参数或传入 `None` 等无效编号会直接报错，不再返回看似成功的空列表；传入有效编号的调用方式和重复项结果格式保持不变。
 

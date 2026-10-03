@@ -133,7 +133,7 @@ class PRRelationSyncService:
         context=None,
         observer=None,
     ):
-        from backend.core.config import get_dynamic_config
+        from backend.core.config import PR_ISSUE_MAX_LINKS_RANGE, get_dynamic_config
         from backend.services.issues.pr_verifier import PRVerificationResult
         from backend.services.pr_body import strip_sakura_generated_sections
 
@@ -243,6 +243,9 @@ class PRRelationSyncService:
                     return PRVerificationResult(False, failure="deadline")
                 top_k = await get_dynamic_config("semantic_issue_max_links", fresh=True)
                 check_boundary(cancel_event, deadline)
+                minimum, maximum = PR_ISSUE_MAX_LINKS_RANGE
+                if type(top_k) is not int or not minimum <= top_k <= maximum:
+                    raise ValueError("invalid semantic Issue candidate limit")
                 threshold = await get_dynamic_config(
                     "semantic_issue_similarity_threshold", fresh=True
                 )
