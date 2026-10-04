@@ -46,6 +46,23 @@ class _FakeRepo:
         raise Exception(f"Not found: {path} @ {ref}")
 
 
+class _BaseOnlyRepo:
+    """目录仅在 PR base sha 存在的仓库，模拟 PR 删除/重命名目录的场景。"""
+
+    default_branch = "main"
+    full_name = "owner/repo"
+
+    def __init__(self, directory_items, head_sha="headsha", base_sha="basesha"):
+        self._directory_items = directory_items
+        self._head_sha = head_sha
+        self._base_sha = base_sha
+
+    def get_contents(self, path, ref=None):
+        if path == "tests" and ref == self._base_sha:
+            return self._directory_items
+        raise Exception(f"Not found: {path} @ {ref}")
+
+
 class _FileStrategyConfig:
     """FileToolHandler 依赖的策略配置替身。"""
 
@@ -132,6 +149,60 @@ async def test_read_file_directory_search_recovery_omits_unset_arguments(
 
     retry_arguments = result["recovery"]["retry_arguments"]
     assert retry_arguments == {"keyword": "Findings Summary", "directory": "tests"}
+
+
+@pytest.mark.parametrize(
+    ("raw_context_lines", "expected"),
+    [(-5, 0), (999, 200)],
+)
+@pytest.mark.asyncio
+async def test_read_file_directory_search_recovery_clamps_context_lines(
+    file_strategy, raw_context_lines, expected
+):
+    """recovery 透传钳制后的 context_lines，避免负值让 search_in_files 崩溃。"""
+    repo = _directory_repo()
+    handler = FileToolHandler()
+    result = await handler.read_file(
+        "tests",
+        repo,
+        pr=None,
+        search_pattern="Findings Summary",
+        context_lines=raw_context_lines,
+        branch="main",
+    )
+
+    assert result["recovery"]["retry_arguments"]["context_lines"] == expected
+
+
+@pytest.mark.asyncio
+async def test_read_file_directory_base_only_pr_suppresses_search_recovery(
+    file_strategy,
+):
+    """PR 删除/重命名目录（仅 base 存在）时不发指向 HEAD 的无效搜索 recovery。
+
+    PR 场景 search_in_files 仅搜索 PR HEAD，目录在 HEAD 已不存在，
+    照 retry_arguments 重试只会得到零匹配；应诚实报错并指引走 PR diff。
+    """
+    repo = _BaseOnlyRepo(
+        directory_items=[
+            _FakeContent("tests/test_a.py"),
+            _FakeContent("tests/test_b.py"),
+        ]
+    )
+    pr = SimpleNamespace(
+        head=SimpleNamespace(sha="headsha"),
+        base=SimpleNamespace(sha="basesha"),
+    )
+    handler = FileToolHandler()
+    result = await handler.read_file(
+        "tests", repo, pr=pr, search_pattern="Findings Summary"
+    )
+
+    assert result["branch_used"] == "base"
+    assert "recovery" not in result
+    assert "HEAD" in result["error"]
+    assert "目录" in result["error"]
+    assert "diff" in result["hint"]
 
 
 @pytest.mark.asyncio
