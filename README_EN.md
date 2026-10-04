@@ -109,7 +109,7 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
 | `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
 | `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
-| `semantic_issue_similarity_threshold` | `0.8` | PR candidate cosine threshold; must be a finite number from 0 to 1, checked before retrieval |
+| `semantic_issue_similarity_threshold` | `0.65` | PR candidate cosine threshold; must be a finite number from 0 to 1, checked before retrieval |
 | `semantic_issue_max_links` | `5` | PR candidate limit, from 1 to 200; Settings and runtime admission enforce the same range before retrieval |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold; must be a finite number from 0 to 1 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold; must be a finite number from 0 to 1 |
@@ -121,6 +121,10 @@ Relationship settings can be changed dynamically on the unified `/config` page. 
 | `rerank_score_threshold` | `0.6` | PR/Issue relation reranking threshold; must be a finite number from 0 to 1; enabled reranking rejects an invalid threshold before the provider request |
 
 Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
+
+PR recall defaults to a cosine floor of `0.65` to help short PR descriptions recall Issues with longer bodies; candidates still require reranking and independent relation verification. Each successful retrieval, including an empty result, emits an INFO summary: `recalled` counts vector-pool rows, `eligible` counts rows passing identity and exclusion checks, `cosine_matches` counts rows meeting the cosine threshold, `hydrated` counts valid current GitHub facts, `candidates` counts reranked results, and `max_cosine` is the highest eligible score before cosine filtering (`none` when no score is available). The log contains no query, Issue title or body. It distinguishes an empty corpus, cosine filtering and reranking that yields no candidates.
+
+Existing `app_config` values and explicit environment settings override the new default. An upgrade does not automatically change a saved `0.8` to `0.65`. Existing deployments can set `semantic_issue_similarity_threshold` to `0.65` on the unified `/config` page, then use the INFO summary for further calibration. Lowering recall alone never establishes or closes a relation.
 
 Invalid PR confidence or semantic recall thresholds explicitly fail synchronization, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
 

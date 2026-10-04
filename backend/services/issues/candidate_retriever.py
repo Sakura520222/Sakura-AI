@@ -5,6 +5,7 @@ import math
 
 from github import UnknownObjectException
 from github.GithubObject import GithubObject
+from loguru import logger
 
 from backend.core.config import (
     ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
@@ -146,6 +147,27 @@ class IssueCandidateRetriever:
         minimum, maximum = ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE
         if type(multiplier) is not int or not minimum <= multiplier <= maximum:
             raise ValueError("Invalid Issue candidate pool multiplier")
+        recalled_count = eligible_count = cosine_matches = 0
+        max_cosine = None
+
+        def log_recall(candidate_count, hydrated_count=0):
+            peak = "none" if max_cosine is None else f"{max_cosine:.4f}"
+            logger.info(
+                "Issue candidate recall: repo={}/{} state={} threshold={:.4f} "
+                "recalled={} eligible={} cosine_matches={} hydrated={} "
+                "candidates={} max_cosine={}",
+                repo_owner,
+                repo_name,
+                state,
+                similarity_threshold,
+                recalled_count,
+                eligible_count,
+                cosine_matches,
+                hydrated_count,
+                candidate_count,
+                peak,
+            )
+
         await self.corpus.reconcile(
             repo_owner, repo_name, cancel_event=cancel_event, deadline=deadline
         )
@@ -156,6 +178,7 @@ class IssueCandidateRetriever:
             lambda: asyncio.to_thread(collection.count), cancel_event, deadline
         )
         if not count:
+            log_recall(0)
             return []
         query = await _controlled(
             lambda: self.service.embedding_service.embed_query(text),
@@ -185,6 +208,7 @@ class IssueCandidateRetriever:
             cancel_event,
             deadline,
         )
+        recalled_count = min(pool_size, len(found["ids"][0]))
         excluded = set(exclude_numbers)
         docs = []
         seen = set()
@@ -216,8 +240,13 @@ class IssueCandidateRetriever:
                 (a / query_norm) * (b / embedding_norm)
                 for a, b in zip(query, embedding, strict=True)
             )
+            eligible_count += 1
+            max_cosine = (
+                similarity if max_cosine is None else max(max_cosine, similarity)
+            )
             if similarity < similarity_threshold:
                 continue
+            cosine_matches += 1
             try:
                 facts = await _controlled(
                     lambda number=number: asyncio.to_thread(
@@ -255,6 +284,7 @@ class IssueCandidateRetriever:
             )
             seen.add(number)
         if not docs:
+            log_recall(0)
             return []
         docs.sort(key=lambda doc: doc["similarity"], reverse=True)
         results = await _controlled(
@@ -288,4 +318,5 @@ class IssueCandidateRetriever:
                 candidate["comments"] = comments
                 candidate["comments_context"] = context
         check_relation_boundary(cancel_event, deadline)
+        log_recall(len(results), len(docs))
         return results
