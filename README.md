@@ -109,7 +109,7 @@
 | `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
 | `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
 | `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
-| `semantic_issue_similarity_threshold` | `0.8` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
+| `semantic_issue_similarity_threshold` | `0.65` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
 | `semantic_issue_max_links` | `5` | PR 候选上限，允许 1–200；Settings 与检索前运行时校验保持一致 |
 | `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
 | `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
@@ -121,6 +121,10 @@
 | `rerank_score_threshold` | `0.6` | PR/Issue 关系重排阈值，须为 0–1 的有限数值；启用重排时，无效阈值在提供商请求前失败 |
 
 语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
+
+PR 召回默认采用 `0.65` 的余弦下限，便于短 PR 描述召回正文较长的 Issue；候选仍须通过重排和独立关系验证。每次成功检索（含空结果）会输出一条 INFO 摘要：`recalled` 为向量池返回数量，`eligible` 为通过身份和排除检查的数量，`cosine_matches` 为达到余弦阈值的数量，`hydrated` 为当前 GitHub 事实有效的数量，`candidates` 为重排后的候选数，`max_cosine` 为余弦过滤前的最大 eligible 分数（无可比较候选时为 `none`）。日志不包含查询、Issue 标题或正文。这样可以区分语料为空、余弦过滤为空和重排后为空。
+
+已有 `app_config` 值及显式环境配置会覆盖新默认值，升级不会自动把保存的 `0.8` 改成 `0.65`。已有部署可在统一 `/config` 页将 `semantic_issue_similarity_threshold` 调整为 `0.65`，再结合 INFO 摘要校准；降低召回阈值不会直接建立或关闭关系。
 
 非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
 

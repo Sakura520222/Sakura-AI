@@ -217,7 +217,7 @@ async def test_complete_zero_line_entry_does_not_block_other_code_evidence(
     zero = packet["files"][1]
     assert zero["additions"] == zero["deletions"] == 0
     assert zero["patch"] == (patch or "")
-    assert case.retriever.retrieve.await_args.kwargs["similarity_threshold"] == 0.8
+    assert case.retriever.retrieve.await_args.kwargs["similarity_threshold"] == 0.65
 
 
 @pytest.mark.asyncio

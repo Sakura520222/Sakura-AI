@@ -202,7 +202,9 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | WebUI 配置管理 | `max_concurrent_issues` | 同时进行的最大 Issue 分析任务数，超出排队 |
 | WebUI 配置管理 | `issue_auto_rewrite_title` | Issue 标题自动改写 |
 | WebUI 配置管理 | `enable_semantic_issue_linking` | 语义 Issue 关联开关 |
-| WebUI 配置管理 | `semantic_issue_similarity_threshold` | 语义相似度阈值 |
+| WebUI 配置管理 | `semantic_issue_similarity_threshold` | PR 召回余弦下限，默认 `0.65`；关系仍由后续重排及验证决定 |
+
+已有数据库配置不会随默认值调整而覆盖；若当前有效值仍为 `0.8`，需在统一 `/config` 页显式保存 `0.65`。检索的 INFO 摘要会显示有效 `threshold`、阈值前 `max_cosine`、`cosine_matches` 与重排后的 `candidates`，可据此区分入口过滤和后续过滤。
 
 ---
 
@@ -400,4 +402,4 @@ Bot 设置、通知端点绑定与命令参考详见 [Telegram Bot 集成指南]
 
 ---
 
-*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-4 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
