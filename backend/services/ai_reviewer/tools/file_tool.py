@@ -420,14 +420,16 @@ class FileToolHandler:
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
                 }
-                if search_pattern:
+                if search_pattern and not (pr is not None and branch_used == "base"):
                     # 目录搜索意图：结构化 recovery 指向 search_in_files 等价调用
                     retry_arguments: dict[str, Any] = {
                         "keyword": search_pattern,
                         "directory": file_path,
                     }
                     if context_lines is not None:
-                        retry_arguments["context_lines"] = context_lines
+                        # 透传钳制后的值；search_in_files 自身不校验 context_lines，
+                        # 负值会使其扫描窗口计算失败
+                        retry_arguments["context_lines"] = effective_context_lines
                     if pr is None and branch_used:
                         retry_arguments["branch"] = branch_used
                     result.update(
@@ -447,6 +449,23 @@ class FileToolHandler:
                                 "reason": "path_is_directory",
                                 "retry_arguments": retry_arguments,
                             },
+                        }
+                    )
+                elif search_pattern:
+                    # 目录仅存在于 base 分支（被本 PR 删除/重命名）：PR 场景下
+                    # search_in_files 只搜索 PR HEAD，按等价参数重试只会零匹配，
+                    # 不提供该 recovery
+                    result.update(
+                        {
+                            "error": (
+                                "该路径是目录而非文件，且该目录在 PR HEAD 分支中"
+                                "不存在（仅在 base 分支中找到）"
+                            ),
+                            "hint": (
+                                "目录可能已被本 PR 删除或重命名。PR 场景下"
+                                " search_in_files 仅搜索 PR HEAD，无法搜索 base 中"
+                                "的该目录；请基于 PR diff 审查相关变更。"
+                            ),
                         }
                     )
                 else:
