@@ -17,6 +17,7 @@ from loguru import logger
 
 from backend.core.time_service import monotonic
 from backend.services.agent_team.execution import ExecutionRunner
+from backend.services.agent_team.skill_scope import SkillRestriction
 from backend.services.agent_team.tools.errors import ToolExecutionError
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
@@ -78,14 +79,25 @@ class ToolContext:
     extra: dict[str, Any] = field(default_factory=dict)
     # 写操作追踪：记录被修改的文件路径（相对于 workspace）
     modified_files: set[str] = field(default_factory=set)
-    max_parallel_reads: int = field(default_factory=lambda: _default_parallel_reads())
     repository_context: RepositoryContext | None = field(default=None, repr=False)
-    repository_instructions: dict[str, RepositoryInstruction] = field(default_factory=dict, repr=False)
-    active_skill_tools: dict[str, frozenset[str]] = field(default_factory=dict)
+    repository_instructions: dict[str, RepositoryInstruction] = field(
+        default_factory=dict, repr=False
+    )
+    active_skill_tools: dict[str, SkillRestriction] = field(default_factory=dict)
+    skills_enabled: bool = True
+    repository_targets: tuple[str, ...] = ()
+    repository_whole_scope: bool = False
+    pending_repository_snapshot: dict[str, RepositoryInstruction] | None = field(
+        default=None, repr=False
+    )
+    pending_repository_targets: tuple[str, ...] = ()
+    pending_repository_whole_scope: bool = False
 
-    def allows_skill_tool(self, name: str) -> bool:
+    def allows_skill_tool(self, name: str, args: dict[str, Any] | None = None) -> bool:
         """Workflow restrictions intersect the existing runtime ceiling."""
-        return name in {"use_skill", "finish_task"} or all(name in tools for tools in self.active_skill_tools.values())
+        return name in {"use_skill", "finish_task"} or all(
+            scope.allows(name, args) for scope in self.active_skill_tools.values()
+        )
 
     def track_modified_file(self, file_path: str) -> None:
         """记录被修改的文件路径。"""
@@ -197,7 +209,7 @@ class ToolExecutor:
 
         metadata = self.metadata(tool_call.function.name)
         barrier = workspace_barrier(ctx.workspace)
-        async with barrier.hold(metadata.parallel_safe, ctx.max_parallel_reads):
+        async with barrier.hold(metadata.parallel_safe):
             if ctx.cancel_event and ctx.cancel_event.is_set():
                 raise asyncio.CancelledError
             if metadata.parallel_safe:
@@ -244,15 +256,28 @@ class ToolExecutor:
         if not isinstance(arguments, dict):
             return ToolResult(success=False, error="工具参数必须是对象")
 
-        if not ctx.allows_skill_tool(function_name):
-            return ToolResult(False, error=f"Active Skill does not allow tool: {function_name}", error_code="SKILL_TOOL_RESTRICTED")
+        if not ctx.allows_skill_tool(function_name, arguments):
+            return ToolResult(
+                False,
+                error=f"Active Skill does not allow tool: {function_name}",
+                error_code="SKILL_TOOL_RESTRICTED",
+            )
         if ctx.repository_context:
             try:
-                docs = await self.repository_requirements([tool_call], ctx)
+                docs = await self.repository_requirements(
+                    [tool_call], ctx, preserve_batch=True
+                )
             except ValueError as exc:
-                return ToolResult(False, error=str(exc), error_code="REPOSITORY_CONTEXT_REJECTED")
-            if docs:
-                return ToolResult(False, output={"repository_context": ctx.repository_context.render(docs)}, error="Receive applicable repository instructions before retrying this tool", error_code="REPOSITORY_CONTEXT_REQUIRED")
+                return ToolResult(
+                    False, error=str(exc), error_code="REPOSITORY_CONTEXT_REJECTED"
+                )
+            if ctx.pending_repository_snapshot is not None:
+                return ToolResult(
+                    False,
+                    output={"repository_context": ctx.repository_context.render(docs)},
+                    error="Receive applicable repository instructions before retrying this tool",
+                    error_code="REPOSITORY_CONTEXT_REQUIRED",
+                )
 
         # 3. 输入校验
         validation_error = tool.validate_input(arguments, ctx)
@@ -297,14 +322,18 @@ class ToolExecutor:
             result, output=output, terminal_state="success" if terminal else ""
         )
 
-    async def repository_requirements(self, calls: list[Any], ctx: ToolContext) -> list[RepositoryInstruction]:
+    async def repository_requirements(
+        self, calls: list[Any], ctx: ToolContext, *, preserve_batch: bool = False
+    ) -> list[RepositoryInstruction]:
         """Preflight a whole model batch before admitting workspace effects."""
         repository = ctx.repository_context
         if repository is None:
             return []
 
         def discover():
-            docs = {}
+            targets = set(ctx.repository_targets) if preserve_batch else set()
+            whole = ctx.repository_whole_scope if preserve_batch else False
+            repository.diagnostics.clear()
             for call in calls:
                 try:
                     args = json.loads(call.function.arguments)
@@ -313,16 +342,37 @@ class ToolExecutor:
                 if not isinstance(args, dict):
                     continue
                 name = call.function.name
-                targets = [args[key] for key in ("file_path", "path", "directory") if isinstance(args.get(key), str)]
+                targets.update(
+                    args[key]
+                    for key in ("file_path", "path", "directory")
+                    if isinstance(args.get(key), str)
+                )
+                for key in ("file_paths", "modified_files"):
+                    if isinstance(args.get(key), list):
+                        targets.update(
+                            item for item in args[key] if isinstance(item, str)
+                        )
+                if name == "use_skill":
+                    entry = ctx.extra.get("skills_index", {}).get(
+                        str(args.get("slug") or ""), {}
+                    )
+                    if entry.get("source_type") == "repository":
+                        main = repository.relative(entry["install_path"])
+                        targets.add(
+                            str(main.parent / str(args.get("file") or "SKILL.md"))
+                        )
                 if name == "run_command":
-                    found = repository.all_instructions()
-                else:
-                    found = [doc for target in (targets or ["."]) for doc in repository.instructions_for(target)]
-                for doc in found:
-                    prior = ctx.repository_instructions.get(doc.path)
-                    if prior is None or prior.digest != doc.digest:
-                        docs[doc.path] = doc
-            return list(docs.values())
+                    whole = True
+            current_targets = tuple(sorted(targets))
+            docs = repository.snapshot(current_targets, whole=whole)
+            current = {doc.path: doc for doc in docs}
+            ctx.pending_repository_targets = current_targets
+            ctx.pending_repository_whole_scope = whole
+            # Includes deletions and complete scope replacement, not only new docs.
+            ctx.pending_repository_snapshot = (
+                current if current != ctx.repository_instructions else None
+            )
+            return docs if ctx.pending_repository_snapshot is not None else []
 
         return await asyncio.to_thread(discover)
 
@@ -334,9 +384,3 @@ class ToolExecutor:
             function=SimpleNamespace(name=tool_name, arguments=json.dumps(arguments))
         )
         return await self.execute_tool_call(call, ctx)
-
-
-def _default_parallel_reads() -> int:
-    from backend.core.config import Settings
-
-    return Settings.model_fields["agent_team_max_parallel_reads"].default

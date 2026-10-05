@@ -29,10 +29,11 @@ from backend.services.agent_team.prompt_config import (
 from backend.services.agent_team.repository_context import (
     RepositoryContext,
     RepositoryContextError,
-    get_repository_limits,
-    parse_allowed_tools,
+    skills_enabled,
 )
-from backend.services.agent_team.runtime_limits import get_runtime_limits
+from backend.services.agent_team.skill_scope import SkillRestriction
+from backend.services.agent_team.skill_service import normalize_skill_slug
+from backend.services.agent_team.strategy_self_check import StrategySelfCheckState
 from backend.services.agent_team.tool_scheduler import run_tool_batch
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -40,6 +41,7 @@ from backend.services.agent_team.tools.registry import (
     create_executor,
     get_tool_definitions_fresh,
 )
+from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.message_utils import (
@@ -76,11 +78,10 @@ class FullStackResult:
             return "cancelled"
         if self.error in {
             "no_progress",
-            "model_round_limit",
-            "tool_call_limit",
             "reconciliation_required",
             "checkpoint_inconsistent",
             "guidance_admission_failed",
+            "repository_context_rejected",
         }:
             return "blocked"
         return "unrecoverable_error"
@@ -89,89 +90,6 @@ class FullStackResult:
 def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
     """返回缺少结果消息的工具调用。"""
     return get_missing_tool_calls(messages)
-
-
-class _NoProgressTracker:
-    """Incrementally detect repeated observable work, including across resume.
-
-    Call IDs do not constitute progress. New canonical tool/argument/result
-    evidence (including distinct errors) or new admitted user context resets
-    consecutive stalled rounds and the text reminder. This is deterministic
-    evidence comparison, not a claim that every changed output is useful.
-    """
-
-    def __init__(self):
-        self.cursor = 0
-        self.seen: set[str] = set()
-        self.pending: dict[str, dict[str, Any]] = {}
-        self.results: dict[str, dict[str, Any]] = {}
-        self.stalled_rounds = 0
-        self.reminded = False
-
-    @staticmethod
-    def _json(value: Any) -> Any:
-        try:
-            return json.loads(value)
-        except (TypeError, ValueError):
-            return value
-
-    @staticmethod
-    def _fingerprint(value: Any) -> str:
-        payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-    def _admit_evidence(self, value: Any) -> bool:
-        digest = self._fingerprint(value)
-        if digest in self.seen:
-            return False
-        self.seen.add(digest)
-        return True
-
-    def _reset(self) -> None:
-        self.stalled_rounds = 0
-        self.reminded = False
-
-    def update(self, messages: list[dict[str, Any]]) -> None:
-        while self.cursor < len(messages):
-            message = messages[self.cursor]
-            self.cursor += 1
-            if message.get("role") == "user":
-                if message.get("metadata", {}).get("completion_reminder"):
-                    self.reminded = True
-                elif message.get("content") and self._admit_evidence(
-                    {
-                        "context": message["content"],
-                        "guidance_ids": message.get("metadata", {}).get(
-                            "guidance_ids", message.get("guidance_ids")
-                        ),
-                    }
-                ):
-                    self._reset()
-            elif message.get("role") == "assistant" and message.get("tool_calls"):
-                self.pending = {call["id"]: call for call in message["tool_calls"]}
-                self.results = {}
-            elif (
-                message.get("role") == "tool"
-                and message.get("tool_call_id") in self.pending
-            ):
-                self.results[message["tool_call_id"]] = message
-                if len(self.results) != len(self.pending):
-                    continue
-                novel = False
-                for ident, call in self.pending.items():
-                    function = call.get("function") or {}
-                    evidence = {
-                        "tool": function.get("name"),
-                        "arguments": self._json(function.get("arguments")),
-                        "result": self._json(self.results[ident].get("content")),
-                    }
-                    novel = self._admit_evidence(evidence) or novel
-                if novel:
-                    self._reset()
-                else:
-                    self.stalled_rounds += 1
-                self.pending = {}
-                self.results = {}
 
 
 def _guidance_items(guidance: Any) -> list[Any]:
@@ -320,6 +238,8 @@ class FullStackExpertAgent:
                 if message.get("role") == "user"
                 and not self._is_guidance_message(message)
                 and not message.get("metadata", {}).get("completion_reminder")
+                and not message.get("metadata", {}).get("repository_context")
+                and not message.get("metadata", {}).get("strategy_self_check")
             ),
             None,
         )
@@ -368,6 +288,15 @@ class FullStackExpertAgent:
     async def execute(self, *args: Any, **kwargs: Any) -> FullStackResult:
         try:
             return await self._execute(*args, **kwargs)
+        except RepositoryContextError:
+            ctx = getattr(self, "_active_context", None)
+            return FullStackResult(
+                False,
+                "仓库上下文路径或格式校验阻止了执行",
+                error="repository_context_rejected",
+                modified_files=sorted(ctx.modified_files) if ctx else [],
+                tool_calls_count=sum(m.get("role") == "tool" for m in self.messages),
+            )
         except asyncio.CancelledError:
             ctx = getattr(self, "_active_context", None)
             return FullStackResult(
@@ -406,30 +335,39 @@ class FullStackExpertAgent:
         self._cancel_event = cancel_event
         ctx = self._build_context(skills_context)
         self._active_context = ctx
-        ctx.repository_context = RepositoryContext(self.workspace, await get_repository_limits())
-        repo_index = await asyncio.to_thread(ctx.repository_context.discover_skills)
-        # Administrator-installed/enabled Skills retain slug precedence.
-        ctx.extra["skills_index"] = {**repo_index, **ctx.extra.get("skills_index", {})}
+        ctx.repository_context = RepositoryContext(self.workspace)
+        ctx.extra["admin_skills_index"] = dict(ctx.extra.get("skills_index", {}))
+        await self._refresh_skills(ctx)
         if self.restored_messages:
             restored = await self._recover(ctx)
             if restored is not None:
                 return restored
             self._restore_skill_workflows(ctx)
-        limits = await get_runtime_limits()
-        ctx.max_parallel_reads = limits["max_parallel_reads"]
         client, config = await create_agent_team_client()
         candidate = await client.resolve_role_primary_candidate(config.agent_role)
         context_window_tokens = (
             candidate.model.context_window_tokens if candidate else None
         )
-        tool_schemas = await get_tool_definitions_fresh("agent")
+        self._task_context = {
+            "task_title": task_title,
+            "task_summary": task_summary,
+            "source_type": source_type,
+            "source_issue_number": source_issue_number,
+            "sakura_memory": sakura_memory,
+            "skills_summary": skills_summary,
+            "reference_context": reference_context,
+            "feedback": feedback,
+            "handoff_context": handoff_context,
+            "role_memory_context": role_memory_context,
+            "execution_expectations": execution_expectations,
+        }
         self._prepare_restored_messages(
             task_title=task_title,
             task_summary=task_summary,
             source_type=source_type,
             source_issue_number=source_issue_number,
             sakura_memory=sakura_memory,
-            skills_summary=skills_summary,
+            skills_summary=skills_summary if ctx.skills_enabled else "",
             reference_context=reference_context,
             feedback=feedback,
             handoff_context=handoff_context,
@@ -447,7 +385,7 @@ class FullStackExpertAgent:
                         source_type=source_type,
                         source_issue_number=source_issue_number,
                         sakura_memory=sakura_memory,
-                        skills_summary=skills_summary,
+                        skills_summary=skills_summary if ctx.skills_enabled else "",
                         reference_context=reference_context,
                         feedback=feedback,
                         handoff_context=handoff_context,
@@ -457,8 +395,8 @@ class FullStackExpertAgent:
                 }
             )
 
-        root_docs = await asyncio.to_thread(ctx.repository_context.instructions_for)
-        ctx.repository_instructions.update({doc.path: doc for doc in root_docs})
+        root_docs = await asyncio.to_thread(ctx.repository_context.snapshot, ())
+        ctx.repository_instructions = {doc.path: doc for doc in root_docs}
         repository_message = self._repository_message(ctx)
         if repository_message is not None and not has_missing_tool_results(
             self.messages
@@ -468,9 +406,7 @@ class FullStackExpertAgent:
         tool_calls_count = sum(m.get("role") == "tool" for m in self.messages)
         token_tracker = TokenTracker()
         round_num = 0
-        model_rounds = sum(m.get("role") == "assistant" for m in self.messages)
-        progress = _NoProgressTracker()
-        progress.update(self.messages)
+        strategy = StrategySelfCheckState()
 
         def blocked(reason: str) -> FullStackResult:
             return FullStackResult(
@@ -500,12 +436,6 @@ class FullStackExpertAgent:
 
             pending_tool_calls = _get_missing_tool_calls(self.messages)
             if pending_tool_calls:
-                if (
-                    limits["max_tool_calls"]
-                    and tool_calls_count + len(pending_tool_calls)
-                    > limits["max_tool_calls"]
-                ):
-                    return blocked("tool_call_limit")
                 terminal_output = await self._execute_tool_calls(
                     pending_tool_calls,
                     ctx,
@@ -529,12 +459,6 @@ class FullStackExpertAgent:
                         completion_tokens=token_tracker.completion_tokens,
                     )
                 continue
-
-            if (
-                limits["max_model_rounds"]
-                and model_rounds >= limits["max_model_rounds"]
-            ):
-                return blocked("model_round_limit")
 
             # 消费新的管理员指导
             if guidance_callback:
@@ -591,18 +515,35 @@ class FullStackExpertAgent:
                         completion_tokens=token_tracker.completion_tokens,
                     )
 
-            progress.update(self.messages)
-            if progress.stalled_rounds >= limits["max_no_progress_rounds"]:
-                return blocked("no_progress")
+            for self_check in strategy.update(self.messages):
+                await self._append_message(self_check)
 
+            await self._refresh_skills(ctx)
+            # Re-read the current scope; deletions and replacements are observed
+            # before the next request, while durable history stays untouched.
+            current_docs = await asyncio.to_thread(
+                ctx.repository_context.snapshot,
+                ctx.repository_targets,
+                whole=ctx.repository_whole_scope,
+            )
+            ctx.repository_instructions = {doc.path: doc for doc in current_docs}
+            projected = self._project_model_messages(ctx)
             model_messages = await compress_agent_team_messages(
-                self.messages, candidate=candidate, token_tracker=token_tracker
+                projected, candidate=candidate, token_tracker=token_tracker
             )
             # Compression and legacy histories may omit repository messages.
             # Reinforce current data as a user turn, never system authority.
             repository_message = self._repository_message(ctx)
             if repository_message is not None:
                 model_messages = [*model_messages, repository_message]
+            for guidance in projected:
+                if self._is_guidance_message(guidance) and not any(
+                    message.get("role") == "user"
+                    and message.get("content") == guidance.get("content")
+                    for message in model_messages
+                ):
+                    model_messages.append(guidance)
+            tool_schemas = await get_tool_definitions_fresh("agent", ctx=ctx)
             await _publish_ai_request(
                 "agent",
                 round_num,
@@ -617,7 +558,6 @@ class FullStackExpertAgent:
                 role="agent_team",
                 cancel_event=cancel_event,
             )
-            model_rounds += 1
             token_tracker.accumulate(response)
             token_tracker.log_context_usage(
                 response,
@@ -660,8 +600,6 @@ class FullStackExpertAgent:
 
             # Text never completes a run. One durable reminder is allowed.
             if not message.tool_calls:
-                if progress.reminded:
-                    return blocked("no_progress")
                 await self._append_message(
                     {
                         "role": "user",
@@ -669,14 +607,7 @@ class FullStackExpertAgent:
                         "metadata": {"completion_reminder": True},
                     }
                 )
-                progress.update(self.messages)
                 continue
-
-            if (
-                limits["max_tool_calls"]
-                and tool_calls_count + len(message.tool_calls) > limits["max_tool_calls"]
-            ):
-                return blocked("tool_call_limit")
 
             # 逐个执行工具调用
             terminal_output = await self._execute_tool_calls(
@@ -722,6 +653,36 @@ class FullStackExpertAgent:
                 "tool_call_id": tool_call.id,
                 "content": serialize_tool_result(result),
             }
+            if (
+                result.success
+                and type(self.tool_executor.get_tool(tool_call.function.name))
+                is UseSkillTool
+            ):
+                args = json.loads(tool_call.function.arguments)
+                if not args.get("list_files"):
+                    slug = normalize_skill_slug(str(args.get("slug") or ""))
+                    ended = args.get("end_skill") is True
+                    scope = ctx.active_skill_tools.get(slug, SkillRestriction.deny())
+                    # Runtime-owned metadata commits atomically with the result
+                    # and ledger status, never derived from untrusted output.
+                    message["metadata"] = {
+                        "skill_runtime_state": {
+                            "version": 1,
+                            "slug": slug,
+                            "operation": "end" if ended else "activate",
+                            "scope": None if ended else scope.to_data(),
+                        }
+                    }
+            if ctx.active_skill_tools or message.get("metadata", {}).get(
+                "skill_runtime_state"
+            ):
+                message.setdefault("metadata", {})["skill_workflow_ceiling"] = {
+                    "version": 1,
+                    "active": {
+                        slug: scope.to_data()
+                        for slug, scope in ctx.active_skill_tools.items()
+                    },
+                }
             if self.checkpoint and self.session_id:
                 await self.checkpoint.record_tool_result(
                     self.session_id, tool_call.id, message, status, result.error
@@ -736,19 +697,40 @@ class FullStackExpertAgent:
 
         if ctx.repository_context:
             try:
-                docs = await self.tool_executor.repository_requirements(tool_calls, ctx)
+                await self.tool_executor.repository_requirements(tool_calls, ctx)
             except RepositoryContextError as exc:
                 for tool_call in tool_calls:
-                    await after(tool_call, ToolResult(False, error=str(exc), error_code="REPOSITORY_CONTEXT_REJECTED"), "failed")
+                    await after(
+                        tool_call,
+                        ToolResult(
+                            False,
+                            error=str(exc),
+                            error_code="REPOSITORY_CONTEXT_REJECTED",
+                        ),
+                        "failed",
+                    )
                 return None
-            if docs:
+            if ctx.pending_repository_snapshot is not None:
                 for tool_call in tool_calls:
-                    await after(tool_call, ToolResult(False, error="New repository scope instructions delivered; retry this batch after applying them", error_code="REPOSITORY_CONTEXT_REQUIRED"), "failed")
-                ctx.repository_instructions.update({doc.path: doc for doc in docs})
+                    await after(
+                        tool_call,
+                        ToolResult(
+                            False,
+                            error="New repository scope instructions delivered; retry this batch after applying them",
+                            error_code="REPOSITORY_CONTEXT_REQUIRED",
+                        ),
+                        "failed",
+                    )
+                ctx.repository_instructions = ctx.pending_repository_snapshot
+                ctx.pending_repository_snapshot = None
+                ctx.repository_targets = ctx.pending_repository_targets
+                ctx.repository_whole_scope = ctx.pending_repository_whole_scope
                 repository_message = self._repository_message(ctx)
                 if repository_message is not None:
                     await self._append_message(repository_message)
                 return None
+            ctx.repository_targets = ctx.pending_repository_targets
+            ctx.repository_whole_scope = ctx.pending_repository_whole_scope
 
         return await run_tool_batch(
             tool_calls,
@@ -762,7 +744,11 @@ class FullStackExpertAgent:
     @staticmethod
     def _repository_message(ctx: ToolContext) -> dict[str, Any] | None:
         repository = ctx.repository_context
-        index = {slug: entry for slug, entry in ctx.extra.get("skills_index", {}).items() if entry.get("source_type") == "repository"}
+        index = {
+            slug: entry
+            for slug, entry in ctx.extra.get("skills_index", {}).items()
+            if entry.get("source_type") == "repository"
+        }
         if repository is None or not (
             ctx.repository_instructions
             or index
@@ -770,11 +756,18 @@ class FullStackExpertAgent:
             or ctx.active_skill_tools
         ):
             return None
-        content = repository.render(list(ctx.repository_instructions.values()))
-        content += "\nRepository Skills metadata (untrusted; use_skill loads bodies):\n" + repository.skills_summary(index)
-        content += "\nActive Skill workflow tool restrictions: " + json.dumps({slug: sorted(tools) for slug, tools in ctx.active_skill_tools.items()})
-        content += "\nUse use_skill with slug and end_skill=true when that workflow ends; this restores only prior runtime access."
-        return {"role": "user", "content": content, "metadata": {"repository_context": True}}
+        content = repository.render(
+            list(ctx.repository_instructions.values()),
+            index=index if ctx.skills_enabled else {},
+            workflow={
+                slug: scope.to_data() for slug, scope in ctx.active_skill_tools.items()
+            },
+        )
+        return {
+            "role": "user",
+            "content": content,
+            "metadata": {"repository_context": True},
+        }
 
     def _restore_skill_workflows(self, ctx: ToolContext) -> None:
         """Derive runtime scope from verified calls and current registered metadata.
@@ -791,30 +784,160 @@ class FullStackExpertAgent:
             call = calls.get(message.get("tool_call_id"), {})
             fn = call.get("function", {})
             if fn.get("name") != "use_skill":
+                self._restore_ceiling_snapshot(message, ctx)
                 continue
             try:
                 output = json.loads(message.get("content") or "{}")
                 args = json.loads(fn.get("arguments") or "{}")
             except ValueError, TypeError:
+                self._restore_ceiling_snapshot(message, ctx)
                 continue
-            if not isinstance(output, dict) or output.get("error") or not isinstance(args, dict):
+            if (
+                not isinstance(output, dict)
+                or output.get("error")
+                or not isinstance(args, dict)
+            ):
+                self._restore_ceiling_snapshot(message, ctx)
                 continue
             slug = str(args.get("slug") or "")
-            if args.get("end_skill") is True:
+            slug = normalize_skill_slug(slug)
+            if args.get("list_files"):
+                self._restore_ceiling_snapshot(message, ctx)
+                continue
+            metadata = message.get("metadata")
+            state = (
+                metadata.get("skill_runtime_state")
+                if isinstance(metadata, dict)
+                else None
+            )
+            ended = args.get("end_skill") is True
+            valid = (
+                isinstance(state, dict)
+                and type(state.get("version")) is int
+                and state.get("version") == 1
+                and state.get("slug") == slug
+                and state.get("operation") == ("end" if ended else "activate")
+            )
+            if ended and valid and state.get("scope") is None:
                 ctx.active_skill_tools.pop(slug, None)
-            elif not args.get("list_files"):
+                self._restore_ceiling_snapshot(message, ctx)
+                continue
+            try:
+                if not valid or ended:
+                    raise ValueError("Missing historical Skill ceiling")
+                historical = SkillRestriction.from_data(state.get("scope"))
                 entry = ctx.extra.get("skills_index", {}).get(slug)
-                if entry is None:
-                    # A removed active Skill cannot silently restore access.
-                    ctx.active_skill_tools[slug] = frozenset()
-                    continue
+                current = (
+                    SkillRestriction.from_metadata(entry.get("allowed_tools"))
+                    if entry
+                    else SkillRestriction.deny()
+                )
+            except ValueError:
+                historical = current = SkillRestriction.deny()
+            prior = ctx.active_skill_tools.get(slug, SkillRestriction())
+            ctx.active_skill_tools[slug] = prior.intersect(historical).intersect(
+                current
+            )
+            self._restore_ceiling_snapshot(message, ctx)
+
+    @staticmethod
+    def _restore_ceiling_snapshot(message, ctx) -> None:
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict) or "skill_workflow_ceiling" not in metadata:
+            return
+        snapshot = metadata["skill_workflow_ceiling"]
+        try:
+            if (
+                not isinstance(snapshot, dict)
+                or type(snapshot.get("version")) is not int
+                or snapshot.get("version") != 1
+            ):
+                raise ValueError("Invalid historical workflow state")
+            active = snapshot.get("active")
+            if not isinstance(active, dict):
+                raise ValueError("Invalid historical workflow state")
+            for slug in set(ctx.active_skill_tools) | set(active):
+                if not isinstance(slug, str) or normalize_skill_slug(slug) != slug:
+                    raise ValueError("Invalid historical workflow slug")
+                prior = ctx.active_skill_tools.get(slug, SkillRestriction())
                 try:
-                    allowed = parse_allowed_tools(entry.get("allowed_tools"))
-                except RepositoryContextError:
-                    allowed = frozenset()
-                if allowed is not None:
-                    prior = ctx.active_skill_tools.get(slug)
-                    ctx.active_skill_tools[slug] = allowed if prior is None else prior & allowed
+                    historical = SkillRestriction.from_data(active[slug])
+                    entry = ctx.extra.get("skills_index", {}).get(slug)
+                    current = (
+                        SkillRestriction.from_metadata(entry.get("allowed_tools"))
+                        if entry
+                        else SkillRestriction.deny()
+                    )
+                except KeyError, ValueError:
+                    historical = current = SkillRestriction.deny()
+                ctx.active_skill_tools[slug] = prior.intersect(historical).intersect(
+                    current
+                )
+        except ValueError:
+            for slug in ctx.active_skill_tools:
+                ctx.active_skill_tools[slug] = SkillRestriction.deny()
+
+    async def _refresh_skills(self, ctx: ToolContext) -> None:
+        ctx.skills_enabled = await skills_enabled()
+        if not ctx.skills_enabled:
+            ctx.extra["skills_index"] = {}
+            ctx.extra.pop("skills_cache", None)
+            return
+        repository = ctx.repository_context
+        repo_index = (
+            await asyncio.to_thread(repository.discover_skills) if repository else {}
+        )
+        ctx.extra["skills_index"] = {
+            **repo_index,
+            **ctx.extra.get("admin_skills_index", {}),
+        }
+        for slug, historical in ctx.active_skill_tools.items():
+            entry = ctx.extra["skills_index"].get(slug)
+            try:
+                current = (
+                    SkillRestriction.from_metadata(entry.get("allowed_tools"))
+                    if entry
+                    else SkillRestriction.deny()
+                )
+            except ValueError:
+                current = SkillRestriction.deny()
+            ctx.active_skill_tools[slug] = historical.intersect(current)
+
+    def _project_model_messages(self, ctx: ToolContext) -> list[dict[str, Any]]:
+        """Project durable originals; no repository snapshot or disabled Skill
+        body is replayed or compressed, and assistant/tool pairing is retained.
+        """
+        skill_calls = set()
+        result = []
+        initial = True
+        for original in self.messages:
+            message = dict(original)
+            if message.get("metadata", {}).get("repository_context"):
+                continue
+            for call in message.get("tool_calls") or []:
+                if call.get("function", {}).get("name") == "use_skill":
+                    skill_calls.add(call.get("id"))
+            if (
+                message.get("role") == "tool"
+                and message.get("tool_call_id") in skill_calls
+                and not ctx.skills_enabled
+            ):
+                message["content"] = json.dumps({"skills_disabled": True})
+                message.pop("metadata", None)
+            elif (
+                message.get("role") == "user"
+                and initial
+                and not self._is_guidance_message(message)
+                and not message.get("metadata", {}).get("completion_reminder")
+                and not message.get("metadata", {}).get("strategy_self_check")
+            ):
+                initial = False
+                args = dict(self._task_context)
+                if not ctx.skills_enabled:
+                    args["skills_summary"] = ""
+                message["content"] = self._build_user_message(**args)
+            result.append(message)
+        return result
 
     async def _recover(self, ctx: ToolContext) -> FullStackResult | None:
         """Validate a durable prefix before replay; never guess a mutation result.

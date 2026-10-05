@@ -233,10 +233,11 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
 | 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 禁止出网；`web_tools`（默认）授权受控 Web 工具与单次依赖出口，普通 Shell 离线；`full_access` 允许所有 runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
-| 全局配置页「Agent 专家团队」组 | `agent_team_max_iterations_per_task` | 单任务最大自动迭代次数 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
-| 全局配置页「Agent Skills」组 | `agent_team_skills_enabled` | Agent 是否可加载技能 |
-| 全局配置页「Agent Skills」组 | `agent_team_skills_root` | 技能本地存储根目录 |
+| 全局配置页「Agent」组 | `agent_team_skills_enabled` | 控制 DB 与仓库 Skills 的发现、上下文和正文调用；关闭不影响独立的 AGENTS.md 等仓库规则 |
+| 全局配置页「Agent」组 | `agent_team_skills_root` | 管理员安装 Skills 的本地存储根目录，不改变仓库 Skills 的两个固定发现目录 |
+
+规则优先级、目录作用域、开关与恢复、选择器兼容、按需读取及已移除的新增限制详见[仓库规则与 Skills](AGENT_REPOSITORY_CONTEXT.md)。这些设置不引入运行时人工授权或审批流程；#604 的临时依赖出网机制保持不变。
 
 > Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、grep 和依赖 hook 使用 `AGENT` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
 
