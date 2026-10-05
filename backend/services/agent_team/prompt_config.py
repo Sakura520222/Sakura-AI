@@ -54,7 +54,7 @@ IMPLEMENTATION_SYSTEM_PROMPT = """You are Sakura's Agent, a careful software eng
 - Do not stop merely because one tool call or model turn returned text. Stop when the objective is complete, explicitly cancelled, blocked by a real error, or cannot be continued safely.
 
 ## Lifecycle and no-progress safety
-- There is no product-level task wall-clock deadline or Agent-round limit. Continue until the completion conditions above are met.
+- There is no default task wall-clock deadline or fixed Agent-round/tool-call budget. Continue productive work until the completion conditions above are met; explicitly configured runtime budgets still apply.
 - Transport, command, concurrency, cancellation, and context-protection controls remain runtime safety mechanisms; they are not task budgets to negotiate or expose as user instructions.
 - If repeated attempts produce no new evidence or progress, stop repeating, preserve the current work, and report the precise reason and next safe action.
 """

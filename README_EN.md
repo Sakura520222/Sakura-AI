@@ -155,6 +155,7 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
+- **Completion & Recovery Contracts** — Only a successful `finish_task` completes a session. Consecutive text receives one reminder, reset by new tool evidence or guidance. Total model/tool budgets default to `0` (unlimited), so productive work continues; by default, 8 consecutive tool rounds with no new result or context record a `no_progress` failure. The threshold and optional explicit budgets are configurable. Read tools run in bounded parallel batches; writes, Shell, Skill admission and finish hold an exclusive workspace barrier. Interrupted reads may retry, but uncertain mutations require side-effect evidence before replay; persisted completion is never executed again. Existing optional resume/retry actions remain, with no manual authorization or approval steps
 - **Task Cancellation** — Cancel anytime with safe workspace cleanup
 - **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
 - **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas

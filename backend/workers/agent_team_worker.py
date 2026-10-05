@@ -62,6 +62,33 @@ def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
     return "Agent 未能生成有效的代码修改"
 
 
+def _runtime_failure_fields(outcome) -> dict[str, str]:
+    """Project precise Harness outcomes onto the compatible task status API.
+
+    A blocked session uses the existing failed-task resume/retry workflow.
+    Keep its reason even when no file was changed; otherwise no-progress and
+    interrupted-mutation failures become indistinguishable from an empty diff.
+    """
+    state = getattr(outcome, "outcome", "unrecoverable_error")
+    statuses = {
+        "blocked": AgentTeamTaskStatus.FAILED.value,
+        "cancelled": AgentTeamTaskStatus.CANCELLED.value,
+        "unrecoverable_error": AgentTeamTaskStatus.FAILED.value,
+    }
+    if state not in statuses:
+        state = (
+            "blocked"
+            if getattr(getattr(outcome, "fullstack_result", None), "success", False)
+            else "unrecoverable_error"
+        )
+    return {
+        "status": statuses[state],
+        "current_phase": state,
+        "failed_phase": state,
+        "error_message": outcome.reason or state,
+    }
+
+
 _DIRECT_PR_NOOP_MESSAGE = (
     "Agent 未产生新的 Git 提交，请通过 Agent Team follow-up 补充要求；"
     "如需重新执行 /agent，请先取消当前任务"
@@ -385,7 +412,7 @@ class AgentTeamWorker:
             )
 
             # 迭代循环被取消
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.CANCELLED.value,
@@ -411,6 +438,14 @@ class AgentTeamWorker:
                 completion_tokens=outcome.completion_tokens,
                 current_phase="iteration_complete",
             )
+
+            if not outcome.success:
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
 
             # ── Phase 3: VALIDATING ──
             if outcome.success and outcome.modified_files:
@@ -650,6 +685,15 @@ class AgentTeamWorker:
                     estimated_cost,
                 )
 
+        except asyncio.CancelledError:
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             logger.error(
                 "Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True
@@ -657,9 +701,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
         finally:
@@ -814,7 +858,7 @@ class AgentTeamWorker:
                 estimated_cost,
             ) = self._accumulate_iteration_cost(task, outcome)
 
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 terminal = True
                 await self._update_task(
                     task_id,
@@ -844,6 +888,15 @@ class AgentTeamWorker:
                 current_phase="iteration_complete",
             )
 
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
+
             if not outcome.modified_files:
                 terminal = True
                 await self._update_task(
@@ -852,20 +905,6 @@ class AgentTeamWorker:
                     current_phase="waiting_human",
                     estimated_cost=estimated_cost,
                     error_message="Agent 未根据 Sakura PR Review 产生新修改",
-                )
-                return task_id
-
-            if not outcome.success:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    estimated_cost=estimated_cost,
-                    error_message=_format_failure_reason(
-                        outcome.reason,
-                        outcome.modified_files,
-                    ),
                 )
                 return task_id
 
@@ -942,6 +981,16 @@ class AgentTeamWorker:
                 rate_limit_reset_at=None,
             )
             return task_id
+        except asyncio.CancelledError:
+            terminal = True
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             terminal = True
             logger.error(
@@ -954,9 +1003,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
             return task_id
@@ -1110,7 +1159,7 @@ class AgentTeamWorker:
                 estimated_cost,
             ) = self._accumulate_iteration_cost(task, outcome)
 
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 terminal = True
                 await self._update_task(
                     task_id,
@@ -1140,6 +1189,15 @@ class AgentTeamWorker:
                 current_phase="followup_complete",
             )
 
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
+
             if not outcome.modified_files:
                 terminal = True
                 await self._update_task(
@@ -1148,20 +1206,6 @@ class AgentTeamWorker:
                     current_phase="waiting_human",
                     estimated_cost=estimated_cost,
                     error_message="Agent 未根据管理员要求产生新修改",
-                )
-                return task_id
-
-            if not outcome.success:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    estimated_cost=estimated_cost,
-                    error_message=_format_failure_reason(
-                        outcome.reason,
-                        outcome.modified_files,
-                    ),
                 )
                 return task_id
 
@@ -1234,6 +1278,16 @@ class AgentTeamWorker:
                 rate_limit_reset_at=None,
             )
             return task_id
+        except asyncio.CancelledError:
+            terminal = True
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             terminal = True
             logger.error(
@@ -1245,9 +1299,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
             return task_id

@@ -254,9 +254,7 @@ async def test_execution_timeout_does_not_claim_network_failure(
         workspace,
         backend,
         [
-            ExecutionResult(
-                exit_code=-9, timed_out=True, stdout=stdout, stderr=stderr
-            ),
+            ExecutionResult(exit_code=-9, timed_out=True, stdout=stdout, stderr=stderr),
             ExecutionResult(exit_code=0),
         ],
         monkeypatch,
@@ -383,6 +381,10 @@ async def test_failed_setup_reaches_agent_and_is_saved_before_execution(
         assert session_id == 507
         saved.append(payload)
 
+    async def finish_session(session_id, outcome, payload):
+        assert outcome == "success"
+        await save_result(session_id, payload)
+
     async def execute(**kwargs):
         assert saved[0]["dependency_setup"]["status"] == "failed"
         received.append(kwargs["reference_context"])
@@ -393,7 +395,9 @@ async def test_failed_setup_reaches_agent_and_is_saved_before_execution(
     loop = IterationLoopService(
         workspace,
         service.workspace_service,
-        checkpoint=SimpleNamespace(save_session_result=save_result),
+        checkpoint=SimpleNamespace(
+            save_session_result=save_result, finish_session=finish_session
+        ),
     )
     monkeypatch.setattr(
         loop,

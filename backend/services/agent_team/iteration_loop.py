@@ -9,7 +9,6 @@ feedback schedules another run of the same Agent.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Self
@@ -61,6 +60,16 @@ class IterationOutcome:
     total_tool_calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+
+    @property
+    def outcome(self) -> str:
+        if self.success:
+            return "success"
+        if self.fullstack_result and not self.fullstack_result.success:
+            return self.fullstack_result.outcome
+        if self.reason == "任务已取消":
+            return "cancelled"
+        return "blocked"
 
 
 class IterationLoopService:
@@ -204,24 +213,23 @@ class IterationLoopService:
                 guidance_ack_callback=self._ack_pending_prompts,
                 cancel_event=cancel_event,
             )
-        finally:
-            self._active_agent = None
-
-        tracker.add_tokens(result.prompt_tokens, result.completion_tokens)
-        session_id = getattr(agent, "session_id", None)
-        await self._complete_session(session_id, result.tool_calls_count)
-        if self.checkpoint and session_id:
-            try:
-                await self.checkpoint.save_session_result(
+        except (asyncio.CancelledError, Exception) as exc:
+            session_id = getattr(agent, "session_id", None)
+            if self.checkpoint and session_id:
+                outcome = (
+                    "cancelled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "unrecoverable_error"
+                )
+                await self.checkpoint.finish_session(
                     session_id,
+                    outcome,
                     {
-                        "success": result.success,
-                        "summary": result.summary,
-                        "modified_files": result.modified_files,
-                        "risk_level": result.risk_level,
-                        "test_result": result.test_result,
-                        "tool_calls_count": result.tool_calls_count,
-                        "error": result.error,
+                        "outcome": outcome,
+                        "success": False,
+                        "error": "cancelled"
+                        if outcome == "cancelled"
+                        else "agent_execution_error",
                         **(
                             {"dependency_setup": dependency_setup.to_dict()}
                             if dependency_setup is not None
@@ -229,8 +237,32 @@ class IterationLoopService:
                         ),
                     },
                 )
-            except Exception as exc:
-                logger.warning("保存 Agent 结构化结果失败: {}", exc)
+            raise
+        finally:
+            self._active_agent = None
+
+        tracker.add_tokens(result.prompt_tokens, result.completion_tokens)
+        session_id = getattr(agent, "session_id", None)
+        if self.checkpoint and session_id:
+            await self.checkpoint.finish_session(
+                session_id,
+                result.outcome,
+                {
+                    "outcome": result.outcome,
+                    "success": result.success,
+                    "summary": result.summary,
+                    "modified_files": result.modified_files,
+                    "risk_level": result.risk_level,
+                    "test_result": result.test_result,
+                    "tool_calls_count": result.tool_calls_count,
+                    "error": result.error,
+                    **(
+                        {"dependency_setup": dependency_setup.to_dict()}
+                        if dependency_setup is not None
+                        else {}
+                    ),
+                },
+            )
 
         if cancel_check and cancel_check():
             return IterationOutcome(
@@ -321,26 +353,31 @@ class IterationLoopService:
             initial_messages = await self.checkpoint.load_messages(session_id)
         elif self.checkpoint:
             if resume_cursor and resume_cursor.role_name == "fullstack":
-                try:
-                    initial_messages = await self.checkpoint.load_messages(
-                        resume_cursor.session_id
-                    )
-                except Exception as exc:
-                    logger.warning("读取历史 implementation checkpoint 失败: {}", exc)
-                    initial_messages = None
-            agent_session = await self.checkpoint.create_session(
-                iteration,
-                "agent",
-                resume_index=self.resume_index,
-            )
-            session_id = agent_session.id
-            if initial_messages:
+                # Recovery evidence is mandatory. A read error must retain the
+                # original cursor rather than start an unexamined fresh run.
+                initial_messages = await self.checkpoint.load_messages(
+                    resume_cursor.session_id
+                )
+                legacy_states = await self.checkpoint.load_tool_call_states(
+                    resume_cursor.session_id
+                )
                 initial_messages = _normalize_legacy_messages(
                     initial_messages,
                     initial_user_message=initial_user_message,
                 )
-                for message in initial_messages:
-                    await self.checkpoint.append_message(session_id, message)
+                agent_session = await self.checkpoint.create_session_from_history(
+                    iteration,
+                    initial_messages,
+                    legacy_states,
+                    resume_index=self.resume_index,
+                )
+            else:
+                agent_session = await self.checkpoint.create_session(
+                    iteration,
+                    "agent",
+                    resume_index=self.resume_index,
+                )
+            session_id = agent_session.id
         if not self.checkpoint:
             # Keep the simple two-argument constructor used by local fakes and
             # by integrations that run without persistence.
@@ -485,45 +522,23 @@ class IterationLoopService:
         if session_id is None:
             raise RuntimeError("缺少历史 implementation session")
 
-        payload = await self.checkpoint.load_session_result(session_id)
-        if payload and isinstance(payload, dict):
-            return FullStackResult(
-                success=payload.get("success", True),
-                summary=payload.get("summary", ""),
-                modified_files=sorted(payload.get("modified_files", [])),
-                risk_level=payload.get("risk_level", "medium"),
-                test_result=payload.get("test_result", ""),
-                tool_calls_count=payload.get("tool_calls_count", 0),
-                error=payload.get("error", ""),
-            )
         return await self._restore_fullstack_result_from_messages(session_id)
 
     async def _restore_fullstack_result_from_messages(
         self,
         session_id: int,
     ) -> FullStackResult:
-        messages = await self.checkpoint.load_messages(session_id)
-        for message in reversed(messages):
-            if message.get("role") != "tool":
-                continue
-            content = message.get("content") or "{}"
-            if "\n\n[进度:" in content:
-                content = content[: content.index("\n\n[进度:")]
-            try:
-                payload = json.loads(content)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict) or "summary" not in payload:
-                continue
-            ai_files = payload.get("modified_files", [])
-            modified_files = ai_files if isinstance(ai_files, list) else []
-            return FullStackResult(
-                success=True,
-                summary=payload.get("summary", ""),
-                modified_files=sorted(modified_files),
-                risk_level=payload.get("risk_level", "medium"),
-                test_result=payload.get("test_result", ""),
-            )
+        agent = FullStackExpertAgent(
+            self.workspace,
+            self.workspace_service,
+            checkpoint=self.checkpoint,
+            session_id=session_id,
+            initial_messages=await self.checkpoint.load_messages(session_id),
+            execution_runner=self.execution_runner,
+        )
+        result = await agent._recover(agent._build_context())
+        if result is not None and result.success:
+            return result
         raise RuntimeError("无法从历史 Agent messages 中恢复完成结果")
 
 
