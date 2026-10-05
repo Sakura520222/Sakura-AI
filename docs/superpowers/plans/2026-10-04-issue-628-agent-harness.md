@@ -1,14 +1,16 @@
 # Agent Harness 2.0 Implementation Plan and Acceptance Ledger
 
-> Execution scope revised by the user on 2026-10-04: stop later-phase expansion; this round covers inventory, confirmed requirement corrections and Phase 1 wrap-up only. Preserve all existing later-phase work. A verified, task-only local commit is permitted, but no push, PR, merge or issue closure. This plan remains the roadmap for the full Issue, not authorization to continue all phases in this round.
+> Current scope (latest user instruction 2026-10-05): an active goal now covers the complete mandatory Agent Harness 2.0 delivery. Finish and commit the current Phase 2 unit, then continue Phases 3–6 by dependency. WIP checkpoint `656c7b65` preserves the prior work; Phase 5 foundation is not yet connected. Keep the same worktree. Local commits only; no push, PR, merge or issue closure.
 
-**Full goal (unchanged):** implement every mandatory requirement of [Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628). **Current round:** preserve work, audit the actual diff, correct autonomous-operation deviations and finish Phase 1 verification, then stop.
+**Full goal (unchanged):** implement every mandatory requirement of [Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628). **Current work:** finish Phase 2's known gaps and independent review, update evidence and commit locally, then continue the remaining mandatory phases.
 **Baseline:** origin/develop `38a021934461bae4932928c3f466df6d47ddc2b8`, fetched 2026-10-04; clean source checkout.
 **Spec:** Issue #628 body, fetched with its sole comment and full timeline. No linked PRs. The bot comment is investigative context, not specification or current-code evidence.
 **Architecture:** retain the existing Agent, worker, checkpoint, runner, Skills and network services. Add runtime-owned scheduling, repository context, orchestration, capability evaluation and trusted plugin adapters. Only the runner chooses infrastructure parameters. Repository data never grants authority.
 **Stack:** Python 3.14, asyncio, FastAPI, SQLAlchemy, existing model-provider abstraction and sandboxd v2.
 
 ## Global constraints
+
+- Latest user contract (2026-10-05): no model-round, total-tool-call or task-step budgets, no call-count termination for subagents, no threshold-forced completion or cheaper-model switch. All nine introduced execution/repository quotas have been removed without hidden replacements. Detect repeated no-progress behavior and request autonomous strategy self-checks; detection is not a workload cutoff. This overrides the earlier once-reminded text termination and bounded-read-count proposals in the Issue.
 
 - User clarification (2026-10-04): Agent operation is fully autonomous. Capabilities are automatically granted or denied by system policy; never add per-tool, dependency, MCP or subagent manual approval/authorization gates. Existing administrator configuration defines policy, not runtime human approval. Preserve #604 unattended execution.
 - Further clarification: avoid a second authorization workflow around ordinary sandboxed operations. The capability layer unifies existing boundary checks, read-only delegation and external/MCP access. Reuse #604 execution-scoped egress/cleanup/audit; do not invent grant tokens, approval states or redundant admission handshakes for ordinary reads/writes/Shell.
@@ -22,9 +24,9 @@
 
 ## Task 1 — Completion, scheduler and durable recovery
 
-- [x] Pure-text responses get one reminder per consecutive no-progress span, then blocked/no_progress. Deterministic evidence tracking detects repeated unchanged tool work; productive work has no default total round/tool budget.
+- [x] Latest contract verification: pure text receives completion reminders and cannot claim success; repeated identical work triggers a nonterminal strategy self-check, with no cumulative execution budgets or text-response cutoff.
 - [x] Only successful finish_task admits success; cancelled, blocked and unrecoverable_error are distinct runtime/session outcomes. Compatible task statuses retain precise current_phase/reasons. Forged terminal outputs are rejected.
-- [x] Tool metadata is runtime-owned. Bounded safe read batches preserve result order; writes, shell, Git mutations and finish use event-loop-local workspace barriers shared across executors. No cross-process exclusion claim.
+- [x] Tool metadata is runtime-owned. Safe read batches preserve result order without an artificial read-count cap; writes, shell, Git mutations and finish use event-loop-local workspace barriers shared across executors. No cross-process exclusion claim.
 - [x] Persist running/completed/failed/cancelled states with locked sequence allocation and atomic results; propagate cancellation and drain actual mutation work.
 - [x] Resume checks terminal/tool consistency and atomic legacy migration; safe reads may retry, uncertain mutations do not blindly replay.
 - [x] Completion, scheduling, cancellation, guidance, resume, no-progress and local browser checks passed; exact commands/limits are recorded in `docs/AGENT_HARNESS_2_ACCEPTANCE.md`.
@@ -33,11 +35,13 @@ Implementation surface: fullstack_expert.py, tools/base.py, tool_scheduler.py, f
 
 ## Task 2 — Repository instructions and progressive Skills
 
-- [ ] Load root and target-directory AGENTS.md with deterministic ancestor-to-descendant ordering; .sakura/AGENTS.md and .sakura/rules/*.md; optional CLAUDE.md.
-- [ ] Repository text is bounded untrusted user/tool context, never system authority. Reject symlink/traversal/secret paths and limit filesystem scanning/content.
-- [ ] Discover .agents/skills/*/SKILL.md and .sakura/skills/*/SKILL.md metadata; use_skill loads bodies only on demand; allowed_tools only narrows runtime permissions.
-- [ ] Ensure restored conversations, guidance and compaction retain authoritative separation.
-- [ ] Tests: inheritance, path-specific scope, malicious instructions/metadata, symlink escape, size limits, lazy body loading and existing Skills compatibility.
+- [x] Honor agent_team_skills_enabled during discovery, model context/schema projection, cached/direct use_skill calls and resume; independent repository instructions continue working. Runtime changes must not create approval steps.
+- [x] Persist runtime-owned historical Skill restriction ceilings with tool/checkpoint results. Resume intersects historical and current restrictions; changed, removed or corrupt metadata cannot expand them. End-workflow cleanup restores only existing runtime access.
+- [x] Read current root/ancestor AGENTS.md, optional CLAUDE.md and Sakura rules for every schema-supported path/path array. Replace and deduplicate the relevant scope snapshot; refresh updates/deletions/resume; remove all five introduced repository byte/count quotas without replacement; never retain obsolete sibling rules.
+- [x] Preserve existing DB Skill size contracts (installation code currently permits 512 KiB per file) and actual documented/tested selectors such as Shell(git status) and Bash(git status:*). Unsupported selectors fail explicitly, never silently widen. Repository reads have no newly introduced size/count quotas; the pre-existing DB install/read contract remains unchanged.
+- [x] Separate metadata discovery, directory listing and explicit body loading. Validate freshness/content cache invalidation, secure descriptors and explicit errors with behavioral tests.
+- [x] Synchronize existing Skill settings and removal of all nine quota controls in both locales and user docs, explaining switch, priority, scope, recovery and progressive loading. Verify actual configuration-page interaction.
+- [x] Run focused RED/GREEN, affected-chain regressions, Ruff and diff checks; perform one Phase 2 scoped independent review and evidence-backed fixes. Update the acceptance report and commit locally; no unrelated feature work or replacement quotas.
 
 Implementation surface: repository_context.py, skill_service.py, tools/use_skill_tool.py, fullstack_expert.py and focused tests. Prefer a new focused service over rewriting unrelated prompt modules.
 
@@ -45,7 +49,7 @@ Implementation surface: repository_context.py, skill_service.py, tools/use_skill
 
 - [ ] spawn_agent / wait_agent / cancel_agent use independent context and durable child sessions; return structured results.
 - [ ] Fixed runtime allowlist: safe read/search/diff/detect/web and policy-approved read-only MCP. No Shell, file writes, Git write/push or permission expansion.
-- [ ] Bound live and total children, model/tool budget and depth; main remains sole writer. Shared workspace scheduler coordinates readers with parent writes.
+- [ ] Schedule live children within available concurrency (Issue requirement), with no cumulative spawn/model/tool budget or lifetime call-count termination. Child tools cannot recursively spawn writers; main remains sole writer. Shared workspace scheduler coordinates readers with parent writes.
 - [ ] Parent cancellation/shutdown recursively cancels and awaits children. Resume never silently abandons or duplicates active children.
 - [ ] Tests: concurrent isolated children, saturation, deny writes via every executor path, wait/cancel, model failures and parent cancellation.
 
@@ -91,8 +95,8 @@ Initial code inspection confirms pure-text success, serial execution and static 
 
 | Phase | Implementation | Verification | State |
 |---|---|---|---|
-| 1 | Completion/scheduler/checkpoint/worker/resume UI; autonomy corrections complete | 900 passed/1 prerequisite skip; 146 affected tests after import fixes; Ruff; actual browser; scoped review approved | Verified; stop this round |
-| 2 | Partial repository instructions/Skills, already wired to Agent | 17 new tests passed; guidance regression fixed in wrap; other documented gaps remain | Partial; expansion stopped |
+| 1 | Completion/scheduler/checkpoint/worker/resume UI; latest unlimited execution/self-check correction in progress | Latest affected regression 938 passed/1 prerequisite skip; nonterminal self-check, cancellation, resume, Ruff and scoped review passed | Verified in one process/event loop |
+| 2 | Switch, durable Skill ceilings, refreshed rules, selector compatibility and on-demand loading connected | 938 passed/1 prerequisite skip; two review PoCs fixed, 112-test independent recheck passed; bilingual real config browser/CSRF verified | Verified; local checkpoint before Phase 3 |
 | 3 | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending |
 | 5 | Standalone capability schema/profile/direct boundary checks; not integrated | 30 foundation unit tests pass; not phase acceptance | Partial; expansion stopped |

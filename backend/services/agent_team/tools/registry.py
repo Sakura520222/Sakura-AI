@@ -13,7 +13,8 @@ from backend.services.agent_team.network_policy import (
     AgentTeamNetworkPolicy,
     get_agent_team_network_policy,
 )
-from backend.services.agent_team.tools.base import BaseTool, ToolExecutor
+from backend.services.agent_team.repository_context import skills_enabled
+from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolExecutor
 from backend.services.agent_team.tools.edit_tool import EditTool
 from backend.services.agent_team.tools.fetch_url_tool import FetchUrlTool
 from backend.services.agent_team.tools.finish_task_tool import FinishTaskTool
@@ -138,6 +139,7 @@ def get_tool_definitions(
 async def get_tool_definitions_fresh(
     role: str = "agent",
     provider: str | None = None,
+    ctx: ToolContext | None = None,
 ) -> list[dict[str, Any]]:
     """Build model schemas after a fresh network-policy read.
 
@@ -148,13 +150,47 @@ async def get_tool_definitions_fresh(
     """
 
     policy = await get_agent_team_network_policy()
+    enabled = await skills_enabled()
+    if ctx:
+        ctx.skills_enabled = enabled
     definitions = get_tool_definitions(role=role, provider=provider)
+    definitions = [
+        schema
+        for schema in definitions
+        if (ctx is None or ctx.allows_skill_tool(schema["function"]["name"]))
+        and (
+            schema["function"]["name"] != "use_skill"
+            or enabled
+            or (ctx is not None and ctx.active_skill_tools)
+        )
+    ]
+    if ctx:
+        for schema in definitions:
+            name = schema["function"]["name"]
+            if name == "use_skill" and not enabled:
+                schema["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": {
+                        "slug": {"type": "string"},
+                        "end_skill": {"type": "boolean", "enum": [True]},
+                    },
+                    "required": ["slug", "end_skill"],
+                }
+            elif name == "run_command" and ctx.active_skill_tools:
+                schema["function"]["description"] += (
+                    "\nActive Skill command selectors are enforced by the runtime: "
+                    + str(
+                        {
+                            slug: scope.to_data()
+                            for slug, scope in ctx.active_skill_tools.items()
+                        }
+                    )
+                )
     if policy is AgentTeamNetworkPolicy.OFFLINE:
         return [
             schema
             for schema in definitions
-            if schema.get("function", {}).get("name")
-            not in {"search_web", "fetch_url"}
+            if schema.get("function", {}).get("name") not in {"search_web", "fetch_url"}
         ]
     return definitions
 

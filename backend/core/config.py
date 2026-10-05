@@ -865,15 +865,6 @@ class Settings(BaseSettings):
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
-    agent_team_max_model_rounds: int = Field(0, ge=0, le=1000)
-    agent_team_max_tool_calls: int = Field(0, ge=0, le=10000)
-    agent_team_max_parallel_reads: int = Field(4, ge=1, le=32)
-    agent_team_max_no_progress_rounds: int = Field(8, ge=1, le=1000)
-    agent_team_repository_file_bytes: int = Field(65536, ge=1024, le=524288)
-    agent_team_repository_total_bytes: int = Field(262144, ge=1024, le=2097152)
-    agent_team_repository_scan_entries: int = Field(8192, ge=1, le=100000)
-    agent_team_repository_skill_count: int = Field(64, ge=1, le=256)
-    agent_team_repository_metadata_bytes: int = Field(8192, ge=256, le=32768)
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_branch_index_delay: float = 2.0
@@ -1387,15 +1378,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                         "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
                     ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
-                    "agent_team_max_model_rounds": "每会话可选模型调用预算；0（默认）不限制有进展的执行，正数预算在恢复时保留计数",
-                    "agent_team_max_tool_calls": "每会话可选工具调用预算；0（默认）不设总量限制，达到正数预算时记录具体失败原因",
-                    "agent_team_max_parallel_reads": "同一工作区允许同时执行的只读工具数；写入、Shell 和完成工具独占执行",
-                    "agent_team_max_no_progress_rounds": "连续未产生新工具结果或上下文的工具轮次上限；新证据（含不同错误诊断）重置计数",
-                    "agent_team_repository_file_bytes": "仓库指令或 Skill 单文件读取字节上限；拒绝超限内容",
-                    "agent_team_repository_total_bytes": "每次仓库指令上下文的总字节上限",
-                    "agent_team_repository_scan_entries": "仓库指令与 Skill 扫描目录项上限；Shell 扫描超限时返回工具错误",
-                    "agent_team_repository_skill_count": "每个仓库最多发现的 Skill 数量",
-                    "agent_team_repository_metadata_bytes": "仓库 Skill YAML 元数据头的字节上限；正文按需读取",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
@@ -1414,15 +1396,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_network_policy",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
-                    "agent_team_max_model_rounds",
-                    "agent_team_max_tool_calls",
-                    "agent_team_max_parallel_reads",
-                    "agent_team_max_no_progress_rounds",
-                    "agent_team_repository_file_bytes",
-                    "agent_team_repository_total_bytes",
-                    "agent_team_repository_scan_entries",
-                    "agent_team_repository_skill_count",
-                    "agent_team_repository_metadata_bytes",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_draft_pr",
@@ -1709,15 +1682,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "issue_candidate_pool_multiplier": ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
     "agent_team_candidate_cache_ttl": (0, 3600),
     "agent_team_dependency_install_attempts": (1, 5),
-    "agent_team_max_model_rounds": (0, 1000),
-    "agent_team_max_tool_calls": (0, 10000),
-    "agent_team_max_parallel_reads": (1, 32),
-    "agent_team_max_no_progress_rounds": (1, 1000),
-    "agent_team_repository_file_bytes": (1024, 524288),
-    "agent_team_repository_total_bytes": (1024, 2097152),
-    "agent_team_repository_scan_entries": (1, 100000),
-    "agent_team_repository_skill_count": (1, 256),
-    "agent_team_repository_metadata_bytes": (256, 32768),
     "agent_team_dependency_retry_delay_seconds": (0, 60),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
@@ -1897,15 +1861,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
     "agent_team_max_concurrent": "最大并发任务数",
-    "agent_team_max_model_rounds": "每会话最大模型轮次",
-    "agent_team_max_tool_calls": "每会话最大工具调用数",
-    "agent_team_max_parallel_reads": "最大并行只读工具数",
-    "agent_team_max_no_progress_rounds": "连续无进展工具轮次上限",
-    "agent_team_repository_file_bytes": "仓库上下文单文件字节上限",
-    "agent_team_repository_total_bytes": "仓库指令总字节上限",
-    "agent_team_repository_scan_entries": "仓库上下文扫描上限",
-    "agent_team_repository_skill_count": "仓库 Skill 数量上限",
-    "agent_team_repository_metadata_bytes": "仓库 Skill 元数据字节上限",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_draft_pr": "创建 Draft PR",

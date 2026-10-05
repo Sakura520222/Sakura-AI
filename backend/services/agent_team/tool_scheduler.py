@@ -1,4 +1,4 @@
-"""Bounded read batches and workspace-wide, writer-preferring barriers.
+"""Read batches and workspace-wide, writer-preferring barriers.
 
 Locks are shared by executors on the same worker event loop. They do not provide
 exclusion across worker processes; no distributed workspace lease is implemented.
@@ -30,15 +30,11 @@ class WorkspaceBarrier:
         self.waiting_writers = 0
 
     @asynccontextmanager
-    async def hold(self, shared: bool, limit: int) -> AsyncIterator[None]:
+    async def hold(self, shared: bool) -> AsyncIterator[None]:
         async with self.condition:
             if shared:
                 await self.condition.wait_for(
-                    lambda: (
-                        not self.writer
-                        and not self.waiting_writers
-                        and self.readers < limit
-                    )
+                    lambda: not self.writer and not self.waiting_writers
                 )
                 self.readers += 1
             else:
@@ -110,9 +106,7 @@ async def run_tool_batch(
             break
         group = [calls[offset]]
         if executor.metadata(calls[offset].function.name).parallel_safe:
-            while (
-                offset + len(group) < len(calls) and len(group) < ctx.max_parallel_reads
-            ):
+            while offset + len(group) < len(calls):
                 candidate = calls[offset + len(group)]
                 if not executor.metadata(candidate.function.name).parallel_safe:
                     break

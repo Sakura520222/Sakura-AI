@@ -15,7 +15,7 @@
 |---|---|---|
 | Prompt 角色 | 固定系统提示词只承载 Agent 的稳定身份、工具边界和安全约束；初始任务和管理员指导都作为 `user` 输入；管理员指导进入队列，并在下一次模型调用前注入。 | [OpenAI Responses API 的 `instructions` 与 `input` 角色定义](https://platform.openai.com/docs/api-reference/responses/create)、[OpenAI Agents SDK 的 Agent 配置](https://openai.github.io/openai-agents-python/ref/agent/)、[RunState 暂存新输入](https://github.com/openai/openai-agents-python/blob/main/docs/results.md) |
 | Agent 形态 | Agent Team 只保留一个实现型 Agent profile；PR 审查是独立的 review workflow，不再作为实现任务中的第二个“专家”。 | [GitHub Copilot coding agent 完成后请求独立 code review](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/overview)、[GitHub Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) |
-| 任务寿命 | 去除产品级墙钟 `task_timeout`；运行默认可持续到完成或显式取消。仍保留取消、模型/工具调用故障处理、资源/步骤预算和并发限制等安全控制。 | [LangGraph interrupt 等待外部输入](https://docs.langchain.com/oss/python/langgraph/interrupts)、[Agents SDK 的 `max_turns=None` 与取消](https://openai.github.io/openai-agents-python/running_agents/)、[Agents SDK usage](https://openai.github.io/openai-agents-python/usage/) |
+| 任务寿命 | 去除产品级墙钟 `task_timeout`；运行默认可持续到完成或显式取消。保留取消、模型/工具调用故障处理和工作区写入互斥；不新增会话轮数、工具总量或只读并发上限。 | [LangGraph interrupt 等待外部输入](https://docs.langchain.com/oss/python/langgraph/interrupts)、[Agents SDK 的 `max_turns=None` 与取消](https://openai.github.io/openai-agents-python/running_agents/)、[Agents SDK usage](https://openai.github.io/openai-agents-python/usage/) |
 | Skills | 采用目录化 `SKILL.md` manifest；启动时只发现元数据，匹配后才加载正文，正文引用的资源再按需读取；安装/更新先验证，权限默认收紧，版本和来源放入 Sakura 命名空间元数据。 | [Agent Skills specification](https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx)、[Agent Skills client implementation guide](https://github.com/agentskills/agentskills/blob/main/docs/client-implementation/adding-skills-support.mdx)、[GitHub Copilot Skills 安全说明](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills) |
 | 实时 UI | 用有序、可恢复的语义事件时间线表达“回合、消息、工具、技能、等待/取消/完成”；默认折叠低价值细节，详情再展开。 | [OpenAI Agents SDK semantic stream events](https://github.com/openai/openai-agents-python/blob/main/docs/streaming.md)、[LangSmith Messages/Turns/Details 视图](https://docs.langchain.com/langsmith/view-traces)、[LangGraph 多投影事件流](https://docs.langchain.com/oss/python/langgraph/event-streaming) |
 
@@ -51,7 +51,7 @@ status(pending|admitted|consumed|cancelled), admitted_turn_id,
 created_event_id, consumed_event_id
 ```
 
-`author_id` 只用于授权和审计；它不代表模型层级。管理员身份不能借由把文本放入高优先级 prompt 来扩大 Agent 的工具权限。权限检查、可执行操作审批和危险工具确认必须在运行时/工具层完成。
+`author_id` 只用于授权和审计；它不代表模型层级。管理员身份不能借由把文本放入高优先级 prompt 来扩大 Agent 的工具权限。边界检查由确定性运行时代码完成，正常操作不新增人工审批。
 
 ### 1.3 下一次模型调用的安全接纳协议
 
@@ -99,7 +99,7 @@ created_event_id, consumed_event_id
 
 - **显式取消**：`cancel requested -> cancelling -> cancelled`，支持立即取消和当前模型/工具回合完成后取消；取消后继续排空事件流并落库终态。
 - **传输/调用故障控制**：模型 HTTP、Redis、GitHub 等单次调用仍需自己的连接/读取/重试策略，以便断开时能恢复或报错；它们不应被展示为任务超时。
-- **资源/步骤预算**：请求数、token、工具并发、单个工具输出大小和可选的步骤上限用于成本与循环保护。默认可以不启用产品级步骤截止，但必须存在可观测和管理员可配置的保护面。
+- **现有运行时边界**：继续使用既有 Sandbox、取消和故障处理，不新增会话步骤、工具总量或只读并发上限。
 - **进程级故障恢复**：worker 重启、模型失败或机器掉电后，从持久运行状态恢复，而不是因旧墙钟已过直接标记失败。
 
 建议状态机不再包含 `timed_out`：
@@ -172,7 +172,7 @@ discover metadata -> validate manifest -> show catalog
 
 1. **发现**：只读取 frontmatter，生成 `name/description/location/source/version/validation_status`；不把所有正文塞进 system prompt。无有效 Skill 时不要注册空的 Skill 工具或空列表。
 2. **校验**：安装和更新阶段解析 YAML、校验必填字段/字符集/长度、目录名与 name、相对引用、资源大小、符号链接/路径穿越和 digest；脚本不在安装阶段执行。必填字段缺失时跳过；非关键兼容问题可警告并显示诊断，这与参考客户端的 lenient validation 建议一致。[Client implementation guide](https://github.com/agentskills/agentskills/blob/main/docs/client-implementation/adding-skills-support.mdx)
-3. **权限**：`allowed-tools` 只能作为候选声明，不能绕过 Sakura 的工具白名单、工作区边界和审批；默认不自动批准 shell/network/写操作。技能包更新若扩大权限，必须让管理员重新确认并产生审计事件。
+3. **权限**：`allowed-tools` 由确定性代码执行，只能收窄现有工具范围。Shell、依赖安装和写操作在已有配置及 Sandbox 内自主执行，不增加逐次审批。运行中及恢复时将历史限制与当前限制取交集，防止元数据放宽导致扩权。具体行为见[当前使用文档](AGENT_REPOSITORY_CONTEXT.md)。
 4. **激活**：以 `activate_skill(name, task_id)` 或受控文件读取方式返回正文；正文中的 `references/`、`scripts/`、`assets/` 仍按需读取。Skill 是说明/流程扩展，不应自行获得超出 Agent Team 工具策略的能力。
 5. **更新**：下载到临时版本目录，完整校验后原子切换；保留 active revision 和上一版本，失败时回滚。名称冲突时按明确的 project/user/bundled 优先级解析，并在页面显示实际来源。
 6. **质量评估**：为关键 Skill 保存最小输入/预期行为测试，要求执行验证脚本或 checklist；把触发描述当作可评估字段，避免含糊的“适用于所有任务”。
@@ -256,7 +256,7 @@ task_succeeded, task_failed
 - Skill 目录和 `SKILL.md` frontmatter 可被解析；必填字段、name 约束、资源路径和权限变化有验证诊断。
 - 发现阶段只返回元数据；激活阶段才返回正文；引用资源和脚本按需加载。
 - Sakura 版本、schema、来源 revision/digest 和实际权限有结构化字段；更新可验证、原子切换和回滚。
-- shell/network/写操作默认不自动批准；Skills 不能扩大 Agent Team 既有工具权限。
+- Shell、依赖安装和写操作按已有配置自主执行；Skills 不能扩大已有工具权限，不新增人工批准。
 - 关键 Skill 有验证脚本/测试样例，页面能显示验证失败原因和最近使用情况。
 
 ### 实时 UI
