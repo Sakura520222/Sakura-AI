@@ -1,18 +1,19 @@
 # 项目记忆
 
-累计反思 11 次
+累计反思 12 次
 
 ## 核心审查原则
 
 - **"无评论"≠"无问题"**：空结果可能源于工具故障；结论须附验证依据（搜索命令、CI 链接）
 - **高分警惕确认偏误**：高分仍须负向用例验证；已有 major 未决项时，即使增量干净也须保持阻断
 - **审查策略动态升级**：≥30 commits / >500 行、或增量 ≥3 轮 / 累计 >1000 行时切 full；最简变更宜 medium
-- **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据；在数据源/配置存在扰动或超限时严格实施 Fail-Closed 校验，确保分析结论和配置加载的绝对可靠
+- **Fail-Closed**：宁可误报不可漏报；文档不可作验证依据；在数据源/配置存在扰动或超限时严格实施 Fail-Closed 校验，确保分析结论和配置加载绝对可靠
 - **报告结构化**：摘要→关键风险→修复建议；阻断项须在摘要阶段可见
 
 ## 依赖与锁文件
 
-- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；CI 加 `uv lock --check` / `uv sync --locked`；Dependabot 等机器人 PR 若漏更新锁文件一律 Fail-Closed 阻断
+- **锁文件同步=阻断项**：改 pyproject/requirements 必须同 PR 更新 uv.lock；CI 加 `uv sync --locked` / `uv lock --check` 校验；Dependabot 等机器人 PR 若漏更新锁文件一律 Fail-Closed 阻断
+- **Dependabot/Bot PR 防御**：机器人生成的依赖提升 PR 默认易漏 `uv.lock`，审查时优先检查锁文件改动，缺失则直接阻断并提示使用 `uv lock` 或 `@dependabot rebase`
 - **uv 升级指引**：升级依赖优先使用精准单包锁命令 `uv lock --upgrade-package <package_name>`，避免删锁引致非预期依赖变动
 - **升级必附 Release Notes**：核对 Minor/Major 升级 Breaking Changes 与隐式 Extra（如 SQLAlchemy [asyncio] / greenlet 解耦）
 - **依赖清理契机**：依赖集中合并 PR 需全库检索无引用包，及时清退降低攻击面；子项目依赖须与根项目一致
@@ -28,7 +29,8 @@
 - **CI 语法与全模块导入硬防线**：经 Python 3.14+ 确认的语法错误可能导致 pytest 收集阶段失败；须在相同版本的 CI 环境前置执行 `python -m py_compile` 及全模块 import 校验，0 容忍阻断
 - **已确认误报：无括号多异常捕获（PR641/PR643）**：本项目运行时为 Python 3.14+；依据 PEP 758，`except TypeError, ValueError:` 是合法语法。不得将此误报复用或判为阻断项
 - **Best-Effort 防御规范**：辅助落库/诊断逻辑若用宽泛捕获，须收敛为具体基类异常（如 `SQLAlchemyError`/`OSError`），注释标注 `#INTERNAL_ERROR` 与 `best-effort` 说明，严禁裸用 `except Exception`
-- **AI 工具与索引防御**：外部/模型传入的行号切片参数须物理钳制：`0 <= min_idx <= max_idx <= len(sequence)`；重试与 Recovery 载荷中参数（如 `context_lines`）必须使用已物理钳制后的生效值，防止下游工具参数越界或膨胀；遇到工具错误参数时须返回结构化 recovery 引导
+- **AI 工具与索引防御**：外部/模型传入的行号切片参数须物理钳制：`0 <= min_idx <= max_idx <= len(sequence)`；遇到工具错误参数时须返回结构化 recovery 引导
+- **解析器与布尔防线**：拒绝 `bool` 伪装 `int`（用 `type(x) is not int`）；零行/纯元数据 Patch 解析放宽时必须限制 downstream 生成结构禁用文本引用（ungrounded）
 
 ## 错误治理、降级与日志规范
 
