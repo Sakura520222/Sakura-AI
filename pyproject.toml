@@ -66,7 +66,7 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "pyotp>=2.10.0",
     "qrcode[pil]>=8.2",
-    "webauthn>=3.0.0",
+    "webauthn>=3.0.1",
 
     # API 限流
     "slowapi>=0.1.10",
