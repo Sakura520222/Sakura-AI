@@ -180,6 +180,115 @@ def test_intercept_handler_suppresses_http_noise_but_keeps_warnings(monkeypatch)
     ]
 
 
+def test_intercept_handler_suppresses_apscheduler_executor_heartbeat_but_keeps_alerts(
+    monkeypatch,
+):
+    """APScheduler 逐跳执行 INFO 必须被抑制，WARNING/ERROR 与生命周期 INFO 保留。
+
+    star_aid tick 即使功能关闭也保持注册（多副本观察远端开启，见
+    backend/services/star_aid_scheduler.py），APScheduler 每次触发都会经
+    ``apscheduler.executors.default`` 发出 "Running job"/"executed successfully"
+    两条 INFO，形成 Issue #650 报告的每 3 分钟心跳噪音；executor 的
+    WARNING（missed run / max instances）与 ERROR（job 异常）以及
+    ``apscheduler.scheduler`` 的一次性生命周期 INFO 仍须可见。
+    """
+    calls = []
+
+    class LoguruLogger:
+        def level(self, name):
+            return type("Level", (), {"name": name})()
+
+        def opt(self, **_kwargs):
+            return self
+
+        def log(self, level, message, *args):
+            calls.append((level, message, args))
+
+    monkeypatch.setattr("backend.core.logging_bridge.logger", LoguruLogger())
+    handler = InterceptHandler()
+
+    def _record(logger_name, level, message):
+        return logging.LogRecord(
+            name=logger_name,
+            level=level,
+            pathname=__file__,
+            lineno=1,
+            msg=message,
+            args=(),
+            exc_info=None,
+        )
+
+    handler.emit(
+        _record(
+            "apscheduler.executors.default",
+            logging.INFO,
+            'Running job "仓库互助自动点星 (trigger: interval[0:03:00], '
+            'next run at: 2026-10-04 12:56:49 CST)" '
+            "(scheduled at 2026-10-04 12:53:49.541006+08:00)",
+        )
+    )
+    handler.emit(
+        _record(
+            "apscheduler.executors.default",
+            logging.INFO,
+            'Job "仓库互助自动点星 (trigger: interval[0:03:00], next run at: '
+            '2026-10-04 12:56:49 CST)" executed successfully',
+        )
+    )
+    handler.emit(
+        _record(
+            "apscheduler.executors.default",
+            logging.WARNING,
+            'Run time of job "仓库互助自动点星 (trigger: interval[0:03:00], '
+            'next run at: 2026-10-04 12:56:49 CST)" was missed by 0:00:01.234567',
+        )
+    )
+    handler.emit(
+        _record(
+            "apscheduler.executors.default",
+            logging.ERROR,
+            'Job "仓库互助自动点星 (trigger: interval[0:03:00], next run at: '
+            '2026-10-04 12:56:49 CST)" raised an exception',
+        )
+    )
+    handler.emit(
+        _record(
+            "apscheduler.scheduler",
+            logging.INFO,
+            'Added job "仓库互助自动点星" to job store "default"',
+        )
+    )
+
+    assert calls == [
+        (
+            "WARNING",
+            "[{}] {}",
+            (
+                "apscheduler.executors.default",
+                'Run time of job "仓库互助自动点星 (trigger: interval[0:03:00], '
+                'next run at: 2026-10-04 12:56:49 CST)" was missed by 0:00:01.234567',
+            ),
+        ),
+        (
+            "ERROR",
+            "[{}] {}",
+            (
+                "apscheduler.executors.default",
+                'Job "仓库互助自动点星 (trigger: interval[0:03:00], next run at: '
+                '2026-10-04 12:56:49 CST)" raised an exception',
+            ),
+        ),
+        (
+            "INFO",
+            "[{}] {}",
+            (
+                "apscheduler.scheduler",
+                'Added job "仓库互助自动点星" to job store "default"',
+            ),
+        ),
+    ]
+
+
 def test_redact_standard_log_message_masks_url_passwords_and_bot_tokens():
     message = (
         "mysql+asyncmy://sakura:database-password@db.local/sakura "
