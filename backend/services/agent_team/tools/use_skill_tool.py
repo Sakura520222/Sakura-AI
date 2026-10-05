@@ -8,6 +8,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from backend.services.agent_team.repository_context import (
+    RepositoryContext,
+    RepositoryContextError,
+    parse_allowed_tools,
+)
 from backend.services.agent_team.skill_service import (
     SKILL_FILE_NAME,
     _list_safe_skill_files,
@@ -79,6 +84,11 @@ class UseSkillTool(BaseTool):
                             "替换 Skill 内容中的 $ARGUMENTS 和命名参数（$arg_name / ${arg_name}）。"
                         ),
                     },
+                    "end_skill": {
+                        "type": "boolean",
+                        "description": "结束此 Skill 工作流并恢复此前的运行时工具范围；不会授予新权限。",
+                        "default": False,
+                    },
                 },
                 "required": ["slug"],
             },
@@ -88,13 +98,28 @@ class UseSkillTool(BaseTool):
     def is_read_only(self) -> bool:
         return True
 
+    def runtime_metadata(self):
+        from backend.services.agent_team.tools.base import ToolMetadata
+
+        # Skill admission changes session instructions and later capability scope.
+        return ToolMetadata(read_only=True)
+
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         slug = normalize_skill_slug(str(args.get("slug") or ""))
+        if args.get("end_skill") is True:
+            ctx.active_skill_tools.pop(slug, None)
+            return ToolResult(True, output={"slug": slug, "ended": True})
         skills_index = ctx.extra.get("skills_index") or {}
         if slug not in skills_index:
             return ToolResult(success=False, error=f"Skill 未启用或不存在: {slug}")
 
         entry = skills_index[slug]
+        try:
+            allowed = parse_allowed_tools(entry.get("allowed_tools"))
+        except RepositoryContextError as exc:
+            return ToolResult(False, error=str(exc), error_code="SKILL_METADATA_REJECTED")
+        if entry.get("source_type") == "repository":
+            return await self._repository_skill(args, ctx, slug, entry, allowed)
         install_path = Path(str(entry.get("install_path") or "")).resolve()
         skills_root_value = ctx.extra.get("skills_root")
         skills_root = (
@@ -134,14 +159,19 @@ class UseSkillTool(BaseTool):
             return ToolResult(success=False, error=f"文件不存在: {slug}/{target_file}")
 
         target_file = safe_target.as_posix()
-        cache_key = f"{slug}:{target_file}"
+        cache_key = json.dumps([slug, target_file, str(args.get("args") or "")])
         cache = ctx.extra.setdefault("skills_cache", {})
         if cache_key in cache:
             cached = dict(cache[cache_key])
             cached["cached"] = True
+            self._activate(ctx, slug, allowed)
             return ToolResult(success=True, output=cached)
 
-        content = await asyncio.to_thread(target_path.read_text, encoding="utf-8")
+        try:
+            reader = RepositoryContext(skills_root or skill_dir)
+            content = await asyncio.to_thread(reader.read_text, target_path.relative_to(reader.root).as_posix())
+        except RepositoryContextError as exc:
+            return ToolResult(False, error=str(exc), error_code="SKILL_CONTENT_REJECTED")
 
         # 参数替换
         args_str = str(args.get("args") or "").strip()
@@ -171,7 +201,42 @@ class UseSkillTool(BaseTool):
         if arg_names_raw:
             output["arguments"] = self._parse_json_list(arg_names_raw)
         cache[cache_key] = dict(output)
+        self._activate(ctx, slug, allowed)
         return ToolResult(success=True, output=output)
+
+    @staticmethod
+    def _activate(ctx: ToolContext, slug: str, allowed: frozenset[str] | None) -> None:
+        if allowed is not None:
+            previous = ctx.active_skill_tools.get(slug)
+            ctx.active_skill_tools[slug] = allowed if previous is None else previous & allowed
+
+    async def _repository_skill(self, args, ctx, slug, entry, allowed) -> ToolResult:
+        repository = ctx.repository_context
+        if repository is None:
+            return ToolResult(False, error="Repository Skill context unavailable")
+        try:
+            if args.get("list_files"):
+                files = await asyncio.to_thread(repository.list_skill_files, entry)
+                return ToolResult(True, output={"slug": slug, "files": files, "file_count": len(files), "has_attachments": len(files) > 1})
+            filename = str(args.get("file") or SKILL_FILE_NAME)
+            if _safe_skill_relative_path(filename) is None:
+                raise RepositoryContextError("Invalid Skill attachment path")
+            content, metadata = await asyncio.to_thread(repository.load_skill, entry, filename)
+            current_allowed = parse_allowed_tools(metadata.get("allowed_tools"))
+            # A changed repository header can narrow a discovery snapshot,
+            # never use that change to widen an already admitted workflow.
+            if current_allowed is not None:
+                allowed = current_allowed if allowed is None else allowed & current_allowed
+            args_str = str(args.get("args") or "").strip()
+            if args_str:
+                content = _substitute_arguments(content, args_str, self._parse_json_list(metadata.get("arguments", "")))
+            output = {"slug": slug, "name": metadata["name"], "description": metadata["description"], "when_to_use": metadata["when_to_use"], "file": filename, "content": content, "cached": False, "source_type": "repository"}
+            if allowed is not None:
+                output["allowed_tools"] = sorted(allowed)
+            self._activate(ctx, slug, allowed)
+            return ToolResult(True, output=output)
+        except (OSError, RepositoryContextError) as exc:
+            return ToolResult(False, error=str(exc), error_code="SKILL_CONTENT_REJECTED")
 
     @staticmethod
     def _parse_json_list(value: str) -> list[str]:
