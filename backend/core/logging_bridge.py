@@ -16,7 +16,11 @@ from backend.core.time_service import SystemClock, get_time_service
 
 APP_LOG_DIRECTORY = Path("logs")
 APP_LOG_RETENTION_DAYS = 10
-_NOISY_LOGGER_PREFIXES = ("httpx", "httpcore", "telegram")
+# apscheduler.executors：每个 job 触发都会发 "Running job"/"executed successfully"
+# 两条 INFO；star_aid tick 即使功能关闭也保持注册（多副本观察远端开启），
+# 不过滤就会形成 Issue #650 的周期性心跳噪音。executor 的 WARNING（missed
+# run / max instances）与 ERROR（job 异常）不受影响。
+_NOISY_LOGGER_PREFIXES = ("httpx", "httpcore", "telegram", "apscheduler.executors")
 _URL_PASSWORD_PATTERN = re.compile(
     r"(?P<prefix>[a-zA-Z][a-zA-Z0-9+.-]*://[^:/\s@]+:)[^@/\s]+(?P<suffix>@)"
 )
@@ -131,7 +135,7 @@ class InterceptHandler(logging.Handler):
 
 
 def _is_noisy_library_record(record: logging.LogRecord) -> bool:
-    """抑制高频 HTTP 传输和 Telegram 轮询的正常细节日志。"""
+    """抑制高频 HTTP 传输、Telegram 轮询与 APScheduler 逐跳执行的正常细节日志。"""
     return record.levelno < logging.WARNING and any(
         record.name == prefix or record.name.startswith(f"{prefix}.")
         for prefix in _NOISY_LOGGER_PREFIXES
