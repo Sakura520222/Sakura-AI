@@ -13,7 +13,7 @@ openai>=3.8.0
 httpx>=0.28.1
 
 # 数据库
-sqlalchemy[asyncio]>=2.1.0,<2.2
+sqlalchemy[asyncio]>=2.1.1,<2.2
 asyncmy>=0.2.15
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.19.2
