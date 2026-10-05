@@ -10,7 +10,7 @@
 
 Skills 的本质不是“普通 prompt 模板文件”，而是一套建立在 `Command` 与 `Tool` 系统之上的可发现、可授权、可延迟加载、可动态激活、可作为子 Agent 执行的能力扩展机制。
 
-> Sakura 当前实现补充：本项目已在 Agent Team 中实现 Skills 管理与调用能力，当前定位为“给 Agent 注入可复用说明和操作流程”。Skills 不会扩大 Agent 的文件、shell 或 Git 权限，所有实际操作仍受 Agent Team 受控工具和白名单限制。
+> Sakura 当前行为以[仓库规则与 Skills 使用文档](AGENT_REPOSITORY_CONTEXT.md)为准：Skills 按需加载且只能收窄已有工具范围，正常任务在既有 Sandbox 内自主运行，不新增逐工具人工审批。下文的授权、fork、hooks 等外部实现是研究参考，不代表 Sakura 已实现或需要照搬。
 
 > 主要参考源码：
 >
@@ -71,7 +71,7 @@ Sakura 的 Agent Skills 功能面向超级管理员开放，主要用于增强 A
 - 通过 `agent_team_skills_root` 配置 Skills 本地存储根目录。
 - 内置 `ruff-lint` Skill（展示名 `Ruff Lint & Format`），指导 Agent 使用 `ruff check`、`ruff check --fix` 和 `ruff format`。
 
-Sakura 当前的 Skills 更接近“延迟加载的任务说明书”，不实现额外工具授权扩展；即便 Skill 文档中提到 shell 命令，执行时仍必须经过 Agent Team 的命令白名单与工作区安全边界。
+Sakura 的 Skills 提供按需说明和工作流约束；Shell 继续经过工作区执行器和 Sandbox。受限命令选择器由确定性代码匹配，元数据不能扩大当前或恢复的历史权限，也不触发人工授权。
 
 ---
 

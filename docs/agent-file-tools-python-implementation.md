@@ -8,7 +8,7 @@
 
 本文档提取自当前仓库中 Claude Code Agent 的工具系统，重点覆盖文件读取、文件写入、精确编辑、搜索、命令执行等能力，并整理为可迁移到 Python 项目的完整实现思路与参考代码。
 
-> Sakura 当前实现补充：本项目的 Agent Team 已在 `backend/services/agent_team/tools/` 下实现一组工作区受控工具，供全栈修复 Agent 与专业审查 Agent 使用。所有路径必须限制在隔离工作区内，shell 命令采用黑名单安全策略，Skills 只提供说明，不会扩大工具权限。
+> Sakura 当前行为以[仓库规则与 Skills 使用文档](AGENT_REPOSITORY_CONTEXT.md)为准：Skills 按需加载且只能收窄已有工具范围，正常任务在既有 Sandbox 内自主运行，不新增逐工具人工审批。下文的授权、fork、hooks 等外部实现是研究参考，不代表 Sakura 已实现或需要照搬。
 
 > 主要参考源码：
 >

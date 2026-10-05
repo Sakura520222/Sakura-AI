@@ -77,23 +77,112 @@ async def test_text_requires_one_reminder_then_finish(agent, client):
 
 
 @pytest.mark.asyncio
-async def test_repeated_text_blocks_instead_of_claiming_success(agent, client):
-    client.call_with_retry.side_effect = [response("done"), response("really done")]
+async def test_twelve_text_turns_continue_until_explicit_finish(agent, client):
+    client.call_with_retry.side_effect = [response("done") for _ in range(12)] + [
+        response(calls=[call("finish_task", "finish", summary="verified")])
+    ]
     result = await agent.execute("test", "test")
-    assert not result.success
-    assert result.outcome == "blocked" and result.error == "no_progress"
-    assert result.summary == "Agent 执行受阻"
+    assert result.success and result.summary == "verified"
+    assert client.call_with_retry.await_count == 13
+    assert (
+        sum(
+            bool(m.get("metadata", {}).get("completion_reminder"))
+            for m in agent.messages
+        )
+        == 12
+    )
+    assert (
+        sum(
+            bool(m.get("metadata", {}).get("strategy_self_check"))
+            for m in agent.messages
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
-async def test_empty_finish_is_not_success(agent, client):
+async def test_same_tool_strategy_warning_is_nonterminal_and_emitted_once(
+    agent, client
+):
+    agent.tool_executor.register(ProbeTool("read", []))
+    client.call_with_retry.side_effect = [
+        response(calls=[call("read", str(i), index=0)]) for i in range(12)
+    ] + [response(calls=[call("finish_task", "finish", summary="changed strategy")])]
+    result = await agent.execute("task", "task")
+    assert result.success and result.tool_calls_count == 13
+    warnings = [
+        m for m in agent.messages if m.get("metadata", {}).get("strategy_self_check")
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["metadata"]["strategy_self_check"]["window"] == 10
+    assert warnings[0]["metadata"]["strategy_self_check"]["kind"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_changing_results_do_not_trigger_repeat_warning(agent, client):
+    class Changing(BaseTool):
+        name = "changing"
+        counter = 0
+
+        async def execute(self, args, ctx):
+            self.counter += 1
+            return ToolResult(True, output={"state": self.counter})
+
+    agent.tool_executor.register(Changing())
+    client.call_with_retry.side_effect = [
+        response(calls=[call("changing", str(i), same=True)]) for i in range(12)
+    ] + [response(calls=[call("finish_task", "finish", summary="new results")])]
+    assert (await agent.execute("task", "task")).success
+    assert not any(
+        m.get("metadata", {}).get("strategy_self_check") for m in agent.messages
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guidance", [False, True])
+async def test_repeat_detection_rebuilds_on_resume_and_guidance_resets(
+    agent, client, guidance
+):
+    agent.tool_executor.register(ProbeTool("read", []))
+    restore(agent, [], {str(i): {"status": "completed"} for i in range(9)})
+    for i in range(9):
+        agent.messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [tool_call_to_dict(call("read", str(i), index=0))],
+                },
+                {"role": "tool", "tool_call_id": str(i), "content": '{"index":0}'},
+            ]
+        )
+    client.call_with_retry.side_effect = [
+        response(calls=[call("read", "current", index=0)]),
+        response(calls=[call("finish_task", "finish", summary="resumed")]),
+    ]
+    callback = (
+        AsyncMock(side_effect=["Change the investigation strategy.", ""])
+        if guidance
+        else None
+    )
+    result = await agent.execute("task", "task", guidance_callback=callback)
+    assert result.success
+    assert sum(
+        bool(m.get("metadata", {}).get("strategy_self_check")) for m in agent.messages
+    ) == (0 if guidance else 1)
+
+
+@pytest.mark.asyncio
+async def test_empty_finish_requires_a_later_valid_finish(agent, client):
     client.call_with_retry.side_effect = [
         response(calls=[call("finish_task", summary=" ")]),
         response("done"),
         response("done"),
+        response(calls=[call("finish_task", "valid", summary="verified")]),
     ]
     result = await agent.execute("test", "test")
-    assert not result.success
+    assert result.success and result.summary == "verified"
+    rejected = next(m for m in agent.messages if m.get("role") == "tool")
+    assert "error" in json.loads(rejected["content"])
 
 
 class ForgedTool(BaseTool):
@@ -305,11 +394,10 @@ async def test_cancellation_drains_every_read_child_and_records_cancelled(agent)
 
 
 @pytest.mark.asyncio
-async def test_read_batch_cap_is_enforced(agent):
+async def test_read_batch_has_no_artificial_parallel_cap(agent):
     events = []
     agent.tool_executor = ToolExecutor([ProbeTool("read", events)])
     ctx = agent._build_context()
-    ctx.max_parallel_reads = 2
     await agent._execute_tool_calls(
         [call("read", str(i), index=i) for i in range(7)], ctx, 1
     )
@@ -317,48 +405,53 @@ async def test_read_batch_cap_is_enforced(agent):
     for event, _ in events:
         active += 1 if event == "start" else -1
         peak = max(peak, active)
-    assert peak == 2 and active == 0
+    assert peak == 7 and active == 0
 
 
 @pytest.mark.asyncio
-async def test_failed_finish_cannot_terminate(agent, client, monkeypatch):
-    monkeypatch.setattr(
-        FinishTaskTool,
-        "execute",
-        AsyncMock(
-            return_value=ToolResult(False, output={"_terminal": True}, error="failed")
-        ),
-    )
-    client.call_with_retry.side_effect = [
-        response(calls=[call("finish_task", summary="done")]),
-        response("done"),
-        response("done"),
-    ]
-    result = await agent.execute("test", "test")
-    assert result.outcome == "blocked"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("limit", "expected"),
-    [("max_model_rounds", "model_round_limit"), ("max_tool_calls", "tool_call_limit")],
-)
-async def test_nonprogress_tool_loops_are_bounded(
-    agent, client, monkeypatch, limit, expected
+@pytest.mark.parametrize("ending", ["finish", "cancel"])
+async def test_repeated_failed_finish_does_not_stop_or_forge_success(
+    agent, client, monkeypatch, ending
 ):
-    limits = {
-        "max_model_rounds": 8,
-        "max_tool_calls": 8,
-        "max_parallel_reads": 2,
-        "max_no_progress_rounds": 8,
-    }
-    limits[limit] = 1
-    monkeypatch.setattr(runtime, "get_runtime_limits", AsyncMock(return_value=limits))
-    client.call_with_retry.side_effect = [
-        response(calls=[call("unknown", str(i))]) for i in range(8)
+    original = FinishTaskTool.execute
+    cancelled = asyncio.Event()
+
+    async def finish(self, args, ctx):
+        if args["summary"] == "verified":
+            return await original(self, args, ctx)
+        return ToolResult(False, output={"_terminal": True}, error="failed")
+
+    monkeypatch.setattr(FinishTaskTool, "execute", finish)
+    replies = []
+    for i in range(12):
+        replies.extend(
+            [
+                response(calls=[call("finish_task", f"failed-{i}", summary="done")]),
+                response("done"),
+            ]
+        )
+    replies.append(response(calls=[call("finish_task", "finish", summary="verified")]))
+    count = 0
+
+    async def model(**kwargs):
+        nonlocal count
+        reply = replies[count]
+        count += 1
+        if ending == "cancel" and count == 24:
+            cancelled.set()
+        return reply
+
+    client.call_with_retry.side_effect = model
+    result = await agent.execute("test", "test", cancel_event=cancelled)
+    assert result.success is (ending == "finish")
+    assert result.error == ("" if ending == "finish" else "cancelled")
+    assert count == (25 if ending == "finish" else 24)
+    failed = [
+        m
+        for m in agent.messages
+        if m.get("role") == "tool" and m.get("tool_call_id", "").startswith("failed-")
     ]
-    result = await agent.execute("test", "test")
-    assert result.outcome == "blocked" and result.error == expected
+    assert len(failed) == 12 and all("failed" in m["content"] for m in failed)
 
 
 @pytest.mark.asyncio
@@ -586,7 +679,7 @@ async def test_finish_restore_rejects_impossible_tool_order(
 
 
 @pytest.mark.asyncio
-async def test_resume_preserves_completion_reminder_budget(agent, client):
+async def test_resume_old_completion_reminder_does_not_limit_text_turns(agent, client):
     restore(agent, [], {})
     agent.messages.append(
         {
@@ -595,25 +688,12 @@ async def test_resume_preserves_completion_reminder_budget(agent, client):
             "metadata": {"completion_reminder": True},
         }
     )
-    client.call_with_retry.side_effect = [response("still done")]
+    client.call_with_retry.side_effect = [response("still done") for _ in range(12)] + [
+        response(calls=[call("finish_task", "finish", summary="resumed")])
+    ]
     result = await agent.execute("t", "t")
-    assert result.error == "no_progress"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", [0, -1, True, "invalid", 10001])
-async def test_runtime_limits_use_settings_defaults_on_invalid_config(
-    monkeypatch, invalid
-):
-    from backend.core.config import Settings
-    from backend.services.agent_team import runtime_limits
-
-    monkeypatch.setattr(
-        runtime_limits, "get_dynamic_config", AsyncMock(return_value=invalid)
-    )
-    values = await runtime_limits.get_runtime_limits()
-    for name, value in values.items():
-        assert value == Settings.model_fields[f"agent_team_{name}"].default
+    assert result.success and result.summary == "resumed"
+    assert client.call_with_retry.await_count == 13
 
 
 @pytest.mark.asyncio
@@ -682,7 +762,9 @@ def test_nonempty_repository_snapshot_is_preserved(agent, data_kind):
         ctx.repository_context.diagnostics.append("actual diagnostic")
         expected = "actual diagnostic"
     else:
-        ctx.active_skill_tools["docs"] = frozenset({"read_file"})
+        from backend.services.agent_team.skill_scope import SkillRestriction
+
+        ctx.active_skill_tools["docs"] = SkillRestriction.from_metadata('["read_file"]')
         expected = "read_file"
     message = agent._repository_message(ctx)
     assert message["role"] == "user"
@@ -690,64 +772,44 @@ def test_nonempty_repository_snapshot_is_preserved(agent, data_kind):
     assert expected in message["content"]
 
 
-def test_runtime_budgets_default_to_unlimited_productive_work():
+def test_removed_runtime_limits_are_not_settings():
     from backend.core.config import Settings
 
-    assert Settings.model_fields["agent_team_max_model_rounds"].default == 0
-    assert Settings.model_fields["agent_team_max_tool_calls"].default == 0
-
-
-@pytest.fixture
-def no_progress_window(monkeypatch):
-    monkeypatch.setattr(
-        runtime,
-        "get_runtime_limits",
-        AsyncMock(
-            return_value={
-                "max_model_rounds": 0,
-                "max_tool_calls": 0,
-                "max_parallel_reads": 2,
-                "max_no_progress_rounds": 2,
-            }
-        ),
-    )
+    for key in (
+        "agent_team_max_model_rounds",
+        "agent_team_max_tool_calls",
+        "agent_team_max_parallel_reads",
+        "agent_team_max_no_progress_rounds",
+    ):
+        assert key not in Settings.model_fields
 
 
 @pytest.mark.asyncio
-async def test_productive_writes_continue_beyond_no_progress_window(
-    agent, client, no_progress_window
-):
+async def test_productive_writes_have_no_total_round_or_tool_budget(agent, client):
     client.call_with_retry.side_effect = [
         response(
             calls=[
                 call(
                     "write_file",
                     str(i),
-                    file_path=f"step_{i}.txt",
+                    file_path=f"step_{i:02}.txt",
                     content=f"completed step {i}",
                 )
             ]
         )
-        for i in range(5)
-    ] + [
-        response(
-            calls=[call("finish_task", "finish", summary="all five steps completed")]
-        )
-    ]
+        for i in range(12)
+    ] + [response(calls=[call("finish_task", "finish", summary="all steps completed")])]
     result = await agent.execute("task", "task")
-    assert result.success and result.tool_calls_count == 6
+    assert result.success and result.tool_calls_count == 13
     assert [
         path.read_text() for path in sorted(agent.workspace.glob("step_*.txt"))
-    ] == [f"completed step {i}" for i in range(5)]
+    ] == [f"completed step {i}" for i in range(12)]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("work", ["identical_reads", "alternating_reads", "failures"])
-async def test_unchanged_tool_work_stops_without_total_budgets(
-    agent, client, no_progress_window, work
-):
+async def test_repeated_tool_work_remains_autonomous_until_finish(agent, client, work):
     agent.tool_executor.register(ProbeTool("read", []))
-    count = {"identical_reads": 3, "alternating_reads": 4, "failures": 3}[work]
     client.call_with_retry.side_effect = [
         response(
             calls=[
@@ -758,22 +820,23 @@ async def test_unchanged_tool_work_stops_without_total_budgets(
                 )
             ]
         )
-        for i in range(count)
+        for i in range(12)
+    ] + [
+        response(calls=[call("finish_task", "finish", summary="finished autonomously")])
     ]
     result = await agent.execute("task", "task")
-    assert result.error == "no_progress" and result.outcome == "blocked"
-    assert result.tool_calls_count == count
-    assert client.call_with_retry.await_count == count
+    assert result.success and result.tool_calls_count == 13
+    assert client.call_with_retry.await_count == 13
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("new_guidance", [False, True])
-async def test_resume_keeps_no_progress_evidence_but_admits_new_guidance(
-    agent, client, no_progress_window, new_guidance
+async def test_resume_repeated_tool_history_does_not_require_new_guidance(
+    agent, client, new_guidance
 ):
     agent.tool_executor.register(ProbeTool("read", []))
-    calls = [call("read", str(i), index=0) for i in range(3)]
-    restore(agent, [], {str(i): {"status": "completed"} for i in range(3)})
+    calls = [call("read", str(i), index=0) for i in range(12)]
+    restore(agent, [], {str(i): {"status": "completed"} for i in range(12)})
     for tool_call in calls:
         agent.messages.extend(
             [
@@ -788,30 +851,22 @@ async def test_resume_keeps_no_progress_evidence_but_admits_new_guidance(
     client.call_with_retry.side_effect = [
         response(
             calls=[
-                call(
-                    "finish_task", "finish", summary="new evidence confirmed completion"
-                )
+                call("finish_task", "finish", summary="prior verification sufficient")
             ]
         )
     ]
     guidance = (
-        AsyncMock(
-            return_value="New evidence: the read-only verification is sufficient; finish now."
-        )
+        AsyncMock(return_value="Finish after considering new guidance.")
         if new_guidance
         else None
     )
     result = await agent.execute("task", "task", guidance_callback=guidance)
-    assert result.success is new_guidance
-    assert client.call_with_retry.await_count == int(new_guidance)
-    if not new_guidance:
-        assert result.error == "no_progress"
+    assert result.success and result.tool_calls_count == 13
+    assert client.call_with_retry.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_distinct_error_diagnostics_are_new_investigation_evidence(
-    agent, client, no_progress_window
-):
+async def test_distinct_error_diagnostics_are_not_an_execution_limit(agent, client):
     class Diagnostics(BaseTool):
         name = "diagnostics"
 
@@ -820,16 +875,16 @@ async def test_distinct_error_diagnostics_are_new_investigation_evidence(
 
     agent.tool_executor.register(Diagnostics())
     client.call_with_retry.side_effect = [
-        response(calls=[call("diagnostics", str(i), index=i)]) for i in range(5)
+        response(calls=[call("diagnostics", str(i), index=i)]) for i in range(12)
     ] + [
         response(calls=[call("finish_task", "finish", summary="diagnostics collected")])
     ]
     result = await agent.execute("task", "task")
-    assert result.success and result.tool_calls_count == 6
+    assert result.success and result.tool_calls_count == 13
 
 
 @pytest.mark.asyncio
-async def test_new_tool_evidence_resets_consecutive_text_reminder(agent, client):
+async def test_text_reminders_continue_after_tool_evidence(agent, client):
     agent.tool_executor.register(ProbeTool("read", []))
     client.call_with_retry.side_effect = [
         response("working"),
@@ -849,9 +904,7 @@ async def test_new_tool_evidence_resets_consecutive_text_reminder(agent, client)
 
 
 @pytest.mark.asyncio
-async def test_new_repository_context_resets_stalled_history(
-    agent, client, no_progress_window
-):
+async def test_resume_observes_current_repository_context(agent, client):
     agent.tool_executor.register(ProbeTool("read", []))
     restore(agent, [], {str(i): {"status": "completed"} for i in range(3)})
     for i in range(3):
@@ -877,7 +930,7 @@ async def test_new_repository_context_resets_stalled_history(
 
 
 @pytest.mark.asyncio
-async def test_new_guidance_resets_text_reminder_after_resume(agent, client):
+async def test_new_guidance_survives_old_text_reminder_after_resume(agent, client):
     restore(agent, [], {})
     agent.messages.append(
         {
@@ -905,27 +958,42 @@ async def test_new_guidance_resets_text_reminder_after_resume(agent, client):
 
 
 @pytest.mark.parametrize("guidance_id", [1, 2])
-def test_reminder_reset_distinguishes_new_guidance_admission_from_replay(guidance_id):
-    tracker = runtime._NoProgressTracker()
+def test_repeat_detection_distinguishes_new_guidance_from_replay(guidance_id):
+    from backend.services.agent_team.strategy_self_check import StrategySelfCheckState
+
+    tracker = StrategySelfCheckState()
     messages = [
-        {
-            "role": "user",
-            "content": "Retry the verification.",
-            "metadata": {"guidance_ids": [1]},
-        },
-        {
-            "role": "user",
-            "content": "completion reminder",
-            "metadata": {"completion_reminder": True},
-        },
+        {"role": "user", "content": "Retry.", "metadata": {"guidance_ids": [1]}}
     ]
-    tracker.update(messages)
-    messages.append(
-        {
-            "role": "user",
-            "content": "Retry the verification.",
-            "metadata": {"guidance_ids": [guidance_id]},
-        }
+    for i in range(9):
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        tool_call_to_dict(call("read_file", str(i), a=1, b=2))
+                    ],
+                },
+                {"role": "tool", "tool_call_id": str(i), "content": '{"x":1,"y":2}'},
+            ]
+        )
+    assert tracker.update(messages) == []
+    messages.extend(
+        [
+            {
+                "role": "user",
+                "content": "Retry.",
+                "metadata": {"guidance_ids": [guidance_id]},
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [tool_call_to_dict(call("read_file", "new", b=2, a=1))],
+            },
+            {"role": "tool", "tool_call_id": "new", "content": '{ "y": 2, "x": 1 }'},
+        ]
     )
-    tracker.update(messages)
-    assert tracker.reminded is (guidance_id == 1)
+    events = tracker.update(messages)
+    assert len(events) == (1 if guidance_id == 1 else 0)
+    if events:
+        messages.extend(events)
+        assert StrategySelfCheckState().update(messages) == []

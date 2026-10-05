@@ -1,173 +1,119 @@
 # Agent Harness 2.0 验收记录
 
-范围依据：[Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628) 正文、实施阶段与验收要求。基线为 2026-10-04 获取的 `origin/develop`，提交 `38a021934461bae4932928c3f466df6d47ddc2b8`。
+更新：2026-10-05。范围依据：[Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628) 正文及用户在本任务中的最新修订。基线为 2026-10-04 获取的 develop `38a021934461bae4932928c3f466df6d47ddc2b8`；沿用 `feature/issue-628-agent-harness` 和原 worktree。
 
-本轮已按用户修订停止后续阶段扩展，仅做实际盘点、需求纠偏和 Phase 1 收尾。**Phase 1 本轮收尾已验证，整个 Issue 尚未完成**。保留已有 Phase 2 接入与 Phase 5 基础代码，不把保留等同于验证完成。
+**当前：Phase 1/2 本地验证通过；完整 #628 目标已重新设为执行目标，Phase 3–6 尚未完成。** 先保存本阶段本地提交，再按依赖继续，不能把本记录描述成整个 Issue 已解决。没有推送、创建/合并 PR 或关闭 Issue。
 
-产品约束：配置和凭据就绪后，正常代码读写、Shell、依赖、测试及已配置工具自主执行。边界由确定性代码和现有 Sandbox 强制执行；不增加审批 Agent、逐工具授权、人工批准页面或必须点击继续的正常路径。复用 #604 临时出网与清理，不另建网络授权系统。部署配置不等于运行时审批；故障 blocked 不等于等待授权。本约束不改变 Codex 开发环境权限。
+## 产品契约与本轮修订
 
-状态采用：`未开始`、`部分实现`、`已实现未验证`、`已验证`。某项局部测试通过不代表其所在阶段整体完成。`CLAUDE.md` 兼容为可选；可写子 Agent 和具体第三方集成示例属于未来范围。
+- `/agent` 默认无人值守。已有配置和凭据就绪后，常规读写、Shell、依赖、测试和已配置工具自主执行；不新增审批 Agent、逐工具人工批准或正常运行必须点击继续的路径。
+- 保留工作区、宿主凭据、Sandbox 和真实工具访问边界；检查由确定性运行时代码执行。复用 #604 临时依赖出网和 #627 bootstrap，不另建网络授权系统。
+- 用户明确删除了九项新增设置及对应运行时限制：模型总轮数、工具总次数、只读并发数、连续重复工具轮次数，以及仓库单文件/总字节数、扫描项数、Skill 数量和元数据字节数。没有隐藏阈值替代；本任务新增的同类隐含长度/数量阈值也已删除。旧数据库行不再被执行链读取或配置页展示/保存，不做破坏性清理。
+- 不以累计调用次数或任务步数结束任务、强制总结或切换便宜模型。旧 `max_iterations` 参数只保留为兼容的 no-op；本轮核实 worker/Agent 执行链没有使用它终止任务。
+- 用户随后明确保留死循环检测：连续 10 次同工具、相同规范化参数/结果，或相同纯文本，触发一次策略自检提示及可持久化 metadata；继续执行，绝不据该窗口停止或切换模型。新操作/结果/真实指导重置，恢复不会重复发已持久化提示。
+- 上述最新指令覆盖 Issue 中“第二次纯文本无进展即 blocked”和原有有界读取数量建议。普通文本仍不构成成功；正常完成仍必须调用 `finish_task`。取消、真实基础设施失败及无法安全恢复的状态保留明确原因，blocked 不等于人工授权。
 
-## 最终实际变更规模
+## 保存点与真实接入
 
-相对上述基线：0 个本地提交、0 个暂存文件；16 个已跟踪文件未暂存修改，12 个未跟踪新增文件，总计 28 个文件，新增 4,343 行、删除 197 行。未跟踪文件已计入，而不是只统计 `git diff --stat`。
+`656c7b65`（`chore(agent): WIP checkpoint for issue #628`）保存了此前 28 个源码、测试、文档文件，+4,343/-197。提交说明明确引用此前 Phase 1 验证，注明 Phase 2 未完成、Phase 5 基础未接入；它本身不是整体验收。该提交未夹带凭据、缓存、日志或生成产物。
 
-| 分类 | 文件数 | 新增/删除行 | 主要来源 |
-|---|---:|---:|---|
-| 业务代码、配置及界面 | 16 | +1,923 / -192 | 完成协议、调度、恢复事务、worker 终态、部分仓库上下文及未接入能力定义 |
-| 测试与手工浏览器 fixture | 8 | +2,146 / -5 | 并发/取消、SQLite 恢复、worker 三入口、仓库路径和边界矩阵；外部模型/服务使用替身 |
-| 文档 | 4 | +274 / -0 | 两个 README 各一项、实施计划、验收表 |
-| 锁文件 | 0 | 0 | 没有依赖/锁文件变更 |
-| 生成产物 | 0 | 0 | 交付 diff 不含截图、日志、缓存、凭据；`.ruff_cache`、`.superpowers`、`.venv` 为忽略的本地工具产物 |
+本阶段相对 WIP 修改 28 个文件，+2,658/-933：业务代码 13 个（+1,020/-587）、测试/浏览器 fixture 6 个（+1,423/-185）、文档 9 个（+215/-161）。相对 develop 基线合计 38 个文件、+6,204/-333。新增行主要是恢复/失效/兼容和循环检测行为测试以及真实接线；无锁文件、依赖或生成文件变更。行数不作为完成度依据。
 
-停止后续扩展时的快照是 +3,803/-197；收尾增量主要来自无进展检测纠偏及其复现测试、最终盘点文档。未为了降低行数删除实现或测试。
+本轮后端调用链为 worker → iteration_loop → fullstack_expert → ToolExecutor/调度器；RepositoryContext、Skill 开关、历史限制和自检均在真实链上。Skills 的状态随已有工具结果事务提交，不新增表或迁移。`capability_policy.py` 仍没有生产调用方，保持为 Phase 5 基础。
 
-原 `develop` 工作区保持干净。工作均位于已有 `feature/issue-628-agent-harness` worktree。浏览器证据与阶段报告留在 `/tmp/sakura-628-*`，未混入业务文件。
-
-## 阶段与真实接入情况
-
-| 阶段 | 当前状态 | 执行接入与证据 |
+| 阶段 | 状态 | 实现与证据 |
 |---|---|---|
-| Phase 1 | 已验证 | worker → iteration_loop → fullstack_expert → tool_scheduler/ToolExecutor 已接入；checkpoint 结果/终态与旧会话迁移原子提交。最终相关回归 900 通过/1 跳过；import 修正后 146 项重跑通过；Ruff、独立复审与真实浏览器恢复/CSRF 操作通过 |
-| Phase 2 | 部分实现 | repository_context、UseSkillTool、ToolContext 与 FullStack 批次预检已经接入真实执行链，不是闲置辅助代码。17 项新增测试通过；此前扩大回归 193 通过、1 个指导 checkpoint 用例失败；该兼容性回归本轮已修复并重跑。其余缺口未补，见后续清单 |
-| Phase 3 | 未开始 | 尚无 Sakura 产品的 spawn/wait/cancel Agent 工具或子会话编排；Codex 开发子 Agent 不属于产品实现 |
-| Phase 4 | 未开始 | 尚无 MCP 客户端运行时、配置、发现、schema 规范化或 MCP E2E；未添加相关依赖 |
-| Phase 5 | 部分实现 | capability_policy 的 schema/profile/直接边界判断有 30 项基础单测；backend 中没有其他模块引用它，尚未接入工具、执行器或发布链。没有产品级 grant token/审批状态机 |
-| Phase 6 | 未开始 | 尚无通用 Hooks、统一插件抽象或插件管理界面。Phase 1 的 checkpoint 回调和配置字段不能算作 Hooks/插件实现 |
+| Phase 1 | 已验证（按最新用户契约） | finish、调度、取消和 checkpoint/resume 保留；任务预算已删除，重复检测改成非终止自检；最新相关回归 938 通过/1 前置条件跳过 |
+| Phase 2 | 已验证 | 五项交接缺口及两项独立审查 PoC 修复；实际双语配置交互、CSRF、最新回归和复核通过 |
+| Phase 3 | 未开始 | 下一项：只读 Subagents、独立 durable session、等待/取消/汇总及父取消传播；不引入累计调用预算 |
+| Phase 4 | 未开始 | MCP 配置、协议、发现、schema、边界和审计尚待实现 |
+| Phase 5 | 部分实现 | capability_policy 的基础类型/判断及 30 项基础测试已存在，尚未接入执行器或发布链 |
+| Phase 6 | 未开始 | 通用 Hooks、统一插件及管理界面、逐次压缩审计尚待实现 |
 
-## 已确认偏差与收尾范围
+## Phase 2 缺口与验收证据
 
-- 新增的 worker 映射曾将所有 blocked 置为 `waiting_human`，统一摘要还要求“人工处理”；本轮改用兼容的任务 `failed` 状态，并保留独立的 `current_phase=blocked`、会话 outcome 和具体原因。沿用原有可选故障恢复入口，不增加人工授权。
-- 新增默认 64 轮/256 次工具总量上限会截停仍有进展的会话，且与现有提示约定冲突。本轮改为默认无限总量、正数表示显式预算，使用确定性的连续无变化保护。
-- Phase 2 无内容的仓库快照仍被追加进 checkpoint，干扰指导故障路径；本轮只修正这个直接影响 Phase 1 的接入问题，不继续完成 Phase 2。
-- 没有代码证据表明新增了审批 Agent、授权弹窗或人工批准 API。两处仓库规则预检分别位于整批调度前和工具执行器内，存在重复读取，但承担批次上下文投递与执行边界检查；目前不将它们定性为无用的重复授权系统。
-- 未发现本任务改动触及无关业务模块；测试包含可复现的故障、真实文件/并发和数据库事务场景，未发现为了数量而重复同一断言的确证，不因行数删除测试。
-- 工作区屏障的实现范围是同一进程事件循环；未核实跨进程工作区租约，不声称跨 worker 互斥已获得保证，本轮不新增分布式调度。
+| 缺口 | 当前实现/行为 | 对应证据 |
+|---|---|---|
+| Skills 开关覆盖所有入口 | `repository_context.skills_enabled`、`fullstack_expert._refresh_skills/_project_model_messages`、`tools/registry.py`、`UseSkillTool.execute` 均读取当前开关；禁用时移除元数据/正文投影、清理缓存，直接调用和恢复也不能重新激活。独立仓库规则、原始 human guidance 和普通文件访问保留；已有工作流可自主 `end_skill` 清理 | `test_agent_repository_completion.py` 的 disabled/direct/cache/schema/resume/guidance/ordinary-read 行为用例；真实配置开关保存/重载 |
+| 历史限制恢复不扩权 | `skill_scope.SkillRestriction` 用同一声明内的并集、历史与当前声明之间的交集表达约束；`fullstack_expert._execute_tool_calls` 将 runtime-owned scope/ceiling 与结果原子记录；恢复处理缺失、删除、损坏及失败/列表结果 | `test_atomic_skill_scope_resume_cannot_widen`、`test_missing_corrupt_history_cannot_restore_unrestricted_skill`、`test_runtime_scope_and_result_rollback_together`、成功/失败 listing 恢复测试；真实 SQLite 事务适配器 |
+| 路径与规则一致性 | `ToolExecutor.repository_requirements` 覆盖现有 schema 的 `file_path/path/directory/file_paths/modified_files` 和 Skill 附件；`RepositoryContext.snapshot` 保留根/祖先/全局规则顺序，读前去重；新作用域替换旧快照，更新/删除/恢复重新读取 | 数组、兄弟目录切换、规则删除/刷新、`.sakura` 局部和 whole 扫描只读一次的测试；不再保留被用户撤销的 total_bytes 上限 |
+| DB Skills 和选择器兼容 | DB 文件及附件保留本任务前既有 512 KiB 契约；删除仓库新增 64 KiB 等上限。支持真实工具名、`Read`、精确 `Shell(git status)`、token 前缀 `Bash(git status:*)` / `Bash(git *)`；未知/损坏语法明确拒绝，不降级为无限 Shell。语法校验不替代 Sandbox | DB 大文件、边界、附件、同长度/同时间内容更新、nofollow；合法选择器及串联/替换/重定向拒绝矩阵 |
+| 发现、列表、正文分离 | 发现只读取 frontmatter；无头标记时不读完整正文行；目录列表不加载正文，`use_skill` 才读请求文件。每次安全打开新内容，缓存只保留指纹，观察相同 mtime/长度下的变化 | `test_listing_never_reads_main_body`、`test_metadata_listing_does_not_read_admin_body_and_exact_size_limit`、`test_no_frontmatter_marker_does_not_read_plaintext_body_line`、fresh-cache 用例 |
+| 配置和文档 | 两语言 Skills 说明、九项控件撤销、使用指南和 README 对齐；历史外部实现文档明确不代表 Sakura 的审批或 fork/hooks 行为 | `test_agent_repository_config_ui.py` 两语言通过，实际浏览器关闭/开启、保存/重载、旧键忽略与 CSRF 拒绝；见 `AGENT_REPOSITORY_CONTEXT.md` |
 
-## 保留但未完成的后续工作
+独立审查复现并修复了两项问题：成功 `list_files` 的早退遗漏当前持久化 ceiling，导致恢复时重新放宽；`.sakura/AGENTS.md` 在全局和祖先遍历中被重复读取。对应回归先失败再通过。复核覆盖 112 项相关测试和 5 组自检状态转换，没有新的阻断问题。
 
-以下均来自当前代码调用链或已运行结果；除已记录的指导回归外，本轮不扩展其修复：
+一次自动权限审查曾把删除隐含长度/数量阈值判为超出五项点名设置。确认这些阈值全部由本任务新增，并提交用户最新指令和基线 diff 后，同一自动审查批准了小补丁；没有更换执行器绕过拒绝。当前没有遗留的权限审批阻塞。
 
-1. `FullStackExpertAgent._execute` 无条件发现仓库 Skills，尚未接入 `agent_team_skills_enabled` 开关；旧路径 `submission_context.load_skills_context` 会读取该开关。
-2. `_restore_skill_workflows` 使用当前元数据重建限制，尚未持久化历史限制上限。`ctx.repository_instructions.update` 跨作用域累计内容，但 `total_bytes` 只约束单次收集。
-3. 预检只提取 `file_path/path/directory`，尚未覆盖路径数组；规则更新、删除、跨作用域刷新和恢复的一致性仍不完整。
-4. DB Skill 读取改用 64 KiB 默认上限，选择器改为严格工具名；对既有较大 Skill 或其他选择器格式的兼容性尚未建立证据。目录列表仍会读取主 Skill 正文，列表/缓存边界尚未完成验证。
-5. Phase 2 五个配置项尚缺双语目录、完整文档和独立审查；本轮不把配置出现在页面等同于阶段完成。
-6. 未实现 context compaction 的逐次审计、前后 token 记录和保留任务/工具/错误的审计证明；未实现 Subagents、MCP、Hooks 或统一插件管理。
+## 要求映射
 
-下一项明确工作是另轮恢复 Phase 2 的存量接入收尾，先补 Skills 开关及恢复限制上限的行为测试；本轮报告交付后停止扩展。
-
-## 逐项要求
-
-| ID | 验收要求 | 实现位置 | 验证证据 | 状态 |
-|---|---|---|---|---|
-| C1 | 普通文本不能结束为成功 | `fullstack_expert.py` | `test_agent_harness_runtime.py` | 已验证 |
-| C2 | 成功由运行时终态协议确认 | `tools/base.py`、`tools/finish_task_tool.py` | 伪造终态与失败 finish 回归 | 已验证 |
-| C3 | 正常成功统一经过 finish_task | 同 C2、`iteration_loop.py` | 正常 finish 与恢复 finish 回归 | 已验证 |
-| C4 | 取消、阻塞、不可恢复错误分别持久化 | `fullstack_expert.py`、`conversation_checkpoint.py`、worker | `test_agent_harness_worker_outcomes.py` | 已验证 |
-| C5 | 连续无进展保护与可选显式预算 | `runtime_limits.py`、`fullstack_expert.py` | 无工具回复、恢复预算、调用上限回归 | 已验证 |
-| P1 | 安全读取能够有界并行 | `tool_scheduler.py`、`tools/base.py` | 同批读取重叠与并发上限测试 | 已验证 |
-| P2 | 同一工作区写入互斥 | 同 P1 | 跨执行器屏障、取消中的线程写入测试 | 已验证 |
-| P3 | Shell/Git 写入与 finish 独占执行 | 同 P1 | 串行屏障测试 | 已验证 |
-| P4 | 并行调用的 checkpoint 状态一致 | `conversation_checkpoint.py` | SQLite 事务、顺序与原子结果测试 | 已验证 |
-| P5 | 取消传播并等待并行任务清理 | `tool_scheduler.py` | 任务取消/事件取消与写线程清理测试 | 已验证 |
-| R1 | 根目录 AGENTS.md | `repository_context.instructions_for`、`FullStackExpertAgent._execute` | 17 项仓库测试中的真实文件读取 | 已验证 |
-| R2 | 目标目录规则继承与覆盖顺序 | `repository_context.py`、`ToolExecutor.repository_requirements` | 祖先/兄弟目录与批次投递通过；路径数组、刷新与累计范围尚未补齐 | 部分实现 |
-| R3 | .sakura/AGENTS.md 与 rules | `RepositoryContext.instructions_for` | Sakura 规则与排序单测通过 | 已验证 |
-| R4 | 仓库规则保持低于系统的信任级别 | `FullStackExpertAgent._repository_message` | 模拟模型/压缩边界验证 user 角色，不是 system | 已验证 |
-| R5 | 仓库提示注入无法扩大权限或越界 | `repository_context.py`、`tools/base.py` | 穿越/符号链接/FIFO/硬链接拒绝通过；完整恢复上限与攻击链证据未齐 | 部分实现 |
-| S1 | 主 Agent 按需创建只读子 Agent | — | — | 未开始 |
-| S2 | 子 Agent 独立上下文与会话 | — | — | 未开始 |
-| S3 | 子 Agent 数量/资源有上限 | — | — | 未开始 |
-| S4 | 子 Agent 无法修改工作区 | — | — | 未开始 |
-| S5 | 等待、取消与结构化结果汇总 | — | — | 未开始 |
-| S6 | 父任务取消递归清理子 Agent | — | — | 未开始 |
-| M1 | 可配置并连接 MCP 服务 | — | — | 未开始 |
-| M2 | 动态发现并规范化 MCP 工具 | — | — | 未开始 |
-| M3 | MCP 工具经过统一访问边界检查 | — | — | 未开始 |
-| M4 | MCP 保持网络/秘密/工作区/系统访问策略边界 | — | — | 未开始 |
-| M5 | MCP 不可用时拒绝调用且不损坏核心流程 | — | — | 未开始 |
-| K1 | 权限覆盖网络以外的能力 | `capability_policy.py`，无生产调用方 | 30 项基础单测；未改变执行链权限判定 | 部分实现 |
-| K2 | 明确 capability schema 与 profiles | `Capability`、`PermissionProfile`、`PolicySnapshot` | 基础矩阵验证通过；配置/运行时集成未做 | 部分实现 |
-| K3 | 模型只请求抽象能力 | 既有 `network_policy.py` / Shell 参数 | #604 边界保留并通过相关回归；统一接口尚未接入 | 部分实现 |
-| K4 | 临时能力在执行结束后回收 | 复用 #604 的 `sandbox_client.py` / one-shot runner | 本轮没有另建 grant/token 系统；统一任务范围集成未做 | 部分实现 |
-| K5 | 能力决策和生命周期审计 | 既有 #604 日志与未接入的 `CapabilitySession.check` | 直接判断审计单测通过；统一持久化集成未做 | 部分实现 |
-| H1 | before_tool / after_tool | — | — | 未开始 |
-| H2 | before_finish 能阻止不合格的成功 | — | — | 未开始 |
-| H3 | hook 由系统策略控制 | — | — | 未开始 |
-| H4 | 仓库内容不能授权高权限 hook | — | — | 未开始 |
-| G1 | Sandbox 安全边界回归 | 既有 runner/sandboxd，底层未修改 | Agent/Sandbox 相关本地回归通过；未跑真实 Docker 部署 | 已验证 |
-| G2 | checkpoint / resume 保持可用 | checkpoint、Agent、worker、恢复路由 | 旧会话原子迁移、状态恢复、异常/取消与浏览器故障恢复通过 | 已验证 |
-| G3 | human guidance 队列兼容 | 既有 guidance 接入、空上下文修正 | 原失败用例与完整相关回归重跑通过 | 已验证 |
-| G4 | context compression 兼容 | 既有压缩桥、Phase 2 user 上下文增强 | 共享路径回归通过；累计上下文边界及压缩审计未补 | 部分实现 |
-| G5 | Skills 按需加载保持可用 | `UseSkillTool`、仓库发现 | 已有直接测试通过；开关、恢复上限与既有格式兼容性未齐 | 部分实现 |
-| G6 | 接入 #604 与 #627，保持职责边界 | 既有网络能力与依赖 bootstrap | 旧实现回归通过；新能力模型尚未集成 | 部分实现 |
-| G7 | 单元、集成、端到端验证与实际 UI 操作 | `tests/test_agent_harness_*`、`tests/harness_ui_app.py` | Phase 1 已验证；完整 #628 跨阶段 E2E 未实现 | 部分实现 |
-
-## 正文与 Phase 6 的额外明确要求
-
-| ID | 要求 | 实现/验证记录 | 状态 |
+| ID | 要求 | 实现/验证 | 状态 |
 |---|---|---|---|
-| X1 | .agents/skills 与 .sakura/skills 自动发现 | `RepositoryContext.discover_skills` 已接入；发现与优先级单测通过，开关缺口保留 | 部分实现 |
-| X2 | Skill 元数据先展示，正文按需读取 | 元数据发现和 use_skill 正文路径已测；list_files 路径仍会读取正文 | 部分实现 |
-| X3 | Skill allowed_tools 只收窄权限 | 当前运行中的收窄/end_skill 已测；恢复的历史上限未持久化 | 部分实现 |
-| X4 | 每次压缩审计与前后 token 估计 | — | 未开始 |
-| X5 | 审计保留的任务、近期工具、未解决错误 | — | 未开始 |
-| X6 | 恢复检查终态/工具状态一致性 | Phase 1 原子迁移、状态恢复及复审通过 | 已验证 |
-| X7 | 明确崩溃后 pending 调用恢复策略 | 读取允许重试；不确定写入阻塞，不自动重放 | 已验证 |
-| X8 | 全部命名生命周期事件 | session_start、before/after_model、before/after_tool、before/after_write、before/after_finish、task_failed、task_cancelled | 未开始 |
-| X9 | 受控 formatter / lint / test / 仓库校验 hook | — | 未开始 |
-| X10 | Skills、MCP、Hooks 统一插件抽象 | — | 未开始 |
-| X11 | WebUI 插件管理、访问控制、双语及真实交互验证 | — | 未开始 |
+| C1–C3 | 纯文本不成功；正常成功必须经过运行时 finish 协议 | `fullstack_expert.py`、`tools/base.py`、`finish_task_tool.py`；伪造/失败 finish、12 次文本后 finish、恢复终态测试 | 已验证 |
+| C4 | 取消/阻塞/不可恢复错误独立记录 | checkpoint、worker outcome 与恢复测试；blocked 沿用 failed 任务状态并保留具体 phase/reason | 已验证 |
+| C5 | 最新用户要求的非终止无进展自检 | `strategy_self_check.py`；10 次完全相同操作提示，超过窗口继续运行，变化证据/指导/恢复测试 | 已验证；不声称检测全部语义循环 |
+| P1 | 安全只读并行（用户撤销数量上限） | `tool_scheduler.py`；7 个只读同批重叠执行 | 已验证 |
+| P2–P3 | 写入、Shell/Git、finish 独占 | 工作区屏障与后台线程取消清理测试 | 已验证，仅同进程、同事件循环 |
+| P4–P5 | 并行结果账本顺序/原子性、取消传播 | checkpoint SQLite 事务与任务/事件取消测试 | 已验证 |
+| R1–R3 | 根/目录 AGENTS、Sakura rules；可选 CLAUDE | RepositoryContext/批次作用域投递及真实临时文件测试 | 已验证 |
+| R4–R5 | 仓库数据不成为系统权限、不能越界/读宿主秘密 | user 层投影及路径穿越、内外符号链接、硬链接、特殊文件、秘密目录和恢复扩权测试 | 已验证运行时边界；不声称模型不受任何自然语言误导 |
+| X1–X3 | 两种仓库 Skills、元数据先行/正文按需、allowed_tools 只收窄 | 上表对应实现/正常和异常测试 | 已验证 |
+| X6–X7 | 恢复终态一致性、pending 调用策略 | 读取可重试，不确定写入不盲目重放，旧会话迁移原子化 | 已验证 |
+| G1–G5 | Sandbox/checkpoint/guidance/compression/Skills 兼容 | 938 项相关回归；当前模型投影刷新规则且保留真实指导 | 已验证本地链；真实部署见限制 |
+| S1–S6 | 子 Agent 创建、独立 context、并发调度、只读、结果/取消、父取消 | Phase 3 尚待实现；不得使用累计调用次数终止 | 未开始 |
+| M1–M5 | MCP 配置/发现、统一边界、秘密/网络策略、失败隔离 | Phase 4 尚待实现 | 未开始 |
+| K1–K5 | 能力 schema/profiles、抽象请求、执行级回收和审计 | 仅独立基础模块；#604/#627 已有执行链保持，尚无统一接线 | 部分实现 |
+| H1–H4、X8–X11 | 系统生命周期 Hooks、finish veto、仓库不能提权、统一插件与 WebUI | Phase 6 尚待实现；可写子 Agent/具体第三方集成示例仍是未来设想 | 未开始 |
+| X4–X5 | 每次 compaction 审计、前后 token 和保留任务/工具/错误证据 | 现有压缩可用，额外审计未实现 | 未开始 |
+| G6–G7 | #604/#627 接入完整架构；全阶段集成/E2E | 当前回归通过；后续阶段接线与完整 E2E 待完成 | 部分实现 |
 
-## 已执行的阶段验证
+## 实际验证
 
-- 基线：208 项相关测试通过。
-- Phase 1：扩展回归 457 项通过；独立审查发现的三项问题均已修复，新增 8 项复现用例通过，修复后相关回归 245 项通过，Ruff、格式与 diff 检查通过，复审批准。本阶段 C1–C5、P1–P5、X6–X7 通过；跨阶段回归在最终集成后复验。
-- Phase 1 浏览器：实际模板中点击阻塞任务的恢复按钮，经真实路由/CSRF 校验转为 queued/resuming，审计与恢复提交各一次；无效 CSRF 返回 403。数据库、认证和后台提交使用本地测试替身，没有生产或 GitHub 副作用。修正 fixture 辅助接口后，正常操作无控制台错误；现有 Tailwind CDN 警告仍存在。
-- 能力基础模块：30 项单测通过；未接入实际执行链，不能据此宣称 Phase 5 完成。
-
-以上历史结果不替代本轮最终验证；本轮结果与范围列于下文。
-
-## 本轮最终验证
-
-以下命令均在 `/home/firefly/.codex/worktrees/issue-628-agent-harness/Sakura-AI` 执行。没有执行真实模型调用、GitHub 发布或生产部署。
+以下均在 `/home/firefly/.codex/worktrees/issue-628-agent-harness/Sakura-AI` 执行。此前 900/929 等数字属于历史快照，不替代下列最终结果；重叠测试不能相加。
 
 ```bash
 UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest -q \
-  -o cache_dir=/tmp/sakura-628-pytest-final \
-  tests/test_agent*.py tests/test_sakura_agent_conversation.py \
-  tests/test_config_basic_settings.py tests/test_default_configs_source.py \
-  tests/test_webui_unified_config.py
+  -o cache_dir=/tmp/sakura-628-pytest-cache \
+  tests/test_agent_repository_completion.py tests/test_agent_repository_unlimited.py \
+  tests/test_agent_repository_context.py tests/test_agent_skills.py \
+  tests/test_agent_harness_runtime.py tests/test_agent_harness_checkpoint.py \
+  tests/test_agent_team_resume.py tests/test_agent_team_cancel_and_prompts.py \
+  tests/test_agent_team_tool_calling.py tests/test_agent_tool_framework.py --tb=short
 ```
 
-结果：**900 passed, 1 skipped，18.37 秒**。跳过的既有 `test_sticky_dir_foreign_owner_regression` 需要 root 与 `fs.protected_regular>=2`；单独使用 `pytest -q -rs` 复核了该跳过原因，没有更改宿主权限或系统设置。
+结果：**264 passed，2.63 秒**。前置行为测试实际复现：初轮 19 项 Phase 2 缺口失败；后续 7 项 quota/审查 PoC 失败；4 项无限文本流程失败；重复自检和指导重放也先出现预期失败，再修复至通过。
 
 ```bash
+UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest -q \
+  -o cache_dir=/tmp/sakura-628-pytest-cache \
+  tests/test_agent*.py tests/test_sakura_agent_conversation.py \
+  tests/test_config_basic_settings.py tests/test_default_configs_source.py \
+  tests/test_webui_unified_config.py --tb=short
+```
+
+结果：**938 passed, 1 skipped，17.73 秒**。既有 `test_sticky_dir_foreign_owner_regression` 需要 root 与 `fs.protected_regular>=2`，本环境不满足，没有改变宿主权限/系统设置。
+
+```bash
+UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest -q \
+  -o cache_dir=/tmp/sakura-628-parent-pytest-cache \
+  tests/test_agent_repository_config_ui.py tests/test_agent_team_cancel_and_prompts.py \
+  tests/test_sakura_agent_conversation.py
+
 UV_CACHE_DIR=/tmp/sakura-628-uv-cache RUFF_NO_CACHE=true \
   uv run --no-sync python run_ruff.py --check
-
-UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest -q \
-  -o cache_dir=/tmp/sakura-628-pytest-final \
-  tests/test_agent_tool_framework.py tests/test_agent_skills.py \
-  tests/test_agent_repository_context.py tests/test_agent_harness_runtime.py
 
 git diff --check
 ```
 
-- Ruff：**All checks passed**。首次全变更检查发现两处本次新增 import 排版错误，已仅修正 import；没有借格式整理扩展 Phase 2。一次包装命令使用 `RUFF_NO_CACHE=1` 被 Ruff 参数解析拒绝，改为布尔值 `true` 后通过。
-- import 修改后受影响的测试：**146 passed，1.49 秒**。这与上面的 900 项有重叠，不能相加当作独立测试数量。
-- 独立限定复审：Phase 1 收尾批准，没有确认的直接阻断问题；不包含对 Phase 2 的完整验收。
-- 最终浏览器：通过 `tests/harness_ui_app.py` 启动 localhost fixture，实际点击既有失败任务恢复按钮。任务由 `failed/current_phase=blocked` 变为 `queued/resuming`，仅一次审计和一次恢复提交；无效 CSRF 返回 403 且没有新增提交。正常操作无控制台错误，仅有既有 Tailwind CDN 警告；测试服务已通过退出接口关闭。
+结果：父代理相关测试 **37 passed，1.89 秒**；仓库规定 Ruff 检查 **All checks passed**；本单元 12 个后端/测试文件 Ruff format 检查通过；diff 检查通过。
 
-验证性质明确区分如下：
+浏览器命令：`UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python tests/harness_phase2_ui_app.py`。通过真实 `/config` 页面点击 Skills 开关关闭、保存/重载，再开启并保存；中英文显示正确；九个旧配置均无控件。向真实保存路由额外提交旧键也不写入；无效 CSRF 返回 **403** 且没有新增提交/审计。正常操作无控制台错误；主动 403 检查产生预期失败日志，既有 Tailwind CDN 警告保留。fixture 已正常关闭。
 
-- **真实本地执行**：临时文件读写、asyncio 并发/取消、后台写线程清理、SQLite 提交/回滚、浏览器与实际 FastAPI/Jinja/CSRF 路径。
-- **模拟边界**：模型响应、外部 GitHub/供应商/服务使用替身；浏览器 fixture 的身份、数据库与后台调度使用替身。SQLite checkpoint 用同步 Session 的异步测试适配器，不是线上 MySQL 并发测试。
-- **未验证**：真实模型任务完成率、真实 Docker/Sandbox 部署、生产 GitHub 发布、MySQL 跨进程竞争；Phase 2 列明的缺口及 Phase 3–6 完整功能。
+## 证据边界与下一步
 
-无进展检测比较规范化的工具/参数/结果和新上下文证据，排除调用 ID；它不是语义裁判。时间戳、随机输出或其他不同内容可能看起来是新证据，因此不声称能够证明所有语义空转均被终止。默认总量预算为 0，显式正数预算仍可设置；连续无新证据阈值默认 8。
+- **真实执行**：临时文件/目录、nofollow 读取、asyncio 并发与取消、写线程清理、SQLite 提交/回滚、实际浏览器及 FastAPI/Jinja/配置保存/CSRF 路由。
+- **测试替身**：模型、GitHub/外部服务；浏览器身份、数据库、网络状态和与 Phase 2 无关的配置节持久化。SQLite 通过已有同步 Session 的异步测试适配器运行，不代表 MySQL 跨进程测试。
+- **未验证**：真实模型完成率、真实 Docker/Sandbox 部署、生产 GitHub 发布、MySQL 竞争。**Phase 1 互斥证据只覆盖同一进程、同一事件循环；跨 worker 保证仍待核实。** 策略检测仅识别可观察的相同内容；不同随机输出/时间戳或语义空转可能不会触发。
+- **仍需完成**：Phase 3–6 必做功能及集成验证、压缩审计；下一项为只读 Subagent 的独立 durable session、执行边界和取消/恢复，不添加累计调用预算。
 
-最终截图位于 `/tmp/sakura-628-final-ui/failed-state.png`，测试输出在 `/tmp/sakura-628-wrap-final-tests.log`、`/tmp/sakura-628-wrap-import-regression.log`、`/tmp/sakura-628-wrap-ruff-final.log`。这些本地证据没有作为源代码或凭据提交。
-
-本轮保留未提交工作：Phase 1 与尚未完成的 Phase 2 共用部分文件，不把部分实现混成已完成阶段提交。没有推送、创建/合并 PR 或关闭 Issue。**这是阶段性交付，不能声明整个 #628 已解决。**
+本轮浏览器证据保存在 `/tmp/sakura-628-phase2-browser/` 和 `/tmp/sakura-628-phase2-ui-evidence.json`；子任务验证记录位于忽略目录 `.superpowers/sdd/2026-10-04-issue-628-agent-harness/`。这些日志/截图未混入提交；原 develop 工作区保持干净。
