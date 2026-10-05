@@ -1133,7 +1133,11 @@ async def resume_task(
     csrf_token: str = Depends(require_csrf),
 ):
     """从已持久化 messages 和工作区继续运行任务。"""
-    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    result = await db.execute(
+        select(AgentTeamTask)
+        .where(AgentTeamTask.id == task_id)
+        .with_for_update()
+    )
     task = result.scalar_one_or_none()
     if task is None:
         return JSONResponse(

@@ -75,7 +75,9 @@ def test_tool_result_success():
 
 def test_tool_result_terminal():
     r = ToolResult(success=True, output={"_terminal": True, "summary": "done"})
-    assert r.is_terminal
+    assert not r.is_terminal
+    admitted = ToolResult(success=True, terminal_state="success")
+    assert admitted.is_terminal
 
 
 def test_tool_result_error():
@@ -490,6 +492,7 @@ async def test_search_in_files_invalid_regex_case_insensitive_fallback(
     monkeypatch,
 ):
     workspace, ctx = _setup_workspace(tmp_path)
+
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
 
@@ -532,6 +535,7 @@ async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
 @pytest.mark.asyncio
 async def test_legacy_search_in_files_reuses_grep_tool(tmp_path, monkeypatch):
     workspace, ctx = _setup_workspace(tmp_path)
+
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
 

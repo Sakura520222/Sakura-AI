@@ -9,7 +9,12 @@ from typing import Any
 
 from loguru import logger
 
-from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
+from backend.services.agent_team.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolMetadata,
+    ToolResult,
+)
 
 
 class FinishTaskTool(BaseTool):
@@ -54,6 +59,28 @@ class FinishTaskTool(BaseTool):
 
     def is_read_only(self) -> bool:
         return True
+
+    def runtime_metadata(self) -> ToolMetadata:
+        return ToolMetadata(read_only=True, terminal=True)
+
+    def validate_input(self, args: dict[str, Any], ctx: ToolContext) -> str | None:
+        if not isinstance(args.get("summary"), str) or not args["summary"].strip():
+            return "summary must be a non-empty string"
+        risk_level = args.get("risk_level", "medium")
+        if not isinstance(risk_level, str) or risk_level not in {
+            "low",
+            "medium",
+            "high",
+        }:
+            return "risk_level must be low, medium or high"
+        files = args.get("modified_files", [])
+        if not isinstance(files, list) or any(
+            not isinstance(path, str) for path in files
+        ):
+            return "modified_files must be a list of paths"
+        if not isinstance(args.get("test_result", ""), str):
+            return "test_result must be a string"
+        return None
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         summary = args.get("summary", "")
