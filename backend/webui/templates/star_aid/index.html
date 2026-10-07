@@ -90,7 +90,7 @@
                 {% if repo.ai_summary_status == 'ready' and repo.ai_summary %}
                 <div class="mt-2 border-t border-gray-100 pt-2 dark:border-gray-700">
                     <div class="text-xs font-medium text-sakura-600 dark:text-sakura-300">{{ _('star_aid.ai_summary') }}</div>
-                    <p class="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{{ repo.ai_summary }}</p>
+                    <p class="mt-1 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{{ repo.ai_summary }}</p>
                 </div>
                 {% elif repo.ai_summary_status == 'pending' %}<p class="mt-2 text-xs text-yellow-600">{{ _('star_aid.summary_pending') }}</p>
                 {% elif repo.ai_summary_status == 'failed' %}<p class="mt-2 text-xs text-red-500">{{ _('star_aid.summary_failed') }}</p>{% endif %}
