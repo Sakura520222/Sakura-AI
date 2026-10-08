@@ -47,6 +47,7 @@ from backend.core.ai_protocol.request_policy import (
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
 )
+from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
 
 
 def _get_adapter(family):
@@ -642,6 +643,8 @@ class UnifiedAIClient:
                                     "主动压缩可观测性记录失败（不影响审查）: {}",
                                     exc,
                                 )
+                except UsagePersistenceError:
+                    raise
                 except Exception as exc:
                     logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
             policy = resolve_effective_request_policy(
@@ -1005,6 +1008,8 @@ class UnifiedAIClient:
                         if candidate.model.capabilities.vision
                         else strip_message_images(candidate_messages)
                     )
+                except UsagePersistenceError:
+                    raise
                 except Exception as exc:
                     logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
             policy = resolve_effective_request_policy(
@@ -1563,6 +1568,8 @@ class UnifiedAIClient:
                 messages=messages,
                 **compressor_kwargs,
             )
+        except UsagePersistenceError:
+            raise
         except Exception as exc:
             logger.warning("压缩恢复失败: {}", exc)
             return None

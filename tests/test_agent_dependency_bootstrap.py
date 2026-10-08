@@ -687,3 +687,17 @@ async def test_worker_enters_agent_execution_after_permanent_setup_failure(
     assert not any(
         item.get("status") == AgentTeamTaskStatus.FAILED.value for item in updates
     )
+
+
+@pytest.fixture(autouse=True)
+def worker_control_audit_store(monkeypatch):
+    """Worker orchestration uses fake tasks; persistence has separate SQLite tests."""
+    from unittest.mock import AsyncMock
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    monkeypatch.setattr(
+        ConversationCheckpointService, "record_control_event", AsyncMock()
+    )

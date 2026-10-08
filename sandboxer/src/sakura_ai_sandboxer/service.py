@@ -98,7 +98,7 @@ class SandboxExecutionService:
         return HealthData(
             ready=self._runtime_ready and not self._shutting_down,
             runtime=self.runtime.name,
-            profiles=["agent", "dependency"],
+            profiles=["agent", "dependency", "read_only"],
             # Health advertises a capability, never the deployment-owned
             # Docker network name.
             egress_capability=(

@@ -13,17 +13,24 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
-from backend.services.agent_team.context_compressor import compress_agent_team_messages
+from backend.services.agent_team.context_compressor import (
+    AgentContextCompressor,
+    compress_agent_team_messages,
+)
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
 from backend.services.agent_team.execution import ExecutionRunner
+from backend.services.agent_team.harness_runtime import create_harness_runtime
+from backend.services.agent_team.lifecycle_hooks import HookFailure
 from backend.services.agent_team.prompt_config import (
     IMPLEMENTATION_SYSTEM_PROMPT,
+    SUBAGENT_SYSTEM_PROMPT,
     build_implementation_user_message,
 )
 from backend.services.agent_team.repository_context import (
@@ -34,6 +41,11 @@ from backend.services.agent_team.repository_context import (
 from backend.services.agent_team.skill_scope import SkillRestriction
 from backend.services.agent_team.skill_service import normalize_skill_slug
 from backend.services.agent_team.strategy_self_check import StrategySelfCheckState
+from backend.services.agent_team.subagents import (
+    SubagentManager,
+    SubagentStore,
+    drain_cleanup,
+)
 from backend.services.agent_team.tool_scheduler import run_tool_batch
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -43,6 +55,7 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.message_utils import (
     get_missing_tool_calls,
@@ -169,11 +182,19 @@ class FullStackExpertAgent:
         self.restored_messages = initial_messages is not None
         self.execution_runner = execution_runner
         self._cancel_event: asyncio.Event | None = None
+        self._subagents: SubagentManager | None = None
+        self._read_only = False
+        self._harness = None
+        self._compressor: AgentContextCompressor | None = None
         self.messages: list[dict[str, Any]] = (
             [dict(message) for message in initial_messages]
             if initial_messages is not None
             else [{"role": "system", "content": FULLSTACK_SYSTEM_PROMPT}]
         )
+
+    @property
+    def system_prompt(self) -> str:
+        return SUBAGENT_SYSTEM_PROMPT if self._read_only else FULLSTACK_SYSTEM_PROMPT
 
     async def _append_message(self, message: dict[str, Any]) -> int | None:
         message_id = None
@@ -192,6 +213,10 @@ class FullStackExpertAgent:
     def _is_guidance_message(message: dict[str, Any]) -> bool:
         """Identify runtime guidance without inspecting or rewriting its body."""
         if message.get("role") != "user":
+            return False
+        if {"context_compaction", "harness_event"} & (
+            message.get("metadata") or {}
+        ).keys():
             return False
         if message.get("guidance_ids") or message.get("prompt_ids"):
             return True
@@ -223,12 +248,12 @@ class FullStackExpertAgent:
 
         for message in self.messages:
             if message.get("role") == "system":
-                message["content"] = FULLSTACK_SYSTEM_PROMPT
+                message["content"] = self.system_prompt
                 break
         else:
             self.messages.insert(
                 0,
-                {"role": "system", "content": FULLSTACK_SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
             )
 
         initial_user_index = next(
@@ -240,6 +265,8 @@ class FullStackExpertAgent:
                 and not message.get("metadata", {}).get("completion_reminder")
                 and not message.get("metadata", {}).get("repository_context")
                 and not message.get("metadata", {}).get("strategy_self_check")
+                and "context_compaction" not in message.get("metadata", {})
+                and "harness_event" not in message.get("metadata", {})
             ),
             None,
         )
@@ -283,14 +310,47 @@ class FullStackExpertAgent:
             cancel_event=self._cancel_event,
             read_file_state={},
             extra=extra,
+            executor=self.tool_executor,
         )
 
+    async def _initialize_subagents(self, ctx: ToolContext) -> None:
+        if (
+            not isinstance(self.checkpoint, ConversationCheckpointService)
+            or not self.session_id
+        ):
+            return
+        store = SubagentStore(self.checkpoint.task_id)
+        child = await store.for_session(self.session_id)
+        if child is not None:
+            self._read_only = True
+            scope = SkillRestriction()
+            for inherited in child.skill_scopes.values():
+                scope = scope.intersect(inherited)
+            self.tool_executor = create_executor(read_only=True, delegated_scope=scope)
+            ctx.executor = self.tool_executor
+            ctx.active_skill_tools.update(child.skill_scopes)
+            # A fresh child has only a system seed. Recovered history is
+            # refreshed by _prepare_restored_messages after ledger validation.
+            if not self.restored_messages:
+                self.messages = [{"role": "system", "content": self.system_prompt}]
+            return
+        from backend.core.config import get_dynamic_config_fresh
+
+        concurrency = await get_dynamic_config_fresh("agent_team_subagent_concurrency")
+        self._subagents = SubagentManager(
+            self.checkpoint, self.session_id, ctx, concurrency=concurrency
+        )
+        ctx.subagents = self._subagents
+
     async def execute(self, *args: Any, **kwargs: Any) -> FullStackResult:
+        result = None
         try:
-            return await self._execute(*args, **kwargs)
+            result = await self._execute(*args, **kwargs)
+        except HookFailure as exc:
+            result = FullStackResult(False, str(exc), error="hook_failed")
         except RepositoryContextError:
             ctx = getattr(self, "_active_context", None)
-            return FullStackResult(
+            result = FullStackResult(
                 False,
                 "仓库上下文路径或格式校验阻止了执行",
                 error="repository_context_rejected",
@@ -299,7 +359,7 @@ class FullStackExpertAgent:
             )
         except asyncio.CancelledError:
             ctx = getattr(self, "_active_context", None)
-            return FullStackResult(
+            result = FullStackResult(
                 success=False,
                 summary="任务已取消",
                 error="cancelled",
@@ -307,9 +367,95 @@ class FullStackExpertAgent:
                 tool_calls_count=sum(m.get("role") == "tool" for m in self.messages),
             )
         finally:
-            ctx = getattr(self, "_active_context", None)
-            if ctx:
-                ctx.active_skill_tools.clear()
+            try:
+                if self._harness:
+                    ctx = getattr(self, "_active_context", None)
+                    if ctx and (result is None or not result.success):
+                        try:
+                            await drain_cleanup(
+                                self._harness.hooks.emit(
+                                    "task_cancelled"
+                                    if result and result.error == "cancelled"
+                                    else "task_failed",
+                                    ctx,
+                                    audit_only=bool(
+                                        result
+                                        and result.error
+                                        in {
+                                            "reconciliation_required",
+                                            "checkpoint_inconsistent",
+                                        }
+                                    ),
+                                    status="cancelled"
+                                    if result and result.error == "cancelled"
+                                    else "failed",
+                                )
+                            )
+                        except Exception:
+                            logger.error("Agent terminal lifecycle hook failed")
+            finally:
+                await self._close_harness_resources()
+        if (
+            result is not None
+            and isinstance(self.checkpoint, ConversationCheckpointService)
+            and self.session_id
+        ):
+            (
+                result.prompt_tokens,
+                result.completion_tokens,
+            ) = await self.checkpoint.load_usage(self.session_id)
+        return result
+
+    async def _close_harness_resources(self):
+        try:
+            if self._subagents:
+                await drain_cleanup(self._subagents.close())
+        finally:
+            try:
+                if self._compressor:
+                    await drain_cleanup(self._compressor.aclose())
+            finally:
+                ctx = getattr(self, "_active_context", None)
+                try:
+                    if self._harness:
+                        await drain_cleanup(self._harness.close())
+                finally:
+                    if ctx:
+                        ctx.active_skill_tools.clear()
+
+    async def _persist_harness_audit(self, event):
+        await self._append_message(
+            {"role": "user", "content": "", "metadata": {"harness_event": event}}
+        )
+
+    async def _persist_provider_usage(self, usage: Any) -> None:
+        if (
+            isinstance(self.checkpoint, ConversationCheckpointService)
+            and self.session_id
+        ):
+            failed = False
+            try:
+                # Drain known usage through cancellation before any model effect.
+                await drain_cleanup(
+                    self.checkpoint.record_usage(self.session_id, str(uuid4()), usage)
+                )
+            except Exception:
+                failed = True
+            if failed:
+                # Never expose a driver exception or its sensitive context.
+                raise UsagePersistenceError() from None
+
+    async def _persist_compaction_audit(self, audit: dict[str, Any]) -> None:
+        if self.checkpoint and self.session_id:
+            # Audit rows are durable metadata, never an extra model/user turn.
+            await self.checkpoint.append_message(
+                self.session_id,
+                {
+                    "role": "user",
+                    "content": "",
+                    "metadata": {"context_compaction": audit},
+                },
+            )
 
     async def _execute(
         self,
@@ -335,6 +481,23 @@ class FullStackExpertAgent:
         self._cancel_event = cancel_event
         ctx = self._build_context(skills_context)
         self._active_context = ctx
+        try:
+            await self._initialize_subagents(ctx)
+        except ValueError:
+            return FullStackResult(
+                False, "子代理会话或运行时配置无效", error="checkpoint_inconsistent"
+            )
+        self._harness = create_harness_runtime(
+            audit=self._persist_harness_audit,
+            task_id=getattr(self.checkpoint, "task_id", None),
+            session_id=self.session_id,
+            read_only=self._read_only,
+        )
+        self.tool_executor.bind_runtime(self._harness.capabilities, self._harness.hooks)
+        ctx.mcp_runtime = self._harness.mcp
+        await self._ensure_system_checkpoint()
+        if not (await self._harness.capabilities.check("request", ())).allowed:
+            raise HookFailure("runtime_policy_unavailable_or_denied")
         ctx.repository_context = RepositoryContext(self.workspace)
         ctx.extra["admin_skills_index"] = dict(ctx.extra.get("skills_index", {}))
         await self._refresh_skills(ctx)
@@ -343,7 +506,20 @@ class FullStackExpertAgent:
             if restored is not None:
                 return restored
             self._restore_skill_workflows(ctx)
-        client, config = await create_agent_team_client()
+        await self._harness.hooks.emit("session_start", ctx, status="started")
+        if self._subagents:
+            await self._subagents.start()
+        self._compressor = AgentContextCompressor.from_settings(
+            audit_callback=self._persist_compaction_audit
+            if self.checkpoint and self.session_id
+            else None,
+            audit_context={
+                "task_id": getattr(self.checkpoint, "task_id", None),
+                "session_id": self.session_id,
+            },
+            usage_callback=self._persist_provider_usage,
+        )
+        client, config = await create_agent_team_client(compressor=self._compressor)
         candidate = await client.resolve_role_primary_candidate(config.agent_role)
         context_window_tokens = (
             candidate.model.context_window_tokens if candidate else None
@@ -518,6 +694,7 @@ class FullStackExpertAgent:
             for self_check in strategy.update(self.messages):
                 await self._append_message(self_check)
 
+            await self._harness.hooks.emit("before_model", ctx)
             await self._refresh_skills(ctx)
             # Re-read the current scope; deletions and replacements are observed
             # before the next request, while durable history stays untouched.
@@ -528,8 +705,14 @@ class FullStackExpertAgent:
             )
             ctx.repository_instructions = {doc.path: doc for doc in current_docs}
             projected = self._project_model_messages(ctx)
+            self._compressor.bind_source_messages(projected)
+            tool_schemas = await get_tool_definitions_fresh("agent", ctx=ctx)
             model_messages = await compress_agent_team_messages(
-                projected, candidate=candidate, token_tracker=token_tracker
+                projected,
+                candidate=candidate,
+                token_tracker=token_tracker,
+                compressor=self._compressor,
+                tools=tool_schemas,
             )
             # Compression and legacy histories may omit repository messages.
             # Reinforce current data as a user turn, never system authority.
@@ -543,21 +726,39 @@ class FullStackExpertAgent:
                     for message in model_messages
                 ):
                     model_messages.append(guidance)
-            tool_schemas = await get_tool_definitions_fresh("agent", ctx=ctx)
             await _publish_ai_request(
                 "agent",
                 round_num,
                 task_id=self.checkpoint.task_id if self.checkpoint else None,
                 session_id=self.session_id,
             )
-            response = await client.call_with_retry(
-                messages=model_messages,
-                model="",
-                tools=tool_schemas,
-                tool_choice="auto",
-                role="agent_team",
-                cancel_event=cancel_event,
-            )
+            try:
+                response = await client.call_with_retry(
+                    messages=model_messages,
+                    model="",
+                    tools=tool_schemas,
+                    tool_choice="auto",
+                    role="agent_team",
+                    cancel_event=cancel_event,
+                )
+            except BaseException as exc:
+                # Preserve provider/cancellation failures if a post hook fails.
+                try:
+                    await drain_cleanup(
+                        self._harness.hooks.emit(
+                            "after_model",
+                            ctx,
+                            status="cancelled"
+                            if isinstance(exc, asyncio.CancelledError)
+                            else "failed",
+                            audit_only=isinstance(exc, asyncio.CancelledError),
+                        )
+                    )
+                except Exception:
+                    logger.error("Agent after_model failure hook failed")
+                raise
+            await self._persist_provider_usage(getattr(response, "usage", None))
+            await self._harness.hooks.emit("after_model", ctx, status="completed")
             token_tracker.accumulate(response)
             token_tracker.log_context_usage(
                 response,
@@ -912,6 +1113,10 @@ class FullStackExpertAgent:
         initial = True
         for original in self.messages:
             message = dict(original)
+            if {"context_compaction", "harness_event"} & message.get(
+                "metadata", {}
+            ).keys():
+                continue
             if message.get("metadata", {}).get("repository_context"):
                 continue
             for call in message.get("tool_calls") or []:
@@ -962,6 +1167,45 @@ class FullStackExpertAgent:
             and hasattr(self.checkpoint, "load_session_result")
         ):
             session_result = await self.checkpoint.load_session_result(self.session_id)
+        # Non-tool hooks mutate too. Only a matching durable completion closes
+        # an admission; removed hooks do not make interrupted effects replayable.
+        effects = [
+            event
+            for message in self.messages
+            if (event := message.get("metadata", {}).get("harness_event", {})).get(
+                "kind"
+            )
+            == "hook_effect"
+            and event.get("effect") == "workspace_write"
+        ]
+        completed_effects = {
+            event.get("effect_id")
+            for event in effects
+            if event.get("status") == "completed" and event.get("effect_id")
+        }
+        if any(
+            not event.get("tool_call_id")
+            and event.get("status") == "admitted"
+            and (
+                not event.get("effect_id")
+                or event["effect_id"] not in completed_effects
+            )
+            for event in effects
+        ):
+            return FullStackResult(
+                False,
+                "中断的生命周期写操作需要核对工作区后再恢复",
+                error="reconciliation_required",
+            )
+        hook_mutations = {
+            event.get("tool_call_id")
+            for message in self.messages
+            if (event := message.get("metadata", {}).get("harness_event", {})).get(
+                "kind"
+            )
+            == "hook_effect"
+            and event.get("effect") == "workspace_write"
+        }
         calls = {}
         results = {}
         invalid = False
@@ -1066,7 +1310,10 @@ class FullStackExpertAgent:
             elif (
                 terminal is None
                 and status != "pending"
-                and not self.tool_executor.metadata(name).read_only
+                and (
+                    not self.tool_executor.metadata(name).read_only
+                    or ident in hook_mutations
+                )
             ):
                 return FullStackResult(
                     False,

@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
+from backend.services.agent_team.repository_context import RepositoryContext
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 # 项目标记文件 → 语言/工具链映射
@@ -66,12 +68,12 @@ def _dep_in_python_workspace(workspace: Path, dep_name: str) -> bool:
     ):
         req_path = workspace / req_file
         if req_path.exists():
-            content = req_path.read_text(encoding="utf-8", errors="ignore").lower()
+            content = RepositoryContext(workspace).read_text(req_file).lower()
             if dep_name in content:
                 return True
     pyproject = workspace / "pyproject.toml"
     if pyproject.exists():
-        content = pyproject.read_text(encoding="utf-8", errors="ignore").lower()
+        content = RepositoryContext(workspace).read_text("pyproject.toml").lower()
         if dep_name in content:
             return True
     return False
@@ -171,6 +173,10 @@ class DetectProjectTool(BaseTool):
         return True
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        return await asyncio.to_thread(self._detect, ctx)
+
+    @staticmethod
+    def _detect(ctx: ToolContext) -> ToolResult:
         workspace = Path(ctx.workspace)
         detected_languages: list[str] = []
         detected_pm: list[str] = []
@@ -193,7 +199,7 @@ class DetectProjectTool(BaseTool):
         if (workspace / "package.json").exists():
             try:
                 package_json = _safe_read_json(workspace / "package.json")
-            except Exception:
+            except json.JSONDecodeError:
                 pass
 
         # Node.js 包管理器细化
@@ -231,4 +237,4 @@ class DetectProjectTool(BaseTool):
 
 
 def _safe_read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    return json.loads(RepositoryContext(path.parent).read_text(path.name))

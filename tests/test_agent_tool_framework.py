@@ -200,6 +200,8 @@ async def test_git_diff_places_file_paths_after_option_terminator(tmp_path):
     captured: dict[str, tuple[str, ...]] = {}
 
     async def fake_run_git(_ctx, args):
+        if "config" in args:
+            return ExecutionResult(command="git config", cwd=workspace, exit_code=1)
         captured["args"] = args
         return ExecutionResult(
             command="git diff",
@@ -214,7 +216,9 @@ async def test_git_diff_places_file_paths_after_option_terminator(tmp_path):
     result = await tool._run_full(["--stat"], ctx)
 
     assert result.success
-    assert captured["args"] == ("git", "diff", "--", "--stat")
+    assert captured["args"][-2:] == ("--", "--stat")
+    assert "--no-ext-diff" in captured["args"]
+    assert "--no-textconv" in captured["args"]
 
 
 # ── Registry ──────────────────────────────────────────
@@ -240,6 +244,9 @@ def test_registry_has_all_agent_tools():
         "check_changes",
         "search_web",
         "fetch_url",
+        "spawn_agent",
+        "wait_agent",
+        "cancel_agent",
     }
     assert expected == names
 

@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from backend.models.agent_team_models import (
     AgentTeamMessage,
     AgentTeamSession,
+    AgentTeamSubagent,
     AgentTeamTask,
     AgentTeamToolCall,
+    AgentTeamUsage,
 )
 from backend.models.database import Base
 from backend.services.agent_team import conversation_checkpoint as checkpoint_module
@@ -33,6 +35,8 @@ def persistence(monkeypatch):
                 AgentTeamSession,
                 AgentTeamMessage,
                 AgentTeamToolCall,
+                AgentTeamSubagent,
+                AgentTeamUsage,
             )
         ],
     )
@@ -380,3 +384,36 @@ async def test_legacy_recovery_read_error_keeps_original_cursor(
     with Session(engine) as db:
         assert list(db.scalars(select(AgentTeamSession.id))) == [older.id]
         assert db.scalar(select(AgentTeamToolCall)).status == "running"
+
+
+@pytest.mark.asyncio
+async def test_control_audit_is_durable_and_never_selects_resume_cursor(persistence):
+    service, engine, _locked = persistence
+    await service.record_control_event(
+        {"event": "capability_allowed", "action": "dependency"}
+    )
+    assert await service.get_resume_cursor() is None
+    main = await service.create_session(1, "agent")
+    await service.record_control_event({"event": "capability_denied", "action": "git"})
+    assert (await service.get_resume_cursor()).session_id == main.id
+    with Session(engine) as db:
+        from sqlalchemy import select
+
+        from backend.models.agent_team_models import AgentTeamMessage, AgentTeamSession
+
+        control = db.execute(
+            select(AgentTeamSession).where(
+                AgentTeamSession.role_name == "harness_control"
+            )
+        ).scalar_one()
+        rows = (
+            db.execute(
+                select(AgentTeamMessage).where(
+                    AgentTeamMessage.session_id == control.id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 2
+        assert all(row.content == "" for row in rows)

@@ -154,7 +154,9 @@ class CapabilitySession:
         if self.ceiling is not None:
             self.ceiling = frozenset(Capability(value) for value in self.ceiling)
 
-    async def evaluate(self, required: Iterable[str]) -> CapabilityDecision:
+    async def evaluate(
+        self, required: Iterable[str], *, read_only: bool = True
+    ) -> CapabilityDecision:
         """Check tool visibility without recording an execution that did not occur."""
         if self._closed:
             return CapabilityDecision(False, "session_closed")
@@ -167,6 +169,23 @@ class CapabilitySession:
         if self._closed:
             return CapabilityDecision(False, "session_closed")
         decision = snapshot.evaluate(required)
+        if (
+            decision.allowed
+            and not read_only
+            and (
+                snapshot.profile is PermissionProfile.READ_ONLY
+                or (
+                    self.ceiling is not None
+                    and Capability.FILESYSTEM_WRITE not in self.ceiling
+                )
+            )
+        ):
+            return CapabilityDecision(
+                False,
+                "readonly_effect_denied",
+                decision.capabilities,
+                decision.revision,
+            )
         if decision.allowed and self.ceiling is not None:
             if not set(decision.capabilities) <= self.ceiling:
                 return CapabilityDecision(
@@ -215,8 +234,10 @@ class CapabilitySession:
                 raise CapabilityDenied("audit_unavailable") from None
         logger.info("Agent capability audit: {}", payload)
 
-    async def check(self, action: str, required: Iterable[str]) -> CapabilityDecision:
-        decision = await self.evaluate(required)
+    async def check(
+        self, action: str, required: Iterable[str], *, read_only: bool = True
+    ) -> CapabilityDecision:
+        decision = await self.evaluate(required, read_only=read_only)
         await self._record(
             "capability_allowed" if decision.allowed else "capability_denied",
             action,
@@ -232,3 +253,88 @@ class CapabilitySession:
     async def close(self) -> None:
         """Prevent a stale task/child context from dispatching further operations."""
         self._closed = True
+
+
+async def load_runtime_policy() -> PolicySnapshot:
+    """Read only trusted dynamic settings at each actual boundary."""
+    from backend.core.config import get_dynamic_config_fresh
+    from backend.services.agent_team.network_policy import get_agent_team_network_policy
+
+    profile = await get_dynamic_config_fresh("agent_team_permission_profile")
+    network = await get_agent_team_network_policy()
+    return PolicySnapshot(profile, network, revision=f"{profile}:{network}")
+
+
+async def execution_network_policy(
+    policy: AgentTeamNetworkPolicy,
+) -> AgentTeamNetworkPolicy:
+    """Intersect runner networking with the current non-networked profiles.
+
+    The existing #604 runner still owns network mode selection and cleanup.
+    A workspace-only profile cannot inherit egress from a broader deployment
+    network setting. Autonomous/full-access preserve that existing setting.
+    """
+    from backend.core.config import get_dynamic_config_fresh
+
+    profile = PermissionProfile(
+        await get_dynamic_config_fresh("agent_team_permission_profile")
+    )
+    if profile in {PermissionProfile.READ_ONLY, PermissionProfile.WORKSPACE_WRITE}:
+        return AgentTeamNetworkPolicy.OFFLINE
+    return policy
+
+
+def tool_capabilities(tool, args=None) -> tuple[str, ...]:
+    """Only registered implementations select authority, never model metadata."""
+    from backend.services.agent_team.tools.mcp_tool import MCPTool
+
+    if isinstance(tool, MCPTool):
+        return tuple(
+            {
+                Capability.MCP_INVOKE.value,
+                Capability.NETWORK_WEB.value,
+                *tool.policy.required_capabilities,
+            }
+        )
+    name = tool.name
+    if name in {
+        "read_file",
+        "list_directory",
+        "glob",
+        "search_in_files",
+        "detect_project",
+        "use_skill",
+    }:
+        return (Capability.FILESYSTEM_READ,)
+    if name in {
+        "write_file",
+        "edit_file",
+        "replace_lines",
+        "insert_lines",
+        "revert_file",
+    }:
+        return (Capability.FILESYSTEM_WRITE,)
+    if name == "run_command":
+        caps = (Capability.SHELL_EXECUTE, Capability.FILESYSTEM_WRITE)
+        if args and args.get("network_capability", "none") != "none":
+            from backend.services.agent_team.network_policy import (
+                NetworkCapability,
+                parse_network_capability,
+            )
+
+            try:
+                requested = parse_network_capability(args["network_capability"])
+            except ValueError, TypeError:
+                return ("unknown",)
+            if requested is NetworkCapability.DEPENDENCY_EGRESS:
+                caps += (Capability.DEPENDENCY_INSTALL, Capability.NETWORK_EGRESS)
+        return caps
+    if name == "check_changes":
+        return (Capability.GIT_READ,)
+    if name in {"search_web", "fetch_url"}:
+        return (Capability.NETWORK_WEB,)
+    if name == "spawn_agent":
+        return (Capability.SUBAGENT_SPAWN,)
+    if name in {"finish_task", "wait_agent", "cancel_agent"}:
+        return ()
+    return ("unknown",)

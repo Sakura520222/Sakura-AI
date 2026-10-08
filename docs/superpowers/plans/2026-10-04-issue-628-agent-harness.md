@@ -1,8 +1,8 @@
 # Agent Harness 2.0 Implementation Plan and Acceptance Ledger
 
-> Current scope (latest user instruction 2026-10-05): an active goal now covers the complete mandatory Agent Harness 2.0 delivery. Finish and commit the current Phase 2 unit, then continue Phases 3–6 by dependency. WIP checkpoint `656c7b65` preserves the prior work; Phase 5 foundation is not yet connected. Keep the same worktree. Local commits only; no push, PR, merge or issue closure.
+> Final scope (2026-10-08): all mandatory Phase 1–6 runtime features and extra Skills/compaction/recovery requirements are implemented and locally verified. WIP `656c7b65` and Phase1/2 checkpoint `30c4152f` retain history. The same worktree is retained. Local commits only; no push, PR, merge or issue closure. Exact evidence and deployment limits: `docs/AGENT_HARNESS_2_ACCEPTANCE.md`.
 
-**Full goal (unchanged):** implement every mandatory requirement of [Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628). **Current work:** finish Phase 2's known gaps and independent review, update evidence and commit locally, then continue the remaining mandatory phases.
+**Full goal (unchanged):** implement every mandatory requirement of [Issue #628](https://github.com/Sakura520222/Sakura-AI/issues/628). **Delivery:** integrated runtime, configuration, bilingual guides, behavioral tests and independent review; production deployment remains outside local evidence.
 **Baseline:** origin/develop `38a021934461bae4932928c3f466df6d47ddc2b8`, fetched 2026-10-04; clean source checkout.
 **Spec:** Issue #628 body, fetched with its sole comment and full timeline. No linked PRs. The bot comment is investigative context, not specification or current-code evidence.
 **Architecture:** retain the existing Agent, worker, checkpoint, runner, Skills and network services. Add runtime-owned scheduling, repository context, orchestration, capability evaluation and trusted plugin adapters. Only the runner chooses infrastructure parameters. Repository data never grants authority.
@@ -26,7 +26,7 @@
 
 - [x] Latest contract verification: pure text receives completion reminders and cannot claim success; repeated identical work triggers a nonterminal strategy self-check, with no cumulative execution budgets or text-response cutoff.
 - [x] Only successful finish_task admits success; cancelled, blocked and unrecoverable_error are distinct runtime/session outcomes. Compatible task statuses retain precise current_phase/reasons. Forged terminal outputs are rejected.
-- [x] Tool metadata is runtime-owned. Safe read batches preserve result order without an artificial read-count cap; writes, shell, Git mutations and finish use event-loop-local workspace barriers shared across executors. No cross-process exclusion claim.
+- [x] Tool metadata is runtime-owned. Safe read batches preserve result order without an artificial read-count cap; writes, shell, Git mutations and finish use writer-preferring event-loop barriers plus advisory directory locks shared by cooperating processes on the same filesystem. This is not distributed task ownership.
 - [x] Persist running/completed/failed/cancelled states with locked sequence allocation and atomic results; propagate cancellation and drain actual mutation work.
 - [x] Resume checks terminal/tool consistency and atomic legacy migration; safe reads may retry, uncertain mutations do not blindly replay.
 - [x] Completion, scheduling, cancellation, guidance, resume, no-progress and local browser checks passed; exact commands/limits are recorded in `docs/AGENT_HARNESS_2_ACCEPTANCE.md`.
@@ -47,57 +47,59 @@ Implementation surface: repository_context.py, skill_service.py, tools/use_skill
 
 ## Task 3 — Read-only subagents
 
-- [ ] spawn_agent / wait_agent / cancel_agent use independent context and durable child sessions; return structured results.
-- [ ] Fixed runtime allowlist: safe read/search/diff/detect/web and policy-approved read-only MCP. No Shell, file writes, Git write/push or permission expansion.
-- [ ] Schedule live children within available concurrency (Issue requirement), with no cumulative spawn/model/tool budget or lifetime call-count termination. Child tools cannot recursively spawn writers; main remains sole writer. Shared workspace scheduler coordinates readers with parent writes.
-- [ ] Parent cancellation/shutdown recursively cancels and awaits children. Resume never silently abandons or duplicates active children.
-- [ ] Tests: concurrent isolated children, saturation, deny writes via every executor path, wait/cancel, model failures and parent cancellation.
+- [x] spawn_agent / wait_agent / cancel_agent use independent context and durable child sessions; return structured results.
+- [x] Fixed runtime allowlist: safe read/search/diff/detect/web and policy-approved read-only MCP. No Shell, file writes, Git write/push or permission expansion.
+- [x] Schedule live children within available concurrency (Issue requirement), with no cumulative spawn/model/tool budget or lifetime call-count termination. Child tools cannot recursively spawn writers; main remains sole writer. Shared workspace scheduler coordinates readers with parent writes.
+- [x] Parent cancellation/shutdown recursively cancels and awaits children. Resume never silently abandons or duplicates active children.
+- [x] Tests: concurrent isolated children, saturation, deny writes via every executor path, wait/cancel, model failures and parent cancellation.
 
 Implementation surface: subagents.py, tools/subagent_tools.py, registry.py, fullstack_expert.py, checkpoint integration and tests.
 
 ## Task 4 — MCP runtime
 
-- [ ] Administrator-managed server configuration; at least one working standards-based transport and real local protocol integration test.
-- [ ] Initialize/list/call lifecycle, bounded discovery/output/timeouts, namespace collision prevention and schema normalization/validation.
-- [ ] Server advertisement does not grant permission: explicit administrator tool policy, runtime capability/network/workspace/secret checks before visibility and each execution.
-- [ ] Credentials remain transport-only and never enter model context/checkpoints/logs; no repository-controlled servers or host commands.
-- [ ] Fail closed per unavailable server/tool while preserving core tools; audit discovery, invocation, deny, failure and cancellation.
-- [ ] Tests: actual protocol server, malformed schemas/results, unavailable server, revoked authorization, secret redaction, network denial and cancellation.
+- [x] Administrator-managed server configuration; at least one working standards-based transport and real local protocol integration test.
+- [x] Initialize/list/call lifecycle, I/O idle timeouts, collision-safe namespaces and semantics-preserving schema validation. No new discovery/output count or size caps; SDK discovery has its own documented protocol probe deadline.
+- [x] Server advertisement does not grant permission: explicit administrator tool policy, runtime capability/network/workspace/secret checks before visibility and each execution.
+- [x] Credentials remain transport-only and never enter model context/checkpoints/logs; no repository-controlled servers or host commands.
+- [x] Fail closed per unavailable server/tool while preserving core tools; audit discovery, invocation, deny, failure and cancellation.
+- [x] Tests: actual protocol server, malformed schemas/results, unavailable server, revoked authorization, secret redaction, network denial and cancellation.
 
 Implementation surface: mcp_runtime.py, plugin configuration schema/service, executor/registry integration and tests. Do not introduce host stdio execution outside the sandbox.
 
 ## Task 5 — Unified capability engine
 
-- [ ] Capability schema covers filesystem, shell, web/egress, dependency, git/github, MCP, subagent and completion operations.
-- [ ] Profiles read_only/workspace_write/autonomous/full_access; full_access requires trusted administrator selection. Intersect network policy, subagent restrictions and skill constraints.
-- [ ] Model may request an abstract capability only. Task/execution temporary grants expire in finally on success/error/cancel and are not restored from repository/model/checkpoint claims.
-- [ ] Both schema visibility and every execution entry point enforce current policy; host/runner infrastructure remains server-owned.
-- [ ] Grant/deny/revoke audit contains identifiers and decisions, no commands/secrets. Existing worker GitHub publication also respects applicable task policy.
-- [ ] Tests: matrix, profile downgrade/revocation, forged contexts, unknown capabilities, grant cleanup, #604/#627 regressions.
+- [x] Capability schema covers filesystem, shell, web/egress, dependency, git/github, MCP, subagent and completion operations.
+- [x] Profiles read_only/workspace_write/autonomous/full_access; full_access requires trusted administrator selection. Intersect network policy, subagent restrictions and skill constraints.
+- [x] Model may request an abstract capability only. Task/execution temporary grants expire in finally on success/error/cancel and are not restored from repository/model/checkpoint claims.
+- [x] Both schema visibility and every execution entry point enforce current policy; host/runner infrastructure remains server-owned.
+- [x] Grant/deny/revoke audit contains identifiers and decisions, no commands/secrets. Existing worker GitHub publication also respects applicable task policy.
+- [x] Tests: matrix, profile downgrade/revocation, forged contexts, unknown capabilities, grant cleanup, #604/#627 regressions.
 
 Implementation surface: capability_policy.py, tools/base.py, execution/network adapters, worker admission/publication, Settings/dynamic config and tests. Earlier phases may introduce this shared foundation as required by dependencies; acceptance remains tracked here.
 
 ## Task 6 — Hooks, plugin management and integrated delivery
 
-- [ ] System hooks session_start/before_model/after_model/before_tool/after_tool/before_write/after_write/before_finish/after_finish/task_failed/task_cancelled.
-- [ ] Trusted configuration selects sandboxed formatter/lint/test/repository-validation hooks with bounded execution and current policy. Repositories may supply data, never execution grants or host credentials.
-- [ ] Failed required before_finish hooks veto success; after hooks cannot erase failures. Sanitize/audit hook outputs and propagate cancellation.
-- [ ] Unified Skills/MCP/Hooks plugin abstraction with super-admin WebUI management, strict validation, authorization and bilingual copy.
-- [ ] Compression audit records before/after token estimates, retained active task/recent tools/unresolved errors without upgrading untrusted content.
-- [ ] Unit/integration/local E2E tests, real browser interaction, related regressions, full pytest, Ruff, diff/scope review.
-- [ ] Configuration/deployment/user documentation and requirement→implementation→executed-test evidence matrix.
+- [x] System hooks session_start/before_model/after_model/before_tool/after_tool/before_write/after_write/before_finish/after_finish/task_failed/task_cancelled.
+- [x] Trusted configuration selects sandboxed formatter/lint/test/repository-validation hooks with bounded execution and current policy. Repositories may supply data, never execution grants or host credentials.
+- [x] Failed required before_finish hooks veto success; after hooks cannot erase failures. Sanitize/audit hook outputs and propagate cancellation.
+- [x] Unified Skills/MCP/Hooks plugin abstraction with super-admin WebUI management, strict validation, authorization and bilingual copy.
+- [x] Compression audit records before/after token estimates, retained active task/recent tools/unresolved errors without upgrading untrusted content.
+- [x] Unit/integration/local E2E tests, real browser interaction, related regressions, full pytest, Ruff, diff/scope review.
+- [x] Configuration/deployment/user documentation and requirement→implementation→executed-test evidence matrix.
 
 Implementation surface: lifecycle_hooks.py, plugins.py, config routes/templates, translations, compression/checkpoint integration, documentation and focused/browser tests.
 
 ## Evidence and status
 
-Initial code inspection confirms pure-text success, serial execution and static registry still exist. #604 and #627 are already integrated in baseline; preserve their APIs. Phase execution evidence will be appended here only after commands run.
+Baseline inspection on 2026-10-04 found pure-text success, serial execution and a static registry. #604 and #627 are already integrated in baseline; preserve their APIs. The acceptance record now contains the final executed commands and outcomes; reported suites overlap.
 
 | Phase | Implementation | Verification | State |
 |---|---|---|---|
-| 1 | Completion/scheduler/checkpoint/worker/resume UI; latest unlimited execution/self-check correction in progress | Latest affected regression 938 passed/1 prerequisite skip; nonterminal self-check, cancellation, resume, Ruff and scoped review passed | Verified in one process/event loop |
-| 2 | Switch, durable Skill ceilings, refreshed rules, selector compatibility and on-demand loading connected | 938 passed/1 prerequisite skip; two review PoCs fixed, 112-test independent recheck passed; bilingual real config browser/CSRF verified | Verified; local checkpoint before Phase 3 |
-| 3 | Pending | Pending | Pending |
-| 4 | Pending | Pending | Pending |
-| 5 | Standalone capability schema/profile/direct boundary checks; not integrated | 30 foundation unit tests pass; not phase acceptance | Partial; expansion stopped |
-| 6 | Pending | Pending | Pending |
+| 1 | Explicit completion, durable checkpoints, nonterminal self-check, workspace barriers and directory locks | Runtime and real cross-process/cancellation tests; final suite below | Verified in the documented scope |
+| 2 | Repository rules, lazy Skills, fresh scope and durable historical restrictions | Behavioral regressions and bilingual browser controls | Verified; committed checkpoint 30c4152f |
+| 3 | Readonly child sessions, queue, wait/cancel/results, idempotent usage | SQLite and real process/file tests; corrected descriptor-safe search; independent review PASS | Verified |
+| 4 | Official MCP SDK/HTTP, dynamic registry, policy and secrets | Real TCP modern/legacy tests, SDK logging/schema repairs and independent re-review PASS | Verified locally; no paid-provider claim |
+| 5 | Runtime/external control-plane capabilities, profiles, #604 integration | Fresh-policy/network narrowing and teardown regressions; independent review PASS | Verified |
+| 6 | Eleven hooks, durable effects, plugin/config/API/UI, compaction audit | Real formatter/cancellation, browser, SQLite+TCP+child+hook E2E and independent review PASS | Verified locally |
+
+Final combined command: task-local Python `-m pytest tests updater/tests sandboxer/tests -q -rs -p no:cacheprovider --tb=short`: **5166 passed, 17 skipped**. Installing optional aiosqlite only into the isolated test environment then running `tests/test_legacy_placeholder_atomicity.py` produced **3 passed**, including the formerly skipped case. Sixteen host-gated tests remain skipped. Required Ruff and both diff checks passed. Deployment, MySQL competition, live Docker, macOS and arm64 hardware are not inferred from these results. See the acceptance matrix for exact commands, requirements and limits.

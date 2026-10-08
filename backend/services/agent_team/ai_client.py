@@ -101,11 +101,15 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
 
 async def create_agent_team_client(
     validate: bool = True,
+    *,
+    compressor=None,
 ) -> tuple[AIApiClient, AgentTeamAIConfig]:
     """创建无参数统一 AI 客户端及角色策略配置。"""
     del validate  # 角色绑定完整性由 AIApiClient 在实际调用时验证。
     config = await load_agent_team_ai_config()
-    return AIApiClient(), config
+    return (
+        AIApiClient(compressor=compressor) if compressor is not None else AIApiClient()
+    ), config
 
 
 async def create_agent_team_summary_client(

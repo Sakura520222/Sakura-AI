@@ -248,3 +248,17 @@ def test_blocked_task_uses_existing_failure_actions_in_rendered_console(status):
     )
     assert ('data-task-action="resume"' in rendered) is (status == "failed")
     assert ('data-task-action="retry"' in rendered) is (status == "failed")
+
+
+@pytest.fixture(autouse=True)
+def worker_control_audit_store(monkeypatch):
+    """Worker orchestration uses fake tasks; persistence has separate SQLite tests."""
+    from unittest.mock import AsyncMock
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    monkeypatch.setattr(
+        ConversationCheckpointService, "record_control_event", AsyncMock()
+    )

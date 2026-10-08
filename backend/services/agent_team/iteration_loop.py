@@ -255,6 +255,8 @@ class IterationLoopService:
                     "risk_level": result.risk_level,
                     "test_result": result.test_result,
                     "tool_calls_count": result.tool_calls_count,
+                    "prompt_tokens": result.prompt_tokens,
+                    "completion_tokens": result.completion_tokens,
                     "error": result.error,
                     **(
                         {"dependency_setup": dependency_setup.to_dict()}
