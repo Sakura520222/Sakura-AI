@@ -18,6 +18,7 @@ from sqlalchemy.exc import DatabaseError
 from backend.models import database
 from backend.models.billing_models import BillingTransaction
 from backend.models.billing_schema import IMMUTABLE_TABLES
+from backend.models.database import PRReviewIncrementalQueue
 from backend.models.telegram_models import TelegramUser
 from backend.services.billing_service import BillingService
 
@@ -26,10 +27,44 @@ async def main(path):
     url = f"sqlite+aiosqlite:///{path}"
     database.init_async_db(url)
     await database.create_tables_async()
+    # Reproduce an upgrade from the pre-dispatch schema with a retained queue row.
+    # This database is disposable; no deployment schema is altered here.
+    async with database.async_session() as session:
+        session.add(
+            PRReviewIncrementalQueue(
+                repo_owner="test",
+                repo_name="migration",
+                repo_full_name="test/migration",
+                pr_number=1,
+                head_sha="retained-test-head",
+                delivery_id="smoke:legacy-queue",
+            )
+        )
+        await session.commit()
+    async with database.async_engine.begin() as connection:
+        for name in ("dispatch_token", "dispatch_expires_at"):
+            await connection.execute(
+                text(f"ALTER TABLE pr_review_incremental_queue DROP COLUMN {name}")
+            )
     await database.migrate_schema_async()
     await database.insert_default_configs_async()
     await database.migrate_schema_async()
     await database.insert_default_configs_async()
+    async with database.async_engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda conn: {
+                c["name"]
+                for c in inspect(conn).get_columns("pr_review_incremental_queue")
+            }
+        )
+        assert {"dispatch_token", "dispatch_expires_at"} <= columns
+        assert (
+            await connection.execute(
+                text(
+                    "SELECT head_sha FROM pr_review_incremental_queue WHERE delivery_id = 'smoke:legacy-queue'"
+                )
+            )
+        ).scalar_one() == "retained-test-head"
     async with database.async_session() as session:
         session.add(
             TelegramUser(id=1, telegram_id=123, role="super_admin", is_active=True)
@@ -117,6 +152,17 @@ async def main(path):
     await billing_maintenance.run(
         SimpleNamespace(
             command="recover",
+            apply=False,
+            actor_id=None,
+            user_id=None,
+            after_id=0,
+            batch_size=100,
+            manifest=None,
+        )
+    )
+    await billing_maintenance.run(
+        SimpleNamespace(
+            command="recover-increments",
             apply=False,
             actor_id=None,
             user_id=None,

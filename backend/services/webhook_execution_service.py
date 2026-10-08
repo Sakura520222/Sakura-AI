@@ -323,7 +323,9 @@ async def admit_manual_review(payload, session_factory):
     return context.operation_id
 
 
-async def compensate_unstarted_review(operation_id, session_factory, *, db=None):
+async def compensate_unstarted_review(
+    operation_id, session_factory, *, db=None, outcome="failed"
+):
     """Release a failed handoff, preserving its durable no-call outcome."""
     from backend.core.time_service import now_utc
     from backend.models.billing_models import BillingCallAttempt
@@ -335,7 +337,7 @@ async def compensate_unstarted_review(operation_id, session_factory, *, db=None)
     if db is None:
         async with session_factory() as owned_db:
             await compensate_unstarted_review(
-                operation_id, session_factory, db=owned_db
+                operation_id, session_factory, db=owned_db, outcome=outcome
             )
             await owned_db.commit()
         return
@@ -377,7 +379,7 @@ async def compensate_unstarted_review(operation_id, session_factory, *, db=None)
             "Review handoff has calls or live ownership; reconciliation required"
         )
     if operation.outcome is None:
-        await service.finish_operation(operation_id, "failed")
+        await service.finish_operation(operation_id, outcome)
 
 
 async def compensate_unstarted_agent(task_id, session_factory):

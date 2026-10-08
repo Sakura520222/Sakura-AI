@@ -51,6 +51,50 @@ async def run(args):
                 report = await service.recover_operations(
                     limit=args.batch_size, dry_run=not args.apply
                 )
+            elif args.command == "recover-increments":
+                from backend.models.database import PRReviewIncrementalQueue
+                from backend.services.pr_review_incremental_recovery import (
+                    recover_increment_dispatch,
+                )
+
+                if args.apply:
+                    entries = json.loads(Path(args.manifest).read_text())
+                    if not isinstance(entries, list):
+                        raise ValueError("Recovery manifest must be a JSON list")
+                else:
+                    ids = (
+                        (
+                            await session.execute(
+                                select(PRReviewIncrementalQueue.id)
+                                .where(
+                                    PRReviewIncrementalQueue.id > args.after_id,
+                                    PRReviewIncrementalQueue.status.in_(
+                                        ("pending", "dispatching", "running")
+                                    ),
+                                )
+                                .order_by(PRReviewIncrementalQueue.id)
+                                .limit(args.batch_size)
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    entries = [{"queue_id": queue_id} for queue_id in ids]
+                for entry in entries[: args.batch_size]:
+                    report.append(
+                        await recover_increment_dispatch(
+                            session,
+                            entry["queue_id"],
+                            dry_run=not args.apply,
+                            actor_id=args.actor_id,
+                            evidence=entry.get("evidence"),
+                            reason=entry.get("reason"),
+                        )
+                    )
+                    if args.apply:
+                        await session.commit()
+                    else:
+                        await session.rollback()
             else:
                 entries = json.loads(Path(args.manifest).read_text())
                 if not isinstance(entries, list):
@@ -106,7 +150,9 @@ async def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("audit", "recover", "resolve-calls"))
+    parser.add_argument(
+        "command", choices=("audit", "recover", "resolve-calls", "recover-increments")
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--actor-id", type=int)
     parser.add_argument("--user-id", type=int)
@@ -120,6 +166,8 @@ def main():
         parser.error("--apply requires --actor-id")
     if args.command == "resolve-calls" and (not args.manifest or not args.actor_id):
         parser.error("resolve-calls requires reviewed --manifest and --actor-id")
+    if args.command == "recover-increments" and args.apply and not args.manifest:
+        parser.error("recover-increments --apply requires reviewed --manifest")
     asyncio.run(run(args))
 
 

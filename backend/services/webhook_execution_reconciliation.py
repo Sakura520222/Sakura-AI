@@ -79,16 +79,48 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
     if receipt.status == "accepted":
         return receipt  # Repeating the same operator action has no new effect.
     previous_status = receipt.status
+    agent_task = None
+    if receipt.feature == "agent":
+        from backend.models.agent_team_models import AgentTeamTask
+
+        agent_task = (
+            await db.execute(
+                select(AgentTeamTask)
+                .where(AgentTeamTask.id == receipt.source.get("task_id"))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
     operation = await BillingService(db)._operation(
         receipt.operation_id, allow_missing=True
     )
     if resolution == "terminal":
         if operation is None or operation.outcome is None:
             raise BillingError("No durable terminal operation proves completion")
+        if (
+            agent_task is not None
+            and agent_task.billing_operation_id == receipt.operation_id
+            and agent_task.status == "queued"
+        ):
+            # Expired processing may have stopped between the guarded worker
+            # claim and its ownership heartbeat. Finance recovery establishes
+            # its outcome first; now restore a terminal, retryable carrier.
+            agent_task.status = operation.outcome
+            agent_task.current_phase = operation.outcome
+            agent_task.error_message = (
+                "Agent execution outcome restored from reviewed receipt"
+            )
         response = {"status": "accepted", "outcome": operation.outcome}
     elif resolution == "accepted":
         response = {"status": "accepted", "reason": "operator_verified_handoff"}
     else:
+        if receipt.feature == "agent" and receipt.status == "processing":
+            # The Agent worker atomically claimed its carrier before any
+            # workspace/AI action. No current owner/Usage does not undo that
+            # in-flight evidence or prove that it was never dispatched.
+            raise BillingError(
+                "Claimed Agent delivery requires execution reconciliation"
+            )
         attempts = (
             (
                 await db.execute(
@@ -123,6 +155,15 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
                     "Existing terminal execution requires terminal resolution"
                 )
             await BillingService(db).finish_operation(receipt.operation_id, "cancelled")
+        if (
+            agent_task is not None
+            and agent_task.billing_operation_id == receipt.operation_id
+        ):
+            agent_task.status = "cancelled"
+            agent_task.current_phase = "cancelled"
+            agent_task.error_message = (
+                "Agent delivery cancelled after reviewed unstarted handoff"
+            )
         response = {"status": "cancelled", "reason": "operator_verified_unstarted"}
     receipt.status = "accepted"
     # Fence a late original handler acknowledgement after an operator resolves

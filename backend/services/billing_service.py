@@ -1389,10 +1389,14 @@ class BillingService:
     async def resume_operation(self, operation_id):
         """Trusted worker lifecycle extends a settled automatic continuation."""
         operation = await self._operation(operation_id)
-        if (
-            operation.outcome in {"completed", "failed", "cancelled"}
-            and not operation.pending_reason
+        if operation.outcome in {"completed", "failed", "cancelled"} and (
+            not operation.pending_reason
+            or not operation.charging_enabled
+            or operation.user_id is None
         ):
+            # Financial uncertainty remains auditable, but it cannot prevent a
+            # continuation that has no user-payable charge under its frozen policy.
+            # A later global switch change does not reinterpret that policy.
             if operation.user_id is not None:
                 # Resuming an ended execution occupies user headroom again, but
                 # keeps its identity and must not reapply its daily admission.
@@ -1769,6 +1773,25 @@ class BillingService:
                 operation.operation_id,
                 for_update=not dry_run,
             ):
+                continue
+            from backend.services.pr_review_incremental_recovery import (
+                has_recoverable_incremental_carrier,
+            )
+
+            if await has_recoverable_incremental_carrier(
+                self.session, operation.operation_id
+            ):
+                # A durable increment waiting for another review is recoverable
+                # business work, not an abandoned execution merely lacking an
+                # independent Worker lease. Reviewed queue recovery/cancellation
+                # owns its handoff; preserve the original admission and reserve.
+                report.append(
+                    {
+                        "operation_id": operation.operation_id,
+                        "status": "queued_dispatch_recovery",
+                        "reserved_units": operation.reserve_units,
+                    }
+                )
                 continue
             report.append(
                 {
