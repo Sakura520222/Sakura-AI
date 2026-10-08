@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Inspect/replay durable verified payment evidence; never issue another payment/refund."""
 
 import argparse

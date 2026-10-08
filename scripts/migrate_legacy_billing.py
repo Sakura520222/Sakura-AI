@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Dry-run/audited repair of historical quota inflation, after schema migration.
 
 Usage: uv run python scripts/migrate_legacy_billing.py --manifest reviewed.json

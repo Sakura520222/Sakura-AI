@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Export fixed MySQL immutable guards for an authorized DBA; never connects."""
 
 import argparse

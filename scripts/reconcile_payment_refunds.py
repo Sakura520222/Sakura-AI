@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Inspect quarantined payment refunds; apply only a provider-verified outcome."""
 
 import argparse
