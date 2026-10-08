@@ -1,6 +1,7 @@
 """Agent 专家团队模式数据模型"""
 
 import enum
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -69,6 +70,12 @@ class AgentTeamTask(Base):
     __tablename__ = "agent_team_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_operation_id = Column(
+        String(128), nullable=True, index=True, default=lambda: str(uuid4())
+    )
+    webhook_delivery_id = Column(String(191), nullable=True, unique=True)
+    billing_user_id = Column(Integer, nullable=True, index=True)
+    billing_platform_reason = Column(String(128), nullable=True)
     source_type = Column(String(50), nullable=False, index=True)
     source_id = Column(Integer, nullable=True, index=True)
     source_issue_number = Column(BigInteger, nullable=True, index=True)

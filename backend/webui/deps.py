@@ -1,6 +1,7 @@
 """WebUI FastAPI 依赖注入"""
 
 import asyncio
+import re
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from functools import lru_cache
@@ -36,6 +37,9 @@ from backend.webui.time_filters import register_time_filters
 def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates")
+    from backend.services.payment.currency_units import format_minor_amount
+
+    templates.env.globals["format_minor_amount"] = format_minor_amount
     templates.env.globals["percentage"] = _percentage_filter
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
@@ -155,7 +159,72 @@ async def paginate(
     return result.scalars().all(), total, total_pages, page
 
 
-async def require_payment_enabled():
+def _is_plan_configuration_request(path: str, method: str) -> bool:
+    """Allow only existing plan-definition routes; endpoint auth still applies."""
+    if path == "/billing/admin/plans":
+        return method in {"GET", "POST"}
+    if path in {
+        "/billing/admin/plans/batch-toggle",
+        "/billing/admin/plans/batch-delete",
+    }:
+        return method == "POST"
+    if re.fullmatch(r"/billing/admin/plans/[0-9]+/(edit|toggle|delete)", path):
+        return method == "POST"
+    if path == "/api/v1/billing/admin/plans":
+        return method == "POST"
+    if re.fullmatch(r"/api/v1/billing/admin/plans/[0-9]+", path):
+        return method in {"PUT", "DELETE"}
+    return False
+
+
+async def require_payment_enabled(request: Request):
+    # Wallet/accounting remain accessible when payment gateways are disabled.
+    # Only these read/configuration surfaces bypass the purchase-entry switch.
+    path = request.url.path.rstrip("/")
+    if _is_plan_configuration_request(path, getattr(request, "method", "GET")):
+        return
+    accounting_paths = {
+        "/billing/credits",
+        "/billing/credits/threshold",
+        "/billing/admin/pricing",
+        "/billing/admin/credits/adjust",
+        "/billing/admin/grant",
+        "/api/v1/billing/admin/grant",
+        "/api/v1/billing/wallet",
+        "/api/v1/billing/wallet/threshold",
+        "/api/v1/billing/transactions",
+        "/api/v1/billing/operations",
+        "/api/v1/billing/usage",
+        "/api/v1/billing/notices",
+        "/api/v1/billing/admin/pricing",
+        "/api/v1/billing/admin/payment-events",
+    }
+    if (
+        path in accounting_paths
+        or (
+            request.method == "GET"
+            and path.startswith("/billing/admin/pricing/accounts/")
+            and path.endswith("/models")
+        )
+        or (
+            (path.startswith(("/api/v1/billing/notices/", "/billing/credits/notices/")))
+            and path.endswith("/read")
+        )
+        or (
+            path.startswith(
+                (
+                    "/api/v1/billing/admin/payment-events/",
+                    "/billing/admin/payment-events/",
+                )
+            )
+            and path.endswith(("/resolve", "/replay"))
+        )
+        or (
+            path.startswith("/api/v1/billing/admin/wallets/")
+            and path.endswith("/adjust")
+        )
+    ):
+        return
     if not await is_payment_enabled():
         raise HTTPException(status_code=404, detail="付费配额系统未启用")
 
@@ -479,7 +548,7 @@ async def refresh_login_claims(payload: dict) -> dict | None:
     """从数据库刷新正式登录令牌中的权威用户声明。"""
     try:
         user_id = int(payload.get("user_id"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
     async with db_module.async_session() as db:

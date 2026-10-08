@@ -48,7 +48,7 @@ async def threshold_provider(monkeypatch):
         ],
         "usage": {"total_tokens": 11},
     }
-    requests, usage = [], []
+    requests, usage, attempts = [], [], []
     state = SimpleNamespace(error=None)
 
     def send(request):
@@ -66,9 +66,16 @@ async def threshold_provider(monkeypatch):
     )
 
     async def record(**kwargs):
-        usage.append(kwargs)
+        attempts.append(kwargs)
+        if kwargs["usage"] is not None:
+            usage.append(kwargs)
 
-    monkeypatch.setattr(ai_usage_service, "record_ai_usage_best_effort", record)
+    # Capture the actual response boundary introduced by durable billing;
+    # these tests still assert successful API usage survives invalid ranking.
+    monkeypatch.setattr(
+        ai_usage_service, "begin_ai_call", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(ai_usage_service, "finish_ai_call", record)
     service = embedding_service.RerankerService()
     try:
         yield SimpleNamespace(
@@ -77,6 +84,7 @@ async def threshold_provider(monkeypatch):
             response=response,
             requests=requests,
             usage=usage,
+            attempts=attempts,
             state=state,
         )
     finally:
@@ -204,6 +212,9 @@ async def test_non_strict_rag_retains_provider_failure_fallback(threshold_provid
     docs = [{"content": "first"}, {"content": "second"}]
     assert await case.service.rerank("query", docs, top_k=1) == docs[:1]
     assert len(case.requests) == 1 and case.usage == []
+    assert len(case.attempts) == 1
+    assert case.attempts[0]["outcome"] == "failed"
+    assert case.attempts[0]["usage"] is None
 
 
 @pytest.mark.asyncio
@@ -223,6 +234,9 @@ async def test_threshold_guard_preserves_provider_cancellation(
     with pytest.raises(error_type):
         await case.service.rerank("query", [{"content": "first"}], strict=strict)
     assert len(case.requests) == 1 and case.usage == []
+    assert len(case.attempts) == 1
+    assert case.attempts[0]["outcome"] == "cancelled"
+    assert case.attempts[0]["usage"] is None
 
 
 @pytest.mark.asyncio

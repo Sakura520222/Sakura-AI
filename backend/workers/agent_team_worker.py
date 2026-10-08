@@ -14,6 +14,7 @@ import asyncio
 import json
 import re
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 
 from loguru import logger
@@ -49,6 +50,52 @@ from backend.services.agent_team.submission_context import (
     load_skills_context,
 )
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.billing_context import billable_record
+from backend.services.service_execution_capacity import service_execution_slot
+
+
+def _agent_execution_capacity(function):
+    """Gate every Agent entry before workspace setup, keeping cancellation live."""
+
+    @wraps(function)
+    async def wrapped(self, task_id: int, *args, **kwargs):
+        cancel_event = _cancel_events.setdefault(task_id, asyncio.Event())
+        try:
+            async with service_execution_slot("agent", cancel_event=cancel_event):
+                return await function(self, task_id, *args, **kwargs)
+        except asyncio.CancelledError:
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="Agent execution cancelled",
+            )
+            await self._expire_pending_prompts_if_terminal(task_id)
+            current_task = asyncio.current_task()
+            if cancel_event.is_set() and (
+                current_task is None or current_task.cancelling() == 0
+            ):
+                # Cooperative queued cancellation follows the worker's normal
+                # return contract; explicit task.cancel() keeps asyncio semantics.
+                return task_id
+            raise
+        except Exception as exc:
+            # Database admission/lease failure must stop work and remain visible
+            # to the caller and the outer billing lifetime.
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.FAILED.value,
+                current_phase="error",
+                failed_phase="error",
+                error_message=f"{type(exc).__name__}: {exc}",
+            )
+            await self._expire_pending_prompts_if_terminal(task_id)
+            raise
+        finally:
+            if _cancel_events.get(task_id) is cancel_event:
+                _cancel_events.pop(task_id, None)
+
+    return wrapped
 
 
 def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
@@ -79,9 +126,8 @@ def _is_original_pr_task(task: AgentTeamTask) -> bool:
 
     source_type = getattr(task, "source_type", None)
     source_type = getattr(source_type, "value", source_type)
-    return (
-        source_type == AgentTeamSourceType.PR_REVIEW.value
-        and bool(getattr(task, "pr_head_branch", None))
+    return source_type == AgentTeamSourceType.PR_REVIEW.value and bool(
+        getattr(task, "pr_head_branch", None)
     )
 
 
@@ -206,6 +252,8 @@ class AgentTeamWorker:
             )
         return runner
 
+    @billable_record("agent")
+    @_agent_execution_capacity
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         # 注册取消信号
@@ -668,6 +716,8 @@ class AgentTeamWorker:
 
         return task_id
 
+    @billable_record("agent")
+    @_agent_execution_capacity
     async def process_external_review_iteration(
         self, task_id: int, review_id: int
     ) -> int:
@@ -711,9 +761,7 @@ class AgentTeamWorker:
                     workspace_repo_name,
                     head_branch,
                     expected_head_sha,
-                ) = (
-                    _get_original_pr_target(task)
-                )
+                ) = _get_original_pr_target(task)
             else:
                 workspace_repo_owner = task.repo_owner
                 workspace_repo_name = task.repo_name
@@ -965,6 +1013,8 @@ class AgentTeamWorker:
             if terminal:
                 await self._expire_pending_prompts_if_terminal(task_id)
 
+    @billable_record("agent")
+    @_agent_execution_capacity
     async def process_human_followup_iteration(self, task_id: int) -> int:
         """管理员后续要求：复用同一 worktree/branch/PR 继续迭代。
 
@@ -1005,9 +1055,7 @@ class AgentTeamWorker:
                     workspace_repo_name,
                     head_branch,
                     expected_head_sha,
-                ) = (
-                    _get_original_pr_target(task)
-                )
+                ) = _get_original_pr_target(task)
             else:
                 workspace_repo_owner = task.repo_owner
                 workspace_repo_name = task.repo_name

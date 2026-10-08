@@ -4,6 +4,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Column,
@@ -260,6 +261,7 @@ class PRReviewIncrementalQueue(Base):
     base_sha = Column(String(64), nullable=True)
     head_sha = Column(String(64), nullable=False, index=True)
     delivery_id = Column(String(128), nullable=True, index=True)
+    billing_context = Column(JSON, nullable=True)
     # New activity-observability bridge fields. Nullable for pre-migration rows.
     observability_session_id = Column(Integer, nullable=True, index=True)
     observability_trigger_id = Column(Integer, nullable=True, unique=True, index=True)
@@ -759,8 +761,11 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.agent_team_models
     import backend.models.ai_usage_models
     import backend.models.announcement_models
+    import backend.models.billing_models
     import backend.models.identity_models
+    import backend.models.legacy_entitlement_models
     import backend.models.payment_models
+    import backend.models.service_execution_models
     import backend.models.star_aid_models
     import backend.models.telegram_models  # noqa: F401
 
@@ -976,6 +981,14 @@ def init_async_db(database_url: str):
         # 通过 pool_recycle 定期回收连接来保证连接可用性
         async_engine = create_async_engine(
             database_url,
+            # sqlite3 legacy transaction mode can commit a released SAVEPOINT
+            # outside an outer transaction; financial rollback requires modern
+            # transaction control (Python 3.14 is the supported runtime).
+            **(
+                {"connect_args": {"autocommit": False}}
+                if database_url.startswith("sqlite")
+                else {}
+            ),
             echo=False,
             pool_pre_ping=False,
             pool_size=10,
@@ -1515,6 +1528,10 @@ async def _auto_migrate():
             await conn.execute(text(sql))
             _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
 
+        from backend.models.billing_schema import ensure_billing_schema
+
+        billing_schema_changed = await conn.run_sync(ensure_billing_schema)
+
         issue_storage_changed = await _ensure_issue_analysis_longtext_columns(
             conn, _logger
         )
@@ -1529,6 +1546,7 @@ async def _auto_migrate():
 
         if (
             not missing
+            and not billing_schema_changed
             and not unique_index_created
             and not pr_link_index_created
             and not issue_storage_changed

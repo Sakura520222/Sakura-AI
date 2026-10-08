@@ -56,12 +56,12 @@ def fold_image_payloads(node: Any) -> Any:
             has_media = "media_type" in value or "mimeType" in value
             folded: dict[str, Any] = {}
             for key, item in value.items():
-                if key == "url" and isinstance(item, str) and item.startswith(
-                    "data:image/"
+                if (
+                    key == "url"
+                    and isinstance(item, str)
+                    and item.startswith("data:image/")
                 ):
-                    folded[key] = (
-                        f"<folded image data-url: {len(item)} chars>"
-                    )
+                    folded[key] = f"<folded image data-url: {len(item)} chars>"
                 elif key == "data" and has_media and isinstance(item, str):
                     folded[key] = f"<folded image data: {len(item)} chars>"
                 else:
@@ -1067,7 +1067,7 @@ class ObservedModelSender:
                     final_usage = (
                         event_usage
                         if final_usage is None
-                        else final_usage.add(event_usage)
+                        else final_usage.merge_snapshot(event_usage)
                     )
                 event_stop_reason = getattr(event, "stop_reason", None)
                 if event_stop_reason is not None:

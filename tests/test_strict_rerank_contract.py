@@ -45,11 +45,19 @@ def provider(monkeypatch):
         ),
     )
     usage = []
+    service.billing_attempt_results = []
 
     async def record(**kwargs):
-        usage.append(kwargs)
+        service.billing_attempt_results.append(kwargs)
+        if kwargs["usage"] is not None:
+            usage.append(kwargs)
 
-    monkeypatch.setattr(ai_usage_service, "record_ai_usage_best_effort", record)
+    # Capture the actual response boundary introduced by durable billing;
+    # these tests still assert successful API usage survives invalid ranking.
+    monkeypatch.setattr(
+        ai_usage_service, "begin_ai_call", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(ai_usage_service, "finish_ai_call", record)
     return service, response, usage
 
 
@@ -208,6 +216,9 @@ async def test_rerank_provider_cancellation_propagates(provider, strict):
     with pytest.raises(asyncio.CancelledError):
         await service.rerank("query", [{"content": "first"}], strict=strict)
     assert usage == []
+    assert len(service.billing_attempt_results) == 1
+    assert service.billing_attempt_results[0]["usage"] is None
+    assert service.billing_attempt_results[0]["outcome"] == "cancelled"
 
 
 def install_retrieval_provider(foundation, provider, monkeypatch, result_count):

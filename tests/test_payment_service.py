@@ -40,7 +40,15 @@ def mock_session():
 
 
 @pytest.fixture
-def svc(mock_session):
+def svc(mock_session, monkeypatch):
+    # These unit tests cover orchestration; real source persistence is exercised
+    # independently in test_billing_entitlements.py.
+    monkeypatch.setattr(
+        "backend.services.payment_service.LegacyEntitlementService.grant", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "backend.services.billing_service.BillingService.get_wallet", AsyncMock()
+    )
     return PaymentService(mock_session)
 
 
@@ -188,6 +196,7 @@ class TestRedeemCodeUsage:
         redeem_code = RedeemCode(
             id=1,
             code="TESTCODE123456",
+            plan_snapshot=svc._snapshot_plan(sample_plan),
             plan_id=1,
             max_uses=1,
             used_count=0,
@@ -198,7 +207,18 @@ class TestRedeemCodeUsage:
         redeem_result.scalar_one_or_none.return_value = redeem_code
         plan_result = MagicMock()
         plan_result.scalar_one_or_none.return_value = sample_plan
-        mock_session.execute = AsyncMock(side_effect=[redeem_result, plan_result])
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        updated_result = MagicMock(rowcount=1)
+        mock_session.execute = AsyncMock(
+            side_effect=[redeem_result, empty_result, plan_result, updated_result]
+        )
+
+        async def refresh_code(value, **kwargs):
+            if isinstance(value, RedeemCode):
+                value.used_count = 1
+
+        mock_session.refresh = AsyncMock(side_effect=refresh_code)
 
         order = await svc.redeem_code(user_id=1, code="TESTCODE123456")
 
@@ -216,6 +236,7 @@ class TestRedeemCodeUsage:
         redeem_code = RedeemCode(
             id=1,
             code="LOCKCODE123456",
+            plan_snapshot=svc._snapshot_plan(sample_plan),
             plan_id=1,
             max_uses=1,
             used_count=0,
@@ -225,7 +246,18 @@ class TestRedeemCodeUsage:
         redeem_result.scalar_one_or_none.return_value = redeem_code
         plan_result = MagicMock()
         plan_result.scalar_one_or_none.return_value = sample_plan
-        mock_session.execute = AsyncMock(side_effect=[redeem_result, plan_result])
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        updated_result = MagicMock(rowcount=1)
+        mock_session.execute = AsyncMock(
+            side_effect=[redeem_result, empty_result, plan_result, updated_result]
+        )
+
+        async def refresh_code(value, **kwargs):
+            if isinstance(value, RedeemCode):
+                value.used_count = 1
+
+        mock_session.refresh = AsyncMock(side_effect=refresh_code)
 
         await svc.redeem_code(user_id=1, code="LOCKCODE123456")
 
@@ -256,7 +288,9 @@ class TestRedeemCodeUsage:
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = expired_code
-        mock_session.execute.return_value = mock_result
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        mock_session.execute.side_effect = [mock_result, empty_result]
 
         with pytest.raises(PaymentError, match="expired"):
             await svc.redeem_code(user_id=1, code="EXPIREDCODE")
@@ -274,7 +308,9 @@ class TestRedeemCodeUsage:
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = exhausted_code
-        mock_session.execute.return_value = mock_result
+        empty_result = MagicMock()
+        empty_result.scalar_one_or_none.return_value = None
+        mock_session.execute.side_effect = [mock_result, empty_result]
 
         with pytest.raises(PaymentError, match="fully used"):
             await svc.redeem_code(user_id=1, code="USEDCODE")
@@ -285,16 +321,40 @@ class TestQuotaApplication:
     async def test_apply_one_time_bonus(
         self, svc, mock_session, sample_user, sample_plan
     ):
-        result = await svc._apply_plan_to_user(sample_user, sample_plan)
-        assert result.daily_quota == 20  # 10 + 10 bonus
+        order = Order(
+            id=1,
+            user_id=sample_user.id,
+            status="paid",
+            plan_snapshot=svc._snapshot_plan(sample_plan),
+        )
+        await svc._fulfill_order(order, sample_user, sample_plan)
+        assert sample_user.daily_quota == 10
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
+
+        assert LegacyEntitlementService.grant.await_args.args[1]["pr_quota_bonus"] == 10
         mock_session.flush.assert_awaited()
 
     async def test_apply_subscription_adds(
         self, svc, mock_session, sample_user, sample_subscription_plan
     ):
-        result = await svc._apply_plan_to_user(sample_user, sample_subscription_plan)
-        assert result.daily_quota == 15  # 10 + 5 daily_add
-        assert result.monthly_quota == 300  # 200 + 100 monthly_add
+        order = Order(
+            id=1,
+            user_id=sample_user.id,
+            status="paid",
+            plan_snapshot=svc._snapshot_plan(sample_subscription_plan),
+        )
+        empty = MagicMock()
+        empty.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = empty
+        await svc._fulfill_order(order, sample_user, sample_subscription_plan)
+        assert sample_user.daily_quota == 10
+        assert sample_user.monthly_quota == 200
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
+
+        assert LegacyEntitlementService.grant.await_args.args[1]["pr_daily_add"] == 5
+        assert (
+            LegacyEntitlementService.grant.await_args.args[1]["pr_monthly_add"] == 100
+        )
 
     async def test_apply_issue_quota(self, svc, mock_session, sample_user):
         plan = Plan(
@@ -304,9 +364,23 @@ class TestQuotaApplication:
             issue_quota_bonus=20,
             issue_weekly_add=10,
         )
-        result = await svc._apply_plan_to_user(sample_user, plan)
-        assert result.issue_daily_quota == 40  # 20 + 20 bonus
-        assert result.issue_weekly_quota == 90  # 80 + 10
+        order = Order(
+            id=1,
+            user_id=sample_user.id,
+            status="paid",
+            plan_snapshot=svc._snapshot_plan(plan),
+        )
+        await svc._fulfill_order(order, sample_user, plan)
+        assert sample_user.issue_daily_quota == 20
+        assert sample_user.issue_weekly_quota == 80
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
+
+        assert (
+            LegacyEntitlementService.grant.await_args.args[1]["issue_quota_bonus"] == 20
+        )
+        assert (
+            LegacyEntitlementService.grant.await_args.args[1]["issue_weekly_add"] == 10
+        )
 
 
 @pytest.mark.asyncio
@@ -487,6 +561,10 @@ class TestConfirmPayment:
         mock_session.get = AsyncMock(side_effect=mock_get)
 
         svc.get_plan = AsyncMock(return_value=plan)
+        order.plan_snapshot = svc._snapshot_plan(plan)
+        empty = MagicMock()
+        empty.scalar_one_or_none.return_value = None
+        mock_session.execute.side_effect = [mock_result, empty]
 
         confirmed = await svc.confirm_payment(
             order_no="ORD20240101000000ABCD1234",
@@ -602,114 +680,45 @@ class TestConfirmPayment:
         assert order.paid_at is None
         mock_session.flush.assert_not_awaited()
 
-    async def test_confirm_payment_logs_currency_mismatch_before_skipping_strict_amount_comparison(
-        self, svc, mock_session, sample_user
-    ):
-        from backend.models.payment_models import Order
-
-        plan = Plan(
-            id=1,
-            name="Test Plan",
-            plan_type=PlanType.ONE_TIME.value,
-            price_cents=1000,
-            is_active=True,
-            pr_quota_bonus=5,
-        )
+    async def test_confirm_payment_rejects_currency_mismatch(self, svc, mock_session):
         order = Order(
             id=1,
             order_no="ORD_DIFFERENT_CURRENCY",
-            user_id=sample_user.id,
-            plan_id=plan.id,
+            user_id=1,
+            plan_id=1,
             amount_cents=1000,
             currency="CNY",
-            status=OrderStatus.PENDING.value,
+            status="pending",
             payment_provider="nowpayments",
-            provider_tx_id="np_pending",
         )
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = result
+        with pytest.raises(PaymentError, match="currency mismatch"):
+            await svc.confirm_payment(order.order_no, "np_paid", 1000, "USD")
+        assert order.status == "pending"
+        mock_session.flush.assert_not_awaited()
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = order
-        mock_session.execute.return_value = mock_result
-
-        async def mock_get(model, pk):
-            if model is TelegramUser and pk == sample_user.id:
-                return sample_user
-            return None
-
-        mock_session.get = AsyncMock(side_effect=mock_get)
-        svc.get_plan = AsyncMock(return_value=plan)
-
-        with patch("backend.services.payment_service.logger") as mock_logger:
-            confirmed = await svc.confirm_payment(
-                order_no="ORD_DIFFERENT_CURRENCY",
-                provider_tx_id="np_paid",
-                paid_amount_cents=25,
-                paid_currency="USD",
-            )
-
-        assert confirmed.status == OrderStatus.FULFILLED.value
-        mock_session.flush.assert_awaited()
-        mock_logger.warning.assert_any_call(
-            "Payment currency differs for order {}: expected {} {}, got {} {}; "
-            "skipping strict amount comparison because webhook currency should match "
-            "the order currency and no exchange-rate conversion is performed here",
-            "ORD_DIFFERENT_CURRENCY",
-            1000,
-            "CNY",
-            25,
-            "USD",
-        )
-
-    async def test_confirm_payment_logs_error_when_amount_validation_is_bypassed(
-        self, svc, mock_session, sample_user
+    async def test_confirm_payment_rejects_missing_payment_evidence(
+        self, svc, mock_session
     ):
-        from backend.models.payment_models import Order
-
-        plan = Plan(
-            id=1,
-            name="Test Plan",
-            plan_type=PlanType.ONE_TIME.value,
-            price_cents=1000,
-            is_active=True,
-            pr_quota_bonus=5,
-        )
         order = Order(
             id=1,
             order_no="ORD_MISSING_AMOUNT",
-            user_id=sample_user.id,
-            plan_id=plan.id,
+            user_id=1,
+            plan_id=1,
             amount_cents=1000,
             currency="CNY",
-            status=OrderStatus.PENDING.value,
+            status="pending",
             payment_provider="stripe",
-            provider_tx_id="cs_pending",
         )
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = order
-        mock_session.execute.return_value = mock_result
-
-        async def mock_get(model, pk):
-            if model is TelegramUser and pk == sample_user.id:
-                return sample_user
-            return None
-
-        mock_session.get = AsyncMock(side_effect=mock_get)
-        svc.get_plan = AsyncMock(return_value=plan)
-
-        with patch("backend.services.payment_service.logger") as mock_logger:
-            confirmed = await svc.confirm_payment(
-                order_no="ORD_MISSING_AMOUNT",
-                provider_tx_id="cs_paid",
-            )
-
-        assert confirmed.status == OrderStatus.FULFILLED.value
-        mock_logger.error.assert_any_call(
-            "BYPASSING amount validation for payment confirmation: "
-            "order_no={}, provider={}",
-            "ORD_MISSING_AMOUNT",
-            "stripe",
-        )
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = result
+        with pytest.raises(PaymentError, match="amount and currency are required"):
+            await svc.confirm_payment(order.order_no, "cs_paid")
+        assert order.status == "pending"
+        mock_session.flush.assert_not_awaited()
 
     async def test_confirm_payment_idempotent(self, svc, mock_session):
         from backend.models.payment_models import Order
@@ -963,6 +972,7 @@ class TestRefundRequests:
             order_id=refund_request.order_id,
             amount_cents=refund_request.amount_cents,
             operator_id=2,
+            idempotency_key="refund-request:1",
         )
 
     async def test_approve_refund_request_marks_failed_on_refund_error(self, svc):

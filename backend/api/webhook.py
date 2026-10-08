@@ -20,6 +20,8 @@ from backend.core.github_app import (
     extract_pr_info_from_webhook,
     verify_webhook_signature,
 )
+from backend.services.agent_team.billing_admission import find_delivery_task
+from backend.services.billing_context import context_for_payload
 from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
 )
@@ -207,6 +209,9 @@ async def handle_github_webhook(
         except Exception as e:
             logger.error(f"解析Webhook payload失败: {e}")
             raise HTTPException(status_code=400, detail="无效的JSON")
+
+        # Reserved server metadata is overwritten after signature verification.
+        payload_data["_sakura_delivery_id"] = x_github_delivery
 
         # 记录事件
         logger.info(f"收到GitHub事件: {x_github_event}")
@@ -629,8 +634,10 @@ async def handle_pull_request_event(
         author = pr_info.get("author", "")
         branch = pr_info.get("branch", "")
         is_agent_team_pr = branch.startswith("sakura-agent/")
-        if not is_agent_team_pr and bot_username and (
-            sender == bot_username or author == bot_username
+        if (
+            not is_agent_team_pr
+            and bot_username
+            and (sender == bot_username or author == bot_username)
         ):
             is_agent_team_pr = await _is_original_pr_agent_task(pr_info)
 
@@ -740,6 +747,7 @@ async def handle_pull_request_event(
                 github_username=github_username,
                 repo_name=pr_info["repo_full_name"],
                 pr_number=pr_info["pr_number"],
+                operation_id=context_for_payload(pr_info, "pr_review").operation_id,
             )
 
             if not allowed:
@@ -1042,6 +1050,13 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                 "merged": pr.merged,
             }
 
+            if payload.get("_sakura_delivery_id"):
+                pr_info["delivery_id"] = payload["_sakura_delivery_id"]
+            # A language/configuration fallback is not payment authority.
+            pr_info["billing_user_id"] = None
+            pr_info["billing_platform_reason"] = (
+                "unbound_authorized_manual_review_trigger"
+            )
             try:
                 async with get_async_session() as session:
                     svc = TelegramService(session)
@@ -1050,6 +1065,15 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                     )
                     if trigger_user:
                         pr_info["user_id"] = trigger_user.id
+                        if getattr(trigger_user, "role", None) in {
+                            "admin",
+                            "super_admin",
+                        }:
+                            pr_info["billing_platform_reason"] = (
+                                "administrator_manual_review"
+                            )
+                        else:
+                            pr_info["billing_user_id"] = trigger_user.id
                     else:
                         author_user = await svc.get_user_by_github_username(
                             pr.user.login
@@ -1058,6 +1082,9 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                             pr_info["user_id"] = author_user.id
             except Exception as e:
                 logger.warning(f"解析 /full-review 用户配置上下文失败: {e}")
+                raise RuntimeError(
+                    "Manual review payer attribution is unavailable"
+                ) from e
         except Exception as e:
             logger.error(f"获取PR信息失败: {e}", exc_info=True)
             return JSONResponse(
@@ -1632,6 +1659,8 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 Issue 事件"""
     try:
         issue_info = extract_issue_info_from_webhook(payload)
+        if issue_info and payload.get("_sakura_delivery_id"):
+            issue_info["delivery_id"] = payload["_sakura_delivery_id"]
         if not issue_info:
             logger.warning("无法提取 Issue 信息")
             return JSONResponse(
@@ -1848,6 +1877,9 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
                 github_username=github_username,
                 repo_name=issue_info["repo_full_name"],
                 issue_number=issue_info["issue_number"],
+                operation_id=context_for_payload(
+                    issue_info, "issue_analysis"
+                ).operation_id,
             )
             if not allowed:
                 logger.warning(
@@ -1892,6 +1924,8 @@ async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /analyze 命令（手动触发 Issue 分析）"""
     try:
         issue_info = extract_issue_info_from_webhook(payload)
+        if issue_info and payload.get("_sakura_delivery_id"):
+            issue_info["delivery_id"] = payload["_sakura_delivery_id"]
         if not issue_info:
             return JSONResponse(
                 status_code=400,
@@ -1926,6 +1960,9 @@ async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
                 github_username=commenter,
                 repo_name=issue_info["repo_full_name"],
                 issue_number=issue_info["issue_number"],
+                operation_id=context_for_payload(
+                    issue_info, "issue_analysis"
+                ).operation_id,
             )
             if not allowed:
                 logger.warning(f"Issue 配额不足: {commenter} - {reason}")
@@ -2109,7 +2146,10 @@ def _validate_pr_head_admission(
     head_owner, head_name = head_repo_full_name.split("/", 1)
     try:
         base_client = pr_head_info.get("_base_client")
-        if head_repo_full_name.casefold() == base_repo_full_name.casefold() and base_client:
+        if (
+            head_repo_full_name.casefold() == base_repo_full_name.casefold()
+            and base_client
+        ):
             client = base_client
         else:
             client = github_app.get_repo_client(head_owner, head_name)
@@ -2161,12 +2201,29 @@ async def _consume_agent_quota_or_cleanup(
     返回 None 表示配额消耗成功；返回 JSONResponse 表示失败（调用方应直接返回）。
     """
     async with get_async_session() as session:
+        from uuid import uuid4
+
+        from backend.models.agent_team_models import AgentTeamTask
+
         service = TelegramService(session)
+        task = await session.get(AgentTeamTask, task_id)
+        if task is None:
+            raise RuntimeError("Agent task no longer exists")
+        if not task.billing_operation_id:
+            task.billing_operation_id = str(uuid4())
         ok, reason = await service.check_and_consume_agent_quota(
             github_username=repo_owner,
             repo_name=repo_full_name,
             task_id=task_id,
+            operation_id=task.billing_operation_id,
         )
+        if ok:
+            owner = await service.get_user_by_github_username(repo_owner)
+            if task is None or owner is None:
+                raise RuntimeError("Agent billing payer cannot be established")
+            task.billing_user_id = owner.id
+            task.billing_platform_reason = None
+            await session.commit()
     if ok:
         return None
 
@@ -2260,6 +2317,25 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
             issue_number,
         ):
             return err
+
+        verified_delivery_id = payload.get("_sakura_delivery_id")
+        if verified_delivery_id:
+            async with get_async_session() as admission_session:
+                replayed_task = await find_delivery_task(
+                    admission_session,
+                    verified_delivery_id,
+                    repo_full_name,
+                    issue_number,
+                    is_pr=False,
+                )
+            if replayed_task is not None:
+                return JSONResponse(
+                    content={
+                        "status": "accepted",
+                        "task_id": replayed_task.id,
+                        "duplicate": True,
+                    }
+                )
 
         # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
         # 延迟导入：避免 webhook ↔ database/scan_models 循环依赖
@@ -2402,6 +2478,11 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     started_by=commenter,
                     base_branch=base_branch,
                     overrides=overrides if overrides else None,
+                    **(
+                        {"webhook_delivery_id": verified_delivery_id}
+                        if verified_delivery_id
+                        else {}
+                    ),
                 )
             except ValueError as e:
                 logger.warning("/agent 创建任务失败: {}", e)
@@ -2420,6 +2501,14 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     }
                 )
 
+            if getattr(task, "_billing_delivery_replayed", False):
+                return JSONResponse(
+                    content={
+                        "status": "accepted",
+                        "task_id": task.id,
+                        "duplicate": True,
+                    }
+                )
             task_id = task.id
 
         # 仓库所有者配额消耗（任务创建成功后，使用实际 task_id）
@@ -2540,6 +2629,25 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         ):
             return err
 
+        verified_delivery_id = payload.get("_sakura_delivery_id")
+        if verified_delivery_id:
+            async with get_async_session() as admission_session:
+                replayed_task = await find_delivery_task(
+                    admission_session,
+                    verified_delivery_id,
+                    repo_full_name,
+                    pr_number,
+                    is_pr=True,
+                )
+            if replayed_task is not None:
+                return JSONResponse(
+                    content={
+                        "status": "accepted",
+                        "task_id": replayed_task.id,
+                        "duplicate": True,
+                    }
+                )
+
         # 读取原 PR head 的完整可执行身份。PR_REVIEW 任务会直接续写该
         # 分支，因此只保存 SHA 不足以定位 fork PR 的写入仓库。
         def _get_pr_head_info():
@@ -2624,6 +2732,11 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     head_branch=pr_head_info["head_branch"],
                     head_repo_full_name=pr_head_info["head_repo_full_name"],
                     pr_url=pr_head_info.get("pr_url"),
+                    **(
+                        {"webhook_delivery_id": verified_delivery_id}
+                        if verified_delivery_id
+                        else {}
+                    ),
                 )
             except ValueError as e:
                 logger.warning("/agent PR 创建任务失败: {}", e)
@@ -2639,6 +2752,14 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     content={"status": "error", "reason": "failed to create agent task"}
                 )
 
+            if getattr(task, "_billing_delivery_replayed", False):
+                return JSONResponse(
+                    content={
+                        "status": "accepted",
+                        "task_id": task.id,
+                        "duplicate": True,
+                    }
+                )
             task_id = task.id
 
         # 仓库所有者配额消耗
@@ -2662,7 +2783,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
 
         # 回复确认评论
         branch_info = (
-            f"（忽略 base:{base_branch}，PR 修复目标仍为原 head）" if base_branch else ""
+            f"（忽略 base:{base_branch}，PR 修复目标仍为原 head）"
+            if base_branch
+            else ""
         )
         await _post_issue_comment(
             github_app,
@@ -2739,386 +2862,77 @@ async def handle_installation_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
 
-@router.post("/stripe")
-async def handle_stripe_webhook(
-    request: Request,
-) -> JSONResponse:
-    """Handle Stripe webhook events (checkout.session.completed, etc.)"""
+async def _handle_payment_webhook(request: Request, provider: str):
+    """Acknowledge only durable evidence; never refund upstream on receipt."""
+    import hashlib
+
     from backend.services.payment import WebhookEventType, get_gateway
-    from backend.services.payment_service import PaymentError, PaymentService
+    from backend.services.payment_event_service import PaymentEventService
+    from backend.services.payment_service import PaymentService
 
     payload = await request.body()
-    headers = {k.lower(): v for k, v in request.headers.items()}
-
+    headers = {key.lower(): value for key, value in request.headers.items()}
     try:
-        gateway = await get_gateway("stripe")
+        gateway = await get_gateway(provider)
         event = gateway.verify_webhook(payload, headers)
-
         if event.event_type == WebhookEventType.UNKNOWN:
-            # Return 200 for unmapped but valid events so Stripe doesn't retry
-            return JSONResponse(
-                content={"status": "ignored", "message": "Event type not handled"}
+            return (
+                PlainTextResponse("fail", status_code=400)
+                if provider == "alipay"
+                else JSONResponse(content={"status": "ignored"})
             )
-
         async with get_async_session() as db:
-            svc = PaymentService(db)
-            try:
-                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
-                    order = await svc.confirm_payment(
-                        order_no=event.order_no,
-                        provider_tx_id=event.provider_tx_id,
-                        paid_amount_cents=event.amount_cents,
-                        paid_currency=event.currency,
-                    )
-                    await db.commit()
-                    logger.info(
-                        "Stripe webhook: payment confirmed for order {}",
-                        order.order_no,
-                    )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_completed"}
-                    )
-
-                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
-                    await svc.cancel_and_commit_if_needed(event.order_no)
-                    logger.info(
-                        "Stripe webhook: order expired/cancelled {}",
-                        event.order_no,
-                    )
-                    return JSONResponse(
+            if event.event_type in {
+                WebhookEventType.PAYMENT_COMPLETED,
+                WebhookEventType.PAYMENT_REFUNDED,
+            }:
+                record = await PaymentEventService(db).accept(
+                    provider, event, payload_hash=hashlib.sha256(payload).hexdigest()
+                )
+                await db.commit()
+                # Alipay requires a literal ACK. Pending source review is safe
+                # to acknowledge only because its verified receipt is durable.
+                if provider == "alipay":
+                    return PlainTextResponse("success")
+                return JSONResponse(
+                    content={"status": record.status, "event": event.event_type.value}
+                )
+            if event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                await PaymentService(db).cancel_and_commit_if_needed(event.order_no)
+                return (
+                    PlainTextResponse("success")
+                    if provider == "alipay"
+                    else JSONResponse(
                         content={"status": "processed", "event": "payment_expired"}
                     )
-
-                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
-                    # For refund events from Stripe, find order by provider_tx_id
-                    from sqlalchemy import select
-
-                    from backend.models.payment_models import Order, OrderStatus
-
-                    stmt = select(Order).where(
-                        Order.provider_tx_id == event.provider_tx_id,
-                        Order.status == OrderStatus.FULFILLED.value,
-                    )
-                    order = (await db.execute(stmt)).scalar_one_or_none()
-                    if order:
-                        await svc.process_refund(order_id=order.id)
-                        await db.commit()
-                        logger.info(
-                            "Stripe webhook: refund processed for order {}",
-                            order.order_no,
-                        )
-                    else:
-                        logger.info(
-                            "Stripe webhook: refund event but no actionable order for tx {}",
-                            event.provider_tx_id,
-                        )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_refunded"}
-                    )
-
-                else:
-                    logger.info(
-                        "Stripe webhook: ignoring event type {}", event.event_type
-                    )
-                    return JSONResponse(
-                        content={"status": "ignored", "event": str(event.event_type)}
-                    )
-
-            except PaymentError as e:
-                await db.rollback()
-                logger.warning("Stripe webhook processing error: {}", e)
-                return JSONResponse(
-                    status_code=200,
-                    content={"status": "error", "message": "Payment processing failed"},
                 )
+            return JSONResponse(content={"status": "ignored"})
+    except Exception as exc:
+        # Non-2xx asks the gateway to retry. No provider payload, token, stack
+        # trace, or success-shaped financial result is returned to callers.
+        logger.error("{} payment receipt failed: {}", provider, type(exc).__name__)
+        return (
+            PlainTextResponse("fail", status_code=503)
+            if provider == "alipay"
+            else JSONResponse(status_code=503, content={"status": "retry_required"})
+        )
 
-    except ValueError as e:
-        logger.warning("Stripe webhook gateway error: {}", e)
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Invalid request"},
-        )
-    except Exception as e:
-        logger.error(
-            "Stripe webhook unexpected error: {} - {}",
-            type(e).__name__,
-            e,
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": "Internal server error"},
-        )
+
+@router.post("/stripe")
+async def handle_stripe_webhook(request: Request) -> JSONResponse:
+    return await _handle_payment_webhook(request, "stripe")
 
 
 @router.post("/paddle")
-async def handle_paddle_webhook(
-    request: Request,
-) -> JSONResponse:
-    """Handle Paddle Billing webhook events (transaction.completed, etc.)"""
-    from backend.services.payment import WebhookEventType, get_gateway
-    from backend.services.payment_service import PaymentError, PaymentService
-
-    payload = await request.body()
-    headers = {k.lower(): v for k, v in request.headers.items()}
-
-    try:
-        gateway = await get_gateway("paddle")
-        event = gateway.verify_webhook(payload, headers)
-
-        if event.event_type == WebhookEventType.UNKNOWN:
-            # Return 200 for unmapped but valid events so Paddle doesn't retry
-            return JSONResponse(
-                content={"status": "ignored", "message": "Event type not handled"}
-            )
-
-        async with get_async_session() as db:
-            svc = PaymentService(db)
-            try:
-                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
-                    order = await svc.confirm_payment(
-                        order_no=event.order_no,
-                        provider_tx_id=event.provider_tx_id,
-                        paid_amount_cents=event.amount_cents,
-                        paid_currency=event.currency,
-                    )
-                    await db.commit()
-                    logger.info(
-                        "Paddle webhook: payment confirmed for order {}",
-                        order.order_no,
-                    )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_completed"}
-                    )
-
-                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
-                    await svc.cancel_and_commit_if_needed(event.order_no)
-                    logger.info(
-                        "Paddle webhook: order expired/cancelled {}",
-                        event.order_no,
-                    )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_expired"}
-                    )
-
-                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
-                    # For refund events from Paddle, find order by provider_tx_id
-                    from sqlalchemy import select
-
-                    from backend.models.payment_models import Order, OrderStatus
-
-                    stmt = select(Order).where(
-                        Order.provider_tx_id == event.provider_tx_id,
-                        Order.status == OrderStatus.FULFILLED.value,
-                    )
-                    order = (await db.execute(stmt)).scalar_one_or_none()
-                    if order:
-                        await svc.process_refund(order_id=order.id)
-                        await db.commit()
-                        logger.info(
-                            "Paddle webhook: refund processed for order {}",
-                            order.order_no,
-                        )
-                    else:
-                        logger.info(
-                            "Paddle webhook: refund event but no actionable order for tx {}",
-                            event.provider_tx_id,
-                        )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_refunded"}
-                    )
-
-                else:
-                    logger.info(
-                        "Paddle webhook: ignoring event type {}", event.event_type
-                    )
-                    return JSONResponse(
-                        content={"status": "ignored", "event": str(event.event_type)}
-                    )
-
-            except PaymentError as e:
-                await db.rollback()
-                logger.warning("Paddle webhook processing error: {}", e)
-                return JSONResponse(
-                    status_code=200,
-                    content={"status": "error", "message": "Payment processing failed"},
-                )
-
-    except ValueError as e:
-        logger.warning("Paddle webhook gateway error: {}", e)
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Invalid request"},
-        )
-    except Exception as e:
-        logger.error(
-            "Paddle webhook unexpected error: {} - {}",
-            type(e).__name__,
-            e,
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": "Internal server error"},
-        )
+async def handle_paddle_webhook(request: Request) -> JSONResponse:
+    return await _handle_payment_webhook(request, "paddle")
 
 
 @router.post("/alipay", response_model=None)
-async def handle_alipay_webhook(
-    request: Request,
-):
-    """Handle Alipay async payment notification (当面付回调)
-
-    支付宝回调为 POST form-urlencoded，验签成功后返回纯文本 "success"。
-    """
-    from backend.services.payment import WebhookEventType, get_gateway
-    from backend.services.payment_service import PaymentError, PaymentService
-
-    payload = await request.body()
-    headers = {k.lower(): v for k, v in request.headers.items()}
-
-    try:
-        gateway = await get_gateway("alipay")
-        event = gateway.verify_webhook(payload, headers)
-
-        if event.event_type == WebhookEventType.UNKNOWN:
-            logger.info("Alipay webhook: ignoring unmapped event")
-            return PlainTextResponse("fail")
-
-        async with get_async_session() as db:
-            svc = PaymentService(db)
-            try:
-                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
-                    order = await svc.confirm_payment(
-                        order_no=event.order_no,
-                        provider_tx_id=event.provider_tx_id,
-                        paid_amount_cents=event.amount_cents,
-                        paid_currency=event.currency,
-                    )
-                    await db.commit()
-                    logger.info(
-                        "Alipay webhook: payment confirmed for order {}",
-                        order.order_no,
-                    )
-                    # 支付宝要求返回 "success" 纯文本
-                    return PlainTextResponse("success")
-
-                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
-                    await svc.cancel_and_commit_if_needed(event.order_no)
-                    logger.info(
-                        "Alipay webhook: order closed {}",
-                        event.order_no,
-                    )
-                    return PlainTextResponse("success")
-
-                else:
-                    logger.info(
-                        "Alipay webhook: ignoring event type {}", event.event_type
-                    )
-                    return PlainTextResponse("success")
-
-            except PaymentError as e:
-                await db.rollback()
-                logger.warning("Alipay webhook processing error: {}", e)
-                # 仍返回 success 避免支付宝重复通知
-                return PlainTextResponse("success")
-
-    except ValueError as e:
-        logger.warning("Alipay webhook gateway error: {}", e)
-        return PlainTextResponse("fail")
-    except Exception as e:
-        logger.error(
-            "Alipay webhook unexpected error: {} - {}",
-            type(e).__name__,
-            e,
-            exc_info=True,
-        )
-        return PlainTextResponse("fail")
+async def handle_alipay_webhook(request: Request):
+    return await _handle_payment_webhook(request, "alipay")
 
 
-@router.post("/nowpayments", response_model=None)
-async def handle_nowpayments_webhook(
-    request: Request,
-) -> JSONResponse:
-    """Handle NOWPayments IPN callback (virtual currency payment notification)
-
-    NOWPayments sends POST JSON with x-nowpayments-sig header.
-    Verification uses HMAC-SHA512 with IPN secret.
-    """
-    from backend.services.payment import WebhookEventType, get_gateway
-    from backend.services.payment_service import PaymentError, PaymentService
-
-    payload = await request.body()
-    headers = {k.lower(): v for k, v in request.headers.items()}
-
-    try:
-        gateway = await get_gateway("nowpayments")
-        event = gateway.verify_webhook(payload, headers)
-
-        if event.event_type == WebhookEventType.UNKNOWN:
-            logger.info("NOWPayments webhook: ignoring unmapped event")
-            return JSONResponse(content={"status": "ignored"})
-
-        async with get_async_session() as db:
-            svc = PaymentService(db)
-            try:
-                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
-                    order = await svc.confirm_payment(
-                        order_no=event.order_no,
-                        provider_tx_id=event.provider_tx_id,
-                        paid_amount_cents=event.amount_cents,
-                        paid_currency=event.currency,
-                    )
-                    await db.commit()
-                    logger.info(
-                        "NOWPayments webhook: payment confirmed for order {}",
-                        order.order_no,
-                    )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_completed"}
-                    )
-
-                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
-                    await svc.cancel_and_commit_if_needed(event.order_no)
-                    logger.info(
-                        "NOWPayments webhook: order expired {}",
-                        event.order_no,
-                    )
-                    return JSONResponse(
-                        content={"status": "processed", "event": "payment_expired"}
-                    )
-
-                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
-                    logger.info("NOWPayments webhook: refund event received")
-                    return JSONResponse(
-                        content={"status": "processed", "event": "refund"}
-                    )
-
-                else:
-                    logger.info(
-                        "NOWPayments webhook: ignoring event type {}",
-                        event.event_type,
-                    )
-                    return JSONResponse(content={"status": "ignored"})
-
-            except PaymentError as e:
-                await db.rollback()
-                logger.warning("NOWPayments webhook processing error: {}", e)
-                return JSONResponse(
-                    content={"status": "error", "message": "Payment processing failed"}
-                )
-
-    except ValueError as e:
-        logger.warning("NOWPayments webhook gateway error: {}", e)
-        return JSONResponse(content={"status": "error", "message": "Invalid request"})
-    except Exception as e:
-        logger.error(
-            "NOWPayments webhook unexpected error: {} - {}",
-            type(e).__name__,
-            e,
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": "Internal server error"},
-        )
+@router.post("/nowpayments")
+async def handle_nowpayments_webhook(request: Request) -> JSONResponse:
+    return await _handle_payment_webhook(request, "nowpayments")

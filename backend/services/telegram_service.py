@@ -82,9 +82,7 @@ class TelegramService:
         return [
             user
             for user in result.scalars().all()
-            if str(getattr(user, "github_username", "") or "")
-            .strip()
-            .casefold()
+            if str(getattr(user, "github_username", "") or "").strip().casefold()
             == normalized
         ]
 
@@ -92,9 +90,7 @@ class TelegramService:
         self, github_username: str
     ) -> TelegramUser | None:
         """通过 GitHub 用户名获取用户"""
-        matches = await self._casefold_github_matches(
-            github_username, active_only=True
-        )
+        matches = await self._casefold_github_matches(github_username, active_only=True)
         if len(matches) > 1:
             logger.warning(
                 "Ambiguous case-insensitive GitHub mirror lookup: username={}",
@@ -114,235 +110,128 @@ class TelegramService:
         )
         return result.scalar_one_or_none() is not None
 
-    async def check_and_consume_quota(
-        self, github_username: str, repo_name: str, pr_number: int
+    async def _consume_rate_limit(
+        self,
+        github_username: str,
+        repo_name: str,
+        number: int,
+        feature: str,
+        operation_id: str | None = None,
     ) -> tuple[bool, str]:
-        """检查并消耗配额（原子操作，避免并发竞态条件）
-
-        使用数据库原子UPDATE操作，一次性完成检查和递增，
-        完全避免"Check-Then-Act"竞态条件。
-
-        Returns:
-            (是否允许, 拒绝原因)
-        """
-        from sqlalchemy import update
+        """Request counts control admission; they never represent money."""
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
 
         user = await self.get_user_by_github_username(github_username)
         if not user:
             return False, "用户未注册"
-
-        # 管理员和超级管理员不受配额限制
-        # 转换为小写进行比较，支持大小写不敏感（与 webhook.py 保持一致）
-        role_lower = user.role.lower().strip() if user.role else ""
-        if role_lower in ["admin", "super_admin"]:
-            logger.info(
-                f"管理员/超级管理员跳过配额检查: {github_username} (role: {user.role})"
-            )
+        if (user.role or "").lower().strip() in {"admin", "super_admin"}:
             return True, ""
+        from backend.services.billing_service import (
+            BillingError,
+            BillingService,
+            InsufficientCredits,
+        )
 
-        # 重置过期配额
+        try:
+            billing = BillingService(self.session)
+            await billing.get_wallet(user.id)
+            await billing.assert_can_start(user.id)
+        except InsufficientCredits:
+            return False, "Credits 余额不足"
+        except BillingError as exc:
+            if exc.code == "legacy_migration_required":
+                return False, "已购买的旧权益等待审核转换为 Credits，请联系管理员"
+            raise
+        user = (
+            await self.session.execute(
+                select(TelegramUser)
+                .where(TelegramUser.id == user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
         if await is_payment_enabled():
             await PaymentService(self.session).expire_due_subscriptions(user.id)
         await QuotaService(self.session).reset_user_quotas_if_expired(
-            user, include_pr=True, include_issue=False
+            user,
+            include_pr=feature == "pr_review",
+            include_issue=feature == "issue_analysis",
+            include_agent=feature == "agent",
         )
-
-        # 使用原子UPDATE操作检查并消耗配额
-        # 这个操作是原子的：只有当所有配额都未超限时才会执行递增
-        # 注意：MySQL 不支持 RETURNING 子句，所以分两步执行
-        stmt = (
-            update(TelegramUser)
-            .where(
-                and_(
-                    TelegramUser.id == user.id,
-                    TelegramUser.daily_used < TelegramUser.daily_quota,
-                    TelegramUser.weekly_used < TelegramUser.weekly_quota,
-                    TelegramUser.monthly_used < TelegramUser.monthly_quota,
-                )
-            )
-            .values(
-                daily_used=TelegramUser.daily_used + 1,
-                weekly_used=TelegramUser.weekly_used + 1,
-                monthly_used=TelegramUser.monthly_used + 1,
-            )
-        )
-
-        result = await self.session.execute(stmt)
-
-        # 检查是否影响了行数（如果 rowcount == 0 说明配额已用完）
-        if result.rowcount == 0:
-            # 重新读取用户信息以确定具体哪个配额已用完
-            await self.session.refresh(user)
-
-            if user.daily_used >= user.daily_quota:
-                return False, f"每日配额已用完 ({user.daily_used}/{user.daily_quota})"
-            elif user.weekly_used >= user.weekly_quota:
-                return False, f"每周配额已用完 ({user.weekly_used}/{user.weekly_quota})"
-            elif user.monthly_used >= user.monthly_quota:
-                return (
-                    False,
-                    f"每月配额已用完 ({user.monthly_used}/{user.monthly_quota})",
-                )
-            else:
-                return False, "配额已用完"
-
-        # 记录日志
-        log = QuotaUsageLog(
-            telegram_user_id=user.id,
+        service = LegacyEntitlementService(self.session)
+        admitted = await service.consume(
+            user,
+            feature,
             repo_name=repo_name,
-            pr_number=pr_number,
-            usage_type="daily",  # 记录为每日使用（字符串）
+            number=number,
+            event_key=f"operation:{operation_id}:{feature}" if operation_id else None,
         )
-        self.session.add(log)
-
+        if not admitted:
+            await self.session.refresh(user)
+            limits = await service.effective_limits(user, feature)
+            prefix = {"pr_review": "", "issue_analysis": "issue_", "agent": "agent_"}[
+                feature
+            ]
+            label = {"pr_review": "PR", "issue_analysis": "Issue", "agent": "Agent"}[
+                feature
+            ]
+            for index, (period, title) in enumerate(
+                (("daily", "每日"), ("weekly", "每周"), ("monthly", "每月"))
+            ):
+                used = getattr(user, f"{prefix}{period}_used")
+                if used >= limits[index]:
+                    return (
+                        False,
+                        f"{label} {title}次数限流已达到 ({used}/{limits[index]})",
+                    )
+            return False, f"{label} 次数限流已达到"
+        self.session.add(
+            QuotaUsageLog(
+                telegram_user_id=user.id,
+                repo_name=repo_name,
+                pr_number=number,
+                usage_type="daily",
+                usage_category=feature,
+            )
+        )
         await self.session.commit()
         return True, ""
+
+    async def check_and_consume_quota(
+        self,
+        github_username: str,
+        repo_name: str,
+        pr_number: int,
+        *,
+        operation_id: str | None = None,
+    ) -> tuple[bool, str]:
+        return await self._consume_rate_limit(
+            github_username, repo_name, pr_number, "pr_review", operation_id
+        )
 
     async def check_and_consume_issue_quota(
-        self, github_username: str, repo_name: str, issue_number: int
-    ):
-        """检查并消费 Issue 分析配额（独立于 PR 审查配额）"""
-        from sqlalchemy import update
-        from sqlalchemy.sql import and_
-
-        user = await self.get_user_by_github_username(github_username)
-        if not user:
-            return False, "用户未注册"
-
-        role_lower = user.role.lower().strip() if user.role else ""
-        if role_lower in ["admin", "super_admin"]:
-            return True, ""
-
-        if await is_payment_enabled():
-            await PaymentService(self.session).expire_due_subscriptions(user.id)
-        await QuotaService(self.session).reset_user_quotas_if_expired(
-            user, include_pr=False, include_issue=True
+        self,
+        github_username: str,
+        repo_name: str,
+        issue_number: int,
+        *,
+        operation_id: str | None = None,
+    ) -> tuple[bool, str]:
+        return await self._consume_rate_limit(
+            github_username, repo_name, issue_number, "issue_analysis", operation_id
         )
-
-        stmt = (
-            update(TelegramUser)
-            .where(
-                and_(
-                    TelegramUser.id == user.id,
-                    TelegramUser.issue_daily_used < TelegramUser.issue_daily_quota,
-                    TelegramUser.issue_weekly_used < TelegramUser.issue_weekly_quota,
-                    TelegramUser.issue_monthly_used < TelegramUser.issue_monthly_quota,
-                )
-            )
-            .values(
-                issue_daily_used=TelegramUser.issue_daily_used + 1,
-                issue_weekly_used=TelegramUser.issue_weekly_used + 1,
-                issue_monthly_used=TelegramUser.issue_monthly_used + 1,
-            )
-        )
-
-        result = await self.session.execute(stmt)
-
-        if result.rowcount == 0:
-            await self.session.refresh(user)
-
-            if user.issue_daily_used >= user.issue_daily_quota:
-                return (
-                    False,
-                    f"Issue 每日配额已用完 ({user.issue_daily_used}/{user.issue_daily_quota})",
-                )
-            elif user.issue_weekly_used >= user.issue_weekly_quota:
-                return (
-                    False,
-                    f"Issue 每周配额已用完 ({user.issue_weekly_used}/{user.issue_weekly_quota})",
-                )
-            elif user.issue_monthly_used >= user.issue_monthly_quota:
-                return (
-                    False,
-                    f"Issue 每月配额已用完 ({user.issue_monthly_used}/{user.issue_monthly_quota})",
-                )
-            else:
-                return False, "Issue 配额已用完"
-
-        log = QuotaUsageLog(
-            telegram_user_id=user.id,
-            repo_name=repo_name,
-            pr_number=issue_number,
-            usage_type="daily",
-            usage_category="issue_analysis",
-        )
-        self.session.add(log)
-
-        await self.session.commit()
-        return True, ""
 
     async def check_and_consume_agent_quota(
-        self, github_username: str, repo_name: str = "", task_id: int = 0
-    ):
-        """检查并消费 Agent 配额"""
-        from sqlalchemy import update
-        from sqlalchemy.sql import and_
-
-        user = await self.get_user_by_github_username(github_username)
-        if not user:
-            return False, "用户未注册"
-
-        role_lower = user.role.lower().strip() if user.role else ""
-        if role_lower in ["admin", "super_admin"]:
-            return True, ""
-
-        if await is_payment_enabled():
-            await PaymentService(self.session).expire_due_subscriptions(user.id)
-        await QuotaService(self.session).reset_user_quotas_if_expired(
-            user, include_pr=False, include_issue=False, include_agent=True
+        self,
+        github_username: str,
+        repo_name: str = "",
+        task_id: int = 0,
+        *,
+        operation_id: str | None = None,
+    ) -> tuple[bool, str]:
+        return await self._consume_rate_limit(
+            github_username, repo_name, task_id, "agent", operation_id
         )
-
-        stmt = (
-            update(TelegramUser)
-            .where(
-                and_(
-                    TelegramUser.id == user.id,
-                    TelegramUser.agent_daily_used < TelegramUser.agent_daily_quota,
-                    TelegramUser.agent_weekly_used < TelegramUser.agent_weekly_quota,
-                    TelegramUser.agent_monthly_used < TelegramUser.agent_monthly_quota,
-                )
-            )
-            .values(
-                agent_daily_used=TelegramUser.agent_daily_used + 1,
-                agent_weekly_used=TelegramUser.agent_weekly_used + 1,
-                agent_monthly_used=TelegramUser.agent_monthly_used + 1,
-            )
-        )
-
-        result = await self.session.execute(stmt)
-
-        if result.rowcount == 0:
-            await self.session.refresh(user)
-
-            if user.agent_daily_used >= user.agent_daily_quota:
-                return (
-                    False,
-                    f"Agent 每日配额已用完 ({user.agent_daily_used}/{user.agent_daily_quota})",
-                )
-            elif user.agent_weekly_used >= user.agent_weekly_quota:
-                return (
-                    False,
-                    f"Agent 每周配额已用完 ({user.agent_weekly_used}/{user.agent_weekly_quota})",
-                )
-            elif user.agent_monthly_used >= user.agent_monthly_quota:
-                return (
-                    False,
-                    f"Agent 每月配额已用完 ({user.agent_monthly_used}/{user.agent_monthly_quota})",
-                )
-            else:
-                return False, "Agent 配额已用完"
-
-        log = QuotaUsageLog(
-            telegram_user_id=user.id,
-            repo_name=repo_name,
-            pr_number=task_id,
-            usage_type="daily",
-            usage_category="agent",
-        )
-        self.session.add(log)
-
-        await self.session.commit()
-        return True, ""
 
     async def add_user(
         self,
@@ -412,6 +301,29 @@ class TelegramService:
         if not user:
             return False, "用户不存在"
 
+        from backend.models.billing_models import BillingWallet
+        from backend.models.legacy_entitlement_models import LegacyEntitlement
+        from backend.models.payment_models import Order
+
+        financial_source = await self.session.get(BillingWallet, user.id)
+        if financial_source is None:
+            financial_source = (
+                await self.session.execute(
+                    select(Order.id).where(Order.user_id == user.id).limit(1)
+                )
+            ).scalar_one_or_none()
+        if financial_source is None:
+            financial_source = (
+                await self.session.execute(
+                    select(LegacyEntitlement.id)
+                    .where(LegacyEntitlement.user_id == user.id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if financial_source is not None:
+            user.is_active = False
+            await self.session.commit()
+            return True, "用户已停用，账务与权益记录已保留"
         await self.session.delete(user)
         await self.session.commit()
         return True, "用户已移除"
@@ -495,35 +407,42 @@ class TelegramService:
         # 消耗路径仍只重置对应类型，避免不必要写入。
         await QuotaService(self.session).reset_user_quotas_if_expired(user)
 
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
+
+        entitlements = LegacyEntitlementService(self.session)
+        pr_limits = await entitlements.effective_limits(user, "pr_review")
+        issue_limits = await entitlements.effective_limits(user, "issue_analysis")
+        agent_limits = await entitlements.effective_limits(user, "agent")
         return {
+            "legacy_remaining": await entitlements.remaining(user.id),
             "github_username": user.github_username,
             "role": user.role,  # 现在是 String 类型，不需要 .value
-            "daily": {"used": user.daily_used, "limit": user.daily_quota},
-            "weekly": {"used": user.weekly_used, "limit": user.weekly_quota},
-            "monthly": {"used": user.monthly_used, "limit": user.monthly_quota},
+            "daily": {"used": user.daily_used, "limit": pr_limits[0]},
+            "weekly": {"used": user.weekly_used, "limit": pr_limits[1]},
+            "monthly": {"used": user.monthly_used, "limit": pr_limits[2]},
             "issue_daily": {
                 "used": user.issue_daily_used,
-                "limit": user.issue_daily_quota,
+                "limit": issue_limits[0],
             },
             "issue_weekly": {
                 "used": user.issue_weekly_used,
-                "limit": user.issue_weekly_quota,
+                "limit": issue_limits[1],
             },
             "issue_monthly": {
                 "used": user.issue_monthly_used,
-                "limit": user.issue_monthly_quota,
+                "limit": issue_limits[2],
             },
             "agent_daily": {
                 "used": user.agent_daily_used,
-                "limit": user.agent_daily_quota,
+                "limit": agent_limits[0],
             },
             "agent_weekly": {
                 "used": user.agent_weekly_used,
-                "limit": user.agent_weekly_quota,
+                "limit": agent_limits[1],
             },
             "agent_monthly": {
                 "used": user.agent_monthly_used,
-                "limit": user.agent_monthly_quota,
+                "limit": agent_limits[2],
             },
         }
 

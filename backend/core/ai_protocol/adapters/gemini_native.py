@@ -342,7 +342,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
     def _parse_usage(raw: Any) -> UnifiedUsage:
         if not isinstance(raw, dict):
             return UnifiedUsage()
-        return usage_from_mapping(
+        usage = usage_from_mapping(
             {
                 "input_tokens": raw.get("promptTokenCount"),
                 "output_tokens": raw.get("candidatesTokenCount"),
@@ -350,6 +350,18 @@ class GeminiNativeAdapter(ProtocolAdapter):
                 "reasoning_tokens": raw.get("thoughtsTokenCount"),
             }
         )
+        usage.raw_usage = {
+            key: raw[key]
+            for key in (
+                "promptTokenCount",
+                "candidatesTokenCount",
+                "cachedContentTokenCount",
+                "thoughtsTokenCount",
+                "totalTokenCount",
+            )
+            if type(raw.get(key)) is int and raw[key] >= 0
+        }
+        return usage
 
     # ------------------------------------------------------------------
     # HTTP / chat / stream
@@ -373,6 +385,10 @@ class GeminiNativeAdapter(ProtocolAdapter):
         self._raise_for_status(resp, endpoint)
         return resp
 
+    def reported_error_usage(self, body: Any) -> UnifiedUsage | None:
+        raw = body.get("usageMetadata") if isinstance(body, dict) else None
+        return self._parse_usage(raw) if isinstance(raw, dict) else None
+
     def _raise_for_status(
         self, resp: httpx.Response, endpoint: ResolvedEndpoint
     ) -> None:
@@ -388,6 +404,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             message,
             status_code=resp.status_code,
             provider=endpoint.base_url,
+            usage=self.reported_error_usage(body),
         )
 
     def translate_error(
@@ -466,12 +483,14 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     "Gemini 安全拒绝 / safety refusal",
                     provider=endpoint.base_url,
                     model=request.model,
+                    usage=response.usage,
                 )
             raise self.raise_error(
                 AIErrorCategory.EMPTY_RESPONSE,
                 "Gemini 端点返回空响应",
                 provider=endpoint.base_url,
                 model=request.model,
+                usage=response.usage,
             )
         return response
 
@@ -496,6 +515,14 @@ class GeminiNativeAdapter(ProtocolAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
+                if (
+                    not 200 <= resp.status_code < 300
+                    or "text/event-stream"
+                    not in resp.headers.get("content-type", "").lower()
+                ):
+                    # httpx streaming responses must be read before JSON error
+                    # parsing can retain authoritative returned Usage.
+                    await resp.aread()
                 self.ensure_sse_response(
                     resp,
                     endpoint,

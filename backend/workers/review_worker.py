@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import time
 import uuid
+from functools import wraps
 from typing import Any
 
 from loguru import logger
@@ -31,6 +32,14 @@ from backend.models.database import (
 from backend.services.ai_reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.ai_usage_service import finish_billing_operation
+from backend.services.billing_context import (
+    billable_payload,
+    billable_platform,
+    context_for_payload,
+    enrich_billing_source,
+    get_pending_billing_failure,
+)
 from backend.services.check_run_service import (
     CheckRunService,
     ReviewProgressSnapshot,
@@ -45,11 +54,52 @@ from backend.services.database_reset_runtime_service import (
 from backend.services.decision_engine import get_decision_engine
 from backend.services.label_service import label_service
 from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
+from backend.services.service_execution_capacity import (
+    ServiceExecutionLimiter,
+    current_service_execution_failure,
+)
 
 settings = get_settings()
 
-# 审查并发控制信号量
-_review_semaphore: asyncio.Semaphore | None = None
+# The legacy helper name is retained, but capacity belongs to the shared DB.
+_review_semaphore = ServiceExecutionLimiter("pr_review")
+
+
+def _review_capacity_cleanup(function):
+    """Cover cancellation while queued, before the main worker try/finally."""
+
+    @wraps(function)
+    async def wrapped(self, pr_info, *args, **kwargs):
+        task_key = self._make_task_key(pr_info)
+        if task_key not in getattr(self, "_cancel_events", {}):
+            self._register_task(task_key)
+        cancel_event = self._cancel_events[task_key]
+        try:
+            return await function(self, pr_info, *args, **kwargs)
+        except asyncio.CancelledError:
+            # The running body owns its own terminal convergence. Only a wait
+            # cancelled before that body starts still owns this registry entry.
+            if self._cancel_events.get(task_key) is cancel_event:
+                await finish_billing_operation("cancelled")
+                current_task = asyncio.current_task()
+                if cancel_event.is_set() and (
+                    current_task is None or current_task.cancelling() == 0
+                ):
+                    return await self._cancel_and_cleanup(
+                        uuid.uuid4().hex[:8],
+                        task_key,
+                        None,
+                        None,
+                        "PR review cancelled while waiting for service capacity",
+                        pr_info=pr_info,
+                        head_sha=pr_info.get("head_sha"),
+                    )
+            raise
+        finally:
+            if self._cancel_events.get(task_key) is cancel_event:
+                self._unregister_task(task_key)
+
+    return wrapped
 
 
 def _reflection_is_admissible(
@@ -63,21 +113,14 @@ def _reflection_is_admissible(
     )
 
 
-async def _get_review_semaphore() -> asyncio.Semaphore:
-    """获取审查并发信号量（懒初始化，支持动态更新）"""
-    global _review_semaphore
-    if _review_semaphore is None:
-        max_concurrent = await _load_max_concurrent()
-        _review_semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info("审查并发信号量初始化: 最大 {} 个并发任务", max_concurrent)
+async def _get_review_semaphore() -> ServiceExecutionLimiter:
+    """Return the shared service limiter; each acquisition reads current limits."""
     return _review_semaphore
 
 
 def reset_review_semaphore():
-    """重置审查信号量（配置更新时调用）"""
-    global _review_semaphore
-    _review_semaphore = None
-    logger.info("审查并发信号量已重置，下次任务将重新初始化")
+    """Compatibility hook: DB capacity reads fresh limits without replacing leases."""
+    logger.info("审查服务执行容量将在下次申请时读取最新配置")
 
 
 async def _load_max_concurrent() -> int:
@@ -529,6 +572,8 @@ class ReviewWorker:
             logger.warning("[{}] PR relations unavailable: {}", task_id, result.failure)
         return result
 
+    @billable_payload("pr_review")
+    @_review_capacity_cleanup
     async def process_review_task(
         self,
         pr_info: dict[str, Any],
@@ -562,6 +607,7 @@ class ReviewWorker:
         ) -> None:
             """Best-effort finish; retain the status until the operation succeeds."""
             nonlocal execution_status, execution_target_status
+            await finish_billing_operation(status)
             if execution is None or execution_status == status:
                 return
             execution_target_status = status
@@ -582,7 +628,12 @@ class ReviewWorker:
 
         # 获取并发信号量，限制同时运行的审查任务数
         semaphore = await _get_review_semaphore()
-        async with semaphore:
+        capacity_scope = (
+            semaphore.slot(cancel_event=self._cancel_events[task_key])
+            if isinstance(semaphore, ServiceExecutionLimiter)
+            else semaphore
+        )
+        async with capacity_scope:
             try:
                 logger.info(
                     f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
@@ -715,6 +766,7 @@ class ReviewWorker:
                 # synchronize webhook 会查不到 active review，enqueue 返回 None，
                 # 从而误触发第二个完整审查，造成并发 + 限流雪崩。
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
+                enrich_billing_source(review_id=review_id)
 
                 # 提前获取用户输出语言：Check Run / 占位评论 / 审查上下文均依赖它。
                 # get_user_dynamic_config 带缓存，提前调用零成本。
@@ -1487,6 +1539,9 @@ class ReviewWorker:
 
                 # 并行执行所有任务
                 results = await asyncio.gather(*tasks, return_exceptions=True)
+                pending_billing_failure = get_pending_billing_failure()
+                if pending_billing_failure is not None:
+                    raise pending_billing_failure
 
                 # 解析结果
                 review_result = results[0]
@@ -1686,6 +1741,10 @@ class ReviewWorker:
                         # _restore_incremental_activity_history 恢复完整历史，
                         # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
                         # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
+                        @billable_platform(
+                            "memory_reflection",
+                            "independent_repository_memory_maintenance",
+                        )
                         async def _reflect_with_history() -> None:
                             if task_deadline.is_expired():
                                 logger.info(
@@ -1845,7 +1904,12 @@ class ReviewWorker:
             except asyncio.CancelledError:
                 # 外部取消：except Exception 不接 CancelledError，需单独收尾
                 # review 状态，防止僵尸。配置 deadline 不会走这里的硬取消路径。
-                execution_target_status = "cancelled"
+                # Capacity heartbeat loss also interrupts this await. Classify
+                # it before the immutable operation's terminal financial write;
+                # the slot context will then raise ServiceExecutionLeaseLost.
+                execution_target_status = (
+                    "failed" if current_service_execution_failure() else "cancelled"
+                )
                 if review_id:
                     try:
                         await self._update_review_status(review_id, PRStatus.FAILED)
@@ -1883,7 +1947,7 @@ class ReviewWorker:
                     )
                     if review_id:
                         await self._persist_error_reference(review_id, _error_reference)
-                await _finish_execution("cancelled")
+                await _finish_execution(execution_target_status)
                 raise
             finally:
                 if execution is not None and execution_status is None:
@@ -2511,6 +2575,7 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
              The internal task_id (short UUID) is logged by process_review_task.
     """
     ensure_background_admission("review")
+    context_for_payload(pr_info, "pr_review")
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
@@ -2607,6 +2672,26 @@ async def _drain_pending_incremental(pr_info: dict[str, Any]) -> None:
         "before": pending[0].base_sha or pr_info.get("before"),
         "after": pending[-1].head_sha,
     }
+    # This queued batch is a new business execution, with durable queue identity.
+    drain_pr_info.pop("billing_context", None)
+    queue_identity = ",".join(str(item.id) for item in pending)
+    drain_pr_info["delivery_id"] = (
+        f"incremental:{uuid.uuid5(uuid.NAMESPACE_URL, queue_identity)}"
+    )
+    queued_context = getattr(pending[-1], "billing_context", None)
+    # Payer fields belong to this queue admission, never the previous review.
+    drain_pr_info["billing_user_id"] = (
+        queued_context.get("user_id") if queued_context else None
+    )
+    drain_pr_info["billing_platform_reason"] = (
+        queued_context.get("platform_reason")
+        if queued_context
+        else "legacy_incremental_without_verified_payer"
+    )
+    if queued_context:
+        drain_pr_info["user_id"] = queued_context["user_id"]
+        if queued_context.get("source", {}).get("sender"):
+            drain_pr_info["sender"] = queued_context["source"]["sender"]
     logger.info(
         "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
         len(pending),

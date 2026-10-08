@@ -78,43 +78,128 @@ _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 # ============================================================================
 
 
-def _validate_bool(value: Any, label: str) -> None:
+SECTION_VALIDATION_CODES = frozenset(
+    {
+        "boolean_required",
+        "integer_required",
+        "integer_minimum",
+        "string_required",
+        "empty_string",
+        "list_required",
+        "object_required",
+        "empty_strategies",
+        "categories_required",
+        "label_name_length",
+        "label_name_characters",
+        "label_color",
+        "number_required",
+        "number_range",
+        "missing_placeholders",
+        "invalid_option",
+        "save_mode",
+        "invalid_config",
+    }
+)
+
+
+class SectionConfigValidationError(ValueError):
+    """Safe validation metadata; submitted field values are never retained.
+
+    ``path`` / ``field`` are relative to ``section``. Parameters contain only
+    server-defined constraints, so callers can translate without exposing
+    templates, secrets, or invalid values in responses and logs.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        path: str,
+        code: str,
+        *,
+        params: dict | None = None,
+        section: str | None = None,
+    ):
+        super().__init__(message)
+        self.section = section
+        self.path = self.field = path
+        self.code = code
+        self.translation_key = f"section_validation.{code}"
+        self.params = dict(params or {})
+
+
+def _relative_path(label: str) -> str:
+    """Strip the historical human-readable section prefix from a leaf path."""
+    prefixes = tuple(key.split(".", 1)[1] for key in SECTION_REGISTRY)
+    for prefix in prefixes:
+        if label.startswith(prefix + "."):
+            return label[len(prefix) + 1 :]
+    return label
+
+
+def _error(label: str, reason: str, code: str, *, path=None, params=None):
+    return SectionConfigValidationError(
+        f"{label} {reason}",
+        path if path is not None else _relative_path(label),
+        code,
+        params=params,
+    )
+
+
+def _mapping_key(key: str, defaults: dict, index: int) -> str:
+    """Only built-in map keys may be reflected; other rows use an index."""
+    return key if isinstance(key, str) and key in defaults else f"[{index}]"
+
+
+def _validate_bool(value: Any, label: str, *, path: str | None = None) -> None:
     """校验布尔字段（存在时调用方保证键存在）。"""
     if not isinstance(value, bool):
-        raise ValueError(f"{label} 必须是布尔值: {value!r}")
+        raise _error(label, "必须是布尔值", "boolean_required", path=path)
 
 
-def _validate_int(value: Any, label: str) -> None:
+def _validate_int(value: Any, label: str, *, path: str | None = None) -> None:
     """校验整数字段（bool 不是合法整数；不设数值上下限）。"""
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{label} 必须是整数: {value!r}")
+        raise _error(label, "必须是整数", "integer_required", path=path)
 
 
-def _validate_str(value: Any, label: str, *, allow_empty: bool = True) -> None:
+def _validate_str(
+    value: Any, label: str, *, allow_empty: bool = True, path: str | None = None
+) -> None:
     """校验字符串字段。"""
     if not isinstance(value, str):
-        raise ValueError(f"{label} 必须是字符串: {value!r}")
+        raise _error(label, "必须是字符串", "string_required", path=path)
     if not allow_empty and not value.strip():
-        raise ValueError(f"{label} 不能为空")
+        raise _error(label, "不能为空", "empty_string", path=path)
 
 
-def _validate_str_list(value: Any, label: str) -> None:
+def _validate_str_list(value: Any, label: str, *, path: str | None = None) -> None:
     """校验列表类节：元素必须是字符串。"""
     if not isinstance(value, list):
-        raise ValueError(f"{label} 必须是列表: {value!r}")
+        raise _error(label, "必须是列表", "list_required", path=path)
     for idx, item in enumerate(value):
         if not isinstance(item, str):
-            raise ValueError(f"{label}[{idx}] 必须是字符串: {item!r}")
+            raise _error(
+                f"{label}[{idx}]",
+                "必须是字符串",
+                "string_required",
+                path=f"{path}[{idx}]" if path is not None else None,
+            )
 
 
-def _validate_label_name(name: str) -> None:
+def _validate_label_name(name: str, *, path: str) -> None:
     """验证标签名称格式（GitHub 标签命名规范）。"""
+    if not isinstance(name, str):
+        raise _error("标签名称", "必须是字符串", "string_required", path=path)
     if len(name) > _MAX_LABEL_NAME_LEN:
-        raise ValueError(
-            f"标签名称过长（最多 {_MAX_LABEL_NAME_LEN} 字符）: {name[:20]}..."
+        raise _error(
+            "标签名称",
+            f"过长（最多 {_MAX_LABEL_NAME_LEN} 字符）",
+            "label_name_length",
+            path=path,
+            params={"maximum": _MAX_LABEL_NAME_LEN},
         )
-    if not _LABEL_NAME_RE.match(name):
-        raise ValueError(f"标签名称包含非法字符: {name}")
+    if not _LABEL_NAME_RE.fullmatch(name):
+        raise _error("标签名称", "包含非法字符", "label_name_characters", path=path)
 
 
 def _iter_string_leaves(node: Any, path: str = ""):
@@ -146,8 +231,12 @@ def _validate_template_placeholders(section_key: str, effective: dict) -> None:
             continue
         missing = _extract_placeholders(default_text) - _extract_placeholders(text)
         if missing:
-            raise ValueError(
-                f"[{section_key}] 模板 {path} 丢失必需占位符: {sorted(missing)}"
+            raise SectionConfigValidationError(
+                f"[{section_key}] 模板 {path} 丢失必需占位符: {sorted(missing)}",
+                path,
+                "missing_placeholders",
+                params={"placeholders": ", ".join(sorted(missing))},
+                section=section_key,
             )
 
 
@@ -160,19 +249,41 @@ def _validate_template_placeholders(section_key: str, effective: dict) -> None:
 def _validate_strategy_strategies(data: dict) -> None:
     """策略分级：每策略 conditions 数值为正整数、prompt/name 非空字符串。"""
     if not isinstance(data, dict) or not data:
-        raise ValueError("策略定义不能为空")
-    for tier, spec in data.items():
+        raise _error("策略定义", "不能为空", "empty_strategies", path="")
+    defaults = get_section_defaults("strategy.strategies")
+    for idx, (key, spec) in enumerate(data.items()):
+        tier = _mapping_key(key, defaults, idx)
         if not isinstance(spec, dict):
-            raise ValueError(f"[{tier}] 策略定义必须是对象")
-        _validate_str(spec.get("name"), f"[{tier}] name", allow_empty=False)
-        _validate_str(spec.get("prompt"), f"[{tier}] prompt", allow_empty=False)
+            raise _error(
+                f"[{tier}] 策略定义", "必须是对象", "object_required", path=tier
+            )
+        _validate_str(
+            spec.get("name"), f"[{tier}] name", allow_empty=False, path=f"{tier}.name"
+        )
+        _validate_str(
+            spec.get("prompt"),
+            f"[{tier}] prompt",
+            allow_empty=False,
+            path=f"{tier}.prompt",
+        )
         conditions = spec.get("conditions")
         if not isinstance(conditions, dict):
-            raise ValueError(f"[{tier}] conditions 必须是对象")
+            raise _error(
+                f"[{tier}] conditions",
+                "必须是对象",
+                "object_required",
+                path=f"{tier}.conditions",
+            )
         for field in ("max_files", "max_lines"):
             value = conditions.get(field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"[{tier}] {field} 必须是不小于 1 的整数: {value!r}")
+                raise _error(
+                    f"[{tier}] {field}",
+                    "必须是不小于 1 的整数",
+                    "integer_minimum",
+                    path=f"{tier}.conditions.{field}",
+                    params={"minimum": 1},
+                )
 
 
 def _validate_file_filters(data: dict) -> None:
@@ -208,7 +319,9 @@ def _validate_context_enhancement(data: dict) -> None:
     sif = data.get("search_in_files")
     if sif is not None:
         if not isinstance(sif, dict):
-            raise ValueError("context_enhancement.search_in_files 必须是对象")
+            raise _error(
+                "context_enhancement.search_in_files", "必须是对象", "object_required"
+            )
         for field in ("use_search_api", "skip_binary"):
             if field in sif:
                 _validate_bool(sif[field], f"search_in_files.{field}")
@@ -227,7 +340,9 @@ def _validate_context_enhancement(data: dict) -> None:
     git_tools = data.get("git_tools")
     if git_tools is not None:
         if not isinstance(git_tools, dict):
-            raise ValueError("context_enhancement.git_tools 必须是对象")
+            raise _error(
+                "context_enhancement.git_tools", "必须是对象", "object_required"
+            )
         for field in ("default_branch_count", "default_commit_count"):
             if field in git_tools:
                 _validate_int(git_tools[field], f"git_tools.{field}")
@@ -245,14 +360,18 @@ def _validate_review_policy(data: dict) -> None:
         _validate_str_list(data["ignored_patterns"], "review_policy.ignored_patterns")
     overrides = data.get("repo_overrides")
     if overrides is not None and not isinstance(overrides, dict):
-        raise ValueError("review_policy.repo_overrides 必须是对象")
+        raise _error("review_policy.repo_overrides", "必须是对象", "object_required")
     for templates_key in ("review_templates", "review_templates_en"):
         templates = data.get(templates_key)
         if templates is None:
             continue
         if not isinstance(templates, dict):
-            raise ValueError(f"review_policy.{templates_key} 必须是对象")
-        for name, template in templates.items():
+            raise _error(
+                f"review_policy.{templates_key}", "必须是对象", "object_required"
+            )
+        defaults = get_section_defaults("strategy.review_policy").get(templates_key, {})
+        for idx, (key, template) in enumerate(templates.items()):
+            name = _mapping_key(key, defaults, idx)
             _validate_str(template, f"review_policy.{templates_key}.{name}")
 
 
@@ -260,10 +379,16 @@ def _validate_issue_analysis(data: dict) -> None:
     """Issue 分析：分类/优先级规则/关键词列表结构校验。"""
     categories = data.get("categories")
     if not isinstance(categories, list) or not categories:
-        raise ValueError("issue_analysis.categories 至少需要定义一个 Issue 分类")
+        raise _error(
+            "issue_analysis.categories",
+            "至少需要定义一个 Issue 分类",
+            "categories_required",
+        )
     for idx, category in enumerate(categories):
         if not isinstance(category, dict):
-            raise ValueError(f"issue_analysis.categories[{idx}] 必须是对象")
+            raise _error(
+                f"issue_analysis.categories[{idx}]", "必须是对象", "object_required"
+            )
         _validate_str(
             category.get("name"), f"categories[{idx}].name", allow_empty=False
         )
@@ -272,10 +397,20 @@ def _validate_issue_analysis(data: dict) -> None:
     priority_rules = data.get("priority_rules")
     if priority_rules is not None:
         if not isinstance(priority_rules, dict):
-            raise ValueError("issue_analysis.priority_rules 必须是对象")
-        for level, rule in priority_rules.items():
+            raise _error(
+                "issue_analysis.priority_rules", "必须是对象", "object_required"
+            )
+        defaults = get_section_defaults("strategy.issue_analysis").get(
+            "priority_rules", {}
+        )
+        for idx, (key, rule) in enumerate(priority_rules.items()):
+            level = _mapping_key(key, defaults, idx)
             if not isinstance(rule, dict):
-                raise ValueError(f"issue_analysis.priority_rules.{level} 必须是对象")
+                raise _error(
+                    f"issue_analysis.priority_rules.{level}",
+                    "必须是对象",
+                    "object_required",
+                )
             _validate_str_list(
                 rule.get("keywords", []), f"priority_rules.{level}.keywords"
             )
@@ -302,10 +437,14 @@ def _validate_pr_summary(data: dict) -> None:
 
 def _validate_pr_dependency_graph(data: dict) -> None:
     """PR 依赖图：mode 合法值 + 模板字段为字符串。"""
-    if "mode" in data and data["mode"] not in _DEPGRAPH_MODES:
-        raise ValueError(
-            f"pr_dependency_graph.mode 必须是 {'/'.join(sorted(_DEPGRAPH_MODES))}: "
-            f"{data['mode']!r}"
+    if "mode" in data and (
+        not isinstance(data["mode"], str) or data["mode"] not in _DEPGRAPH_MODES
+    ):
+        raise _error(
+            "pr_dependency_graph.mode",
+            f"必须是 {'/'.join(sorted(_DEPGRAPH_MODES))}",
+            "invalid_option",
+            params={"options": ", ".join(sorted(_DEPGRAPH_MODES))},
         )
     for field in ("system_prompt", "user_template"):
         if field in data:
@@ -321,19 +460,38 @@ def _validate_scan(data: dict) -> None:
 def _validate_label_definitions(data: dict) -> None:
     """标签定义：颜色为 6 位十六进制、description 为字符串。"""
     if not isinstance(data, dict):
-        raise ValueError("标签定义必须是对象")
-    for name, spec in data.items():
-        _validate_label_name(name)
+        raise _error("标签定义", "必须是对象", "object_required", path="")
+    defaults = get_section_defaults("label.definitions")
+    for idx, (key, spec) in enumerate(data.items()):
+        _validate_label_name(key, path=f"[{idx}].name")
+        name = _mapping_key(key, defaults, idx)
         if not isinstance(spec, dict):
-            raise ValueError(f"标签 [{name}] 定义必须是对象")
+            raise _error(
+                f"标签 [{name}] 定义", "必须是对象", "object_required", path=name
+            )
         color = spec.get("color")
         if not isinstance(color, str):
-            raise ValueError(f"标签 [{name}] 颜色必须是字符串: {color!r}")
+            raise _error(
+                f"标签 [{name}] 颜色",
+                "必须是字符串",
+                "string_required",
+                path=f"{name}.color",
+            )
         color = color.strip().lstrip("#")
         if not _LABEL_COLOR_RE.match(color):
-            raise ValueError(f"标签 [{name}] 颜色格式错误（需 6 位十六进制）: {color}")
+            raise _error(
+                f"标签 [{name}]",
+                "颜色格式错误（需 6 位十六进制）",
+                "label_color",
+                path=f"{name}.color",
+            )
         if not isinstance(spec.get("description"), str):
-            raise ValueError(f"标签 [{name}] description 必须是字符串")
+            raise _error(
+                f"标签 [{name}] description",
+                "必须是字符串",
+                "string_required",
+                path=f"{name}.description",
+            )
 
 
 def _validate_label_recommendation(data: dict) -> None:
@@ -344,24 +502,31 @@ def _validate_label_recommendation(data: dict) -> None:
     if "confidence_threshold" in data:
         value = data["confidence_threshold"]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(
-                f"recommendation.confidence_threshold 必须是数值: {value!r}"
+            raise _error(
+                "recommendation.confidence_threshold", "必须是数值", "number_required"
             )
         if not 0.0 <= value <= 1.0:
-            raise ValueError(
-                f"recommendation.confidence_threshold 必须在 0.0-1.0 之间: {value!r}"
+            raise _error(
+                "recommendation.confidence_threshold",
+                "必须在 0.0-1.0 之间",
+                "number_range",
+                params={"minimum": 0, "maximum": 1},
             )
 
 
 def _validate_label_conflict_rules(data: dict) -> None:
     """标签冲突规则：key 为合法标签名、value 为字符串列表。"""
     if not isinstance(data, dict):
-        raise ValueError("冲突规则必须是对象")
-    for source, blocked in data.items():
-        _validate_label_name(source)
+        raise _error("冲突规则", "必须是对象", "object_required", path="")
+    defaults = get_section_defaults("label.conflict_rules") | get_section_defaults(
+        "label.definitions"
+    )
+    for idx, (key, blocked) in enumerate(data.items()):
+        _validate_label_name(key, path=f"[{idx}].name")
+        source = _mapping_key(key, defaults, idx)
         _validate_str_list(blocked, f"conflict_rules.{source}")
-        for item in blocked:
-            _validate_label_name(item)
+        for item_idx, item in enumerate(blocked):
+            _validate_label_name(item, path=f"{source}[{item_idx}]")
 
 
 # 校验器注册表：app_config 节键 → 该节的结构校验函数
@@ -391,9 +556,24 @@ def validate_section_config(section_key: str, effective: dict) -> None:
     if section_key not in SECTION_REGISTRY:
         raise KeyError(f"未注册的配置节: {section_key}")
     if not isinstance(effective, dict):
-        raise ValueError(f"配置节 [{section_key}] 数据必须是 JSON 对象")
-    SECTION_VALIDATORS[section_key](effective)
-    _validate_template_placeholders(section_key, effective)
+        raise SectionConfigValidationError(
+            f"配置节 [{section_key}] 数据必须是 JSON 对象",
+            "",
+            "object_required",
+            section=section_key,
+        )
+    try:
+        SECTION_VALIDATORS[section_key](effective)
+        _validate_template_placeholders(section_key, effective)
+    except SectionConfigValidationError as exc:
+        exc.section = section_key
+        raise
+    except ValueError, TypeError:
+        # A future/custom validator may still raise an unstructured exception
+        # containing input. Keep its rejection, but never publish that input.
+        raise SectionConfigValidationError(
+            "配置节验证失败", "", "invalid_config", section=section_key
+        ) from None
 
 
 # ============================================================================
@@ -516,9 +696,20 @@ class SectionConfigService:
         if spec is None:
             raise KeyError(f"未注册的配置节: {section_key}")
         if not isinstance(data, dict):
-            raise ValueError(f"配置节 [{section_key}] 数据必须是 JSON 对象")
+            raise SectionConfigValidationError(
+                f"配置节 [{section_key}] 数据必须是 JSON 对象",
+                "",
+                "object_required",
+                section=section_key,
+            )
         if mode not in ("replace", "patch"):
-            raise ValueError(f"未知的保存模式: {mode}")
+            raise SectionConfigValidationError(
+                "未知的保存模式",
+                "mode",
+                "save_mode",
+                params={"options": "replace, patch"},
+                section=section_key,
+            )
 
         async with self._get_lock(section_key):
             old_override = await self._load_override(db, section_key)

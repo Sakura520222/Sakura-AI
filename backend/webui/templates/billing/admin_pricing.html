@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{% block title %}{{ _('billing.model_pricing') }} - Sakura AI{% endblock %}
+{% from 'components/currency_select.html' import currency_select with context %}
+{% macro price_input(field, required=false, currency=false) %}
+<div data-config-field="{{ field }}">
+    <label for="pricing-{{ field }}" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.' ~ field) }}</label>
+    {% if currency %}
+    {{ currency_select(field, price_form.get(field, ''), 'pricing-' ~ field, required, 'w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white', _('billing.form.' ~ field)) }}
+    {% else %}
+    <input id="pricing-{{ field }}" name="{{ field }}" type="text" value="{{ price_form.get(field, '') }}"
+           data-config-label="{{ _('billing.form.' ~ field) }}" {% if required %}required{% endif %}
+           inputmode="decimal"
+           autocomplete="off" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+    {% endif %}
+</div>
+{% endmacro %}
+{% block content %}
+<div id="config-scroll" data-config-document-scroll class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.model_pricing') }}</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.form.account_pricing_help') }}</p>
+    <section id="config-save-errors" hidden role="alert" aria-live="assertive"
+             class="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+        <h2 class="font-semibold">{{ _('config.save_errors_title') }}</h2>
+        <p class="mt-1 text-xs">{{ _('config.save_errors_hint') }}</p>
+        <ul id="config-save-error-list" class="mt-3 max-h-48 space-y-3 overflow-y-auto"></ul>
+        <p class="mt-3 text-xs">{{ _('config.save_retry_hint') }}</p>
+    </section>
+    <section id="pricing-editor" class="bg-white dark:bg-gray-800 rounded-xl p-6">
+    <form id="pricing-form" action="/billing/admin/pricing" method="POST" class="space-y-6">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2 class="font-semibold text-gray-900 dark:text-white">{{ _('billing.form.new_version') }}</h2>
+        {% if editing_profile %}<p class="text-sm text-sakura-700 dark:text-sakura-300">{{ _('billing.form.editing_version', version=editing_profile.version) }}</p>{% endif %}
+        <div data-config-field="source_scope">
+            <label for="pricing-source" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.source_scope') }}</label>
+            <select id="pricing-source" name="source_scope" required data-config-label="{{ _('billing.form.source_scope') }}" class="mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <option value="account" {% if price_form.get('source_scope', 'account') == 'account' %}selected{% endif %}>{{ _('billing.form.account_source') }}</option>
+                {% for source in pricing_auxiliary %}<option value="{{ source.feature }}" {% if price_form.source_scope == source.feature %}selected{% endif %}>{{ _('billing.form.' ~ source.feature ~ '_source') }} · {{ source.provider_id }} · {{ source.model_id }}</option>{% endfor %}
+            </select>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.source_scope_help') }}</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div data-config-field="account_id">
+                <label for="price-account" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.account_id') }}</label>
+                <select id="price-account" name="account_id" required data-config-label="{{ _('billing.form.account_id') }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="">{{ _('billing.form.choose_account') }}</option>
+                    {% for account in pricing_accounts %}<option value="{{ account.id }}" {% if price_form.account_id == account.id %}selected{% endif %}>{{ account.name }} · {{ account.provider_id }}{% if not account.enabled %} · {{ _('billing.form.account_disabled') }}{% endif %}</option>{% endfor %}
+                    {% if price_form.account_id and price_form.account_id not in pricing_accounts|map(attribute='id')|list %}<option value="{{ price_form.account_id }}" selected disabled>{{ price_form.account_id }} · {{ _('billing.form.account_unavailable') }}</option>{% endif %}
+                </select>
+                {% if not pricing_accounts %}<p class="mt-2 text-xs text-amber-700 dark:text-amber-300">{{ _('billing.form.no_accounts') }} <a href="/config/ai" class="underline">{{ _('billing.form.configure_accounts') }}</a></p>{% endif %}
+            </div>
+            <div data-config-field="model_id">
+                <label for="price-model" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.model_id') }}</label>
+                <select id="price-model" name="model_id" required data-config-label="{{ _('billing.form.model_id') }}" aria-describedby="pricing-model-status" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="">{{ _('billing.form.choose_model') }}</option>
+                    {% if price_form.model_id %}<option value="{{ price_form.model_id }}" selected>{{ price_form.model_id }}</option>{% endif %}
+                </select>
+                <p id="pricing-model-status" aria-live="polite" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.models_loading') }}</p>
+                <button id="pricing-refresh-models" type="button" class="mt-2 text-xs text-sakura-600 underline disabled:opacity-50">{{ _('billing.form.refresh_models') }}</button>
+            </div>
+            <div data-config-field="call_kind"><label for="price-kind" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.call_kind') }}</label><select id="price-kind" name="call_kind" required data-config-label="{{ _('billing.form.call_kind') }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for kind in pricing_call_kinds %}<option value="{{ kind }}" {% if price_form.call_kind == kind %}selected{% endif %}>{{ _('billing.form.' ~ kind) }} ({{ kind }})</option>{% endfor %}{% if price_form.call_kind not in pricing_call_kinds %}<option value="{{ price_form.call_kind }}" selected>{{ price_form.call_kind }}</option>{% endif %}</select></div>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.model_help') }}</p>
+        <div data-config-field="config_mode"><label for="pricing-mode" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.config_mode') }}</label><select id="pricing-mode" name="config_mode" data-config-label="{{ _('billing.form.config_mode') }}" class="mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"><option value="fields">{{ _('billing.form.fields_mode') }}</option><option value="json">{{ _('billing.form.json_mode') }}</option></select></div>
+        <div id="pricing-fields" class="space-y-6">
+            <fieldset class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                <legend class="font-semibold text-gray-900 dark:text-white pr-2">{{ _('billing.form.source_prices') }}</legend>
+                <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.form.source_help') }}</p>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {{ price_input('currency', true, true) }}
+                    <div data-config-field="unit"><label for="pricing-unit" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.unit') }}</label><select id="pricing-unit" name="unit" required data-config-label="{{ _('billing.form.unit') }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for unit in pricing_units %}<option value="{{ unit }}" {% if price_form.unit == unit %}selected{% endif %}>{{ _('billing.form.unit_' ~ unit) }}</option>{% endfor %}</select></div>
+                    <div data-config-field="token_scale" data-price-token-only><label for="pricing-scale" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.token_scale') }}</label><select id="pricing-scale" name="token_scale" data-config-label="{{ _('billing.form.token_scale') }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for scale in ['1','1000','1000000'] %}<option value="{{ scale }}" {% if price_form.token_scale == scale %}selected{% endif %}>{{ _('billing.form.scale_' ~ scale) }}</option>{% endfor %}</select></div>
+                </div>
+                <div data-price-token-only class="space-y-4">
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.scale_help') }}</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{% for field in ['input_price','output_price','cached_input_price','cache_creation_price','reasoning_price'] %}{{ price_input(field, field in ['input_price','output_price']) }}{% endfor %}</div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">{% for field in ['cache_read_supported','cache_creation_supported','reasoning_supported'] %}<div data-config-field="{{ field }}"><label for="pricing-{{ field }}" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.' ~ field) }}</label><select id="pricing-{{ field }}" name="{{ field }}" data-config-label="{{ _('billing.form.' ~ field) }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for value,label in [('', 'support_unknown'),('true','support_true'),('false','support_false')] %}<option value="{{ value }}" {% if price_form[field] == value %}selected{% endif %}>{{ _('billing.form.' ~ label) }}</option>{% endfor %}</select></div>{% endfor %}</div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.capabilities_help') }}</p>
+                </div>
+                <div data-price-native-only class="space-y-4" {% if price_form.unit == 'tokens' %}hidden{% endif %}><div class="grid grid-cols-1 sm:grid-cols-2 gap-4">{{ price_input('unit_price') }}<div data-config-field="meter"><label for="pricing-meter" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.meter') }}</label><select id="pricing-meter" name="meter" data-config-label="{{ _('billing.form.meter') }}" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for unit in pricing_units if unit != 'tokens' %}<option value="{{ unit }}" {% if price_form.meter == unit %}selected{% endif %}>{{ _('billing.form.unit_' ~ unit) }}</option>{% endfor %}</select></div></div><p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.meter_help') }}</p></div>
+            </fieldset>
+            <fieldset class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                <legend class="font-semibold text-gray-900 dark:text-white pr-2">{{ _('billing.form.settlement') }}</legend>
+                <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.form.settlement_help') }}</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{{ price_input('settlement_currency', true, true) }}{% for field in ['fx_rate','markup','credits_per_currency_unit'] %}{{ price_input(field, true) }}{% endfor %}</div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.fx_help') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.markup_help') }} {{ _('billing.form.credits_help') }}</p>
+            </fieldset>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.form.exact_help') }}</p>
+        </div>
+        <div id="pricing-json-section" data-config-field="config" hidden><label for="pricing-config" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.form.config') }}</label><textarea id="pricing-config" name="config" data-config-label="{{ _('billing.form.config') }}" rows="14" spellcheck="false" class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm">{{ price_json }}</textarea><p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.pricing_units_help') }}</p></div>
+        <button id="publish-price-button" type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 text-white disabled:opacity-50">{{ _('billing.form.new_version') }}</button>
+    </form>
+    </section>
+    <section class="bg-white dark:bg-gray-800 rounded-xl p-6">
+        <h2 class="font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.price_history') }}</h2>
+        <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-gray-500"><tr><th class="p-2">{{ _('billing.form.account_id') }}</th><th class="p-2">{{ _('billing.provider_id') }}</th><th class="p-2">{{ _('billing.model_id') }}</th><th class="p-2">{{ _('billing.call_kind') }}</th><th class="p-2">{{ _('billing.price_version') }}</th><th class="p-2">{{ _('billing.pricing_config') }}</th></tr></thead><tbody class="divide-y divide-gray-200 dark:divide-gray-700 text-gray-900 dark:text-white">
+            {% for price in prices["items"] %}
+            <tr>
+                <td class="p-2">{% if price.account_id %}{% set bound_account = pricing_accounts|selectattr('id', 'equalto', price.account_id)|first %}{% if bound_account %}{{ bound_account.name }}{% else %}{{ price.account_id }}<br><span class="text-xs text-amber-700 dark:text-amber-300">{{ _('billing.form.account_unavailable') }}</span>{% endif %}{% else %}<span class="text-xs text-gray-500">{{ _('billing.form.legacy_provider_price') }}</span>{% endif %}</td>
+                <td class="p-2">{{ price.provider_id }}</td><td class="p-2">{{ price.model_id }}</td><td class="p-2">{{ price.call_kind }}</td><td class="p-2">{{ price.version }}<br><span class="text-xs text-gray-500">{{ price.created_at }}</span><br><a href="?edit_price={{ price.id }}#pricing-editor" class="text-sakura-600 text-xs underline">{{ _('billing.form.load_version') }}</a></td><td class="p-2"><details><summary class="cursor-pointer">{{ _('billing.view_config') }}</summary><pre class="text-xs whitespace-pre-wrap break-all mt-2">{{ price.config|tojson(indent=2) }}</pre></details></td>
+            </tr>
+            {% else %}<tr><td colspan="6" class="py-8 text-center text-gray-500">{{ _('billing.no_prices') }}</td></tr>{% endfor %}
+        </tbody></table></div>
+        <div class="flex justify-between text-sm mt-4">{% if page > 1 %}<a href="?page={{ page - 1 }}" class="text-sakura-600">{{ _('billing.previous_page') }}</a>{% else %}<span></span>{% endif %}{% if prices.offset + prices.limit < prices.total %}<a href="?page={{ page + 1 }}" class="text-sakura-600">{{ _('billing.next_page') }}</a>{% endif %}</div>
+    </section>
+    <section id="pending-payment-events" class="bg-white dark:bg-gray-800 rounded-xl p-6">
+        <h2 class="font-semibold text-gray-900 dark:text-white mb-2">{{ _('billing.pending_payment_events') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ _('billing.payment_events_help') }}</p>
+        <div class="space-y-4">{% for event in payment_events["items"] %}
+            <article data-payment-event-id="{{ event.id }}" class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm text-gray-900 dark:text-white">
+                <div class="flex flex-wrap justify-between gap-3"><strong>{{ event.provider }} · #{{ event.id }}</strong><span>{{ event.received_at }}</span></div>
+                <p class="mt-2">{{ _('billing.payment_event_type') }}: <code>{{ event.type or '—' }}</code> · {{ _('common.status') }}: {{ _('billing.status_' ~ event.status) }}</p>
+                <p>{{ _('billing.idempotency_key') }}: <code class="break-all">{{ event.event_key }}</code></p>
+                <p>{{ _('billing.payment_event_amount') }}: {% if event.formatted_amount is not none %}{{ event.currency }} {{ event.formatted_amount }}{% else %}{{ event.amount_cents if event.amount_cents is not none else _('billing.unknown_amount') }} {{ event.currency or _('billing.unknown_currency') }} · {{ _('billing.minor_units') }}{% endif %}</p>
+                <p>{{ _('billing.order_no') }}: {{ event.order_no or '—' }} · {{ _('billing.order_id') }}: {{ event.order_id or '—' }}</p>
+                <p class="text-amber-700 dark:text-amber-300">{{ _('billing.reconciliation_reason') }}: <code>{{ event.pending_reason or '—' }}</code></p>
+                <form action="/billing/admin/payment-events/{{ event.id }}/replay" method="POST" class="mt-3"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="text-sakura-600">{{ _('billing.replay_payment_event') }}</button></form>
+                <details class="mt-3"><summary class="cursor-pointer text-sakura-600">{{ _('billing.resolve_payment_event') }}</summary>
+                    <form action="/billing/admin/payment-events/{{ event.id }}/resolve" method="POST" class="mt-3 space-y-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <label for="event-proof-{{ event.id }}" class="block">{{ _('billing.source_evidence') }}</label><textarea id="event-proof-{{ event.id }}" name="evidence" maxlength="2000" rows="2" required class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></textarea>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            {% for name, label, input_type in [('order_id','reviewed_order_id','number'),('checkout_amount_cents','checkout_minor_amount','number'),('checkout_currency','checkout_currency','text'),('refund_reference_id','refund_reference_id','text'),('refund_amount_cents','verified_refund_amount','number'),('refund_currency','refund_currency','text')] %}
+                            <div><label for="event-{{ event.id }}-{{ name }}" class="block">{{ _('billing.' ~ label) }}</label>{% if name in ['checkout_currency', 'refund_currency'] %}{{ currency_select(name, '', 'event-' ~ event.id ~ '-' ~ name, false, 'w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white') }}{% else %}<input id="event-{{ event.id }}-{{ name }}" name="{{ name }}" type="{{ input_type }}" {% if input_type == 'number' %}min="1" step="1"{% endif %} {% if name == 'order_id' and event.order_id %}value="{{ event.order_id }}"{% endif %} class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% endif %}</div>
+                            {% endfor %}
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('billing.resolution_fields_help') }}</p>
+                        <button type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 text-white">{{ _('billing.resolve_payment_event') }}</button>
+                    </form>
+                </details>
+            </article>
+        {% else %}<p class="text-sm text-gray-500">{{ _('billing.no_pending_payment_events') }}</p>{% endfor %}</div>
+        <div class="flex justify-between text-sm mt-4">{% if page > 1 %}<a href="?page={{ page - 1 }}#pending-payment-events" class="text-sakura-600">{{ _('billing.previous_page') }}</a>{% else %}<span></span>{% endif %}{% if payment_events.has_more %}<a href="?page={{ page + 1 }}#pending-payment-events" class="text-sakura-600">{{ _('billing.next_page') }}</a>{% endif %}</div>
+    </section>
+    <form action="/billing/admin/grant" method="POST" class="bg-white dark:bg-gray-800 rounded-xl p-6 space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="idempotency_key" value="{{ grant_idempotency_key }}">
+        <h2 class="font-semibold text-gray-900 dark:text-white">{{ _('billing.grant_plan_title') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.grant_plan_help') }}</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div><label for="grant-user" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.target_user_id') }}</label><input id="grant-user" name="user_id" type="number" min="1" required class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></div>
+            <div><label for="grant-plan" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.grant_plan_title') }}</label><select id="grant-plan" name="plan_id" required class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white">{% for plan in grant_plans %}<option value="{{ plan.id }}">{{ plan.name }} · {{ plan.credit_grant }} Credits</option>{% endfor %}</select></div>
+        </div>
+        <button type="submit" {% if not grant_plans %}disabled{% endif %} class="px-4 py-2 rounded-lg bg-sakura-600 text-white disabled:opacity-50">{{ _('billing.grant_plan_title') }}</button>
+    </form>
+    <form action="/billing/admin/credits/adjust" method="POST" class="bg-white dark:bg-gray-800 rounded-xl p-6 space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2 class="font-semibold text-gray-900 dark:text-white">{{ _('billing.adjust_credits') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.adjustment_help') }}</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div><label for="adjust-user" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.target_user_id') }}</label><input id="adjust-user" name="target_user_id" type="number" min="1" required class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></div>
+            <div><label for="adjust-credits" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.credit_change') }}</label><input id="adjust-credits" name="credits" type="number" step="0.000001" required class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></div>
+            <div><label for="adjust-key" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.idempotency_key') }}</label><input id="adjust-key" name="idempotency_key" type="text" maxlength="191" required class="w-full mt-1 px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></div>
+        </div>
+        <label for="adjust-reason" class="block text-sm text-gray-700 dark:text-gray-300">{{ _('billing.adjustment_reason') }}</label>
+        <textarea id="adjust-reason" name="reason" maxlength="1000" rows="2" required class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></textarea>
+        <button type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 text-white">{{ _('billing.adjust_credits') }}</button>
+    </form>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+{% include 'components/config_save_feedback.html' %}
+<script>{% include 'components/billing_pricing_accounts.js' %}</script>
+<script>
+function billingPricingEditor(form) {
+    const rateFields = ['input_price', 'output_price', 'cached_input_price', 'cache_creation_price', 'reasoning_price'];
+    const flags = ['cache_read_supported', 'cache_creation_supported', 'reasoning_supported'];
+    const conversionFields = ['currency', 'settlement_currency', 'fx_rate', 'markup', 'credits_per_currency_unit'];
+    const fields = [...conversionFields, ...rateFields, ...flags, 'unit_price', 'meter'];
+    const labels = {
+        invalidJson: {{ _('billing.form.invalid_json_prices') | tojson }},
+        requestFailed: {{ _('config.save_request_failed') | tojson }},
+    };
+    const field = name => form.elements.namedItem(name);
+    const section = id => document.getElementById(id);
+    function millionPrice(value, scale) {
+        const shift = {'1': 6n, '1000': 3n, '1000000': 0n}[scale];
+        if (shift === undefined) throw new Error('Unsupported token denominator');
+        const parts = /^([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:[eE]([+-]?\d+))?$/.exec(value);
+        // Keep an invalid input as a string for the server's field validator.
+        if (!parts) return value;
+        if (shift === 0n && !parts[2]) return value;
+        return parts[1] + 'e' + (BigInt(parts[2] || '0') + shift).toString();
+    }
+    return {
+        mode: 'fields',
+        saving: false,
+        init() {
+            form.noValidate = true;
+            this.syncUnit(false);
+            field('unit').addEventListener('change', () => this.syncUnit(true));
+            field('config_mode').addEventListener('change', () => this.changeMode());
+            form.addEventListener('submit', event => {event.preventDefault(); this.save();});
+        },
+        syncUnit(resetMeter) {
+            const tokens = field('unit').value === 'tokens';
+            const jsonMode = this.mode === 'json';
+            section('pricing-fields').hidden = jsonMode;
+            section('pricing-json-section').hidden = !jsonMode;
+            section('pricing-fields').querySelectorAll('input,select,textarea').forEach(control => {control.disabled = jsonMode;});
+            form.querySelectorAll('[data-price-token-only]').forEach(node => {
+                node.hidden = !tokens;
+                node.querySelectorAll('input,select,textarea').forEach(control => {control.disabled = jsonMode || !tokens;});
+            });
+            form.querySelectorAll('[data-price-native-only]').forEach(node => {
+                node.hidden = tokens;
+                node.querySelectorAll('input,select,textarea').forEach(control => {control.disabled = jsonMode || tokens;});
+            });
+            field('input_price').required = tokens;
+            field('output_price').required = tokens;
+            field('unit_price').required = !tokens;
+            field('config').disabled = !jsonMode;
+            field('config').required = jsonMode;
+            if (resetMeter && !tokens) field('meter').value = field('unit').value;
+        },
+        configFromFields() {
+            const config = {unit: field('unit').value};
+            for (const name of conversionFields) config[name] = field(name).value.trim();
+            if (config.unit === 'tokens') {
+                for (const name of rateFields) {
+                    const value = field(name).value.trim();
+                    if (value || ['input_price', 'output_price'].includes(name)) {
+                        config[name] = millionPrice(value, field('token_scale').value);
+                    }
+                }
+                for (const name of flags) {
+                    const value = field(name).value;
+                    if (value) config[name] = value === 'true';
+                }
+            } else {
+                config.unit_price = field('unit_price').value.trim();
+                config.meter = field('meter').value;
+            }
+            return config;
+        },
+        fieldsFromConfig(config) {
+            const accepted = new Set([...fields, 'unit', 'rounding']);
+            if (!config || typeof config !== 'object' || Array.isArray(config) ||
+                    Object.keys(config).some(name => !accepted.has(name)) ||
+                    !['tokens', 'requests', 'documents', 'search_units'].includes(config.unit)) {
+                throw new Error('Invalid pricing object');
+            }
+            const values = {};
+            for (const name of fields) {
+                const value = config[name];
+                if (value === undefined) values[name] = '';
+                else if (flags.includes(name)) {
+                    if (typeof value !== 'boolean') throw new Error('Invalid capability');
+                    values[name] = value ? 'true' : 'false';
+                } else {
+                    if (typeof value !== 'string' && !(typeof value === 'number' && Number.isSafeInteger(value))) {
+                        throw new Error('Quote decimal amounts');
+                    }
+                    values[name] = String(value);
+                }
+            }
+            // Validate the complete shape before changing any visible input.
+            for (const name of fields) field(name).value = values[name];
+            field('unit').value = config.unit;
+            field('token_scale').value = '1000000';
+        },
+        changeMode() {
+            const next = field('config_mode').value;
+            if (next === this.mode) return;
+            try {
+                if (next === 'json') field('config').value = JSON.stringify(this.configFromFields(), null, 2);
+                else this.fieldsFromConfig(JSON.parse(field('config').value));
+                this.mode = next;
+            } catch (error) {
+                field('config_mode').value = this.mode;
+                this.syncUnit(false);
+                SakuraConfigFeedback.render({errors: [{field: 'config', message: labels.invalidJson, anchor: 'pricing-editor'}]});
+                return;
+            }
+            SakuraConfigFeedback.clear();
+            this.syncUnit(false);
+        },
+        toast(message) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: message, type: 'error', duration: 8000}}));
+        },
+        async save() {
+            if (this.saving) return;
+            SakuraConfigFeedback.clear();
+            const errors = SakuraConfigFeedback.nativeErrors([form]);
+            if (errors.length) {
+                SakuraConfigFeedback.render({errors: errors});
+                this.toast(errors[0].message);
+                return;
+            }
+            const button = section('publish-price-button');
+            this.saving = true;
+            button.disabled = true;
+            try {
+                const response = await fetch(form.action, {method: 'POST', headers: {Accept: 'application/json'}, body: new FormData(form)});
+                const data = await response.json();
+                if (response.ok && data.ok && !(Array.isArray(data.errors) && data.errors.length)) {
+                    window.location.href = '/billing/admin/pricing?_toast=' + encodeURIComponent(data.toast) + '&_toast_type=success';
+                    return;
+                }
+                SakuraConfigFeedback.render(data);
+                this.toast(data.toast || labels.requestFailed);
+            } catch (error) {
+                SakuraConfigFeedback.render({toast: labels.requestFailed});
+                this.toast(labels.requestFailed);
+            } finally {
+                this.saving = false;
+                button.disabled = false;
+            }
+        },
+    };
+}
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('pricing-form');
+    const editor = billingPricingEditor(form);
+    editor.init();
+    const picker = billingPricingAccountPicker(form, {{ pricing_accounts | default([]) | tojson }}, {
+        chooseAccount: {{ _('billing.form.choose_account') | tojson }},
+        chooseModel: {{ _('billing.form.choose_model') | tojson }},
+        loading: {{ _('billing.form.models_loading') | tojson }},
+        ready: {{ _('billing.form.models_ready', count='{count}') | tojson }},
+        noModels: {{ _('billing.form.no_models') | tojson }},
+        failed: {{ _('billing.form.models_failed') | tojson }},
+        unavailable: {{ _('billing.form.model_unavailable') | tojson }},
+        auxiliary: {{ _('billing.form.auxiliary_model_help') | tojson }},
+        auxiliaryUnavailable: {{ _('billing.form.auxiliary_unavailable') | tojson }},
+    }, {{ pricing_auxiliary | default([]) | tojson }});
+    picker.init();
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('_errors')) {
+        try {
+            const errors = JSON.parse(params.get('_errors'));
+            if (Array.isArray(errors)) SakuraConfigFeedback.render({errors: errors});
+        } catch (error) {
+            // URL feedback is display-only and cannot affect stored prices.
+        }
+        params.delete('_errors');
+        history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash);
+    }
+});
+</script>
+{% endblock %}
