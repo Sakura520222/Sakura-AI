@@ -5,6 +5,9 @@ import pytest
 
 from backend.api import webhook
 from backend.core.config import get_settings
+from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
+
+sql_runtime = runtime_fixture
 
 
 class _FakeSession:
@@ -89,6 +92,7 @@ def _patch_common(monkeypatch):
 @pytest.mark.asyncio
 async def test_synchronize_active_review_queues_incremental_without_submitting(
     monkeypatch,
+    sql_runtime,
 ):
     settings = get_settings()
     old_auto_review, old_bot_username = _enable_auto_review(settings)
@@ -110,6 +114,9 @@ async def test_synchronize_active_review_queues_incremental_without_submitting(
 
     try:
         _patch_common(monkeypatch)
+        # Verified delivery admission has a real persisted receipt; GitHub and
+        # queue effects remain mocked at their external boundaries.
+        monkeypatch.setattr(webhook, "get_async_session", sql_runtime[0])
         monkeypatch.setattr(webhook, "submit_review_task", fake_submit_review_task)
         monkeypatch.setattr(
             webhook,

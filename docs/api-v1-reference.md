@@ -2816,7 +2816,9 @@ WebUI `/config/save-all` 保留 `ok/toast/results` 契约，并在失败分区�
 | POST | `/billing/admin/payment-events/{event_id}/replay` | super_admin；只重放本地已保存证据，不再次请求支付/退款网关；返回实际 status/pending_reason |
 | POST | `/billing/admin/payment-events/{event_id}/resolve` | super_admin；必填 evidence，可提供 order_id、checkout_amount_cents/checkout_currency 或 refund_reference_id/refund_amount_cents/refund_currency；按审核证据核对并重放 |
 
-套餐创建/编辑与返回增加 `credit_grant`（Decimal 字符串）、`rate_limits`（已验证 JSON 映射）、`concurrency_limit`。旧 bonus 字段为独立可消耗权益，不再永久修改每日上限。购买按订单快照发放，套餐修改不改变已购权益。`POST /billing/admin/grant` 需稳定 `idempotency_key`；退款也使用稳定请求键。部分退款仅在显式配置 `proportional_unused_credits` 后用于 Credits-only 套餐，默认拒绝不明确的比例政策。
+套餐创建/编辑与返回增加 `credit_grant`（Decimal 字符串）、`rate_limits`（已验证 JSON 映射）、`concurrency_limit`。旧 bonus 字段为独立可消耗权益，不再永久修改每日上限。购买按订单快照发放，套餐修改不改变已购权益。`POST /billing/admin/grant` 支持 body `idempotency_key` 或 `Idempotency-Key` 头；同时提供须相同。兼容旧无键请求，为每次独立请求生成并返回 UUID，后续重试必须沿用返回键以去重。退款使用稳定请求键，上限 160 字符。部分退款仅在显式配置 `proportional_unused_credits` 后用于 Credits-only 套餐，默认拒绝不明确的比例政策。
+
+更新套餐省略 `concurrency_limit` 保持原值，显式传 `null` 清除此套餐的并发上限；WebUI 显式提交空白也可清除。
 
 `concurrency_limit` 是每用户跨 PR/Issue/Agent/Repo Scan 的业务执行入场上限：
 已登记并排队/运行的 outcome=null 执行占用，已记录终态结果即释放，账单是否
@@ -2825,6 +2827,7 @@ max_concurrent_reviews/max_concurrent_issues/agent_team_max_concurrent 使用共
 数据库协调所有 API/Worker 实例的执行容量，满额排队，不代表用户购买的余额。
 
 `price_cents`/`amount_cents`/`refunded_amount_cents` 保持整数契约，表示所选币种的最小单位（JPY 0 位、USD/CNY 2 位、USDT 6 位）。新增 `formatted_price`/`formatted_amount`/`formatted_refunded_amount` 精确字符串用于显示，客户端不能统一除以 100。
+历史未知币种保留原整数/code，格式化金额为 `null` 并返回 `currency_supported=false`，禁止猜测小数位。Alipay 国内 page.pay 结账仅支持 CNY。
 
 余额不足使用 `insufficient_credits`，次数/并发为独立限流提示。管理员价格配置必须显式指定成本/结算币种、汇率、markup、Credits 换算及 Token 或实际计量单价，不能用浮点样本启用。详情见 [Billing 2.0](billing-2.md)。
 
@@ -3213,13 +3216,15 @@ embedding/rerank 来源由当前独立服务配置解析 Provider/模型/调用�
 |------|------|------|------|
 | `user_id` | int | 是 | 目标用户 ID |
 | `plan_id` | int | 是 | 套餐 ID |
+| `idempotency_key` | string | 否 | 稳定事件键（也可通过 Idempotency-Key 请求头提供）；缺省为本次请求生成 UUID，并在响应返回 |
 
 **响应示例**：
 
 ```json
 {
   "success": true,
-  "order_no": "ORD202605090002"
+  "order_no": "ORD202605090002",
+  "idempotency_key": "b287bc7b-987a-4d88-8bb9-c9612367e970"
 }
 ```
 
@@ -3326,4 +3331,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-*Last updated: 2026-8-16 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*Last updated: 2026-10-8 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

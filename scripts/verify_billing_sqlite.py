@@ -79,18 +79,28 @@ async def main(path):
             tuple(i["column_names"]) == ("actual_call_id",)
             for i in [*constraints, *(index for index in indexes if index["unique"])]
         )
+        receipts = await connection.run_sync(
+            lambda conn: inspect(conn).get_unique_constraints(
+                "webhook_execution_receipts"
+            )
+        )
+        assert any(
+            tuple(c["column_names"]) == ("feature", "delivery_id") for c in receipts
+        )
     await database.close_async_db()
     # Exercise actual CLI dry-run handlers against this same isolated database.
     from scripts import (
         billing_maintenance,
         migrate_legacy_billing,
         reconcile_payment_events,
+        reconcile_webhook_executions,
     )
 
     for module in (
         billing_maintenance,
         migrate_legacy_billing,
         reconcile_payment_events,
+        reconcile_webhook_executions,
     ):
         module.get_settings = lambda: SimpleNamespace(database_url=url)
     await billing_maintenance.run(
@@ -128,6 +138,9 @@ async def main(path):
     )
     await database.close_async_db()
     await reconcile_payment_events.run(
+        SimpleNamespace(apply=False, limit=100, offset=0)
+    )
+    await reconcile_webhook_executions.run(
         SimpleNamespace(apply=False, limit=100, offset=0)
     )
     print(

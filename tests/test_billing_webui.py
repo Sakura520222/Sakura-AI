@@ -46,7 +46,9 @@ def test_sidebar_hides_purchase_links_but_keeps_pricing_setup_when_payment_disab
     assert 'href="/billing/admin/plans"' in rendered
     assert 'href="/billing/admin/pricing"' in rendered
     assert "兑换码管理" not in rendered
-    assert "退款审核" not in rendered
+    assert "退款审核" in rendered
+    assert 'href="/billing/"' in rendered
+    assert "订单记录" in rendered
 
 
 def test_sidebar_shows_billing_links_when_payment_enabled():

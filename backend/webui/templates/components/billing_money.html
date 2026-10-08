@@ -1,0 +1,4 @@
+{% macro money(amount, currency) -%}
+{% set formatted = safe_format_minor_amount(amount, currency) -%}
+{{ currency }} {% if formatted is not none %}{{ formatted }}{% else %}{{ amount }} · {{ _('billing.minor_units') }} · {{ _('billing.unknown_currency_unit') }}{% endif %}
+{%- endmacro %}

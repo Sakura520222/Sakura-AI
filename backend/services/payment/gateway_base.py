@@ -15,6 +15,14 @@ class WebhookEventType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class PaymentWebhookConfigurationError(RuntimeError):
+    """Verification cannot run until the gateway configuration is repaired."""
+
+
+class PaymentWebhookVerificationError(ValueError):
+    """The receipt is unverified and must never be acknowledged as ignored."""
+
+
 @dataclass
 class PaymentIntentResult:
     """创建支付意图的结果"""

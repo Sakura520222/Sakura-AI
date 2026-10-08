@@ -106,13 +106,51 @@ async def validate_billing_configuration(session, changes):
             issues[0]["message_key"],
             issues=issues,
         )
-    if "billing_enabled" not in changes or not config_bool(changes["billing_enabled"]):
+    route_keys = {
+        "billing_enabled",
+        "enable_context_compression",
+        "embedding_provider",
+        "embedding_model",
+        "rerank_provider",
+        "rerank_model",
+        "ai_role_bindings",
+    }
+    if not route_keys.intersection(changes) and not any(
+        key.startswith("ai_account.") for key in changes
+    ):
         return
     from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
 
+    from backend.core.config import get_settings
     from backend.core.time_service import now_utc
+    from backend.models.database import AppConfig
     from backend.models.legacy_entitlement_models import LegacyEntitlement
     from backend.models.payment_models import Order, Plan
+
+    # All route writes and activation serialize on this persisted config row.
+    # Bootstrap once for installations that have not saved the default yet.
+    gate_query = (
+        select(AppConfig)
+        .where(AppConfig.key_name == "billing_enabled")
+        .execution_options(populate_existing=True)
+    )
+    gate = (await session.execute(gate_query.with_for_update())).scalar_one_or_none()
+    if gate is None:
+        try:
+            async with session.begin_nested():
+                session.add(
+                    AppConfig(
+                        key_name="billing_enabled",
+                        key_value=str(get_settings().billing_enabled).lower(),
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            pass  # Another writer bootstrapped it; the locking read follows.
+        gate = (await session.execute(gate_query.with_for_update())).scalar_one()
+    if not config_bool(changes.get("billing_enabled", gate.key_value)):
+        return
 
     # The rollout must not turn an already purchased request allowance into
     # unusable rate-limit headroom without an explicitly reviewed conversion.
@@ -199,7 +237,51 @@ async def validate_billing_configuration(session, changes):
                 help_url="/billing/admin/plans",
                 help_label_key="billing.admin_plans",
             )
-    from backend.core.ai_protocol.role_config import ALL_ROLES, resolve_role_from_config
+    from backend.core.ai_protocol.role_config import (
+        ALL_ROLES,
+        resolve_role_from_config,
+        resolve_role_from_snapshot,
+    )
+
+    snapshot = None
+    if "ai_role_bindings" in changes or any(
+        key.startswith("ai_account.") for key in changes
+    ):
+        from backend.core.ai_protocol import account_store
+
+        rows = (
+            (
+                await session.execute(
+                    select(AppConfig)
+                    .where(
+                        AppConfig.key_name.startswith("ai_account.")
+                        | (AppConfig.key_name == "ai_role_bindings")
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        values = {row.key_name: row.key_value for row in rows}
+        values.update(changes)
+        accounts, bindings = {}, {}
+        for key, raw in values.items():
+            data = account_store._safe_json_loads(raw)
+            if not isinstance(data, dict):
+                continue
+            if key.startswith("ai_account."):
+                account = account_store._account_from_dict(data)
+                account.id = account.id or key.removeprefix("ai_account.")
+                accounts[account.id] = account
+            elif key == "ai_role_bindings":
+                for role, entry in data.items():
+                    if isinstance(entry, dict):
+                        binding = account_store._role_binding_from_dict(entry)
+                        if binding is not None:
+                            bindings[role] = binding
+        snapshot = accounts, bindings
 
     service = BillingService(session)
     routes = set()
@@ -210,7 +292,11 @@ async def validate_billing_configuration(session, changes):
         )
     )
     for role in ALL_ROLES:
-        chain = await resolve_role_from_config(role)
+        chain = (
+            resolve_role_from_snapshot(role, *snapshot)
+            if snapshot is not None
+            else await resolve_role_from_config(role)
+        )
         if role == "main" and (chain is None or not chain.candidates):
             raise BillingConfigurationError(
                 "Configure an AI main role before enabling Credits billing",

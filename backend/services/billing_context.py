@@ -102,7 +102,14 @@ def context_for_payload(payload: dict[str, Any], feature: str) -> BillingContext
     )
     source = {
         key: payload[key]
-        for key in ("repo_full_name", "pr_number", "issue_number", "task_id", "sender")
+        for key in (
+            "repo_full_name",
+            "pr_number",
+            "issue_number",
+            "task_id",
+            "sender",
+            "trigger_user_id",
+        )
         if payload.get(key) is not None
     }
     context = BillingContext(

@@ -161,7 +161,9 @@ async def resolve_billing_call(
         usage_reported=counters.usage_reported or bool(billing_units),
         usage_complete=True,
         raw_usage=snapshot["usage"],
-        usage_semantics=usage_semantics(attempt.protocol_family or "unknown"),
+        usage_semantics=usage_semantics(
+            attempt.protocol_family or "unknown", attempt.call_kind
+        ),
         billing_units=units,
         outcome=outcome,
     )

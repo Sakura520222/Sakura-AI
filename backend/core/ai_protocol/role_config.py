@@ -211,6 +211,21 @@ async def _resolve_from_accounts(
     accounts = {a.id: a for a in await account_store.list_accounts()}
     overrides = await _load_model_overrides(bindings, accounts)
 
+    return resolve_role_from_snapshot(role, accounts, bindings, overrides)
+
+
+def resolve_role_from_snapshot(
+    role: str,
+    accounts: dict[str, Any],
+    bindings: dict[str, Any],
+    overrides: dict[tuple[str, str], ModelMetadata] | None = None,
+) -> ResolvedChain | None:
+    """Resolve a proposed route with the same rules as persisted AI bindings."""
+    binding = bindings.get(role)
+    if binding is None:
+        return None
+    overrides = overrides or {}
+
     candidates: list[ResolvedModel] = []
 
     def _add_assignment(account_id: str, model_id: str) -> None:
