@@ -287,6 +287,9 @@ class DraftDb:
         self.scalar_calls = 0
         self.added = []
 
+    async def commit(self):
+        self.committed = True
+
     async def scalar(self, _stmt):
         self.scalar_calls += 1
         if self.scalar_calls == 1:

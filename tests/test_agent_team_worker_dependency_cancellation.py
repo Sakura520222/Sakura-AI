@@ -11,6 +11,12 @@ import pytest
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.workers import agent_team_worker as worker_module
 from backend.workers.agent_team_worker import AgentTeamWorker
+from tests.worker_capacity_support import install_unit_worker_capacity
+
+
+@pytest.fixture(autouse=True)
+def isolated_capacity_boundary(monkeypatch):
+    install_unit_worker_capacity(monkeypatch)
 
 
 class _BlockingDependencyService:

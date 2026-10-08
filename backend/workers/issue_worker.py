@@ -28,6 +28,13 @@ from backend.models.database import (
     async_session,
 )
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.ai_usage_service import finish_billing_operation
+from backend.services.billing_context import (
+    billable_payload,
+    billable_platform,
+    context_for_payload,
+    enrich_billing_source,
+)
 from backend.services.database_reset_runtime_service import (
     DatabaseResetRuntimeAdmissionClosed,
     ensure_background_admission,
@@ -35,26 +42,23 @@ from backend.services.database_reset_runtime_service import (
 )
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
+from backend.services.service_execution_capacity import (
+    ServiceExecutionLeaseLost,
+    ServiceExecutionLimiter,
+)
 
-# Issue 分析并发控制信号量
-_issue_semaphore: asyncio.Semaphore | None = None
+# The legacy helper name is retained, but capacity belongs to the shared DB.
+_issue_semaphore = ServiceExecutionLimiter("issue_analysis")
 
 
-async def _get_issue_semaphore() -> asyncio.Semaphore:
-    """获取 Issue 分析并发信号量（懒初始化，支持动态更新）"""
-    global _issue_semaphore
-    if _issue_semaphore is None:
-        max_concurrent = await _load_max_concurrent()
-        _issue_semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info(f"Issue 分析并发信号量初始化: 最大 {max_concurrent} 个并发任务")
+async def _get_issue_semaphore() -> ServiceExecutionLimiter:
+    """Return the shared service limiter; each acquisition reads current limits."""
     return _issue_semaphore
 
 
 def reset_issue_semaphore():
-    """重置 Issue 分析信号量（配置更新时调用）"""
-    global _issue_semaphore
-    _issue_semaphore = None
-    logger.info("Issue 分析并发信号量已重置，下次任务将重新初始化")
+    """Compatibility hook: DB capacity reads fresh limits without replacing leases."""
+    logger.info("Issue 服务执行容量将在下次申请时读取最新配置")
 
 
 async def _load_max_concurrent() -> int:
@@ -631,6 +635,7 @@ class IssueWorker:
         return
 
     @task_logging("issue")
+    @billable_payload("issue_analysis")
     async def process_issue_analysis(
         self,
         issue_info: dict[str, Any],
@@ -666,6 +671,38 @@ class IssueWorker:
                 cancel_event=registered_event,
                 task_id=task_id,
             )
+        except ServiceExecutionLeaseLost:
+            # Heartbeat loss cancels the body before the capacity context raises
+            # its explicit infrastructure failure. Refresh the task-bound row
+            # after rollback and never leave it ANALYZING or overwrite a sibling.
+            terminal_status = IssueAnalysisStatus.FAILED.value
+            identity = self._get_analysis_record_identity(task_key, task_id)
+            if identity is not None:
+                async with async_session() as cleanup_db:
+                    record = await self._mark_analysis_failed(
+                        cleanup_db,
+                        analysis_id=identity[0],
+                        reason="Service execution capacity lease lost",
+                    )
+                status = getattr(record, "status", None)
+                if status in {
+                    IssueAnalysisStatus.COMPLETED.value,
+                    IssueAnalysisStatus.FAILED.value,
+                    IssueAnalysisStatus.CANCELLED.value,
+                }:
+                    terminal_status = status
+            execution = self._get_execution(task_key, task_id)
+            await finish_billing_operation(terminal_status)
+            if (
+                execution is not None
+                and self._get_execution_status(task_key, task_id) is None
+            ):
+                await execution.finish(
+                    terminal_status,
+                    error_message="Service execution capacity lease lost",
+                )
+                self._set_execution_status(task_key, task_id, terminal_status)
+            raise
         except asyncio.CancelledError as cancellation:
             # ``task.cancel()`` can interrupt the worker outside the nested DB
             # try block (notably while waiting for the semaphore).  If this
@@ -756,6 +793,7 @@ class IssueWorker:
         ) -> None:
             """Best-effort terminal convergence for the observability bundle."""
             nonlocal execution_status, execution_target_status
+            await finish_billing_operation(status)
             if execution is None or execution_status is not None:
                 return
             execution_target_status = status
@@ -778,8 +816,18 @@ class IssueWorker:
             cancellation_pending = False
             try:
                 semaphore = await _get_issue_semaphore()
-                async with semaphore:
+                capacity_scope = (
+                    semaphore.slot(cancel_event=cancel_event)
+                    if isinstance(semaphore, ServiceExecutionLimiter)
+                    else semaphore
+                )
+                async with capacity_scope:
                     yield
+            except ServiceExecutionLeaseLost:
+                # The outer task handler must refresh the exact analysis before
+                # selecting its terminal state, just as for task cancellation.
+                cancellation_pending = True
+                raise
             except asyncio.CancelledError:
                 # The ORM record captured by this task may be stale: an
                 # independent lifecycle transaction can complete/fail it while
@@ -939,6 +987,7 @@ class IssueWorker:
                     analysis_id = record.id
                     analysis_record = record
                     self._bind_analysis_record(task_key, task_id, record)
+                    enrich_billing_source(issue_analysis_id=record.id)
                     await db.refresh(record)
 
                     # 2. 更新状态为 ANALYZING
@@ -1433,8 +1482,12 @@ class IssueWorker:
                             sakura_memory_service = get_sakura_memory_service()
                             ensure_background_admission("issue_reflection")
                             self._raise_if_cancelled(cancel_event)
+                            reflect_issue = billable_platform(
+                                "memory_reflection",
+                                "independent_repository_memory_maintenance",
+                            )(sakura_memory_service.reflect_issue)
                             task = asyncio.create_task(
-                                sakura_memory_service.reflect_issue(
+                                reflect_issue(
                                     repo=repo,
                                     repo_full_name=repo_full_name,
                                     issue_number=issue_number,
@@ -1673,6 +1726,7 @@ async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     ensure_background_admission("issue")
     task_id = str(uuid.uuid4())
     issue_info["task_id"] = task_id
+    context_for_payload(issue_info, "issue_analysis")
     worker = get_issue_worker()
     deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
     task_key = worker._make_task_key(issue_info)

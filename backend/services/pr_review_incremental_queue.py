@@ -15,6 +15,7 @@ from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
 from backend.services.activity_observability.integration_service import (
     ActivityIntegrationService,
 )
+from backend.services.billing_context import context_for_payload
 
 
 @dataclass
@@ -207,6 +208,9 @@ class PRReviewIncrementalQueueService:
                 base_sha=pr_info.get("before") or pr_info.get("base_sha"),
                 head_sha=head_sha,
                 delivery_id=delivery_id,
+                billing_context=context_for_payload(
+                    {**pr_info, "delivery_id": delivery_id}, "pr_review"
+                ).to_payload(),
                 observability_session_id=observability_session_id,
                 observability_trigger_id=observability_trigger_id,
                 status="pending",

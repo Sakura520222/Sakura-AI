@@ -164,6 +164,11 @@ async def reanalyze_issue(
             i18n.t(error.translation_key), status_code=error.status_code
         )
 
+    if user.get("role") in {"admin", "super_admin"}:
+        issue_info["billing_platform_reason"] = "administrator_issue_reanalysis"
+    else:
+        issue_info["user_id"] = user.get("user_id")
+
     # 计算分析版本号
     max_version_result = await db.execute(
         select(func.max(IssueAnalysis.analysis_version)).where(
