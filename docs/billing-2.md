@@ -120,6 +120,10 @@ cache_creation_supported / reasoning_supported=false，并保留缺失计量为 
 不能用 logical call 合并真实重试/Fallback。主调用、摘要、压缩、Embedding、
 Rerank 均继承顶层 feature。平台任务、共享索引、无绑定身份和管理员系统任务
 记录平台承担原因；语言偏好用户不自动成为付款人。上下文退出后复原。
+恢复按 operation 的冻结收费策略判断：`charging_enabled=false` 或明确平台付款
+的执行，可在缺价/未知 Usage 时继续 Agent 自动审查轮次或可信 Repo Scan 恢复。
+原 Usage、待定价/待核对原因仍保留，既有用户并发检查仍生效。后来开启全局
+收费不改变旧执行；后来关闭全局收费也不能解除旧收费执行的金融核对要求。
 自动事件中的已验证管理员仍保留触发者/语言身份，payer 明确为平台；可信
 trigger_user_id 写入业务来源。用户钱包/套餐并发入场与周期或一次性次数消费在
 同事务提交，余额或并发拒绝不消耗次数，次数拒绝回滚预留。Agent 任务载体与
@@ -144,6 +148,47 @@ terminal 要求已有持久化终态；accepted 是操作者确认已交接；ca
 要求确认未交接，拒绝存在调用或活动 Worker 的执行，并释放无调用预留。重复
 核对不追加第二次审计；新的用户执行使用新 delivery。发生 `billing_conflict`
 时回滚并用新事务重试，不在旧快照里反转钱包/operation 的锁顺序。
+
+### Agent delivery 与 PR 增量恢复
+
+Agent `/agent`（Issue/PR）将“任务已保存”和“已经交接”分开。仅保存或已入场但
+未派发的重投递恢复同一 operation，次数与预留不会重复。首次响应为 202 queued；
+后台协程创建不当作实际 Worker 证明。交接窗口未知的重投递返回 503，只有
+原 execution 的持久 Worker 所有权或终态才可去重确认。Worker 入口在读取任务
+付款者前检查回执令牌；取消或手动重跑后的旧协程不能执行新的载体。
+
+Agent 没有启动自动重排队循环。未知交接使用已有回执核对入口；Worker 已声明
+processing 时不能伪装为“未调度”。进程崩溃且没有活动 Worker 的过期 operation
+先按现有账务恢复入口处理，再以 terminal 核对回执并同步原 queued 任务终态；
+已换新 operation 的任务不被覆盖。不重投未知请求，不删除原审计或流水。
+
+PR synchronize 增量保留入场时的付款者、operation 和来源；不同 operation 独立
+串行执行，正在审查的旧 operation 不再吸收其他付款者的增量。所有调用仍累计
+在其原 operation 内舍入。成功、失败、取消、PR 关闭均收敛对应队列和预留，
+一个终态残留不会阻塞后续增量。
+
+pr_review_incremental_queue 增加 nullable `dispatch_token`、`dispatch_expires_at`；
+派发使用数据库条件声明和既有 service_execution_lease_seconds。Worker 在进入
+账务/AI 作用域前校验令牌，旧派发不能结束新派发的账单。初始化/自动迁移追加
+两列并保留旧行；应排空旧 Worker 后统一升级，回滚保留列、队列与财务记录。
+
+增量恢复默认 dry-run，不调用 AI；应用审核清单仅将已过期、未进入 Worker、
+没有实际调用或活动所有权的派发恢复为可调度状态。running/未知请求需先核对
+账务，不能凭当前无 Worker 自动重发：
+
+普通账务 recover 对仍有可信 pending/dispatching 载体、没有实际调用的增量
+返回 queued_dispatch_recovery，保留原入场和预留，不把等待上一轮审查的有效
+工作当成孤儿取消。该项交由增量恢复或已验证 PR 关闭的取消入口处理。
+
+```bash
+uv run python scripts/billing_maintenance.py recover-increments --batch-size 100
+uv run python scripts/billing_maintenance.py recover-increments --apply --actor-id ADMIN --manifest reviewed-increments.json
+```
+
+清单每项包含 queue_id、evidence、reason。超级管理员可通过
+`POST /api/v1/queue/increments/{item_id}/resume` 请求恢复，body 为 evidence/reason；
+来源、原付款者及 operation 均从数据库重建，复核 GitHub App 的仓库访问和 PR
+状态后调度现有 Worker。用户不能指定付款者，未配置入口不能绕过授权。
 
 | app_config 参数 | 默认及语义 |
 | --- | --- |
@@ -331,6 +376,10 @@ Usage 核对清单是 JSON 数组，需 call_id/event_key/reason/usage/outcome�
 撤销来源。未知结果不得自动重发；使用 scripts/reconcile_payment_refunds.py
 与网关证据确认成功或未发生。部分退款按累计货币金额计算累计微 Credits，
 只退差额，最后一笔收尽余数；不可退其他来源或已经消费/偿债的资金。
+禁用或缺凭据的网关先进行本地配置解析；确认未能构造客户端时不创建未知退款
+意图或隔离 Credits，修复配置后可沿用原键重试。既有 pending/unknown 或成功
+尝试优先使用其持久状态，不因配置修复重新发送退款；真正发送后的超时/取消
+仍进入待核对并保留隔离预留。
 
 已验签的入站支付及退款回调先进入持久化 inbox，再在独立保存点应用本地财务
 效果。未知订单、金额、币种或通道的归一化失败保留 `wire_evidence` 和

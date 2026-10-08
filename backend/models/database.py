@@ -262,6 +262,8 @@ class PRReviewIncrementalQueue(Base):
     head_sha = Column(String(64), nullable=False, index=True)
     delivery_id = Column(String(128), nullable=True, index=True)
     billing_context = Column(JSON, nullable=True)
+    dispatch_token = Column(String(36), nullable=True)
+    dispatch_expires_at = Column(UTCDateTime, nullable=True)
     # New activity-observability bridge fields. Nullable for pre-migration rows.
     observability_session_id = Column(Integer, nullable=True, index=True)
     observability_trigger_id = Column(Integer, nullable=True, unique=True, index=True)

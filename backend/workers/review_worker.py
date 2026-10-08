@@ -717,6 +717,9 @@ class ReviewWorker:
                             skipped = await PRReviewIncrementalQueueService().mark_skipped_for_pr(
                                 pr_info["repo_full_name"],
                                 int(pr_info["pr_number"]),
+                                operation_id=context_for_payload(
+                                    pr_info, "pr_review"
+                                ).operation_id,
                             )
                             if skipped:
                                 logger.info(
@@ -2610,6 +2613,15 @@ async def _run_review_task_with_timeout(
     worker changes only the next AI request to final-only mode after expiry;
     explicit task cancellation still follows the existing cancellation path.
     """
+    from backend.services.pr_review_incremental_queue import (
+        PRReviewIncrementalQueueService,
+    )
+
+    queue_service = PRReviewIncrementalQueueService()
+    if pr_info.get("incremental_queue_ids") and not await queue_service.start_dispatch(
+        pr_info
+    ):
+        return "deduplicated_incremental"
     deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
     review_task = asyncio.create_task(
         worker.process_review_task(pr_info, deadline=deadline)
@@ -2622,80 +2634,138 @@ async def _run_review_task_with_timeout(
             await review_task
         except asyncio.CancelledError:
             pass
-        raise
-    try:
-        result = await review_task
-    except asyncio.CancelledError:
-        review_task.cancel()
-        try:
-            await review_task
-        except asyncio.CancelledError:
-            pass
-        raise
+        if pr_info.get("incremental_queue_ids"):
+            from backend.services.webhook_execution_service import (
+                compensate_unstarted_review,
+            )
 
-    # 兜底：非增量审查顺利完成后，若仍有 pending 增量（审查期间到达的新提交，
-    # 本次未消费），触发一个增量审查去消费。此时 process_review_task 的 finally
-    # 已 unregister task_key，触发新任务不会与当前任务的 cancel event 冲突。
+            await asyncio.shield(
+                compensate_unstarted_review(
+                    context_for_payload(pr_info, "pr_review").operation_id,
+                    get_async_session(),
+                )
+            )
+            await asyncio.shield(queue_service.finalize_for_operation(pr_info))
+        raise
     try:
-        await _drain_pending_incremental(pr_info)
-    except Exception as exc:
-        logger.warning("兜底消费 pending 增量失败: {}", exc)
+        try:
+            result = await review_task
+        except asyncio.CancelledError:
+            review_task.cancel()
+            try:
+                await review_task
+            except asyncio.CancelledError:
+                pass
+            raise
+    finally:
+        # Billing commits its real terminal outcome before converging the queue.
+        # Never replace a queued delivery with a new financial execution.
+        if pr_info.get("incremental_queue_ids"):
+            await queue_service.finalize_for_operation(pr_info)
+        try:
+            await _drain_pending_incremental(pr_info)
+        except Exception as exc:
+            logger.warning("兜底消费 pending 增量失败（保留入场身份供恢复）: {}", exc)
 
     return result
 
 
-async def _drain_pending_incremental(pr_info: dict[str, Any]) -> None:
-    """非增量审查完成后的兜底：触发增量审查消费残留 pending 增量。
+async def _drain_pending_incremental(pr_info: dict[str, Any]) -> bool:
+    """Run the next admitted increment, preserving its payer and execution ID.
 
-    首次/完整审查（opened/reopened/ready_for_review/full_review 等非 synchronize
-    事件）不会消费增量队列；若审查期间到达了新提交（synchronize 入队给本次 active
-    review），这些增量会残留 pending、本轮不被审查。这里在审查顺利结束后检查并
-    触发一个增量审查去消费，避免新提交被困在队列里。
-
-    增量审查（synchronize）自身已消费 pending，不在此兜底，避免循环；失败的审查
-    走 except 分支不触发，避免 compare 失败时反复触发。
+    Distinct deliveries execute sequentially rather than being charged to the
+    active review's payer. Only rows sharing an operation may be merged.
     """
-    if pr_info.get("action") == "synchronize":
-        return
 
     from backend.services.pr_review_incremental_queue import (
         PRReviewIncrementalQueueService,
     )
 
-    pending = await PRReviewIncrementalQueueService().list_pending(pr_info)
-    if not pending:
-        return
+    queue_service = PRReviewIncrementalQueueService()
+    while True:
+        pending = await queue_service.list_pending(pr_info)
+        resume_id = pr_info.get("incremental_resume_queue_id")
+        if resume_id is not None:
+            target = next((item for item in pending if item.id == resume_id), None)
+            if target is None:
+                return False
+            target_operation = (target.billing_context or {}).get("operation_id")
+            pending = [
+                item
+                for item in pending
+                if (item.billing_context or {}).get("operation_id") == target_operation
+            ]
+        current_operation = (pr_info.get("billing_context") or {}).get("operation_id")
+        # A financially incomplete execution remains for explicit recovery, without
+        # causing an immediate recursive retry or starving a later queued delivery.
+        if pr_info.get("incremental_queue_ids"):
+            pending = [
+                item
+                for item in pending
+                if item.id not in pr_info["incremental_queue_ids"]
+                and (item.billing_context or {}).get("operation_id")
+                != current_operation
+            ]
+        if not pending:
+            return False
 
-    drain_pr_info = {
-        **pr_info,
-        "action": "synchronize",
-        "before": pending[0].base_sha or pr_info.get("before"),
-        "after": pending[-1].head_sha,
-    }
-    # This queued batch is a new business execution, with durable queue identity.
-    drain_pr_info.pop("billing_context", None)
-    queue_identity = ",".join(str(item.id) for item in pending)
-    drain_pr_info["delivery_id"] = (
-        f"incremental:{uuid.uuid5(uuid.NAMESPACE_URL, queue_identity)}"
-    )
-    queued_context = getattr(pending[-1], "billing_context", None)
-    # Payer fields belong to this queue admission, never the previous review.
-    drain_pr_info["billing_user_id"] = (
-        queued_context.get("user_id") if queued_context else None
-    )
-    drain_pr_info["billing_platform_reason"] = (
-        queued_context.get("platform_reason")
-        if queued_context
-        else "legacy_incremental_without_verified_payer"
-    )
-    if queued_context:
-        drain_pr_info["user_id"] = queued_context["user_id"]
-        if queued_context.get("source", {}).get("sender"):
-            drain_pr_info["sender"] = queued_context["source"]["sender"]
-    logger.info(
-        "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
-        len(pending),
-        pr_info.get("repo_full_name"),
-        pr_info.get("pr_number"),
-    )
-    await submit_review_task(drain_pr_info)
+        queued_context = getattr(pending[0], "billing_context", None)
+        queued_operation = (queued_context or {}).get("operation_id")
+        pending = [
+            item
+            for item in pending
+            if (getattr(item, "billing_context", None) or {}).get("operation_id")
+            == queued_operation
+        ]
+
+        drain_pr_info = {
+            **pr_info,
+            "action": "synchronize",
+            "before": pending[0].base_sha or pr_info.get("before"),
+            "after": pending[-1].head_sha,
+            "head_sha": pending[-1].head_sha,
+            "incremental_queue_ids": [int(item.id) for item in pending],
+        }
+        # Pre-migration rows without an execution carrier have explicit platform
+        # ownership. New rows reuse the exact already admitted financial identity.
+        drain_pr_info.pop("billing_context", None)
+        queue_identity = ",".join(str(item.id) for item in pending)
+        drain_pr_info["delivery_id"] = (
+            getattr(pending[0], "delivery_id", None)
+            or f"incremental:{uuid.uuid5(uuid.NAMESPACE_URL, queue_identity)}"
+        )
+        # Payer fields belong to this queue admission, never the previous review.
+        drain_pr_info["billing_user_id"] = (
+            queued_context.get("user_id") if queued_context else None
+        )
+        drain_pr_info["billing_platform_reason"] = (
+            queued_context.get("platform_reason")
+            if queued_context
+            else "legacy_incremental_without_verified_payer"
+        )
+        if queued_context:
+            trigger_user_id = queued_context.get("source", {}).get(
+                "trigger_user_id", queued_context["user_id"]
+            )
+            drain_pr_info["user_id"] = trigger_user_id
+            drain_pr_info["trigger_user_id"] = trigger_user_id
+            if queued_context.get("source", {}).get("sender"):
+                drain_pr_info["sender"] = queued_context["source"]["sender"]
+            if queued_operation:
+                drain_pr_info["billing_context"] = queued_context
+        await queue_service.finalize_for_operation(drain_pr_info)
+        if not await queue_service.claim_dispatch(drain_pr_info):
+            remaining = await queue_service.list_pending(pr_info)
+            if not any(
+                item.id in drain_pr_info["incremental_queue_ids"] for item in remaining
+            ):
+                continue
+            return False
+        logger.info(
+            "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
+            len(pending),
+            pr_info.get("repo_full_name"),
+            pr_info.get("pr_number"),
+        )
+        await submit_review_task(drain_pr_info)
+        return True

@@ -252,6 +252,15 @@ def billable_record(feature: str):
                     return await function(self, record_id, *args, **kwargs)
             model = AgentTeamTask if feature == "agent" else RepoScan
             async with factory() as db:
+                if feature == "agent":
+                    from backend.services.agent_team.billing_admission import (
+                        claim_agent_delivery_worker,
+                    )
+
+                    if not await claim_agent_delivery_worker(db, record_id):
+                        # A cancelled/superseded delivery cannot execute a newer
+                        # task carrier or finalize another user's operation.
+                        return record_id
                 record = (
                     await db.execute(
                         select(model).where(model.id == record_id).with_for_update()

@@ -2831,6 +2831,14 @@ max_concurrent_reviews/max_concurrent_issues/agent_team_max_concurrent 使用共
 
 余额不足使用 `insufficient_credits`，次数/并发为独立限流提示。管理员价格配置必须显式指定成本/结算币种、汇率、markup、Credits 换算及 Token 或实际计量单价，不能用浮点样本启用。详情见 [Billing 2.0](billing-2.md)。
 
+`POST /queue/increments/{item_id}/resume` 仅活跃超级管理员可恢复已验证未执行的
+PR 增量派发。body 必须包含非空 `evidence`（最多 2000 字符）、`reason`（最多
+1000 字符），拒绝额外字段。付款者和 operation 取已保存的队列载体，不接受
+客户端指定。返回 ready/resume_requested、leased/owned、terminal 或
+pending_reconciliation 等实际恢复结果；未知外部请求不自动重发。仓库无现有
+GitHub App 访问权限返回可重试错误，PR 已关闭会取消未使用执行并追加管理审计。
+恢复 CLI 的默认 dry-run、审核清单与切换边界见 [Billing 2.0](billing-2.md)。
+
 报价返回增加 `account_id`（历史/独立辅助模型为 null）和 `scope_key`。新账号调用
 严格按实际命中的账号查价，不回退到旧 Provider 通用报价。主调用、压缩、流式及
 Fallback 的 Usage 和计价快照保存实际账号；历史冻结费用不因账号改名或报价

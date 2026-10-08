@@ -1360,6 +1360,17 @@ class PaymentService:
             target_units = target_cumulative - prior_reversed
             if target_units < 0:
                 raise PaymentError("Refund source reconciliation mismatch")
+        # The factory only reads configuration and constructs a local client.
+        # A disabled/misconfigured provider is a known pre-send failure: resolve
+        # it before staging an intent or holding Credits, so repairing config
+        # lets the same request retry without financial reconciliation. Existing
+        # intents were handled above and must never resolve/send another client.
+        gateway = (
+            await get_gateway(order.payment_provider)
+            if order.payment_provider in EXTERNAL_PAYMENT_PROVIDERS
+            and order.provider_tx_id
+            else None
+        )
         attempt = PaymentRefundAttempt(
             order_id=order.id,
             active_order_id=order.id,
@@ -1393,10 +1404,7 @@ class PaymentService:
                 )
             except BillingError as exc:
                 raise PaymentError(str(exc), code=exc.code) from exc
-        if (
-            order.payment_provider not in EXTERNAL_PAYMENT_PROVIDERS
-            or not order.provider_tx_id
-        ):
+        if gateway is None:
             attempt.status = "upstream_succeeded"
             return await self._finalize_refund(attempt, order)
         metadata = json.loads(order.metadata_json) if order.metadata_json else {}
@@ -1420,11 +1428,10 @@ class PaymentService:
         )
         attempt.gateway_amount_cents = gateway_target - gateway_prior
         attempt.gateway_currency = str(metadata.get("gateway_currency", order.currency))
-        provider, provider_tx_id = order.payment_provider, order.provider_tx_id
+        provider_tx_id = order.provider_tx_id
         await self.session.flush()
         await self.session.commit()  # release order and wallet locks before I/O
         try:
-            gateway = await get_gateway(provider)
             result = await gateway.refund(
                 provider_tx_id=provider_tx_id,
                 amount_cents=attempt.gateway_amount_cents,

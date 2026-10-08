@@ -375,6 +375,49 @@ Paddle 锁查询仅有真实服务调用 spy、原生 SQL 编译和跳过锁行�
 history-en.jpg、refunds-zh.jpg、refunds-en.jpg（后三个同 sakura-disabled- 前缀）；
 服务和标签均已关闭。暂存区仍为空，HEAD 保持 7875ed03。
 
+## PR #660 后续生命周期审查（基线 a7eeafe925）
+
+2026-10-08，本轮对 4 条 P1 逐条读取真实入口并补 RED/GREEN 回归；邮件页脚
+没有作为 GitHub 回复、反应、退订或发布授权。开始实现时 Billing 分支工作区
+干净、HEAD 与 a7eeafe925367f51abe9b2046bbbd35d667fede8 一致。
+
+| 审查项 | 本地实现 | 回归及反例 |
+| --- | --- | --- |
+| 非收费执行因 missing_price 阻止恢复 | billing_service.resume_operation 按冻结收费策略/平台付款者解除金融 gate，保留 Usage 和 pending_reason；限流不放宽 | test_billing_noncharging_resume：9 项，Agent/Scan 持久 Worker 自动续轮与可信恢复、缺失/已知 Usage、开关正反切换、平台成本、用户并发拒绝；初始 6 failed/1 passed |
+| Agent 仅保存任务即假确认重放 | billing_admission + webhook + billing_context：入场和交接分阶段，原 operation 配额幂等，持久 CAS，Worker 入口令牌，未知返回 503；现有回执对账同步原任务 | test_agent_delivery_recovery：21 项，Issue/PR 的前后 admission 崩溃、创建竞态、8 线程 SQL CAS、未知窗口、晚取消/手动换付款者、TTL 账务恢复与原载体同步；初始 4 项失败 |
+| 网关配置失效先冻结退款 Credits | PaymentService 先构造本地网关，后持久退款 intent/hold，再无数据库锁调用上游；既有未知意图不重发 | test_billing_refund_presend：7 项，禁用/缺 key 重复失败不写意图或 hold、同键恢复、审批、超时/取消未知、两会话退款竞争；初始 3 failed/4 passed |
+| synchronize 入场 operation 未执行/终结 | pr_review_incremental_queue + review_worker：按原付款者/op 串行、SQL 派发 token、终态收敛与关闭补偿；recover 服务/CLI/API；maintenance 保留可信排队载体 | test_billing_incremental_operations：28 项真实 SQL/服务/API handler，跨用户、失败/取消/关闭、多行组恢复、旧 token、来源错配、未知调用、权限/审计、长期有效排队及无效载体反例、已知子任务登记失败；首批 5 项均失败 |
+
+没有真实 AI、支付或退款请求。新 Actor 和来源从持久化记录/现有鉴权确定，
+恢复 API 不接受客户端付款者；CLI 默认 dry-run，不发送 AI 请求。Agent 没有
+启动自动重投循环，未知交接保持可追踪；不承诺跨外部 API 的 exactly-once。
+原生 MySQL/PostgreSQL 行锁竞争本轮未实测。
+
+迁移：仅 PR 增量表追加两个 nullable 列 dispatch_token/dispatch_expires_at，
+复用自动缺列迁移。scripts/verify_billing_sqlite.py 实际模拟旧表缺列、保留原
+队列行，再验证首次/重复迁移、不可变财务触发器、钱包重建及所有 CLI dry-run，
+包含 recover-increments。统一切换旧 Worker，回滚保留列和队列/财务审计；
+操作步骤见 [Billing 2.0](billing-2.md)。
+
+最终验证：新增 65 项自动化回归；未改依赖清单、未增加 skip、未放宽原断言。
+
+| 实际运行命令/检查 | 结果 |
+| --- | --- |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs` | 最终 5310 passed、17 既有条件 skip，117.05s；前一版本 5309 passed，最后补已知子任务登记失败后重跑 |
+| `uv run --no-sync python -m pytest updater/tests -q` | 414 passed、3 systemd 条件 skip |
+| `uv run --no-sync python -m pytest sandboxer/tests -q` | 131 passed、12 Docker 条件 skip |
+| `PYTHONPATH=/tmp/sakura-621-test-deps uv run --no-sync python -m pytest tests/test_legacy_placeholder_atomicity.py -q` | 已隔离的 aiosqlite 驱动补跑 3 passed；没有依赖变更 |
+| `PYTHONPATH=/tmp/sakura-621-test-deps uv run --no-sync python scripts/verify_billing_sqlite.py` | 旧表缺两列/旧队列行保留、首次/重复迁移、所有财务不可变触发器、回滚、钱包重建、全部 CLI dry-run PASS |
+| `ruff check .`（隔离 CI 0.16.10）和 `uv run --no-sync python run_ruff.py --check` | 通过 |
+| 完整补丁叠加 Git HEAD archive，使用 tracked Git mode 和新文件 100644；同 Ruff check + 20 个变更 Python 文件 format check | 通过，/tmp/sakura-a7ee-ci-patch-nxvtieoi |
+| `git diff --check`、`billing_maintenance.py recover-increments --help` | 通过 |
+
+17 条件 skip 为 Docker 12、root/sticky 权限 1、未装默认 aiosqlite 1、systemd 3；
+aiosqlite 场景已另外隔离补跑。没有运行 Docker/systemd/root 专属或原生数据库
+实测，不把 SQL 编译/SQLite 验证称为 MySQL/PostgreSQL 验收。所有测试外部接口
+仅在边界模拟。本轮没有 WebUI 模板变更，不新增未经验证的浏览器结果。
+暂存区为空，HEAD 保持 a7eeafe925；未推送、创建工作树或执行生产操作。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

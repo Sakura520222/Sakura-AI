@@ -50,6 +50,12 @@ async def test_incremental_drain_replaces_previous_verified_payer(
         async def list_pending(self, payload):
             return [pending]
 
+        async def claim_dispatch(self, payload):
+            return True
+
+        async def finalize_for_operation(self, payload):
+            return None
+
     submitted = []
 
     async def submit(payload):
