@@ -160,6 +160,7 @@ async def billing_index(
         per_page=per_page,
         available_providers=available_providers,
         wallet=await BillingViewService(db).wallet(user["user_id"]),
+        payment_entries_enabled=getattr(request.state, "payment_entries_enabled", True),
     )
 
 
@@ -1086,25 +1087,35 @@ async def admin_grant(
     csrf_token: str = Depends(require_csrf),
     user_id: int = Form(..., ge=1),
     plan_id: int = Form(..., ge=1),
-    idempotency_key: str = Form(..., min_length=1, max_length=191),
+    idempotency_key: str | None = Form(None, min_length=1, max_length=191),
 ):
     """手动为用户充值套餐"""
     svc = PaymentService(db)
     try:
+        header_key = request.headers.get("Idempotency-Key")
+        if header_key is not None and (
+            not header_key
+            or len(header_key) > 191
+            or (idempotency_key and header_key != idempotency_key)
+        ):
+            raise PaymentError("Invalid or conflicting grant idempotency key")
+        key = idempotency_key or header_key or str(uuid4())
         order = await svc.grant_plan_to_user(
             user_id=user_id,
             plan_id=plan_id,
             operator_id=user["user_id"],
-            idempotency_key=idempotency_key,
+            idempotency_key=key,
         )
         await db.commit()
         logger.info(f"Admin {user['sub']} granted plan {plan_id} to user {user_id}")
-        return toast_redirect(
+        response = toast_redirect(
             f"/users/{user_id}",
             "toast.grant_success",
             lang=detect_language(),
             order_no=order.order_no,
         )
+        response.headers["Idempotency-Key"] = key
+        return response
     except PaymentError as e:
         await db.rollback()
         return toast_redirect(
@@ -1195,6 +1206,10 @@ async def admin_edit_plan(
     for field, value in form_fields.items():
         if value is not None:
             update_data[field] = value
+    # Missing field keeps the old value; an explicitly submitted blank clears
+    # only this nullable limit, matching the create form's unlimited setting.
+    if "concurrency_limit" in await request.form():
+        update_data["concurrency_limit"] = concurrency_limit
 
     svc = PaymentService(db)
     try:

@@ -183,24 +183,31 @@ async def test_disabled_payment_guard_preserves_purchase_refund_and_csrf_boundar
                 path, data={"csrf_token": "invalid-csrf", "plan_ids": "1"}
             )
             assert response.status_code == 403, response.text
-        for method, path, kwargs in (
-            ("GET", "/billing/", {}),
-            ("POST", "/billing/purchase/1", {"data": {"csrf_token": "invalid-csrf"}}),
+        for method, path, kwargs, expected_status in (
+            ("GET", "/billing/", {}, 200),
+            (
+                "POST",
+                "/billing/purchase/1",
+                {"data": {"csrf_token": "invalid-csrf"}},
+                404,
+            ),
             (
                 "POST",
                 "/api/v1/billing/orders",
                 {"json": {"plan_id": 1, "provider": "stripe"}},
+                404,
             ),
-            ("POST", "/api/v1/billing/orders/1/refund", {"json": {}}),
+            ("POST", "/api/v1/billing/orders/1/refund", {"json": {}}, 400),
             (
                 "POST",
                 "/billing/admin/refund-requests/1/approve",
                 {"data": {"csrf_token": "invalid-csrf"}},
+                403,
             ),
-            ("POST", "/billing/admin/codes/generate", {"data": {}}),
+            ("POST", "/billing/admin/codes/generate", {"data": {}}, 404),
         ):
             response = await client.request(method, path, **kwargs)
-            assert response.status_code == 404, response.text
+            assert response.status_code == expected_status, response.text
     async with factory() as db:
         assert (await db.execute(select(Plan))).scalars().all() == []
         assert (await db.execute(select(BillingTransaction))).scalars().all() == []

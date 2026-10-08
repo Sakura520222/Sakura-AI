@@ -593,6 +593,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         ai_config_snapshot=None,
         base_branch=None,
         overrides=None,
+        commit=True,
     ):
         captured.update(
             {
@@ -606,6 +607,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         )
         return SimpleNamespace(
             id=88,
+            billing_operation_id="TEST-created-task",
             source_type=overrides["source_type"],
             source_id=overrides["source_id"],
             repo_full_name=overrides["repo_full_name"],
