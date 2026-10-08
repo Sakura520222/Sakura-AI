@@ -1,6 +1,10 @@
 """API v1 队列监控端点"""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
+from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,9 +16,94 @@ from backend.api.v1.responses import (
 )
 from backend.core.time_service import format_rfc3339
 from backend.models.database import ReviewQueue
+from backend.models.telegram_models import TelegramUser
 from backend.webui.deps import get_db, paginate
 
 router = APIRouter(prefix="/queue", tags=["Queue"])
+
+
+class IncrementalResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: str = Field(min_length=1, max_length=2000)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+@router.post("/increments/{item_id}/resume")
+async def resume_incremental_queue(
+    item_id: int,
+    body: IncrementalResumeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_admin),
+):
+    """Resume a verified, never-started increment under its original payer."""
+    from backend.core.github_app import GitHubAppClient
+    from backend.services.billing_service import BillingError
+    from backend.services.pr_review_incremental_queue import (
+        PRReviewIncrementalQueueService,
+    )
+    from backend.services.pr_review_incremental_recovery import (
+        incremental_recovery_payload,
+        recover_increment_dispatch,
+    )
+    from backend.workers.review_worker import _drain_pending_incremental
+
+    actor = await db.get(TelegramUser, user.get("user_id"))
+    if actor is None or not actor.is_active or actor.role != "super_admin":
+        return error_response("forbidden", status_code=403)
+    if not body.evidence.strip() or not body.reason.strip():
+        return error_response("incremental_recovery_evidence_required", status_code=400)
+    actor_id = actor.id
+    try:
+        payload = await incremental_recovery_payload(db, item_id)
+        await db.rollback()  # No financial or queue locks during GitHub I/O.
+        github = GitHubAppClient()
+        client = await asyncio.to_thread(
+            github.get_repo_client, payload["repo_owner"], payload["repo_name"]
+        )
+        if client is None:
+            raise RuntimeError("Repository authorization unavailable")
+        repo = await asyncio.to_thread(client.get_repo, payload["repo_full_name"])
+        pr = await asyncio.to_thread(repo.get_pull, payload["pr_number"])
+        if pr.state != "open" or pr.merged:
+            await PRReviewIncrementalQueueService().cancel_pending_for_pr(
+                payload["repo_full_name"],
+                payload["pr_number"],
+                actor_id=actor_id,
+                evidence=body.evidence,
+                reason=body.reason,
+            )
+            return success_response(data={"queue_id": item_id, "status": "cancelled"})
+        report = await recover_increment_dispatch(
+            db,
+            item_id,
+            dry_run=False,
+            actor_id=actor_id,
+            evidence=body.evidence,
+            reason=body.reason,
+        )
+        await db.commit()
+        if report["status"] != "ready":
+            return success_response(data=report)
+        dispatched = await _drain_pending_incremental(payload)
+        return success_response(
+            data={
+                **report,
+                "status": "resume_requested" if dispatched else report["status"],
+                "dispatch_accepted": dispatched,
+            }
+        )
+    except BillingError:
+        await db.rollback()
+        return error_response("incremental_recovery_invalid", status_code=400)
+    except Exception as exc:
+        await db.rollback()
+        logger.warning(
+            "Incremental recovery unavailable queue={} type={}",
+            item_id,
+            type(exc).__name__,
+        )
+        return error_response("incremental_recovery_unavailable", status_code=503)
 
 
 @router.get("/stats")

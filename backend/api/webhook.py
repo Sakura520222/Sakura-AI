@@ -2417,6 +2417,82 @@ async def _consume_agent_quota_or_cleanup(
     )
 
 
+async def _dispatch_verified_agent_task(payload, github_app, task_id, *, is_pr):
+    """Recover persisted admission and fence the local, non-durable handoff."""
+    from backend.models.agent_team_models import AgentTeamTask
+    from backend.services.agent_team.billing_admission import (
+        claim_agent_dispatch,
+        inspect_agent_delivery,
+        prepare_agent_delivery,
+        reject_agent_delivery,
+        run_agent_delivery,
+    )
+    from backend.workers.agent_team_worker import submit_agent_team_task
+
+    async with get_async_session() as db:
+        task = await db.get(AgentTeamTask, task_id)
+        if task is None:
+            raise RuntimeError("Verified Agent task no longer exists")
+        response = await prepare_agent_delivery(db, payload, task, is_pr=is_pr)
+        if response is not None:
+            return response
+        repo_owner, repo_name, repo_full_name = (
+            task.repo_owner,
+            task.repo_name,
+            task.repo_full_name,
+        )
+        number = task.source_issue_number
+    response = await _consume_agent_quota_or_cleanup(
+        github_app,
+        repo_owner,
+        repo_name,
+        repo_full_name,
+        task_id,
+        number,
+        log_prefix="/agent PR" if is_pr else "/agent",
+    )
+    if response is not None:
+        async with get_async_session() as db:
+            await reject_agent_delivery(db, payload, response, is_pr=is_pr)
+        return response
+    async with get_async_session() as db:
+        claim = await claim_agent_dispatch(db, payload, task_id, is_pr=is_pr)
+        if claim is None:
+            response = await inspect_agent_delivery(db, payload, is_pr=is_pr)
+            if response is None:
+                raise RuntimeError("Agent dispatch ownership cannot be established")
+            return response
+    try:
+        create_registered_background_task(
+            run_agent_delivery(claim, submit_agent_team_task, get_async_session),
+            "agent_team_webhook",
+        )
+    except DatabaseResetRuntimeAdmissionClosed:
+        await asyncio.shield(compensate_unstarted_agent(task_id, get_async_session))
+        async with get_async_session() as db:
+            await inspect_agent_delivery(db, payload, is_pr=is_pr)
+        raise
+    # The persisted carrier is queued. A later replay requires worker liveness
+    # or terminal evidence before claiming successful handoff; a crash after
+    # creating this in-process task remains explicit pending reconciliation.
+    return JSONResponse(
+        status_code=202, content={"status": "queued", "task_id": task_id}
+    )
+
+
+async def _verified_agent_receipt_response(payload, *, is_pr):
+    from backend.services.agent_team.billing_admission import inspect_agent_delivery
+
+    async with get_async_session() as db:
+        try:
+            return await inspect_agent_delivery(db, payload, is_pr=is_pr)
+        except ValueError:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "error", "reason": "delivery_source_conflict"},
+            )
+
+
 async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /agent 命令：将已分析的 Issue 委派给 Agent 团队执行"""
     try:
@@ -2474,6 +2550,9 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
 
         verified_delivery_id = payload.get("_sakura_delivery_id")
         if verified_delivery_id:
+            response = await _verified_agent_receipt_response(payload, is_pr=False)
+            if response is not None:
+                return response
             async with get_async_session() as admission_session:
                 replayed_task = await find_delivery_task(
                     admission_session,
@@ -2483,12 +2562,8 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     is_pr=False,
                 )
             if replayed_task is not None:
-                return JSONResponse(
-                    content={
-                        "status": "accepted",
-                        "task_id": replayed_task.id,
-                        "duplicate": True,
-                    }
+                return await _dispatch_verified_agent_task(
+                    payload, github_app, replayed_task.id, is_pr=False
                 )
 
         # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
@@ -2655,15 +2730,12 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     }
                 )
 
-            if getattr(task, "_billing_delivery_replayed", False):
-                return JSONResponse(
-                    content={
-                        "status": "accepted",
-                        "task_id": task.id,
-                        "duplicate": True,
-                    }
-                )
             task_id = task.id
+
+        if verified_delivery_id:
+            return await _dispatch_verified_agent_task(
+                payload, github_app, task_id, is_pr=False
+            )
 
         # 仓库所有者配额消耗（任务创建成功后，使用实际 task_id）
         if err := await _consume_agent_quota_or_cleanup(
@@ -2789,6 +2861,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
 
         verified_delivery_id = payload.get("_sakura_delivery_id")
         if verified_delivery_id:
+            response = await _verified_agent_receipt_response(payload, is_pr=True)
+            if response is not None:
+                return response
             async with get_async_session() as admission_session:
                 replayed_task = await find_delivery_task(
                     admission_session,
@@ -2798,12 +2873,8 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     is_pr=True,
                 )
             if replayed_task is not None:
-                return JSONResponse(
-                    content={
-                        "status": "accepted",
-                        "task_id": replayed_task.id,
-                        "duplicate": True,
-                    }
+                return await _dispatch_verified_agent_task(
+                    payload, github_app, replayed_task.id, is_pr=True
                 )
 
         # 读取原 PR head 的完整可执行身份。PR_REVIEW 任务会直接续写该
@@ -2910,15 +2981,12 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     content={"status": "error", "reason": "failed to create agent task"}
                 )
 
-            if getattr(task, "_billing_delivery_replayed", False):
-                return JSONResponse(
-                    content={
-                        "status": "accepted",
-                        "task_id": task.id,
-                        "duplicate": True,
-                    }
-                )
             task_id = task.id
+
+        if verified_delivery_id:
+            return await _dispatch_verified_agent_task(
+                payload, github_app, task_id, is_pr=True
+            )
 
         # 仓库所有者配额消耗
         if err := await _consume_agent_quota_or_cleanup(
