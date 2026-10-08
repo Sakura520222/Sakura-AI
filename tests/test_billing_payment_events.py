@@ -764,8 +764,10 @@ async def test_missing_verification_secret_never_persists_financial_receipt(
 
     monkeypatch.setattr("backend.api.webhook.get_async_session", session_context)
     response = await _handle_payment_webhook(request, provider)
-    assert response.status_code == 200
-    assert json.loads(response.body)["status"] == "ignored"
+    assert response.status_code == (503 if provider == "nowpayments" else 200)
+    assert json.loads(response.body)["status"] == (
+        "retry_required" if provider == "nowpayments" else "ignored"
+    )
     assert (await db.execute(select(PaymentRefundInboxEvent))).scalars().all() == []
     assert (await db.execute(select(BillingTransaction))).scalars().all() == []
 

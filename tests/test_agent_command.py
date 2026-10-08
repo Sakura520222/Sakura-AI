@@ -165,7 +165,7 @@ class _FakeTelegramService:
         return True, ""
 
 
-class _FakeTelegramServiceQuotaExceeded:
+class _FakeTelegramServiceQuotaExceeded(_FakeTelegramService):
     def __init__(self, session):
         self.session = session
 

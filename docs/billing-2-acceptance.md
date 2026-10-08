@@ -311,7 +311,71 @@ billing/index.html 的并发权益列表中复用了管理员字段帮助
 `95b35635a351bffc2aac5e5f890cdb57920f4e2fa0ed8e6a84723e9642db2617`；
 新增修复未暂存、未提交、未推送。无需数据迁移，重启应用加载新双语资源。
 
-## 上线边界
+## PR #660 两轮审查修复（2026-10-08）
+
+工作基线为 `7875ed03552a1257d1d20247330c43ca430f175b`，开始时工作区干净。
+外部审查正文用于定位问题，邮件回复/反应/退订链接未作为操作授权。以下均为
+本地代码与隔离测试；没有暂存、提交、推送、部署或改动实际用户余额。
+
+| 审查项 | 实现 | 可重复证据 |
+| --- | --- | --- |
+| 1 开启后部分 AI 路由写入绕过定价 | billing_configuration_service + account_store + role_config：有效开关、拟保存快照、数据库配置行锁 | test_review_billing_route_changes：辅助模型、压缩、账号变更、角色 fallback、先有价格后保存、旧 ORM identity |
+| 2 旧管理员发放缺键 422 | v1/WebUI billing：可选 body/头、生成返回 UUID、显式冲突拒绝 | test_review_billing_api_compat：独立两次发放和返回键重放，真实 Ledger/余额 |
+| 3 已结束 delivery 重投再次入队 | webhook_execution_service + webhook_execution_models：feature/delivery 唯一回执、正文指纹、历史终态检查 | test_webhook_billing_admission：opened/reopened、并发、skip、不同正文/feature、活动旧执行 |
+| 4 自动管理员被当付款者 | webhook + Agent candidate：平台 payer，保留可信 trigger_user_id 和语言身份 | test_webhook_billing_admission：管理员零钱包不拒绝、不扣个人钱包；Agent carrier 与付款者一致 |
+| 5 无法清除套餐并发上限 | PaymentService + API/WebUI：显式 null/空白清除，省略不变 | test_review_billing_api_compat + test_billing_payment_lifecycle_review |
+| 6 隐藏待付订单付款后不可见 | PaymentService 履约同事务恢复可见并追加日志 | test_billing_payment_lifecycle_review：有效重复回调一次恢复，错金额不恢复 |
+| 7 退款键 schema/service 上限不一致 | RefundRequest 最大 160 | test_review_billing_api_compat：160 接受、161 拒绝、可选保留 |
+| 8 人工核对 input-only 使用 chat 语义 | billing_reconciliation_service 传实际 call_kind | test_review_billing_reconciliation_meters：Embedding/Rerank 缺失缓存保持 null、准确结算、重复核对一次 |
+| 9 Alipay 任意币种造成金额标签错配 | config + API + PaymentService + gateway：国内 page.pay 仅 CNY | test_review_billing_api_compat、test_review_billing_route_changes、test_billing_payment_lifecycle_review：拒绝非 CNY 且不发送网关请求 |
+| 10 历史未知币种拖垮整页/API | safe_format_minor_amount + billing_money：原整数/code，格式化 null、单位未知 | test_review_billing_api_compat：真实用户/管理 HTTP/API 页面及原行保留 |
+| 11 部分退款后申请仍请求全额 | PaymentService：申请/首次审批当前剩余金额，已存在 attempt 不改身份 | test_billing_payment_lifecycle_review：剩余退款、审批前金额变化、unknown 不重发、剩余零拒绝 |
+| 12 full-review 入场失败前清除成功结果 | webhook_execution_service + webhook：先钱包/并发入场后外部清理 | test_webhook_billing_admission：余额/并发拒绝保留原 PRReview 与评论；已知关闭释放，未知交接保留 |
+| 13 并发拒绝却消费次数 | TelegramService：Billing/Quota 保存点及同事务提交，Agent 外层统一 carrier 与入场 | test_quota_billing_atomic_admission + test_agent_webui_atomic_admission：PR/Issue/Agent 周期/一次性未损耗、余额拒绝、创建/提交失败、非调度状态、重放一账 |
+| 14 Paddle 异步终态留下旧 pending | PaymentEventService：原生 adjustment/transaction 关联，追加 superseded 审计 | test_billing_paddle_refund_lifecycle：批准/拒绝、乱序、证据冲突、锁行跳过后 replay，原证据保留 |
+| 15 关闭购买阻断历史退款 | require_payment_enabled + sidebar/index：历史/退款精确路径放行，购买继续关闭 | test_review_disabled_payments_and_ipn：用户归属、管理员、CSRF、真实 HTTP、入口及购买表单 |
+| 16 NOWPayments 缺验签配置 ACK200 | gateway 类型异常 + webhook：配置 503、签名 400、已验签非目标 200 | test_review_disabled_payments_and_ipn：真实 HMAC 及 HTTP，无未验签 Inbox 写入 |
+
+自审补充：BillingService._operation 在旧身份快照遇到当前新 operation 时
+返回可重试 billing_conflict，禁止 operation→wallet 的反向锁获取；可选缺行
+探测使用当前锁读。register_operation 刷新已加载 ORM 终态。
+test_billing_operation_identity_snapshot 验证拒绝不改余额/预留、恢复和终态刷新。
+回执核对的调用/Worker 检查使用当前锁读，用户不能核对或伪装未调用。
+test_webhook_execution_reconciliation 覆盖 dry-run 不写、权限、三类核对、重复
+核对、已调用/活动 Worker 拒绝及同事务管理员审计。
+
+本轮新增唯一表 webhook_execution_receipts 随已有 create_all/迁移入口创建，
+scripts/verify_billing_sqlite.py 验证首次/重复初始化、唯一键、所有财务不可变
+触发器、钱包回滚/重建及包含新 CLI 的 dry-run。CLI 操作与恢复边界见
+[配置与恢复文档](billing-2.md)。原生 MySQL/PostgreSQL RR/锁竞争本轮未实测；
+Paddle 锁查询仅有真实服务调用 spy、原生 SQL 编译和跳过锁行边界模拟证据。
+
+最终验证（本轮新增 102 项自动化回归）：
+
+| 实际命令/检查 | 结果 |
+| --- | --- |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs` | 5245 passed、17 既有条件 skip，115.91s |
+| `uv run --no-sync python -m pytest updater/tests -q` | 414 passed、3 systemd 条件 skip |
+| `uv run --no-sync python -m pytest sandboxer/tests -q` | 131 passed、12 Docker 条件 skip |
+| `PYTHONPATH=/tmp/sakura-621-test-deps uv run --no-sync python -m pytest tests/test_legacy_placeholder_atomicity.py -q` | 用已隔离的 aiosqlite 补跑：3 passed；没有修改依赖清单 |
+| `PYTHONPATH=/tmp/sakura-621-test-deps uv run --no-sync python scripts/verify_billing_sqlite.py` | 首次/重复 schema、不可变触发器、回滚、钱包重建、全部 CLI dry-run PASS |
+| `/tmp/sakura-pr660-ruff/bin/ruff check .`（0.16.10）及 `uv run --no-sync python run_ruff.py --check` | 通过 |
+| Git HEAD archive 叠加完整本地补丁，以已跟踪 Git mode 和新文件 100644 执行相同 Ruff，及变更的 52 个 Python 文件 format check | 通过，防止工作区权限掩盖 CI 模式错误 |
+| `git diff --check`、恢复 CLI `--help` | 通过 |
+
+第一次全量的 19 个新增失败已修复：2 个为代码增行后的时间原语白名单位置
+漂移（时区语义未改）；17 个为纯字段测试的记录型 mock 未提供新事务接口。
+先返回纯字段错误再访问账务校验；该单元测试只隔离账务服务边界，保留原
+响应/字段/保存断言，实际账务激活与写入仍由真实 SQL/HTTP 测试验证。
+没有删除测试、放宽断言或增加 skip。
+
+实际 Chrome 在临时 SQLite 站点验证中/英文：关闭购买仍显示订单、用户退款
+及管理审核入口；购买/兑换按钮为零；ZZZ 历史金额保留原整数、审核页可打开。
+未点击批准、拒绝、付款或退款动作。截图为 /tmp/sakura-disabled-history-zh.jpg、
+history-en.jpg、refunds-zh.jpg、refunds-en.jpg（后三个同 sakura-disabled- 前缀）；
+服务和标签均已关闭。暂存区仍为空，HEAD 保持 7875ed03。
+
+## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库
 验收仍待完成，因此不能把本地测试称为Issue的全部部署验收。配置正式商业

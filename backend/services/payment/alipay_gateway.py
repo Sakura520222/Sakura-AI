@@ -276,6 +276,14 @@ class AlipayGateway(PaymentGateway):
         """
         import json
 
+        # This domestic page.pay integration sends yuan amounts and has no
+        # foreign-currency settlement fields. Never relabel another currency.
+        if not isinstance(currency, str) or currency.strip().upper() != "CNY":
+            return PaymentIntentResult(
+                success=False,
+                error_message="Alipay page.pay supports CNY payments only",
+            )
+
         # 金额转换：cents → 元
         total_amount = f"{Decimal(amount_cents) / Decimal(100):.2f}"
 

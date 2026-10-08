@@ -852,7 +852,7 @@ class TestRefundRequests:
         existing_result.scalar_one_or_none.return_value = None
         mock_session.execute.return_value = existing_result
 
-        async def mock_get(model, pk):
+        async def mock_get(model, pk, **_kwargs):
             if model is Order and pk == order.id:
                 return order
             if model is TelegramUser and pk == sample_user.id:
@@ -962,6 +962,10 @@ class TestRefundRequests:
         )
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock(return_value=order)
+        svc.session.get.return_value = order
+        attempt_result = MagicMock()
+        attempt_result.scalar_one_or_none.return_value = None
+        svc.session.execute.return_value = attempt_result
 
         result = await svc.approve_refund_request(
             request_id=1,
@@ -990,6 +994,16 @@ class TestRefundRequests:
         )
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock(side_effect=PaymentError("gateway down"))
+        svc.session.get.return_value = Order(
+            id=1,
+            order_no="ORD_FAIL_REFUND",
+            user_id=1,
+            amount_cents=1000,
+            status=OrderStatus.FULFILLED.value,
+        )
+        attempt_result = MagicMock()
+        attempt_result.scalar_one_or_none.return_value = None
+        svc.session.execute.return_value = attempt_result
 
         result = await svc.approve_refund_request(request_id=1, reviewer_id=2)
 

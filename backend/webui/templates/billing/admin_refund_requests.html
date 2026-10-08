@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/billing_money.html" import money with context %}
 
 {% block title %}{{ _('billing.refund_reviews') }} - Sakura AI{% endblock %}
 
@@ -61,7 +62,7 @@
                             {{ item.order.plan.name if item.order and item.order.plan else '-' }}
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
-                            {{ item.currency }} {{ format_minor_amount(item.amount_cents, item.currency) }}
+                            {{ money(item.amount_cents, item.currency) }}
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 max-w-xs whitespace-pre-wrap">
                             {{ item.reason or '-' }}

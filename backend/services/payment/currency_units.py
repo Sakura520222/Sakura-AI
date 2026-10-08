@@ -206,3 +206,16 @@ def format_minor_amount(amount: int, currency: str) -> str:
     exponent = currency_minor_exponent(currency)
     major = Decimal(amount) / (Decimal(10) ** exponent)
     return f"{major:.{exponent}f}"
+
+
+def safe_format_minor_amount(amount: int, currency: str) -> str | None:
+    """Project legacy money without inventing a scale for an unknown currency.
+
+    New financial writes still use the strict catalog/formatter. Read callers
+    retain the original integer and currency when this projection is unknown.
+    """
+    try:
+        currency_minor_exponent(currency)
+    except ValueError:
+        return None
+    return format_minor_amount(amount, currency)
