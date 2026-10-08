@@ -9,13 +9,20 @@ participates in scheduling decisions.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary, WeakValueDictionary
+
+try:
+    import fcntl
+except ImportError:
+    # Windows can import/start the backend without this POSIX-only capability.
+    # Workspace operations still require a real process lock; never fall back
+    # to event-loop-only exclusion when the host cannot provide it.
+    fcntl = None
 
 if TYPE_CHECKING:
     from backend.services.agent_team.tools.base import (
@@ -35,6 +42,13 @@ class WorkspaceBarrier:
 
     @asynccontextmanager
     async def hold(self, shared: bool) -> AsyncIterator[None]:
+        if fcntl is None or not all(
+            hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")
+        ):
+            raise RuntimeError(
+                "workspace_lock_unavailable: Agent workspace operations require "
+                "POSIX directory-lock support on the backend host"
+            )
         async with self.condition:
             if shared:
                 await self.condition.wait_for(

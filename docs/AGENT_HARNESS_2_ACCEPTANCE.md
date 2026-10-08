@@ -21,7 +21,7 @@
 
 Phase 1/2 保存点 `30c4152f` 相对 WIP 修改 28 个文件，+2,658/-933：业务代码 13 个（+1,020/-587）、测试/浏览器 fixture 6 个（+1,423/-185）、文档 9 个（+215/-161）。该保存点相对 develop 合计 38 个文件、+6,204/-333；这是历史提交规模，不包括当前 Phase 3–6 的未提交实现。当前另有 MCP SDK/直接依赖及对应锁文件更新。行数不作为完成度依据。
 
-最终变更规模（相对 develop 基线，含两个历史本地提交与当前交付）：101 个文件，+17,404/-552。业务代码 49 个（+6,734/-504）、测试/fixture 38 个（+10,065/-34）、文档 11 个（+525/-14）、依赖清单 2 个（+10/0）、锁文件 1 个（+70/0）。本次保存前为暂存 0、未暂存 54、未跟踪 32 个任务文件。新增行主要来自行为/失败/恢复/并发矩阵测试，以及 MCP、子会话、能力/Hooks 和持久审计实现；没有凭据、日志、缓存、环境目录或生成文件进入提交。
+`fa526d6d` 交付时的变更规模（相对 develop 基线，含两个历史本地提交）：101 个文件，+17,404/-552。业务代码 49 个（+6,734/-504）、测试/fixture 38 个（+10,065/-34）、文档 11 个（+525/-14）、依赖清单 2 个（+10/0）、锁文件 1 个（+70/0）。该次保存前为暂存 0、未暂存 54、未跟踪 32 个任务文件。新增行主要来自行为/失败/恢复/并发矩阵测试，以及 MCP、子会话、能力/Hooks 和持久审计实现；没有凭据、日志、缓存、环境目录或生成文件进入提交。后续 Windows 导入修复见下节。
 
 后端调用链为 worker → iteration_loop → fullstack_expert → HarnessRuntime / ToolExecutor / 调度器；RepositoryContext、Skills、自检、SubagentManager、MCP 发现与执行、能力检查、Hooks、压缩审计均已接线。Skills 状态随已有工具结果事务提交。新 `AgentTeamSubagent` 保存父子关系与不可扩大的只读范围，`AgentTeamUsage` 保存幂等 provider receipt；使用现有 metadata 建表机制，不改已有列含义。`capability_policy.py` 已被执行器、MCP、Hooks、worker 依赖安装及 GitHub 写入链调用，不再是独立基础模块。
 
@@ -111,6 +111,26 @@ git diff --check 38a021934461bae4932928c3f466df6d47ddc2b8
 结果：安装 `aiosqlite==0.22.1` 后 **3 passed，0.38 秒**；Ruff **All checks passed**；两次 diff 检查通过。Ruff wrapper 按仓库约定读取现有 `.venv` 的 Ruff；只读检查没有同步或改写它。前一轮完整测试的 3 个失败均已处理：两项测试服务端 DEBUG 捕获混入客户端日志断言，以及本次路由代码移动导致的两处时间 API allowlist 行号漂移。
 
 真实浏览器运行 `tests/harness_plugins_ui_app.py`：英文/中文管理页面，遮罩配置保存、禁用 MCP/添加 Hook、重载、不合法版本拒绝。`tests/harness_phase2_ui_app.py` 另验证新增子 Agent 并发字段从默认 4 修改为 3、Save All 后中文重载仍为 3；零控制台错误，保留既有 Tailwind CDN 警告。Skills 开关保存/恢复及 CSRF 证据见历史段落和当前 HTTP 回归。Fixture 身份/存储为测试替身，真实 FastAPI/Jinja/CSRF/保存与浏览器代码执行。两个测试服务均已关闭。
+
+## 2026-10-08 Windows CI 导入回归修复
+
+用户推送 `fa526d6d` 后，[Windows uv 冒烟任务](https://github.com/Sakura520222/Sakura-AI/actions/runs/37729363960/job/113154750933) 的锁定依赖同步成功，但 `import backend.main` 失败。调用链是 WebUI 插件路由 → plugin_config → lifecycle_hooks → tool_scheduler；新增的顶层 `import fcntl` 在 Windows 抛出 `ModuleNotFoundError`。同一 run 的 Linux Python 和 updater 检查成功。CI 未因锁文件漂移失败。
+
+`tool_scheduler.py` 将 POSIX 模块改为可选导入；真正获取工作区锁时，缺少 `fcntl`、`O_DIRECTORY` 或 `O_NOFOLLOW` 则明确拒绝并保留 `workspace_lock_unavailable` 原因，不降级为无进程间互斥的执行。普通后端导入不再依赖这些执行期能力，Windows 原生 Harness 工作区操作仍未实现。
+
+新增 `tests/test_agent_platform_import.py`：独立解释器屏蔽 POSIX 模块/目录标志后导入真实后端，并验证缺少锁能力不会执行操作或遗留读写等待状态。先观察到 **4 failed**，修复后 **4 passed**；与原有真实进程锁测试合跑 **11 passed**。以下相关回归 **180 passed，8.16 秒**（测试范围有重叠，不相加）：
+
+```bash
+UV_PROJECT_ENVIRONMENT=.superpowers/sdd/2026-10-04-issue-628-agent-harness/venv \
+UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest \
+  tests/test_agent_platform_import.py tests/test_agent_workspace_process_lock.py \
+  tests/test_agent_harness_runtime.py tests/test_agent_policy_hooks_integration.py \
+  tests/test_agent_subagents.py tests/test_agent_harness_e2e.py \
+  tests/test_agent_plugins_ui.py tests/test_uv_pyproject.py \
+  -q -p no:cacheprovider --tb=short
+```
+
+新测试最后强化为同时缺少模块和目录标志后再次执行：**4 passed，1.84 秒**。仓库 `run_ruff.py --check`、两文件格式检查、`git diff --check` 均通过。以上是 Linux 上的能力缺失模拟和真实 Linux 回归；修复未推送，真实 Windows runner 尚未复验，不能将原失败 run 描述为已转绿。
 
 ## Phase 1/2 保存点的历史验证
 
