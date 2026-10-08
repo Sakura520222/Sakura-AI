@@ -164,7 +164,9 @@ class PaymentService:
             kwargs.get("concurrency_limit", plan.concurrency_limit),
         )
         for key, value in kwargs.items():
-            if key in self.PLAN_UPDATE_FIELDS and value is not None:
+            if key in self.PLAN_UPDATE_FIELDS and (
+                value is not None or key == "concurrency_limit"
+            ):
                 setattr(plan, key, value)
         await self.session.flush()
         return plan
@@ -643,6 +645,10 @@ class PaymentService:
         provider_currency = str(
             await self._get_provider_currency(order.payment_provider)
         ).upper()
+        if order.payment_provider == "alipay" and provider_currency != "CNY":
+            raise PaymentError(
+                "Alipay page.pay supports CNY payments only", code="invalid_currency"
+            )
 
         # 确定订单原始货币（套餐定价货币）
         order_currency = order.currency.upper()
@@ -1241,6 +1247,15 @@ class PaymentService:
                 "Legacy refund requires an audited purchased entitlement snapshot",
                 code="snapshot_required",
             )
+        metadata = json.loads(order.metadata_json or "{}")
+        if (
+            order.payment_provider == "alipay"
+            and str(metadata.get("gateway_currency", order.currency)).upper() != "CNY"
+        ):
+            raise PaymentError(
+                "Alipay checkout currency requires provider reconciliation",
+                code="invalid_currency",
+            )
         key = idempotency_key or f"order:{order.id}:full-refund"
         if not isinstance(key, str) or not key or len(key) > 160:
             raise PaymentError("Invalid refund idempotency key")
@@ -1657,7 +1672,9 @@ class PaymentService:
         reason: str = "",
     ) -> RefundRequest:
         """Create a pending refund request for a user's fulfilled paid order."""
-        order = await self.session.get(Order, order_id)
+        order = await self.session.get(
+            Order, order_id, with_for_update=True, populate_existing=True
+        )
         if not order or order.user_id != user_id:
             raise PaymentError("Order not found or not refundable")
 
@@ -1666,6 +1683,11 @@ class PaymentService:
 
         if order.amount_cents <= 0:
             raise PaymentError("Free or manual grant orders cannot be refunded")
+        remaining_cents = order.amount_cents - (order.refunded_amount_cents or 0)
+        if remaining_cents <= 0:
+            raise PaymentError(
+                "No refundable amount remains", code="invalid_refund_amount"
+            )
 
         existing_stmt = select(RefundRequest).where(
             and_(
@@ -1686,7 +1708,7 @@ class PaymentService:
         refund_request = RefundRequest(
             order_id=order.id,
             user_id=user_id,
-            amount_cents=order.amount_cents,
+            amount_cents=remaining_cents,
             currency=order.currency,
             status=RefundRequestStatus.PENDING.value,
             reason=(reason or "").strip() or None,
@@ -1801,11 +1823,41 @@ class PaymentService:
         refund_request.review_note = (review_note or "").strip() or None
 
         try:
+            key = f"refund-request:{refund_request.id}"
+            order = await self.session.get(
+                Order,
+                refund_request.order_id,
+                with_for_update=True,
+                populate_existing=True,
+            )
+            if order is None:
+                raise PaymentError("Order not found or not refundable")
+            attempt = (
+                await self.session.execute(
+                    select(PaymentRefundAttempt)
+                    .where(PaymentRefundAttempt.idempotency_key == key)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if attempt is None:
+                remaining_cents = order.amount_cents - (
+                    order.refunded_amount_cents or 0
+                )
+                if remaining_cents <= 0:
+                    raise PaymentError(
+                        "No refundable amount remains", code="invalid_refund_amount"
+                    )
+                # A separately verified refund may arrive while review is pending.
+                # Reduce the review request before creating its financial intent;
+                # an existing attempt's amount and idempotency identity never change.
+                refund_request.amount_cents = min(
+                    refund_request.amount_cents, remaining_cents
+                )
             order = await self.process_refund(
                 order_id=refund_request.order_id,
                 amount_cents=refund_request.amount_cents,
                 operator_id=reviewer_id,
-                idempotency_key=f"refund-request:{refund_request.id}",
+                idempotency_key=key,
             )
             refund_request.order = order
             refund_request.status = RefundRequestStatus.APPROVED.value
@@ -2102,6 +2154,15 @@ class PaymentService:
             )
         order.status = OrderStatus.FULFILLED.value
         order.fulfilled_at = now_utc()
+        if order.hidden_by_user_at is not None:
+            order.hidden_by_user_at = None
+            await self._log_payment(
+                order_id=order.id,
+                user_id=user.id,
+                action="restore_visibility",
+                detail="Hidden order restored after verified fulfillment",
+                operator_id=operator_id,
+            )
         if purchased.plan_type == PlanType.SUBSCRIPTION.value:
             await self._upsert_subscription(
                 user.id, purchased, order.id, expires_at=expires_at

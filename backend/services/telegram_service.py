@@ -43,6 +43,10 @@ def _is_github_username_unique_error(exc: IntegrityError) -> bool:
     )
 
 
+class _RateAdmissionRejected(Exception):
+    """Rollback only the admission savepoint, preserving earlier caller work."""
+
+
 class TelegramService:
     """Telegram Bot 服务类"""
 
@@ -117,31 +121,87 @@ class TelegramService:
         number: int,
         feature: str,
         operation_id: str | None = None,
+        *,
+        commit: bool = True,
     ) -> tuple[bool, str]:
         """Request counts control admission; they never represent money."""
-        from backend.services.legacy_entitlement_service import LegacyEntitlementService
-
         user = await self.get_user_by_github_username(github_username)
         if not user:
             return False, "用户未注册"
-        if (user.role or "").lower().strip() in {"admin", "super_admin"}:
-            return True, ""
+        administrator = (user.role or "").lower().strip() in {"admin", "super_admin"}
+        # Subscription maintenance keeps its existing independent commit. Run
+        # it before the atomic wallet + request-admission savepoint.
+        if not administrator and await is_payment_enabled():
+            await PaymentService(self.session).expire_due_subscriptions(user.id)
+        try:
+            async with self.session.begin_nested():
+                allowed, reason = await self._apply_rate_limit_admission(
+                    user, repo_name, number, feature, operation_id, administrator
+                )
+                if not allowed:
+                    raise _RateAdmissionRejected(reason)
+        except _RateAdmissionRejected as exc:
+            return False, str(exc)
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+        return True, ""
+
+    async def _apply_rate_limit_admission(
+        self, user, repo_name, number, feature, operation_id, administrator
+    ):
+        from backend.models.legacy_entitlement_models import RateLimitAdmission
         from backend.services.billing_service import (
             BillingError,
             BillingService,
             InsufficientCredits,
         )
+        from backend.services.legacy_entitlement_service import LegacyEntitlementService
 
+        source = {"repo_full_name": repo_name} if repo_name else {}
+        if number:
+            source[
+                {
+                    "pr_review": "pr_number",
+                    "issue_analysis": "issue_number",
+                    "agent": "agent_task_id",
+                }[feature]
+            ] = number
         try:
             billing = BillingService(self.session)
-            await billing.get_wallet(user.id)
-            await billing.assert_can_start(user.id)
+            if operation_id:
+                operation = await billing.register_operation(
+                    None if administrator else user.id,
+                    operation_id,
+                    feature,
+                    source=source,
+                    platform_reason={
+                        "pr_review": "administrator_automatic_pr_review",
+                        "issue_analysis": "administrator_automatic_issue_analysis",
+                        "agent": "administrator_webhook_agent",
+                    }[feature]
+                    if administrator
+                    else None,
+                )
+                if operation.outcome is not None:
+                    return False, "业务执行已结束"
+            elif not administrator:
+                # Legacy service callers without a persisted worker carrier do
+                # not create an orphan financial execution. All queue entrances
+                # provide their server-created operation identity.
+                await billing.get_wallet(user.id)
+                await billing.assert_can_start(user.id)
         except InsufficientCredits:
             return False, "Credits 余额不足"
         except BillingError as exc:
             if exc.code == "legacy_migration_required":
                 return False, "已购买的旧权益等待审核转换为 Credits，请联系管理员"
+            if exc.code == "concurrency_limit":
+                return False, "每用户业务执行上限已达到"
             raise
+        if administrator:
+            return True, ""
         user = (
             await self.session.execute(
                 select(TelegramUser)
@@ -150,21 +210,32 @@ class TelegramService:
                 .execution_options(populate_existing=True)
             )
         ).scalar_one()
-        if await is_payment_enabled():
-            await PaymentService(self.session).expire_due_subscriptions(user.id)
         await QuotaService(self.session).reset_user_quotas_if_expired(
             user,
             include_pr=feature == "pr_review",
             include_issue=feature == "issue_analysis",
             include_agent=feature == "agent",
+            commit=False,
         )
         service = LegacyEntitlementService(self.session)
+        event_key = f"operation:{operation_id}:{feature}" if operation_id else None
+        previous = (
+            (
+                await self.session.execute(
+                    select(RateLimitAdmission.event_key)
+                    .where(RateLimitAdmission.event_key == event_key)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if event_key
+            else None
+        )
         admitted = await service.consume(
             user,
             feature,
             repo_name=repo_name,
             number=number,
-            event_key=f"operation:{operation_id}:{feature}" if operation_id else None,
+            event_key=event_key,
         )
         if not admitted:
             await self.session.refresh(user)
@@ -180,21 +251,19 @@ class TelegramService:
             ):
                 used = getattr(user, f"{prefix}{period}_used")
                 if used >= limits[index]:
-                    return (
-                        False,
-                        f"{label} {title}次数限流已达到 ({used}/{limits[index]})",
-                    )
+                    detail = f"{label} {title}次数限流已达到 ({used}/{limits[index]})"
+                    return False, detail
             return False, f"{label} 次数限流已达到"
-        self.session.add(
-            QuotaUsageLog(
-                telegram_user_id=user.id,
-                repo_name=repo_name,
-                pr_number=number,
-                usage_type="daily",
-                usage_category=feature,
+        if previous is None:
+            self.session.add(
+                QuotaUsageLog(
+                    telegram_user_id=user.id,
+                    repo_name=repo_name,
+                    pr_number=number,
+                    usage_type="daily",
+                    usage_category=feature,
+                )
             )
-        )
-        await self.session.commit()
         return True, ""
 
     async def check_and_consume_quota(
@@ -228,9 +297,10 @@ class TelegramService:
         task_id: int = 0,
         *,
         operation_id: str | None = None,
+        commit: bool = True,
     ) -> tuple[bool, str]:
         return await self._consume_rate_limit(
-            github_username, repo_name, task_id, "agent", operation_id
+            github_username, repo_name, task_id, "agent", operation_id, commit=commit
         )
 
     async def add_user(

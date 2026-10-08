@@ -129,6 +129,7 @@ from backend.models.telegram_models import (
     UserRecoveryCode,
     UserWebAuthnCredential,
 )
+from backend.models.webhook_execution_models import WebhookExecutionReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +232,7 @@ __all__ = [
     "UserRecoveryCode",
     "UserSubscription",
     "UserWebAuthnCredential",
+    "WebhookExecutionReceipt",
     "close_async_db",
     "init_async_db",
     "init_database",

@@ -3,6 +3,8 @@
 本实现不提供正式商业价格。首次部署保持 `billing_enabled=false`，先审核历史
 权益、配置正式价格/汇率/倍率/Credits 价值和开账余额，再显式启用。
 `payment_enabled` 只控制支付入口；钱包、账单、管理员发放和定价可独立使用。
+关闭购买时，已有订单历史、用户退款申请及管理员退款审核/处理仍可访问；
+侧栏保留相应入口，概览隐藏购买和兑换表单。权限及 CSRF 检查保持生效。
 
 超级管理员侧栏及全局配置的付费配置卡片常显「模型定价」和「套餐与价格」。
 模型定价在 `/billing/admin/pricing` 选择已配置 AI 账号，编辑 Provider 原始单价
@@ -16,12 +18,18 @@
 载入编辑，但发布只新增版本，不能覆盖历史账单引用的报价。
 
 金额币种使用统一支持目录的下拉选择：Provider 成本币种、结算币种、套餐创建/
-编辑、付款/退款核对，以及默认支付、Stripe、Paddle、支付宝的配置币种均复用
+编辑、付款/退款核对，以及默认支付、Stripe、Paddle 的配置币种均复用
 `currency_units.py`，USD/CNY 排在前面，包含其他受支持 ISO 币种及 USDT。
 表单、高级 JSON、API 和套餐服务拒绝目录外的新币种；已保存历史值不会自动
 改写，异常币种只显示为不可选的历史值，需要管理员明确重新选择。套餐价格
 继续使用各币种的整数最小单位，不因更换控件转换金额。NOWPayments 的
 `usdttrc20` 等接收资产/网络标识保持原协议语义，不用 ISO 币种替代。
+
+当前支付宝接入为国内 `page.pay`，付款币种仅允许 CNY；表单、Settings、
+全局配置 API、结账服务及网关均拒绝其他币种，不会把 USD/JPY 等标签与人民币
+金额混用。历史异常订单须核对实际网关币种后处理，不能自动换标签或猜汇率。
+历史未知币种的账单保留原整数及币种代码，并显示单位未知；API 的格式化金额
+为 null、`currency_supported=false`。这只保证读取可用，不代表允许继续付款。
 
 USDT 有四个字符；费用表 `billing_usage_charges` 的 provider_currency 和
 settlement_currency 从 VARCHAR(3) 扩为 VARCHAR(10)。正常启动迁移检查并幂等
@@ -40,6 +48,9 @@ ALTER 权限；本轮已验证 SQLite 及原生 DDL 编译/反射分支，未在
 并链接模型定价页；预留精度、回收时限等无效值会定位各自字段。配置页、批量
 保存、系统配置及报价保存按当前用户个人语言返回反馈。部分保存失败保留输入，
 明确区分已成功保存的分区；错误响应不包含原始输入、Prompt或凭据。
+收费已开启时，部分更新压缩、Embedding/Rerank 路由以及 AI 账号或角色绑定也
+重新校验报价。拟保存的账号/绑定先投影解析，验证与保存之间持有数据库配置
+行锁，缺价拒绝提交；未使用的账号、保留已定价路由的改名仍可保存。
 
 ## 金额与价格
 
@@ -109,6 +120,30 @@ cache_creation_supported / reasoning_supported=false，并保留缺失计量为 
 不能用 logical call 合并真实重试/Fallback。主调用、摘要、压缩、Embedding、
 Rerank 均继承顶层 feature。平台任务、共享索引、无绑定身份和管理员系统任务
 记录平台承担原因；语言偏好用户不自动成为付款人。上下文退出后复原。
+自动事件中的已验证管理员仍保留触发者/语言身份，payer 明确为平台；可信
+trigger_user_id 写入业务来源。用户钱包/套餐并发入场与周期或一次性次数消费在
+同事务提交，余额或并发拒绝不消耗次数，次数拒绝回滚预留。Agent 任务载体与
+入场一起保存，创建失败不留下孤儿预留；未知队列交接保留执行待核对。
+
+PR/Issue 的已验签 delivery 使用 `webhook_execution_receipts` 记忆响应，以
+feature+delivery 唯一键及签名正文指纹防止并发重投递再次入场/入队。已完成的
+旧 Billing operation 同样去重；活动旧执行或外部副作用未知返回 503，不能凭
+缺少 Usage 推断请求未发生。`/full-review` 先入场，再清理旧结果。
+所有实例应统一升级并排空旧 handler；旧版本不认识回执，混跑无法提供同样保护。
+新表随项目初始化/自动迁移创建，不改写余额或历史流水；回滚保留回执和审计。
+
+回执恢复默认 dry-run，仅列出待核对项。应用核对需要活跃超级管理员身份、
+明确证据及原因，不发送 GitHub 写入、AI 请求或队列消息：
+
+```bash
+uv run python scripts/reconcile_webhook_executions.py --limit 100 --offset 0
+uv run python scripts/reconcile_webhook_executions.py --apply --receipt-id RECEIPT --actor-id ADMIN --resolution terminal --evidence "Verified durable terminal outcome" --reason "Recover lost acknowledgement"
+```
+
+terminal 要求已有持久化终态；accepted 是操作者确认已交接；cancelled_unstarted
+要求确认未交接，拒绝存在调用或活动 Worker 的执行，并释放无调用预留。重复
+核对不追加第二次审计；新的用户执行使用新 delivery。发生 `billing_conflict`
+时回滚并用新事务重试，不在旧快照里反转钱包/operation 的锁顺序。
 
 | app_config 参数 | 默认及语义 |
 | --- | --- |
@@ -322,9 +357,27 @@ uv run python scripts/reconcile_payment_events.py --apply --event-id 123 --actor
 启用支付通道前必须配置其验签密钥或公钥。NOWPayments IPN、Paddle Webhook
 缺少或仅有空白密钥时拒绝处理财务事件；支付宝缺少公钥也不能接受支付确认。
 金额解析失败只在验签成功后持久化为待核对，不能跳过验签补录任意请求。
+NOWPayments 验签配置缺失返回 503 `retry_required`，补齐配置后可重新投递；
+缺失/无效签名返回 400 `verification_failed`，不会保存未验签财务证据。
+只有已经验签的非目标事件才能返回 200 `ignored`。
+Paddle adjustment.created 的 pending_approval 与后续 approved/rejected 共用
+原生 adjustment/transaction 身份；终态核对成功后关闭匹配的旧待核对投影，
+追加 superseded 关联审计，保留原 received/reviewed 证据。金额、币种、订单
+或来源矛盾继续待核对。锁竞争中被跳过的行由现有 payment-events replay 入口
+在锁释放后关闭，不再次请求退款或要求猜测原始证据。
 
 用户订单的删除操作改为隐藏列表记录，保留购买快照、支付日志、退款流水和
 永久发票指纹。已隐藏订单仍参与回调、退款和审计；不能借清理页面释放发票身份。
+
+若隐藏的待支付订单随后完成验签、金额核对及权益发放，同事务恢复其用户可见性
+并追加支付审计；无效回调不恢复。部分退款后的新申请只请求尚未退款的金额，
+审批前重新核对剩余金额，已存在的财务尝试保持原身份，未知结果不再次请求网关。
+
+管理员发放接受 body `idempotency_key` 或 `Idempotency-Key` 请求头，两处同时
+指定须相同。旧客户端只传 user_id/plan_id 仍可使用，服务器为该次独立请求生成
+UUID 并返回（WebUI 返回同名响应头）；重试请沿用该键。旧无键请求无法证明是
+重试还是第二次发放，不保证跨独立无键请求去重。退款键最多 160 字符。
+套餐更新省略 concurrency_limit 保持原值，显式 null 或表单空白清除该套餐上限。
 
 用户接口只读自身钱包/流水/Usage/执行，关联链接受现有权限检查。管理价格、
 发放、调整需要超级管理员，记录操作者/原因/幂等键和同事务审计。账单不泄漏

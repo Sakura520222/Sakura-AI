@@ -1826,6 +1826,14 @@ async def save_general_config(
 
                 validated_values.append((key, val, is_sensitive))
 
+        if errors:
+            return config_save_response(
+                request,
+                "/config",
+                "toast.config_fields_invalid",
+                lang=lang,
+                errors=errors,
+            )
         changed = {}
         from backend.services.billing_configuration_service import (
             BillingConfigurationError,

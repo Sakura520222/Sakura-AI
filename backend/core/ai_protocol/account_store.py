@@ -312,6 +312,11 @@ async def _upsert_app_config(key: str, value: str, description: str = "") -> Non
         return
 
     async with async_session() as session:
+        from backend.services.billing_configuration_service import (
+            validate_billing_configuration,
+        )
+
+        await validate_billing_configuration(session, {key: value})
         result = await session.execute(
             select(AppConfig).where(AppConfig.key_name == key)
         )
@@ -338,6 +343,11 @@ async def _delete_app_config(key: str) -> None:
         return
 
     async with async_session() as session:
+        from backend.services.billing_configuration_service import (
+            validate_billing_configuration,
+        )
+
+        await validate_billing_configuration(session, {key: None})
         await session.execute(delete(AppConfig).where(AppConfig.key_name == key))
         await session.commit()
 

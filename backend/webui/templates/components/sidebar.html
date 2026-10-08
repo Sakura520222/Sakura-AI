@@ -57,11 +57,11 @@
 
         {% if current_user %}
             {% call domain(_('nav.billing_center') if settings.payment_enabled else _('billing.credits_title'), ['billing', 'billing_credits', 'billing_admin_codes', 'billing_admin_refunds']) %}
-                {% if settings.payment_enabled %}{{ link('/billing/', _('nav.billing_overview'), 'billing') }}{% endif %}
+                {{ link('/billing/', _('nav.billing_overview') if settings.payment_enabled else _('billing.order_history'), 'billing') }}
                 {{ link('/billing/credits', _('billing.credits_title'), 'billing_credits') }}
                 {% if current_user and current_user.role == 'super_admin' %}
                     {% if settings.payment_enabled %}{{ link('/billing/admin/codes', _('nav.redemption_codes'), 'billing_admin_codes') }}{% endif %}
-                    {% if settings.payment_enabled %}{{ link('/billing/admin/refund-requests', _('nav.refund_reviews'), 'billing_admin_refunds') }}{% endif %}
+                    {{ link('/billing/admin/refund-requests', _('nav.refund_reviews'), 'billing_admin_refunds') }}
                 {% endif %}
             {% endcall %}
         {% endif %}

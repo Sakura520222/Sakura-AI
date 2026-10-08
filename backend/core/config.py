@@ -12,7 +12,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
-from backend.services.payment.currency_units import supported_currencies
+from backend.services.payment.currency_units import (
+    normalize_currency,
+    supported_currencies,
+)
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 # Bounds apply before Issue corpus recall and source hydration, independent of
@@ -21,6 +24,14 @@ ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
 # Operational recall bounds, shared by Settings, forms and request admission.
 ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE = (1, 10)
 PR_ISSUE_MAX_LINKS_RANGE = (1, 200)
+
+
+def validate_currency_config_value(key: str, value: object) -> str:
+    """Validate configured money codes against each payment protocol."""
+    currency = normalize_currency(value)
+    if key == "alipay_currency" and currency != "CNY":
+        raise ValueError("Alipay website payments support CNY only")
+    return currency
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -757,6 +768,17 @@ class Settings(BaseSettings):
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
     alipay_sandbox: bool = Field(False, description="启用支付宝沙箱环境")
+
+    @field_validator(
+        "payment_default_currency",
+        "stripe_currency",
+        "paddle_currency",
+        "alipay_currency",
+        mode="before",
+    )
+    @classmethod
+    def validate_payment_currencies(cls, value, info):
+        return validate_currency_config_value(info.field_name, value)
 
     # NOWPayments 虚拟币支付（无需 KYC，非托管）
     nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
@@ -1662,6 +1684,8 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         key: [{"value": code, "label": code} for code in supported_currencies()]
         for key in MONETARY_CURRENCY_CONFIG_KEYS
     },
+    # alipay.trade.page.pay is a CNY-only gateway, not a general FX gateway.
+    "alipay_currency": [{"value": "CNY", "label": "CNY"}],
     "payment_partial_refund_policy": [
         {"value": "reject", "label": "拒绝部分退款"},
         {

@@ -188,7 +188,7 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 - **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
 - **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset
 - **Paid Quota System** — Plan and redeem code CRUD + admin manual grants
-- **External Payments & Refunds** — Stripe / Paddle / Alipay / NOWPayments / TRON USDT
+- **External Payments & Refunds** — Stripe / Paddle / Alipay (CNY) / NOWPayments / TRON USDT; order history and refunds remain available when purchases are disabled
 - **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
 - **Admin Action Audit** — Complete operation logs
 - **WebUI Dashboard** — Navigation grouped into Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings; the PR review page includes repository and date filters, with old review-log URLs redirecting to it

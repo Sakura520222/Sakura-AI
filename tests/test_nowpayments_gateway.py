@@ -11,7 +11,10 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.services.payment.gateway_base import WebhookEventType
+from backend.services.payment.gateway_base import (
+    PaymentWebhookVerificationError,
+    WebhookEventType,
+)
 from backend.services.payment.nowpayments_gateway import NowPaymentsGateway
 
 API_KEY = "test-api-key"
@@ -314,18 +317,16 @@ class TestVerifyWebhook:
         body = json.dumps(data).encode("utf-8")
         headers = {"x-nowpayments-sig": "invalid_signature"}
 
-        event = gateway.verify_webhook(body, headers)
-
-        assert event.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(body, headers)
 
     def test_no_signature(self, gateway):
         """缺少签名头"""
         data = {"payment_id": 5077125057, "payment_status": "finished"}
         body = json.dumps(data).encode("utf-8")
 
-        event = gateway.verify_webhook(body, {})
-
-        assert event.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(body, {})
 
 
 class TestRefund:

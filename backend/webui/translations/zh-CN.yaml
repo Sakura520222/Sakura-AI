@@ -1534,6 +1534,7 @@ billing:
   unknown_amount: "金额未知"
   unknown_currency: "币种未知"
   minor_units: "币种最小单位整数"
+  unknown_currency_unit: "币种单位未知，显示原始整数"
   order_id: "订单 ID"
   reconciliation_reason: "待核对原因"
   replay_payment_event: "重新处理已验证事件"

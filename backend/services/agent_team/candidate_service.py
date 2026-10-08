@@ -298,6 +298,7 @@ class AgentTeamCandidateService:
         base_branch: str | None = None,
         overrides: dict | None = None,
         webhook_delivery_id: str | None = None,
+        commit: bool = True,
     ) -> AgentTeamTask:
         """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
         existing = await find_delivery_task(
@@ -322,6 +323,17 @@ class AgentTeamCandidateService:
             **values,
             started_by=started_by,
         )
+        if not commit:
+            if webhook_delivery_id is not None:
+                raise ValueError(
+                    "Verified webhook tasks require durable delivery admission"
+                )
+            # WebUI owns one transaction containing task + rate admission +
+            # reservation. Metadata calls above happen before taking wallet locks.
+            db.add(task)
+            await db.flush()
+            await db.refresh(task)
+            return task
         return await persist_delivery_task(db, task)
 
     # ── PR 审查 /agent 任务 ──────────────────────────────────────

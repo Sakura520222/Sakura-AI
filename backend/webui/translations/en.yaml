@@ -1533,6 +1533,7 @@ billing:
   unknown_amount: "Unknown amount"
   unknown_currency: "Unknown currency"
   minor_units: "Integer currency minor units"
+  unknown_currency_unit: "Unknown currency unit; original integer shown"
   order_id: "Order ID"
   reconciliation_reason: "Reconciliation reason"
   replay_payment_event: "Reprocess verified event"

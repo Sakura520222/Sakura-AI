@@ -608,6 +608,12 @@ def _patch_save_deps(monkeypatch: pytest.MonkeyPatch):
     """替换 save_general_config 的副作用依赖（函数内延迟导入 → patch 源模块）。"""
     monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
     monkeypatch.setattr(config_routes, "log_admin_action", _noop_async)
+    # These are pure field/serialization tests with a recording-only session.
+    # Activation and live route validation use real SQL in billing/config tests.
+    monkeypatch.setattr(
+        "backend.services.billing_configuration_service.validate_billing_configuration",
+        _noop_async,
+    )
     monkeypatch.setattr(
         "backend.core.config.update_settings_field", lambda _key, _value: None
     )

@@ -95,12 +95,14 @@ def test_dynamic_currency_fields_use_shared_catalog():
         "payment_default_currency",
         "stripe_currency",
         "paddle_currency",
-        "alipay_currency",
     ):
         assert get_dynamic_config_input_type(field) == "select"
         codes = [option["value"] for option in DYNAMIC_CONFIG_SELECT_OPTIONS[field]]
         assert codes[:2] == ["USD", "CNY"]
         assert set(codes) == set(CURRENCY_MINOR_EXPONENTS)
+    assert DYNAMIC_CONFIG_SELECT_OPTIONS["alipay_currency"] == [
+        {"value": "CNY", "label": "CNY"}
+    ]
 
 
 def test_old_stream_price_loads_as_merged_chat_editor():

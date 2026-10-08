@@ -133,7 +133,9 @@ class PaymentEventService:
                 if record.evidence["type"] == WebhookEventType.PAYMENT_COMPLETED.value:
                     await self._payment(record)
                 elif record.evidence["type"] == WebhookEventType.PAYMENT_REFUNDED.value:
-                    await self._refund(record)
+                    if not await self._resolve_paddle_pending(record):
+                        await self._refund(record)
+                        await self._supersede_paddle_pending(record)
                 else:
                     raise PaymentError(
                         "Unsupported incoming payment event", code="unsupported_event"
@@ -231,6 +233,159 @@ class PaymentEventService:
             metadata["payment_reference_id"] = evidence["payment_reference_id"]
             order.metadata_json = json.dumps(metadata)
 
+    @staticmethod
+    def _paddle_refund_identity(evidence, statuses):
+        """Only match a complete native adjustment identity, never guessed money."""
+        if (
+            evidence.get("type") != WebhookEventType.PAYMENT_REFUNDED.value
+            or evidence.get("normalization_error")
+            or (evidence.get("wire_evidence") or {}).get("event_type")
+            not in {"adjustment.created", "adjustment.updated"}
+        ):
+            return None
+        items = evidence.get("refund_items") or []
+        source = evidence.get("payment_reference_id")
+        if len(items) != 1 or not isinstance(source, str) or not source:
+            return None
+        item = items[0]
+        reference, amount, currency = (
+            item.get("id"),
+            item.get("amount_cents"),
+            item.get("currency"),
+        )
+        if (
+            not isinstance(reference, str)
+            or not reference
+            or reference != evidence.get("provider_tx_id")
+            or item.get("status") not in statuses
+            or not isinstance(amount, int)
+            or isinstance(amount, bool)
+            or amount <= 0
+            or not isinstance(currency, str)
+            or not currency
+        ):
+            return None
+        return reference, source, amount, currency.upper()
+
+    def _paddle_lifecycle_query(self, record, identity, *, pending):
+        return (
+            select(PaymentRefundInboxEvent)
+            .where(
+                PaymentRefundInboxEvent.provider == "paddle",
+                PaymentRefundInboxEvent.id != record.id,
+                PaymentRefundInboxEvent.status
+                == ("pending_reconciliation" if pending else "processed"),
+                PaymentRefundInboxEvent.evidence["provider_tx_id"].as_string()
+                == identity[0],
+                PaymentRefundInboxEvent.evidence["payment_reference_id"].as_string()
+                == identity[1],
+            )
+            .execution_options(populate_existing=True)
+        )
+
+    def _append_paddle_superseded(self, pending, terminal, identity):
+        # The projection closes, but the native pending observation and every
+        # received/reviewed audit remain intact for source reconstruction.
+        self.session.add(
+            PaymentRefundInboxAudit(
+                inbox_event_id=pending.id,
+                event_key=f"superseded:{pending.id}:{terminal.id}",
+                status="superseded",
+                actor_id=terminal.actor_id,
+                evidence={
+                    "terminal_event_id": terminal.id,
+                    "refund_reference_id": identity[0],
+                    "payment_reference_id": identity[1],
+                    "order_id": terminal.order_id,
+                },
+            )
+        )
+
+    async def _resolve_paddle_pending(self, record):
+        if record.provider != "paddle":
+            return False
+        identity = self._paddle_refund_identity(record.evidence, {"pending_approval"})
+        if identity is None:
+            return False
+        # Wait for the order lock before reading terminal observations. A refund
+        # already executing in another worker can then commit its terminal event.
+        order = await self._order(record)
+        terminals = (
+            (
+                await self.session.execute(
+                    self._paddle_lifecycle_query(
+                        record, identity, pending=False
+                    ).with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for terminal in terminals:
+            if (
+                self._paddle_refund_identity(
+                    terminal.evidence, {"succeeded", "rejected"}
+                )
+                == identity
+                and terminal.order_id == order.id
+            ):
+                self._append_paddle_superseded(record, terminal, identity)
+                return True
+        # A locked terminal event is deliberately skipped: retain this receipt
+        # as pending and let the existing replay/reconciliation entry resolve it.
+        # The locking read also bypasses an earlier MySQL repeatable-read snapshot.
+        return False
+
+    async def _supersede_paddle_pending(self, record):
+        if record.provider != "paddle":
+            return
+        identity = self._paddle_refund_identity(
+            record.evidence, {"succeeded", "rejected"}
+        )
+        if identity is None:
+            return
+        terminal_order = await self.session.get(Order, record.order_id)
+        if terminal_order is None:
+            return
+        pending_rows = (
+            (
+                await self.session.execute(
+                    self._paddle_lifecycle_query(
+                        record, identity, pending=True
+                    ).with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for pending in pending_rows:
+            if (
+                self._paddle_refund_identity(pending.evidence, {"pending_approval"})
+                != identity
+            ):
+                continue
+            if pending.evidence.get("reviewed_order_id") not in {
+                None,
+                terminal_order.id,
+            } or pending.evidence.get("order_no") not in {
+                None,
+                "",
+                terminal_order.order_no,
+            }:
+                continue  # Do not lock another order for conflicting ownership.
+            try:
+                order = await self._order(pending)
+            except PaymentError:
+                continue  # Conflicting ownership remains explicitly pending.
+            if order.id != record.order_id:
+                continue
+            pending.status = "processed"
+            pending.pending_reason = None
+            pending.resolved_at = now_utc()
+            self._append_paddle_superseded(pending, record, identity)
+        # An in-flight pending replay is skipped to avoid event/order lock
+        # inversion; after it gets the order lock it resolves against this event.
+
     async def _refund(self, record):
         evidence = record.evidence
         denied = evidence.get("refund_items") or []
@@ -238,9 +393,61 @@ class PaymentEventService:
             item.get("status") in {"failed", "canceled", "rejected"} for item in denied
         ):
             order = await self._order(record)
+            metadata = json.loads(order.metadata_json or "{}")
+            gateway_total = metadata.get("gateway_amount_cents")
+            gateway_currency = metadata.get("gateway_currency")
+            if (
+                not isinstance(gateway_total, int)
+                or isinstance(gateway_total, bool)
+                or gateway_total <= 0
+                or not gateway_currency
+            ):
+                raise PaymentError(
+                    "Historical checkout amount/currency needs audit",
+                    code="checkout_snapshot_required",
+                )
             billing = BillingService(self.session)
             await billing.get_wallet(order.user_id)
             for item in denied:
+                amount = item.get("amount_cents")
+                currency = str(
+                    item.get("currency") or evidence.get("currency") or ""
+                ).upper()
+                if currency != str(gateway_currency).upper():
+                    raise PaymentError(
+                        "Refund currency differs from checkout",
+                        code="refund_currency_mismatch",
+                    )
+                if (
+                    not isinstance(amount, int)
+                    or isinstance(amount, bool)
+                    or amount <= 0
+                    or not isinstance(item.get("id"), str)
+                    or not item["id"]
+                ):
+                    raise PaymentError(
+                        "Refund identity/amount/outcome needs review",
+                        code="refund_evidence_incomplete",
+                    )
+                if amount > gateway_total:
+                    raise PaymentError(
+                        "Refund exceeds original payment", code="refund_overflow"
+                    )
+                confirmed = (
+                    await self.session.execute(
+                        select(PaymentRefundReference)
+                        .where(
+                            PaymentRefundReference.provider == record.provider,
+                            PaymentRefundReference.reference_id == item.get("id"),
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if confirmed:
+                    raise PaymentError(
+                        "Successful refund conflicts with later failed evidence",
+                        code="refund_outcome_conflict",
+                    )
                 attempt = (
                     await self.session.execute(
                         select(PaymentRefundAttempt)
@@ -254,6 +461,14 @@ class PaymentEventService:
                 ).scalar_one_or_none()
                 if not attempt:
                     continue
+                if (
+                    attempt.gateway_amount_cents != amount
+                    or str(attempt.gateway_currency).upper() != currency
+                ):
+                    raise PaymentError(
+                        "Refund outcome differs from staged intent",
+                        code="refund_intent_mismatch",
+                    )
                 if attempt.status == "succeeded":
                     raise PaymentError(
                         "Successful refund conflicts with later failed evidence",

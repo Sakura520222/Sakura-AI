@@ -756,18 +756,21 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
-    import backend.models.activity_observability_models
-    import backend.models.agent_skill_models
-    import backend.models.agent_team_models
-    import backend.models.ai_usage_models
-    import backend.models.announcement_models
-    import backend.models.billing_models
-    import backend.models.identity_models
-    import backend.models.legacy_entitlement_models
-    import backend.models.payment_models
-    import backend.models.service_execution_models
-    import backend.models.star_aid_models
-    import backend.models.telegram_models  # noqa: F401
+    from backend.models import (  # noqa: F401 - imports register SQLAlchemy models
+        activity_observability_models,
+        agent_skill_models,
+        agent_team_models,
+        ai_usage_models,
+        announcement_models,
+        billing_models,
+        identity_models,
+        legacy_entitlement_models,
+        payment_models,
+        service_execution_models,
+        star_aid_models,
+        telegram_models,
+        webhook_execution_models,
+    )
 
 
 # app_config 默认行的单一来源说明：

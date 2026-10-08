@@ -37,9 +37,13 @@ from backend.webui.time_filters import register_time_filters
 def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates")
-    from backend.services.payment.currency_units import format_minor_amount
+    from backend.services.payment.currency_units import (
+        format_minor_amount,
+        safe_format_minor_amount,
+    )
 
     templates.env.globals["format_minor_amount"] = format_minor_amount
+    templates.env.globals["safe_format_minor_amount"] = safe_format_minor_amount
     templates.env.globals["percentage"] = _percentage_filter
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
@@ -177,11 +181,37 @@ def _is_plan_configuration_request(path: str, method: str) -> bool:
     return False
 
 
+def _is_existing_order_request(path: str, method: str) -> bool:
+    """Keep historical accounting/refunds available without reopening checkout."""
+    if method == "GET":
+        return path in {
+            "/billing",
+            "/api/v1/billing/orders",
+            "/billing/admin/refund-requests",
+        } or bool(re.fullmatch(r"/api/v1/billing/orders/[0-9]+", path))
+    if method == "POST":
+        return bool(
+            re.fullmatch(
+                r"(?:/billing(?:/admin)?|/api/v1/billing)/orders/[0-9]+/refund", path
+            )
+            or re.fullmatch(
+                r"/billing/admin/refund-requests/[0-9]+/(approve|reject)", path
+            )
+        )
+    return False
+
+
 async def require_payment_enabled(request: Request):
     # Wallet/accounting remain accessible when payment gateways are disabled.
     # Only these read/configuration surfaces bypass the purchase-entry switch.
     path = request.url.path.rstrip("/")
-    if _is_plan_configuration_request(path, getattr(request, "method", "GET")):
+    method = getattr(request, "method", "GET")
+    if _is_existing_order_request(path, method):
+        # The overview retains subscriptions, balances and owned order history,
+        # while hiding checkout/redeem forms when new purchases are disabled.
+        request.state.payment_entries_enabled = await is_payment_enabled()
+        return
+    if _is_plan_configuration_request(path, method):
         return
     accounting_paths = {
         "/billing/credits",

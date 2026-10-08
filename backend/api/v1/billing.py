@@ -2,8 +2,9 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,7 @@ from backend.services.billing_view_service import (
     pending_payment_events,
 )
 from backend.services.payment import SUPPORTED_PROVIDERS
-from backend.services.payment.currency_units import format_minor_amount
+from backend.services.payment.currency_units import safe_format_minor_amount
 from backend.services.payment_service import PaymentError, PaymentService
 from backend.webui.deps import get_db, require_payment_enabled
 
@@ -109,7 +110,7 @@ class RedeemRequest(BaseModel):
 class GrantRequest(BaseModel):
     user_id: int = Field(..., ge=1)
     plan_id: int = Field(..., ge=1)
-    idempotency_key: str = Field(..., min_length=1, max_length=191)
+    idempotency_key: str | None = Field(None, min_length=1, max_length=191)
 
 
 class GenerateCodesRequest(BaseModel):
@@ -180,7 +181,7 @@ class RefundRequest(BaseModel):
     amount_cents: int | None = Field(
         None, ge=1, description="Integer minor units of the order currency"
     )
-    idempotency_key: str | None = Field(None, min_length=1, max_length=191)
+    idempotency_key: str | None = Field(None, min_length=1, max_length=160)
 
 
 # ========== Public endpoints ==========
@@ -200,7 +201,9 @@ async def list_plans(
             "name": p.name,
             "plan_type": p.plan_type,
             "price_cents": p.price_cents,
-            "formatted_price": format_minor_amount(p.price_cents, p.currency),
+            "formatted_price": safe_format_minor_amount(p.price_cents, p.currency),
+            "currency_supported": safe_format_minor_amount(p.price_cents, p.currency)
+            is not None,
             "currency": p.currency,
             "duration_days": p.duration_days,
             "credit_grant": str(p.credit_grant or Decimal(0)),
@@ -266,8 +269,14 @@ async def list_orders(
                 "plan_name": (o.plan_snapshot or {}).get("name")
                 or (o.plan.name if o.plan else None),
                 "amount_cents": o.amount_cents,
-                "formatted_amount": format_minor_amount(o.amount_cents, o.currency),
-                "formatted_refunded_amount": format_minor_amount(
+                "formatted_amount": safe_format_minor_amount(
+                    o.amount_cents, o.currency
+                ),
+                "currency_supported": safe_format_minor_amount(
+                    o.amount_cents, o.currency
+                )
+                is not None,
+                "formatted_refunded_amount": safe_format_minor_amount(
                     int(getattr(o, "refunded_amount_cents", 0) or 0), o.currency
                 ),
                 "refunded_amount_cents": int(
@@ -308,8 +317,14 @@ async def create_order(
             "order_no": order.order_no,
             "status": order.status,
             "amount_cents": order.amount_cents,
-            "formatted_amount": format_minor_amount(order.amount_cents, order.currency),
-            "formatted_refunded_amount": format_minor_amount(
+            "formatted_amount": safe_format_minor_amount(
+                order.amount_cents, order.currency
+            ),
+            "currency_supported": safe_format_minor_amount(
+                order.amount_cents, order.currency
+            )
+            is not None,
+            "formatted_refunded_amount": safe_format_minor_amount(
                 int(getattr(order, "refunded_amount_cents", 0) or 0), order.currency
             ),
             "currency": order.currency,
@@ -356,8 +371,14 @@ async def get_order(
         "order_no": order.order_no,
         "status": order.status,
         "amount_cents": order.amount_cents,
-        "formatted_amount": format_minor_amount(order.amount_cents, order.currency),
-        "formatted_refunded_amount": format_minor_amount(
+        "formatted_amount": safe_format_minor_amount(
+            order.amount_cents, order.currency
+        ),
+        "currency_supported": safe_format_minor_amount(
+            order.amount_cents, order.currency
+        )
+        is not None,
+        "formatted_refunded_amount": safe_format_minor_amount(
             int(getattr(order, "refunded_amount_cents", 0) or 0), order.currency
         ),
         "refunded_amount_cents": int(getattr(order, "refunded_amount_cents", 0) or 0),
@@ -465,7 +486,10 @@ async def update_plan(
     """编辑套餐"""
     svc = PaymentService(db)
     try:
-        plan = await svc.update_plan(plan_id, **req.model_dump(exclude_none=True))
+        updates = req.model_dump(exclude_unset=True, exclude_none=True)
+        if "concurrency_limit" in req.model_fields_set:
+            updates["concurrency_limit"] = req.concurrency_limit
+        plan = await svc.update_plan(plan_id, **updates)
         add_billing_admin_audit(
             db,
             actor_id=user["user_id"],
@@ -580,20 +604,28 @@ async def delete_redeem_code(
 @router.post("/admin/grant")
 async def grant_plan(
     req: GrantRequest,
+    request_key: str | None = Header(
+        None, alias="Idempotency-Key", min_length=1, max_length=191
+    ),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
     """手动为用户充值"""
+    if req.idempotency_key and request_key and req.idempotency_key != request_key:
+        raise HTTPException(status_code=400, detail="Conflicting idempotency keys")
+    # Old clients may omit the key. Each independent request is a new grant;
+    # replay clients must reuse the key returned here (or send their own).
+    key = req.idempotency_key or request_key or str(uuid4())
     svc = PaymentService(db)
     try:
         order = await svc.grant_plan_to_user(
             user_id=req.user_id,
             plan_id=req.plan_id,
             operator_id=user["user_id"],
-            idempotency_key=req.idempotency_key,
+            idempotency_key=key,
         )
         await db.commit()
-        return {"success": True, "order_no": order.order_no}
+        return {"success": True, "order_no": order.order_no, "idempotency_key": key}
     except PaymentError as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))

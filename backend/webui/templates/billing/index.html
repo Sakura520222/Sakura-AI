@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% from "components/billing_money.html" import money with context %}
 
-{% block title %}{{ _('billing.title') }} - Sakura AI{% endblock %}
+{% block title %}{{ _('billing.title') if payment_entries_enabled|default(true) else _('billing.order_history') }} - Sakura AI{% endblock %}
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
-        <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('billing.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.current_quota') }}, {{ _('billing.redeem_code') }}</p>
+        <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('billing.title') if payment_entries_enabled|default(true) else _('billing.order_history') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.current_quota') }}{% if payment_entries_enabled|default(true) %}, {{ _('billing.redeem_code') }}{% endif %}</p>
     </div>
 
     <div class="mb-8 bg-white dark:bg-gray-800 rounded-xl shadow p-6">
@@ -93,6 +94,7 @@
     {% endif %}
 
     <!-- 兑换码 -->
+    {% if payment_entries_enabled|default(true) %}
     <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.redeem_title') }}</h2>
         <form action="/billing/redeem" method="POST" class="flex gap-3">
@@ -109,9 +111,10 @@
             </button>
         </form>
     </div>
+    {% endif %}
 
     <!-- 可用套餐 -->
-    {% if plans %}
+    {% if plans and payment_entries_enabled|default(true) %}
     <div class="mb-8">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.available_plans') }}</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -125,7 +128,7 @@
                     </span>
                 </div>
                 <div class="text-2xl font-bold text-pink-600 dark:text-pink-400 mb-4">
-                    {{ plan.currency }} {{ format_minor_amount(plan.price_cents, plan.currency) }}
+                    {{ money(plan.price_cents, plan.currency) }}
                 </div>
                 {% if plan.description %}
                 <p class="text-sm text-gray-500 dark:text-gray-400 mb-3">{{ plan.description }}</p>
@@ -238,8 +241,8 @@
                             {{ (order.plan_snapshot or {}).get('name') or (order.plan.name if order.plan else '-') }}
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
-                            {% if order.amount_cents == 0 %}{{ _('billing.free') }}{% else %}{{ order.currency }} {{ format_minor_amount(order.amount_cents, order.currency) }}{% endif %}
-                            {% if order.refunded_amount_cents %}<p class="text-xs text-gray-500">{{ _('billing.refunded_amount') }}: {{ order.currency }} {{ format_minor_amount(order.refunded_amount_cents, order.currency) }}</p>{% endif %}
+                            {% if order.amount_cents == 0 %}{{ _('billing.free') }}{% else %}{{ money(order.amount_cents, order.currency) }}{% endif %}
+                            {% if order.refunded_amount_cents %}<p class="text-xs text-gray-500">{{ _('billing.refunded_amount') }}: {{ money(order.refunded_amount_cents, order.currency) }}</p>{% endif %}
                         </td>
                         <td class="px-6 py-4">
                             <span class="text-xs px-2 py-1 rounded-full

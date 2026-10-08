@@ -446,7 +446,10 @@ async def test_credit_surface_remains_available_when_payment_entries_disabled(
     assert (await client.get("/api/v1/billing/wallet")).status_code == 200
     assert (await client.get("/billing/credits")).status_code == 200
     assert (await client.get("/api/v1/billing/plans")).status_code == 404
-    assert (await client.get("/billing/")).status_code == 404
+    history = await client.get("/billing/")
+    assert history.status_code == 200
+    assert 'action="/billing/redeem"' not in history.text
+    assert 'action="/billing/purchase/' not in history.text
 
 
 @pytest.mark.asyncio
@@ -520,13 +523,22 @@ async def test_admin_grant_reuses_form_event_and_cannot_double_credit(billing_cl
             )
         )
         await db.commit()
-    assert (
-        await client.post(
-            "/api/v1/billing/admin/grant",
-            headers=headers,
-            json={"user_id": 1, "plan_id": 20},
-        )
-    ).status_code == 422
+    legacy = await client.post(
+        "/api/v1/billing/admin/grant",
+        headers=headers,
+        json={"user_id": 1, "plan_id": 20},
+    )
+    assert legacy.status_code == 200
+    replay = await client.post(
+        "/api/v1/billing/admin/grant",
+        headers=headers,
+        json={
+            "user_id": 1,
+            "plan_id": 20,
+            "idempotency_key": legacy.json()["idempotency_key"],
+        },
+    )
+    assert replay.json() == legacy.json()
     page = await client.get("/billing/admin/pricing", headers=headers)
     token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
     key = re.search(
@@ -543,7 +555,7 @@ async def test_admin_grant_reuses_form_event_and_cannot_double_credit(billing_cl
             .all()
         )
         assert len(orders) == 1
-        assert (await db.get(BillingWallet, 1)).balance_units == 16_750_000
+        assert (await db.get(BillingWallet, 1)).balance_units == 24_000_000
 
 
 @pytest.mark.asyncio

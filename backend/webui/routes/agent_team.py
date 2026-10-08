@@ -151,7 +151,12 @@ def _build_task_owner_filter(user: dict):
 
 
 async def _check_and_consume_agent_quota(
-    db: AsyncSession, user: dict, *, operation_id: str | None = None
+    db: AsyncSession,
+    user: dict,
+    *,
+    operation_id: str | None = None,
+    repo_name: str = "",
+    task_id: int = 0,
 ) -> tuple[bool, str]:
     """非管理员用户消费 Agent 配额，管理员跳过"""
     if _is_admin(user):
@@ -163,6 +168,9 @@ async def _check_and_consume_agent_quota(
     return await service.check_and_consume_agent_quota(
         github_username=user["sub"],
         operation_id=operation_id,
+        repo_name=repo_name,
+        task_id=task_id,
+        commit=False,
     )
 
 
@@ -792,10 +800,15 @@ async def create_task_from_candidate(
         base_branch=base_branch.strip() or None,
         overrides=overrides,
     )
-    task.billing_user_id = None if _is_admin(user) else user["user_id"]
-    task.billing_platform_reason = (
-        "administrator_agent_task" if _is_admin(user) else None
-    )
+    if _should_schedule_agent_task(task.status):
+        task.billing_user_id = None if _is_admin(user) else user["user_id"]
+        task.billing_platform_reason = (
+            "administrator_agent_task" if _is_admin(user) else None
+        )
+    else:
+        task.billing_operation_id = None
+        task.billing_user_id = None
+        task.billing_platform_reason = None
     await db.commit()
 
     await log_admin_action(
@@ -980,12 +993,6 @@ async def create_task_from_issue(
                 status_code=200,
             )
 
-    # Agent 配额消费（仓库权限校验通过后再扣费）
-    operation_id = str(uuid4())
-    ok, msg = await _check_and_consume_agent_quota(db, user, operation_id=operation_id)
-    if not ok:
-        return JSONResponse({"success": False, "message": msg}, status_code=200)
-
     try:
         overrides = _parse_task_overrides(
             title=title,
@@ -1041,24 +1048,49 @@ async def create_task_from_issue(
             started_by=user["sub"],
             base_branch=base_branch.strip() or None,
             overrides=overrides,
+            commit=False,
         )
     except CandidateServiceError:
+        await db.rollback()
         return JSONResponse(
             {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
             status_code=200,
         )
     except ValueError as e:
+        await db.rollback()
         return JSONResponse(
             {"success": False, "message": str(e)},
             status_code=200,
         )
 
-    task.billing_operation_id = operation_id
-    task.billing_user_id = None if _is_admin(user) else user["user_id"]
-    task.billing_platform_reason = (
-        "administrator_agent_task" if _is_admin(user) else None
-    )
-    await db.commit()
+    try:
+        if _should_schedule_agent_task(task.status):
+            operation_id = task.billing_operation_id or str(uuid4())
+            task.billing_operation_id = operation_id
+            task.billing_user_id = None if _is_admin(user) else user["user_id"]
+            task.billing_platform_reason = (
+                "administrator_agent_task" if _is_admin(user) else None
+            )
+            ok, msg = await _check_and_consume_agent_quota(
+                db,
+                user,
+                operation_id=operation_id,
+                repo_name=task.repo_full_name,
+                task_id=task.id,
+            )
+            if not ok:
+                await db.rollback()
+                return JSONResponse({"success": False, "message": msg}, status_code=200)
+        else:
+            # Saving a candidate or historical terminal task is not execution.
+            # Its first real submission allocates a fresh admission identity.
+            task.billing_operation_id = None
+            task.billing_user_id = None
+            task.billing_platform_reason = None
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
 
     await log_admin_action(
         db,
@@ -1115,8 +1147,15 @@ async def retry_task(
 
     # Agent 配额消费（确认任务可重试后再扣费）
     operation_id = str(uuid4())
-    ok, msg = await _check_and_consume_agent_quota(db, user, operation_id=operation_id)
+    ok, msg = await _check_and_consume_agent_quota(
+        db,
+        user,
+        operation_id=operation_id,
+        repo_name=task.repo_full_name,
+        task_id=task.id,
+    )
     if not ok:
+        await db.rollback()
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     old_status = task.status
@@ -1969,7 +2008,11 @@ async def submit_user_prompt(
             )
         else:
             allowed, reason = await _check_and_consume_agent_quota(
-                db, user, operation_id=operation_id
+                db,
+                user,
+                operation_id=operation_id,
+                repo_name=task.repo_full_name,
+                task_id=task.id,
             )
             if not allowed:
                 await db.rollback()

@@ -40,6 +40,8 @@ from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
@@ -191,12 +193,7 @@ class NowPaymentsGateway(PaymentGateway):
                 hashlib.sha512,
             ).hexdigest()
             if not hmac.compare_digest(expected, signature):
-                logger.warning(
-                    "NOWPayments IPN sig mismatch: expected={}, got={}, sorted_data={}",
-                    expected[:16] + "...",
-                    signature[:16] + "..." if len(signature) > 16 else signature,
-                    sorted_data[:200],
-                )
+                logger.warning("NOWPayments IPN signature mismatch")
                 return False
             return True
         except Exception as e:
@@ -291,21 +288,18 @@ class NowPaymentsGateway(PaymentGateway):
 
         回调是 POST JSON，x-nowpayments-sig 头包含 HMAC-SHA512 签名。
         """
+        if not isinstance(self._ipn_secret, str) or not self._ipn_secret.strip():
+            raise PaymentWebhookConfigurationError(
+                "NOWPayments verification is not configured"
+            )
+        signature = headers.get("x-nowpayments-sig", "")
+        if not signature or not self._verify_ipn_signature(payload, signature):
+            raise PaymentWebhookVerificationError("Invalid NOWPayments signature")
+
         try:
-            # 验签
-            signature = headers.get("x-nowpayments-sig", "")
-            if not signature:
-                logger.warning("NOWPayments IPN: missing signature")
-                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
-
-            if not self._ipn_secret or not self._ipn_secret.strip():
-                logger.warning("NOWPayments IPN: missing verification secret")
-                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
-            if not self._verify_ipn_signature(payload, signature):
-                logger.warning("NOWPayments IPN: signature verification failed")
-                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
-
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                raise PaymentWebhookVerificationError("Invalid NOWPayments payload")
             payment_status = data.get("payment_status", "")
             payment_id = str(data.get("payment_id", ""))
             order_id = str(data.get("order_id", ""))
@@ -384,12 +378,9 @@ class NowPaymentsGateway(PaymentGateway):
                 },
             )
 
-        except Exception as e:
-            logger.error("NOWPayments webhook verification error: {}", e)
-            return WebhookEvent(
-                event_type=WebhookEventType.UNKNOWN,
-                raw_event={"error": str(e)},
-            )
+        except Exception as exc:
+            logger.error("NOWPayments webhook parsing failed: {}", type(exc).__name__)
+            raise
 
     # ------------------------------------------------------------------
     # 退款（NOWPayments 不支持 API 退款）

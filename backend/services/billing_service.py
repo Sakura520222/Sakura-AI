@@ -1048,7 +1048,7 @@ class BillingService:
             )
         ).scalar_one_or_none()
 
-    async def _operation(self, operation_id):
+    async def _operation(self, operation_id, *, allow_missing=False):
         identity = (
             await self.session.execute(
                 select(BillingOperation.user_id).where(
@@ -1067,7 +1067,17 @@ class BillingService:
             )
         ).scalar_one_or_none()
         if operation is None:
+            if allow_missing:
+                return None
             raise BillingError("Billing operation not registered")
+        if operation.user_id is not None and (
+            identity is None or identity[0] != operation.user_id
+        ):
+            # A MySQL repeatable-read snapshot can miss a recently committed
+            # immutable identity while the locking read sees its operation.
+            # Never acquire its wallet after the operation lock: roll back and
+            # retry in a fresh transaction to preserve wallet -> operation order.
+            raise BillingConflict()
         return operation
 
     async def register_operation(
@@ -1088,6 +1098,7 @@ class BillingService:
                 select(BillingOperation)
                 .where(BillingOperation.operation_id == operation_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if existing:
