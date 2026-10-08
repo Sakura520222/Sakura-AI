@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Audit wallets, release abandoned reservations and resolve reviewed Usage.
 
 Read-only by default. This CLI never sends an AI request, payment or refund.

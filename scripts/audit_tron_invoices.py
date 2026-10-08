@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Review old TRON invoice identities; never guess an ambiguous payer."""
 
 import argparse
