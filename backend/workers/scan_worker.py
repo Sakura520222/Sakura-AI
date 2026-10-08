@@ -26,6 +26,7 @@ from backend.core.time_service import now_utc
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.billing_context import billable_record
 
 # 扫描并发控制信号量
 _scan_semaphore: asyncio.Semaphore | None = None
@@ -167,9 +168,13 @@ class ScanWorker:
         return await _db_retry(_create)
 
     @task_logging("scan")
-    async def process_scan(self, scan_id: int):
+    @billable_record("repo_scan")
+    async def process_scan(self, scan_id: int, *, resume: bool = False):
         """执行扫描主流程"""
         update_log_context(task_id=scan_id)
+        # Only trusted checkpoint recovery passes resume; explicit user retries
+        # receive a fresh operation at admission. The billing decorator restores
+        # and validates the original operation before entering any provider call.
         # Deadline starts before semaphore admission so queueing time is part of
         # the same task budget.  It is soft: only the next AI call is forced to
         # produce a tool-free final response.

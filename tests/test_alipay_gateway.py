@@ -216,7 +216,7 @@ class TestRefund:
                 )
 
         assert result.success is True
-        assert result.status == "refunded"
+        assert result.status == "succeeded"
 
     @pytest.mark.asyncio
     async def test_refund_error(self, gateway):

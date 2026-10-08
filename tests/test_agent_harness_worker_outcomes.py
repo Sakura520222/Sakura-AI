@@ -9,6 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from backend.workers import agent_team_worker as module
+from tests.worker_capacity_support import install_unit_worker_capacity
+
+
+@pytest.fixture(autouse=True)
+def isolated_capacity_boundary(monkeypatch):
+    install_unit_worker_capacity(monkeypatch)
 
 
 @pytest.mark.asyncio

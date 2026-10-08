@@ -13,6 +13,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -77,11 +78,37 @@ from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 class _FormRequest:
     """只实现保存路由需要的 Request 接口。"""
 
-    def __init__(self, form_data: Mapping[str, str]) -> None:
+    def __init__(self, form_data: Mapping[str, str], *, ajax: bool = False) -> None:
         self._form_data = form_data
+        self.headers = {"accept": "application/json"} if ajax else {}
 
     async def form(self) -> Mapping[str, str]:
         return self._form_data
+
+
+def _config_error(response, field: str, *, ajax: bool = False) -> dict:
+    """Assert the observable form/AJAX error contract, without mocking feedback."""
+    if ajax:
+        assert response.status_code == 400
+        payload = json.loads(response.body)
+        assert payload["ok"] is False
+        assert "配置保存失败" in payload["toast"]
+        errors = payload["errors"]
+    else:
+        assert response.status_code == 302
+        target = urlsplit(response.headers["location"])
+        assert target.path == "/config"
+        query = parse_qs(target.query)
+        assert query["_toast_type"] == ["error"]
+        assert "配置保存失败" in query["_toast"][0]
+        errors = json.loads(query["_errors"][0])
+    assert len(errors) == 1
+    error = errors[0]
+    assert error["field"] == field
+    assert error["code"] == "invalid_config_value"
+    assert isinstance(error["message"], str) and error["message"]
+    assert not error["message"].startswith("toast.")
+    return error
 
 
 def _route(path: str, method: str, target_router=router) -> APIRoute:
@@ -564,14 +591,8 @@ async def test_general_save_rejects_dependency_retry_out_of_range(
     monkeypatch, key, value
 ):
     _patch_save_deps(monkeypatch)
-    calls = []
-    monkeypatch.setattr(
-        config_routes,
-        "toast_redirect",
-        lambda *args, **kwargs: calls.append((args, kwargs)),
-    )
     db = _FakeSession()
-    await config_routes.save_general_config(
+    response = await config_routes.save_general_config(
         _FormRequest({"csrf_token": "t", key: value}),
         db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
@@ -580,8 +601,10 @@ async def test_general_save_rejects_dependency_retry_out_of_range(
 
     assert not db.committed
     assert db.added == []
-    assert calls[0][0][1:3] == ("toast.value_range", "error")
-    assert calls[0][1]["field_key"] == key
+    error = _config_error(response, key)
+    assert "值须在" in error["message"]
+    bounds = (1, 5) if key == "agent_team_dependency_install_attempts" else (0.0, 60.0)
+    assert error["params"] == {"min_v": bounds[0], "max_v": bounds[1]}
 
 
 @pytest.mark.parametrize(
@@ -677,24 +700,20 @@ async def test_general_save_persists_web_search_and_review_basic_keys(
 async def test_general_save_rejects_below_min_open_ended_range(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """开区间上界键只约束下界：0 → toast.value_min_required。"""
+    """开区间上界键只约束下界：0 被拒绝且响应定位字段。"""
     _patch_save_deps(monkeypatch)
-    calls: list[dict] = []
-
-    def fake_toast_redirect(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return object()
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
     form = {"csrf_token": "t", "max_concurrent_reviews": "0"}
-    await config_routes.save_general_config(
+    db = _FakeSession()
+    response = await config_routes.save_general_config(
         _FormRequest(form),
-        db=_FakeSession(),
+        db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         csrf_token="t",
     )
-    assert calls and calls[0]["args"][1] == "toast.value_min_required"
-    assert calls[0]["kwargs"]["min_v"] == 1
+    error = _config_error(response, "max_concurrent_reviews")
+    assert "值须不小于 1" in error["message"]
+    assert error["params"] == {"min_v": 1}
+    assert db.added == [] and db.committed is False
 
 
 @pytest.mark.asyncio
@@ -720,52 +739,40 @@ async def test_general_save_accepts_large_open_ended_value(
 async def test_general_save_validates_protocol_repair_range(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """protocol_repair_max_attempts 上界 10：越界 → toast.value_range。"""
+    """protocol_repair_max_attempts 上界 10：越界响应保留范围约束。"""
     _patch_save_deps(monkeypatch)
-    calls: list[dict] = []
-
-    def fake_toast_redirect(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return object()
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
     form = {"csrf_token": "t", "protocol_repair_max_attempts": "11"}
-    await config_routes.save_general_config(
+    db = _FakeSession()
+    response = await config_routes.save_general_config(
         _FormRequest(form),
-        db=_FakeSession(),
+        db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         csrf_token="t",
     )
-    assert calls and calls[0]["args"][1] == "toast.value_range"
-    expected = {
-        "min_v": 1,
-        "max_v": 10,
-        "field_key": "protocol_repair_max_attempts",
-    }
-    assert expected.items() <= calls[0]["kwargs"].items()
+    error = _config_error(response, "protocol_repair_max_attempts")
+    assert "值须在 1-10 之间" in error["message"]
+    assert error["params"] == {"min_v": 1, "max_v": 10}
+    assert db.added == [] and db.committed is False
 
 
 @pytest.mark.asyncio
 async def test_general_save_rejects_unknown_web_search_provider(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """web_search_provider 走 SELECT_OPTIONS 校验：非法值 → toast.value_invalid。"""
+    """web_search_provider 走 SELECT_OPTIONS 校验：非法值不保存。"""
     _patch_save_deps(monkeypatch)
-    calls: list[dict] = []
-
-    def fake_toast_redirect(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return object()
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
     form = {"csrf_token": "t", "web_search_provider": "google"}
-    await config_routes.save_general_config(
+    db = _FakeSession()
+    response = await config_routes.save_general_config(
         _FormRequest(form),
-        db=_FakeSession(),
+        db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         csrf_token="t",
     )
-    assert calls and calls[0]["args"][1] == "toast.value_invalid"
+    error = _config_error(response, "web_search_provider")
+    assert "值无效" in error["message"]
+    assert error["params"] == {}
+    assert db.added == [] and db.committed is False
 
 
 @pytest.mark.asyncio
@@ -813,22 +820,17 @@ async def test_general_save_rejects_fractional_integer_without_side_effects(
 ):
     """整数配置拒绝 1.5，而不是先转成浮点再截断。"""
     _patch_save_deps(monkeypatch)
-    calls: list[dict] = []
-
-    def fake_toast_redirect(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return object()
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
     db = _FakeSession()
-    await config_routes.save_general_config(
-        _FormRequest({"max_concurrent_reviews": "1.5"}),
+    response = await config_routes.save_general_config(
+        _FormRequest({"max_concurrent_reviews": "1.5"}, ajax=True),
         db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         csrf_token="t",
     )
 
-    assert calls and calls[0]["args"][1] == "toast.numeric_required"
+    error = _config_error(response, "max_concurrent_reviews", ajax=True)
+    assert "必须是有效数值" in error["message"]
+    assert error["params"] == {}
     assert db.added == []
     assert db.committed is False
 
@@ -840,22 +842,17 @@ async def test_general_save_rejects_non_finite_float_without_side_effects(
 ):
     """浮点配置只接受有限值，NaN/Infinity 不能绕过范围比较。"""
     _patch_save_deps(monkeypatch)
-    calls: list[dict] = []
-
-    def fake_toast_redirect(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return object()
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
     db = _FakeSession()
-    await config_routes.save_general_config(
-        _FormRequest({"rerank_score_threshold": raw}),
+    response = await config_routes.save_general_config(
+        _FormRequest({"rerank_score_threshold": raw}, ajax=True),
         db=db,
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         csrf_token="t",
     )
 
-    assert calls and calls[0]["args"][1] == "toast.numeric_required"
+    error = _config_error(response, "rerank_score_threshold", ajax=True)
+    assert "必须是有效数值" in error["message"]
+    assert error["params"] == {}
     assert db.added == []
     assert db.committed is False
 

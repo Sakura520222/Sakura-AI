@@ -272,6 +272,11 @@ async def reanalyze_issue(
             status_code=error.status_code,
         )
 
+    if user.get("role") in {"admin", "super_admin"}:
+        issue_info["billing_platform_reason"] = "administrator_issue_reanalysis"
+    else:
+        issue_info["user_id"] = user.get("user_id")
+
     # 计算分析版本号
     from backend.models.database import IssueAnalysis as IssueAnalysisModel
 

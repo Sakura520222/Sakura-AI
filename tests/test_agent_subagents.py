@@ -10,6 +10,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from backend.models import agent_team_models as models
+from backend.models.ai_usage_models import AIUsageRecord
+from backend.models.billing_models import (
+    BillingCallAttempt,
+    BillingOperation,
+    BillingPriceProfile,
+    BillingUsageCharge,
+)
 from backend.models.database import AppConfig, Base
 from backend.services.agent_team import conversation_checkpoint as checkpoint_module
 from backend.services.agent_team import fullstack_expert as runtime
@@ -18,6 +25,7 @@ from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.registry import create_executor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.utils.message_utils import tool_call_to_dict
+from tests.test_billing_wallet import AsyncNested
 
 
 def call(name, ident="call_1", **args):
@@ -38,8 +46,10 @@ def response(*calls, text=""):
 
 
 @pytest.fixture
-def persistence(monkeypatch):
-    engine = create_engine("sqlite://")
+def persistence(monkeypatch, tmp_path):
+    # Billing settings use a separate session; file-backed SQL keeps that read
+    # from rolling back the provider meter's active write on a shared connection.
+    engine = create_engine(f"sqlite:///{tmp_path / 'agent.sqlite'}")
     tables = [
         models.AgentTeamTask,
         models.AgentTeamSession,
@@ -48,6 +58,11 @@ def persistence(monkeypatch):
         models.AgentTeamSubagent,
         models.AgentTeamUsage,
         AppConfig,
+        AIUsageRecord,
+        BillingOperation,
+        BillingPriceProfile,
+        BillingCallAttempt,
+        BillingUsageCharge,
     ]
     Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])
 
@@ -72,6 +87,9 @@ def persistence(monkeypatch):
 
         async def flush(self):
             self.db.flush()
+
+        def begin_nested(self):
+            return AsyncNested(self.db.begin_nested())
 
         async def commit(self):
             self.db.commit()

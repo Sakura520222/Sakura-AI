@@ -1089,7 +1089,7 @@ class ObservedModelSender:
                     final_usage = (
                         event_usage
                         if final_usage is None
-                        else final_usage.add(event_usage)
+                        else final_usage.merge_snapshot(event_usage)
                     )
                 event_stop_reason = getattr(event, "stop_reason", None)
                 if event_stop_reason is not None:

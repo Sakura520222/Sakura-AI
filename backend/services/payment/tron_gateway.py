@@ -24,6 +24,8 @@
 """
 
 import hashlib
+import re
+from decimal import Decimal, InvalidOperation
 
 import httpx
 from loguru import logger
@@ -46,6 +48,7 @@ class TronGateway(PaymentGateway):
 
     TRONGRID_API = "https://api.trongrid.io"
     TRONSCAN_API = "https://apilist.tronscanapi.com"
+    INVOICE_SUFFIX_VARIANTS = 10000  # Six USDT decimals inside one cent.
 
     def __init__(
         self,
@@ -72,22 +75,34 @@ class TronGateway(PaymentGateway):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _calculate_unique_amount(base_usdt: float, order_no: str) -> float:
+    def _invoice_suffix(order_no: str) -> int:
+        # Server-created retry tags enumerate every suffix exactly once.
+        # Original invoice identities never become available again.
+        tagged = re.fullmatch(r"(ORD[0-9]{14}[0-9A-F]{8})T([0-9]{4})", order_no)
+        seed = tagged.group(1) if tagged else order_no
+        offset = int(tagged.group(2)) if tagged else 0
+        digest = hashlib.md5(seed.encode()).hexdigest()
+        return (int(digest[:4], 16) + offset) % TronGateway.INVOICE_SUFFIX_VARIANTS
+
+    @staticmethod
+    def _calculate_unique_amount(base_usdt: Decimal, order_no: str) -> Decimal:
         """为订单计算唯一的 USDT 支付金额
 
         在基础金额上附加一个基于 order_no 的微量后缀（0.000001~0.009999），
         确保同一收款地址上的不同订单金额不会重复。
         """
-        h = hashlib.md5(order_no.encode()).hexdigest()
-        suffix = int(h[:4], 16) % 10000  # 0~9999
-        return round(base_usdt + suffix * 0.000001, 6)
+        suffix = TronGateway._invoice_suffix(order_no)
+        return (base_usdt + Decimal(suffix) / Decimal(1_000_000)).quantize(
+            Decimal("0.000001")
+        )
 
     @staticmethod
-    def _extract_base_amount(unique_usdt: float, order_no: str) -> float:
+    def _extract_base_amount(unique_usdt: Decimal, order_no: str) -> Decimal:
         """从唯一金额中还原基础金额（用于验证）"""
-        h = hashlib.md5(order_no.encode()).hexdigest()
-        suffix = int(h[:4], 16) % 10000
-        return round(unique_usdt - suffix * 0.000001, 6)
+        suffix = TronGateway._invoice_suffix(order_no)
+        return (unique_usdt - Decimal(suffix) / Decimal(1_000_000)).quantize(
+            Decimal("0.000001")
+        )
 
     # ------------------------------------------------------------------
     # TronGrid API
@@ -100,6 +115,8 @@ class TronGateway(PaymentGateway):
             "limit": limit,
             "contract_address": USDT_TRC20_CONTRACT,
             "order_by": "block_timestamp,desc",
+            "only_confirmed": "true",
+            "only_to": "true",
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -113,12 +130,13 @@ class TronGateway(PaymentGateway):
             logger.warning("TronGrid query failed: {}", e)
             return []
 
-    def _parse_transfer_amount(self, raw: str) -> float:
-        """USDT TRC-20 金额解析（6 位小数，字符串→float）"""
+    def _parse_transfer_amount(self, raw: str) -> Decimal | None:
+        """USDT atomic units are exact integers; malformed evidence is unknown."""
         try:
-            return int(raw) / 1_000_000
+            units = int(raw)
         except ValueError, TypeError:
-            return 0.0
+            return None
+        return Decimal(units) / Decimal(1_000_000) if units >= 0 else None
 
     # ------------------------------------------------------------------
     # 创建支付
@@ -141,7 +159,7 @@ class TronGateway(PaymentGateway):
         内部计算唯一金额并返回收款信息。
         """
         # amount_cents 是 USDT cents（如 1861 = $18.61 USDT）
-        base_usdt = amount_cents / 100
+        base_usdt = Decimal(amount_cents) / Decimal(100)
         unique_usdt = self._calculate_unique_amount(base_usdt, order_no)
 
         logger.info(
@@ -188,6 +206,7 @@ class TronGateway(PaymentGateway):
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         """TRON 链上无法自动退款，需手动操作"""
         return RefundResult(
@@ -225,12 +244,22 @@ class TronGateway(PaymentGateway):
     async def check_payment_by_amount(
         self,
         order_no: str,
-        expected_usdt: float,
+        expected_usdt: Decimal,
+        *,
+        min_block_timestamp: int = 0,
     ) -> PaymentStatusResult:
         """按唯一金额匹配链上转账
 
         遍历最近的 USDT 转账记录，查找与 expected_usdt 匹配的转入。
         """
+        if isinstance(expected_usdt, (float, bool)):
+            raise ValueError("Expected payment amount must be an exact Decimal")
+        try:
+            expected_usdt = Decimal(expected_usdt)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError("Invalid payment amount") from exc
+        if not expected_usdt.is_finite() or expected_usdt <= 0:
+            raise ValueError("Payment amount must be finite and positive")
         transfers = await self._get_trc20_transfers(self._wallet_address, limit=50)
 
         for tx in transfers:
@@ -242,8 +271,8 @@ class TronGateway(PaymentGateway):
             # 检查 token 类型
             token_info = tx.get("token_info", {})
             if (
-                token_info.get("symbol", "").upper() != "USDT"
-                and tx.get("contract_address", "") != USDT_TRC20_CONTRACT
+                token_info.get("address", tx.get("contract_address", ""))
+                != USDT_TRC20_CONTRACT
             ):
                 continue
 
@@ -251,8 +280,15 @@ class TronGateway(PaymentGateway):
             raw_value = tx.get("value", "0")
             amount = self._parse_transfer_amount(str(raw_value))
 
-            # 精确匹配唯一金额（允许 ±0.000001 误差）
-            if abs(amount - expected_usdt) < 0.000002:
+            # Atomic token units are exact. A tolerance could match another
+            # invoice's suffix or an underpaid transfer.
+            if tx.get("block_timestamp", 0) < min_block_timestamp:
+                continue
+            if (
+                amount is not None
+                and amount == expected_usdt
+                and tx.get("transaction_id")
+            ):
                 tx_hash = tx.get("transaction_id", "")
                 block_ts = tx.get("block_timestamp", 0)
 
@@ -274,7 +310,7 @@ class TronGateway(PaymentGateway):
                     raw_data={
                         "payment_status": "finished",
                         "tx_hash": tx_hash,
-                        "amount": amount,
+                        "amount": str(amount),
                         "block_timestamp": block_ts,
                         "from_address": tx.get("from", ""),
                     },

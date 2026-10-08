@@ -1,0 +1,194 @@
+<script>
+(function () {
+    const labels = {
+        failed: {{ _('config.save_unknown_error') | tojson }},
+        locate: {{ _('config.save_locate_field') | tojson }},
+        resolve: {{ _('config.save_resolve') | tojson }},
+        required: {{ _('config.save_required') | tojson }},
+        minimum: {{ _('config.save_minimum') | tojson }},
+        maximum: {{ _('config.save_maximum') | tojson }},
+        step: {{ _('config.save_step') | tojson }},
+        short: {{ _('config.save_short') | tojson }},
+        long: {{ _('config.save_long') | tojson }},
+        invalid: {{ _('config.save_invalid') | tojson }},
+    };
+
+    function fieldControl(field) {
+        const container = document.getElementById('config-scroll');
+        if (!field || !container) return null;
+        return Array.from(document.getElementsByName(field)).find(function (node) {
+            return container.contains(node) && node.type !== 'hidden';
+        }) || null;
+    }
+
+    function clear() {
+        const container = document.getElementById('config-scroll');
+        if (container) {
+            container.querySelectorAll('[data-config-error]').forEach(function (node) { node.remove(); });
+            container.querySelectorAll('[aria-invalid="true"]').forEach(function (node) {
+                node.removeAttribute('aria-invalid');
+                node.classList.remove('ring-2', 'ring-red-500');
+                const original = node.getAttribute('data-config-original-description');
+                if (original) node.setAttribute('aria-describedby', original);
+                else node.removeAttribute('aria-describedby');
+                node.removeAttribute('data-config-original-description');
+            });
+        }
+        const summary = document.getElementById('config-save-errors');
+        const list = document.getElementById('config-save-error-list');
+        if (summary) summary.hidden = true;
+        if (list) list.replaceChildren();
+    }
+
+    function focusError(control, anchor) {
+        // Expand collapsed cards through Alpine, preserving x-show ownership.
+        const expandable = control || document.getElementById(anchor);
+        if (expandable) {
+            let activeTab = null;
+            for (let node = expandable; node; node = node.parentElement) {
+                if (node.getAttribute('data-config-tab')) activeTab = node.getAttribute('data-config-tab');
+                if (node.tagName === 'DETAILS') node.open = true;
+                if (node.getAttribute('x-data') && window.Alpine && Alpine.$data) {
+                    const data = Alpine.$data(node);
+                    if (typeof data.expanded === 'boolean') data.expanded = true;
+                    if (activeTab && typeof data.activeTab === 'string') data.activeTab = activeTab;
+                }
+            }
+        }
+        function focus() {
+            const target = control || document.getElementById(anchor);
+            const container = document.getElementById('config-scroll');
+            if (!target) return;
+            if (container && container.getAttribute('data-config-document-scroll') !== null) {
+                target.scrollIntoView({block: 'center', behavior: 'smooth'});
+            } else if (container && container.scrollBy) {
+                container.scrollBy({
+                    top: target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24,
+                    behavior: 'smooth',
+                });
+            }
+            if (control) control.focus({preventScroll: true});
+        }
+        if (window.Alpine && Alpine.nextTick) Alpine.nextTick(focus);
+        else requestAnimationFrame(focus);
+    }
+
+    function fieldLabel(control, field) {
+        if (!control) return field || '';
+        const configured = control.getAttribute('data-config-label');
+        if (configured) return configured;
+        if (control.labels && control.labels.length) return control.labels[0].textContent.trim();
+        const parent = control.parentElement;
+        const label = parent && parent.querySelector('label');
+        return label ? label.textContent.trim() : field || '';
+    }
+
+    function safeHelpUrl(value) {
+        if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return null;
+        const url = new URL(value, window.location.origin);
+        return url.origin === window.location.origin ? url.pathname + url.search + url.hash : null;
+    }
+
+    function render(payload) {
+        clear();
+        const summary = document.getElementById('config-save-errors');
+        const list = document.getElementById('config-save-error-list');
+        if (!summary || !list) return;
+        let errors = Array.isArray(payload.errors) ? payload.errors : [];
+        if (!errors.length) {
+            errors = (Array.isArray(payload.results) ? payload.results : []).filter(function (result) {
+                return !result.ok;
+            }).flatMap(function (result) {
+                return Array.isArray(result.errors) && result.errors.length
+                    ? result.errors.map(function (error) { return Object.assign({anchor: result.anchor}, error); })
+                    : [{anchor: result.anchor, message: result.toast || labels.failed}];
+            });
+        }
+        if (!errors.length) errors = [{message: payload.toast || labels.failed}];
+        let first = null;
+        const seen = new Set();
+        errors.forEach(function (error, index) {
+            if (!error || typeof error !== 'object') return;
+            const message = typeof error.message === 'string' ? error.message : labels.failed;
+            const key = JSON.stringify([error.field, error.anchor, message]);
+            if (seen.has(key)) return;
+            seen.add(key);
+            const control = fieldControl(error.field);
+            const section = control ? control.closest('section') : document.getElementById(error.anchor);
+            const heading = section && section.querySelector('h2, h3');
+            const name = fieldLabel(control, error.field);
+            const context = [heading && heading.textContent.trim(), name].filter(Boolean).join(' — ');
+            const description = (context ? context + ': ' : '') + message;
+            const item = document.createElement('li');
+            item.className = 'space-y-1';
+            const title = document.createElement(control || section ? 'button' : 'p');
+            title.textContent = description;
+            if (control || section) {
+                title.type = 'button';
+                title.className = 'text-left font-medium underline underline-offset-2 hover:no-underline';
+                title.setAttribute('aria-label', labels.locate + ': ' + description);
+                title.addEventListener('click', function () { focusError(control, section && section.id); });
+            }
+            item.appendChild(title);
+            if (Array.isArray(error.details)) {
+                const details = document.createElement('ul');
+                details.className = 'list-disc pl-5 text-xs';
+                error.details.filter(function (value) { return typeof value === 'string'; }).forEach(function (value) {
+                    const detail = document.createElement('li');
+                    detail.textContent = value;
+                    details.appendChild(detail);
+                });
+                item.appendChild(details);
+            }
+            const helpUrl = safeHelpUrl(error.help_url);
+            if (helpUrl) {
+                const link = document.createElement('a');
+                link.href = helpUrl;
+                link.textContent = typeof error.help_label === 'string' ? error.help_label : labels.resolve;
+                link.className = 'inline-block text-xs font-medium underline underline-offset-2';
+                item.appendChild(link);
+            }
+            list.appendChild(item);
+            if (control) {
+                const feedback = document.createElement('p');
+                feedback.id = 'config-field-error-' + index;
+                feedback.setAttribute('data-config-error', 'true');
+                feedback.className = 'config-field-error w-full mt-1 text-xs text-red-700 dark:text-red-300';
+                feedback.textContent = message;
+                const row = control.closest('[data-config-field]') || control.parentElement;
+                row.appendChild(feedback);
+                if (control.getAttribute('aria-invalid') !== 'true') {
+                    control.setAttribute('data-config-original-description', control.getAttribute('aria-describedby') || '');
+                }
+                control.setAttribute('aria-invalid', 'true');
+                control.classList.add('ring-2', 'ring-red-500');
+                const described = control.getAttribute('aria-describedby');
+                control.setAttribute('aria-describedby', (described ? described + ' ' : '') + feedback.id);
+            }
+            if (!first && (control || section)) first = {control: control, anchor: section && section.id};
+        });
+        summary.hidden = false;
+        if (first) focusError(first.control, first.anchor);
+    }
+
+    function nativeErrors(forms) {
+        return forms.flatMap(function (form) {
+            return Array.from(form.querySelectorAll('input, select, textarea')).filter(function (control) {
+                return control.willValidate !== false && control.validity && !control.validity.valid && control.type !== 'hidden';
+            }).map(function (control) {
+                const validity = control.validity;
+                let message = labels.invalid;
+                if (validity.valueMissing) message = labels.required;
+                else if (validity.rangeUnderflow) message = labels.minimum.replace('{min}', control.min);
+                else if (validity.rangeOverflow) message = labels.maximum.replace('{max}', control.max);
+                else if (validity.stepMismatch) message = labels.step.replace('{step}', control.step || '1');
+                else if (validity.tooShort) message = labels.short.replace('{min}', control.minLength);
+                else if (validity.tooLong) message = labels.long.replace('{max}', control.maxLength);
+                return {field: control.name, code: 'invalid_input', message: message};
+            });
+        });
+    }
+
+    window.SakuraConfigFeedback = {render: render, clear: clear, nativeErrors: nativeErrors};
+})();
+</script>

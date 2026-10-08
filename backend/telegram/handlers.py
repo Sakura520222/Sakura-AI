@@ -1363,6 +1363,7 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id=target_user.id,
                 plan_id=plan_id,
                 operator_id=operator.id if operator else None,
+                idempotency_key=f"telegram-grant:{update.update_id}",
             )
             await session.commit()
             await update.message.reply_text(

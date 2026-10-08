@@ -227,6 +227,7 @@ class TestVerifyWebhook:
             "payment_status": "expired",
             "order_id": "ORDER-002",
             "price_amount": 5.0,
+            "price_currency": "usd",
         }
         body = json.dumps(data).encode("utf-8")
         sig = _make_ipn_signature(data, IPN_SECRET)
@@ -398,3 +399,10 @@ class TestGetPaymentStatus:
 
         assert result.success is False
         assert "Not found" in result.error_message
+
+
+def test_nowpayments_major_amounts_follow_canonical_minor_units():
+    assert NowPaymentsGateway._from_minor_units(500, "MGA") == 5.0
+    assert NowPaymentsGateway._from_minor_units(1234, "BHD") == 1.234
+    assert NowPaymentsGateway._to_minor_units("5", "MGA") == 500
+    assert NowPaymentsGateway._to_minor_units("1.234", "BHD") == 1234

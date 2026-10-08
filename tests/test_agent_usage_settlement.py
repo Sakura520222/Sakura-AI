@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models import agent_team_models as models
+from backend.models.ai_usage_models import AIUsageRecord
+from backend.models.billing_models import BillingCallAttempt
 from backend.services.agent_team import conversation_checkpoint as checkpoint_module
 from backend.services.agent_team import fullstack_expert as runtime
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
@@ -581,6 +583,22 @@ async def test_fullstack_accounts_for_summary_and_main_responses_once(
         with Session(engine) as db:
             receipts = db.scalars(select(models.AgentTeamUsage)).all()
             assert len(receipts) == len(provider.requests)
+            provider_receipts = db.scalars(select(AIUsageRecord)).all()
+            attempts = db.scalars(select(BillingCallAttempt)).all()
+            assert len(provider_receipts) == len(provider.requests) == len(attempts)
+            assert {row.call_kind for row in provider_receipts} == {
+                "chat",
+                "context_compression",
+            }
+            assert {row.actual_call_id for row in provider_receipts} == {
+                attempt.call_id for attempt in attempts
+            }
+            assert sum(row.input_tokens for row in provider_receipts) == (
+                8 * len(provider.requests)
+            )
+            assert sum(row.output_tokens for row in provider_receipts) == (
+                4 * len(provider.requests)
+            )
         assert (result.prompt_tokens, result.completion_tokens) == (
             8 * len(provider.requests),
             4 * len(provider.requests),

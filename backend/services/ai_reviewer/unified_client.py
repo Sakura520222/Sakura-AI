@@ -54,6 +54,11 @@ from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
 )
 from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
+from backend.services.ai_usage_service import (
+    ProviderUsageMeter,
+    is_billing_failure,
+    metered_stream,
+)
 
 
 def _get_adapter(family):
@@ -428,11 +433,9 @@ class UnifiedAIClient:
     ) -> None:
         recorder = self._usage_recorder
         if recorder is None:
-            from backend.services.ai_usage_service import (
-                record_unified_ai_usage_best_effort,
-            )
-
-            recorder = record_unified_ai_usage_best_effort
+            # The transport boundary meters every real request, including
+            # unsuccessful attempts. This hook remains for injected observers.
+            return
         try:
             await recorder(
                 logical_call_id=logical_call_id,
@@ -659,7 +662,9 @@ class UnifiedAIClient:
                 except UsagePersistenceError:
                     raise
                 except Exception as exc:
-                    logger.warning(
+                    if is_billing_failure(exc):
+                        raise
+                            logger.warning(
                         "主动压缩预检失败，按原消息继续: {}",
                         sanitize_exception_text(exc),
                     )
@@ -1034,7 +1039,9 @@ class UnifiedAIClient:
                 except UsagePersistenceError:
                     raise
                 except Exception as exc:
-                    logger.warning(
+                    if is_billing_failure(exc):
+                        raise
+                            logger.warning(
                         "流式主动压缩预检失败，按原消息继续: {}",
                         sanitize_exception_text(exc),
                     )
@@ -1155,6 +1162,12 @@ class UnifiedAIClient:
                             requested=requested_candidate,
                             reasoning_snapshot=reasoning_snapshot,
                         )
+                    events = metered_stream(
+                        events,
+                        candidate=candidate,
+                        role=role,
+                        logical_call_id=logical_call_id,
+                    )
                     self._mark_logical_attempt(logical_call_id)
                     try:
                         async with asyncio.timeout(iteration_timeout):
@@ -1370,44 +1383,57 @@ class UnifiedAIClient:
                     model=candidate.model.model_id,
                 )
             try:
-                self._mark_logical_attempt(logical_call_id)
-                if call_state.observer is not None:
-                    attempt_kind = (
-                        "retry"
-                        if attempt
-                        else (
-                            initial_attempt_kind
-                            or ("fallback" if fallback_from is not None else "primary")
+                async with ProviderUsageMeter.for_candidate(
+                    candidate,
+                    call_kind="chat",
+                    role=role,
+                    logical_call_id=logical_call_id,
+                ) as usage_meter:
+                    self._mark_logical_attempt(logical_call_id)
+                    if call_state.observer is not None:
+                        attempt_kind = (
+                            "retry"
+                            if attempt
+                            else (
+                                initial_attempt_kind
+                                or (
+                                    "fallback"
+                                    if fallback_from is not None
+                                    else "primary"
+                                )
+                            )
                         )
-                    )
-                    (
-                        response,
-                        call_state.last_attempt_id,
-                    ) = await call_state.observer.send_chat(
-                        adapter,
-                        self.http_client,
-                        candidate,
-                        request,
-                        timeout=timeout,
-                        logical_call_id=logical_call_id
-                        or str(call_state.logical_call_factory()),
-                        attempt_kind=attempt_kind,
-                        purpose=role,
-                        retry_of=(
-                            call_state.last_attempt_id if attempt else initial_retry_of
-                        ),
-                        fallback_from=fallback_from,
-                        requested=requested_candidate or candidate,
-                        reasoning_snapshot=reasoning_snapshot,
-                    )
-                else:
-                    response = await adapter.chat(
-                        self.http_client,
-                        candidate.endpoint,
-                        candidate.credential,
-                        request,
-                        timeout=timeout,
-                    )
+                        (
+                            response,
+                            call_state.last_attempt_id,
+                        ) = await call_state.observer.send_chat(
+                            adapter,
+                            self.http_client,
+                            candidate,
+                            request,
+                            timeout=timeout,
+                            logical_call_id=logical_call_id
+                            or str(call_state.logical_call_factory()),
+                            attempt_kind=attempt_kind,
+                            purpose=role,
+                            retry_of=(
+                                call_state.last_attempt_id
+                                if attempt
+                                else initial_retry_of
+                            ),
+                            fallback_from=fallback_from,
+                            requested=requested_candidate or candidate,
+                            reasoning_snapshot=reasoning_snapshot,
+                        )
+                    else:
+                        response = await adapter.chat(
+                            self.http_client,
+                            candidate.endpoint,
+                            candidate.credential,
+                            request,
+                            timeout=timeout,
+                        )
+                    usage_meter.usage = response.usage
                 return response
             except AIError as exc:
                 last_exc = exc
