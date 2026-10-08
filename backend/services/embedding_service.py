@@ -16,6 +16,7 @@ from openai import AsyncOpenAI
 
 from backend.core.config import get_settings
 from backend.services.activity_observability.contracts import InvocationContext
+from backend.services.ai_usage_service import ProviderUsageMeter, is_billing_failure
 
 # 嵌入文本最大字符数（防御性兜底，确保不超过 BGE-M3 的 8192 token 限制）
 # 中文约 1 token ≈ 1.5 字符，8000 字符 ≈ 5300 tokens，留足余量
@@ -184,50 +185,42 @@ class EmbeddingService:
                     f"正在处理批次 {batch_num}/{total_batches}: {len(batch)} 个文本"
                 )
 
-                if observer is not None and context is not None:
-                    response, _ = await observer.send_embedding(
-                        lambda batch=batch: self.client.embeddings.create(
-                            model=settings.embedding_model,
-                            input=batch,
-                        ),
-                        logical_call_id=logical_call_id or str(uuid4()),
-                        requested={
-                            "provider_id": self.provider,
-                            "model_id": settings.embedding_model,
-                            "protocol_family": "openai-compatible",
-                            "endpoint_url": settings.embedding_base_url,
-                        },
-                        effective={
-                            "provider_id": self.provider,
-                            "model_id": settings.embedding_model,
-                            "protocol_family": "openai-compatible",
-                            "endpoint_url": settings.embedding_base_url,
-                        },
-                    )
-                else:
-                    response = await self.client.embeddings.create(
-                        model=settings.embedding_model,
-                        input=batch,
-                    )
-
-                from backend.services.ai_usage_service import (
-                    build_usage_record_key,
-                    record_ai_usage_best_effort,
-                )
-
-                await record_ai_usage_best_effort(
-                    record_key=build_usage_record_key(
-                        "embedding",
-                        f"{logical_call_id or uuid4()}:{batch_num}",
-                    ),
-                    call_kind="embedding",
-                    role="embedding",
+                async with ProviderUsageMeter(
                     provider_id=self.provider,
                     model_id=settings.embedding_model,
                     protocol_family="openai-compatible",
-                    usage=getattr(response, "usage", None),
+                    call_kind="embedding",
+                    role="embedding",
+                    logical_call_id=logical_call_id or str(uuid4()),
                     input_only=True,
-                )
+                ) as usage_meter:
+                    if observer is not None and context is not None:
+                        response, _ = await observer.send_embedding(
+                            lambda batch=batch: self.client.embeddings.create(
+                                model=settings.embedding_model,
+                                input=batch,
+                            ),
+                            logical_call_id=logical_call_id or str(uuid4()),
+                            requested={
+                                "provider_id": self.provider,
+                                "model_id": settings.embedding_model,
+                                "protocol_family": "openai-compatible",
+                                "endpoint_url": settings.embedding_base_url,
+                            },
+                            effective={
+                                "provider_id": self.provider,
+                                "model_id": settings.embedding_model,
+                                "protocol_family": "openai-compatible",
+                                "endpoint_url": settings.embedding_base_url,
+                            },
+                        )
+                    else:
+                        response = await self.client.embeddings.create(
+                            model=settings.embedding_model,
+                            input=batch,
+                        )
+
+                    usage_meter.usage = getattr(response, "usage", None)
 
                 # 提取嵌入向量
                 batch_embeddings = [item.embedding for item in response.data]
@@ -396,6 +389,8 @@ class RerankerService:
                 return docs[:top_k]
 
         except Exception as e:
+            if is_billing_failure(e):
+                raise
             if strict:
                 raise
             logger.warning("⚠️  重排序失败: {}，返回原始结果", e)
@@ -432,34 +427,29 @@ class RerankerService:
 
             # 调用 Rerank API
             logical_call_id = str(uuid4())
-            response = await self.client.post(
-                "",
-                json={
-                    "model": settings.rerank_model,
-                    "query": query,
-                    "documents": texts,
-                    "top_n": top_n,
-                },
-            )
-
-            response.raise_for_status()
-            results = response.json()
-
-            from backend.services.ai_usage_service import (
-                build_usage_record_key,
-                record_ai_usage_best_effort,
-            )
-
-            await record_ai_usage_best_effort(
-                record_key=build_usage_record_key("rerank", logical_call_id),
-                call_kind="rerank",
-                role="rerank",
+            async with ProviderUsageMeter(
                 provider_id=self.provider,
                 model_id=settings.rerank_model,
                 protocol_family="siliconflow-rerank",
-                usage=results,
+                call_kind="rerank",
+                role="rerank",
+                logical_call_id=logical_call_id,
                 input_only=True,
-            )
+            ) as usage_meter:
+                response = await self.client.post(
+                    "",
+                    json={
+                        "model": settings.rerank_model,
+                        "query": query,
+                        "documents": texts,
+                        "top_n": top_n,
+                    },
+                )
+
+                response.raise_for_status()
+                results = response.json()
+
+                usage_meter.usage = results
 
             # 解析结果
             if not isinstance(results, dict) or not isinstance(
@@ -514,6 +504,8 @@ class RerankerService:
             logger.warning("SiliconFlow Rerank API 请求失败: {}", e)
             return docs[:top_k]
         except Exception as e:
+            if is_billing_failure(e):
+                raise
             if strict:
                 raise
             logger.warning("SiliconFlow 重排序失败: {}", e)

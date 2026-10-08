@@ -27,7 +27,10 @@ class _FakeTelegramService:
     async def get_user_by_github_username(self, github_username):
         return _FakeUser()
 
-    async def check_and_consume_quota(self, github_username, repo_name, pr_number):
+    async def check_and_consume_quota(
+        self, github_username, repo_name, pr_number, *, operation_id=None
+    ):
+        assert isinstance(operation_id, str) and operation_id
         return True, "ok"
 
     async def get_repo_subscribers(self, repo_full_name):

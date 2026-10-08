@@ -78,6 +78,9 @@ class _FakeAnalysis:
 
 class _FakeTask:
     id = 99
+    billing_operation_id = None
+    billing_user_id = None
+    billing_platform_reason = None
 
 
 class _FakeScan:
@@ -142,6 +145,11 @@ class _FakeSession:
         if self._execute_result is not None:
             return self._execute_result
 
+    async def get(self, model, task_id):
+        task = _FakeTask()
+        task.id = task_id
+        return task
+
     async def commit(self):
         pass
 
@@ -149,6 +157,9 @@ class _FakeSession:
 class _FakeTelegramService:
     def __init__(self, session):
         self.session = session
+
+    async def get_user_by_github_username(self, username):
+        return SimpleNamespace(id=42)
 
     async def check_and_consume_agent_quota(self, *a, **kw):
         return True, ""
@@ -635,7 +646,7 @@ async def test_agent_command_parses_base_branch(monkeypatch):
     payload = _base_payload("/agent base:develop")
     captured = {}
 
-    class CapturingService:
+    class CapturingService(_FakeTelegramService):
         def __init__(self, session):
             pass
 
@@ -676,7 +687,7 @@ async def test_agent_command_default_base_branch_is_none(monkeypatch):
     payload = _base_payload("/agent")
     captured = {}
 
-    class CapturingService:
+    class CapturingService(_FakeTelegramService):
         def __init__(self, session):
             pass
 
@@ -714,7 +725,7 @@ async def test_agent_command_default_base_branch_is_none(monkeypatch):
 async def test_agent_command_rejected_when_task_already_exists(monkeypatch):
     payload = _base_payload()
 
-    class CapturingService:
+    class CapturingService(_FakeTelegramService):
         def __init__(self, session):
             pass
 

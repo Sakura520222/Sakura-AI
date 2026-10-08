@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ _('billing.credits_title') }} - Sakura AI{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <div class="flex items-center justify-between gap-4">
+        <div><h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.credits_title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.credits_description') }}</p></div>
+        <a href="/billing/" class="text-sm text-sakura-600 dark:text-sakura-400">{{ _('billing.back_to_plans') }}</a>
+    </div>
+    {% if wallet.low_balance %}
+    <div role="alert" class="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 p-4 text-amber-800 dark:text-amber-200">{{ _('billing.low_balance_message', balance=wallet.available) }}</div>
+    {% endif %}
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {% for key, value in [('credit_balance', wallet.balance), ('credit_reserved', wallet.reserved), ('credit_available', wallet.available)] %}
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.' ~ key) }}</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white" data-testid="{{ key }}">{{ value }} <span class="text-sm">Credits</span></p>
+        </div>
+        {% endfor %}
+    </div>
+    <form action="/billing/credits/threshold" method="POST" class="bg-white dark:bg-gray-800 rounded-xl p-6 space-y-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="credits-threshold" class="block font-medium text-gray-900 dark:text-white">{{ _('billing.low_balance_threshold') }}</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.low_balance_help') }}</p>
+        <div class="flex flex-wrap gap-3"><input id="credits-threshold" name="credits" type="number" min="0" step="0.000001" value="{{ wallet.low_balance_threshold }}" required class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+        <button type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 text-white">{{ _('common.save') }}</button></div>
+    </form>
+    <section class="bg-white dark:bg-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.credit_transactions') }}</h2>
+        <form method="GET" class="flex flex-wrap gap-3 mb-4">
+            <label class="sr-only" for="feature-filter">{{ _('billing.feature') }}</label>
+            <select id="feature-filter" name="feature" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <option value="">{{ _('billing.all_features') }}</option>
+                {% for item in features %}<option value="{{ item }}" {% if feature == item %}selected{% endif %}>{{ _('billing.feature_' ~ item) }}</option>{% endfor %}
+            </select>
+            <label class="sr-only" for="kind-filter">{{ _('billing.transaction_kind') }}</label>
+            <select id="kind-filter" name="kind" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                <option value="">{{ _('billing.all_kinds') }}</option>
+                {% for item in kinds %}<option value="{{ item }}" {% if kind == item %}selected{% endif %}>{{ _('billing.kind_' ~ item) }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="px-4 py-2 rounded-lg bg-sakura-600 text-white">{{ _('billing.apply_filters') }}</button>
+        </form>
+        <div class="overflow-x-auto"><table class="w-full text-sm text-left">
+            <thead class="text-gray-500 dark:text-gray-400"><tr>
+                <th class="py-3 px-2">{{ _('billing.transaction_time') }}</th><th class="py-3 px-2">{{ _('billing.transaction_kind') }}</th><th class="py-3 px-2">{{ _('billing.credit_change') }}</th><th class="py-3 px-2">{{ _('billing.feature') }}</th><th class="py-3 px-2">{{ _('billing.source') }}</th>
+            </tr></thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700 text-gray-900 dark:text-white">
+                {% for item in transactions["items"] %}
+                <tr data-transaction-id="{{ item.id }}"><td class="py-3 px-2">{{ item.created_at }}</td><td class="py-3 px-2">{{ _('billing.kind_' ~ item.kind) }}</td><td class="py-3 px-2 font-mono">{{ item.credits }}</td><td class="py-3 px-2">{{ _('billing.feature_' ~ item.feature) if item.feature else '—' }}</td>
+                    <td class="py-3 px-2">{% if item.source.url %}<a href="{{ item.source.url }}" class="text-sakura-600 dark:text-sakura-400">{% if item.source.order_no %}{{ _('billing.order_no') }} {{ item.source.order_no }}{% else %}{{ item.source.repo }}{% endif %}{% if item.source.pr_number %} #{{ item.source.pr_number }}{% elif item.source.issue_number %} #{{ item.source.issue_number }}{% endif %}</a>{% else %}{{ _('billing.source_unavailable') }}{% endif %}
+                    {% if item.operation_id %}<details class="mt-1"><summary class="text-xs text-gray-500 cursor-pointer">{{ _('billing.operation_id') }}</summary><code class="text-xs break-all">{{ item.operation_id }}</code></details>{% endif %}</td></tr>
+                {% else %}<tr><td colspan="5" class="py-8 text-center text-gray-500">{{ _('billing.no_transactions') }}</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+        <div class="flex justify-between mt-4 text-sm">
+            {% if page > 1 %}<a href="?page={{ page - 1 }}&amp;feature={{ feature }}&amp;kind={{ kind }}" class="text-sakura-600">{{ _('billing.previous_page') }}</a>{% else %}<span></span>{% endif %}
+            <span class="text-gray-500">{{ _('billing.transaction_count', count=transactions.total) }}</span>
+            {% if transactions.offset + transactions.limit < transactions.total %}<a href="?page={{ page + 1 }}&amp;feature={{ feature }}&amp;kind={{ kind }}" class="text-sakura-600">{{ _('billing.next_page') }}</a>{% else %}<span></span>{% endif %}
+        </div>
+    </section>
+    <section class="bg-white dark:bg-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.operations_title') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 mb-4">{{ _('billing.pending_help') }}</p>
+        <div class="overflow-x-auto"><table class="w-full text-sm text-left"><thead class="text-gray-500"><tr><th class="py-3 px-2">{{ _('billing.feature') }}</th><th class="py-3 px-2">{{ _('common.status') }}</th><th class="py-3 px-2">{{ _('billing.credit_reserved') }}</th><th class="py-3 px-2">{{ _('billing.settled_credits') }}</th><th class="py-3 px-2">{{ _('billing.operation_id') }}</th></tr></thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700 text-gray-900 dark:text-white">{% for item in operations["items"] %}<tr><td class="py-3 px-2">{{ _('billing.feature_' ~ item.feature) }}</td><td class="py-3 px-2">{{ _('billing.status_' ~ item.status) }}</td><td class="py-3 px-2 font-mono">{{ item.reserved_credits }}</td><td class="py-3 px-2 font-mono">{{ item.settled_credits }}</td><td class="py-3 px-2 font-mono text-xs break-all">{{ item.operation_id }}</td></tr>{% else %}<tr><td colspan="5" class="py-8 text-center text-gray-500">{{ _('billing.no_operations') }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+    </section>
+    <section class="bg-white dark:bg-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.notices_title') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 mb-4">{{ _('billing.notices_help') }}</p>
+        <ul class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for notice in notices["items"] %}<li class="py-3 flex items-center justify-between gap-4 text-sm text-gray-900 dark:text-white"><div>{{ _('billing.low_balance_notice') }} <span class="text-gray-500">{{ notice.created_at }}</span></div>{% if not notice.read_at %}<form action="/billing/credits/notices/{{ notice.id }}/read" method="POST"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="text-sakura-600">{{ _('billing.mark_read') }}</button></form>{% else %}<span class="text-gray-500">{{ _('billing.notice_read') }}</span>{% endif %}</li>{% else %}<li class="py-4 text-sm text-gray-500">{{ _('billing.no_notices') }}</li>{% endfor %}
+        </ul>
+        <div class="flex justify-between text-sm mt-4">{% if page > 1 %}<a href="?page={{ page - 1 }}" class="text-sakura-600">{{ _('billing.previous_page') }}</a>{% else %}<span></span>{% endif %}{% if notices.offset + notices.limit < notices.total %}<a href="?page={{ page + 1 }}" class="text-sakura-600">{{ _('billing.next_page') }}</a>{% endif %}</div>
+    </section>
+</div>
+{% endblock %}

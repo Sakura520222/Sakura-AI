@@ -107,7 +107,9 @@ async def test_open_reanalysis_submit_with_next_version(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
 
-    response = await _reanalyze(surface, analysis_db.db, {"sub": "alice"})
+    response = await _reanalyze(
+        surface, analysis_db.db, {"sub": "alice", "user_id": 42}
+    )
 
     assert response.status_code == 200
     payload = json.loads(response.body)
@@ -124,6 +126,7 @@ async def test_open_reanalysis_submit_with_next_version(
             "body": "Raw body",
             "state": "open",
             "analysis_version": 3,
+            "user_id": 42,
         }
     )
 

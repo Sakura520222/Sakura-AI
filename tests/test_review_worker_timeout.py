@@ -31,9 +31,15 @@ from backend.workers.review_worker import (
     submit_review_task,
 )
 from tests import test_pr_candidate_freshness, test_pr_issue_budget
+from tests.worker_capacity_support import install_unit_worker_capacity
 
 freshness = test_pr_candidate_freshness.freshness
 budgets = test_pr_issue_budget.budgets
+
+
+@pytest.fixture(autouse=True)
+def isolated_capacity_boundary(monkeypatch):
+    install_unit_worker_capacity(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

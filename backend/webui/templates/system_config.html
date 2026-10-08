@@ -124,10 +124,12 @@
 <style>
     [x-cloak] { display: none !important; }
 </style>
+{% include 'components/config_save_feedback.html' %}
 <script>
 function systemConfig() {
     return {
         activeTab: 'database',
+        saving: false,
         testing: false,
         fetchingGithubAppSlug: false,
         testResult: null,
@@ -146,7 +148,68 @@ function systemConfig() {
         },
 
         init() {
-            // 默认选中第一个 tab
+            const form = document.getElementById('systemConfigForm');
+            // Only disable browser-language bubbles after translated validation
+            // has been installed. Traditional forms retain native validation.
+            form.noValidate = true;
+            form.querySelectorAll('[data-config-field]').forEach(function (row) {
+                row.querySelectorAll('input,select,textarea').forEach(function (control) {
+                    control.setAttribute('data-config-label', row.getAttribute('data-config-label'));
+                });
+            });
+            const params = new URLSearchParams(window.location.search);
+            const serializedErrors = params.get('_errors');
+            if (serializedErrors) {
+                try {
+                    const errors = JSON.parse(serializedErrors);
+                    if (Array.isArray(errors)) SakuraConfigFeedback.render({errors: errors});
+                } catch (error) {
+                    // Invalid URL feedback cannot affect saved configuration.
+                }
+                params.delete('_errors');
+                history.replaceState(null, '', window.location.pathname +
+                    (params.toString() ? '?' + params.toString() : '') + window.location.hash);
+            }
+        },
+
+        async saveConfig(event) {
+            if (this.saving) return;
+            const form = event.target;
+            SakuraConfigFeedback.clear();
+            const errors = SakuraConfigFeedback.nativeErrors([form]);
+            if (errors.length) {
+                SakuraConfigFeedback.render({errors: errors});
+                this.showSaveToast(errors[0].message, 'error');
+                return;
+            }
+            this.saving = true;
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json'},
+                    body: new FormData(form),
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    window.location.href = '/system-config/?_toast=' +
+                        encodeURIComponent(data.toast) + '&_toast_type=success';
+                    return;
+                }
+                SakuraConfigFeedback.render(data);
+                this.showSaveToast(data.toast, 'error');
+            } catch (error) {
+                const message = {{ _('config.save_request_failed') | tojson }};
+                SakuraConfigFeedback.render({toast: message});
+                this.showSaveToast(message, 'error');
+            } finally {
+                this.saving = false;
+            }
+        },
+
+        showSaveToast(message, type) {
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: {message: message, type: type, duration: 8000},
+            }));
         },
 
         async restartApplication() {
