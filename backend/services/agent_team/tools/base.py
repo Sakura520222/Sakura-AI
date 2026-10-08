@@ -26,10 +26,13 @@ from backend.services.agent_team.workspace_service import (
 # ── 数据结构 ──────────────────────────────────────────
 
 if TYPE_CHECKING:
+    from backend.services.agent_team.capability_policy import CapabilitySession
+    from backend.services.agent_team.lifecycle_hooks import LifecycleHooks
     from backend.services.agent_team.repository_context import (
         RepositoryContext,
         RepositoryInstruction,
     )
+    from backend.services.agent_team.subagents import SubagentManager
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,11 @@ class ToolMetadata:
     read_only: bool = False
     parallel_safe: bool = False
     terminal: bool = False
+    # Orchestration waits must never hold workspace locks. Only trusted tool
+    # implementations select this; schemas/arguments cannot change it.
+    workspace_access: bool = True
+    # Reserved for explicitly policy-admitted read-only external adapters.
+    delegation_safe: bool = False
 
 
 # ── 工具上下文 ────────────────────────────────────────
@@ -92,6 +100,11 @@ class ToolContext:
     )
     pending_repository_targets: tuple[str, ...] = ()
     pending_repository_whole_scope: bool = False
+    executor: ToolExecutor | None = field(default=None, repr=False)
+    subagents: SubagentManager | None = field(default=None, repr=False)
+    # Per-invocation context, set by the executor from the durable call object.
+    tool_call_id: str | None = field(default=None, repr=False)
+    mcp_runtime: Any = field(default=None, repr=False)
 
     def allows_skill_tool(self, name: str, args: dict[str, Any] | None = None) -> bool:
         """Workflow restrictions intersect the existing runtime ceiling."""
@@ -181,11 +194,31 @@ class BaseTool:
 class ToolExecutor:
     """统一工具执行器，管理工具生命周期。"""
 
-    def __init__(self, tools: list[BaseTool] | None = None):
+    def __init__(
+        self,
+        tools: list[BaseTool] | None = None,
+        *,
+        read_only: bool = False,
+        delegated_scope: SkillRestriction | None = None,
+        capabilities: CapabilitySession | None = None,
+        hooks: LifecycleHooks | None = None,
+    ):
+        self._read_only = read_only
+        self._capabilities = capabilities
+        self._hooks = hooks
+        self._delegated_scope = delegated_scope or SkillRestriction()
         self._tools: dict[str, BaseTool] = {}
         if tools:
             for tool in tools:
                 self.register(tool)
+
+    def bind_runtime(
+        self, capabilities: CapabilitySession, hooks: LifecycleHooks
+    ) -> None:
+        if self._capabilities is not None:
+            raise RuntimeError("executor_runtime_already_bound")
+        self._capabilities = capabilities
+        self._hooks = hooks
 
     def register(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
@@ -202,12 +235,203 @@ class ToolExecutor:
 
     def get_schemas(self) -> list[dict[str, Any]]:
         """获取所有注册工具的 schema（用于 function calling）。"""
-        return [t.get_schema() for t in self._tools.values()]
+        return [
+            t.get_schema() for t in self._tools.values() if self.allows_tool(t.name)
+        ]
+
+    def allows_tool(self, name: str, args: dict[str, Any] | None = None) -> bool:
+        """An immutable runtime ceiling, independent of caller/model context."""
+        if not self._read_only:
+            return True
+        if name == "finish_task":
+            from backend.services.agent_team.tools.finish_task_tool import (
+                FinishTaskTool,
+            )
+
+            return type(self.get_tool(name)) is FinishTaskTool
+        metadata = self.metadata(name)
+        allowed = (
+            name
+            in {
+                "read_file",
+                "list_directory",
+                "glob",
+                "search_in_files",
+                "check_changes",
+                "detect_project",
+                "search_web",
+                "fetch_url",
+            }
+            or metadata.delegation_safe
+        )
+        return bool(
+            allowed and metadata.read_only and self._delegated_scope.allows(name, args)
+        )
+
+    async def capability_allowed(self, name: str, args=None, *, record=False) -> bool:
+        from backend.services.agent_team.capability_policy import tool_capabilities
+
+        tool = self.get_tool(name)
+        if tool is None:
+            return False
+        if self._capabilities is None:
+            return True  # Compatibility executors; production always binds a session.
+        required = tool_capabilities(tool, args)
+        read_only = self.metadata(name).read_only or name in {
+            "finish_task",
+            "wait_agent",
+            "cancel_agent",
+            "use_skill",
+            "spawn_agent",
+        }
+        if record:
+            decision = await self._capabilities.check(
+                "tool", required, read_only=read_only
+            )
+        else:
+            decision = await self._capabilities.evaluate(required, read_only=read_only)
+        return decision.allowed
+
+    def replace_mcp_tools(self, tools) -> None:
+        from backend.services.agent_team.tools.mcp_tool import MCPTool
+
+        self._tools = {
+            name: tool
+            for name, tool in self._tools.items()
+            if not isinstance(tool, MCPTool)
+        }
+        for tool in tools:
+            self.register(tool)
 
     async def execute_tool_call(self, tool_call: Any, ctx: ToolContext) -> ToolResult:
+        from backend.services.agent_team.lifecycle_hooks import HookFailure
+
+        if self._hooks is None:
+            return await self._execute_with_workspace_lock(tool_call, ctx)
+        from backend.services.agent_team.tool_scheduler import workspace_barrier
+
+        name = tool_call.function.name
+        metadata = self.metadata(name)
+        try:
+            plan = await self._hooks.plan()
+        except HookFailure as exc:
+            return ToolResult(False, error=str(exc), error_code="HOOK_FAILED")
+        events = {"before_tool", "after_tool"}
+        if name == "finish_task":
+            events.update(("before_finish", "after_finish"))
+        elif metadata.workspace_access and not metadata.read_only:
+            events.update(("before_write", "after_write"))
+        atomic = metadata.workspace_access and (
+            name == "finish_task"
+            or any(h.kind == "command" and h.event in events for h in plan)
+        )
+        if not atomic:
+            return await self._execute_lifecycle(tool_call, ctx, plan, False)
+        async with workspace_barrier(ctx.workspace).hold(False):
+            if ctx.cancel_event is None:
+                ctx.cancel_event = asyncio.Event()
+            if ctx.cancel_event.is_set():
+                raise asyncio.CancelledError
+            operation = asyncio.create_task(
+                self._execute_lifecycle(tool_call, ctx, plan, True)
+            )
+            try:
+                return await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                ctx.cancel_event.set()
+                while not operation.done():
+                    try:
+                        await asyncio.shield(operation)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                await asyncio.gather(operation, return_exceptions=True)
+                raise
+
+    async def _execute_lifecycle(self, tool_call, ctx, plan, locked):
+        from backend.services.agent_team.lifecycle_hooks import HookFailure
+
+        name = tool_call.function.name
+        ident = getattr(tool_call, "id", None)
+
+        async def emit(event, *, status="", audit_only=False):
+            await self._hooks.emit(
+                event,
+                ctx,
+                status=status,
+                tool_call_id=ident,
+                plan=plan,
+                workspace_locked=locked,
+                audit_only=audit_only,
+            )
+
+        metadata = self.metadata(name)
+        write = (
+            metadata.workspace_access
+            and not metadata.read_only
+            and name != "finish_task"
+        )
+        result = None
+        try:
+            await emit("before_tool")
+            if write:
+                await emit("before_write")
+            if name == "finish_task":
+                await emit("before_finish")
+            result = await (
+                self._execute_tool_call(tool_call, ctx)
+                if locked
+                else self._execute_with_workspace_lock(tool_call, ctx)
+            )
+        except asyncio.CancelledError:
+            try:
+                if write:
+                    await emit("after_write", status="cancelled", audit_only=True)
+                await emit("after_tool", status="cancelled", audit_only=True)
+            except Exception:
+                logger.error("Agent cancelled tool lifecycle audit failed")
+            raise
+        except HookFailure as exc:
+            result = ToolResult(False, error=str(exc), error_code="HOOK_FAILED")
+        # Post hooks cannot erase an original failure or make a failed operation
+        # appear successful. Output keeps the concrete side-effect evidence.
+        try:
+            if write:
+                await emit(
+                    "after_write", status="completed" if result.success else "failed"
+                )
+            await emit("after_tool", status="completed" if result.success else "failed")
+            if result.is_terminal:
+                await emit("after_finish", status="completed")
+        except Exception as exc:
+            # Persistence failures are also hook failures. Never replace the
+            # original tool error with a post-hook audit driver exception.
+            reason = (
+                str(exc) if isinstance(exc, HookFailure) else "hook_audit_unavailable"
+            )
+            logger.error("Agent post-tool lifecycle failed")
+            if result.success:
+                result = replace(
+                    result,
+                    success=False,
+                    error=reason,
+                    error_code="HOOK_FAILED",
+                    terminal_state="",
+                    output={k: v for k, v in result.output.items() if k != "_terminal"},
+                )
+        return result
+
+    async def _execute_with_workspace_lock(
+        self, tool_call: Any, ctx: ToolContext
+    ) -> ToolResult:
         from backend.services.agent_team.tool_scheduler import workspace_barrier
 
         metadata = self.metadata(tool_call.function.name)
+        if not metadata.workspace_access:
+            if ctx.cancel_event and ctx.cancel_event.is_set():
+                raise asyncio.CancelledError
+            return await self._execute_tool_call(tool_call, ctx)
         barrier = workspace_barrier(ctx.workspace)
         async with barrier.hold(metadata.parallel_safe):
             if ctx.cancel_event and ctx.cancel_event.is_set():
@@ -239,6 +463,17 @@ class ToolExecutor:
         """执行单个工具调用，完整的生命周期管理。"""
         function_name = tool_call.function.name
         start_time = monotonic()
+        if not self.metadata(function_name).workspace_access:
+            # Per-call identity must not be shared across concurrently running
+            # tools and must be present during validation as well as execution.
+            ctx = replace(ctx, tool_call_id=getattr(tool_call, "id", None))
+
+        if not self.allows_tool(function_name):
+            return ToolResult(
+                False,
+                error=f"Read-only subagent cannot use tool: {function_name}",
+                error_code="SUBAGENT_TOOL_RESTRICTED",
+            )
 
         # 1. 查找工具
         tool = self._tools.get(function_name)
@@ -255,6 +490,13 @@ class ToolExecutor:
             )
         if not isinstance(arguments, dict):
             return ToolResult(success=False, error="工具参数必须是对象")
+
+        if not self.allows_tool(function_name, arguments):
+            return ToolResult(
+                False,
+                error=f"Delegated scope does not allow tool: {function_name}",
+                error_code="SUBAGENT_TOOL_RESTRICTED",
+            )
 
         if not ctx.allows_skill_tool(function_name, arguments):
             return ToolResult(
@@ -283,6 +525,11 @@ class ToolExecutor:
         validation_error = tool.validate_input(arguments, ctx)
         if validation_error:
             return ToolResult(success=False, error=validation_error)
+
+        if not await self.capability_allowed(function_name, arguments, record=True):
+            return ToolResult(
+                False, error="Runtime capability denied", error_code="CAPABILITY_DENIED"
+            )
 
         # 4. 执行
         try:

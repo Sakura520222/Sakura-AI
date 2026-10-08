@@ -49,6 +49,8 @@ class StrategySelfCheckState:
                 if not (
                     metadata.get("completion_reminder")
                     or metadata.get("repository_context")
+                    or "context_compaction" in metadata
+                    or "harness_event" in metadata
                 ):
                     ids = (
                         metadata.get("guidance_ids")

@@ -14,6 +14,7 @@ from backend.services.agent_team.network_policy import (
     get_agent_team_network_policy,
 )
 from backend.services.agent_team.repository_context import skills_enabled
+from backend.services.agent_team.skill_scope import SkillRestriction
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolExecutor
 from backend.services.agent_team.tools.edit_tool import EditTool
 from backend.services.agent_team.tools.fetch_url_tool import FetchUrlTool
@@ -28,6 +29,11 @@ from backend.services.agent_team.tools.read_tool import ReadTool
 from backend.services.agent_team.tools.replace_lines_tool import ReplaceLinesTool
 from backend.services.agent_team.tools.revert_file_tool import RevertFileTool
 from backend.services.agent_team.tools.shell_tool import ShellTool
+from backend.services.agent_team.tools.subagent_tools import (
+    CancelAgentTool,
+    SpawnAgentTool,
+    WaitAgentTool,
+)
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.tools.web_search_tool import WebSearchTool
 from backend.services.agent_team.tools.write_tool import WriteTool
@@ -52,6 +58,9 @@ AGENT_TOOL_INSTANCES: list[BaseTool] = [
     FinishTaskTool(),
     WebSearchTool(),
     FetchUrlTool(),
+    SpawnAgentTool(),
+    WaitAgentTool(),
+    CancelAgentTool(),
 ]
 
 # Legacy name retained for callers that still import the old implementation list.
@@ -153,11 +162,42 @@ async def get_tool_definitions_fresh(
     enabled = await skills_enabled()
     if ctx:
         ctx.skills_enabled = enabled
-    definitions = get_tool_definitions(role=role, provider=provider)
+    if ctx is not None and ctx.executor is not None:
+        from backend.services.agent_team.tools.mcp_tool import MCPTool
+
+        if ctx.mcp_runtime is not None:
+            ctx.executor.replace_mcp_tools(await ctx.mcp_runtime.discover())
+        normalize = (
+            _glm_compatible_schema
+            if (provider or "").lower() in ("glm", "zai")
+            else _sanitize_schema
+        )
+        definitions = [
+            # Built-in normalization assumes our implementations' defaults.
+            # Remote schemas may contain boolean properties, composition and
+            # dynamic maps; preserve their validated meaning for every provider.
+            tool.get_schema()
+            if isinstance(tool, MCPTool)
+            else normalize(tool.get_schema())
+            for tool in ctx.executor.all_tools()
+            if await ctx.executor.capability_allowed(tool.name)
+        ]
+    else:
+        definitions = get_tool_definitions(role=role, provider=provider)
     definitions = [
         schema
         for schema in definitions
         if (ctx is None or ctx.allows_skill_tool(schema["function"]["name"]))
+        and (
+            ctx is None
+            or ctx.executor is None
+            or ctx.executor.allows_tool(schema["function"]["name"])
+        )
+        and (
+            schema["function"]["name"]
+            not in {"spawn_agent", "wait_agent", "cancel_agent"}
+            or (ctx is not None and ctx.subagents is not None)
+        )
         and (
             schema["function"]["name"] != "use_skill"
             or enabled
@@ -195,10 +235,17 @@ async def get_tool_definitions_fresh(
     return definitions
 
 
-def create_executor(role: str = "agent") -> ToolExecutor:
+def create_executor(
+    role: str = "agent",
+    *,
+    read_only: bool = False,
+    delegated_scope: SkillRestriction | None = None,
+) -> ToolExecutor:
     """创建 Agent 实现工具执行器。
 
     ``role`` 仅为旧调用方保留，不再改变工具白名单。
     """
     del role
-    return ToolExecutor(list(AGENT_TOOL_INSTANCES))
+    return ToolExecutor(
+        list(AGENT_TOOL_INSTANCES), read_only=read_only, delegated_scope=delegated_scope
+    )

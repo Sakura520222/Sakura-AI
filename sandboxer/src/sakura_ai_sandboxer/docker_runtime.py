@@ -32,6 +32,7 @@ from .errors import (
 from .models import (
     REQUEST_ID_PATTERN,
     WORKSPACE_KEY_PATTERN,
+    ExecutionProfile,
     ExecutionRequest,
     NetworkMode,
 )
@@ -431,6 +432,17 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         else:
             assert request.argv is not None
             command = tuple(request.argv)
+        read_only = request.profile is ExecutionProfile.READ_ONLY
+        if read_only:
+            if (
+                request.command is not None
+                or command[0] not in {"git", "grep"}
+                or request.network_mode is not NetworkMode.NONE
+            ):
+                raise InvalidRequestError(
+                    "read-only execution requires fixed git/grep argv and network none"
+                )
+            command = (f"/usr/bin/{command[0]}", *command[1:])
 
         if git_mount_plan is None:
             try:
@@ -496,14 +508,30 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                 # standalone long-syntax field on all supported Docker
                 # versions; omitting it preserves the writable default while
                 # keeping the propagation policy explicit.
-                f"type=bind,src={source},dst={CONTAINER_WORKSPACE},bind-propagation=rprivate",
+                f"type=bind,src={source},dst={CONTAINER_WORKSPACE},{'readonly,' if read_only else ''}bind-propagation=rprivate",
                 "--workdir",
-                f"{CONTAINER_WORKSPACE}/{workdir}" if workdir != "." else CONTAINER_WORKSPACE,
+                f"{CONTAINER_WORKSPACE}/{workdir}"
+                if workdir != "."
+                else CONTAINER_WORKSPACE,
                 "--entrypoint",
                 "",
             )
         )
-        for item in FIXED_ENVIRONMENT:
+        environment = FIXED_ENVIRONMENT
+        if read_only:
+            environment = tuple(
+                item
+                for item in environment
+                if not item.startswith(("PATH=", "VIRTUAL_ENV="))
+            ) + (
+                "PATH=/usr/bin:/bin",
+                "GIT_CONFIG_NOSYSTEM=1",
+                "GIT_CONFIG_GLOBAL=/dev/null",
+                "GIT_CONFIG_SYSTEM=/dev/null",
+                "GIT_TERMINAL_PROMPT=0",
+                "GIT_OPTIONAL_LOCKS=0",
+            )
+        for item in environment:
             argv.extend(("--env", item))
         if git_mount_plan is not None:
             common_source = str(git_mount_plan.common_gitdir)
@@ -511,7 +539,9 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             worktree_destination = self._container_git_worktree_path(git_mount_plan)
             for path in (common_source, worktree_source):
                 if any(char in path for char in ("\n", "\r", ",")):
-                    raise InvalidRequestError("workspace Git metadata path is not mountable")
+                    raise InvalidRequestError(
+                        "workspace Git metadata path is not mountable"
+                    )
             # Keep the common repository view read-only.  Only this task's
             # linked-worktree metadata receives write access for its index and
             # HEAD/log files; no other worktree metadata is writable in the
@@ -526,7 +556,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
                     "--mount",
                     (
                         f"type=bind,src={worktree_source},dst={worktree_destination},"
-                        "bind-propagation=rprivate"
+                        f"{'readonly,' if read_only else ''}bind-propagation=rprivate"
                     ),
                     "--env",
                     f"GIT_DIR={worktree_destination}",

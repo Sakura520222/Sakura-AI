@@ -34,6 +34,7 @@ class ExecutionProfile(StrEnum):
     """Public execution profiles; Docker/runtime knobs are server-owned."""
 
     AGENT = "agent"
+    READ_ONLY = "read_only"
     DEPENDENCY = "dependency"
 
 
@@ -150,6 +151,30 @@ class ExecutionRequest(StrictModel):
     def validate_command_form(self) -> ExecutionRequest:
         if (self.command is None) == (self.argv is None):
             raise ValueError("exactly one of command or argv is required")
+        if self.profile is ExecutionProfile.READ_ONLY:
+            if (
+                self.command is not None
+                or not self.argv
+                or self.argv[0] not in {"git", "grep"}
+            ):
+                raise ValueError("read-only execution requires fixed git/grep argv")
+            if self.argv[0] == "grep":
+                remaining = self.argv[4:]
+                while len(remaining) >= 2 and remaining[0] in {
+                    "--include",
+                    "--exclude-dir",
+                }:
+                    remaining = remaining[2:]
+                if self.argv[:4] != ["grep", "-rl", "-Z", "-I"] or remaining != [
+                    "--",
+                    "^",
+                    ".",
+                ]:
+                    raise ValueError(
+                        "read-only grep requires fixed text candidate enumeration"
+                    )
+            if self.network_mode is not NetworkMode.NONE:
+                raise ValueError("read-only execution requires network none")
         return self
 
 

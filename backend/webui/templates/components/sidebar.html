@@ -39,9 +39,10 @@
         {% endif %}
 
         {% if current_user %}
-            {% call domain(_('nav.agent_team'), ['agent_team', 'agent_skills']) %}
+            {% call domain(_('nav.agent_team'), ['agent_team', 'agent_skills', 'agent_plugins']) %}
                 {{ link('/agent-team/', _('nav.agent_tasks'), 'agent_team') }}
                 {% if current_user.role == 'super_admin' %}
+                    {{ link('/agent-plugins/', _('agent_plugins.title'), 'agent_plugins') }}
                     {{ link('/agent-skills/', _('nav.agent_skills'), 'agent_skills') }}
                 {% endif %}
             {% endcall %}

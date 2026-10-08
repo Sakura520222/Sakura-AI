@@ -22,6 +22,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
 from backend.core.config import get_settings
+from backend.services.agent_team.capability_policy import execution_network_policy
 from backend.services.agent_team.execution import (
     ExecutionError,
     ExecutionProfile,
@@ -560,8 +561,18 @@ class SandboxExecutionRunner:
         self._egress_capability: str | None = None
         self._runner_image_digest: str | None = None
 
+    @property
+    def execution_workspace(self) -> str:
+        # sandboxd v2 mounts the admitted task workspace here. Host paths are
+        # deliberately not part of the runner container's namespace.
+        return "/workspace"
+
     def supports_profile(self, profile: ExecutionProfile) -> bool:
-        return profile in {ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY}
+        return profile in {
+            ExecutionProfile.AGENT,
+            ExecutionProfile.DEPENDENCY,
+            ExecutionProfile.READ_ONLY,
+        }
 
     @property
     def egress_capability(self) -> str | None:
@@ -713,7 +724,9 @@ class SandboxExecutionRunner:
                 result="denied_workspace_mismatch",
                 capability=audit_capability,
             )
-            raise SandboxPolicyError("request workspace does not match the runner workspace")
+            raise SandboxPolicyError(
+                "request workspace does not match the runner workspace"
+            )
         if request.env:
             _audit_execution(
                 task=request.workspace_key,
@@ -726,16 +739,30 @@ class SandboxExecutionRunner:
                 result="denied_environment",
                 capability=audit_capability,
             )
-            raise SandboxPolicyError("sandbox requests cannot inject environment variables")
+            raise SandboxPolicyError(
+                "sandbox requests cannot inject environment variables"
+            )
+
+        if request.profile is ExecutionProfile.READ_ONLY:
+            # Older v2 daemons do not implement this stricter domain. Verify
+            # current daemon readiness/capability before any execution; never
+            # substitute the writable Agent profile for compatibility.
+            health = await self.ensure_ready()
+            if ExecutionProfile.READ_ONLY.value not in health.profiles:
+                raise SandboxPolicyError(
+                    "sandboxd does not advertise read_only execution"
+                )
 
         try:
             policy_state = await get_agent_team_network_policy_state()
-            network_policy = policy_state.policy
+            network_policy = await execution_network_policy(policy_state.policy)
             network_mode = network_mode_for_policy(
                 network_policy,
                 profile=request.profile,
                 capability=request.network_capability,
             )
+            if request.profile is ExecutionProfile.READ_ONLY:
+                network_mode = "none"
         except asyncio.CancelledError:
             _audit_execution(
                 task=request.workspace_key,

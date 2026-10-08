@@ -236,6 +236,58 @@ class AgentTeamSession(Base):
     )
 
 
+class AgentTeamUsage(Base):
+    """Runtime receipt; its insert and task accounting commit atomically.
+
+    Nullable counters preserve absent provider usage. Historical task/session
+    totals are never inferred or backfilled from result or message content.
+    """
+
+    __tablename__ = "agent_team_usage"
+
+    request_id = Column(String(36), primary_key=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+
+
+class AgentTeamSubagent(Base):
+    """Runtime-owned delegation identity; child messages use the normal ledger.
+
+    A separate table adds no new meaning to existing session columns. The
+    unique spawn ledger link survives a crash between creation and the parent
+    tool result, so replay cannot create a second child.
+    """
+
+    __tablename__ = "agent_team_subagents"
+
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    parent_session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    spawn_tool_call_id = Column(
+        Integer,
+        ForeignKey("agent_team_tool_calls.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    instruction = Column(LONGTEXT, nullable=False)
+    restriction_payload = Column(LONGTEXT, nullable=False)
+
+
 class AgentTeamMessage(Base):
     """Agent OpenAI-compatible 消息日志。"""
 

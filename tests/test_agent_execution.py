@@ -1082,13 +1082,16 @@ async def test_grep_tool_uses_context_runner_argv(tmp_path):
         def __init__(self):
             self.request: ExecutionRequest | None = None
 
+        def supports_profile(self, profile):
+            return profile is ExecutionProfile.READ_ONLY
+
         async def execute(self, request):
             self.request = request
             return ExecutionResult(
                 command=" ".join(request.argv or ()),
                 cwd=str(workspace),
                 exit_code=0,
-                stdout="./README.md:1:needle\n",
+                stdout="./README.md\0",
                 stderr="",
             )
 
@@ -1105,23 +1108,27 @@ async def test_grep_tool_uses_context_runner_argv(tmp_path):
     assert result.output["files"] == ["./README.md"]
     assert fake.request is not None
     assert fake.request.argv is not None
-    assert fake.request.argv[-2:] == ("needle", ".")
+    assert fake.request.argv[-3:] == ("--", "^", ".")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("keyword", ["..", "$HOME", "/etc/passwd"])
 async def test_grep_allows_path_like_literals_after_separator(tmp_path, keyword):
     service, workspace = _workspace(tmp_path)
+    (workspace / "README.md").write_text(keyword + "\n", encoding="utf-8")
 
     class FakeRunner:
+        def supports_profile(self, profile):
+            return profile is ExecutionProfile.READ_ONLY
+
         async def execute(self, request):
             assert request.argv is not None
-            assert request.argv[-2] == keyword
+            assert request.argv[-3:] == ("--", "^", ".")
             return ExecutionResult(
                 command=" ".join(request.argv),
                 cwd=str(workspace),
                 exit_code=0,
-                stdout="./README.md:1:literal\n",
+                stdout="./README.md\0",
                 stderr="",
             )
 

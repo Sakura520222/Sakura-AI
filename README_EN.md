@@ -146,7 +146,7 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 
 - **Multi-entry Task Creation** — Super-admin manual launch, Issue `/agent` delegation, PR `/agent` one-click fix
 - **Multi-branch Parallel Workspaces** — Each task uses an isolated Git worktree, supporting parallel execution
-- **Two-agent Collaboration** — Full-stack expert plans and edits; professional reviewer does pre-push quality review
+- **Dynamic Read-only Subagents** — The main Agent implements changes and can delegate independent investigations, wait for or cancel children, and collect structured results
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
 - **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with ordinary Shell offline under the default policy, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
 - **Temporary Dependency Egress** — The default `web_tools` policy allows controlled Web tools and implicit Dependency egress. `run_command` can explicitly set `network_capability=dependency_egress` for any current command and its package hooks to reach arbitrary public destinations, with no command or domain allowlist. Egress ends with that container execution; the next ordinary Shell remains offline. `offline` denies egress; `full_access` allows all runner egress. Local is source-only, requires `full_access`, and uses the host network without OS isolation. [Python, Node, Rust, Go, and JVM examples](docs/CONFIGURATION.md#agent-专家团队)
@@ -154,9 +154,11 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 - **Dependency Install Recovery** — Transient network failures get up to 3 attempts by default, with 2- and 4-second backoff; permanent errors are not retried. Final failures retain sanitized diagnostics for the Agent to repair installation or continue static analysis and report tests it could not run. Attempts and delay are adjustable on the unified configuration page
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
+- **Unified Plugin Management** — Super admins manage MCP services, lifecycle hooks, runtime profiles and Skills at `/agent-plugins/`. Configuration lives in the database, credentials are masked, and ordinary execution needs no per-tool approval. See the [plugin configuration guide](docs/AGENT_PLUGINS.md#english-summary)
 - **Repository Instructions & Skills** — Load scoped `AGENTS.md` and Sakura rules, discover `.agents/skills` / `.sakura/skills`, and read bodies on demand. Historical workflow restrictions survive resume; see the [switch, scope, and size guide](docs/AGENT_REPOSITORY_CONTEXT.md#english-summary)
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
 - **Completion & Recovery Contracts** — Only a successful `finish_task` completes a session. Model rounds and cumulative tool calls are unlimited. Ten identical calls or text responses trigger a strategy self-check without ending work, forcing a summary or switching models. Safe reads run in parallel; writes, Shell, Skill admission and finish are exclusive. Interrupted reads may retry, uncertain writes need reconciliation, and persisted completion is never replayed. Cancellation and fault recovery remain, with no per-tool manual approval.
+- **Agent Harness 2.0** — Read-only subagents, MCP, system hooks, capability boundaries and durable audit are wired into autonomous execution. See the [runtime guide](docs/AGENT_HARNESS_RUNTIME.md#english-summary) for deployment prerequisites, recovery and backend compatibility.
 - **Task Cancellation** — Cancel anytime with safe workspace cleanup
 - **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
 - **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas

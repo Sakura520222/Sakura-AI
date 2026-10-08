@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import errno
 import os
+import stat
 from pathlib import Path
 
 from backend.services.agent_team.tools.errors import (
@@ -28,7 +29,10 @@ def read_text_with_metadata(path: str | Path) -> tuple[str, str, str]:
 
     自动处理 UTF-8 / UTF-16-LE 编码。
     """
-    raw = Path(path).read_bytes()
+    return _decode_text_with_metadata(Path(path).read_bytes())
+
+
+def _decode_text_with_metadata(raw: bytes) -> tuple[str, str, str]:
     if raw.startswith(b"\xff\xfe"):
         encoding = "utf-16-le"
     else:
@@ -38,6 +42,45 @@ def read_text_with_metadata(path: str | Path) -> tuple[str, str, str]:
     # 统一为 LF 方便内部处理
     text = text.replace("\r\n", "\n")
     return text, encoding, line_ending
+
+
+def read_workspace_text_with_metadata(
+    workspace: str | Path, resolved: str | Path
+) -> tuple[str, str, str, float]:
+    """Read the resolved workspace target through stable directory descriptors.
+
+    The caller resolves safe internal symlinks and validates the workspace.
+    Replacements after that check cannot redirect this open: every remaining
+    component uses O_NOFOLLOW. Ordinary filenames have no instruction/Skill
+    filters. The content and cached mtime come from the same regular file.
+    """
+    root = Path(workspace)
+    relative = Path(resolved).relative_to(root)
+    if not relative.parts or any(part in {".", ".."} for part in relative.parts):
+        raise ValueError("A workspace file path is required")
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in relative.parts[:-1]:
+            next_directory = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+            )
+            os.close(directory)
+            directory = next_directory
+        descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError(
+                    "Workspace reads require a regular file without hard links"
+                )
+            raw = stream.read()
+            return (*_decode_text_with_metadata(raw), info.st_mtime)
+    finally:
+        os.close(directory)
 
 
 def write_workspace_bytes(path: str | Path, data: bytes) -> None:
@@ -54,9 +97,7 @@ def write_workspace_bytes(path: str | Path, data: bytes) -> None:
         try:
             descriptor = os.open(path, os.O_WRONLY | os.O_TRUNC)
         except FileNotFoundError:
-            descriptor = os.open(
-                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644
-            )
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(data)
     except OSError as exc:
