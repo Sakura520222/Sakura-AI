@@ -6,7 +6,7 @@
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
 - 语言统计: Python: 8744585, HTML: 1130029, Shell: 357518, Dockerfile: 3135
-- 累计反思 5 次
+- 累计反思 12 次
 
 ## 3. 核心审查原则
 - 完整性验证：PR 描述/提交/文件/diff 一致核对；功能逐项勾选，差异 >10% 标 minor。
@@ -17,11 +17,13 @@
 
 ## 4. 硬规则（重点）
 - CI 与语法防线：CI 失败标 error，合并前须全绿；workflow 权限最小化；CI 最早期必须全库 `py_compile` + `import-all`，语法/导入错误零容忍；语法判断以 Python 3.14+ 为准。
+- 优雅降级与防御文案：宽泛捕获/回退机制（Fallback Recovery）中严禁对未明确验证的因果做出确定性断言（如区分 404 与 5xx/Timeout），模型/用户提示须使用条件式/可能性表述；Tool 返回结构化 recovery（含 action/retry_arguments）引导 LLM，Recovery 提示文案需与单测断言解耦。
+- 第三方日志收敛与开关语义：第三方库（如 APScheduler, httpx）默认 INFO 日志须纳入 `logging_bridge` 噪音过滤，保留 WARNING/ERROR 并补全正负向单测；布尔配置与实际执行逻辑必须保持 UI/文档与行为一致。
 - PEP 758 语法识别：Python 3.14+ 允许不带 `as` 的多异常捕获省略括号，`except TypeError, ValueError:` 与 `except (TypeError, ValueError):` 等价。禁止将其识别为“Python 2 遗留语法”、“硬 SyntaxError”或据此阻断合并。误报防复发按当前运行时复核，带 `as` 时仍须为 `except (A, B) as e:`。
 - 并发与锁生命周期：并发所有权锁 (Ownership Lock) / Users 计数器递增必须在进入 acquire 等待队列前同步完成，清理/删键严格约束为 `users == 0`，禁止持有者 release 即删键，防止交接期竞争造成分裂锁。
 - 异步与数据迁移：async 路由同步 I/O 用 `asyncio.to_thread()`；大数据去重/清理迁移必须下推至 DB（配多方言 AST 编译断言防 MySQL 1093 错误），禁用全表拉入内存。
 - 契约与防御：防御性捕获需收敛为底层基类异常（如 `SQLAlchemyError`）且显式标记 best-effort，严禁裸 `except Exception:`；底层 AI 工具错误须返回结构化 recovery（含 action/retry_arguments），防纯文本重试消耗 Token。
-- 依赖与格式：pyproject/requirements/uv.lock 同步（CI `uv lock --check`）；静态检测排查闲置依赖，升级核对 Release Notes；键值/元组契约变更需防范调用方无条件解包 TypeError 及“三态归一”（混淆拒绝与网络异常）隐患。
+- 依赖与格式：pyproject/requirements/uv.lock 同步（CI `uv sync --locked` 或 `uv lock --check`）；修改声明文件必须同 PR 更新 `uv.lock`，Dependabot 等机器人 PR 遗漏锁文件时需阻断（Fail-Closed）并指明运行 `uv lock` / `uv lock --upgrade-package <pkg>`；静态检测排查闲置依赖，升级核对 Release Notes；键值/元组契约变更需防范调用方无条件解包 TypeError 及“三态归一”（混淆拒绝与网络异常）隐患。
 
 ## 5. Agent/Worker/Issue 治理
 - Worker 与恢复机制：禁用无日志无退避的异常忽略；通知与任务恢复循环中禁绝尾部 `asyncio.sleep(0)` 死循环；统一复用 `_cancel_events` 幂等取消。
@@ -32,11 +34,12 @@
 - 行号白名单改用语义化标记；单点真值源。配置集中 `backend/core/config.py`，新配置 env+文件双入口并 CI 校验。
 
 ## 7. 最新反思要点
-- PR644（incr1~incr3）：零行补丁配严格 ungrounded 断言与 `type(count) is not int` 防线；配置校验优先于逻辑早退；并发 Ownership 锁所有权移交必须在 acquire 等待前完成计数递增；DB 迁移 SQL 必须下推且带方言 AST 编译断言。
-- ISSUE646：Epic 级 Issue 拆解即时修复与分阶段演进；规范 `_eligibility_snapshot` 三态区分（明确拒绝 vs 检查失败）；元组契约变更须防范解包 TypeError。
-- ISSUE645：AI 工具报错优先返回结构化 recovery 契约引导重试；涉及到 Prompt/Recovery 的微小 Issue 不应挂 `good first issue` 标签。
+- PR653~PR655：Dependabot 等机器人升级 PR 缺少 `uv.lock` 更新引发 CI `uv sync --locked` 崩溃，必须严格 Fail-Closed 阻断并提示使用 `uv lock` / `uv lock --upgrade-package <pkg>` 精准补全。
+- PR649 (incr2)：Tool 优雅降级与防御性重试中防范状态混淆（网络超时等误判断为资源已删除），结构化 Hint 设计保持客观条件式表述，解耦 Recovery 提示文案与单测断言。
+- ISSUE650：APScheduler 第三方心跳日志噪音收敛至 `logging_bridge`（保留 WARNING/ERROR）；保持配置开关与定时器运行语义的一致性。
+- PR644/ISSUE645/646：零行补丁 ungrounded 断言、并发 Ownership 锁移交原子计数、DB 迁移 AST 编译断言、Epic 拆解与三态区分。
 
 ## 8. 技术栈
 FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
 
-*最后更新：基于 PR644(incr1-3)/ISSUE646/ISSUE645 最新反思整合，精确标注累计反思 5 次*
+*最后更新：整合 PR653~PR655、PR649_incr2、ISSUE650 最新反思，精确标注累计反思 12 次*
