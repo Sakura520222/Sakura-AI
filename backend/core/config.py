@@ -836,6 +836,11 @@ class Settings(BaseSettings):
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
     # ========== Agent 模式配置 ==========
+    agent_team_harness_plugins: str = '{"version":1,"mcp":{"servers":[]},"hooks":[]}'
+    agent_team_permission_profile: Literal[
+        "read_only", "workspace_write", "autonomous", "full_access"
+    ] = "autonomous"
+    agent_team_mcp_io_timeout_seconds: float = Field(300.0, gt=0, allow_inf_nan=False)
     agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     # Agent command execution backend.  ``sandbox`` is the production-safe
@@ -865,6 +870,7 @@ class Settings(BaseSettings):
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
     agent_team_max_concurrent: int = 1
+    agent_team_subagent_concurrency: int = Field(4, ge=1)
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_branch_index_delay: float = 2.0
@@ -1378,6 +1384,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                         "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
                     ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
+                    "agent_team_subagent_concurrency": "新主会话中同时运行的只读子 Agent 槽位；其余排队，不限制累计创建或调用次数，不结束主任务",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
@@ -1396,6 +1403,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_network_policy",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
+                    "agent_team_subagent_concurrency",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_draft_pr",
@@ -1682,6 +1690,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "issue_candidate_pool_multiplier": ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
     "agent_team_candidate_cache_ttl": (0, 3600),
     "agent_team_dependency_install_attempts": (1, 5),
+    "agent_team_subagent_concurrency": (1, None),
     "agent_team_dependency_retry_delay_seconds": (0, 60),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
@@ -1861,6 +1870,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
     "agent_team_max_concurrent": "最大并发任务数",
+    "agent_team_subagent_concurrency": "子 Agent 并发运行槽位",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_draft_pr": "创建 Draft PR",

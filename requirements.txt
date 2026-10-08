@@ -12,6 +12,11 @@ cryptography>=50.0.1
 openai>=3.8.0
 httpx>=0.28.1
 
+# Agent Harness MCP runtime
+mcp>=2.3.0,<3.0.0
+httpx2>=2.10.0,<3.0.0
+jsonschema>=4.26.0,<5.0.0
+
 # 数据库
 sqlalchemy[asyncio]>=2.1.1,<2.2
 asyncmy>=0.2.15

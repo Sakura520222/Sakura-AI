@@ -166,9 +166,7 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
 
-        async def prepare_workspace_for_execution_backend(
-            self, workspace, backend
-        ):
+        async def prepare_workspace_for_execution_backend(self, workspace, backend):
             del workspace, backend
 
         async def install_workspace_dependencies(
@@ -181,7 +179,7 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                        command="python -m venv --copies /workspace/.venv/sandbox",
+                    command="python -m venv --copies /workspace/.venv/sandbox",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )
@@ -268,6 +266,7 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
     )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+
     async def fake_create_runner(self, workspace, workspace_service):
         admission_events.append(("factory", workspace))
         return execution_runner
@@ -392,7 +391,9 @@ async def test_agent_worker_updates_original_pr_head_without_creating_replacemen
     async def fake_save_iteration(self, **kwargs):
         return None
 
-    async def fake_admit(self, git_service, workspace, *, cancel_event=None):
+    async def fake_admit(
+        self, git_service, workspace, *, cancel_event=None, task_id=None
+    ):
         return object()
 
     async def fake_resolve_bool_config(self, key, fallback):
@@ -415,7 +416,9 @@ async def test_agent_worker_updates_original_pr_head_without_creating_replacemen
         lambda self, task: _async_empty_context(),
     )
     monkeypatch.setattr(AgentTeamWorker, "_admit_workspace_runner", fake_admit)
-    monkeypatch.setattr(AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config)
+    monkeypatch.setattr(
+        AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config
+    )
 
     worker = AgentTeamWorker()
     await worker.process_task(task.id)
@@ -524,9 +527,7 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
 
-        async def prepare_workspace_for_execution_backend(
-            self, workspace, backend
-        ):
+        async def prepare_workspace_for_execution_backend(self, workspace, backend):
             del workspace, backend
 
         async def install_workspace_dependencies(
@@ -540,7 +541,7 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
                 ExecutionRequest(
                     workspace_key="fake-workspace",
                     command=(
-                            "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
+                        "/workspace/.venv/sandbox/bin/pip install -r requirements.txt --quiet"
                     ),
                     profile=ExecutionProfile.DEPENDENCY,
                 )
@@ -580,6 +581,10 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
 
         async def run(self, **kwargs):
             run_kwargs.append(kwargs)
+            # The real loop commits provider receipts before returning. This
+            # worker double exposes the corresponding fresh database snapshot.
+            task.prompt_tokens = 110
+            task.completion_tokens = 55
             return _passing_outcome(modified_files=["backend/example.py"])
 
     class FakePRService:
@@ -629,6 +634,7 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
+
     async def fake_create_runner(self, workspace, workspace_service):
         admission_events.append(("factory", workspace))
         return execution_runner
@@ -734,9 +740,7 @@ async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()
 
-        async def prepare_workspace_for_execution_backend(
-            self, workspace, backend
-        ):
+        async def prepare_workspace_for_execution_backend(self, workspace, backend):
             del workspace, backend
 
         async def resume_workspace(
@@ -772,7 +776,7 @@ async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
             await runner.execute(
                 ExecutionRequest(
                     workspace_key="fake-workspace",
-                        command="python -m venv --copies /workspace/.venv/sandbox",
+                    command="python -m venv --copies /workspace/.venv/sandbox",
                     profile=ExecutionProfile.DEPENDENCY,
                 )
             )
@@ -855,3 +859,17 @@ async def test_human_followup_resumes_with_factory_dependency_and_loop_runner(
     assert pushed[0]["target_repo_name"] == "repo-fork"
     assert pushed[0]["target_branch_name"] == "feature/original"
     assert pushed[0]["expected_head_sha"] == "old-sha"
+
+
+@pytest.fixture(autouse=True)
+def worker_control_audit_store(monkeypatch):
+    """Worker orchestration uses fake tasks; persistence has separate SQLite tests."""
+    from unittest.mock import AsyncMock
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    monkeypatch.setattr(
+        ConversationCheckpointService, "record_control_event", AsyncMock()
+    )

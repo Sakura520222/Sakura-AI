@@ -14,6 +14,7 @@ Replaces legacy ContextCompressor and AgentTeamContextCompressor:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from backend.core.ai_protocol.request_policy import (
 )
 from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
+from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 try:
@@ -88,11 +90,13 @@ class UnifiedContextCompressor:
         threshold: float = _COMPRESSION_THRESHOLD_DEFAULT,
         summary_max_tokens: int = _SUMMARY_MAX_TOKENS_DEFAULT,
         enabled: bool = True,
+        usage_callback: Callable[[Any], Awaitable[None]] | None = None,
     ):
         self._http_client = http_client
         self.threshold = threshold
         self.summary_max_tokens = max(1, int(summary_max_tokens))
         self.enabled = enabled
+        self.usage_callback = usage_callback
         self._model_ctx = get_model_context_manager()
 
     @classmethod
@@ -351,6 +355,17 @@ class UnifiedContextCompressor:
         except Exception as exc:
             logger.warning("压缩摘要调用失败，放弃压缩: {}", exc)
             return None
+
+        if self.usage_callback is not None:
+            failed = False
+            try:
+                await self.usage_callback(response.usage)
+            except Exception:
+                failed = True
+            if failed:
+                # Raise outside the handler: no database/credential exception
+                # context is retained in the public infrastructure failure.
+                raise UsagePersistenceError() from None
 
         # This request intentionally bypasses UnifiedAIClient to avoid recursive
         # compression.  Account for it explicitly so auxiliary summarization is

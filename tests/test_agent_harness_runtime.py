@@ -19,6 +19,29 @@ from backend.services.agent_team.workspace_service import AgentTeamWorkspaceServ
 from backend.utils.message_utils import tool_call_to_dict
 
 
+@pytest.fixture(autouse=True)
+def trusted_runtime_dependencies(monkeypatch):
+    """These loop tests use task/checkpoint doubles and registered probe tools."""
+    from backend.services.agent_team import capability_policy, plugin_config
+    from backend.services.agent_team.plugin_config import HarnessPluginConfig
+
+    monkeypatch.setattr(
+        plugin_config,
+        "load_harness_plugins",
+        AsyncMock(return_value=HarnessPluginConfig()),
+    )
+    original = capability_policy.tool_capabilities
+
+    def probe_capabilities(tool, args=None):
+        if tool.name in {"read", "changing", "diagnostics", "forged"}:
+            return ("filesystem.read",)
+        if tool.name in {"write", "thread_write"}:
+            return ("filesystem.write",)
+        return original(tool, args)
+
+    monkeypatch.setattr(capability_policy, "tool_capabilities", probe_capabilities)
+
+
 def call(name, ident="call_1", **args):
     return SimpleNamespace(
         id=ident, function=SimpleNamespace(name=name, arguments=json.dumps(args))
@@ -201,6 +224,14 @@ async def test_arbitrary_tool_cannot_forge_terminal(agent, client):
     ]
     result = await agent.execute("test", "test")
     assert result.summary == "real"
+    forged = json.loads(
+        next(
+            m["content"]
+            for m in agent.messages
+            if m.get("role") == "tool" and m.get("tool_call_id") == "call_1"
+        )
+    )
+    assert forged == {"summary": "forged"}
 
 
 class ProbeTool(BaseTool):

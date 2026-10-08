@@ -236,10 +236,16 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
 | 全局配置页「Agent」组 | `agent_team_skills_enabled` | 控制 DB 与仓库 Skills 的发现、上下文和正文调用；关闭不影响独立的 AGENTS.md 等仓库规则 |
 | 全局配置页「Agent」组 | `agent_team_skills_root` | 管理员安装 Skills 的本地存储根目录，不改变仓库 Skills 的两个固定发现目录 |
+| 全局配置页「Agent」组 | `agent_team_subagent_concurrency` | 同时运行的只读子 Agent 数，默认 4；其余排队，不是累计调用或任务预算 |
+| Agent 插件页 `/agent-plugins/` | `agent_team_permission_profile` | 默认 `autonomous`；`read_only`、`workspace_write`、`full_access` 收窄/选择既有运行边界，无逐工具审批 |
+| Agent 插件页 `/agent-plugins/` | `agent_team_harness_plugins` | 版本化 MCP/Hooks 配置；现有 Skills 管理入口也在该页，凭据只用于 transport |
+| Settings / 单个 MCP 配置 | `agent_team_mcp_io_timeout_seconds` / `timeout_seconds` | HTTP I/O 空闲默认 300 秒；不限制活跃工具调用总时长。SDK discovery 握手另有协议探测超时 |
 
 规则优先级、目录作用域、开关与恢复、选择器兼容、按需读取及已移除的新增限制详见[仓库规则与 Skills](AGENT_REPOSITORY_CONTEXT.md)。这些设置不引入运行时人工授权或审批流程；#604 的临时依赖出网机制保持不变。
 
-> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、grep 和依赖 hook 使用 `AGENT` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+> Agent Team 的主/子 Agent 均使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、只读搜索/Git 检查和依赖 hook 分别使用 `AGENT` / `READ_ONLY` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+
+Harness 后端和恢复要求见[运行指南](AGENT_HARNESS_RUNTIME.md)。本地只读进程要求 Linux Landlock ABI ≥ 3、libseccomp；`check_changes` 要求所选后端 Git 支持 `--no-lazy-fetch`（上游 2.45+），旧 Git 返回明确工具前置条件错误，不移除保护参数重试。部署 `workspace_write` 时 Shell 始终断网，不能被更宽的网络配置覆盖。
 
 下列设置属于部署安全边界，不通过 WebUI 或数据库动态修改：
 

@@ -71,6 +71,19 @@ class AIModelsRequest(BaseModel):
 
 def _mask_sensitive(value: str, key: str) -> str:
     """对敏感配置字段进行脱敏"""
+    if key == "agent_team_harness_plugins":
+        from backend.services.agent_team.plugin_config import (
+            PluginConfigError,
+            parse_harness_plugins,
+            public_plugin_config,
+        )
+
+        try:
+            return json.dumps(
+                public_plugin_config(parse_harness_plugins(value)), ensure_ascii=False
+            )
+        except PluginConfigError:
+            return "****"
     sensitive_keys = ("secret", "key", "token", "password", "credential")
     if key.startswith("ai_account."):
         try:
@@ -586,6 +599,15 @@ async def update_general_config(
     configs = body.configs
     if not configs:
         return error_response("配置内容不能为空")
+    if {
+        "agent_team_harness_plugins",
+        "agent_team_permission_profile",
+        "agent_team_mcp_io_timeout_seconds",
+    } & set(configs):
+        return error_response(
+            "Agent 插件配置必须通过专用管理页面更新",
+            code="PLUGIN_CONFIG_DEDICATED_ROUTE_REQUIRED",
+        )
     section_keys = sorted(set(configs).intersection(SECTION_REGISTRY))
     if section_keys:
         return error_response(

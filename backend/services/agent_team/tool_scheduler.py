@@ -1,13 +1,16 @@
 """Read batches and workspace-wide, writer-preferring barriers.
 
-Locks are shared by executors on the same worker event loop. They do not provide
-exclusion across worker processes; no distributed workspace lease is implemented.
-No schema field or model argument participates in scheduling decisions.
+An event-loop barrier provides writer preference, and an advisory lock on the
+workspace directory coordinates processes using the same filesystem inode.
+This is not a distributed task/session lease. No schema field or model argument
+participates in scheduling decisions.
 """
 
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +26,8 @@ if TYPE_CHECKING:
 
 
 class WorkspaceBarrier:
-    def __init__(self):
+    def __init__(self, workspace: str):
+        self.workspace = workspace
         self.condition = asyncio.Condition()
         self.readers = 0
         self.writer = False
@@ -47,9 +51,26 @@ class WorkspaceBarrier:
                 finally:
                     self.waiting_writers -= 1
                     self.condition.notify_all()
+        directory_fd = None
         try:
+            # Lock the admitted directory itself: no writable lock file inside
+            # repository content, no stale-file cleanup or inode replacement.
+            # Nonblocking acquisition keeps cancellation responsive without an
+            # execution budget or a blocking worker thread left behind.
+            directory_fd = os.open(
+                self.workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            operation = (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB
+            while True:
+                try:
+                    fcntl.flock(directory_fd, operation)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(0.01)
             yield
         finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
             async with self.condition:
                 if shared:
                     self.readers -= 1
@@ -67,7 +88,7 @@ def workspace_barrier(workspace: str) -> WorkspaceBarrier:
     key = str(Path(workspace).resolve())
     barrier = barriers.get(key)
     if barrier is None:
-        barrier = WorkspaceBarrier()
+        barrier = WorkspaceBarrier(key)
         barriers[key] = barrier
     return barrier
 

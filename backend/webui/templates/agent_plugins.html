@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ _('agent_plugins.title') }} - Sakura AI{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-6xl space-y-6">
+    <header><h1 class="text-2xl font-bold">{{ _('agent_plugins.title') }}</h1><p class="mt-2 text-sm text-gray-500">{{ _('agent_plugins.description') }}</p></header>
+    <section class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+        <h2 class="font-semibold">Skills</h2>
+        <p class="my-2 text-sm">{{ _('agent_plugins.skills_status', total=skill_count, enabled=enabled_skill_count) }}</p>
+        <a class="text-pink-600 hover:underline" href="/agent-skills/">{{ _('agent_plugins.manage_skills') }}</a>
+    </section>
+    <section class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+        <h2 class="font-semibold">{{ _('agent_plugins.configured') }}</h2>
+        <ul class="mt-3 space-y-2 text-sm">
+        {% for server in plugins.mcp.servers %}<li><strong>MCP · {{ server.id }}</strong> — {{ _('agent_plugins.enabled') if server.enabled else _('agent_plugins.disabled') }} · {{ server.url }}{% if plugins.mcp_repository_scopes.get(server.id) is not none %} · {{ plugins.mcp_repository_scopes[server.id]|join(', ') }}{% endif %}</li>{% endfor %}
+        {% for hook in plugins.hooks %}<li><strong>Hook · {{ hook.id }}</strong> — {{ _('agent_plugins.enabled') if hook.enabled else _('agent_plugins.disabled') }} · {{ hook.event }} · {{ hook.kind }}</li>{% endfor %}
+        {% if not plugins.mcp.servers and not plugins.hooks %}<li class="text-gray-500">{{ _('agent_plugins.empty') }}</li>{% endif %}
+        </ul>
+    </section>
+    <form method="post" action="/agent-plugins/save" class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="block font-semibold" for="plugin-profile">{{ _('agent_plugins.profile') }}</label>
+        <select id="plugin-profile" name="profile" class="rounded-lg border p-2 dark:bg-gray-900">{% for value in profiles %}<option value="{{ value }}" {% if value == profile %}selected{% endif %}>{{ _('agent_plugins.profile_' + value) }}</option>{% endfor %}</select>
+        <p class="text-sm text-gray-500">{{ _('agent_plugins.profile_help') }}</p>
+        <label class="block font-semibold" for="plugin-json">{{ _('agent_plugins.editor') }}</label>
+        <p class="text-sm text-gray-500">{{ _('agent_plugins.editor_help') }}</p>
+        <textarea id="plugin-json" name="plugins" rows="24" spellcheck="false" class="w-full rounded-lg border border-gray-300 p-3 font-mono text-sm dark:bg-gray-900 dark:border-gray-600">{{ plugin_json }}</textarea>
+        <details class="text-sm"><summary class="cursor-pointer">{{ _('agent_plugins.example') }}</summary><pre class="mt-3 overflow-auto rounded bg-gray-100 dark:bg-gray-900 p-3">{
+  "version": 1,
+  "mcp": {"servers": [{
+    "id": "docs", "url": "https://mcp.example.com/mcp", "enabled": true,
+    "timeout_seconds": 300, "credential_headers": {"Authorization": "SAKURA_MCP_DOCS_TOKEN"}
+  }]},
+  "mcp_repository_scopes": {"docs": ["owner/repo"]},
+  "hooks": [{"id": "checks", "event": "before_finish", "kind": "command",
+    "argv": ["python", "-m", "pytest", "-q"], "required": true, "enabled": true}]
+}</pre><p class="mt-2">{{ _('agent_plugins.example_help') }}</p></details>
+        <button type="submit" class="rounded-lg bg-pink-600 px-5 py-2 text-white hover:bg-pink-700">{{ _('agent_plugins.save') }}</button>
+    </form>
+</div>
+{% endblock %}

@@ -16,6 +16,19 @@ from backend.services.agent_team.execution import (
     resolve_execution_runner,
 )
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
+from backend.services.agent_team.tools.errors import ToolExecutionError
+
+_READ_ONLY_GIT = (
+    "git",
+    "--no-pager",
+    "--no-optional-locks",
+    "--no-lazy-fetch",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "diff.autoRefreshIndex=false",
+)
+_READ_ONLY_DIFF = ("diff", "--no-ext-diff", "--no-textconv", "--submodule=short")
 
 
 class GitDiffTool(BaseTool):
@@ -74,13 +87,16 @@ class GitDiffTool(BaseTool):
 
     async def _run_summary(self, ctx: ToolContext) -> ToolResult:
         """git diff --stat + git status --short"""
-        stat_result = await self._run_git(ctx, ("git", "diff", "--stat"))
-        status_result = await self._run_git(ctx, ("git", "status", "--short"))
+        prefix = await self._read_only_prefix(ctx)
+        stat_result = await self._run_git(ctx, (*prefix, *_READ_ONLY_DIFF, "--stat"))
         if stat_result.returncode != 0:
             return ToolResult(
                 success=False,
                 error=f"git diff --stat 失败: {stat_result.stderr}",
             )
+        status_result = await self._run_git(ctx, (*prefix, "status", "--short"))
+        if status_result.returncode != 0:
+            return ToolResult(False, error=f"git status 失败: {status_result.stderr}")
 
         stat_output = stat_result.stdout.strip()
         status_output = status_result.stdout.strip()
@@ -112,7 +128,7 @@ class GitDiffTool(BaseTool):
         # Keep every user-selected path after Git's option terminator.  This
         # preserves literal filenames such as ``--stat`` or ``-p`` instead of
         # letting Git parse them as additional diff options.
-        git_args: list[str] = ["git", "diff", "--"]
+        git_args = [*await self._read_only_prefix(ctx), *_READ_ONLY_DIFF, "--"]
         workspace_root = ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
         if file_paths and isinstance(file_paths, list):
             for fp in file_paths:
@@ -152,6 +168,59 @@ class GitDiffTool(BaseTool):
             },
         )
 
+    async def _read_only_prefix(self, ctx: ToolContext) -> tuple[str, ...]:
+        # --no-textconv does not disable worktree clean/process conversions.
+        # Read only their names, never command bodies, then override the
+        # effective driver settings for this invocation without editing config.
+        result = await self._run_git(
+            ctx,
+            (
+                *_READ_ONLY_GIT,
+                "config",
+                "--null",
+                "--name-only",
+                "--get-regexp",
+                "^filter[.].*[.](clean|process|required)$",
+            ),
+        )
+        if result.returncode not in {0, 1}:
+            if (
+                result.returncode == 129
+                and "unknown option: --no-lazy-fetch" in result.stderr
+            ):
+                # Never retry without the no-fetch guarantee. This is a tool
+                # prerequisite failure, not a terminal event for the Agent.
+                raise ToolExecutionError(
+                    "GIT_READ_ONLY_UNSUPPORTED",
+                    "check_changes 需要支持 --no-lazy-fetch 的 Git（上游 2.45+）。"
+                    "请升级所选执行后端的 Git；其他工具仍可继续使用。",
+                )
+            raise ToolExecutionError(
+                "GIT_READ_ONLY_CONFIG_FAILED",
+                f"无法安全读取 Git 只读检查配置: {result.stderr.strip()}",
+            )
+        drivers = set()
+        for key in result.stdout.split("\0"):
+            if not key:
+                continue
+            prefix, separator, option = key.rpartition(".")
+            if (
+                not separator
+                or not prefix.startswith("filter.")
+                or not prefix[7:]
+                or option not in {"clean", "process", "required"}
+                or any(ord(char) < 32 for char in key)
+            ):
+                raise ToolExecutionError(
+                    "GIT_READ_ONLY_CONFIG_FAILED", "Git filter 配置键无效"
+                )
+            drivers.add(prefix)
+        options = list(_READ_ONLY_GIT)
+        for driver in sorted(drivers):
+            for setting in ("clean=", "process=", "required=false"):
+                options.extend(("-c", f"{driver}.{setting}"))
+        return tuple(options)
+
     async def _run_git(
         self,
         ctx: ToolContext,
@@ -163,11 +232,9 @@ class GitDiffTool(BaseTool):
             ctx.workspace_service,
         )
         request = ExecutionRequest(
-            workspace_key=execution_workspace_key(
-                ctx.workspace, ctx.workspace_service
-            ),
+            workspace_key=execution_workspace_key(ctx.workspace, ctx.workspace_service),
             argv=args,
-            profile=ExecutionProfile.AGENT,
+            profile=ExecutionProfile.READ_ONLY,
             cancel_event=ctx.cancel_event,
         )
         return await execute_request(runner, request)

@@ -86,7 +86,7 @@ Read the relevant files, inspect the diff, and report the evidence.
 
 管理员安装的 DB Skills 沿用此任务前既有的 `MAX_SKILL_BYTES`：每文件 **512 KiB**，包括附件；原安装目录总量校验也保留。该既有契约与已删除的仓库默认 64 KiB 限制相互独立。
 
-这些规则不限制真实用户指导的原文，不删除 checkpoint 中的原始审计记录，也不改变 Phase 1 的完成、取消和恢复协议。同进程、同事件循环中的工作区互斥已经验证；跨 worker 互斥保证仍待核实。
+这些规则不限制真实用户指导的原文，不删除 checkpoint 中的原始审计记录，也不改变完成、取消和恢复协议。共享目录上的跨进程工具互斥和任务/session 所有权是不同保证，详见[运行行为与验证边界](AGENT_HARNESS_RUNTIME.md)。
 
 ## English summary
 
@@ -96,6 +96,6 @@ Repository instructions remain untrusted user-level data. Root/global rules prec
 
 Discovery reads metadata, listings enumerate resources, and explicit `use_skill` calls read the requested body or attachment. DB Skills retain the existing 512 KiB per-file contract; the added repository 64 KiB cap has been removed. Unsupported selectors and violations of the existing DB Skill file contract are explicit errors. Runtime tool names and documented `Read`/`Shell`/`Bash` forms preserve exact or simple-command-prefix constraints without granting new tools or network access.
 
-Runtime-owned historical workflow ceilings are checkpointed atomically and intersected with current restrictions on resume. Metadata changes cannot silently expand them. `end_skill=true` is an autonomous cleanup operation, never an approval request. No MCP, subagent, unified capability engine, hook or plugin-management expansion is part of this Phase 2 delivery.
+Runtime-owned historical workflow ceilings are checkpointed atomically and intersected with current restrictions on resume. Metadata changes cannot silently expand them. `end_skill=true` is an autonomous cleanup operation, never an approval request. See [runtime behavior](AGENT_HARNESS_RUNTIME.md) for subagents, capabilities, hooks and their verification boundaries.
 
 The nine newly introduced runtime/configuration limits have been removed, including model/tool totals, parallel-read counts and repeated-tool-round thresholds. Persisted legacy values are ignored. Workspace exclusion, cancellation and explicit finish_task completion remain enforced.
