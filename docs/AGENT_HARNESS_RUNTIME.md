@@ -10,6 +10,8 @@
 
 进程间锁要求各 worker 访问同一支持 `flock` 的文件系统目录。它不提供跨机器独立副本协调，也不等于任务/session 的分布式所有权租约。数据库行锁和子会话唯一约束不能被描述为完整的跨 worker 所有权保证。
 
+POSIX 锁能力不会成为整个后端的导入依赖。Windows 等缺少 `fcntl` 或安全目录打开能力的宿主仍可导入/启动普通后端；若实际执行 Harness 工作区操作，则明确返回 `workspace_lock_unavailable`，不会默默退回仅进程内互斥。这不代表已实现 Windows 原生 Harness 工作区执行。
+
 取消会通知并等待并行工具、命令进程和子 Agent 清理，再释放工作区屏障。崩溃恢复不会盲目重放可能已经执行的写入；工具和 Hook 的 admitted/completed 副作用账本用于识别不确定操作。已有任务恢复入口用于故障处置，正常工作不需要点击继续。
 
 ## 只读子 Agent
@@ -58,6 +60,8 @@ Hook 的独立参数 `{workspace}` 由所选执行后端展开：本地是实际
 The unattended Agent has no new model-round, cumulative tool-call or task-step budgets. Only an accepted `finish_task` completes normally; required pre-finish hooks can return actionable failures. Repeated identical work prompts autonomous strategy review without terminating the task or changing models.
 
 Safe reads run concurrently. Mutations and completion validation are exclusive. An event-loop barrier and advisory lock on the shared workspace directory coordinate local processes without repository lock files or time budgets. This requires shared filesystem `flock` semantics and is not distributed task/session ownership. Cancellation drains child tasks/processes before releasing exclusion; uncertain historical mutations require reconciliation instead of blind replay.
+
+Backend import/startup does not require the optional POSIX locking module. Hosts without `fcntl` or safe directory-open support can start the general backend, but actual Harness workspace operations fail explicitly with `workspace_lock_unavailable`; they never silently drop process exclusion. Native Windows Harness workspace execution is not implemented by this import compatibility fix.
 
 Subagents have isolated durable sessions, immutable readonly/Skill ceilings, scoped wait/cancel/results and parent cleanup. `agent_team_subagent_concurrency` defaults to four live children with queued work; there is no lifetime call cap. Main and child sessions retain the configured `agent_team` model. Readonly search/diff uses readonly, offline Sandbox mounts or Linux Landlock ABI ≥ 3 plus libseccomp. Unsupported backends fail explicitly; macOS local readonly execution is not implemented. Deploy compatible sandboxd/runner versions together.
 
