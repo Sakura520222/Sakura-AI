@@ -66,7 +66,7 @@ class ConversationCheckpointService:
             await self.append_message_in_session(
                 db,
                 control.id,
-                {"role": "user", "content": "", "metadata": {"harness_event": payload}},
+                {"role": "audit", "content": "", "metadata": {"harness_event": payload}},
                 publish_event=False,
             )
             control.completed_at = utc_now()

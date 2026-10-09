@@ -204,7 +204,12 @@ class FullStackExpertAgent:
         return message_id
 
     async def _ensure_system_checkpoint(self) -> None:
-        if not self.checkpoint or not self.session_id or not self.messages:
+        if (
+            self.restored_messages
+            or not self.checkpoint
+            or not self.session_id
+            or not self.messages
+        ):
             return
         if len(self.messages) == 1 and self.messages[0].get("role") == "system":
             await self.checkpoint.append_message(self.session_id, self.messages[0])
@@ -344,6 +349,7 @@ class FullStackExpertAgent:
 
     async def execute(self, *args: Any, **kwargs: Any) -> FullStackResult:
         result = None
+        task_cancellation = None
         try:
             result = await self._execute(*args, **kwargs)
         except HookFailure as exc:
@@ -357,7 +363,10 @@ class FullStackExpertAgent:
                 modified_files=sorted(ctx.modified_files) if ctx else [],
                 tool_calls_count=sum(m.get("role") == "tool" for m in self.messages),
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                task_cancellation = exc
             ctx = getattr(self, "_active_context", None)
             result = FullStackResult(
                 success=False,
@@ -368,33 +377,46 @@ class FullStackExpertAgent:
             )
         finally:
             try:
-                if self._harness:
-                    ctx = getattr(self, "_active_context", None)
-                    if ctx and (result is None or not result.success):
-                        try:
-                            await drain_cleanup(
-                                self._harness.hooks.emit(
-                                    "task_cancelled"
-                                    if result and result.error == "cancelled"
-                                    else "task_failed",
-                                    ctx,
-                                    audit_only=bool(
-                                        result
-                                        and result.error
-                                        in {
-                                            "reconciliation_required",
-                                            "checkpoint_inconsistent",
-                                        }
-                                    ),
-                                    status="cancelled"
-                                    if result and result.error == "cancelled"
-                                    else "failed",
+                try:
+                    if self._harness:
+                        ctx = getattr(self, "_active_context", None)
+                        if ctx and (result is None or not result.success):
+                            try:
+                                await drain_cleanup(
+                                    self._harness.hooks.emit(
+                                        "task_cancelled"
+                                        if result and result.error == "cancelled"
+                                        else "task_failed",
+                                        ctx,
+                                        audit_only=bool(
+                                            result
+                                            and result.error
+                                            in {
+                                                "reconciliation_required",
+                                                "checkpoint_inconsistent",
+                                            }
+                                        ),
+                                        status="cancelled"
+                                        if result and result.error == "cancelled"
+                                        else "failed",
+                                    )
                                 )
-                            )
-                        except Exception:
-                            logger.error("Agent terminal lifecycle hook failed")
-            finally:
-                await self._close_harness_resources()
+                            except Exception:
+                                logger.error("Agent terminal lifecycle hook failed")
+                finally:
+                    await self._close_harness_resources()
+            except (asyncio.CancelledError, Exception) as cleanup_error:
+                if task_cancellation is None:
+                    raise
+                if not isinstance(cleanup_error, asyncio.CancelledError):
+                    logger.error(
+                        "Agent cleanup failed during task cancellation: {}",
+                        type(cleanup_error).__name__,
+                    )
+        if task_cancellation is not None:
+            # Retain structured lifecycle data, but let the owning worker/task
+            # observe shutdown cancellation after all resources have drained.
+            raise task_cancellation
         if (
             result is not None
             and isinstance(self.checkpoint, ConversationCheckpointService)
@@ -425,7 +447,7 @@ class FullStackExpertAgent:
 
     async def _persist_harness_audit(self, event):
         await self._append_message(
-            {"role": "user", "content": "", "metadata": {"harness_event": event}}
+            {"role": "audit", "content": "", "metadata": {"harness_event": event}}
         )
 
     async def _persist_provider_usage(self, usage: Any) -> None:
@@ -451,7 +473,7 @@ class FullStackExpertAgent:
             await self.checkpoint.append_message(
                 self.session_id,
                 {
-                    "role": "user",
+                    "role": "audit",
                     "content": "",
                     "metadata": {"context_compaction": audit},
                 },

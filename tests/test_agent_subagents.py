@@ -666,9 +666,13 @@ async def test_parent_ending_cancels_and_awaits_actual_children(
     if ending == "error":
         with pytest.raises(RuntimeError, match="upstream"):
             await asyncio.wait_for(running, 2)
+    elif ending == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(running, 2)
+        assert running.cancelled()
     else:
         result = await asyncio.wait_for(running, 2)
-        assert result.outcome == ("cancelled" if ending == "cancel" else "success")
+        assert result.outcome == "success"
     assert child_drained.is_set()
     with Session(engine) as db:
         children = list(

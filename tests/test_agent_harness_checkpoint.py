@@ -417,3 +417,4 @@ async def test_control_audit_is_durable_and_never_selects_resume_cursor(persiste
         )
         assert len(rows) == 2
         assert all(row.content == "" for row in rows)
+        assert all(row.role == "audit" for row in rows)
