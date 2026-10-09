@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.services.payment.gateway_base import WebhookEventType
+from backend.services.payment.gateway_base import (
+    PaymentWebhookVerificationError,
+    WebhookEventType,
+)
 from backend.services.payment.stripe_gateway import StripeGateway
 
 
@@ -134,12 +137,11 @@ class TestStripeGatewayVerifyWebhook:
         )
         mock_stripe.error = real_stripe.error
 
-        result = gateway.verify_webhook(
-            payload=b"test",
-            headers={"stripe-signature": "invalid"},
-        )
-
-        assert result.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(
+                payload=b"test",
+                headers={"stripe-signature": "invalid"},
+            )
 
     @patch("backend.services.payment.stripe_gateway.stripe")
     def test_verify_webhook_unknown_event_type(self, mock_stripe, gateway):
