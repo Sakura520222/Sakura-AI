@@ -266,9 +266,10 @@ async def test_cancel_during_usage_commit_drains_receipt_and_reports_known_work(
     await asyncio.sleep(0)
     assert not running.done()
     release.set()
-    result = await running
-    assert result.outcome == "cancelled"
-    assert (result.prompt_tokens, result.completion_tokens) == (13, 5)
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert running.cancelled()
+    assert await checkpoint.load_usage(parent.id) == (13, 5)
     assert totals(engine)[:2] == (13, 5)
     assert not (tmp_path / "written.txt").exists()
 

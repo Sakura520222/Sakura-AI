@@ -14,6 +14,8 @@ POSIX 锁能力不会成为整个后端的导入依赖。Windows 等缺少 `fcnt
 
 取消会通知并等待并行工具、命令进程和子 Agent 清理，再释放工作区屏障。崩溃恢复不会盲目重放可能已经执行的写入；工具和 Hook 的 admitted/completed 副作用账本用于识别不确定操作。已有任务恢复入口用于故障处置，正常工作不需要点击继续。
 
+通过任务事件发出的取消保留结构化 `cancelled` 结果；宿主直接调用 `Task.cancel()` 时，协程清理后继续抛出取消，供服务关闭和上层 worker 识别。后续清理错误有安全日志，不覆盖已收到的外部取消。审计记录使用独立角色并保留历史 metadata，不占用 Live View 的会话消息页；界面继续补读后续页和加载期间到达的 SSE 更新。
+
 ## 只读子 Agent
 
 主 Agent 使用 `spawn_agent(task=...)` 创建独立的 durable session，通过 `wait_agent(agent_id=...)` 取回结构化结果，通过 `cancel_agent(agent_id=...)` 取消。任务和父会话身份由数据库验证，不能等待或取消另一任务的子会话。关闭父会话会取消并等待尚未完成的后代。
@@ -62,6 +64,8 @@ The unattended Agent has no new model-round, cumulative tool-call or task-step b
 Safe reads run concurrently. Mutations and completion validation are exclusive. An event-loop barrier and advisory lock on the shared workspace directory coordinate local processes without repository lock files or time budgets. This requires shared filesystem `flock` semantics and is not distributed task/session ownership. Cancellation drains child tasks/processes before releasing exclusion; uncertain historical mutations require reconciliation instead of blind replay.
 
 Backend import/startup does not require the optional POSIX locking module. Hosts without `fcntl` or safe directory-open support can start the general backend, but actual Harness workspace operations fail explicitly with `workspace_lock_unavailable`; they never silently drop process exclusion. Native Windows Harness workspace execution is not implemented by this import compatibility fix.
+
+Event cancellation returns a structured cancelled outcome. Owning-task `Task.cancel()` propagates after resource cleanup so shutdown and worker callers observe cancellation; later cleanup failures have safe diagnostics and do not replace it. Durable audit metadata has a separate message role, remains available to recovery, and does not occupy conversation pages. Live View drains subsequent pages and retains SSE updates received while loading.
 
 Subagents have isolated durable sessions, immutable readonly/Skill ceilings, scoped wait/cancel/results and parent cleanup. `agent_team_subagent_concurrency` defaults to four live children with queued work; there is no lifetime call cap. Main and child sessions retain the configured `agent_team` model. Readonly search/diff uses readonly, offline Sandbox mounts or Linux Landlock ABI ≥ 3 plus libseccomp. Unsupported backends fail explicitly; macOS local readonly execution is not implemented. Deploy compatible sandboxd/runner versions together.
 
