@@ -164,7 +164,7 @@ def test_live_view_has_conversation_layout_safe_markdown_and_stream_recovery_con
     assert "_lastMsgId" in template
     assert "_userScrolledUp" in template
     assert "scrollToLatest()" in template
-    assert "data.messages.length === 0" in template
+    assert "data.has_more === true" in template
     assert "new URLSearchParams({content: this.promptText})" in template
     assert "_sseHandlers" in template
     assert "visibilitychange" in template

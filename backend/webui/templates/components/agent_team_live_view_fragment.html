@@ -50,7 +50,7 @@
 <script>
 function agentTeamLiveView() {
     return {
-        selectedTaskId: '', activeTasks: [], displayItems: [], isLoading: false, isRefreshing: false, isConnected: false, isThinking: false, isSending: false, canSendPrompt: false, promptDisabledReason: '', promptText: '', _lastMsgId: 0, _messages: [], _sessions: [], _toolCalls: {}, _prompts: [], _sseHandlers: [], _collapsedState: {}, _userScrolledUp: false, _incrementalTimer: null, _scrollElement: null, _scrollHandler: null, _visibilityHandler: null,
+        selectedTaskId: '', activeTasks: [], displayItems: [], isLoading: false, isRefreshing: false, isConnected: false, isThinking: false, isSending: false, canSendPrompt: false, promptDisabledReason: '', promptText: '', _lastMsgId: 0, _messages: [], _sessions: [], _toolCalls: {}, _prompts: [], _sseHandlers: [], _collapsedState: {}, _userScrolledUp: false, _incrementalTimer: null, _incrementalPending: false, _scrollElement: null, _scrollHandler: null, _visibilityHandler: null,
         init() { window.agentTeamLiveState = this; this._setupSSEListeners(); this.loadActiveTasks(); this._setupScrollDetection(); this._visibilityHandler = () => { this.isConnected = !document.hidden; if (!document.hidden && this.selectedTaskId) this._scheduleIncremental(); }; document.addEventListener('visibilitychange', this._visibilityHandler); },
         selectedTask() { return this.activeTasks.find((item) => String(item.id) === String(this.selectedTaskId)); },
         selectedTaskTitle() { if (!this.selectedTaskId) return 'Sakura Agent'; return this.selectedTask()?.title || `{{ _('agent_team.tasks') }} #${this.selectedTaskId}`; },
@@ -60,12 +60,38 @@ function agentTeamLiveView() {
         _onSSEEvent(eventName, data) { if (!this.selectedTaskId || String(data.task_id) !== String(this.selectedTaskId)) { if (eventName === 'sse:agent:task_updated') this.loadActiveTasks(); return; } if (eventName === 'sse:agent:ai_request') { this.isThinking = true; this._pushDisplayItem({type: 'thinking', label: '{{ _('agent_team.live_thinking') }}', key: 'thinking-' + Date.now()}); this._scrollToBottom(); } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') { this.isThinking = false; this._scheduleIncremental(); } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') this._scheduleIncremental(); else if (eventName === 'sse:agent:task_updated') { this.loadActiveTasks(); this._pushDisplayItem({type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now()}); this._scrollToBottom(); } else if (eventName === 'sse:agent:prompt_received') this._loadPrompts(); },
         async loadActiveTasks() { try { const response = await fetch('/agent-team/api/active-tasks'); if (!response.ok) return; const data = await response.json(); if (data.success) this.activeTasks = data.tasks || []; } catch (error) { this.isConnected = false; } },
         async refreshLiveView() { if (this.isRefreshing) return; this.isRefreshing = true; try { await this.loadActiveTasks(); if (this.selectedTaskId) { this._resetStreamState(false); await this._loadFull(); } } finally { this.isRefreshing = false; } },
-        _resetStreamState(resetCollapsed) { this.displayItems = []; this._lastMsgId = 0; this._messages = []; this._sessions = []; this._toolCalls = {}; this._prompts = []; if (resetCollapsed) this._collapsedState = {}; },
+        _resetStreamState(resetCollapsed) { this.displayItems = []; this._lastMsgId = 0; this._messages = []; this._sessions = []; this._toolCalls = {}; this._prompts = []; this._incrementalPending = false; if (resetCollapsed) this._collapsedState = {}; },
         async onTaskSelected() { if (!this.selectedTaskId) { this._resetStreamState(true); this.canSendPrompt = false; this.promptDisabledReason = ''; return; } this._resetStreamState(true); this._userScrolledUp = false; await this._loadFull(); },
         watchTask(taskId) { this.selectedTaskId = String(taskId || ''); this.onTaskSelected(); },
-        async _loadFull() { this.isLoading = true; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/stream-data?after_id=0&limit=200'); const data = await response.json(); if (!data.success) return; this.canSendPrompt = data.can_send_prompt !== false; this.promptDisabledReason = data.prompt_disabled_reason || ''; this._processStreamData(data); this._rebuildDisplay(); } catch (error) { this.isConnected = false; } finally { this.isLoading = false; } },
+        async _loadFull() { await this._loadStreamPages(0, 200); },
+        async _loadStreamPages(startCursor, pageSize) {
+            this.isLoading = true;
+            const taskId = this.selectedTaskId;
+            const messages = this._messages;
+            let cursor = startCursor;
+            try {
+                do {
+                    this._incrementalPending = false;
+                    let hasMore;
+                    do {
+                        const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(taskId) + '/stream-data?after_id=' + cursor + '&limit=' + pageSize);
+                        const data = await response.json();
+                        if (this.selectedTaskId !== taskId || this._messages !== messages || !data.success) return;
+                        this.canSendPrompt = data.can_send_prompt !== false;
+                        this.promptDisabledReason = data.prompt_disabled_reason || '';
+                        this._processStreamData(data);
+                        this._rebuildDisplay();
+                        hasMore = data.has_more === true;
+                        if (hasMore && this._lastMsgId <= cursor) throw new Error('Message pagination did not advance');
+                        cursor = this._lastMsgId;
+                    } while (hasMore);
+                    pageSize = 50;
+                } while (this._incrementalPending);
+            } catch (error) { this.isConnected = false; }
+            finally { if (this.selectedTaskId === taskId && this._messages === messages) this.isLoading = false; }
+        },
         _scheduleIncremental() { if (this._incrementalTimer) return; this._incrementalTimer = setTimeout(() => { this._incrementalTimer = null; this._loadIncremental(); }, 300); },
-        async _loadIncremental() { if (!this.selectedTaskId || this.isLoading) return; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/stream-data?after_id=' + this._lastMsgId + '&limit=50'); const data = await response.json(); if (!data.success) return; if (data.messages.length === 0 && data.tool_calls.length === 0 && data.prompts.length === 0) return; this._processStreamData(data); this._rebuildDisplay(); } catch (error) { this.isConnected = false; } },
+        async _loadIncremental() { if (!this.selectedTaskId) return; if (this.isLoading) { this._incrementalPending = true; return; } await this._loadStreamPages(this._lastMsgId, 50); },
         async _loadPrompts() { if (!this.selectedTaskId) return; try { const response = await fetch('/agent-team/api/tasks/' + encodeURIComponent(this.selectedTaskId) + '/prompts'); const data = await response.json(); if (data.success) this._prompts = data.prompts || []; this._rebuildDisplay(); } catch (error) { this.isConnected = false; } },
         parseToolArguments(argumentsJson) { if (!argumentsJson) return {}; if (typeof argumentsJson === 'object') return argumentsJson; try { return JSON.parse(argumentsJson); } catch (error) { return {raw: String(argumentsJson)}; } },
         describeToolAction(name, args, status) { const tool = String(name || '').toLowerCase(); const running = status === 'running' || status === 'pending'; if (tool === 'read' || tool.includes('read_file') || tool.includes('read')) return running ? '{{ _('agent_team.live_tool_read_file_running') }}' : '{{ _('agent_team.live_tool_read_file_completed') }}'; if (tool === 'bash' || tool.includes('shell') || tool.includes('command')) return running ? '{{ _('agent_team.live_tool_bash_running') }}' : '{{ _('agent_team.live_tool_bash_completed') }}'; if (tool === 'grep' || tool === 'glob' || tool.includes('search')) return running ? '{{ _('agent_team.live_tool_search_running') }}' : '{{ _('agent_team.live_tool_search_completed') }}'; if (tool === 'edit' || tool === 'write' || tool.includes('edit') || tool.includes('write')) return running ? '{{ _('agent_team.live_tool_edit_running') }}' : '{{ _('agent_team.live_tool_edit_completed') }}'; return running ? '{{ _('agent_team.live_tool_generic_running') }}' : '{{ _('agent_team.live_tool_generic_completed') }}'; },

@@ -132,6 +132,20 @@ UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest \
 
 新测试最后强化为同时缺少模块和目录标志后再次执行：**4 passed，1.84 秒**。仓库 `run_ruff.py --check`、两文件格式检查、`git diff --check` 均通过。以上是 Linux 上的能力缺失模拟和真实 Linux 回归；修复未推送，真实 Windows runner 尚未复验，不能将原失败 run 描述为已转绿。
 
+## 2026-10-09 PR #661 审查修复
+
+在主工作区 `feature/issue-628-agent-harness` 上复现并修复 [PR #661](https://github.com/Sakura520222/Sakura-AI/pull/661) 对 `471d29b1` 的三项意见：
+
+- **取消传播**：事件取消保持结构化 `cancelled` 结果；外部 `Task.cancel()` 保留原 `CancelledError`，在子 Agent、压缩器和 Harness 资源排空后重新抛出。重复取消或清理存储故障不能覆盖原取消；清理故障记录安全 ERROR 日志。实际 IterationLoop/父子 SQLite 状态与资源关闭测试，初轮 **3 failed / 4 passed**（包含下面 seed 缺陷），独立审查补出清理边界 **2 failed / 8 passed**，修复后 **10 passed**。
+- **恢复 seed 幂等性**：`_ensure_system_checkpoint` 跳过恢复历史；仅 system seed 已提交就崩溃的会话，连续两次恢复仍只有一条持久化/模型 system 消息。新会话仍写一次 seed。没有修改或删除已有历史记录。
+- **审计与展示**：新 Harness、压缩、worker 控制审计使用 `role=audit`，保留全部 metadata；流端点在可见分页前过滤新审计角色及历史 user-role 审计。真实用户、指导与工具结果继续展示。Live View 完整/增量加载排空 `has_more`，加载期间的 SSE 刷新合并保留并在排空后补读，避免已完成任务遗漏最终消息。
+
+审计分页与实际 JavaScript 先复现 **4 failed / 1 passed**，独立审查补出 SSE 竞态 **2 failed**，修复后针对测试 **30 passed**、Agent Team 回归 **226 passed**。取消/恢复/用量及相关调用链回归 **204 passed**。测试范围重叠，不相加。时间 API allowlist 仅同步本次新增路由 helper 导致的两处行号，保留显式 UTC 语义。
+
+真实中英文浏览器使用生产路由、SQLite、Jinja/JS 和实际 300 ms SSE 防抖：450 条历史审计 + 205 条新审计不形成空白气泡，205 条真实消息全部加载；在持有 HTTP 快照响应时追加完成消息并发送 SSE，释放后自动补读，中文/英文分别显示 206/207 条消息，完成可见、零空白审计气泡、零控制台错误。仅 fixture 身份是替身，没有真实 MySQL/provider/GitHub 调用；服务和浏览器均关闭。
+
+独立审查和两项补修的差异复核均为 spec/quality PASS。临时证据：`/tmp/sakura-661-runtime-review-tests-report.md`、`/tmp/sakura-661-audit-stream-fix-report.md`、`/tmp/sakura-661-independent-review.md`；截图在 `/tmp/sakura-661-audit-stream-browser/`。最终完整回归命令 `UV_CACHE_DIR=/tmp/sakura-661-uv-cache uv run --no-sync python -m pytest tests updater/tests sandboxer/tests -q -rs -p no:cacheprovider --tb=short`：**5189 passed / 17 skipped，134.04 秒**。跳过原因是 1 项缺少可选 aiosqlite、1 项 root/sticky、3 项 root/systemd 和 12 项显式 Docker gate；不计作已通过。仓库 Ruff 和 `git diff --check` 通过，没有运行远端 CI 或推送。
+
 ## Phase 1/2 保存点的历史验证
 
 以下均在 `/home/firefly/.codex/worktrees/issue-628-agent-harness/Sakura-AI` 执行。此前 900/929 等数字属于历史快照，不替代下列最终结果；重叠测试不能相加。
