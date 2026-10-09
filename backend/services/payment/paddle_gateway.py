@@ -25,6 +25,8 @@ from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
@@ -173,46 +175,51 @@ class PaddleGateway(PaymentGateway):
         - Header: Paddle-Signature: ts=<timestamp>;h1=<hmac_sha256_hex>
         - 验证: HMAC-SHA256(webhook_secret, f"{timestamp}:{raw_body}")
         """
-        if not self._webhook_secret or not self._webhook_secret.strip():
-            logger.warning("Paddle webhook: missing verification secret")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        if (
+            not isinstance(self._webhook_secret, str)
+            or not self._webhook_secret.strip()
+        ):
+            raise PaymentWebhookConfigurationError(
+                "Paddle verification is not configured"
+            )
         signature_header = headers.get("paddle-signature", "")
-        if not signature_header:
-            logger.warning("Paddle webhook: missing Paddle-Signature header")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        if not isinstance(signature_header, str) or not signature_header:
+            raise PaymentWebhookVerificationError("Missing Paddle signature")
 
         # 解析 ts=<timestamp>;h1=<hmac_hex>
         ts_match = re.search(r"ts=(\d+)", signature_header)
         h1_match = re.search(r"h1=([a-fA-F0-9]+)", signature_header)
         if not ts_match or not h1_match:
-            logger.warning("Paddle webhook: invalid signature format")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            raise PaymentWebhookVerificationError("Invalid Paddle signature format")
 
         timestamp = ts_match.group(1)
         provided_sig = h1_match.group(1)
 
         # 计算 HMAC-SHA256
-        payload_str = payload.decode("utf-8") if isinstance(payload, bytes) else payload
-        signed_payload = f"{timestamp}:{payload_str}"
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8")
+        if not isinstance(payload, bytes):
+            raise PaymentWebhookVerificationError("Invalid Paddle payload")
+        signed_payload = timestamp.encode("utf-8") + b":" + payload
         computed_sig = hmac.new(
             self._webhook_secret.encode("utf-8"),
-            signed_payload.encode("utf-8"),
+            signed_payload,
             hashlib.sha256,
         ).hexdigest()
 
         # 时序安全比较
         if not hmac.compare_digest(computed_sig, provided_sig):
-            logger.warning("Paddle webhook: signature verification failed")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            raise PaymentWebhookVerificationError("Invalid Paddle signature")
 
         # 解析事件 payload
         try:
             import json
 
             body = json.loads(payload)
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.warning("Paddle webhook: invalid JSON payload: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, TypeError) as exc:
+            raise PaymentWebhookVerificationError("Invalid Paddle payload") from exc
 
         event_type_str = body.get("event_type", "") or body.get("meta", {}).get(
             "event_name", ""
