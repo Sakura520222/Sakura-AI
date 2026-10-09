@@ -14,6 +14,8 @@ from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
@@ -130,6 +132,13 @@ class StripeGateway(PaymentGateway):
         payload: bytes,
         headers: dict[str, str],
     ) -> WebhookEvent:
+        if (
+            not isinstance(self._webhook_secret, str)
+            or not self._webhook_secret.strip()
+        ):
+            raise PaymentWebhookConfigurationError(
+                "Stripe verification is not configured"
+            )
         signature = headers.get("stripe-signature", "")
         try:
             event = stripe.Webhook.construct_event(
@@ -137,12 +146,12 @@ class StripeGateway(PaymentGateway):
                 sig_header=signature,
                 secret=self._webhook_secret,
             )
-        except stripe.error.SignatureVerificationError as e:
-            logger.warning("Stripe webhook signature verification failed: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
-        except Exception as e:
-            logger.warning("Stripe webhook construction failed: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        except stripe.error.SignatureVerificationError as exc:
+            logger.warning("Stripe webhook signature verification failed")
+            raise PaymentWebhookVerificationError("Invalid Stripe signature") from exc
+        except ValueError as exc:
+            logger.warning("Stripe webhook payload could not be parsed")
+            raise PaymentWebhookVerificationError("Invalid Stripe payload") from exc
 
         # Stripe SDK v15+ returns stripe.Event (StripeObject), not a dict.
         # Use attribute access instead of .get() to avoid KeyError.

@@ -403,12 +403,17 @@ uv run python scripts/reconcile_payment_events.py --apply --event-id 123 --actor
 退款可能涉及已消费来源，此时追加来源债务，其他来源不被直接撤销；随后冲正
 原消费会先消除该来源债务，已用于偿债的资金恢复其实际来源。
 
-启用支付通道前必须配置其验签密钥或公钥。NOWPayments IPN、Paddle Webhook
+启用支付通道前必须配置其验签密钥或公钥。NOWPayments IPN、Paddle 和 Stripe Webhook
 缺少或仅有空白密钥时拒绝处理财务事件；支付宝缺少公钥也不能接受支付确认。
 金额解析失败只在验签成功后持久化为待核对，不能跳过验签补录任意请求。
-NOWPayments 验签配置缺失返回 503 `retry_required`，补齐配置后可重新投递；
+NOWPayments、Paddle、Stripe 验签配置缺失（含空白密钥）返回 503
+`retry_required`，补齐配置后可重新投递同一事件；未验签时不保存财务 Inbox、
+不改变订单或发放 Credits，验签后的重投递仍按原事件幂等处理。
 缺失/无效签名返回 400 `verification_failed`，不会保存未验签财务证据。
 只有已经验签的非目标事件才能返回 200 `ignored`。
+Stripe SDK 的非验证运行错误保留可重试失败，不归类为未处理事件；验签日志
+及 HTTP 错误不回显 secret、签名或原始回调正文。此修复无需数据库迁移或
+修改账户余额；保留已收到的财务记录，不能以重投递为由清空旧事件。
 Paddle adjustment.created 的 pending_approval 与后续 approved/rejected 共用
 原生 adjustment/transaction 身份；终态核对成功后关闭匹配的旧待核对投影，
 追加 superseded 关联审计，保留原 received/reviewed 证据。金额、币种、订单

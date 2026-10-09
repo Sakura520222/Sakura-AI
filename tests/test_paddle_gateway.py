@@ -229,20 +229,23 @@ class TestPaddleGatewayVerifyWebhook:
     def test_verify_webhook_invalid_signature(self, gateway):
         payload = b'{"event_type": "transaction.completed"}'
 
-        result = gateway.verify_webhook(
-            payload=payload,
-            headers={"paddle-signature": "ts=123;h1=invalid_hex"},
+        from backend.services.payment.gateway_base import (
+            PaymentWebhookVerificationError,
         )
 
-        assert result.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(
+                payload=payload,
+                headers={"paddle-signature": "ts=123;h1=invalid_hex"},
+            )
 
     def test_verify_webhook_missing_signature(self, gateway):
-        result = gateway.verify_webhook(
-            payload=b"test",
-            headers={},
+        from backend.services.payment.gateway_base import (
+            PaymentWebhookVerificationError,
         )
 
-        assert result.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(payload=b"test", headers={})
 
     def test_verify_webhook_unknown_event_type(self, gateway):
         payload_dict = {

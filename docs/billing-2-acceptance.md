@@ -418,6 +418,39 @@ aiosqlite 场景已另外隔离补跑。没有运行 Docker/systemd/root 专属�
 仅在边界模拟。本轮没有 WebUI 模板变更，不新增未经验证的浏览器结果。
 暂存区为空，HEAD 保持 a7eeafe925；未推送、创建工作树或执行生产操作。
 
+## 缺验签配置回调修复（基线 cd4f341523）
+
+2026-10-09，核实 Paddle 与 Stripe 将缺失 secret 转 UNKNOWN，再被 handler
+返回 200 ignored，确实会误确认未处理回调。两网关现在复用已有配置/验证
+异常：None、空串或空白配置返回 503 retry_required；签名失败或不可解析
+JSON/UTF-8 返回 400 verification_failed；已经验签的未处理事件保持 200 ignored。
+Stripe SDK 的其他运行异常传播给 handler 的可重试失败，日志不插入异常全文。
+Paddle 直接对原始字节验 HMAC；已验签金额/币种归一化仍走原持久 Inbox 路径。
+
+新增 test_billing_webhook_verification_config（14 项）及
+test_review_stripe_verification_config（13 项），共 27 项。前者使用真实 ASGI、
+本地原生签名和真实 SQLite：缺密钥时订单/流水/Inbox 不变，补齐配置后的
+同一回调重复投递只入账一次、余额可重建；覆盖坏签名、缺签名、坏 JSON 与
+已验签未处理事件。Stripe 原生 SDK 专项还覆盖过期签名、坏 UTF-8、未调用
+construct_event 的配置检查及 SDK 非验证错误。正确测试夹具下 Paddle HTTP
+回归修复前 6 failed/8 passed；Stripe 专项修复前 12 failed/1 passed。
+
+旧测试更新为新的严格失败语义，保留“未验签不写财务表”的断言，没有删除
+测试或增加 skip。测试订单直接构造本地快照，签名本地生成，没有真实付款、
+退款、AI 请求或生产账户修改。无需数据库迁移、依赖清单或 WebUI 模板变更。
+
+| 实际检查 | 结果 |
+| --- | --- |
+| `uv run --no-sync python -m pytest -q`，两个新文件及 Stripe/Paddle、支付 Inbox、Paddle lifecycle、NOWPayments HTTP 回归共七个文件 | 107 passed，7.13s |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs` | 5337 passed、17 既有条件 skip，137.48s |
+| `/tmp/sakura-cd4f-ruff/bin/ruff check .`（隔离安装 0.16.10）及 `uv run --no-sync python run_ruff.py --check` | 通过；未改项目依赖 |
+| Git HEAD archive 叠加本地补丁，tracked Git mode/新文件 100644，Ruff check + 7 个 Python 文件 format check | 通过，/tmp/sakura-cd4f-ci-patch-hc5pjuv2 |
+| `git diff --check` | 通过 |
+
+17 个 skip 仍为 Docker 12、root/sticky 权限 1、缺默认 aiosqlite 1、systemd 3；
+本轮没有追加这些环境门槛的实测。当前 HEAD 保持 cd4f341523，暂存区为空，
+没有提交或推送；不将本地验证称为远端 CI 或生产验收。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库
