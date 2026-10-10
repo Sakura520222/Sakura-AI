@@ -336,14 +336,16 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 | [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | 可选通知 Provider、绑定握手与命令参考 |
 | [审查协议规范](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 协议、字段校验、修复降级 |
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys、安全中心 |
+| [安全策略](SECURITY.md) | 漏洞报告流程、受支持版本与披露机制 |
 | [API v1 参考文档](docs/api-v1-reference.md) | RESTful API v1（移动端 OAuth、MFA、SSE、Billing） |
 | [贡献者约定](AGENTS.md) | 自动化代理与贡献者项目约定 |
+| [贡献指南](CONTRIBUTING.md) | 完整贡献流程、Gitflow 分支规范与开发设置 |
 
 ---
 
 ## 贡献
 
-本项目使用标准 Gitflow 工作流：`main`（生产）← `release/*` / `hotfix/*`；`develop`（集成）← `feature/*`。
+本项目使用标准 Gitflow 工作流：`main`（生产）← `release/*` / `hotfix/*`；`develop`（集成）← `feature/*`。详细规范请阅读 [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md)。
 
 1. Fork 本项目
 2. 基于 `develop` 创建特性分支：`git checkout develop && git checkout -b feature/amazing-feature`
@@ -351,6 +353,12 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
 4. 推送并开启 PR，目标分支选择 `develop`
 
 发布与热修复由维护者执行：从 `develop` 创建 `release/x.y.z`（或从 `main` 创建 `hotfix/x.y.z`），合入 `main` 后自动发布 Release 并回合到 `develop`。自动化工作流会校验 PR 分支流向、运行 CI、清理已合并的临时分支。
+
+---
+
+## 安全
+
+如果您发现了安全漏洞，请参阅我们的 [安全策略 (SECURITY.md)](SECURITY.md)，优先通过 [GitHub 私密漏洞上报](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) 或发送邮件至 <sakura520222@outlook.com> 进行披露。请勿在公开 Issue 中讨论漏洞细节。
 
 ---
 

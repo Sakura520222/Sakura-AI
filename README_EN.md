@@ -336,14 +336,16 @@ Full documentation index at [docs/README.md](docs/README.md). Common entries:
 | [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Optional notification Provider, binding handshake and command reference (Chinese) |
 | [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` protocol, validation, repair (Chinese) |
 | [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md) | TOTP, recovery codes, Passkeys, Security Center (Chinese) |
+| [Security Policy](SECURITY.md) | Vulnerability disclosure policy, supported versions |
 | [API v1 Reference](docs/api-v1-reference.md) | RESTful API v1 (mobile OAuth, MFA, SSE, Billing) (Chinese) |
 | [Contributor Conventions](AGENTS.md) | Project conventions for automation agents and contributors |
+| [Contributing Guide](CONTRIBUTING_EN.md) | Gitflow branching model, development setup, code standards |
 
 ---
 
 ## Contributing
 
-This project uses the standard Gitflow workflow: `main` (production) ← `release/*` / `hotfix/*`; `develop` (integration) ← `feature/*`.
+This project uses the standard Gitflow workflow: `main` (production) ← `release/*` / `hotfix/*`; `develop` (integration) ← `feature/*`. For full guidelines, see the [Contributing Guide (CONTRIBUTING_EN.md)](CONTRIBUTING_EN.md).
 
 1. Fork this repository
 2. Create a feature branch from `develop`: `git checkout develop && git checkout -b feature/amazing-feature`
@@ -351,6 +353,12 @@ This project uses the standard Gitflow workflow: `main` (production) ← `releas
 4. Push and open a Pull Request targeting `develop`
 
 Releases and hotfixes are handled by maintainers: create `release/x.y.z` from `develop` (or `hotfix/x.y.z` from `main`), merge into `main` to auto-publish a Release, then `main` is synced back to `develop`. Automation enforces PR branch flow, runs CI, and cleans up merged temporary branches.
+
+---
+
+## Security
+
+If you discover a security vulnerability, please review our [Security Policy (SECURITY.md)](SECURITY.md) and report it privately via [GitHub Private Vulnerability Reporting](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) or by emailing <sakura520222@outlook.com>. Please do not disclose vulnerabilities via public issues.
 
 ---
 
