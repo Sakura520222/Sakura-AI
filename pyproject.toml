@@ -13,7 +13,7 @@ requires-python = ">=3.14"
 # pip/Docker builds); the sync is enforced by tests/test_uv_pyproject.py.
 dependencies = [
     # Web框架
-    "fastapi>=0.141.1,<1.0.0",
+    "fastapi>=0.142.2,<1.0.0",
     "starlette>=1.7.0,<2.0.0",
     "uvicorn[standard]>=0.53.0",
     "python-multipart>=0.0.32",
@@ -27,7 +27,7 @@ dependencies = [
     "httpx>=0.28.1",
 
     # 数据库
-    "sqlalchemy[asyncio]>=2.1.0,<2.2",
+    "sqlalchemy[asyncio]>=2.1.1,<2.2",
     "asyncmy>=0.2.15",
     "asyncpg>=0.31.0",
     "alembic>=1.19.2",
@@ -66,7 +66,7 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "pyotp>=2.10.0",
     "qrcode[pil]>=8.2",
-    "webauthn>=3.0.0",
+    "webauthn>=3.0.1",
 
     # API 限流
     "slowapi>=0.1.10",
@@ -76,7 +76,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
 
     # Agent 专家团队常用验证工具
-    "ruff>=0.16.9",
+    "ruff>=0.16.10",
     "pytest>=9.1.1",
 ]
 

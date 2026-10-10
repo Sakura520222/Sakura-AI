@@ -1,5 +1,5 @@
 # Web框架
-fastapi>=0.141.1,<1.0.0
+fastapi>=0.142.2,<1.0.0
 starlette>=1.7.0,<2.0.0
 uvicorn[standard]>=0.53.0
 python-multipart>=0.0.32
@@ -13,7 +13,7 @@ openai>=3.8.0
 httpx>=0.28.1
 
 # 数据库
-sqlalchemy[asyncio]>=2.1.0,<2.2
+sqlalchemy[asyncio]>=2.1.1,<2.2
 asyncmy>=0.2.15
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.19.2
@@ -52,7 +52,7 @@ python-jose[cryptography]>=3.5.0
 itsdangerous>=2.2.0
 pyotp>=2.10.0
 qrcode[pil]>=8.2
-webauthn>=3.0.0
+webauthn>=3.0.1
 
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)
 
@@ -64,5 +64,5 @@ beautifulsoup4>=4.15.0
 duckduckgo-search>=8.1.1
 
 # Agent 专家团队常用验证工具
-ruff>=0.16.9
+ruff>=0.16.10
 pytest>=9.1.1
