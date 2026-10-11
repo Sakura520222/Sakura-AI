@@ -43,6 +43,11 @@ from backend.services.agent_team.candidate_service import (
     CandidateServiceError,
     candidates_to_dicts,
 )
+from backend.services.agent_team.manual_dispatch import (
+    ManualAgentDispatchPending,
+    manual_dispatch_receipt_id,
+    stage_manual_agent_dispatch,
+)
 from backend.services.agent_team.prompt_config import build_implementation_user_message
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
@@ -837,12 +842,15 @@ async def create_task_from_candidate(
         started_by=user["sub"],
         base_branch=base_branch.strip() or None,
         overrides=overrides,
+        commit=False,
     )
     if _should_schedule_agent_task(task.status):
+        task.billing_operation_id = task.billing_operation_id or str(uuid4())
         task.billing_user_id = None if _is_admin(user) else user["user_id"]
         task.billing_platform_reason = (
             "administrator_agent_task" if _is_admin(user) else None
         )
+        dispatch_receipt_id = await stage_manual_agent_dispatch(db, task)
     else:
         task.billing_operation_id = None
         task.billing_user_id = None
@@ -867,7 +875,9 @@ async def create_task_from_candidate(
     )
 
     if _should_schedule_agent_task(task.status):
-        background_tasks.add_task(_run_agent_task_background, task.id)
+        background_tasks.add_task(
+            _run_agent_task_background, task.id, dispatch_receipt_id
+        )
 
     return JSONResponse({"success": True, "task_id": task.id})
 
@@ -1119,6 +1129,7 @@ async def create_task_from_issue(
             if not ok:
                 await db.rollback()
                 return JSONResponse({"success": False, "message": msg}, status_code=200)
+            dispatch_receipt_id = await stage_manual_agent_dispatch(db, task)
         else:
             # Saving a candidate or historical terminal task is not execution.
             # Its first real submission allocates a fresh admission identity.
@@ -1148,7 +1159,9 @@ async def create_task_from_issue(
     )
 
     if _should_schedule_agent_task(task.status):
-        background_tasks.add_task(_run_agent_task_background, task.id)
+        background_tasks.add_task(
+            _run_agent_task_background, task.id, dispatch_receipt_id
+        )
 
     return JSONResponse({"success": True, "task_id": task.id})
 
@@ -1184,34 +1197,82 @@ async def retry_task(
             status_code=200,
         )
 
-    # Agent 配额消费（确认任务可重试后再扣费）
-    operation_id = str(uuid4())
-    ok, msg = await _check_and_consume_agent_quota(
-        db,
-        user,
-        operation_id=operation_id,
-        repo_name=task.repo_full_name,
-        task_id=task.id,
-    )
-    if not ok:
-        await db.rollback()
-        return JSONResponse({"success": False, "message": msg}, status_code=200)
+    # A queued handoff retry continues its durable admission. Pending/legacy
+    # unconfirmed handoffs require evidence; never orphan them behind a new id.
+    recovering = task.status == "queued" and bool(task.billing_operation_id)
+    if recovering:
+        from backend.models.webhook_execution_models import WebhookExecutionReceipt
+
+        receipt = await db.get(
+            WebhookExecutionReceipt,
+            manual_dispatch_receipt_id(task.billing_operation_id),
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if receipt is None:
+            if task.webhook_delivery_id is not None:
+                # Native deliveries retain their own receipt/replay identity.
+                await db.rollback()
+                return await _manual_dispatch_pending_response(db, user)
+            # Upgrade-era queued carriers have no proof of whether dispatch
+            # occurred. Quarantine the existing admission, without reissuing it.
+            try:
+                await stage_manual_agent_dispatch(db, task, unknown_handoff=True)
+                await db.commit()
+            except ManualAgentDispatchPending:
+                await db.rollback()
+            return await _manual_dispatch_pending_response(db, user)
+        if receipt.status != "retryable":
+            await db.rollback()
+            return await _manual_dispatch_pending_response(db, user)
+        task = (
+            await db.execute(
+                select(AgentTeamTask)
+                .where(AgentTeamTask.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        if task.status != "queued" or task.billing_operation_id != receipt.operation_id:
+            await db.rollback()
+            return await _manual_dispatch_pending_response(db, user)
+        operation_id = task.billing_operation_id
+    else:
+        operation_id = str(uuid4())
+        ok, msg = await _check_and_consume_agent_quota(
+            db,
+            user,
+            operation_id=operation_id,
+            repo_name=task.repo_full_name,
+            task_id=task.id,
+        )
+        if not ok:
+            await db.rollback()
+            return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.billing_operation_id = operation_id
-    task.billing_user_id = None if _is_admin(user) else user["user_id"]
-    task.billing_platform_reason = (
-        "administrator_agent_task" if _is_admin(user) else None
-    )
+    if not recovering:
+        task.billing_user_id = None if _is_admin(user) else user["user_id"]
+        task.billing_platform_reason = (
+            "administrator_agent_task" if _is_admin(user) else None
+        )
     task.current_phase = None
     task.started_at = None
     task.completed_at = None
     task.error_message = None
-    await db.commit()
+    try:
+        dispatch_receipt_id = await stage_manual_agent_dispatch(db, task)
+        await db.commit()
+    except ManualAgentDispatchPending:
+        await db.rollback()
+        return await _manual_dispatch_pending_response(db, user)
+    except BaseException:
+        await db.rollback()
+        raise
 
-    # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
-    background_tasks.add_task(_run_agent_task_background, task_id)
+    background_tasks.add_task(_run_agent_task_background, task_id, dispatch_receipt_id)
 
     await log_admin_action(
         db,
@@ -1626,14 +1687,46 @@ async def clean_orphan_worktrees(
     return JSONResponse({"success": True, "cleaned": cleaned})
 
 
-async def _run_agent_task_background(task_id: int) -> None:
+async def _manual_dispatch_pending_response(db, user):
+    from backend.webui.config_feedback import config_api_language
+    from backend.webui.i18n import i18n
+
+    return JSONResponse(
+        {
+            "success": False,
+            "code": "agent_dispatch_pending",
+            "message": i18n.t(
+                "api.agent_dispatch_pending", lang=await config_api_language(db, user)
+            ),
+        },
+        status_code=503,
+    )
+
+
+async def _run_agent_task_background(
+    task_id: int, receipt_id: str | None = None
+) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
     if register_current_background_task("agent_team_webui") is None:
         return
     try:
         from backend.workers.agent_team_worker import submit_agent_team_task
 
-        await submit_agent_team_task(task_id)
+        if receipt_id is None:
+            await submit_agent_team_task(task_id)
+        else:
+            from backend.models import database
+            from backend.services.agent_team.billing_admission import run_agent_delivery
+            from backend.services.agent_team.manual_dispatch import (
+                claim_manual_agent_dispatch,
+            )
+
+            async with database.async_session() as db:
+                claim = await claim_manual_agent_dispatch(db, receipt_id, task_id)
+            if claim is not None:
+                await run_agent_delivery(
+                    claim, submit_agent_team_task, database.async_session
+                )
     except Exception as exc:
         logger.opt(exception=True).error(
             "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc

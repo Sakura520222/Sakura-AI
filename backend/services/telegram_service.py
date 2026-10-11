@@ -413,32 +413,62 @@ class TelegramService:
         if not user:
             return False, "用户不存在"
 
-        from backend.models.billing_models import BillingWallet
-        from backend.models.legacy_entitlement_models import LegacyEntitlement
-        from backend.models.payment_models import Order
-
-        financial_source = await self.session.get(BillingWallet, user.id)
-        if financial_source is None:
-            financial_source = (
-                await self.session.execute(
-                    select(Order.id).where(Order.user_id == user.id).limit(1)
-                )
-            ).scalar_one_or_none()
-        if financial_source is None:
-            financial_source = (
-                await self.session.execute(
-                    select(LegacyEntitlement.id)
-                    .where(LegacyEntitlement.user_id == user.id)
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-        if financial_source is not None:
-            user.is_active = False
-            await self.session.commit()
-            return True, "用户已停用，账务与权益记录已保留"
-        await self.session.delete(user)
+        retained = await self.retire_user(user)
         await self.session.commit()
-        return True, "用户已移除"
+        return True, "用户已停用，账务与权益记录已保留" if retained else "用户已移除"
+
+    async def retire_user(self, user: TelegramUser) -> bool:
+        """Stage billing-aware removal by trusted row identity; caller commits.
+
+        Keep the parent row for both restrictive financial FKs and legacy
+        cascading order/subscription FKs. A zero wallet still has provenance.
+        """
+        from backend.models.billing_models import (
+            BillingOperation,
+            BillingTransaction,
+            BillingWallet,
+        )
+        from backend.models.legacy_entitlement_models import (
+            LegacyEntitlement,
+            RateLimitAdmission,
+            RedeemCodeRedemption,
+        )
+        from backend.models.payment_models import Order, UserSubscription
+
+        user = await self.session.get(
+            TelegramUser, user.id, with_for_update=True, populate_existing=True
+        )
+        if user is None:
+            raise ValueError("User no longer exists")
+        retained = (
+            await self.session.get(
+                BillingWallet, user.id, with_for_update=True, populate_existing=True
+            )
+        ) is not None
+        for model in (
+            BillingTransaction,
+            BillingOperation,
+            Order,
+            UserSubscription,
+            LegacyEntitlement,
+            RedeemCodeRedemption,
+            RateLimitAdmission,
+        ):
+            if retained:
+                break
+            retained = (
+                await self.session.execute(
+                    select(model.user_id)
+                    .where(model.user_id == user.id)
+                    .limit(1)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none() is not None
+        if retained:
+            user.is_active = False
+        else:
+            await self.session.delete(user)
+        return retained
 
     async def add_repo(self, repo_name: str, added_by: int) -> tuple[bool, str]:
         """添加仓库到白名单"""

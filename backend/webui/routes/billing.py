@@ -407,9 +407,10 @@ async def crypto_payment_status(
         return JSONResponse({"status": "unknown"}, status_code=404)
 
     # 如果订单已经完成/失败/取消，直接返回数据库状态
-    if order.status in ("completed", "failed", "cancelled", "refunded"):
+    if order.status in ("completed", "fulfilled", "failed", "cancelled", "refunded"):
         db_status_map = {
             "completed": "completed",
+            "fulfilled": "completed",
             "failed": "failed",
             "cancelled": "expired",
             "refunded": "failed",
