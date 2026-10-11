@@ -903,12 +903,25 @@ async def test_reanalysis_retains_known_issue_state_for_relation_prephase(
         async def execute(self, stmt):
             return SimpleNamespace(scalar_one_or_none=lambda: record, scalar=lambda: 1)
 
-    submit = AsyncMock(return_value="task")
+        def add(self, row):
+            row.id = 2
+
+        async def flush(self):
+            pass
+
+        async def rollback(self):
+            pass
+
+    submit = AsyncMock(side_effect=lambda info: info["task_id"])
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
     monkeypatch.setattr(
         "backend.services.issues.reanalysis_admission.admit_reanalysis_operation",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "backend.services.issues.reanalysis_dispatch.claim_reanalysis_dispatch",
         AsyncMock(),
     )
     module = api_routes if surface == "api" else webui_routes

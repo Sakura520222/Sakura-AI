@@ -59,7 +59,7 @@ def source(monkeypatch):
     app = SimpleNamespace(get_repo_client=lambda owner, name: client(None, owner, name))
     monkeypatch.setattr(reanalysis_admission, "GitHubAppClient", lambda: app)
     outcome.reads = reads
-    outcome.submit = AsyncMock(return_value="task-7")
+    outcome.submit = AsyncMock(side_effect=lambda info: info["task_id"])
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", outcome.submit
     )
@@ -380,6 +380,9 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
         def add(self, record):
             analysis_db.session.add(record)
 
+        async def get(self, model, identity, **kwargs):
+            return analysis_db.session.get(model, identity, **kwargs)
+
         async def scalar(self, statement):
             from backend.models.scan_models import RepoScan
 
@@ -440,7 +443,7 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
         ),
     )
 
-    await worker.process_issue_analysis(dict(payload, task_id="legacy-live-open"))
+    await worker.process_issue_analysis(payload)
 
     assert len(relation_results) == 1
     assert relation_results[0].status == "verified"
@@ -474,9 +477,7 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
     assert response.status_code == 200
     second_payload = source.submit.call_args.args[0]
     assert second_payload["analysis_version"] == 4
-    await worker.process_issue_analysis(
-        dict(second_payload, task_id="legacy-live-open-again")
-    )
+    await worker.process_issue_analysis(second_payload)
     versions = analysis_db.session.scalars(
         select(IssueAnalysis.analysis_version)
         .where(IssueAnalysis.id != 1, IssueAnalysis.repo_owner == "owner")

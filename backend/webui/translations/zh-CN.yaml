@@ -597,6 +597,7 @@ issue:
   reanalyze_entitlements_pending: "已购买的旧权益等待审核转换，请联系管理员。"
   reanalyze_submit_failed: "提交重新分析任务失败，请稍后重试"
   reanalyze_handoff_unconfirmed: "分析任务交接状态尚未确认，请查看执行状态或联系管理员。"
+  reanalyze_task_unavailable: "任务不存在或无权访问。"
   ai_summary: "AI 摘要"
   no_summary: "暂无摘要"
   no_feasibility: "暂无评估"
@@ -1525,6 +1526,7 @@ billing:
     invalid_choice: "请为 {field_key} 选择支持的选项。"
     invalid_json_prices: "定价 JSON 必须包含币种、正数换算参数和完整单价。金额须为带引号的十进制字符串；不接受 Float、未知字段或不支持的单位。"
   model_pricing: "模型定价"
+  refund_amount_unrepresentable: "这笔退款换算为付款币种后不足一个最小单位。请调整为可表示的金额；本次未冻结 Credits，也未发送退款。"
   plan_pricing: "套餐与价格"
   validation:
     boolean: "{field_key} 必须选择开启或关闭。"

@@ -52,6 +52,11 @@ class PaymentError(Exception):
         self.code = code
 
 
+REFUND_AMOUNT_UNREPRESENTABLE_MESSAGE = (
+    "Refund amount is smaller than the payment currency's minimum unit"
+)
+
+
 async def is_payment_enabled() -> bool:
     return bool(await get_dynamic_config("payment_enabled"))
 
@@ -1381,12 +1386,37 @@ class PaymentService:
         # it before staging an intent or holding Credits, so repairing config
         # lets the same request retry without financial reconciliation. Existing
         # intents were handled above and must never resolve/send another client.
-        gateway = (
-            await get_gateway(order.payment_provider)
-            if order.payment_provider in EXTERNAL_PAYMENT_PROVIDERS
-            and order.provider_tx_id
-            else None
+        external_refund = order.payment_provider in EXTERNAL_PAYMENT_PROVIDERS and bool(
+            order.provider_tx_id
         )
+        gateway_delta = None
+        gateway_currency = str(metadata.get("gateway_currency", order.currency))
+        if external_refund:
+            gateway_total = metadata.get("gateway_amount_cents", order.amount_cents)
+            gateway_prior = (
+                proportional_units(
+                    gateway_total, refunded_cents, order.amount_cents, half_even=True
+                )
+                if order.amount_cents
+                else 0
+            )
+            gateway_target = (
+                proportional_units(
+                    gateway_total,
+                    refunded_cents + requested_cents,
+                    order.amount_cents,
+                    half_even=True,
+                )
+                if order.amount_cents
+                else 0
+            )
+            gateway_delta = gateway_target - gateway_prior
+            if gateway_delta <= 0:
+                raise PaymentError(
+                    REFUND_AMOUNT_UNREPRESENTABLE_MESSAGE,
+                    code="refund_amount_unrepresentable",
+                )
+        gateway = await get_gateway(order.payment_provider) if external_refund else None
         attempt = PaymentRefundAttempt(
             order_id=order.id,
             active_order_id=order.id,
@@ -1397,6 +1427,8 @@ class PaymentService:
             actor_id=operator_id,
             credit_transaction_id=purchase.id if purchase else None,
             credit_hold_units=target_units,
+            gateway_amount_cents=gateway_delta,
+            gateway_currency=gateway_currency if external_refund else None,
             evidence={
                 "requested_total_cents": refunded_cents + requested_cents,
                 "full": full,
@@ -1423,27 +1455,6 @@ class PaymentService:
         if gateway is None:
             attempt.status = "upstream_succeeded"
             return await self._finalize_refund(attempt, order)
-        metadata = json.loads(order.metadata_json) if order.metadata_json else {}
-        gateway_total = metadata.get("gateway_amount_cents", order.amount_cents)
-        gateway_prior = (
-            proportional_units(
-                gateway_total, refunded_cents, order.amount_cents, half_even=True
-            )
-            if order.amount_cents
-            else 0
-        )
-        gateway_target = (
-            proportional_units(
-                gateway_total,
-                refunded_cents + requested_cents,
-                order.amount_cents,
-                half_even=True,
-            )
-            if order.amount_cents
-            else 0
-        )
-        attempt.gateway_amount_cents = gateway_target - gateway_prior
-        attempt.gateway_currency = str(metadata.get("gateway_currency", order.currency))
         provider_tx_id = order.provider_tx_id
         await self.session.flush()
         await self.session.commit()  # release order and wallet locks before I/O

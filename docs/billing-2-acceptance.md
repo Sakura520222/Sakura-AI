@@ -540,6 +540,53 @@ curl 验证 8898 不可达；证据位于 /tmp/sakura-5347-browser-evidence。
 MySQL/PostgreSQL 的本轮并发场景尚未实测，SQL 编译和 SQLite 证据不替代
 原生事务验收。配置、恢复与回滚说明见 [Billing 2.0](billing-2.md)。
 
+## 保留身份、退款精度与 Issue 持久交接（基线 d5e41b4972）
+
+2026-10-11，在 feature/billing-system-2.0 的干净工作区核对本轮三项审查，
+HEAD 为 d5e41b497225b120a89bd6e40f94fd989f43e1bb。补丁仅修改本地代码、
+测试和文档；没有暂存、提交、推送或执行生产动作。
+
+| 审查项 | 状态与实现 | 自动化验收证据 |
+| --- | --- | --- |
+| 保留身份停用后旧 Token 仍有权限 | 完成。API 共用鉴权边界对 Bearer/query/Cookie 刷新持久身份、活跃状态及角色；Cookie 续期与 MFA 保持原语义，数据库失败不使用旧角色兜底 | test_review_retired_token_auth：9 项，真实签名 JWT/ASGI/SQL 删除金融用户后的所有 Token 运输模式及管理/钱包/直接消费者拒绝、降权与重命名正常反例、缺失身份与 MFA pending；test_webui_session_renewal 原有续期/MFA 回归 |
+| 部分退款舍入为零仍冻结并发送 | 完成。PaymentService 用整数累计 half-even 求实际网关差额，非正值在 intent/hold/client 前拒绝，返回 refund_amount_unrepresentable；API 保持字符串 detail，页面、审批提示及持久失败明细按个人语言翻译 | test_review_refund_rounding_presend：11 项，零值/边界重复拒绝后 commit 仍无退款尝试/冻结、可表示多次累计退款及幂等、最小单位全额退款、零现金手动发放冲正、真实 API 和审批页面双语；test_billing_refund_presend 保留真实未知窗口及两会话竞争 |
+| Issue reanalysis 入场提交后没有持久载体 | 完成。API/WebUI 同事务保存新的分析行、BillingOperation/预留及现有回执，提前固定 task_id；SQL 领取及 Worker token/source/input fence，复用原分析行；状态及安全恢复接口、已知未开始补偿、未知交接核对复用现有 CLI | test_review_issue_dispatch_carrier：11 项，独立会话提交可见、模拟进程退出、原身份恢复及权限、重复 Worker、processing 不可伪装未执行、核对后迟到 Worker、真实 Worker 早期失败、容量等待取消、启动前关闭/取消释放；原有 reanalysis/legacy state/relations 断言保留 |
+
+首批 Token/退款测试在修复前为 10 failed/3 passed；最初持久交接测试三项
+均失败。自审新增的“Worker 首条指令前关闭/取消”两项也先复现红测，再补
+无调用补偿。旧 Issue 单表/队列夹具增加持久分析写入接口和服务器 task_id，
+财务/交接边界继续由完整 SQL 集成测试验证，没有移除原权限、关闭状态、
+关系判定及版本断言。全量中发现的 Agent 错误文案兼容问题恢复原文案；
+新增页面夹具按既有 302 合约和完整认证身份修正，没有放宽余额断言或 skip。
+
+Token 修复依照 codex-security:fix-finding 的独立只读调查及候选复核完成；
+复核未发现旁路，并验证读取失败拒绝、混合 Token 优先级、实时降权及 MFA
+反例。复核后的 API deps 内容哈希保持一致。请求入场后的执行及已打开 SSE
+连接不被本轮的新请求检查追溯取消。
+
+实际浏览器在隔离 SQLite 站点操作审批和确认，英文及中文失败提示、
+明细均正确；切换持久个人语言后重试仍无网关请求。测试余额保持 5,000,000
+微 Credits、reserved=0、attempt_count=0、gateway_calls=0，账本重建一致。
+截图与快照在 /tmp/sakura-d5-browser-evidence-fmof1m7l；只挂载账单功能的
+测试站点缺少公告/SSE/版本接口，其 404 不作为整站验证。临时服务及浏览器
+已关闭，8899 的 curl 为 000，没有真实退款、转账或 AI 调用。
+
+| 最终实际运行的检查 | 结果 |
+| --- | --- |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs --tb=short` | 6011 passed、17 既有条件 skip，177.42s，无失败；包含主应用、updater、sandboxer，启动前取消修复后重新全量运行 |
+| `uv run --no-sync python -m pytest tests/test_review_retired_token_auth.py tests/test_review_refund_rounding_presend.py tests/test_review_issue_dispatch_carrier.py tests/test_webui_session_renewal.py tests/test_billing_refund_presend.py tests/test_review_issue_reanalysis_billing.py tests/test_webhook_execution_reconciliation.py tests/test_agent_delivery_recovery.py tests/test_issue_cancellation_races.py tests/test_issue_worker_cancellation.py tests/test_service_billing_liveness.py -q --tb=short`（同一 UV_CACHE_DIR） | 128 passed，9.62s；31 项本轮新增回归全部包含 |
+| `/tmp/sakura-9adb-ruff/bin/ruff check .`、`uv run --no-sync python run_ruff.py --check` | 0.16.10 与 venv 0.16.9 均通过 |
+| `/tmp/sakura-9adb-ruff/bin/ruff format --check`（本次相关 18 个 Python 文件）、`git diff --check` | 通过 |
+| `python3 /tmp/sakura-1692-ci-copy.py` | HEAD archive 叠加本次 23 文件、恢复 tracked Git mode/新文件 100644 后 Ruff 通过；临时副本 /tmp/sakura-1692-ci-patch-yp_xh5ou，不将本地检查称为远端 CI |
+
+17 项 skip 为 Docker gate 12、root/sticky gate 1、可选 aiosqlite 1、systemd
+gate 3，本轮没有新增 skip。没有运行真实 AI、支付/退款、生产部署或关闭 Issue。
+
+本轮复用现有表，无结构迁移或依赖变更。排空并统一升级旧 Issue Worker，
+避免旧代码绕过领取令牌；已有未知交接继续使用持久证据核对，不能凭无 Usage
+重发，回滚保留所有财务与交接记录。原生 MySQL/PostgreSQL 多 Worker 的
+本轮新增交接场景尚未实测；SQLite 事务证据不替代原生部署验收。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

@@ -66,12 +66,12 @@ async def get_api_current_user(
     if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="凭证无效或已过期")
 
-    # Cookie mode refreshes claims; Bearer/query-token clients stay stateless.
-    if token_from_cookie:
-        refreshed_payload = await refresh_login_claims(payload)
-        if refreshed_payload is None:
-            raise HTTPException(status_code=401, detail="凭证无效或已过期")
-        payload = refreshed_payload
+    # Every access-token transport must obey live account state and roles.
+    # Only response-cookie renewal remains exclusive to cookie sessions.
+    refreshed_payload = await refresh_login_claims(payload)
+    if refreshed_payload is None:
+        raise HTTPException(status_code=401, detail="凭证无效或已过期")
+    payload = refreshed_payload
 
     user_id = payload.get("user_id")
     if not user_id:

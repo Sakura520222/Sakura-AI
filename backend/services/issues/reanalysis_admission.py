@@ -121,6 +121,7 @@ async def prepare_issue_reanalysis(analysis):
 async def admit_reanalysis_operation(db, context):
     """Commit financial admission before a caller acknowledges or starts I/O."""
     from backend.services.billing_service import BillingService
+    from backend.services.issues.reanalysis_dispatch import stage_reanalysis_receipt
 
     async with db.begin_nested():
         await BillingService(db).register_operation(
@@ -130,18 +131,17 @@ async def admit_reanalysis_operation(db, context):
             source=dict(context.source),
             platform_reason=context.platform_reason,
         )
+        await stage_reanalysis_receipt(db, context)
     await db.commit()
 
 
 async def submit_issue_reanalysis(db, issue_info, user):
     """Shared API/WebUI handoff; clients never supply the payer or execution ID."""
-    from backend.services.billing_context import context_for_payload
-    from backend.services.billing_service import BillingError, BillingService
-    from backend.services.database_reset_runtime_service import (
-        DatabaseResetRuntimeAdmissionClosed,
-    )
-    from backend.services.webhook_execution_service import compensate_unstarted_review
-    from backend.workers.issue_worker import submit_issue_analysis_task
+    from uuid import uuid4
+
+    from backend.models.database import IssueAnalysis
+    from backend.services.billing_context import BillingContext, context_for_payload
+    from backend.services.billing_service import BillingError
 
     user_id = user.get("user_id")
     administrator = user.get("role") in {"admin", "super_admin"}
@@ -156,8 +156,32 @@ async def submit_issue_reanalysis(db, issue_info, user):
         issue_info["trigger_user_id"] = user_id
     if administrator:
         issue_info["billing_platform_reason"] = "administrator_issue_reanalysis"
-    context = context_for_payload(issue_info, "issue_analysis")
     try:
+        issue_info["task_id"] = str(uuid4())
+        record = IssueAnalysis(
+            issue_number=issue_info["issue_number"],
+            repo_owner=issue_info["repo_owner"],
+            repo_name=issue_info["repo_name"],
+            author=issue_info.get("author"),
+            title=issue_info.get("title"),
+            body=issue_info.get("body"),
+            status="pending",
+            analysis_version=issue_info["analysis_version"],
+            issue_state=issue_info["state"],
+        )
+        db.add(record)
+        await db.flush()
+        context = context_for_payload(issue_info, "issue_analysis")
+        context = BillingContext(
+            context.user_id,
+            context.operation_id,
+            context.feature,
+            {**context.source, "issue_analysis_id": record.id},
+            context.platform_reason,
+        )
+        issue_info.update(
+            billing_context=context.to_payload(), _reanalysis_analysis_id=record.id
+        )
         await admit_reanalysis_operation(db, context)
     except BillingError as exc:
         await db.rollback()
@@ -166,11 +190,65 @@ async def submit_issue_reanalysis(db, issue_info, user):
         await db.rollback()
         logger.warning("Issue reanalysis admission unavailable: {}", type(exc).__name__)
         raise IssueReanalysisAdmissionError(code="billing_unavailable") from None
+    return await dispatch_admitted_reanalysis(db, context, issue_info)
+
+
+async def dispatch_admitted_reanalysis(db, context, issue_info):
+    """Dispatch an existing receipt without another allowance or wallet entry."""
+    from uuid import uuid4
+
+    from backend.models.database import IssueAnalysis
+    from backend.models.webhook_execution_models import WebhookExecutionReceipt
+    from backend.services.billing_service import BillingService
+    from backend.services.database_reset_runtime_service import (
+        DatabaseResetRuntimeAdmissionClosed,
+    )
+    from backend.services.issues.reanalysis_dispatch import (
+        claim_reanalysis_dispatch,
+        reanalysis_receipt_id,
+    )
+    from backend.services.webhook_execution_service import compensate_unstarted_review
+    from backend.workers.issue_worker import submit_issue_analysis_task
+
     try:
-        return await submit_issue_analysis_task(issue_info)
+        await claim_reanalysis_dispatch(db, context, issue_info)
+        expected_task_id = issue_info["task_id"]
+        returned_task_id = await submit_issue_analysis_task(issue_info)
+        if (
+            returned_task_id != expected_task_id
+            or issue_info["task_id"] != expected_task_id
+        ):
+            raise RuntimeError("Issue dispatch identity changed")
+        return expected_task_id
     except DatabaseResetRuntimeAdmissionClosed:
         # The runtime supervisor proves this handoff was not registered.
+        receipt = await db.get(
+            WebhookExecutionReceipt,
+            reanalysis_receipt_id(context.operation_id),
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if (
+            receipt is None
+            or receipt.status != "pending_reconciliation"
+            or receipt.owner_token != issue_info.get("_reanalysis_owner_token")
+        ):
+            await db.rollback()
+            raise IssueReanalysisAdmissionError(
+                code="reanalysis_handoff_unconfirmed"
+            ) from None
         await compensate_unstarted_review(context.operation_id, None, db=db)
+        row = await db.get(
+            IssueAnalysis, receipt.source["issue_analysis_id"], with_for_update=True
+        )
+        if row is not None and row.status == "pending":
+            from backend.core.time_service import now_utc
+
+            row.status = "failed"
+            row.completed_at = now_utc()
+        receipt.status = "accepted"
+        receipt.owner_token = str(uuid4())
+        receipt.response = {"status": "failed", "task_id": issue_info["task_id"]}
         await db.commit()
         raise IssueReanalysisAdmissionError(code="reanalysis_submit_failed") from None
     except Exception as exc:

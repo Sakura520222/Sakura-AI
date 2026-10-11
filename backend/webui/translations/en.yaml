@@ -597,6 +597,7 @@ issue:
   reanalyze_entitlements_pending: "Purchased legacy rights await reviewed conversion. Contact an administrator."
   reanalyze_submit_failed: "Could not submit reanalysis. Try again later."
   reanalyze_handoff_unconfirmed: "Analysis handoff is unconfirmed. Check execution status or contact an administrator."
+  reanalyze_task_unavailable: "Task not found or access denied."
   ai_summary: "AI Summary"
   no_summary: "No summary yet"
   no_feasibility: "No assessment yet"
@@ -1524,6 +1525,7 @@ billing:
     invalid_choice: "Choose a supported value for {field_key}."
     invalid_json_prices: "Price JSON must include currencies, positive conversion factors and complete prices. Quote decimal amounts; floats, unknown fields and unsupported units are rejected."
   model_pricing: "Model pricing"
+  refund_amount_unrepresentable: "This refund rounds to zero in the payment currency. Increase the amount to a representable value; no Credits were held and no refund was sent."
   plan_pricing: "Plans and prices"
   validation:
     boolean: "{field_key} must be explicitly enabled or disabled."

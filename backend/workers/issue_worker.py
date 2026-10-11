@@ -34,6 +34,8 @@ from backend.services.billing_context import (
     billable_platform,
     context_for_payload,
     enrich_billing_source,
+    get_billing_context,
+    mark_registered_operation,
 )
 from backend.services.database_reset_runtime_service import (
     DatabaseResetRuntimeAdmissionClosed,
@@ -42,6 +44,7 @@ from backend.services.database_reset_runtime_service import (
 )
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
+from backend.services.issues.reanalysis_dispatch import durable_reanalysis_worker
 from backend.services.service_execution_capacity import (
     ServiceExecutionLeaseLost,
     ServiceExecutionLimiter,
@@ -635,6 +638,7 @@ class IssueWorker:
         return
 
     @task_logging("issue")
+    @durable_reanalysis_worker
     @billable_payload("issue_analysis")
     async def process_issue_analysis(
         self,
@@ -650,6 +654,11 @@ class IssueWorker:
         synchronously when the coroutine starts and always removes only its own
         task entry after the worker has finished.
         """
+        if issue_info.get("_reanalysis_receipt_id"):
+            # The outer receipt fence already proved this durable admission.
+            # Include failures/cancellation before the capacity acquisition in
+            # settlement, instead of leaving a known unstarted reservation.
+            mark_registered_operation(get_billing_context().operation_id)
         task_id = str(issue_info.get("task_id") or uuid.uuid4())
         update_log_context(task_id=task_id)
         task_key = self._make_task_key(issue_info)
@@ -956,33 +965,44 @@ class IssueWorker:
                     # Check after semaphore admission so a queued task that was
                     # cancelled never creates an analysis record or calls AI.
                     self._raise_if_cancelled(cancel_event)
-                    # 1. 计算下一个分析版本号
-                    max_version = await db.scalar(
-                        select(func.max(IssueAnalysis.analysis_version)).where(
-                            and_(
-                                IssueAnalysis.repo_name.in_(
-                                    [repo_name, repo_full_name]
-                                ),
-                                IssueAnalysis.repo_owner == repo_owner,
-                                IssueAnalysis.issue_number == issue_number,
+                    prepared_id = issue_info.get("_reanalysis_analysis_id")
+                    if prepared_id:
+                        record = await db.get(
+                            IssueAnalysis,
+                            prepared_id,
+                            with_for_update=True,
+                            populate_existing=True,
+                        )
+                        if record is None or record.status != "pending":
+                            raise asyncio.CancelledError(
+                                "Issue reanalysis carrier is no longer pending"
+                            )
+                    else:
+                        # Native webhook callers still allocate their own record.
+                        max_version = await db.scalar(
+                            select(func.max(IssueAnalysis.analysis_version)).where(
+                                and_(
+                                    IssueAnalysis.repo_name.in_(
+                                        [repo_name, repo_full_name]
+                                    ),
+                                    IssueAnalysis.repo_owner == repo_owner,
+                                    IssueAnalysis.issue_number == issue_number,
+                                )
                             )
                         )
-                    )
-                    next_version = (max_version or 0) + 1
-
-                    # 创建分析记录（PENDING）
-                    record = IssueAnalysis(
-                        issue_number=issue_number,
-                        repo_name=repo_name,
-                        repo_owner=repo_owner,
-                        author=issue_info.get("author", ""),
-                        title=issue_info.get("title", ""),
-                        body=issue_info.get("body", ""),
-                        status=IssueAnalysisStatus.PENDING.value,
-                        analysis_version=next_version,
-                        issue_state=issue_info.get("state", "open"),
-                    )
-                    db.add(record)
+                        next_version = (max_version or 0) + 1
+                        record = IssueAnalysis(
+                            issue_number=issue_number,
+                            repo_name=repo_name,
+                            repo_owner=repo_owner,
+                            author=issue_info.get("author", ""),
+                            title=issue_info.get("title", ""),
+                            body=issue_info.get("body", ""),
+                            status=IssueAnalysisStatus.PENDING.value,
+                            analysis_version=next_version,
+                            issue_state=issue_info.get("state", "open"),
+                        )
+                        db.add(record)
                     await db.commit()
                     analysis_id = record.id
                     analysis_record = record
@@ -1724,10 +1744,22 @@ def get_issue_worker() -> IssueWorker:
 async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
     ensure_background_admission("issue")
-    task_id = str(uuid.uuid4())
+    task_id = (
+        str(issue_info["task_id"])
+        if issue_info.get("_reanalysis_receipt_id")
+        else str(uuid.uuid4())
+    )
     issue_info["task_id"] = task_id
     context_for_payload(issue_info, "issue_analysis")
     worker = get_issue_worker()
+    if issue_info.get("_reanalysis_receipt_id"):
+        existing_handle = (
+            getattr(worker, "_task_handles", {})
+            .get(worker._make_task_key(issue_info), {})
+            .get(task_id)
+        )
+        if existing_handle is not None and not existing_handle.done():
+            return task_id  # A duplicate local delivery must not replace its event.
     deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
     task_key = worker._make_task_key(issue_info)
     cancel_event = worker._register_task(
