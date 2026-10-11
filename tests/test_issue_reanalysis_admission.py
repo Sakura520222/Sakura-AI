@@ -18,9 +18,14 @@ from backend.webui.routes import issues as webui_routes
 @pytest.fixture
 def analysis_db(monkeypatch):
     # This fixture exercises Issue state/authorization with its one-table DB.
-    # Wallet admission is verified against the complete real schema separately.
+    # Wallet admission and receipt fencing use the complete real schema in the
+    # billing integration tests; this fixture isolates Issue state/authorization.
     monkeypatch.setattr(
         "backend.services.issues.reanalysis_admission.admit_reanalysis_operation",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "backend.services.issues.reanalysis_dispatch.claim_reanalysis_dispatch",
         AsyncMock(),
     )
     engine = create_engine("sqlite:///:memory:")
@@ -42,6 +47,18 @@ def analysis_db(monkeypatch):
         statements = []
 
         class AsyncFacade:
+            def add(self, row):
+                session.add(row)
+
+            async def flush(self):
+                session.flush()
+
+            async def commit(self):
+                session.commit()
+
+            async def rollback(self):
+                session.rollback()
+
             async def execute(self, statement):
                 statements.append(statement)
                 return session.execute(statement)
@@ -109,7 +126,7 @@ async def test_open_reanalysis_submit_with_next_version(
 ):
     analysis_db.record.issue_state = "open"
     analysis_db.session.commit()
-    submit = AsyncMock(return_value="task-7")
+    submit = AsyncMock(side_effect=lambda info: info["task_id"])
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
@@ -126,17 +143,23 @@ async def test_open_reanalysis_submit_with_next_version(
     assert response.status_code == 200
     payload = json.loads(response.body)
     assert payload["success"] is True
-    assert (payload["data"] if surface == "api" else payload)["task_id"] == "task-7"
+    task_id = (payload["data"] if surface == "api" else payload)["task_id"]
+    assert task_id == submit.await_args.args[0]["task_id"]
     assert len(analysis_db.statements) == 2
     submit.assert_awaited_once()
     admission.assert_awaited_once()
     sent = dict(submit.await_args.args[0])
     context = sent.pop("billing_context")
+    assert sent.pop("task_id") == task_id
+    pending_id = sent.pop("_reanalysis_analysis_id")
+    assert analysis_db.session.get(IssueAnalysis, pending_id).status == "pending"
     assert context["user_id"] == 42 and context["feature"] == "issue_analysis"
     assert context["source"] == {
         "repo_full_name": "owner/repo",
         "issue_number": 7,
         "trigger_user_id": 42,
+        "task_id": task_id,
+        "issue_analysis_id": pending_id,
     }
     assert context["operation_id"] == admission.await_args.args[1].operation_id
     assert sent == {

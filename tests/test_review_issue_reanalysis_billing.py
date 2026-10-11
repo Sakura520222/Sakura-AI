@@ -158,7 +158,7 @@ async def test_accepted_task_is_admitted_before_queue_and_cannot_nominate_payer(
             )
             await db.commit()
         captured.append(payload)
-        return "accepted-task"
+        return payload["task_id"]
 
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
@@ -193,7 +193,7 @@ async def test_admin_platform_task_is_durable_without_credits(
             assert (
                 await db.get(BillingOperation, context["operation_id"])
             ).user_id is None
-        return "platform-task"
+        return payload["task_id"]
 
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit

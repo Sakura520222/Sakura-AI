@@ -118,6 +118,58 @@ async def issue_stats(
     return success_response(data=stats)
 
 
+@router.get("/tasks/{task_id}")
+async def get_reanalysis_task_status(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    from backend.services.issues.reanalysis_dispatch import reanalysis_task_status
+    from backend.webui.config_feedback import config_api_language
+
+    result = await reanalysis_task_status(db, user, task_id)
+    if result is None:
+        return error_response(
+            i18n.t(
+                "issue.reanalyze_task_unavailable",
+                lang=await config_api_language(db, user),
+            ),
+            status_code=404,
+        )
+    return success_response(data=result)
+
+
+@router.post("/tasks/{task_id}/retry")
+async def retry_reanalysis_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    from backend.services.billing_service import BillingError
+    from backend.services.issues.reanalysis_dispatch import retry_reanalysis_dispatch
+    from backend.webui.config_feedback import config_api_language
+
+    try:
+        returned = await retry_reanalysis_dispatch(db, user, task_id)
+        return success_response(data={"task_id": returned})
+    except (BillingError, IssueReanalysisAdmissionError) as error:
+        await db.rollback()
+        status = 404 if error.code == "reanalysis_task_unavailable" else 503
+        return JSONResponse(
+            {
+                "success": False,
+                "code": error.code,
+                "error": i18n.t(
+                    "issue.reanalyze_task_unavailable"
+                    if status == 404
+                    else "issue.reanalyze_handoff_unconfirmed",
+                    lang=await config_api_language(db, user),
+                ),
+            },
+            status_code=status,
+        )
+
+
 @router.get("/{issue_id}")
 async def get_issue(
     issue_id: int,

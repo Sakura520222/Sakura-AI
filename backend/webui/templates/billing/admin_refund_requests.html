@@ -76,7 +76,7 @@
                                 {{ _('billing.refund_request_status_' ~ item.status) }}
                             </span>
                             {% if item.error_message %}
-                            <div class="mt-1 text-xs text-red-600 dark:text-red-400 max-w-xs whitespace-pre-wrap">{{ item.error_message }}</div>
+                            <div class="mt-1 text-xs text-red-600 dark:text-red-400 max-w-xs whitespace-pre-wrap">{{ refund_error_message(item.error_message) }}</div>
                             {% endif %}
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">

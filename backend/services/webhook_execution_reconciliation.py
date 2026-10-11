@@ -80,6 +80,7 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
         return receipt  # Repeating the same operator action has no new effect.
     previous_status = receipt.status
     agent_task = None
+    issue_record = None
     if receipt.feature == "agent":
         from backend.models.agent_team_models import AgentTeamTask
 
@@ -91,6 +92,18 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
                 .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
+    if (
+        receipt.feature == "issue_analysis"
+        and receipt.source.get("origin") == "issue_reanalysis"
+    ):
+        from backend.models.database import IssueAnalysis
+
+        issue_record = await db.get(
+            IssueAnalysis,
+            receipt.source["issue_analysis_id"],
+            with_for_update=True,
+            populate_existing=True,
+        )
     operation = await BillingService(db)._operation(
         receipt.operation_id, allow_missing=True
     )
@@ -111,15 +124,27 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
                 "Agent execution outcome restored from reviewed receipt"
             )
         response = {"status": "accepted", "outcome": operation.outcome}
+        if issue_record is not None and issue_record.status in {"pending", "analyzing"}:
+            issue_record.status = (
+                operation.outcome if operation.outcome != "completed" else "failed"
+            )
+            issue_record.completed_at = now_utc()
     elif resolution == "accepted":
         response = {"status": "accepted", "reason": "operator_verified_handoff"}
     else:
-        if receipt.feature == "agent" and receipt.status == "processing":
-            # The Agent worker atomically claimed its carrier before any
+        if (
+            receipt.feature == "agent"
+            or (
+                receipt.feature == "issue_analysis"
+                and receipt.source.get("origin") == "issue_reanalysis"
+            )
+        ) and receipt.status == "processing":
+            # The Worker atomically claimed its carrier before any
             # workspace/AI action. No current owner/Usage does not undo that
             # in-flight evidence or prove that it was never dispatched.
+            feature_name = "Agent" if receipt.feature == "agent" else "Issue"
             raise BillingError(
-                "Claimed Agent delivery requires execution reconciliation"
+                f"Claimed {feature_name} delivery requires execution reconciliation"
             )
         attempts = (
             (
@@ -165,6 +190,9 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
                 "Agent delivery cancelled after reviewed unstarted handoff"
             )
         response = {"status": "cancelled", "reason": "operator_verified_unstarted"}
+        if issue_record is not None:
+            issue_record.status = "cancelled"
+            issue_record.completed_at = now_utc()
     receipt.status = "accepted"
     # Fence a late original handler acknowledgement after an operator resolves
     # its crashed/unknown window. That handler cannot overwrite the audit result.
