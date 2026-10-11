@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from backend.services.agent_team.repository_context import RepositoryContext
@@ -38,7 +40,10 @@ _NODE_PM_FILES: list[tuple[str, str]] = [
 
 
 def _detect_framework(
-    workspace: Path, language: str, package_json: dict | None
+    workspace: Path,
+    language: str,
+    package_json: dict | None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[str]:
     """从依赖文件推断框架。"""
     frameworks: list[str] = []
@@ -46,7 +51,7 @@ def _detect_framework(
         if (workspace / "manage.py").exists():
             frameworks.append("django")
         for name in ("fastapi", "flask", "starlette", "sanic"):
-            if _dep_in_python_workspace(workspace, name):
+            if _dep_in_python_workspace(workspace, name, cancel_check):
                 frameworks.append(name)
     elif language == "javascript" and package_json:
         deps = {
@@ -59,20 +64,32 @@ def _detect_framework(
     return frameworks
 
 
-def _dep_in_python_workspace(workspace: Path, dep_name: str) -> bool:
+def _dep_in_python_workspace(
+    workspace: Path,
+    dep_name: str,
+    cancel_check: Callable[[], None] | None = None,
+) -> bool:
     """检查 Python 依赖是否在工作区中声明。"""
     for req_file in (
         "requirements.txt",
         "requirements/base.txt",
         "requirements/production.txt",
     ):
+        if cancel_check:
+            cancel_check()
         req_path = workspace / req_file
         if req_path.exists():
+            if cancel_check:
+                cancel_check()
             content = RepositoryContext(workspace).read_text(req_file).lower()
             if dep_name in content:
                 return True
     pyproject = workspace / "pyproject.toml"
+    if cancel_check:
+        cancel_check()
     if pyproject.exists():
+        if cancel_check:
+            cancel_check()
         content = RepositoryContext(workspace).read_text("pyproject.toml").lower()
         if dep_name in content:
             return True
@@ -173,10 +190,36 @@ class DetectProjectTool(BaseTool):
         return True
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        return await asyncio.to_thread(self._detect, ctx)
+        detection_cancel = Event()
+        operation = asyncio.create_task(
+            asyncio.to_thread(self._detect, ctx, detection_cancel)
+        )
+        try:
+            return await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            # The current filesystem read cannot be interrupted by cancelling
+            # its future. Retain the shared workspace barrier until it drains,
+            # then stop before admitting another read or returning a result.
+            detection_cancel.set()
+            while not operation.done():
+                try:
+                    await asyncio.shield(operation)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            await asyncio.gather(operation, return_exceptions=True)
+            raise
 
     @staticmethod
-    def _detect(ctx: ToolContext) -> ToolResult:
+    def _detect(ctx: ToolContext, detection_cancel: Event | None = None) -> ToolResult:
+        def check_cancelled():
+            if (detection_cancel is not None and detection_cancel.is_set()) or (
+                ctx.cancel_event is not None and ctx.cancel_event.is_set()
+            ):
+                raise asyncio.CancelledError
+
+        check_cancelled()
         workspace = Path(ctx.workspace)
         detected_languages: list[str] = []
         detected_pm: list[str] = []
@@ -186,6 +229,7 @@ class DetectProjectTool(BaseTool):
 
         # 检测标记文件
         for marker, language, pm in _PROJECT_MARKERS:
+            check_cancelled()
             if (workspace / marker).exists():
                 if language not in detected_languages:
                     detected_languages.append(language)
@@ -196,19 +240,24 @@ class DetectProjectTool(BaseTool):
                     primary_pm = pm
 
         # 读取 package.json
+        check_cancelled()
         if (workspace / "package.json").exists():
             try:
+                check_cancelled()
                 package_json = _safe_read_json(workspace / "package.json")
             except json.JSONDecodeError:
                 pass
+        check_cancelled()
 
         # Node.js 包管理器细化
         if "javascript" in detected_languages:
             for lock_file, pm in _NODE_PM_FILES:
+                check_cancelled()
                 if (workspace / lock_file).exists():
                     primary_pm = pm
                     break
 
+        check_cancelled()
         if not detected_languages:
             return ToolResult(
                 success=True,
@@ -216,9 +265,14 @@ class DetectProjectTool(BaseTool):
             )
 
         # 推断框架和工具
-        frameworks = _detect_framework(workspace, primary_language, package_json)
+        frameworks = _detect_framework(
+            workspace, primary_language, package_json, check_cancelled
+        )
+        check_cancelled()
         test_command = _detect_test_command(workspace, primary_language, package_json)
+        check_cancelled()
         lint_command = _detect_lint_command(workspace, primary_language, package_json)
+        check_cancelled()
 
         result: dict[str, Any] = {
             "detected": True,

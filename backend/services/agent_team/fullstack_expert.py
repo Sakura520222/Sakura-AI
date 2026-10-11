@@ -12,6 +12,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -417,6 +418,9 @@ class FullStackExpertAgent:
             # Retain structured lifecycle data, but let the owning worker/task
             # observe shutdown cancellation after all resources have drained.
             raise task_cancellation
+        if result is not None and self._read_only:
+            # Also sanitize completed finish ledgers restored from older runs.
+            result.modified_files = []
         if (
             result is not None
             and isinstance(self.checkpoint, ConversationCheckpointService)
@@ -593,8 +597,12 @@ class FullStackExpertAgent:
                 }
             )
 
-        root_docs = await asyncio.to_thread(ctx.repository_context.snapshot, ())
-        ctx.repository_instructions = {doc.path: doc for doc in root_docs}
+        initial_docs = await asyncio.to_thread(
+            ctx.repository_context.snapshot,
+            ctx.repository_targets,
+            whole=ctx.repository_whole_scope,
+        )
+        ctx.repository_instructions = {doc.path: doc for doc in initial_docs}
         repository_message = self._repository_message(ctx)
         if repository_message is not None and not has_missing_tool_results(
             self.messages
@@ -1380,6 +1388,25 @@ class FullStackExpertAgent:
                 test_result=terminal.get("test_result", ""),
                 tool_calls_count=len(results),
             )
+        # Recover the last verified batch's scope before sending its persisted
+        # results back to the model. Rules themselves must be reread from the
+        # current workspace; historical user text never supplies authority.
+        for message in reversed(self.messages):
+            verified = [
+                SimpleNamespace(function=SimpleNamespace(**call["function"]))
+                for call in message.get("tool_calls") or []
+                if states.get(call["id"], {}).get("status") == "completed"
+                and call["id"] in results
+                and "error" not in results[call["id"]]
+                and self.tool_executor.metadata(
+                    call["function"].get("name", "")
+                ).workspace_access
+            ]
+            if verified:
+                ctx.repository_targets, ctx.repository_whole_scope = (
+                    self.tool_executor.repository_targets(verified, ctx)
+                )
+                break
         return None
 
     def _build_user_message(

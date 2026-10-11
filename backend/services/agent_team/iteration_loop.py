@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Self
 
 from loguru import logger
@@ -38,6 +38,7 @@ from backend.services.agent_team.prompt_config import (
     IMPLEMENTATION_SYSTEM_PROMPT,
     build_implementation_user_message,
 )
+from backend.services.agent_team.tool_scheduler import workspace_barrier
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
@@ -89,7 +90,8 @@ class IterationLoopService:
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
         self.git_workspace_service = (
-            git_workspace_service or AgentTeamGitWorkspaceService()
+            git_workspace_service
+            or AgentTeamGitWorkspaceService(workspace_service=self.workspace_service)
         )
         self.task_id = task_id
         self.checkpoint = checkpoint
@@ -213,6 +215,29 @@ class IterationLoopService:
                 guidance_ack_callback=self._ack_pending_prompts,
                 cancel_event=cancel_event,
             )
+            if (
+                result.success
+                and not (cancel_event and cancel_event.is_set())
+                and not (cancel_check and cancel_check())
+            ):
+                # Hooks and Shell can change files without a file-tool marker.
+                # Reconcile the final workspace before persisting completion or
+                # deciding there is nothing to publish. Reuse trusted Git
+                # control; no Agent command, credential or backend is broadened.
+                try:
+                    changes = await self._completion_changes()
+                except Exception as exc:
+                    logger.error(
+                        "Agent completion Git accounting failed: {}", type(exc).__name__
+                    )
+                    raise RuntimeError("agent_workspace_changes_unavailable") from None
+                result.modified_files = sorted(
+                    set(result.modified_files) | set(changes)
+                )
+            if cancel_event and cancel_event.is_set():
+                result = replace(
+                    result, success=False, summary="任务已取消", error="cancelled"
+                )
         except (asyncio.CancelledError, Exception) as exc:
             session_id = getattr(agent, "session_id", None)
             if self.checkpoint and session_id:
@@ -317,6 +342,27 @@ class IterationLoopService:
             prompt_tokens=tracker.prompt_tokens,
             completion_tokens=tracker.completion_tokens,
         )
+
+    async def _completion_changes(self) -> dict[str, dict]:
+        async with workspace_barrier(str(self.workspace)).hold(True):
+            operation = asyncio.create_task(
+                self.git_workspace_service.get_changed_file_stats(self.workspace)
+            )
+            try:
+                return await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                # Trusted Git metadata checks also use worker threads. Retain
+                # ownership through repeated cancellation until all reads and
+                # commands have drained, then preserve the caller's cancel.
+                while not operation.done():
+                    try:
+                        await asyncio.shield(operation)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                await asyncio.gather(operation, return_exceptions=True)
+                raise
 
     @staticmethod
     def _run_number(
