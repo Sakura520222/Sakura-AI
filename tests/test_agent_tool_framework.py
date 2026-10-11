@@ -75,7 +75,9 @@ def test_tool_result_success():
 
 def test_tool_result_terminal():
     r = ToolResult(success=True, output={"_terminal": True, "summary": "done"})
-    assert r.is_terminal
+    assert not r.is_terminal
+    admitted = ToolResult(success=True, terminal_state="success")
+    assert admitted.is_terminal
 
 
 def test_tool_result_error():
@@ -198,6 +200,8 @@ async def test_git_diff_places_file_paths_after_option_terminator(tmp_path):
     captured: dict[str, tuple[str, ...]] = {}
 
     async def fake_run_git(_ctx, args):
+        if "config" in args:
+            return ExecutionResult(command="git config", cwd=workspace, exit_code=1)
         captured["args"] = args
         return ExecutionResult(
             command="git diff",
@@ -212,7 +216,9 @@ async def test_git_diff_places_file_paths_after_option_terminator(tmp_path):
     result = await tool._run_full(["--stat"], ctx)
 
     assert result.success
-    assert captured["args"] == ("git", "diff", "--", "--stat")
+    assert captured["args"][-2:] == ("--", "--stat")
+    assert "--no-ext-diff" in captured["args"]
+    assert "--no-textconv" in captured["args"]
 
 
 # ── Registry ──────────────────────────────────────────
@@ -238,6 +244,9 @@ def test_registry_has_all_agent_tools():
         "check_changes",
         "search_web",
         "fetch_url",
+        "spawn_agent",
+        "wait_agent",
+        "cancel_agent",
     }
     assert expected == names
 
@@ -490,6 +499,7 @@ async def test_search_in_files_invalid_regex_case_insensitive_fallback(
     monkeypatch,
 ):
     workspace, ctx = _setup_workspace(tmp_path)
+
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
 
@@ -532,6 +542,7 @@ async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
 @pytest.mark.asyncio
 async def test_legacy_search_in_files_reuses_grep_tool(tmp_path, monkeypatch):
     workspace, ctx = _setup_workspace(tmp_path)
+
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
 

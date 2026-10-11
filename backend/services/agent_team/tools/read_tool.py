@@ -14,7 +14,9 @@ from loguru import logger
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
-from backend.services.agent_team.tools.file_utils import read_text_with_metadata
+from backend.services.agent_team.tools.file_utils import (
+    read_workspace_text_with_metadata,
+)
 from backend.services.agent_team.workspace_service import WorkspaceSecurityError
 
 
@@ -85,8 +87,9 @@ class ReadTool(BaseTool):
             return ToolResult(success=False, error=f"路径是目录，不是文件: {file_path}")
 
         try:
-            content, _encoding, _line_ending = await asyncio.to_thread(
-                read_text_with_metadata, resolved
+            root = ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
+            content, _encoding, _line_ending, mtime = await asyncio.to_thread(
+                read_workspace_text_with_metadata, root, resolved
             )
         except Exception as exc:
             return ToolResult(success=False, error=f"读取文件失败: {exc}")
@@ -109,7 +112,6 @@ class ReadTool(BaseTool):
         # 更新文件状态缓存
         file_state = ctx.extra.get("file_state")
         if isinstance(file_state, ReadFileState):
-            mtime = await asyncio.to_thread(lambda: resolved.stat().st_mtime)
             file_state.set(
                 resolved,
                 content=content,

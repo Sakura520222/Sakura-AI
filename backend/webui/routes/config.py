@@ -1429,6 +1429,19 @@ async def save_general_config(
     """
     try:
         form = await request.form()
+        # Plugins are only writable through the typed, credential-preserving route.
+        # Reject the whole generic form before any row can be changed.
+        if {
+            "agent_team_harness_plugins",
+            "agent_team_permission_profile",
+            "agent_team_mcp_io_timeout_seconds",
+        } & set(form):
+            return toast_redirect(
+                "/config",
+                "agent_plugins.use_plugin_page",
+                "error",
+                lang=detect_language(),
+            )
 
         # ========== 动态配置保存（覆盖全部 DYNAMIC 组键） ==========
         from backend.core.config import (

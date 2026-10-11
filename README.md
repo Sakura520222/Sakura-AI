@@ -146,7 +146,7 @@ PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核�
 
 - **多入口任务创建** — 超级管理员手动启动、Issue 评论 `/agent` 委派、PR 评论 `/agent` 一键修复
 - **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
-- **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
+- **动态只读子 Agent** — 主 Agent 负责实现，可按需委派独立上下文的只读调查，并等待、取消和汇总结果
 - **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
 - **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认策略下普通 Shell 断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
 - **单次依赖出口** — 默认 `web_tools` 允许受控 Web 工具及 Dependency 自动依赖出口；`run_command` 可显式指定 `network_capability=dependency_egress`，为任意当前命令及包安装钩子开放公网出口，不设命令或域名白名单。容器执行结束出口即结束，下一次普通 Shell 仍离线。`offline` 禁止出口，`full_access` 允许全部 runner 出网；local 仅源码开发且要求 `full_access`，使用宿主网络而无 OS 隔离。[Python、Node、Rust、Go 与 JVM 示例](docs/CONFIGURATION.md#agent-专家团队)
@@ -154,7 +154,11 @@ PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核�
 - **依赖安装容错** — 瞬时网络故障默认最多尝试 3 次，按 2、4 秒退避；永久错误不重试。最终失败会保留脱敏诊断并交给 Agent 修复或继续静态分析，明确报告无法运行的测试；可在统一配置页调整重试次数和等待时间
 - **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
 - **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
+- **统一插件管理** — 超级管理员通过 `/agent-plugins/` 管理 MCP 服务、生命周期 Hooks、运行时权限配置和 Skills；配置保存在数据库，凭据遮罩，常规执行无需逐工具审批。见[插件配置说明](docs/AGENT_PLUGINS.md)
+- **仓库规则与 Skills** — 读取分层 `AGENTS.md` 与 Sakura rules，发现 `.agents/skills` / `.sakura/skills`，正文按需加载；历史工作流限制在恢复后仍有效，开关、作用域与恢复行为见[使用说明](docs/AGENT_REPOSITORY_CONTEXT.md)
 - **实时管理员干预** — WebUI Live View 注入指导意见
+- **完成与恢复约束** — 仅成功的 `finish_task` 能完成会话；模型轮次和工具累计次数不限。连续 10 次完全相同的调用或文本只触发策略自检，任务继续执行，不强制总结或切换模型。安全只读工具并行，写入、Shell、Skill 加载和完成独占工作区。中断读取可重试，不确定的写入须核对副作用，已持久化完成不会重放；保留取消和故障恢复，无逐工具人工授权。
+- **Agent Harness 2.0** — 动态只读子 Agent、MCP、系统 Hooks、能力边界和持久审计接入自主执行链；部署要求、恢复语义和后端兼容范围见 [运行指南](docs/AGENT_HARNESS_RUNTIME.md)。
 - **任务取消支持** — 随时取消并安全释放工作区
 - **PR 创建闭环** — Draft PR + Sakura PR 审查 + 人工反馈迭代，不自动合并
 - **普通用户权限控制** — 仓库白名单 + 独立 Agent 配额

@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, Self, runtime_checkable
 from urllib.parse import unquote, urlsplit
 
+from backend.services.agent_team.capability_policy import execution_network_policy
 from backend.services.agent_team.network_policy import (
     NetworkCapability,
     execution_network_capability,
@@ -136,6 +137,7 @@ _GIT_SAFE_CONFIG = (
     ("sequence.editor", "true"),
 )
 
+
 class _ReentrantAsyncLock:
     """Task-reentrant asyncio lock used by nested TrustedGit entry points."""
 
@@ -207,6 +209,7 @@ class ExecutionProfile(StrEnum):
     """执行请求的信任域。"""
 
     AGENT = "agent"
+    READ_ONLY = "read_only"
     DEPENDENCY = "dependency"
     TRUSTED_CONTROL = "trusted_control"
 
@@ -217,6 +220,71 @@ class ExecutionError(RuntimeError):
 
 class UnsupportedExecutionProfile(ExecutionError):
     """当前执行后端没有实现指定 profile。"""
+
+
+def _validate_read_only_argv(args: tuple[str, ...]) -> None:
+    """Only the built-in inspection grammar can select this execution domain."""
+    valid = False
+    if args and args[0] == "git":
+        remaining = list(args[1:])
+        prefix = [
+            "--no-pager",
+            "--no-optional-locks",
+            "--no-lazy-fetch",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "diff.autoRefreshIndex=false",
+        ]
+        if remaining[: len(prefix)] == prefix:
+            remaining = remaining[len(prefix) :]
+            while len(remaining) >= 2 and remaining[0] == "-c":
+                if not re.fullmatch(
+                    r"filter\.[^\x00-\x1f]+\.(?:clean=|process=|required=false)",
+                    remaining[1],
+                ):
+                    break
+                remaining = remaining[2:]
+            if remaining in [
+                [
+                    "config",
+                    "--null",
+                    "--name-only",
+                    "--get-regexp",
+                    "^filter[.].*[.](clean|process|required)$",
+                ],
+                ["status", "--short"],
+                [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--submodule=short",
+                    "--stat",
+                ],
+            ]:
+                valid = True
+            elif remaining[:5] == [
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--submodule=short",
+                "--",
+            ]:
+                valid = all(
+                    not PurePosixPath(path).is_absolute()
+                    and ".." not in PurePosixPath(path).parts
+                    and not path.startswith(":")
+                    for path in remaining[5:]
+                )
+    elif args[:4] == ("grep", "-rl", "-Z", "-I"):
+        remaining = list(args[4:])
+        while len(remaining) >= 2 and remaining[0] in {"--include", "--exclude-dir"}:
+            remaining = remaining[2:]
+        valid = remaining == ["--", "^", "."]
+    if not valid:
+        raise ValueError(
+            "read-only execution accepts only built-in git/grep inspection arguments"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +355,15 @@ class ExecutionRequest:
         except ValueError as exc:
             raise ValueError(f"未知执行 profile: {self.profile}") from exc
         object.__setattr__(self, "profile", profile)
+        if profile is ExecutionProfile.READ_ONLY:
+            if (
+                self.command is not None
+                or self.network_capability != NetworkCapability.NONE
+            ):
+                raise ValueError(
+                    "read-only execution forbids shell commands and network capabilities"
+                )
+            _validate_read_only_argv(tuple(self.argv or ()))
         capability = parse_network_capability(self.network_capability)
         execution_network_capability(profile, capability)
         object.__setattr__(self, "network_capability", capability)
@@ -348,6 +425,11 @@ class ExecutionResult:
 @runtime_checkable
 class ExecutionRunner(Protocol):
     """所有 Agent 执行后端必须实现的最小协议。"""
+
+    @property
+    def execution_workspace(self) -> str:
+        """Workspace root as seen by a process in this execution backend."""
+        ...
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """执行一个已验证请求。"""
@@ -877,13 +959,21 @@ class LocalExecutionRunner:
             self.workspace, self.workspace_service
         )
 
+    @property
+    def execution_workspace(self) -> str:
+        return str(self.workspace)
+
     def supports_profile(self, profile: ExecutionProfile) -> bool:
         # ``DEPENDENCY`` is a capability of the source-development runner,
         # but execute() still performs the fresh full_access policy gate.  A
         # synchronous capability query cannot safely read the async dynamic
         # configuration without introducing a stale snapshot or event-loop
         # coupling.
-        return profile in {ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY}
+        return profile in {
+            ExecutionProfile.AGENT,
+            ExecutionProfile.DEPENDENCY,
+            ExecutionProfile.READ_ONLY,
+        }
 
     @property
     def dependency_python_executable(self) -> Path:
@@ -1050,10 +1140,15 @@ class LocalExecutionRunner:
             raise UnsupportedExecutionProfile(
                 f"LocalExecutionRunner 不支持 profile: {request.profile.value}"
             )
-        if request.profile in {
-            ExecutionProfile.AGENT,
-            ExecutionProfile.DEPENDENCY,
-        } and request.workspace_key != self.workspace_key:
+        if (
+            request.profile
+            in {
+                ExecutionProfile.AGENT,
+                ExecutionProfile.DEPENDENCY,
+                ExecutionProfile.READ_ONLY,
+            }
+            and request.workspace_key != self.workspace_key
+        ):
             raise ExecutionError(
                 "LocalExecutionRunner workspace_key 与工作区 identity 不匹配"
             )
@@ -1066,7 +1161,9 @@ class LocalExecutionRunner:
             ExecutionProfile.DEPENDENCY,
         }:
             try:
-                network_policy = await get_agent_team_network_policy()
+                network_policy = await execution_network_policy(
+                    await get_agent_team_network_policy()
+                )
             except Exception as exc:
                 raise ExecutionError(
                     "local Agent backend 无法读取网络策略，已拒绝执行"
@@ -1092,7 +1189,22 @@ class LocalExecutionRunner:
                 self._validate_command_args(request.argv or ())
         elif request.profile is ExecutionProfile.DEPENDENCY:
             self._validate_dependency_request(request)
-        env = self._build_env(request.env)
+        if request.profile is ExecutionProfile.READ_ONLY:
+            args = self._read_only_command(request)
+            env = {
+                "PATH": os.defpath,
+                "HOME": "/nonexistent",
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_OPTIONAL_LOCKS": "0",
+            }
+        else:
+            args = tuple(request.argv or ())
+            env = self._build_env(request.env)
         process_group_kwargs = self._process_group_kwargs()
         if request.command is not None:
             process = await asyncio.create_subprocess_shell(
@@ -1105,13 +1217,17 @@ class LocalExecutionRunner:
             )
             display_command = request.command
         else:
-            args = tuple(request.argv or ())
             process = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=str(safe_cwd),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **(
+                    {"stdin": asyncio.subprocess.DEVNULL}
+                    if request.profile is ExecutionProfile.READ_ONLY
+                    else {}
+                ),
                 **process_group_kwargs,
             )
             display_command = _display_args(args)
@@ -1143,9 +1259,7 @@ class LocalExecutionRunner:
                     resume_error,
                     cleanup_error,
                 )
-                raise ExecutionError(
-                    f"本地进程树恢复失败: {detail}"
-                )
+                raise ExecutionError(f"本地进程树恢复失败: {detail}")
 
             if request.cancel_event is None:
                 stdout, stderr = await asyncio.wait_for(
@@ -1160,12 +1274,10 @@ class LocalExecutionRunner:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if cancel_waiter in done and communicate_task not in done:
-                    stdout, stderr, cleanup_error = (
-                        await self._terminate_and_collect(
-                            process,
-                            process_tree,
-                            communicate_task,
-                        )
+                    stdout, stderr, cleanup_error = await self._terminate_and_collect(
+                        process,
+                        process_tree,
+                        communicate_task,
                     )
                     result = self._result(
                         display_command,
@@ -1223,9 +1335,7 @@ class LocalExecutionRunner:
                 await cleanup_task
                 raise
             if cleanup_error:
-                raise ExecutionError(
-                    f"本地进程树清理失败: {cleanup_error}"
-                )
+                raise ExecutionError(f"本地进程树清理失败: {cleanup_error}")
             raise
         finally:
             if cancel_waiter is not None and not cancel_waiter.done():
@@ -1244,6 +1354,34 @@ class LocalExecutionRunner:
         if result is None:
             raise ExecutionError("本地进程没有产生执行结果")
         return result
+
+    def _read_only_command(self, request: ExecutionRequest) -> tuple[str, ...]:
+        """Pin inspection binaries and apply OS restrictions in a child launcher."""
+        if sys.platform != "linux":
+            raise UnsupportedExecutionProfile(
+                "read-only local execution requires Linux Landlock; use sandbox"
+            )
+        if request.command is not None or not request.argv:
+            raise ExecutionError("read-only execution accepts inspection argv only")
+        if request.network_capability is not NetworkCapability.NONE:
+            raise ExecutionError("read-only execution cannot request network access")
+        name = request.argv[0]
+        if name == "git":
+            executable = TrustedGitRunner._resolve_system_git(self.workspace)
+        elif name == "grep":
+            executable = Path("/usr/bin/grep").resolve(strict=True)
+            if self.workspace == executable or self.workspace in executable.parents:
+                raise ExecutionError(
+                    "read-only grep executable is inside the workspace"
+                )
+        else:
+            raise ExecutionError(
+                "read-only execution supports only fixed git/grep binaries"
+            )
+        launcher = Path(__file__).with_name("readonly_process.py").resolve(strict=True)
+        # The application interpreter/source, unlike workspace PATH, is owned
+        # by the backend. -I excludes the working directory and Python env.
+        return (sys.executable, "-I", str(launcher), str(executable), *request.argv[1:])
 
     async def run(
         self,
@@ -2834,6 +2972,12 @@ async def execute_request(
 ) -> ExecutionResult:
     """通过统一 ExecutionRunner 协议执行请求，缺失协议时 fail closed。"""
 
+    if request.profile is ExecutionProfile.READ_ONLY:
+        supports = getattr(runner, "supports_profile", None)
+        if not callable(supports) or supports(request.profile) is not True:
+            raise UnsupportedExecutionProfile(
+                "执行后端未实现 read_only profile；请使用支持只读执行的 backend"
+            )
     execute = getattr(runner, "execute", None)
     if not callable(execute):
         raise ExecutionError("执行器缺少 execute 方法，拒绝协议外 fallback")

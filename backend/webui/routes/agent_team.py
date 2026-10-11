@@ -138,6 +138,23 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
     return guidance_ids
 
 
+def _is_conversation_message(message: AgentTeamMessage) -> bool:
+    """Exclude bookkeeping while keeping historical conversation rows intact."""
+    if message.role in {"audit", "harness_control"}:
+        return False
+    if message.role != "user":
+        return True
+    try:
+        payload = json.loads(message.message_json)
+    except TypeError, ValueError:
+        return True
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    return not (
+        isinstance(metadata, dict)
+        and {"harness_event", "context_compaction"}.intersection(metadata)
+    )
+
+
 def _is_admin(user: dict) -> bool:
     return user.get("role") in ("admin", "super_admin")
 
@@ -1133,7 +1150,11 @@ async def resume_task(
     csrf_token: str = Depends(require_csrf),
 ):
     """从已持久化 messages 和工作区继续运行任务。"""
-    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    result = await db.execute(
+        select(AgentTeamTask)
+        .where(AgentTeamTask.id == task_id)
+        .with_for_update()
+    )
     task = result.scalar_one_or_none()
     if task is None:
         return JSONResponse(
@@ -1754,17 +1775,33 @@ async def task_stream_data(
             }
         )
 
-    # Messages with pagination (use global id, not per-session seq)
-    msg_query = (
-        select(AgentTeamMessage)
-        .where(
-            AgentTeamMessage.session_id.in_(session_ids),
-            AgentTeamMessage.id > after_id,
+    # Paginate visible messages by global ID. Legacy audits were saved as user
+    # rows, so filter their structured metadata before applying the page limit.
+    # Bounded reads avoid loading the entire durable ledger in memory; audits
+    # remain in that ledger for recovery and are not conversation quota slots.
+    msg_rows = []
+    cursor = after_id
+    batch_size = max(1, limit + 1)
+    while len(msg_rows) < limit + 1:
+        msg_query = (
+            select(AgentTeamMessage)
+            .where(
+                AgentTeamMessage.session_id.in_(session_ids),
+                AgentTeamMessage.id > cursor,
+                AgentTeamMessage.role.not_in(("audit", "harness_control")),
+            )
+            .order_by(AgentTeamMessage.id)
+            .limit(batch_size)
         )
-        .order_by(AgentTeamMessage.id)
-        .limit(limit + 1)
-    )
-    msg_rows = (await db.execute(msg_query)).scalars().all()
+        batch = (await db.execute(msg_query)).scalars().all()
+        for message in batch:
+            cursor = message.id
+            if _is_conversation_message(message):
+                msg_rows.append(message)
+            if len(msg_rows) == limit + 1:
+                break
+        if len(batch) < batch_size:
+            break
     has_more = len(msg_rows) > limit
     msg_rows = msg_rows[:limit]
 

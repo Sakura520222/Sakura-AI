@@ -48,7 +48,6 @@ from backend.services.agent_team.submission_context import (
     load_sakura_memory,
     load_skills_context,
 )
-from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
@@ -60,6 +59,33 @@ def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
     if modified_files:
         return reason
     return "Agent 未能生成有效的代码修改"
+
+
+def _runtime_failure_fields(outcome) -> dict[str, str]:
+    """Project precise Harness outcomes onto the compatible task status API.
+
+    A blocked session uses the existing failed-task resume/retry workflow.
+    Keep its reason even when no file was changed; otherwise no-progress and
+    interrupted-mutation failures become indistinguishable from an empty diff.
+    """
+    state = getattr(outcome, "outcome", "unrecoverable_error")
+    statuses = {
+        "blocked": AgentTeamTaskStatus.FAILED.value,
+        "cancelled": AgentTeamTaskStatus.CANCELLED.value,
+        "unrecoverable_error": AgentTeamTaskStatus.FAILED.value,
+    }
+    if state not in statuses:
+        state = (
+            "blocked"
+            if getattr(getattr(outcome, "fullstack_result", None), "success", False)
+            else "unrecoverable_error"
+        )
+    return {
+        "status": statuses[state],
+        "current_phase": state,
+        "failed_phase": state,
+        "error_message": outcome.reason or state,
+    }
 
 
 _DIRECT_PR_NOOP_MESSAGE = (
@@ -79,9 +105,8 @@ def _is_original_pr_task(task: AgentTeamTask) -> bool:
 
     source_type = getattr(task, "source_type", None)
     source_type = getattr(source_type, "value", source_type)
-    return (
-        source_type == AgentTeamSourceType.PR_REVIEW.value
-        and bool(getattr(task, "pr_head_branch", None))
+    return source_type == AgentTeamSourceType.PR_REVIEW.value and bool(
+        getattr(task, "pr_head_branch", None)
     )
 
 
@@ -162,12 +187,38 @@ class AgentTeamWorker:
             ),
         )
 
+    async def _check_control_capability(self, task_id, action, required) -> bool:
+        from backend.services.agent_team.capability_policy import (
+            CapabilitySession,
+            load_runtime_policy,
+        )
+
+        checkpoint = (
+            ConversationCheckpointService(task_id) if task_id is not None else None
+        )
+        session = CapabilitySession(
+            load_runtime_policy,
+            task_id=task_id,
+            audit=checkpoint.record_control_event if checkpoint else None,
+        )
+        try:
+            return (await session.check(action, required, read_only=False)).allowed
+        finally:
+            await session.close()
+
+    async def _require_control_capability(self, task_id, action, required) -> None:
+        from backend.services.agent_team.capability_policy import CapabilityDenied
+
+        if not await self._check_control_capability(task_id, action, required):
+            raise CapabilityDenied("worker_capability_denied")
+
     async def _admit_workspace_runner(
         self,
         git_service: AgentTeamGitWorkspaceService,
         workspace: Path,
         *,
         cancel_event: asyncio.Event | None = None,
+        task_id: int | None = None,
     ) -> ExecutionRunner:
         """Create runner then install untrusted dependencies through it.
 
@@ -196,6 +247,17 @@ class AgentTeamWorker:
         )
         backend = "local" if isinstance(runner, LocalExecutionRunner) else "sandbox"
         await prepare_workspace(workspace, backend)
+        if not await self._check_control_capability(
+            task_id, "dependency", ("dependency.install", "filesystem.write")
+        ):
+            from backend.services.agent_team.dependency_bootstrap import (
+                DependencySetupReport,
+            )
+
+            git_service.dependency_setup_report = DependencySetupReport(
+                "policy_denied", "", ()
+            )
+            return runner
         if cancel_event is None:
             await install_dependencies(workspace, runner)
         else:
@@ -316,6 +378,7 @@ class AgentTeamWorker:
                 git_service,
                 workspace,
                 cancel_event=cancel_event,
+                task_id=task_id,
             )
             if cancel_event.is_set():
                 await self._update_task(
@@ -364,14 +427,10 @@ class AgentTeamWorker:
                 cancel_event=cancel_event,
             )
 
-            # 提前计算 estimated_cost（供成功/失败两分支共用）
-            s = get_settings()
-            cost_tracker = TokenTracker()
-            cost_tracker.add_tokens(outcome.prompt_tokens, outcome.completion_tokens)
-            estimated_cost = cost_tracker.calculate_cost(
-                s.review_price_per_1k_prompt,
-                s.review_price_per_1k_completion,
-            )
+            # Provider receipts already settled parent/child usage atomically.
+            # A resumed result is a report, never another accounting increment.
+            accounted_task = await self._load_task(task_id)
+            estimated_cost = getattr(accounted_task, "estimated_cost", 0) or 0
 
             logger.info(
                 "Agent 迭代循环完成: success={}, iterations={}, tool_calls={}, "
@@ -385,7 +444,7 @@ class AgentTeamWorker:
             )
 
             # 迭代循环被取消
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.CANCELLED.value,
@@ -411,6 +470,14 @@ class AgentTeamWorker:
                 completion_tokens=outcome.completion_tokens,
                 current_phase="iteration_complete",
             )
+
+            if not outcome.success:
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
 
             # ── Phase 3: VALIDATING ──
             if outcome.success and outcome.modified_files:
@@ -470,6 +537,9 @@ class AgentTeamWorker:
                             "expected_head_sha": head_sha,
                         }
                     )
+                await self._require_control_capability(
+                    task_id, "git", ("git.write", "git.push")
+                )
                 commit_sha = await pr_service.commit_and_push(
                     **push_kwargs,
                 )
@@ -571,6 +641,9 @@ class AgentTeamWorker:
                     issue_number=task.source_issue_number,
                 )
 
+                await self._require_control_capability(
+                    task_id, "github", ("github.write",)
+                )
                 pr_result = await pr_service.create_pull_request(
                     repo_owner=repo_owner,
                     repo_name=repo_name,
@@ -650,6 +723,15 @@ class AgentTeamWorker:
                     estimated_cost,
                 )
 
+        except asyncio.CancelledError:
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             logger.error(
                 "Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True
@@ -657,9 +739,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
         finally:
@@ -711,9 +793,7 @@ class AgentTeamWorker:
                     workspace_repo_name,
                     head_branch,
                     expected_head_sha,
-                ) = (
-                    _get_original_pr_target(task)
-                )
+                ) = _get_original_pr_target(task)
             else:
                 workspace_repo_owner = task.repo_owner
                 workspace_repo_name = task.repo_name
@@ -760,6 +840,7 @@ class AgentTeamWorker:
                 git_service,
                 workspace_info.workspace,
                 cancel_event=cancel_event,
+                task_id=task_id,
             )
             if cancel_event.is_set():
                 terminal = True
@@ -812,9 +893,9 @@ class AgentTeamWorker:
                 prompt_tokens,
                 completion_tokens,
                 estimated_cost,
-            ) = self._accumulate_iteration_cost(task, outcome)
+            ) = await self._accumulate_iteration_cost(task, outcome)
 
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 terminal = True
                 await self._update_task(
                     task_id,
@@ -844,6 +925,15 @@ class AgentTeamWorker:
                 current_phase="iteration_complete",
             )
 
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
+
             if not outcome.modified_files:
                 terminal = True
                 await self._update_task(
@@ -852,20 +942,6 @@ class AgentTeamWorker:
                     current_phase="waiting_human",
                     estimated_cost=estimated_cost,
                     error_message="Agent 未根据 Sakura PR Review 产生新修改",
-                )
-                return task_id
-
-            if not outcome.success:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    estimated_cost=estimated_cost,
-                    error_message=_format_failure_reason(
-                        outcome.reason,
-                        outcome.modified_files,
-                    ),
                 )
                 return task_id
 
@@ -912,6 +988,9 @@ class AgentTeamWorker:
                         "expected_head_sha": expected_head_sha,
                     }
                 )
+            await self._require_control_capability(
+                task_id, "git", ("git.write", "git.push")
+            )
             new_sha = await pr_service.commit_and_push(**push_kwargs)
 
             if direct_pr and new_sha.lower() == expected_head_sha.lower():
@@ -942,6 +1021,16 @@ class AgentTeamWorker:
                 rate_limit_reset_at=None,
             )
             return task_id
+        except asyncio.CancelledError:
+            terminal = True
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             terminal = True
             logger.error(
@@ -954,9 +1043,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
             return task_id
@@ -1005,9 +1094,7 @@ class AgentTeamWorker:
                     workspace_repo_name,
                     head_branch,
                     expected_head_sha,
-                ) = (
-                    _get_original_pr_target(task)
-                )
+                ) = _get_original_pr_target(task)
             else:
                 workspace_repo_owner = task.repo_owner
                 workspace_repo_name = task.repo_name
@@ -1055,6 +1142,7 @@ class AgentTeamWorker:
                 git_service,
                 workspace_info.workspace,
                 cancel_event=cancel_event,
+                task_id=task_id,
             )
             if cancel_event.is_set():
                 terminal = True
@@ -1108,9 +1196,9 @@ class AgentTeamWorker:
                 prompt_tokens,
                 completion_tokens,
                 estimated_cost,
-            ) = self._accumulate_iteration_cost(task, outcome)
+            ) = await self._accumulate_iteration_cost(task, outcome)
 
-            if not outcome.success and cancel_event.is_set():
+            if cancel_event.is_set():
                 terminal = True
                 await self._update_task(
                     task_id,
@@ -1140,6 +1228,15 @@ class AgentTeamWorker:
                 current_phase="followup_complete",
             )
 
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    **_runtime_failure_fields(outcome),
+                    estimated_cost=estimated_cost,
+                )
+                return task_id
+
             if not outcome.modified_files:
                 terminal = True
                 await self._update_task(
@@ -1148,20 +1245,6 @@ class AgentTeamWorker:
                     current_phase="waiting_human",
                     estimated_cost=estimated_cost,
                     error_message="Agent 未根据管理员要求产生新修改",
-                )
-                return task_id
-
-            if not outcome.success:
-                terminal = True
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
-                    current_phase="waiting_human",
-                    estimated_cost=estimated_cost,
-                    error_message=_format_failure_reason(
-                        outcome.reason,
-                        outcome.modified_files,
-                    ),
                 )
                 return task_id
 
@@ -1204,6 +1287,9 @@ class AgentTeamWorker:
                         "expected_head_sha": expected_head_sha,
                     }
                 )
+            await self._require_control_capability(
+                task_id, "git", ("git.write", "git.push")
+            )
             new_sha = await pr_service.commit_and_push(**push_kwargs)
 
             if direct_pr and new_sha.lower() == expected_head_sha.lower():
@@ -1234,6 +1320,16 @@ class AgentTeamWorker:
                 rate_limit_reset_at=None,
             )
             return task_id
+        except asyncio.CancelledError:
+            terminal = True
+            cancel_event.set()
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.CANCELLED.value,
+                current_phase="cancelled",
+                error_message="cancelled",
+            )
+            raise
         except Exception as e:
             terminal = True
             logger.error(
@@ -1245,9 +1341,9 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
-                current_phase="error",
+                current_phase="unrecoverable_error",
                 error_message=f"{type(e).__name__}: {e}",
-                failed_phase="error",
+                failed_phase="unrecoverable_error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
             return task_id
@@ -1319,21 +1415,18 @@ class AgentTeamWorker:
             )
             return ""
 
-    def _accumulate_iteration_cost(
+    async def _accumulate_iteration_cost(
         self, task: AgentTeamTask, outcome
     ) -> tuple[int, int, int, int]:
-        """计算累计 token 和成本，返回 (new_iteration_count, prompt_tokens, completion_tokens, estimated_cost)。"""
+        """Read settled totals; only the iteration counter is additive here."""
         new_iteration_count = (task.iteration_count or 0) + outcome.iterations
-        prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
-        completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
-        s = get_settings()
-        cost_tracker = TokenTracker()
-        cost_tracker.add_tokens(prompt_tokens, completion_tokens)
-        estimated_cost = cost_tracker.calculate_cost(
-            s.review_price_per_1k_prompt,
-            s.review_price_per_1k_completion,
+        current = await self._load_task(task.id)
+        return (
+            new_iteration_count,
+            current.prompt_tokens or 0,
+            current.completion_tokens or 0,
+            current.estimated_cost or 0,
         )
-        return new_iteration_count, prompt_tokens, completion_tokens, estimated_cost
 
     async def _finalize_original_pr_task(
         self,
@@ -1446,6 +1539,7 @@ class AgentTeamWorker:
                 source_issue_number=task.source_issue_number,
                 fallback_body=fallback_body,
             )
+            await self._require_control_capability(task.id, "github", ("github.write",))
             await pr_service.update_pull_request_body(
                 repo_owner=task.repo_owner,
                 repo_name=task.repo_name,
@@ -1517,6 +1611,10 @@ class AgentTeamWorker:
             return task
 
     async def _update_task(self, task_id: int, **kwargs) -> None:
+        # Accounting belongs exclusively to checkpoint.record_usage. Status
+        # updates may carry an old snapshot after a child commits new usage.
+        for field in ("prompt_tokens", "completion_tokens", "estimated_cost"):
+            kwargs.pop(field, None)
         async with db_module.async_session() as session:
             from sqlalchemy import select
 
