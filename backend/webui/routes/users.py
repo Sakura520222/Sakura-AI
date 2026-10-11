@@ -17,6 +17,7 @@ from backend.services.identity_service import (
     stage_notification_endpoint,
 )
 from backend.services.quota_service import QuotaService
+from backend.services.telegram_service import TelegramService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
     can_update_user_role,
@@ -35,7 +36,7 @@ from backend.webui.deps import (
     toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import detect_language, i18n
 
 router = APIRouter(prefix="/users", tags=["WebUI Users"])
 templates = get_templates()
@@ -197,9 +198,7 @@ async def add_user(
     # 检查 GitHub 用户名唯一性
     existing_gh = await db.execute(select(TelegramUser))
     if any(
-        str(getattr(candidate, "github_username", "") or "")
-        .strip()
-        .casefold()
+        str(getattr(candidate, "github_username", "") or "").strip().casefold()
         == github_username.casefold()
         for candidate in existing_gh.scalars().all()
     ):
@@ -623,37 +622,42 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ) -> RedirectResponse:
     """删除用户（仅超级管理员）"""
+    lang = detect_language(user_prefs)
     if user_id == user["user_id"]:
-        return toast_redirect(
-            "/users/", "toast.cannot_delete_self", "error", lang=detect_language()
-        )
+        return toast_redirect("/users/", "api.cannot_delete_self", "error", lang=lang)
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     target_user = result.scalar_one_or_none()
     if not target_user:
-        return error_page(request, message="用户不存在", user=user)
+        return error_page(
+            request,
+            message=i18n.t("toast.user_not_found", lang=lang),
+            user=user,
+            user_prefs=user_prefs,
+        )
 
     github = target_user.github_username
     tg_id = target_user.telegram_id
     role = target_user.role
 
     try:
-        await db.delete(target_user)
+        retained = await TelegramService(db).retire_user(target_user)
         await db.commit()
     except Exception as e:
         logger.error(f"用户删除失败: {e}")
         await db.rollback()
         return toast_redirect(
             f"/users/{user_id}",
-            "toast.user_delete_failed",
+            "api.user_delete_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
         )
 
     logger.info(
-        f"用户已通过 WebUI 删除: id={user_id}, github={github}, telegram_id={tg_id}, by={user['sub']}"
+        f"用户已通过 WebUI 移除: id={user_id}, github={github}, retained={retained}, by={user['sub']}"
     )
     await log_admin_action(
         db,
@@ -665,13 +669,14 @@ async def delete_user(
             "github_username": github,
             "telegram_id": tg_id,
             "role": role,
+            "retained_financial_records": retained,
         },
     )
     return toast_redirect(
         "/users/",
-        "toast.user_deleted",
-        lang=detect_language(),
-        name=github or tg_id,
+        "api.user_deactivated_retained" if retained else "api.user_deleted",
+        lang=lang,
+        name=github or tg_id or user_id,
     )
 
 

@@ -1386,6 +1386,76 @@ class BillingService:
         operation.outcome = outcome
         return await self.settle_operation(operation_id)
 
+    async def _has_payable_pending(self, operation) -> bool:
+        """Provider-cost uncertainty is not automatically user-payable uncertainty."""
+        operation_id = operation.operation_id
+        attempts = (
+            (
+                await self.session.execute(
+                    select(BillingCallAttempt)
+                    .where(BillingCallAttempt.operation_id == operation_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        usages = (
+            (
+                await self.session.execute(
+                    select(AIUsageRecord)
+                    .where(AIUsageRecord.operation_id == operation_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        active = {attempt.call_id: attempt.usage_record_key for attempt in attempts}
+        usages = [
+            row
+            for row in usages
+            if not row.actual_call_id
+            or row.actual_call_id not in active
+            or active[row.actual_call_id] == row.record_key
+        ]
+        exempt = {
+            row.record_key
+            for row in usages
+            if not operation.charge_failed_calls
+            and row.outcome in {"failed", "cancelled"}
+        }
+        # No receipt, an unfinished successful call, or a crash window cannot
+        # be reclassified as a non-chargeable failure by absence of Usage.
+        if not exempt or any(
+            attempt.state in {"started", "pending_usage", "pending_reconciliation"}
+            and attempt.usage_record_key not in exempt
+            for attempt in attempts
+        ):
+            return True
+        quoted = set(
+            (
+                await self.session.execute(
+                    select(BillingUsageCharge.usage_record_key)
+                    .where(BillingUsageCharge.operation_id == operation_id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return any(
+            row.record_key not in exempt
+            and (
+                not row.usage_reported
+                or row.usage_complete is False
+                or row.record_key not in quoted
+            )
+            for row in usages
+        )
+
     async def resume_operation(self, operation_id):
         """Trusted worker lifecycle extends a settled automatic continuation."""
         operation = await self._operation(operation_id)
@@ -1393,6 +1463,7 @@ class BillingService:
             not operation.pending_reason
             or not operation.charging_enabled
             or operation.user_id is None
+            or not await self._has_payable_pending(operation)
         ):
             # Financial uncertainty remains auditable, but it cannot prevent a
             # continuation that has no user-payable charge under its frozen policy.

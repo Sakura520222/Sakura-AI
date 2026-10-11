@@ -147,6 +147,7 @@ class AgentTeamCandidateService:
         ai_config_snapshot: dict | None = None,
         base_branch: str | None = None,
         overrides: dict | None = None,
+        commit: bool = True,
     ) -> AgentTeamTask:
         """将候选项转为 AgentTeamTask。
 
@@ -178,7 +179,10 @@ class AgentTeamCandidateService:
             started_by=started_by,
         )
         db.add(task)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(task)
         return task
 

@@ -386,6 +386,8 @@ class TestQuotaApplication:
 @pytest.mark.asyncio
 class TestManualGrant:
     async def test_grant_success(self, svc, mock_session, sample_user, sample_plan):
+        # AsyncSession.begin_nested is synchronous and returns an async context.
+        mock_session.begin_nested = MagicMock(return_value=AsyncMock())
         mock_session.get.side_effect = lambda model, pk: (
             sample_user if pk == 1 else sample_plan if pk == 1 else None
         )

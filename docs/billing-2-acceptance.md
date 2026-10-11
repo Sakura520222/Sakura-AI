@@ -489,6 +489,57 @@ Paddle 页面实际下拉含 33 个选项、USD/CNY 可选、USDT/AED 不可选�
 门槛实测，不把 SQLite 证据称为生产验收。暂存区为空，HEAD 保持 9adb69fa0a；
 未提交、推送、创建工作树或修改生产账户。
 
+## 变基后的两轮审查（基线 1692bec1a1）
+
+2026-10-11，在 feature/billing-system-2.0 的干净工作区核对旧审查
+5347927f2c 和当前审查 1692bec1a1；实际 HEAD 是
+1692bec1a149f2e8b4e7662c20af0c93ef8557ec。以下均为本地补丁，不把邮件
+页脚、审查建议或贡献指南当作提交、推送、付款或生产部署授权。
+
+| 审查项 | 实现位置与行为 | 自动化证据 |
+| --- | --- | --- |
+| 关闭销售阻断 TRON 到账 | webui/deps 精确 GET 路径；billing 状态接口识别 fulfilled；原账单所有者、永久指纹、金额快照与幂等履约保留 | test_review_disabled_payments_and_ipn：真实 ASGI/SQL 关闭销售后打开原账单、他人拒绝、一次入账、无新 invoice；Node 执行渲染后的组件，只有一份轮询且终态停止 |
+| 删除用户绕过账务保留 | TelegramService.retire_user 供 API/WebUI/Telegram 共用；按 ID、锁定读取财务/权益来源，有记录停用，无记录删除；审计结果与中英文提示同步 | test_review_billing_user_retention：真实 FK 开启，零钱包、入账、旧订单/权益、执行与限流记录，权限/自身/CSRF、写入中断及语言、未绑定/同名身份反例 |
+| Text 上的 JSON 来源查找 | PaymentEventService 按通道及固定高水位 keyset 读取、应用层校验；损坏无关行保留，匹配不明确进入待核对，选中后锁定复核 | test_review_payment_reference_lookup：损坏/非对象 JSON、中文/转义标识、跨批次、其他通道、重复退款、重复映射、选中损坏及锁后来源变化；编译 PostgreSQL/MySQL 查询确认无 Text JSON 运算 |
+| 手动 Agent 提交无持久交接 | manual_dispatch + agent_team 路由：任务/入场/回执同事务，retryable 恢复原 op/payer，SQL 领取并复用 Worker token 校验，未知交接 503；复用核对 CLI | test_review_manual_agent_dispatch：创建与 queued 恢复、注册拒绝、未知提交、新次数不重复扣、事务中断、并发领取、管理员帮助不改付款者、核对释放及迟到 Worker、旧载体隔离 |
+| 不收费失败尝试阻止续轮 | BillingService._has_payable_pending 按冻结策略和正式计价判断续轮；settlement 的 Provider 待核对标记及原未知 Usage 保留 | test_review_failed_call_continuation：PR/Agent 真实 Meter 失败后 fallback、同 op 再结算不重扣，策略反向切换、收费失败正例和无回执 started 反例；原有 Usage/流式/账号回归保持通过 |
+| 并发管理员发放唯一键报错 | PaymentService._grant_replay + 保存点冲突恢复；重读并验证财务意图，不吞其他约束错误 | test_review_admin_grant_race：隔离会话中的真实 SQLite 唯一键/保存点，模拟并发首读遗漏，余额/流水只有一次，用户/套餐/操作者冲突拒绝，外层事务仍可使用 |
+
+第一批回归初始 14 failed/14 passed；浏览器复测发现双初始化轮询和误导的
+永久删除说明，新增 3 项红测后修复。第一批最终全量 5964 passed/17 既有
+条件 skip。第二批新回归复现待核对 gate、真实唯一键异常及缺回执；收费失败
+反例需期待下一次发送和终结传播同一财务拒绝，未放宽生产收费失败策略。
+
+第二批首次全量出现 5 个失败：3 个原有未知/部分 Usage 的待核对断言提醒
+保留 Provider 成本信号，因此改为单独判定续轮而保留原结算标记；另 1 个
+AsyncMock 保存点夹具修正为同步返回异步上下文，2 个 fromtimestamp 调用
+所在的 1 项白名单测试同步精确行号。没有移除断言、增加 skip 或放宽时间
+边界。最终运行结果见本节后续验证表。
+
+| 最终实际运行的命令 | 结果 |
+| --- | --- |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs --tb=short` | 最终 5980 passed、17 既有条件 skip，153.66s，无失败或警告；包含主应用/updater/sandboxer；保存点当前读取补强后重新全量运行 |
+| `uv run --no-sync python -m pytest -q tests/test_review_admin_grant_race.py tests/test_billing_entitlements.py tests/test_payment_service.py --tb=short` | 91 passed，3.06s；真实唯一键、保存点及服务回归 |
+| `uv run --no-sync python -m pytest -q tests/test_review_failed_call_continuation.py tests/test_billing_usage_attribution.py tests/test_billing_account_usage.py tests/test_billing_noncharging_resume.py --tb=short` | 60 passed，5.12s；原未知/部分流式 Usage 断言保留 |
+| `/tmp/sakura-9adb-ruff/bin/ruff check .`、`uv run --no-sync python run_ruff.py --check` | 隔离 0.16.10 与 venv 0.16.9 均通过；没有依赖清单或锁文件修改 |
+| `/tmp/sakura-9adb-ruff/bin/ruff format --check`（19 个相关 Python 文件）及 `git diff --check` | 通过 |
+| Git HEAD archive 叠加 25 个改动文件，恢复 tracked Git mode、新文件 100644 后运行 Ruff | 通过，/tmp/sakura-1692-ci-patch-6n0oyqm3；未将本地检查称为远端 CI |
+
+17 项 skip 为 Docker gate 12、root/sticky gate 1、可选 aiosqlite 1、
+systemd gate 3，本轮没有新增 skip。没有运行真实 AI/支付/退款、生产部署，
+也未提交、暂存、推送、创建工作树或关闭 Issue。工作区基线 HEAD 保持不变。
+
+实际浏览器在隔离 SQLite 站点确认关闭销售后的 TRON 页面为英文，正常
+轮询一次返回 200、Payment Complete、5 TEST Credits 一次入账且轮询停止；
+用户移除实际点击确认后保留原行并停用，英文 toast 及确认文案正确。测试网关
+在边界模拟，没有真实转账、AI 调用或生产写入。临时服务及浏览器已关闭，
+curl 验证 8898 不可达；证据位于 /tmp/sakura-5347-browser-evidence。
+
+本轮没有模型/约束迁移或依赖变更，复用已有执行回执。旧 Worker 应排空并
+统一升级；待核对回执需可信证据，不能凭无 Usage 推断未交接。原生
+MySQL/PostgreSQL 的本轮并发场景尚未实测，SQL 编译和 SQLite 证据不替代
+原生事务验收。配置、恢复与回滚说明见 [Billing 2.0](billing-2.md)。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

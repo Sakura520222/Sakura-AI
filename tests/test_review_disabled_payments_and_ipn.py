@@ -1,9 +1,11 @@
 """Disabling new purchases must not disable refund recovery or lose callbacks."""
 
+import asyncio
 import hashlib
 import hmac
 import json
 import re
+import subprocess
 from contextlib import asynccontextmanager
 
 import httpx
@@ -90,6 +92,178 @@ async def test_disabled_purchase_switch_keeps_own_history_and_blocks_new_orders(
     ).status_code == 404
     async with factory() as db:
         assert len((await db.execute(select(Order))).scalars().all()) == 4
+
+
+@pytest.mark.asyncio
+async def test_disabled_sales_keep_existing_tron_invoice_and_settle_once(
+    billing_client, monkeypatch
+):
+    from decimal import Decimal
+    from unittest.mock import AsyncMock
+
+    from backend.models.billing_models import BillingTransaction, BillingWallet
+    from backend.services.payment.gateway_base import PaymentStatusResult
+    from backend.services.payment.tron_gateway import TronGateway
+
+    client, factory = billing_client
+    async with factory() as db:
+        service = PaymentService(db)
+        plan = await service.create_plan(
+            "TEST TRON invoice", "one_time", 100, credit_grant=Decimal(5)
+        )
+        order = await service.create_order(1, plan.id)
+        order.payment_provider = "tron"
+        metadata = {
+            "pay_amount": "1.000123",
+            "pay_address": "TEST-tron-address",
+            "pay_currency": "usdttrc20",
+            "price_amount": "1",
+            "price_currency": "usd",
+            "gateway_amount_cents": 100,
+            "gateway_currency": "USD",
+        }
+        order.metadata_json = json.dumps(metadata)
+        fingerprint = PaymentService._tron_invoice_identity(metadata)
+        order.invoice_identity = fingerprint
+        order_no, order_id = order.order_no, order.id
+        before = (await db.get(BillingWallet, 1)).balance_units
+        await db.commit()
+
+    gateway = TronGateway("TEST-tron-address")
+    gateway.check_payment_by_amount = AsyncMock(
+        return_value=PaymentStatusResult(
+            success=True, status="completed", provider_tx_id="TEST-chain-transfer"
+        )
+    )
+    gateway.create_payment = AsyncMock(side_effect=AssertionError("No new invoice"))
+    gateway_factory = AsyncMock(return_value=gateway)
+    monkeypatch.setattr("backend.services.payment.get_gateway", gateway_factory)
+    await disable_new_payments(client, monkeypatch)
+
+    page = await client.get(f"/billing/crypto-payment/{order_no}")
+    assert page.status_code == 200 and "1.000123" in page.text
+    assert "TEST-tron-address" in page.text
+    wrong_owner = {"x-test-identity": "bob"}
+    assert (
+        await client.get(
+            "/billing/crypto-status", params={"order_no": order_no}, headers=wrong_owner
+        )
+    ).status_code == 404
+    assert (
+        await client.get(f"/billing/crypto-payment/{order_no}", headers=wrong_owner)
+    ).status_code == 302
+    gateway_factory.assert_not_awaited()
+    for _ in range(2):
+        status = await client.get(
+            "/billing/crypto-status", params={"order_no": order_no}
+        )
+        assert status.status_code == 200 and status.json()["status"] == "completed"
+    gateway.check_payment_by_amount.assert_awaited_once()
+    args = gateway.check_payment_by_amount.call_args
+    assert args.args == (order_no, Decimal("1.000123"))
+    assert args.kwargs["min_block_timestamp"] > 0
+    gateway.create_payment.assert_not_awaited()
+    assert (
+        await client.post(f"/billing/purchase/{plan.id}", data={"provider": "tron"})
+    ).status_code == 404
+    assert (await client.post("/billing/crypto-status")).status_code != 200
+    async with factory() as db:
+        order = await db.get(Order, order_id)
+        assert order.status == "fulfilled" and order.invoice_identity == fingerprint
+        assert json.loads(order.metadata_json) == metadata
+        assert (await db.get(BillingWallet, 1)).balance_units == before + 5_000_000
+        purchases = (
+            (
+                await db.execute(
+                    select(BillingTransaction).where(
+                        BillingTransaction.order_id == order_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(purchases) == 1 and purchases[0].kind == "purchase"
+
+
+@pytest.mark.parametrize(
+    ("path", "method", "allowed"),
+    [
+        ("/billing/crypto-status", "GET", True),
+        ("/billing/crypto-payment/ORDexisting", "GET", True),
+        ("/billing/crypto-status", "POST", False),
+        ("/billing/crypto-payment/ORDexisting", "POST", False),
+        ("/billing/crypto-payment/ORDexisting/anything", "GET", False),
+        ("/billing/purchase/1", "POST", False),
+    ],
+)
+def test_existing_checkout_allowlist_is_method_and_route_specific(
+    path, method, allowed
+):
+    assert deps._is_existing_order_request(path, method) is allowed
+
+
+@pytest.mark.asyncio
+async def test_rendered_crypto_component_starts_one_poll_and_stops_at_completion(
+    billing_client,
+):
+    client, factory = billing_client
+    async with factory() as db:
+        service = PaymentService(db)
+        plan = await service.create_plan("TEST component invoice", "one_time", 100)
+        order = await service.create_order(1, plan.id)
+        order.payment_provider = "tron"
+        order.metadata_json = json.dumps(
+            {"pay_address": "TEST-address", "pay_amount": "1.000123"}
+        )
+        order_no = order.order_no
+        await db.commit()
+    page = await client.get(f"/billing/crypto-payment/{order_no}")
+    assert page.status_code == 200
+    component_script = re.search(
+        r"<script>\s*(function cryptoPayment\(\)[\s\S]*?)</script>", page.text
+    ).group(1)
+    root = re.search(r'<div[^>]+x-data="cryptoPayment\(\)"[^>]*>', page.text).group()
+    harness = r"""
+const vm = require('node:vm');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+let nextId = 0;
+const intervals = new Map();
+const requests = [];
+const context = {
+    Date, console, document: {getElementById: () => null},
+    setInterval(callback, delay) {intervals.set(++nextId, {callback, delay}); return nextId;},
+    clearInterval(id) {intervals.delete(id);},
+    async fetch(url) {requests.push(url); return {ok: true, async json() {return {status: 'completed'};}};}
+};
+vm.createContext(context);
+vm.runInContext(input.script, context);
+(async () => {
+    const component = context.cryptoPayment();
+    // Alpine calls a data object's init before evaluating an explicit x-init.
+    component.init();
+    if (input.explicitInit) component.init();
+    const polls = [...intervals.values()].filter(item => item.delay === 15000);
+    for (const item of polls) await item.callback();
+    process.stdout.write(JSON.stringify({status: component.status, pollCount: polls.length,
+        activePolls: [...intervals.values()].filter(item => item.delay === 15000).length, requests}));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+    result = await asyncio.to_thread(
+        subprocess.run,
+        ["node", "-e", harness],
+        input=json.dumps(
+            {"script": component_script, "explicitInit": 'x-init="init()"' in root}
+        ),
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=5,
+    )
+    outcome = json.loads(result.stdout)
+    assert outcome["status"] == "completed"
+    assert outcome["pollCount"] == 1 and outcome["activePolls"] == 0
+    assert outcome["requests"] == [f"/billing/crypto-status?order_no={order_no}"]
 
 
 @pytest.mark.asyncio

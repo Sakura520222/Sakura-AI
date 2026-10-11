@@ -138,13 +138,13 @@
         <!-- 危险操作 -->
         {% if current_user.role == 'super_admin' and target_user.id != current_user.user_id %}
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 shadow-sm p-6">
-            <h3 class="text-base font-medium mb-2 text-red-600 dark:text-red-400">{{ _('common.delete') }}</h3>
+            <h3 class="text-base font-medium mb-2 text-red-600 dark:text-red-400">{{ _('user.remove_user') }}</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">{{ _('user.delete_warning') }}</p>
             <form method="POST" action="/users/{{ target_user.id }}/delete"
-                  data-confirm="{{ _('user.confirm_delete_user', name=target_user.github_username or target_user.telegram_id) }}">
+                  data-confirm="{{ _('user.confirm_delete_user', name=target_user.github_username or target_user.telegram_id or target_user.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="w-full px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
-                    {{ _('common.delete') }} {{ _('user.title') }}
+                    {{ _('user.remove_user') }}
                 </button>
             </form>
         </div>

@@ -1944,6 +1944,48 @@ class PaymentService:
         )
         return refund_request
 
+    async def _grant_replay(
+        self, key, user_id, plan_id, operator_id, *, current=False
+    ) -> Order | None:
+        statement = select(Order).where(Order.grant_idempotency_key == key)
+        # A first nonlocking miss avoids InnoDB gap locks competing with each
+        # other's inserts. After a unique conflict, use a current locking read
+        # to see the committed winner even under MySQL repeatable-read.
+        if current:
+            statement = statement.with_for_update()
+        previous = (
+            await self.session.execute(
+                statement.execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if previous is None:
+            return None
+        if not current:
+            previous = (
+                await self.session.execute(
+                    statement.with_for_update().execution_options(
+                        populate_existing=True
+                    )
+                )
+            ).scalar_one_or_none()
+            if previous is None:
+                return None
+        try:
+            metadata = json.loads(previous.metadata_json or "{}")
+        except ValueError, TypeError:
+            metadata = None
+        if (
+            previous.user_id != user_id
+            or previous.plan_id != plan_id
+            or not isinstance(metadata, dict)
+            or metadata.get("grant_operator_id") != operator_id
+        ):
+            raise PaymentError(
+                "Grant key conflicts with another financial intent",
+                code="idempotency_conflict",
+            )
+        return previous
+
     async def grant_plan_to_user(
         self,
         user_id: int,
@@ -1955,26 +1997,10 @@ class PaymentService:
         if idempotency_key:
             if not isinstance(idempotency_key, str) or len(idempotency_key) > 191:
                 raise PaymentError("Invalid admin grant idempotency key")
-            previous = (
-                await self.session.execute(
-                    select(Order)
-                    .where(Order.grant_idempotency_key == idempotency_key)
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
+            previous = await self._grant_replay(
+                idempotency_key, user_id, plan_id, operator_id
+            )
             if previous:
-                previous_operator = json.loads(previous.metadata_json or "{}").get(
-                    "grant_operator_id"
-                )
-                if (
-                    previous.user_id != user_id
-                    or previous.plan_id != plan_id
-                    or previous_operator != operator_id
-                ):
-                    raise PaymentError(
-                        "Grant key conflicts with another financial intent",
-                        code="idempotency_conflict",
-                    )
                 return previous
         plan = await self.get_plan(plan_id)
         if not plan:
@@ -1997,8 +2023,19 @@ class PaymentService:
             paid_at=now_utc(),
             plan_snapshot=self._snapshot_plan(plan),
         )
-        self.session.add(order)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                self.session.add(order)
+                await self.session.flush()
+        except IntegrityError:
+            if not idempotency_key:
+                raise
+            previous = await self._grant_replay(
+                idempotency_key, user_id, plan_id, operator_id, current=True
+            )
+            if previous is None:
+                raise  # Unrelated constraints must remain operational failures.
+            return previous
 
         await self._log_payment(
             order_id=order.id,

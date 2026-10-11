@@ -193,13 +193,17 @@ def _is_plan_configuration_request(path: str, method: str) -> bool:
 
 
 def _is_existing_order_request(path: str, method: str) -> bool:
-    """Keep historical accounting/refunds available without reopening checkout."""
+    """Keep existing invoices/accounting available without opening new sales."""
     if method == "GET":
         return path in {
             "/billing",
             "/api/v1/billing/orders",
             "/billing/admin/refund-requests",
-        } or bool(re.fullmatch(r"/api/v1/billing/orders/[0-9]+", path))
+            "/billing/crypto-status",
+        } or bool(
+            re.fullmatch(r"/api/v1/billing/orders/[0-9]+", path)
+            or re.fullmatch(r"/billing/crypto-payment/[^/]+", path)
+        )
     if method == "POST":
         return bool(
             re.fullmatch(
