@@ -66,6 +66,7 @@ from backend.webui.deps import (
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language, i18n
+from backend.webui.payment_feedback import refund_error_message
 
 router = APIRouter(
     prefix="/billing",
@@ -698,6 +699,9 @@ async def admin_refund_requests(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="billing_admin_refunds",
+        refund_error_message=lambda error: refund_error_message(
+            error, lang=detect_language(user_prefs)
+        ),
         refund_requests=refund_requests,
         status=status or "",
         total=total,
@@ -712,10 +716,12 @@ async def admin_approve_refund_request(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
     csrf_token: str = Depends(require_csrf),
     review_note: str = Form(""),
 ):
     """批准退款申请并执行真实退款。"""
+    lang = detect_language(user_prefs)
     svc = PaymentService(db)
     try:
         refund_request = await svc.approve_refund_request(
@@ -754,8 +760,8 @@ async def admin_approve_refund_request(
             "/billing/admin/refund-requests",
             toast_key,
             toast_type,
-            lang=detect_language(),
-            error=refund_request.error_message or "",
+            lang=lang,
+            error=refund_error_message(refund_request.error_message or "", lang=lang),
         )
     except PaymentError as e:
         await db.rollback()
@@ -763,7 +769,7 @@ async def admin_approve_refund_request(
             "/billing/admin/refund-requests",
             "toast.payment_error",
             "error",
-            lang=detect_language(),
+            lang=lang,
             error=str(e),
         )
 
@@ -1395,9 +1401,11 @@ async def admin_refund_order(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
     csrf_token: str = Depends(require_csrf),
 ):
     """管理员发起退款"""
+    lang = detect_language(user_prefs)
     svc = PaymentService(db)
     try:
         order = await svc.process_refund(
@@ -1419,7 +1427,7 @@ async def admin_refund_order(
         return toast_redirect(
             "/billing/",
             "toast.refund_success",
-            lang=detect_language(),
+            lang=lang,
             order_no=order.order_no,
         )
     except PaymentError as e:
@@ -1428,8 +1436,8 @@ async def admin_refund_order(
             "/billing/",
             "toast.payment_error",
             "error",
-            lang=detect_language(),
-            error=str(e),
+            lang=lang,
+            error=refund_error_message(e, lang=lang),
         )
 
 

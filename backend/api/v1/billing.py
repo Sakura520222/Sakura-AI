@@ -22,7 +22,9 @@ from backend.services.billing_view_service import (
 from backend.services.payment import SUPPORTED_PROVIDERS
 from backend.services.payment.currency_units import safe_format_minor_amount
 from backend.services.payment_service import PaymentError, PaymentService
+from backend.webui.config_feedback import config_api_language
 from backend.webui.deps import get_db, require_payment_enabled
+from backend.webui.payment_feedback import refund_error_message
 
 router = APIRouter(
     prefix="/billing",
@@ -419,6 +421,13 @@ async def refund_order(
         }
     except PaymentError as e:
         await db.rollback()
+        if e.code == "refund_amount_unrepresentable":
+            language = await config_api_language(db, user)
+            raise HTTPException(
+                status_code=400,
+                detail=refund_error_message(e, lang=language),
+                headers={"X-Error-Code": e.code},
+            ) from e
         raise HTTPException(status_code=400, detail=str(e))
 
 
