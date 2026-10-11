@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ from backend.models.database import IssueAnalysis
 from backend.services.issues.reanalysis_admission import (
     IssueReanalysisAdmissionError,
     prepare_issue_reanalysis,
+    submit_issue_reanalysis,
 )
 from backend.webui.deps import (
     build_user_scope_filter,
@@ -164,11 +166,6 @@ async def reanalyze_issue(
             i18n.t(error.translation_key), status_code=error.status_code
         )
 
-    if user.get("role") in {"admin", "super_admin"}:
-        issue_info["billing_platform_reason"] = "administrator_issue_reanalysis"
-    else:
-        issue_info["user_id"] = user.get("user_id")
-
     # 计算分析版本号
     max_version_result = await db.execute(
         select(func.max(IssueAnalysis.analysis_version)).where(
@@ -186,10 +183,25 @@ async def reanalyze_issue(
     issue_info["analysis_version"] = max_version + 1
 
     try:
-        from backend.workers.issue_worker import submit_issue_analysis_task
-
-        task_id = await submit_issue_analysis_task(issue_info)
+        task_id = await submit_issue_reanalysis(db, issue_info, user)
         return success_response(data={"task_id": task_id})
-    except Exception:
-        logger.exception("提交 Issue 分析任务失败 / submit issue analysis failed")
+    except IssueReanalysisAdmissionError as error:
+        from backend.webui.config_feedback import config_api_language
+
+        try:
+            lang = await config_api_language(db, {"user_id": user.get("user_id")})
+        except Exception:
+            from backend.webui.i18n import detect_language
+
+            lang = detect_language()
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "success": False,
+                "code": error.code,
+                "error": i18n.t(error.translation_key, lang=lang),
+            },
+        )
+    except Exception as exc:
+        logger.warning("Issue reanalysis submission failed: {}", type(exc).__name__)
         return error_response("提交分析任务失败，请稍后重试", status_code=500)

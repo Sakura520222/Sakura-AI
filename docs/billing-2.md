@@ -31,6 +31,13 @@
 历史未知币种的账单保留原整数及币种代码，并显示单位未知；API 的格式化金额
 为 null、`currency_supported=false`。这只保证读取可用，不代表允许继续付款。
 
+Paddle 付款币种使用独立的协议能力目录，从 SDK 明确声明的 CurrencyCode
+成员取得并与本项目已知最小货币单位取交集。不能仅构造 CurrencyCode 验证，
+因为 SDK 允许未知字符串。已核对 [Paddle GET /currencies 官方目录](https://developer.paddle.com/api-reference/currencies/list-currencies/)，
+当前 33 种包含 USD/CNY/EUR/JPY；USDT、AED 不属于此通道。下拉、Settings、
+配置 API 与网关发起请求前统一拒绝不支持的值。AI 成本/结算及其他通道仍使用
+自己的原目录；已保存异常配置或历史订单不自动换币或改金额，请明确重新选择。
+
 USDT 有四个字符；费用表 `billing_usage_charges` 的 provider_currency 和
 settlement_currency 从 VARCHAR(3) 扩为 VARCHAR(10)。正常启动迁移检查并幂等
 扩宽 MySQL/MariaDB/PostgreSQL 的旧列，保留空值、默认值、注释及已有字符集/
@@ -111,6 +118,17 @@ cache_creation_supported / reasoning_supported=false，并保留缺失计量为 
 ## 执行、身份与政策
 
 服务端 BillingContext 包含可信 payer、operation、feature 和业务 source。
+
+API/WebUI 的 Issue 重新分析先完成既有权限、关闭状态与历史来源检查，再在
+返回 task_id 前提交钱包/每用户并发入场及预留。余额不足返回 402
+insufficient_credits，并发超限返回 429 concurrency_limit；失败不排队、不改原
+分析状态或消费 Credits。管理员保留触发者与语言身份，付款者显式为平台。
+成功携带同一服务端 operation 到 Worker，不重新预留；用户明确重发的新请求
+获得新 operation。已知 runtime gate 未提交会终结无调用执行并释放预留；
+交接结果未知返回 503，保留入场待恢复，不用缺 Usage 推断未发生。该不确定性
+记录为交接确认状态，不伪造金融 Usage 或阻止后来实际启动的原 Worker。
+恢复沿用现有过期执行/对账入口，不通过删除流水回滚。无需数据迁移。
+
 队列/持久化业务行显式保存标识，恢复与重投递沿用，用户新执行/新续问获得新
 标识；自动 Agent 续轮显式恢复累计执行。扫描的人工 retry 使用新 operation
 和本次服务端验证的触发者；可信 `process_scan(..., resume=True)` 恢复原标识，

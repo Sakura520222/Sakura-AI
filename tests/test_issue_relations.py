@@ -907,12 +907,18 @@ async def test_reanalysis_retains_known_issue_state_for_relation_prephase(
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
+    monkeypatch.setattr(
+        "backend.services.issues.reanalysis_admission.admit_reanalysis_operation",
+        AsyncMock(),
+    )
     module = api_routes if surface == "api" else webui_routes
     monkeypatch.setattr(module, "build_user_scope_filter", lambda *a: None)
     if surface == "api":
-        await module.reanalyze_issue(1, db=Session(), user={})
+        await module.reanalyze_issue(1, db=Session(), user={"user_id": 42})
     else:
-        await module.reanalyze_issue(SimpleNamespace(), 1, db=Session(), user={})
+        await module.reanalyze_issue(
+            SimpleNamespace(), 1, db=Session(), user={"user_id": 42}
+        )
     assert submit.call_args.args[0]["state"] == "open"
 
 

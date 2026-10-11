@@ -451,6 +451,44 @@ construct_event 的配置检查及 SDK 非验证错误。正确测试夹具下 P
 本轮没有追加这些环境门槛的实测。当前 HEAD 保持 cd4f341523，暂存区为空，
 没有提交或推送；不将本地验证称为远端 CI 或生产验收。
 
+## Issue 重新分析入场与 Paddle 币种边界（基线 9adb69fa0a）
+
+2026-10-11，工作基线 9adb69fa0ae5d74c5acd9e28aca5d9b58a83fe60，开始时
+Billing 分支工作区干净。按实际代码核实两条 P2，未将邮件页脚作为外部操作授权。
+
+| 审查项 | 实现 | 可重复证据 |
+| --- | --- | --- |
+| API/WebUI 返回 task_id 后才拒绝收费入场 | issues/reanalysis_admission 共享服务先提交可信 payer/operation、钱包/并发与预留，再排队；402/429 明确拒绝、原分析不变；管理员平台承担；已知未提交释放，未知交接保留且不污染金融 Usage gate | test_review_issue_reanalysis_billing：16 项，真实 ASGI/SQL 拒绝无 task_id/入账、提交前独立会话可见原 operation、身份不可客户端指定、重复登记一份预留、提交失败与写账中断、迟到 Worker、渲染后 JS 执行 |
+| Paddle 下拉广告不受支持币种 | paddle_capabilities 从明确 SDK 成员生成协议目录，配置下拉/Settings/API 与网关发起前共用校验；模型成本、结算与其他通道不变 | test_review_paddle_currency_bounds：5 项，拒绝 USDT/AED、保留 USD/CNY 等、配置 API 不写错误值、合法小写规范化、网关不构造 SDK Client；官方 GET /currencies 与 SDK 明确成员均为 33 种 |
+
+初始两组 16 项回归均失败，证明原路径无提前入场/不限制 Paddle。后续补充
+3 项写账/配置 API 与 1 项迟到 Worker、1 项真实渲染 JS 回归，共新增 21 项。
+第一遍全量出现 16 个旧夹具失败：旧 Issue 状态测试只提供用户名/单表录制
+会话。补齐可信测试 ID 并隔离财务服务边界，保留关闭 409、来源、权限、版本
+与语义内容断言；没有为过测试放宽生产身份校验、删除断言或新增 skip。
+
+实际浏览器点击发现 Issue 详情旧 showToast 全局不存在，造成 402 后仍无提示。
+该页改用 Base 已有 show-toast 事件，消息由服务端/Jinja 按语言生成，不使用
+不存在的 JS 翻译键。渲染后的 JS 由 Node VM 执行真实异步请求/事件路径，
+并在临时 SQLite 站点实际点击确认：POST 402、英文余额不足事件且页面可见。
+Paddle 页面实际下拉含 33 个选项、USD/CNY 可选、USDT/AED 不可选，切换 USD
+成功（未保存配置或发起付款）。临时服务及浏览器已关闭；证据在
+/tmp/sakura-9adb-browser-evidence。测试外部 Worker/支付仅在边界模拟。
+
+| 实际检查 | 结果 |
+| --- | --- |
+| 新回归及 Issue 状态/历史来源/关系回归 `uv run --no-sync python -m pytest -q ...` | 152 passed，6.23s |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs` | 最终 5358 passed、17 既有条件 skip，120.50s；前版 5357 passed 后补详情 toast 修复再重跑 |
+| `/tmp/sakura-9adb-ruff/bin/ruff check .`（隔离 0.16.10）及 `uv run --no-sync python run_ruff.py --check` | 通过；没有依赖清单变更 |
+| Git HEAD archive 叠加补丁，tracked Git mode/新文件 100644，Ruff check + 12 个 Python 文件 format check | 通过，/tmp/sakura-9adb-ci-patch-u3qito1b |
+| `git diff --check` | 通过 |
+
+无需数据库迁移，不自动修改已保存非法 Paddle 值或历史订单金额；管理员需
+明确重新选择通道支持币种。Paddle 目录依据及 HTTP/恢复语义见
+[Billing 2.0](billing-2.md)。没有原生 MySQL/PostgreSQL、Docker/systemd/root
+门槛实测，不把 SQLite 证据称为生产验收。暂存区为空，HEAD 保持 9adb69fa0a；
+未提交、推送、创建工作树或修改生产账户。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

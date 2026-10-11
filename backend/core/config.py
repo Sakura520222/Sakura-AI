@@ -16,6 +16,10 @@ from backend.services.payment.currency_units import (
     normalize_currency,
     supported_currencies,
 )
+from backend.services.payment.paddle_capabilities import (
+    supported_paddle_currencies,
+    validate_paddle_currency,
+)
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 # Bounds apply before Issue corpus recall and source hydration, independent of
@@ -31,6 +35,8 @@ def validate_currency_config_value(key: str, value: object) -> str:
     currency = normalize_currency(value)
     if key == "alipay_currency" and currency != "CNY":
         raise ValueError("Alipay website payments support CNY only")
+    if key == "paddle_currency":
+        return validate_paddle_currency(currency)
     return currency
 
 
@@ -1725,6 +1731,9 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
     },
     # alipay.trade.page.pay is a CNY-only gateway, not a general FX gateway.
     "alipay_currency": [{"value": "CNY", "label": "CNY"}],
+    "paddle_currency": [
+        {"value": code, "label": code} for code in supported_paddle_currencies()
+    ],
     "payment_partial_refund_policy": [
         {"value": "reject", "label": "拒绝部分退款"},
         {

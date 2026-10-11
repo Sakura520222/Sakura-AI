@@ -16,7 +16,13 @@ from backend.webui.routes import issues as webui_routes
 
 
 @pytest.fixture
-def analysis_db():
+def analysis_db(monkeypatch):
+    # This fixture exercises Issue state/authorization with its one-table DB.
+    # Wallet admission is verified against the complete real schema separately.
+    monkeypatch.setattr(
+        "backend.services.issues.reanalysis_admission.admit_reanalysis_operation",
+        AsyncMock(),
+    )
     engine = create_engine("sqlite:///:memory:")
     IssueAnalysis.__table__.create(engine)
     with Session(engine) as session:
@@ -64,6 +70,7 @@ def _request():
 
 
 async def _reanalyze(surface, db, user):
+    user = {"user_id": 42, **user}
     if surface == "api":
         return await api_routes.reanalyze_issue(1, db=db, user=user)
     return await webui_routes.reanalyze_issue(_request(), 1, db=db, user=user)
@@ -106,6 +113,11 @@ async def test_open_reanalysis_submit_with_next_version(
     monkeypatch.setattr(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
+    admission = AsyncMock()
+    monkeypatch.setattr(
+        "backend.services.issues.reanalysis_admission.admit_reanalysis_operation",
+        admission,
+    )
 
     response = await _reanalyze(
         surface, analysis_db.db, {"sub": "alice", "user_id": 42}
@@ -116,19 +128,31 @@ async def test_open_reanalysis_submit_with_next_version(
     assert payload["success"] is True
     assert (payload["data"] if surface == "api" else payload)["task_id"] == "task-7"
     assert len(analysis_db.statements) == 2
-    submit.assert_awaited_once_with(
-        {
-            "issue_number": 7,
-            "repo_name": "repo",
-            "repo_owner": "owner",
-            "author": "alice",
-            "title": "Current issue",
-            "body": "Raw body",
-            "state": "open",
-            "analysis_version": 3,
-            "user_id": 42,
-        }
-    )
+    submit.assert_awaited_once()
+    admission.assert_awaited_once()
+    sent = dict(submit.await_args.args[0])
+    context = sent.pop("billing_context")
+    assert context["user_id"] == 42 and context["feature"] == "issue_analysis"
+    assert context["source"] == {
+        "repo_full_name": "owner/repo",
+        "issue_number": 7,
+        "trigger_user_id": 42,
+    }
+    assert context["operation_id"] == admission.await_args.args[1].operation_id
+    assert sent == {
+        "issue_number": 7,
+        "repo_name": "repo",
+        "repo_owner": "owner",
+        "author": "alice",
+        "title": "Current issue",
+        "body": "Raw body",
+        "state": "open",
+        "analysis_version": 3,
+        "user_id": 42,
+        "billing_user_id": 42,
+        "trigger_user_id": 42,
+        "repo_full_name": "owner/repo",
+    }
 
 
 @pytest.mark.asyncio
