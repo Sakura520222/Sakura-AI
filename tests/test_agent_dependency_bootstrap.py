@@ -606,7 +606,9 @@ async def test_worker_enters_agent_execution_after_permanent_setup_failure(
     from backend.models.agent_team_models import AgentTeamTaskStatus
     from backend.services.agent_team.iteration_loop import IterationOutcome
     from backend.workers import agent_team_worker as worker_module
+    from tests.worker_capacity_support import install_unit_worker_capacity
 
+    install_unit_worker_capacity(monkeypatch)
     service, workspace, _settings = dependency_workspace
     runner, _requests = dependency_runner(
         service,

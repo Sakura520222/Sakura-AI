@@ -188,10 +188,11 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 - **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
 - **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset
 - **Paid Quota System** — Plan and redeem code CRUD + admin manual grants
-- **External Payments & Refunds** — Stripe / Paddle / Alipay / NOWPayments / TRON USDT
+- **External Payments & Refunds** — Stripe / Paddle / Alipay (CNY) / NOWPayments / TRON USDT; order history and refunds remain available when purchases are disabled
 - **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
 - **Admin Action Audit** — Complete operation logs
 - **WebUI Dashboard** — Navigation grouped into Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings; the PR review page includes repository and date filters, with old review-log URLs redirecting to it
+- **Billing 2.0** — Credits wallets, actual AI Usage pricing, source-traced purchases/refunds and bills; model pricing selects configured AI accounts and discovers their models automatically, with one tariff for streaming and non-streaming calls and dropdown currency selection. Service execution capacity is shared across Workers; plans independently limit each user's admitted executions. Request counts and concurrency control admission. Charging defaults off while non-charging executions can still resume and continue automatically. Read the [configuration, migration and reconciliation guide](docs/billing-2.md) before enabling it.
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions

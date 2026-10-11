@@ -4,11 +4,13 @@ import enum
 import secrets
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -84,6 +86,11 @@ class Plan(Base):
     currency = Column(String(10), default="CNY", nullable=False)
     duration_days = Column(Integer, nullable=True)
 
+    # Human Credits; no production conversion or price is implied by this field.
+    credit_grant = Column(Numeric(24, 6), default=0, nullable=False)
+    rate_limits = Column(JSON, nullable=True)
+    concurrency_limit = Column(Integer, nullable=True)
+
     # PR 配额增量
     pr_quota_bonus = Column(Integer, default=0, nullable=False)
     pr_daily_add = Column(Integer, default=0, nullable=False)
@@ -125,6 +132,8 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     order_no = Column(String(64), unique=True, nullable=False, index=True)
+    grant_idempotency_key = Column(String(191), nullable=True, unique=True)
+    invoice_identity = Column(String(191), nullable=True, unique=True)
     user_id = Column(
         Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
     )
@@ -132,6 +141,7 @@ class Order(Base):
         Integer, ForeignKey("plan_plans.id", ondelete="SET NULL"), nullable=True
     )
     amount_cents = Column(Integer, nullable=False)
+    refunded_amount_cents = Column(Integer, default=0, nullable=False)
     currency = Column(String(10), default="CNY", nullable=False)
     status = Column(String(20), default=OrderStatus.PENDING.value, nullable=False)
     payment_provider = Column(String(50), nullable=True)
@@ -140,6 +150,8 @@ class Order(Base):
     fulfilled_at = Column(UTCDateTime, nullable=True)
     expires_at = Column(UTCDateTime, nullable=True)
     metadata_json = Column(Text, nullable=True)
+    plan_snapshot = Column(JSON, nullable=True)
+    hidden_by_user_at = Column(UTCDateTime, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -161,6 +173,7 @@ class RedeemCode(Base):
         Integer, ForeignKey("plan_plans.id", ondelete="CASCADE"), nullable=False
     )
     batch_name = Column(String(100), nullable=True)
+    plan_snapshot = Column(JSON, nullable=True)
     max_uses = Column(Integer, default=1, nullable=False)
     used_count = Column(Integer, default=0, nullable=False)
     status = Column(String(20), default=RedeemCodeStatus.ACTIVE.value, nullable=False)
@@ -198,6 +211,8 @@ class UserSubscription(Base):
     started_at = Column(UTCDateTime, default=utc_now, nullable=False)
     expires_at = Column(UTCDateTime, nullable=False)
     auto_renew = Column(Boolean, default=False, nullable=False)
+    granted_snapshot = Column(JSON, nullable=True)
+    quota_application_version = Column(Integer, nullable=True)
     applied_pr_quota_bonus = Column(Integer, default=0, nullable=False)
     applied_pr_daily_add = Column(Integer, default=0, nullable=False)
     applied_pr_weekly_add = Column(Integer, default=0, nullable=False)

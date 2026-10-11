@@ -33,7 +33,6 @@ class TestStripeWebhookEndpoint:
 
     @pytest.mark.asyncio
     async def test_webhook_payment_completed(self, mock_db_session, mock_gateway):
-        from backend.models.payment_models import OrderStatus
         from backend.services.payment.gateway_base import (
             WebhookEvent,
             WebhookEventType,
@@ -50,7 +49,7 @@ class TestStripeWebhookEndpoint:
 
         mock_order = MagicMock()
         mock_order.order_no = "ORD20240101000000ABCD1234"
-        mock_order.status = OrderStatus.FULFILLED.value
+        mock_order.status = "processed"
 
         with (
             patch(
@@ -63,7 +62,7 @@ class TestStripeWebhookEndpoint:
                 return_value=mock_gateway,
             ),
             patch(
-                "backend.services.payment_service.PaymentService.confirm_payment",
+                "backend.services.payment_event_service.PaymentEventService.accept",
                 new_callable=AsyncMock,
                 return_value=mock_order,
             ) as mock_confirm_payment,
@@ -85,12 +84,9 @@ class TestStripeWebhookEndpoint:
             body = json.loads(body_text)
             assert body["status"] == "processed"
             assert body["event"] == "payment_completed"
-            mock_confirm_payment.assert_awaited_once_with(
-                order_no="ORD20240101000000ABCD1234",
-                provider_tx_id="cs_test_123",
-                paid_amount_cents=1000,
-                paid_currency="cny",
-            )
+            mock_confirm_payment.assert_awaited_once()
+            assert mock_confirm_payment.await_args.args[0] == "stripe"
+            assert mock_confirm_payment.await_args.args[1] is event
 
     @pytest.mark.asyncio
     async def test_webhook_invalid_signature(self, mock_gateway):
@@ -136,9 +132,9 @@ class TestStripeWebhookEndpoint:
 
             response = await handle_stripe_webhook(mock_request)
 
-            assert response.status_code == 400
+            assert response.status_code == 503
             body = json.loads(response.body.decode())
-            assert "error" in body["status"]
+            assert body["status"] == "retry_required"
 
 
 @pytest.mark.asyncio
@@ -168,7 +164,6 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
     from fastapi import Request
 
     from backend.api import webhook
-    from backend.models.payment_models import OrderStatus
     from backend.services.payment.gateway_base import WebhookEvent, WebhookEventType
 
     event = WebhookEvent(
@@ -182,7 +177,7 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
 
     mock_order = MagicMock()
     mock_order.order_no = event.order_no
-    mock_order.status = OrderStatus.FULFILLED.value
+    mock_order.status = "processed"
 
     with (
         patch(
@@ -195,7 +190,7 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
             return_value=mock_gateway,
         ),
         patch(
-            "backend.services.payment_service.PaymentService.confirm_payment",
+            "backend.services.payment_event_service.PaymentEventService.accept",
             new_callable=AsyncMock,
             return_value=mock_order,
         ) as mock_confirm_payment,
@@ -208,12 +203,9 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
 
     assert response.status_code == 200
     assert response.body == expected_body
-    mock_confirm_payment.assert_awaited_once_with(
-        order_no=event.order_no,
-        provider_tx_id=event.provider_tx_id,
-        paid_amount_cents=event.amount_cents,
-        paid_currency=event.currency,
-    )
+    mock_confirm_payment.assert_awaited_once()
+    assert mock_confirm_payment.await_args.args[0] == provider
+    assert mock_confirm_payment.await_args.args[1] is event
 
 
 @pytest.mark.asyncio

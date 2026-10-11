@@ -20,6 +20,7 @@
 签名：RSA2（SHA256WithRSA）
 """
 
+from decimal import Decimal, InvalidOperation, localcontext
 from urllib.parse import parse_qs, urlencode
 
 import httpx
@@ -275,8 +276,16 @@ class AlipayGateway(PaymentGateway):
         """
         import json
 
+        # This domestic page.pay integration sends yuan amounts and has no
+        # foreign-currency settlement fields. Never relabel another currency.
+        if not isinstance(currency, str) or currency.strip().upper() != "CNY":
+            return PaymentIntentResult(
+                success=False,
+                error_message="Alipay page.pay supports CNY payments only",
+            )
+
         # 金额转换：cents → 元
-        total_amount = f"{amount_cents / 100:.2f}"
+        total_amount = f"{Decimal(amount_cents) / Decimal(100):.2f}"
 
         biz_content = {
             "out_trade_no": order_no,
@@ -367,13 +376,23 @@ class AlipayGateway(PaymentGateway):
             trade_status = flat_params.get("trade_status", "")
             out_trade_no = flat_params.get("out_trade_no", "")
             trade_no = flat_params.get("trade_no", "")
-            total_amount = flat_params.get("total_amount", "0")
+            total_amount = flat_params.get("total_amount")
 
             # 解析金额
+            amount_cents = None
+            normalization_error = ""
             try:
-                amount_cents = int(float(total_amount) * 100)
-            except ValueError, TypeError:
-                amount_cents = 0
+                value = Decimal(str(total_amount))
+                if not value.is_finite() or value < 0:
+                    raise ValueError("Provider amount must be finite and nonnegative")
+                with localcontext() as context:
+                    context.prec = max(context.prec, len(value.as_tuple().digits) + 2)
+                    minor = value * Decimal(100)  # Alipay's CNY amount protocol.
+                    if minor != minor.to_integral_value():
+                        raise ValueError("Provider amount has unresolved minor units")
+                    amount_cents = int(minor)
+            except ValueError, TypeError, InvalidOperation:
+                normalization_error = "provider_amount_requires_review"
 
             # 交易状态映射
             if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED"):
@@ -397,6 +416,15 @@ class AlipayGateway(PaymentGateway):
                 amount_cents=amount_cents,
                 currency="CNY",
                 raw_event=flat_params,
+                event_id=flat_params.get("notify_id") or "",
+                normalization_error=normalization_error
+                if event_type == WebhookEventType.PAYMENT_COMPLETED
+                else "",
+                wire_evidence={
+                    "trade_status": trade_status,
+                    "amount": total_amount,
+                    "currency": "CNY",
+                },
             )
 
         except Exception as e:
@@ -415,13 +443,16 @@ class AlipayGateway(PaymentGateway):
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         """调用 alipay.trade.refund 退款"""
         import json
 
         biz_content: dict = {"trade_no": provider_tx_id}
+        if idempotency_key:
+            biz_content["out_request_no"] = idempotency_key
         if amount_cents is not None:
-            biz_content["refund_amount"] = f"{amount_cents / 100:.2f}"
+            biz_content["refund_amount"] = f"{Decimal(amount_cents) / Decimal(100):.2f}"
         if reason:
             biz_content["refund_reason"] = reason
 
@@ -450,7 +481,7 @@ class AlipayGateway(PaymentGateway):
                     success=True,
                     refund_id=result.get("trade_no", provider_tx_id),
                     amount_cents=amount_cents or 0,
-                    status="refunded",
+                    status="succeeded",
                 )
 
             error_msg = result.get("sub_msg") or result.get("msg", "Refund failed")
@@ -506,8 +537,8 @@ class AlipayGateway(PaymentGateway):
                 }
                 total_amount = result.get("total_amount", "0")
                 try:
-                    amount_cents = int(float(total_amount) * 100)
-                except ValueError, TypeError:
+                    amount_cents = int(Decimal(str(total_amount)) * Decimal(100))
+                except ValueError, TypeError, InvalidOperation:
                     amount_cents = 0
 
                 return PaymentStatusResult(

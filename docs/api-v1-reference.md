@@ -1899,7 +1899,7 @@ Issue 分析详情。
 
 #### PATCH /config/general
 
-更新全局配置。
+更新全局配置。配置值按既有契约使用字符串（布尔使用 `"true"` / `"false"`）；计费参数先校验，再保存。
 
 **认证级别**：super_admin
 
@@ -1914,8 +1914,9 @@ Issue 分析详情。
 ```json
 {
   "configs": {
-    "OPENAI_MODEL": "gpt-4o-mini",
-    "LOG_LEVEL": "DEBUG"
+    "billing_enabled": "false",
+    "billing_initial_reserve_credits": "500",
+    "billing_reservation_ttl_seconds": "3600"
   }
 }
 ```
@@ -1930,6 +1931,18 @@ Issue 分析详情。
 ```
 
 ---
+
+计费及策略/标签校验错误返回 HTTP 400，保留 `success=false` / `error`，增加稳定
+`code` 和 `errors` 数组。每项包含 `field`、`code`、按可信用户个人偏好翻译的
+`message`、安全约束 `params`；可提供 `details`、`help_url`、`help_label`。
+例如缺少模型报价时 `field=billing_enabled`、`code=missing_price`，列出缺失
+Provider/Model/call_kind 并链接 `/billing/admin/pricing`。Bearer 客户端也按自身
+用户ID读取语言，不依赖 WebUI Cookie。错误不返回提交的原始字段值或完整模板。
+
+WebUI `/config/save-all` 保留 `ok/toast/results` 契约，并在失败分区及顶层聚合
+`errors`。部分失败保持 `ok=false`，成功分区仍独立记录。单表单请求在
+`Accept: application/json` 下使用 HTTP 400/200 JSON反馈；普通提交保留302并携
+`_errors`供同页定位。
 
 #### GET /config/strategies
 
@@ -2784,7 +2797,71 @@ Issue 分析详情。
 
 ### 3.15 付费配额 (Billing)
 
-Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒绝访问或功能未启用错误。当前 Billing 模块部分响应为直接 JSON，不完全使用统一 `success_response` 包装。
+支付及旧套餐购买端点由 `payment_enabled` 控制。Billing 2.0 钱包、账单、Usage、通知与管理定价/发放独立可用；实际 Usage 收费由 `billing_enabled` 控制，默认关闭。当前 Billing 模块部分响应为直接 JSON，不完全使用统一 `success_response` 包装。
+
+#### Billing 2.0 契约
+
+| 方法 | 路径（前缀 `/api/v1`） | 权限 / 参数 |
+| --- | --- | --- |
+| GET | `/billing/wallet` | 当前用户；balance/reserved/available/low_balance_threshold 都为精确十进制字符串 |
+| PUT | `/billing/wallet/threshold` | 当前用户；`credits` 为最多六位小数的字符串，0 禁用提醒 |
+| GET | `/billing/transactions` | 当前用户；kind/feature/offset/limit 筛选及分页；只显示有权访问的业务来源 |
+| GET | `/billing/operations` | 当前用户；status/feature/offset/limit；包含待结算/待核对执行 |
+| GET | `/billing/usage` | 当前用户；operation_id/feature/offset/limit；实际 Token 保留 null 与 0 的区别 |
+| GET | `/billing/notices` | 当前用户；offset/limit，持久化低余额提醒 |
+| POST | `/billing/notices/{notice_id}/read` | 当前用户标记自己的提醒已读，不越权访问他人提醒 |
+| GET / POST | `/billing/admin/pricing` | super_admin；POST account_id/model_id/call_kind/config 发布账号的新不可变版本，provider_id 从账号解析；无 account_id 时保留旧显式 provider_id 契约 |
+| POST | `/billing/admin/wallets/{user_id}/adjust` | super_admin；精确 credits、idempotency_key、reason，操作者取鉴权上下文 |
+| GET | `/billing/admin/payment-events` | super_admin；offset/limit 分页查看已验签但待核对的支付/退款事件，金额未知为 null |
+| POST | `/billing/admin/payment-events/{event_id}/replay` | super_admin；只重放本地已保存证据，不再次请求支付/退款网关；返回实际 status/pending_reason |
+| POST | `/billing/admin/payment-events/{event_id}/resolve` | super_admin；必填 evidence，可提供 order_id、checkout_amount_cents/checkout_currency 或 refund_reference_id/refund_amount_cents/refund_currency；按审核证据核对并重放 |
+
+套餐创建/编辑与返回增加 `credit_grant`（Decimal 字符串）、`rate_limits`（已验证 JSON 映射）、`concurrency_limit`。旧 bonus 字段为独立可消耗权益，不再永久修改每日上限。购买按订单快照发放，套餐修改不改变已购权益。`POST /billing/admin/grant` 支持 body `idempotency_key` 或 `Idempotency-Key` 头；同时提供须相同。兼容旧无键请求，为每次独立请求生成并返回 UUID，后续重试必须沿用返回键以去重。退款使用稳定请求键，上限 160 字符。部分退款仅在显式配置 `proportional_unused_credits` 后用于 Credits-only 套餐，默认拒绝不明确的比例政策。
+
+更新套餐省略 `concurrency_limit` 保持原值，显式传 `null` 清除此套餐的并发上限；WebUI 显式提交空白也可清除。
+
+`concurrency_limit` 是每用户跨 PR/Issue/Agent/Repo Scan 的业务执行入场上限：
+已登记并排队/运行的 outcome=null 执行占用，已记录终态结果即释放，账单是否
+结算不影响此口径。新登记及已结束执行的恢复都会检查上限。服务侧的
+max_concurrent_reviews/max_concurrent_issues/agent_team_max_concurrent 使用共享
+数据库协调所有 API/Worker 实例的执行容量，满额排队，不代表用户购买的余额。
+
+`price_cents`/`amount_cents`/`refunded_amount_cents` 保持整数契约，表示所选币种的最小单位（JPY 0 位、USD/CNY 2 位、USDT 6 位）。新增 `formatted_price`/`formatted_amount`/`formatted_refunded_amount` 精确字符串用于显示，客户端不能统一除以 100。
+历史未知币种保留原整数/code，格式化金额为 `null` 并返回 `currency_supported=false`，禁止猜测小数位。Alipay 国内 page.pay 结账仅支持 CNY。
+
+余额不足使用 `insufficient_credits`，次数/并发为独立限流提示。管理员价格配置必须显式指定成本/结算币种、汇率、markup、Credits 换算及 Token 或实际计量单价，不能用浮点样本启用。详情见 [Billing 2.0](billing-2.md)。
+
+`POST /queue/increments/{item_id}/resume` 仅活跃超级管理员可恢复已验证未执行的
+PR 增量派发。body 必须包含非空 `evidence`（最多 2000 字符）、`reason`（最多
+1000 字符），拒绝额外字段。付款者和 operation 取已保存的队列载体，不接受
+客户端指定。返回 ready/resume_requested、leased/owned、terminal 或
+pending_reconciliation 等实际恢复结果；未知外部请求不自动重发。仓库无现有
+GitHub App 访问权限返回可重试错误，PR 已关闭会取消未使用执行并追加管理审计。
+恢复 CLI 的默认 dry-run、审核清单与切换边界见 [Billing 2.0](billing-2.md)。
+
+报价返回增加 `account_id`（历史/独立辅助模型为 null）和 `scope_key`。新账号调用
+严格按实际命中的账号查价，不回退到旧 Provider 通用报价。主调用、压缩、流式及
+Fallback 的 Usage 和计价快照保存实际账号；历史冻结费用不因账号改名或报价
+变更而改写。
+
+新报价中 `chat` 同时覆盖流式与非流式模型调用；请求 `chat_stream` 是兼容
+别名，发布后保存 `chat`，管理员审计另外保留 requested_call_kind。原始 Usage
+和实际请求类型不改变；计价快照保存 pricing_call_kind/price_profile_call_kind。
+历史已固定的旧流式报价继续按原版本结算，不自动选择旧流式报价用于新请求。
+报价成本/结算币种及套餐付款币种均按统一支持目录验证，目录外代码不能通过
+JSON/API 绕过下拉。币种参数规范化为大写，USDT 保留现有六位最小单位语义。
+
+WebUI 超级管理员模型发现接口（没有 `/api/v1` 前缀）为
+`GET /billing/admin/pricing/accounts/{account_id}/models?refresh=false`。
+账号须已配置且启用；服务端读取其凭据，仅调用模型列表接口。成功返回
+`{success:true,data:{account_id,models,default_model,source,discovery_failed}}`，
+models 是该账号保存/默认/发现的模型 ID 列表，source 为 saved/discovered/cached。
+发现失败保留该账号已保存的模型，discovery_failed=true；凭据、端点与上游错误
+正文不返回。缓存60秒，`refresh=true` 强制重新发现。仅超级管理员可访问，支付
+关闭时仍可配置报价。WebUI 表单的 source_scope=account 必须有 account_id；
+embedding/rerank 来源由当前独立服务配置解析 Provider/模型/调用类型。
+
+支付回调先保存不可变 received 审计，再处理账务。已验签但无法归一化的金额/币种保留最小 wire_evidence，进入 pending_reconciliation，不当作免费或忽略事件；人工核对追加 reviewed 审计，保留原始证据供重投递比较。退款引用与通道事件均有数据库幂等约束。后台 `/billing/admin/pricing` 提供待核对列表和 CSRF 保护的重放/核对表单。
 
 2.12.0 起，Billing API 支持外部支付订单创建和查询，`provider` 可使用 `stripe`、`paddle`、`alipay`、`nowpayments`、`tron`。兑换码和管理员手动发放仍可用于无需外部支付网关的配额发放。
 
@@ -3147,13 +3224,15 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 |------|------|------|------|
 | `user_id` | int | 是 | 目标用户 ID |
 | `plan_id` | int | 是 | 套餐 ID |
+| `idempotency_key` | string | 否 | 稳定事件键（也可通过 Idempotency-Key 请求头提供）；缺省为本次请求生成 UUID，并在响应返回 |
 
 **响应示例**：
 
 ```json
 {
   "success": true,
-  "order_no": "ORD202605090002"
+  "order_no": "ORD202605090002",
+  "idempotency_key": "b287bc7b-987a-4d88-8bb9-c9612367e970"
 }
 ```
 
@@ -3260,4 +3339,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-*Last updated: 2026-8-16 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*Last updated: 2026-10-8 · Found an error? [Submit an Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

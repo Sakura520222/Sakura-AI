@@ -42,6 +42,21 @@ from backend.models.announcement_models import (
     DeliveryStatus,
     NotificationDelivery,
 )
+from backend.models.billing_models import (
+    BillingCallAttempt,
+    BillingCreditDebt,
+    BillingCreditHold,
+    BillingCreditLot,
+    BillingDebtFunding,
+    BillingNotice,
+    BillingOperation,
+    BillingPriceProfile,
+    BillingReconciliationEvent,
+    BillingReservationEvent,
+    BillingTransaction,
+    BillingUsageCharge,
+    BillingWallet,
+)
 from backend.models.database import (
     AppConfig,
     Base,
@@ -61,6 +76,19 @@ from backend.models.identity_models import (
     NotificationEndpoint,
     NotificationProvider,
     UserIdentity,
+)
+from backend.models.legacy_entitlement_models import (
+    LegacyEntitlement,
+    LegacyEntitlementEvent,
+    PaymentReceipt,
+    PaymentRefundAttempt,
+    PaymentRefundAttemptEvent,
+    PaymentRefundInboxAudit,
+    PaymentRefundInboxEvent,
+    PaymentRefundReference,
+    RateLimitAdmission,
+    RedeemCodeRedemption,
+    RedeemCodeSnapshotAudit,
 )
 from backend.models.payment_models import (
     Order,
@@ -84,6 +112,11 @@ from backend.models.scan_models import (
     ScanStatus,
 )
 from backend.models.security_models import SecurityEventLog
+from backend.models.service_execution_models import (
+    ServiceExecutionGate,
+    ServiceExecutionLease,
+    ServiceExecutionOwnership,
+)
 from backend.models.star_aid_models import (
     StarAidActionLog,
     StarAidCredential,
@@ -96,6 +129,7 @@ from backend.models.telegram_models import (
     UserRecoveryCode,
     UserWebAuthnCredential,
 )
+from backend.models.webhook_execution_models import WebhookExecutionReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +170,24 @@ __all__ = [
     "AppConfig",
     "AuthProvider",
     "Base",
+    "BillingCallAttempt",
+    "BillingCreditDebt",
+    "BillingCreditHold",
+    "BillingCreditLot",
+    "BillingDebtFunding",
+    "BillingNotice",
+    "BillingOperation",
+    "BillingPriceProfile",
+    "BillingReconciliationEvent",
+    "BillingReservationEvent",
+    "BillingTransaction",
+    "BillingUsageCharge",
+    "BillingWallet",
     "DeliveryStatus",
     "FindingCategory",
     "FindingSeverity",
+    "LegacyEntitlement",
+    "LegacyEntitlementEvent",
     "NotificationDelivery",
     "NotificationEndpoint",
     "NotificationProvider",
@@ -147,9 +196,18 @@ __all__ = [
     "PRReview",
     "PaymentAction",
     "PaymentLog",
+    "PaymentReceipt",
+    "PaymentRefundAttempt",
+    "PaymentRefundAttemptEvent",
+    "PaymentRefundInboxAudit",
+    "PaymentRefundInboxEvent",
+    "PaymentRefundReference",
     "Plan",
     "PlanType",
+    "RateLimitAdmission",
     "RedeemCode",
+    "RedeemCodeRedemption",
+    "RedeemCodeSnapshotAudit",
     "RedeemCodeStatus",
     "RefundRequest",
     "RefundRequestStatus",
@@ -159,6 +217,9 @@ __all__ = [
     "ScanFinding",
     "ScanStatus",
     "SecurityEventLog",
+    "ServiceExecutionGate",
+    "ServiceExecutionLease",
+    "ServiceExecutionOwnership",
     "StarAidActionLog",
     "StarAidCredential",
     "StarAidMember",
@@ -171,6 +232,7 @@ __all__ = [
     "UserRecoveryCode",
     "UserSubscription",
     "UserWebAuthnCredential",
+    "WebhookExecutionReceipt",
     "close_async_db",
     "init_async_db",
     "init_database",

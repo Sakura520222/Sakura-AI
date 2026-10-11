@@ -188,10 +188,11 @@ PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核�
 - **SSE 实时推送** — 基于 Redis Pub/Sub 的多进程实时通信
 - **配额制访问控制** — 用户自注册 + UTC 日 / 周 / 月自动重置
 - **付费配额系统** — 套餐计划与兑换码 CRUD + 管理员手动充值
-- **外部支付与退款** — Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT 直收
+- **外部支付与退款** — Stripe / Paddle / 支付宝（CNY）/ NOWPayments / TRON USDT 直收；关闭购买后仍可查看订单和处理退款
 - **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
 - **管理员操作审计** — 完整操作日志
 - **WebUI 管理界面** — 按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口；PR 审查页统一提供仓库与日期筛选，旧审查日志地址重定向至 PR 页面
+- **Billing 2.0** — Credits 钱包、真实 AI Usage 定价、来源可追踪的购买/退款与账单；模型按已配置 AI 账号定价并自动获取列表，流式与非流式共用报价，金额币种使用下拉选择。服务执行容量在多 Worker 间共享，套餐单独限制每用户已登记执行；次数与并发只负责限流。正式收费默认关闭，不妨碍非收费执行的恢复和自动续轮；启用前请阅读[配置、迁移与对账](docs/billing-2.md)。
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断

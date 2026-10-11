@@ -30,15 +30,18 @@ API 流程：
 import hashlib
 import hmac
 import json
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
 import httpx
 from loguru import logger
 
+from backend.services.payment.currency_units import currency_minor_exponent
 from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
@@ -127,7 +130,7 @@ class NowPaymentsGateway(PaymentGateway):
 
     @classmethod
     def _currency_decimals(cls, currency: str) -> int:
-        return cls.CURRENCY_DECIMALS.get(currency.upper(), 2)
+        return currency_minor_exponent(currency)
 
     @classmethod
     def _to_minor_units(cls, amount: object, currency: str) -> int:
@@ -190,12 +193,7 @@ class NowPaymentsGateway(PaymentGateway):
                 hashlib.sha512,
             ).hexdigest()
             if not hmac.compare_digest(expected, signature):
-                logger.warning(
-                    "NOWPayments IPN sig mismatch: expected={}, got={}, sorted_data={}",
-                    expected[:16] + "...",
-                    signature[:16] + "..." if len(signature) > 16 else signature,
-                    sorted_data[:200],
-                )
+                logger.warning("NOWPayments IPN signature mismatch")
                 return False
             return True
         except Exception as e:
@@ -290,23 +288,26 @@ class NowPaymentsGateway(PaymentGateway):
 
         回调是 POST JSON，x-nowpayments-sig 头包含 HMAC-SHA512 签名。
         """
+        if not isinstance(self._ipn_secret, str) or not self._ipn_secret.strip():
+            raise PaymentWebhookConfigurationError(
+                "NOWPayments verification is not configured"
+            )
+        signature = headers.get("x-nowpayments-sig", "")
+        if not signature or not self._verify_ipn_signature(payload, signature):
+            raise PaymentWebhookVerificationError("Invalid NOWPayments signature")
+
         try:
-            # 验签
-            signature = headers.get("x-nowpayments-sig", "")
-            if not signature:
-                logger.warning("NOWPayments IPN: missing signature")
-                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
-
-            if self._ipn_secret and not self._verify_ipn_signature(payload, signature):
-                logger.warning("NOWPayments IPN: signature verification failed")
-                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
-
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                raise PaymentWebhookVerificationError("Invalid NOWPayments payload")
             payment_status = data.get("payment_status", "")
             payment_id = str(data.get("payment_id", ""))
             order_id = str(data.get("order_id", ""))
-            price_amount = data.get("price_amount", 0)
-            price_currency = str(data.get("price_currency") or "USD").upper()
+            price_amount = data.get("price_amount")
+            wire_currency = data.get("price_currency")
+            price_currency = (
+                wire_currency.upper() if isinstance(wire_currency, str) else ""
+            )
 
             logger.info(
                 "NOWPayments IPN: status={}, payment_id={}, order_id={}",
@@ -314,9 +315,6 @@ class NowPaymentsGateway(PaymentGateway):
                 payment_id,
                 order_id,
             )
-
-            # 金额转换（price_currency 对应的主单位 → currency-specific minor units）
-            amount_cents = self._to_minor_units(price_amount, price_currency)
 
             # 状态映射
             if payment_status in ("finished", "confirmed", "sending"):
@@ -335,6 +333,30 @@ class NowPaymentsGateway(PaymentGateway):
             else:
                 return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event=data)
 
+            amount_cents = None
+            normalization_error = ""
+            try:
+                decimals = currency_minor_exponent(price_currency)
+                if isinstance(price_amount, bool):
+                    raise ValueError("Provider amount cannot be a Boolean")
+                value = Decimal(str(price_amount))
+                if not value.is_finite() or value < 0:
+                    raise ValueError("Provider amount must be finite and nonnegative")
+                with localcontext() as context:
+                    context.prec = max(
+                        context.prec, len(value.as_tuple().digits) + decimals
+                    )
+                    minor = value * (Decimal(10) ** decimals)
+                    if minor != minor.to_integral_value():
+                        raise ValueError("Provider amount has unresolved minor units")
+                    amount_cents = int(minor)
+            except InvalidOperation, ValueError, TypeError:
+                if event_type in {
+                    WebhookEventType.PAYMENT_COMPLETED,
+                    WebhookEventType.PAYMENT_REFUNDED,
+                }:
+                    normalization_error = "provider_amount_requires_review"
+
             return WebhookEvent(
                 event_type=event_type,
                 provider_tx_id=payment_id,
@@ -342,14 +364,23 @@ class NowPaymentsGateway(PaymentGateway):
                 amount_cents=amount_cents,
                 currency=price_currency,
                 raw_event=data,
+                event_id=f"{payment_id}:{payment_status}",
+                payment_reference_id=payment_id,
+                # price_amount is an invoice price, not proof of a partial
+                # cash refund. Preserve receipt, require provider evidence.
+                refund_items=[],
+                refund_evidence_complete=False,
+                normalization_error=normalization_error,
+                wire_evidence={
+                    "payment_status": payment_status,
+                    "amount": price_amount,
+                    "currency": wire_currency,
+                },
             )
 
-        except Exception as e:
-            logger.error("NOWPayments webhook verification error: {}", e)
-            return WebhookEvent(
-                event_type=WebhookEventType.UNKNOWN,
-                raw_event={"error": str(e)},
-            )
+        except Exception as exc:
+            logger.error("NOWPayments webhook parsing failed: {}", type(exc).__name__)
+            raise
 
     # ------------------------------------------------------------------
     # 退款（NOWPayments 不支持 API 退款）
@@ -360,6 +391,7 @@ class NowPaymentsGateway(PaymentGateway):
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         """NOWPayments 不支持 API 退款，需在 Dashboard 手动操作"""
         logger.warning(

@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.encoders import jsonable_encoder
@@ -116,7 +117,7 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
     """Read stable prompt IDs from a checkpointed guidance message."""
     try:
         payload = json.loads(message_json or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except TypeError, ValueError, json.JSONDecodeError:
         return []
     if not isinstance(payload, dict):
         return []
@@ -131,7 +132,7 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
     for raw_id in raw_ids:
         try:
             guidance_id = int(raw_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if guidance_id > 0 and guidance_id not in guidance_ids:
             guidance_ids.append(guidance_id)
@@ -150,7 +151,12 @@ def _build_task_owner_filter(user: dict):
 
 
 async def _check_and_consume_agent_quota(
-    db: AsyncSession, user: dict
+    db: AsyncSession,
+    user: dict,
+    *,
+    operation_id: str | None = None,
+    repo_name: str = "",
+    task_id: int = 0,
 ) -> tuple[bool, str]:
     """非管理员用户消费 Agent 配额，管理员跳过"""
     if _is_admin(user):
@@ -161,6 +167,10 @@ async def _check_and_consume_agent_quota(
     service = TelegramService(db)
     return await service.check_and_consume_agent_quota(
         github_username=user["sub"],
+        operation_id=operation_id,
+        repo_name=repo_name,
+        task_id=task_id,
+        commit=False,
     )
 
 
@@ -790,6 +800,17 @@ async def create_task_from_candidate(
         base_branch=base_branch.strip() or None,
         overrides=overrides,
     )
+    if _should_schedule_agent_task(task.status):
+        task.billing_user_id = None if _is_admin(user) else user["user_id"]
+        task.billing_platform_reason = (
+            "administrator_agent_task" if _is_admin(user) else None
+        )
+    else:
+        task.billing_operation_id = None
+        task.billing_user_id = None
+        task.billing_platform_reason = None
+    await db.commit()
+
     await log_admin_action(
         db,
         user["user_id"],
@@ -972,11 +993,6 @@ async def create_task_from_issue(
                 status_code=200,
             )
 
-    # Agent 配额消费（仓库权限校验通过后再扣费）
-    ok, msg = await _check_and_consume_agent_quota(db, user)
-    if not ok:
-        return JSONResponse({"success": False, "message": msg}, status_code=200)
-
     try:
         overrides = _parse_task_overrides(
             title=title,
@@ -1032,17 +1048,49 @@ async def create_task_from_issue(
             started_by=user["sub"],
             base_branch=base_branch.strip() or None,
             overrides=overrides,
+            commit=False,
         )
     except CandidateServiceError:
+        await db.rollback()
         return JSONResponse(
             {"success": False, "message": "GitHub API 调用失败，请稍后重试"},
             status_code=200,
         )
     except ValueError as e:
+        await db.rollback()
         return JSONResponse(
             {"success": False, "message": str(e)},
             status_code=200,
         )
+
+    try:
+        if _should_schedule_agent_task(task.status):
+            operation_id = task.billing_operation_id or str(uuid4())
+            task.billing_operation_id = operation_id
+            task.billing_user_id = None if _is_admin(user) else user["user_id"]
+            task.billing_platform_reason = (
+                "administrator_agent_task" if _is_admin(user) else None
+            )
+            ok, msg = await _check_and_consume_agent_quota(
+                db,
+                user,
+                operation_id=operation_id,
+                repo_name=task.repo_full_name,
+                task_id=task.id,
+            )
+            if not ok:
+                await db.rollback()
+                return JSONResponse({"success": False, "message": msg}, status_code=200)
+        else:
+            # Saving a candidate or historical terminal task is not execution.
+            # Its first real submission allocates a fresh admission identity.
+            task.billing_operation_id = None
+            task.billing_user_id = None
+            task.billing_platform_reason = None
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
 
     await log_admin_action(
         db,
@@ -1098,12 +1146,25 @@ async def retry_task(
         )
 
     # Agent 配额消费（确认任务可重试后再扣费）
-    ok, msg = await _check_and_consume_agent_quota(db, user)
+    operation_id = str(uuid4())
+    ok, msg = await _check_and_consume_agent_quota(
+        db,
+        user,
+        operation_id=operation_id,
+        repo_name=task.repo_full_name,
+        task_id=task.id,
+    )
     if not ok:
+        await db.rollback()
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
+    task.billing_operation_id = operation_id
+    task.billing_user_id = None if _is_admin(user) else user["user_id"]
+    task.billing_platform_reason = (
+        "administrator_agent_task" if _is_admin(user) else None
+    )
     task.current_phase = None
     task.started_at = None
     task.completed_at = None
@@ -1915,6 +1976,7 @@ async def submit_user_prompt(
         task.workspace_path and task.branch_name and task.pr_number
     )
     if is_resumable_terminal:
+        operation_id = str(uuid4())
         expected_updated_at = task.updated_at
         from sqlalchemy import update as sa_update
 
@@ -1928,11 +1990,16 @@ async def submit_user_prompt(
             .values(
                 status=AgentTeamTaskStatus.ITERATING.value,
                 current_phase="human_followup",
+                billing_operation_id=operation_id,
+                billing_user_id=None if _is_admin(user) else user["user_id"],
+                billing_platform_reason="administrator_agent_human_followup"
+                if _is_admin(user)
+                else None,
                 updated_at=_utc_now(),
             )
         )
-        await db.commit()
         if optimistic_result.rowcount == 0:
+            await db.commit()
             # 并发冲突：其他请求已抢先转换状态，跳过 follow-up
             is_resumable_terminal = False
             logger.info(
@@ -1940,6 +2007,19 @@ async def submit_user_prompt(
                 task_id,
             )
         else:
+            allowed, reason = await _check_and_consume_agent_quota(
+                db,
+                user,
+                operation_id=operation_id,
+                repo_name=task.repo_full_name,
+                task_id=task.id,
+            )
+            if not allowed:
+                await db.rollback()
+                return JSONResponse(
+                    {"success": False, "error": reason}, status_code=200
+                )
+            await db.commit()
             await db.refresh(task)
     else:
         await db.commit()

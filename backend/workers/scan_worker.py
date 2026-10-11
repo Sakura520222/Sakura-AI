@@ -21,6 +21,7 @@ from backend.core.time_service import now_utc
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.billing_context import billable_record
 
 # 扫描并发控制信号量
 _scan_semaphore: asyncio.Semaphore | None = None
@@ -161,8 +162,12 @@ class ScanWorker:
 
         return await _db_retry(_create)
 
-    async def process_scan(self, scan_id: int):
+    @billable_record("repo_scan")
+    async def process_scan(self, scan_id: int, *, resume: bool = False):
         """执行扫描主流程"""
+        # Only trusted checkpoint recovery passes resume; explicit user retries
+        # receive a fresh operation at admission. The billing decorator restores
+        # and validates the original operation before entering any provider call.
         # Deadline starts before semaphore admission so queueing time is part of
         # the same task budget.  It is soft: only the next AI call is forced to
         # produce a tool-free final response.
@@ -362,7 +367,9 @@ class ScanWorker:
                 )
                 if execution is not None:
                     await _finish_execution("failed", error_message=error_message)
-                logger.error("扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message)
+                logger.error(
+                    "扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message
+                )
                 return
 
             # 10. 聚合结果（使用 AI 评估的健康评分）
@@ -785,10 +792,7 @@ class ScanWorker:
                     "observer": observer,
                 }
                 call_kwargs.update(task_deadline.prepare_call(messages))
-                if (
-                    not prompt_was_sent
-                    and task_deadline.timeout_prompt_sent
-                ):
+                if not prompt_was_sent and task_deadline.timeout_prompt_sent:
                     await _event_callback("message", messages[-1])
 
                 response = await reviewer.api_client.call_with_retry(**call_kwargs)

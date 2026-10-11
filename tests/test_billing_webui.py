@@ -31,7 +31,7 @@ def test_payment_config_labels_are_chinese():
     assert DYNAMIC_CONFIG_LABELS["payment_default_currency"] == "默认货币"
 
 
-def test_sidebar_hides_billing_links_when_payment_disabled():
+def test_sidebar_hides_purchase_links_but_keeps_pricing_setup_when_payment_disabled():
     from backend.webui.deps import get_templates
 
     template = get_templates().get_template("components/sidebar.html")
@@ -43,9 +43,12 @@ def test_sidebar_hides_billing_links_when_payment_disabled():
     )
 
     assert "套餐中心" not in rendered
-    assert "套餐管理" not in rendered
+    assert 'href="/billing/admin/plans"' in rendered
+    assert 'href="/billing/admin/pricing"' in rendered
     assert "兑换码管理" not in rendered
-    assert "退款审核" not in rendered
+    assert "退款审核" in rendered
+    assert 'href="/billing/"' in rendered
+    assert "订单记录" in rendered
 
 
 def test_sidebar_shows_billing_links_when_payment_enabled():
@@ -60,7 +63,7 @@ def test_sidebar_shows_billing_links_when_payment_enabled():
     )
 
     assert "套餐中心" in rendered
-    assert "套餐管理" in rendered
+    assert "套餐与价格" in rendered
     assert "兑换码管理" in rendered
     assert "退款审核" in rendered
 

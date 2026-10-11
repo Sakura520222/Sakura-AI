@@ -47,6 +47,14 @@
         </div>
     </section>
 
+    <section id="config-save-errors" hidden role="alert" aria-live="assertive"
+             class="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+        <h2 class="font-semibold">{{ _('config.save_errors_title') }}</h2>
+        <p class="mt-1 text-xs">{{ _('config.save_errors_hint') }}</p>
+        <ul id="config-save-error-list" class="mt-3 max-h-48 space-y-3 overflow-y-auto"></ul>
+        <p class="mt-3 text-xs">{{ _('config.save_retry_hint') }}</p>
+    </section>
+
     <div class="flex gap-6 h-[calc(100vh-10rem)]">
         <!-- 左侧锚点导航（独立滚动栏） -->
         <nav class="hidden lg:block w-52 flex-shrink-0 overflow-y-auto" aria-label="{{ _('config.general_title') }}">
@@ -880,6 +888,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% include 'components/config_save_feedback.html' %}
 {{ super() }}
 <script>
 /* jshint ignore:start */
@@ -1023,22 +1032,24 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function saveAllConfig() {
+        if (saveBtn && saveBtn.disabled) return;
         var forms = Array.prototype.slice.call(
             document.querySelectorAll('#config-scroll form')
         );
         if (!forms.length) return;
 
-        // 先跑原生校验（与单表单提交时的浏览器行为一致），失败聚焦首个错误字段
-        for (var i = 0; i < forms.length; i++) {
-            if (!forms[i].checkValidity()) {
-                forms[i].reportValidity();
-                return;
-            }
+        SakuraConfigFeedback.clear();
+        // 浏览器内置气泡跟随浏览器语言；使用账户语言并展示所有无效字段。
+        var invalidFields = SakuraConfigFeedback.nativeErrors(forms);
+        if (invalidFields.length) {
+            SakuraConfigFeedback.render({errors: invalidFields});
+            showToast({{ _('config.save_errors_title') | tojson }}, 'error');
+            return;
         }
 
         var csrfInput = forms[0].querySelector('input[name="csrf_token"]');
         if (!csrfInput) {
-            showToast("{{ _('toast.save_failed') }}", 'error');
+            showToast({{ _('toast.save_failed') | tojson }}, 'error');
             return;
         }
 
@@ -1062,9 +1073,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         saveBtn.disabled = true;
-        saveBtn.textContent = "{{ _('common.saving') }}";
+        saveBtn.textContent = {{ _('common.saving') | tojson }};
 
-        fetch('/config/save-all', {
+        return fetch('/config/save-all', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1072,29 +1083,50 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify({ requests: requests }),
         }).then(function(resp) {
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            return resp.json();
+            // Non-2xx validation responses still contain useful field errors.
+            return resp.json().then(function(data) {
+                if (!resp.ok) data.ok = false;
+                return data;
+            });
         }).then(function(data) {
-            if (data.ok) {
+            var hasFailedSection = Array.isArray(data.results) && data.results.some(function(result) {
+                return result.ok !== true;
+            });
+            var hasErrors = Array.isArray(data.errors) && data.errors.length > 0;
+            if (data.ok === true && !hasFailedSection && !hasErrors) {
                 window.location.href = '/config?_toast=' +
-                    encodeURIComponent(data.toast) + '&_toast_type=success';
+                    encodeURIComponent(data.toast || {{ _('toast.saved') | tojson }}) + '&_toast_type=success';
                 return;
             }
-            showToast(data.toast, 'error');
-            var firstFailed = (data.results || []).filter(function(r) {
-                return !r.ok && r.anchor;
-            })[0];
-            if (firstFailed) scrollToSection(firstFailed.anchor);
+            SakuraConfigFeedback.render(data);
+            showToast(data.toast || {{ _('config.save_errors_title') | tojson }}, 'error');
             resetSaveBtn();
         }).catch(function() {
-            showToast("{{ _('toast.save_failed') }}", 'error');
+            var message = {{ _('config.save_request_failed') | tojson }};
+            SakuraConfigFeedback.render({errors: [{message: message}]});
+            showToast(message, 'error');
             resetSaveBtn();
         });
     }
 
     if (saveBtn) saveBtn.addEventListener('click', saveAllConfig);
+    var errorParams = new URLSearchParams(window.location.search);
+    var returnedErrors = errorParams.get('_errors');
+    if (returnedErrors) {
+        try {
+            var parsedErrors = JSON.parse(returnedErrors);
+            if (Array.isArray(parsedErrors)) SakuraConfigFeedback.render({errors: parsedErrors});
+        } catch (_) {
+            // Malformed URL state is not an executable or user-visible error.
+        }
+        errorParams.delete('_errors');
+        history.replaceState(null, '', window.location.pathname +
+            (errorParams.toString() ? '?' + errorParams.toString() : '') + window.location.hash);
+    }
     // 表单内回车的隐式提交改为统一保存
     document.querySelectorAll('#config-scroll form').forEach(function(form) {
+        // Let the shared, account-localized validator also handle Enter.
+        form.noValidate = true;
         form.addEventListener('submit', function(e) {
             e.preventDefault();
             saveAllConfig();

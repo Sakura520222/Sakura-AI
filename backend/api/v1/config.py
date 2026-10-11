@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -20,20 +21,69 @@ from backend.api.v1.schemas import (
 )
 from backend.core.config import (
     AI_STRATEGY_CONFIG_KEYS,
+    MONETARY_CURRENCY_CONFIG_KEYS,
     get_label_config,
     get_settings,
     update_settings_field,
+    validate_currency_config_value,
 )
 from backend.core.config_sections import SECTION_REGISTRY
 from backend.core.setup_service import setup_service
 from backend.models.database import AppConfig
+from backend.services.billing_configuration_service import BillingConfigurationError
 from backend.services.label_service import label_service
-from backend.services.section_config_service import section_config_service
+from backend.services.section_config_service import (
+    SectionConfigValidationError,
+    section_config_service,
+)
+from backend.webui.config_feedback import config_api_language, config_issue
 from backend.webui.deps import get_db
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
 _config_lock = asyncio.Lock()
+
+
+async def _billing_validation_response(db, user, exc):
+    lang = await config_api_language(db, user)
+    errors = [config_issue(lang=lang, **issue) for issue in exc.issues]
+    return JSONResponse(
+        status_code=400,
+        content={
+            "success": False,
+            "code": exc.code,
+            "error": i18n.t(
+                "toast.config_fields_invalid", lang=lang, error=errors[0]["message"]
+            ),
+            "detail": errors[0]["message"],
+            "errors": errors,
+        },
+    )
+
+
+async def _section_validation_response(db, user, exc):
+    lang = await config_api_language(db, user)
+    if isinstance(exc, SectionConfigValidationError):
+        issue = config_issue(
+            exc.path, exc.code, exc.translation_key, lang=lang, params=exc.params
+        )
+    else:
+        issue = config_issue(
+            "", "invalid_config", "section_validation.invalid_config", lang=lang
+        )
+    return JSONResponse(
+        status_code=400,
+        content={
+            "success": False,
+            "code": issue["code"],
+            "error": i18n.t(
+                "toast.config_fields_invalid", lang=lang, error=issue["message"]
+            ),
+            "errors": [issue],
+        },
+    )
+
 
 # 策略 section 名 → 统一配置节键（与 SECTION_REGISTRY 对齐）
 _STRATEGY_SECTION_KEY_MAP = {
@@ -57,9 +107,7 @@ def _normalize_label_definitions(
         name = name.strip()
         if name in normalized:
             raise ValueError(f"标签名称重复: {name}")
-        normalized[name] = {
-            key: value for key, value in label.items() if key != "name"
-        }
+        normalized[name] = {key: value for key, value in label.items() if key != "name"}
     return normalized
 
 
@@ -177,6 +225,7 @@ async def list_ai_accounts(user: dict = Depends(require_api_super_admin)):
 async def save_ai_account(
     body: AccountSaveRequest,
     user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """创建或更新一个 AI 账号 / Create or update an account.
 
@@ -234,7 +283,10 @@ async def save_ai_account(
         notes=body.notes.strip(),
         created_at=existing.created_at if existing else 0.0,
     )
-    saved = await account_store.save_account(account)
+    try:
+        saved = await account_store.save_account(account)
+    except BillingConfigurationError as exc:
+        return await _billing_validation_response(db, user, exc)
     logger.info(
         f"AI 账号已保存 / account saved: {saved.id} ({saved.name}), by={user['sub']}"
     )
@@ -245,9 +297,13 @@ async def save_ai_account(
 async def delete_ai_account(
     account_id: str,
     user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """删除一个 AI 账号（若被角色引用则拒绝）/ Delete an account."""
-    ok = await account_store.delete_account(account_id)
+    try:
+        ok = await account_store.delete_account(account_id)
+    except BillingConfigurationError as exc:
+        return await _billing_validation_response(db, user, exc)
     if not ok:
         return error_response("账号不存在或正被角色绑定引用，无法删除")
     logger.info(f"AI 账号已删除 / account deleted: {account_id}, by={user['sub']}")
@@ -313,6 +369,7 @@ async def get_ai_bindings(user: dict = Depends(require_api_super_admin)):
 async def save_ai_bindings(
     body: RoleBindingSaveRequest,
     user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """保存角色→账号绑定 / Persist role→account bindings."""
     if not isinstance(body.bindings, dict):
@@ -324,7 +381,10 @@ async def save_ai_bindings(
     )
     if error_message:
         return error_response(error_message)
-    await account_store.save_role_bindings(bindings)
+    try:
+        await account_store.save_role_bindings(bindings)
+    except BillingConfigurationError as exc:
+        return await _billing_validation_response(db, user, exc)
     logger.info(f"AI 角色绑定已更新 / role bindings saved, by={user['sub']}")
     normalized = {role: binding.to_dict() for role, binding in bindings.items()}
     return success_response(data={"bindings": normalized})
@@ -583,7 +643,7 @@ async def update_general_config(
     """更新全局配置"""
     from sqlalchemy import select
 
-    configs = body.configs
+    configs = dict(body.configs)
     if not configs:
         return error_response("配置内容不能为空")
     section_keys = sorted(set(configs).intersection(SECTION_REGISTRY))
@@ -604,6 +664,63 @@ async def update_general_config(
         )
 
     async with _config_lock:
+        from backend.services.billing_configuration_service import (
+            BillingConfigurationError,
+            validate_billing_configuration,
+        )
+        from backend.services.billing_service import BillingError
+
+        lang = await config_api_language(db, user)
+        for key in set(configs).intersection(MONETARY_CURRENCY_CONFIG_KEYS):
+            try:
+                configs[key] = validate_currency_config_value(key, configs[key])
+            except ValueError:
+                issue = config_issue(
+                    key, "invalid_currency", "toast.value_invalid", lang=lang
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "code": issue["code"],
+                        "error": issue["message"],
+                        "errors": [issue],
+                    },
+                )
+        try:
+            await validate_billing_configuration(db, configs)
+        except BillingConfigurationError as exc:
+            errors = [config_issue(lang=lang, **issue) for issue in exc.issues]
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "code": exc.code,
+                    "error": i18n.t(
+                        "toast.config_fields_invalid",
+                        lang=lang,
+                        error=errors[0]["message"],
+                    ),
+                    "detail": errors[0]["message"],
+                    "errors": errors,
+                },
+            )
+        except BillingError, ValueError, TypeError:
+            issue = config_issue(
+                "billing_enabled",
+                "invalid_billing_config",
+                "toast.value_invalid",
+                lang=lang,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "code": "invalid_billing_config",
+                    "error": issue["message"],
+                    "errors": [issue],
+                },
+            )
         for key, value in configs.items():
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == key)
@@ -625,7 +742,7 @@ async def update_general_config(
         logger.warning(f"重载动态配置失败: {e}")
 
     logger.info(f"API 更新全局配置: {list(configs.keys())}, by={user['sub']}")
-    return success_response(message="配置已更新")
+    return success_response(message=i18n.t("toast.config_saved_live", lang=lang))
 
 
 @router.get("/strategies")
@@ -667,8 +784,12 @@ async def update_strategy_section(
         )
         return success_response(message=f"策略配置 {section} 已更新")
     except ValueError as e:
-        logger.warning(f"API 更新策略配置校验失败: section={section}, error={e}")
-        return error_response(f"配置校验失败: {e}")
+        logger.warning(
+            "API 更新策略配置校验失败: section={} error_type={}",
+            section,
+            type(e).__name__,
+        )
+        return await _section_validation_response(db, user, e)
     except Exception as e:
         logger.error(f"更新策略配置失败: {e}")
         return error_response("更新策略配置失败")
@@ -710,8 +831,8 @@ async def update_labels(
         logger.info(f"API 更新标签定义, by={user['sub']}")
         return success_response(message="标签定义已更新")
     except ValueError as e:
-        logger.warning(f"API 更新标签定义校验失败: {e}")
-        return error_response(f"标签校验失败: {e}")
+        logger.warning("API 更新标签定义校验失败: error_type={}", type(e).__name__)
+        return await _section_validation_response(db, user, e)
     except Exception as e:
         logger.error(f"更新标签配置失败: {e}")
         return error_response("更新标签配置失败")
@@ -736,7 +857,7 @@ async def update_label_recommendation(
         return success_response(message="标签推荐设置已更新")
     except ValueError as e:
         logger.warning(f"API 更新标签推荐设置校验失败: {e}")
-        return error_response(f"推荐设置校验失败: {e}")
+        return await _section_validation_response(db, user, e)
     except Exception as e:
         logger.error(f"更新推荐设置失败: {e}")
         return error_response("更新推荐设置失败")

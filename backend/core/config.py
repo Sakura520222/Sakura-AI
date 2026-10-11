@@ -12,6 +12,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
+from backend.services.payment.currency_units import (
+    normalize_currency,
+    supported_currencies,
+)
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 # Bounds apply before Issue corpus recall and source hydration, independent of
@@ -20,6 +24,14 @@ ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
 # Operational recall bounds, shared by Settings, forms and request admission.
 ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE = (1, 10)
 PR_ISSUE_MAX_LINKS_RANGE = (1, 200)
+
+
+def validate_currency_config_value(key: str, value: object) -> str:
+    """Validate configured money codes against each payment protocol."""
+    currency = normalize_currency(value)
+    if key == "alipay_currency" and currency != "CNY":
+        raise ValueError("Alipay website payments support CNY only")
+    return currency
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -100,7 +112,20 @@ class Settings(BaseSettings):
     # 基础审查任务配置
     max_concurrent_reviews: int = Field(
         5,
-        description="最大并发审查数量",
+        ge=1,
+        description="PR 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
+    service_execution_lease_seconds: int = Field(
+        300,
+        ge=30,
+        le=3600,
+        description="服务执行名额租约时长（秒）；执行期间续约，异常退出后到期回收",
+    )
+    service_execution_poll_seconds: float = Field(
+        0.25,
+        ge=0.05,
+        le=60,
+        description="服务执行排队轮询间隔（秒）；等待共享并发名额时使用",
     )
     review_timeout_seconds: int = Field(
         600,
@@ -643,7 +668,12 @@ class Settings(BaseSettings):
     issue_suggest_milestones: bool = True
     protocol_repair_max_attempts: int = 3
     issue_max_files_per_analysis: int = 500
-    max_concurrent_issues: int = 5
+    max_concurrent_issues: int = Field(
+        5,
+        ge=1,
+        le=500,
+        description="Issue 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
     # Module A: 向量存储元数据增强
@@ -704,7 +734,15 @@ class Settings(BaseSettings):
     fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
-    payment_enabled: bool = False  # 是否启用付费配额系统
+    payment_enabled: bool = False  # 是否启用支付入口
+    billing_enabled: bool = False  # 正式 Credits 收费需显式启用
+    billing_charge_failed_operations: bool = False
+    billing_charge_failed_calls: bool = False
+    billing_initial_reserve_credits: str = "0"
+    billing_reservation_ttl_seconds: int = Field(3600, ge=60)
+    payment_partial_refund_policy: Literal["reject", "proportional_unused_credits"] = (
+        "reject"
+    )
     payment_order_expire_minutes: int = Field(
         30, description="未支付订单过期时间（分钟）"
     )
@@ -730,6 +768,17 @@ class Settings(BaseSettings):
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
     alipay_sandbox: bool = Field(False, description="启用支付宝沙箱环境")
+
+    @field_validator(
+        "payment_default_currency",
+        "stripe_currency",
+        "paddle_currency",
+        "alipay_currency",
+        mode="before",
+    )
+    @classmethod
+    def validate_payment_currencies(cls, value, info):
+        return validate_currency_config_value(info.field_name, value)
 
     # NOWPayments 虚拟币支付（无需 KYC，非托管）
     nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
@@ -864,7 +913,11 @@ class Settings(BaseSettings):
     agent_team_sandbox_expected_workspace_root: str | None = None
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
-    agent_team_max_concurrent: int = 1
+    agent_team_max_concurrent: int = Field(
+        1,
+        ge=1,
+        description="Agent 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_branch_index_delay: float = 2.0
@@ -1136,7 +1189,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "label": "审查任务基础配置",
                 "icon": "activity",
                 "descriptions": {
-                    "max_concurrent_reviews": "同时进行的最大 PR 审查任务数，超出排队等待",
+                    "max_concurrent_reviews": "共享同一数据库的 API/Worker 实例合计 PR 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
+                    "service_execution_lease_seconds": "共享服务执行名额租约时长（30–3600 秒）；执行期间每隔租约时长的三分之一续约，异常退出后到期回收。不会限制任务总时长。",
+                    "service_execution_poll_seconds": "排队等待共享服务执行名额时的轮询间隔（0.05–60 秒），适用于 PR、Issue 和 Agent。",
                     "review_timeout_seconds": (
                         "PR 审查、Issue 分析与仓库扫描共用的软超时时间（秒）；"
                         "超时后在下一次 AI 调用时提示"
@@ -1150,6 +1205,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 },
                 "keys": [
                     "max_concurrent_reviews",
+                    "service_execution_lease_seconds",
+                    "service_execution_poll_seconds",
                     "review_timeout_seconds",
                     "enable_auto_review",
                     "enable_check_runs",
@@ -1310,7 +1367,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
                     "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
-                    "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
+                    "max_concurrent_issues": "共享同一数据库的 API/Worker 实例合计 Issue 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
                     "issue_corpus_freshness_seconds": "Issue 语料同步的最小间隔（秒），0 表示每次检索都同步",
                     "issue_corpus_batch_size": "每批同步并嵌入的 Issue 数量",
@@ -1378,6 +1435,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                         "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
                     ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
+                    "agent_team_max_concurrent": "共享同一数据库的 API/Worker 实例合计 Agent 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
@@ -1461,8 +1519,22 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "付费配额配置",
                 "icon": "credit-card",
+                "descriptions": {
+                    "billing_enabled": "开启前必须配置实际模型的完整定价与换算。默认关闭，不自动追溯旧 Usage。",
+                    "billing_charge_failed_operations": "关闭时保留失败任务真实 Provider 成本，但不新增用户扣费。",
+                    "billing_charge_failed_calls": "控制成功任务中产生实际 Usage 的失败或重试调用是否由用户承担，默认不收费。",
+                    "billing_initial_reserve_credits": "每次执行初始预留的 Credits，十进制字符串；不是任务总预算，不保证未知成本的上界。",
+                    "billing_reservation_ttl_seconds": "过期未完成执行由恢复入口标记待核对并释放预留，最小 60 秒。",
+                    "payment_partial_refund_policy": "默认拒绝部分退款。可选按未消费 Credits 比例退款，仅适用于 Credits 单一权益订单，需幂等事件标识。",
+                },
                 "keys": [
                     "payment_enabled",
+                    "billing_enabled",
+                    "billing_charge_failed_operations",
+                    "billing_charge_failed_calls",
+                    "billing_initial_reserve_credits",
+                    "billing_reservation_ttl_seconds",
+                    "payment_partial_refund_policy",
                     "payment_order_expire_minutes",
                     "payment_default_currency",
                     "stripe_enabled",
@@ -1601,7 +1673,26 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
 )
 
 # 选择类字段的选项
+MONETARY_CURRENCY_CONFIG_KEYS = (
+    "payment_default_currency",
+    "stripe_currency",
+    "paddle_currency",
+    "alipay_currency",
+)
 DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
+    **{
+        key: [{"value": code, "label": code} for code in supported_currencies()]
+        for key in MONETARY_CURRENCY_CONFIG_KEYS
+    },
+    # alipay.trade.page.pay is a CNY-only gateway, not a general FX gateway.
+    "alipay_currency": [{"value": "CNY", "label": "CNY"}],
+    "payment_partial_refund_policy": [
+        {"value": "reject", "label": "拒绝部分退款"},
+        {
+            "value": "proportional_unused_credits",
+            "label": "仅退未消费 Credits 的对应付款",
+        },
+    ],
     "embedding_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "openai", "label": "OpenAI"},
@@ -1651,6 +1742,9 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
 DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     # 审查任务基础配置
     "max_concurrent_reviews": (1, None),
+    "service_execution_lease_seconds": (30, 3600),
+    "service_execution_poll_seconds": (0.05, 60),
+    "agent_team_max_concurrent": (1, None),
     "review_timeout_seconds": (1, None),
     "analysis_min_interval_sec": (1, None),
     "protocol_repair_max_attempts": (1, 10),
@@ -1714,7 +1808,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
 # 字段中文标签
 DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     # 审查任务基础配置
-    "max_concurrent_reviews": "最大并发审查数",
+    "max_concurrent_reviews": "PR 服务执行并发",
+    "service_execution_lease_seconds": "服务执行名额租约时长（秒）",
+    "service_execution_poll_seconds": "服务执行排队轮询间隔（秒）",
     "review_timeout_seconds": "PR/Issue/仓库扫描软超时（秒）",
     "enable_auto_review": "启用 Webhook 自动审查",
     "enable_check_runs": "启用 Check Runs 进度可视化",
@@ -1758,6 +1854,12 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "pr_issue_max_files": "PR 关系验证文件上限（超限时保留原关联）",
     "pr_issue_max_input_tokens": "PR 关系验证完整请求输入 token 上限（同时受摘要模型上下文限制）",
     "payment_enabled": "启用付费配额系统",
+    "billing_enabled": "启用 Credits 用量收费",
+    "billing_charge_failed_operations": "失败任务收费",
+    "billing_charge_failed_calls": "成功任务中的失败调用收费",
+    "billing_initial_reserve_credits": "初始预留 Credits",
+    "billing_reservation_ttl_seconds": "异常预留回收时限（秒）",
+    "payment_partial_refund_policy": "部分退款政策",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
     "stripe_enabled": "启用 Stripe 支付",
@@ -1847,7 +1949,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_suggest_assignees": "推荐指派人",
     "issue_suggest_milestones": "推荐里程碑",
     "issue_max_files_per_analysis": "单次分析最大文件数",
-    "max_concurrent_issues": "最大并发分析数",
+    "max_concurrent_issues": "Issue 服务执行并发",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
     "issue_corpus_freshness_seconds": "Issue 语料同步间隔（秒）",
     "issue_corpus_batch_size": "Issue 语料同步批次大小",
@@ -1860,7 +1962,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_execution_backend": "Agent 执行后端",
     "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_max_concurrent": "最大并发任务数",
+    "agent_team_max_concurrent": "Agent 服务执行并发",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_draft_pr": "创建 Draft PR",
@@ -2355,6 +2457,8 @@ CORE_CONFIG_KEYS = frozenset(
 BASIC_CONFIG_KEYS = frozenset(
     {
         "max_concurrent_reviews",
+        "service_execution_lease_seconds",
+        "service_execution_poll_seconds",
         "review_timeout_seconds",
         "enable_auto_review",
         "enable_check_runs",

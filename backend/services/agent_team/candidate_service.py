@@ -31,6 +31,11 @@ from backend.models.database import (
 )
 from backend.models.scan_models import RepoScan, ScanFinding
 from backend.services.agent_team.ai_client import create_agent_team_client
+from backend.services.agent_team.billing_admission import (
+    delivery_operation_id,
+    find_delivery_task,
+    persist_delivery_task,
+)
 
 _PRIORITY_SCORE = {"critical": 100, "high": 80, "medium": 50, "low": 20}
 _PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -292,8 +297,15 @@ class AgentTeamCandidateService:
         ai_config_snapshot: dict | None = None,
         base_branch: str | None = None,
         overrides: dict | None = None,
+        webhook_delivery_id: str | None = None,
+        commit: bool = True,
     ) -> AgentTeamTask:
         """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
+        existing = await find_delivery_task(
+            db, webhook_delivery_id, repo_full_name, issue_number, is_pr=False
+        )
+        if existing is not None:
+            return existing
         values = await self.build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
@@ -304,14 +316,25 @@ class AgentTeamCandidateService:
         values.update(overrides or {})
         if not str((overrides or {}).get("summary") or "").strip():
             values["summary"] = draft_goal or DEFAULT_AGENT_TASK_GOAL
+        values["webhook_delivery_id"] = webhook_delivery_id
+        if webhook_delivery_id:
+            values["billing_operation_id"] = delivery_operation_id(webhook_delivery_id)
         task = AgentTeamTask(
             **values,
             started_by=started_by,
         )
-        db.add(task)
-        await db.commit()
-        await db.refresh(task)
-        return task
+        if not commit:
+            if webhook_delivery_id is not None:
+                raise ValueError(
+                    "Verified webhook tasks require durable delivery admission"
+                )
+            # WebUI owns one transaction containing task + rate admission +
+            # reservation. Metadata calls above happen before taking wallet locks.
+            db.add(task)
+            await db.flush()
+            await db.refresh(task)
+            return task
+        return await persist_delivery_task(db, task)
 
     # ── PR 审查 /agent 任务 ──────────────────────────────────────
 
@@ -495,6 +518,7 @@ class AgentTeamCandidateService:
         head_repo_full_name: str | None = None,
         pr_url: str | None = None,
         overrides: dict | None = None,
+        webhook_delivery_id: str | None = None,
     ) -> AgentTeamTask:
         """从 PR 审查的 /agent 命令创建 Agent 修复任务。
 
@@ -504,6 +528,11 @@ class AgentTeamCandidateService:
         - pr_head_branch / pr_head_repo_full_name 记录原 PR head 的可写目标
         - 同一 PR 仅允许一个非终态任务（已由 draft 方法 guard）
         """
+        existing = await find_delivery_task(
+            db, webhook_delivery_id, repo_full_name, pr_number, is_pr=True
+        )
+        if existing is not None:
+            return existing
         if not head_sha:
             raise ValueError("PR head commit 不存在，无法创建可写 Agent 任务")
         if not head_branch:
@@ -526,15 +555,15 @@ class AgentTeamCandidateService:
         values["pr_url"] = pr_url or (
             f"https://github.com/{repo_full_name}/pull/{pr_number}"
         )
+        values["webhook_delivery_id"] = webhook_delivery_id
+        if webhook_delivery_id:
+            values["billing_operation_id"] = delivery_operation_id(webhook_delivery_id)
         task = AgentTeamTask(
             **values,
             started_by=started_by,
             pr_head_sha=head_sha,
         )
-        db.add(task)
-        await db.commit()
-        await db.refresh(task)
-        return task
+        return await persist_delivery_task(db, task)
 
     async def _collect_issue_candidates(
         self, db: AsyncSession, allowlist: set[str], limit: int

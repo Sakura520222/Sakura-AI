@@ -33,6 +33,7 @@ from backend.core.ai_protocol.request_policy import (
 from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_usage_service import ProviderUsageMeter, is_billing_failure
 
 try:
     from backend.utils.message_utils import has_missing_tool_results
@@ -178,9 +179,9 @@ class UnifiedContextCompressor:
                 )
             ),
         )
-        exact_input_budget = self._context_window_tokens(
-            candidate
-        ) - final_output_tokens - reserve
+        exact_input_budget = (
+            self._context_window_tokens(candidate) - final_output_tokens - reserve
+        )
         if current <= budget and current <= exact_input_budget:
             return False, messages
 
@@ -341,31 +342,25 @@ class UnifiedContextCompressor:
 
         adapter = get_adapter(candidate.effective_protocol)
         try:
-            response = await adapter.chat(
-                self.http_client,
-                candidate.endpoint,
-                candidate.credential,
-                request,
-                timeout=120.0,
-            )
+            async with ProviderUsageMeter.for_candidate(
+                candidate,
+                call_kind="context_compression",
+                role="summary",
+                logical_call_id=str(uuid4()),
+            ) as usage_meter:
+                response = await adapter.chat(
+                    self.http_client,
+                    candidate.endpoint,
+                    candidate.credential,
+                    request,
+                    timeout=120.0,
+                )
+                usage_meter.usage = response.usage
         except Exception as exc:
+            if is_billing_failure(exc):
+                raise
             logger.warning("压缩摘要调用失败，放弃压缩: {}", exc)
             return None
-
-        # This request intentionally bypasses UnifiedAIClient to avoid recursive
-        # compression.  Account for it explicitly so auxiliary summarization is
-        # still part of the global provider-usage ledger.
-        from backend.services.ai_usage_service import (
-            record_unified_ai_usage_best_effort,
-        )
-
-        await record_unified_ai_usage_best_effort(
-            logical_call_id=str(uuid4()),
-            call_kind="context_compression",
-            role="summary",
-            candidate=candidate,
-            usage=response.usage,
-        )
 
         summary = (response.content or "").strip()
         if not summary:
@@ -636,7 +631,9 @@ class UnifiedContextCompressor:
         for msg in reversed(body):
             if msg.role == "user" and msg.content:
                 # 保留图片附件：压缩后当前任务轮的图片仍需随消息下发
-                return UnifiedMessage(role="user", content=msg.content, images=msg.images)
+                return UnifiedMessage(
+                    role="user", content=msg.content, images=msg.images
+                )
         return None
 
     @staticmethod

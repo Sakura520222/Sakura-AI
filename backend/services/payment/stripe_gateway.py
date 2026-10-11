@@ -4,14 +4,18 @@
 """
 
 import asyncio
+from decimal import Decimal
 
 import stripe
 from loguru import logger
 
+from backend.services.payment.currency_units import currency_minor_exponent
 from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
@@ -24,6 +28,34 @@ class StripeGateway(PaymentGateway):
     def __init__(self, api_key: str, webhook_secret: str):
         self._api_key = api_key
         self._webhook_secret = webhook_secret
+
+    @staticmethod
+    def _protocol_amount(amount: int, currency: str, *, inbound: bool = False) -> int:
+        """Normalize only Stripe's documented charge/refund wire exceptions.
+
+        Canonical Plan/Order/FX amounts use ISO minor units. Stripe retains a
+        two-decimal wire value for ISK/UGX and zero decimals for MGA.
+        https://docs.stripe.com/currencies#special-cases
+        """
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
+            raise ValueError(
+                "Payment evidence requires nonnegative integer minor units"
+            )
+        canonical_exponent = currency_minor_exponent(currency)
+        wire_exponent = {"ISK": 2, "UGX": 2, "MGA": 0}.get(
+            currency.upper(), canonical_exponent
+        )
+        difference = (
+            canonical_exponent - wire_exponent
+            if inbound
+            else wire_exponent - canonical_exponent
+        )
+        value = Decimal(amount) * (Decimal(10) ** difference)
+        if value != value.to_integral_value():
+            raise ValueError(
+                "Stripe amount is not representable in the confirmed currency unit"
+            )
+        return int(value)
 
     async def create_payment(
         self,
@@ -52,12 +84,15 @@ class StripeGateway(PaymentGateway):
                             "product_data": {
                                 "name": plan_name,
                             },
-                            "unit_amount": amount_cents,
+                            "unit_amount": self._protocol_amount(
+                                amount_cents, currency
+                            ),
                         },
                         "quantity": 1,
                     }
                 ],
                 metadata=session_meta,
+                payment_intent_data={"metadata": session_meta},
                 success_url=success_url,
                 cancel_url=cancel_url,
             )
@@ -97,6 +132,13 @@ class StripeGateway(PaymentGateway):
         payload: bytes,
         headers: dict[str, str],
     ) -> WebhookEvent:
+        if (
+            not isinstance(self._webhook_secret, str)
+            or not self._webhook_secret.strip()
+        ):
+            raise PaymentWebhookConfigurationError(
+                "Stripe verification is not configured"
+            )
         signature = headers.get("stripe-signature", "")
         try:
             event = stripe.Webhook.construct_event(
@@ -104,12 +146,12 @@ class StripeGateway(PaymentGateway):
                 sig_header=signature,
                 secret=self._webhook_secret,
             )
-        except stripe.error.SignatureVerificationError as e:
-            logger.warning("Stripe webhook signature verification failed: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
-        except Exception as e:
-            logger.warning("Stripe webhook construction failed: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        except stripe.error.SignatureVerificationError as exc:
+            logger.warning("Stripe webhook signature verification failed")
+            raise PaymentWebhookVerificationError("Invalid Stripe signature") from exc
+        except ValueError as exc:
+            logger.warning("Stripe webhook payload could not be parsed")
+            raise PaymentWebhookVerificationError("Invalid Stripe payload") from exc
 
         # Stripe SDK v15+ returns stripe.Event (StripeObject), not a dict.
         # Use attribute access instead of .get() to avoid KeyError.
@@ -132,6 +174,12 @@ class StripeGateway(PaymentGateway):
             logger.warning("Stripe webhook: unmapped event type '{}'", event_type)
             return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
 
+        if (
+            resolved_type == WebhookEventType.PAYMENT_COMPLETED
+            and getattr(event_data, "payment_status", None) != "paid"
+        ):
+            logger.info("Stripe payment is awaiting confirmed funds")
+            return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event=event)
         provider_tx_id = getattr(event_data, "id", "") or ""
         # metadata is also a StripeObject in v15+, use getattr for attribute access
         raw_metadata = getattr(event_data, "metadata", None)
@@ -142,13 +190,106 @@ class StripeGateway(PaymentGateway):
             order_no = getattr(raw_metadata, "order_no", "") or ""
         else:
             order_no = ""
-        amount_cents = (
-            getattr(event_data, "amount_total", 0)
-            or getattr(event_data, "amount", 0)
-            or 0
-        )
-        currency = getattr(event_data, "currency", "") or ""
-
+        amount_cents = getattr(event_data, "amount_total", None)
+        if amount_cents is None:
+            amount_cents = getattr(event_data, "amount", None)
+        wire_currency = getattr(event_data, "currency", None)
+        currency = wire_currency if isinstance(wire_currency, str) else ""
+        wire_evidence = {
+            "event_type": event_type,
+            "amount": amount_cents,
+            "currency": wire_currency,
+        }
+        if resolved_type == WebhookEventType.PAYMENT_REFUNDED:
+            raw_refunds = (
+                getattr(getattr(event_data, "refunds", None), "data", None) or []
+                if event_type == "charge.refunded"
+                else [event_data]
+            )
+            wire_evidence["refund_items"] = [
+                {
+                    "id": getattr(item, "id", None),
+                    "amount": getattr(item, "amount", None),
+                    "currency": getattr(item, "currency", wire_currency),
+                    "status": getattr(item, "status", None),
+                }
+                for item in raw_refunds
+            ]
+            if event_type == "charge.refunded":
+                wire_evidence["amount_refunded"] = getattr(
+                    event_data, "amount_refunded", None
+                )
+        normalization_error = ""
+        if resolved_type != WebhookEventType.PAYMENT_EXPIRED:
+            try:
+                amount_cents = self._protocol_amount(
+                    amount_cents, currency, inbound=True
+                )
+            except ValueError:
+                logger.warning(
+                    "Stripe payment amount/currency requires provider reconciliation"
+                )
+                # Signature and financial event identity are already verified.
+                # Keep unresolved wire units for a durable reviewed receipt.
+                amount_cents = None
+                normalization_error = "provider_amount_requires_review"
+        refund_items = []
+        original_amount = None
+        refund_total = None
+        complete = False
+        payment_reference = getattr(event_data, "payment_intent", "") or ""
+        if (
+            resolved_type == WebhookEventType.PAYMENT_REFUNDED
+            and not normalization_error
+        ):
+            try:
+                if event_type == "charge.refunded":
+                    original_amount = self._protocol_amount(
+                        event_data.amount, currency, inbound=True
+                    )
+                    refund_total = self._protocol_amount(
+                        event_data.amount_refunded, currency, inbound=True
+                    )
+                    refunds = getattr(event_data, "refunds", None)
+                    for item in getattr(refunds, "data", None) or []:
+                        refund_items.append(
+                            {
+                                "id": item.id,
+                                "amount_cents": self._protocol_amount(
+                                    item.amount, currency, inbound=True
+                                ),
+                                "currency": currency,
+                                "status": item.status,
+                            }
+                        )
+                    complete = (
+                        bool(refund_items)
+                        and not getattr(refunds, "has_more", True)
+                        and sum(
+                            item["amount_cents"]
+                            for item in refund_items
+                            if item["status"] == "succeeded"
+                        )
+                        == refund_total
+                    )
+                else:
+                    refund_items = [
+                        {
+                            "id": provider_tx_id,
+                            "amount_cents": amount_cents,
+                            "currency": currency,
+                            "status": getattr(event_data, "status", "") or "unknown",
+                        }
+                    ]
+                    complete = refund_items[0]["status"] == "succeeded"
+            except ValueError:
+                complete = False
+                normalization_error = "provider_amount_requires_review"
+            except AttributeError, TypeError:
+                complete = False
+        native_event_id = getattr(event, "id", "") or ""
+        if not isinstance(native_event_id, str):
+            native_event_id = ""
         return WebhookEvent(
             event_type=resolved_type,
             provider_tx_id=provider_tx_id,
@@ -156,6 +297,16 @@ class StripeGateway(PaymentGateway):
             amount_cents=amount_cents,
             currency=currency,
             raw_event=event,
+            event_id=native_event_id,
+            payment_reference_id=payment_reference
+            if isinstance(payment_reference, str)
+            else "",
+            refund_items=refund_items,
+            refund_total_cents=refund_total,
+            original_amount_cents=original_amount,
+            refund_evidence_complete=complete,
+            normalization_error=normalization_error,
+            wire_evidence=wire_evidence,
         )
 
     async def refund(
@@ -163,6 +314,7 @@ class StripeGateway(PaymentGateway):
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         try:
             # 同步 Stripe SDK 调用需包装以避免阻塞事件循环
@@ -184,10 +336,20 @@ class StripeGateway(PaymentGateway):
                 "payment_intent": payment_intent_id,
             }
             if amount_cents is not None:
-                refund_params["amount"] = amount_cents
+                refund_params["amount"] = self._protocol_amount(
+                    amount_cents, session.currency
+                )
             if reason:
                 refund_params["reason"] = "requested_by_customer"
 
+            if idempotency_key:
+                refund_params["idempotency_key"] = idempotency_key
+            session_metadata = getattr(session, "metadata", None)
+            if isinstance(session_metadata, dict):
+                refund_params["metadata"] = {
+                    "order_no": session_metadata.get("order_no", ""),
+                    "refund_request_key": idempotency_key or "",
+                }
             refund_obj = await asyncio.to_thread(stripe.Refund.create, **refund_params)
 
             logger.info(
@@ -199,7 +361,9 @@ class StripeGateway(PaymentGateway):
             return RefundResult(
                 success=True,
                 refund_id=refund_obj.id,
-                amount_cents=refund_obj.amount or 0,
+                amount_cents=self._protocol_amount(
+                    refund_obj.amount or 0, session.currency, inbound=True
+                ),
                 status=refund_obj.status or "",
             )
         except stripe.error.StripeError as e:
@@ -230,7 +394,9 @@ class StripeGateway(PaymentGateway):
                 success=True,
                 status=session.payment_status or "",
                 provider_tx_id=session.id,
-                amount_cents=session.amount_total or 0,
+                amount_cents=self._protocol_amount(
+                    session.amount_total or 0, session.currency, inbound=True
+                ),
                 currency=session.currency or "",
                 raw_data={
                     "session_id": session.id,

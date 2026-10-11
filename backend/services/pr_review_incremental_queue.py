@@ -1,20 +1,26 @@
 """Persistent queue for PR review incremental synchronize events."""
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 
-from backend.core.config import get_settings
+from backend.core.config import get_dynamic_config, get_settings
 from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
 from backend.services.activity_observability.integration_service import (
     ActivityIntegrationService,
 )
+from backend.services.billing_context import context_for_payload
+
+PENDING_QUEUE_STATES = ("pending", "dispatching", "running")
 
 
 @dataclass
@@ -192,11 +198,17 @@ class PRReviewIncrementalQueueService:
                     PRReviewIncrementalQueue.repo_full_name == repo_full_name,
                     PRReviewIncrementalQueue.pr_number == pr_number,
                     PRReviewIncrementalQueue.head_sha == head_sha,
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
             )
             existing = existing_result.scalars().first()
-            if existing:
+            # A new delivery already owns its own admission/reservation. Sharing
+            # just a commit SHA must not silently discard that execution.
+            if existing and (
+                not isinstance(pr_info.get("billing_context"), dict)
+                or (existing.billing_context or {}).get("operation_id")
+                == pr_info["billing_context"].get("operation_id")
+            ):
                 return existing
 
             item = PRReviewIncrementalQueue(
@@ -207,6 +219,9 @@ class PRReviewIncrementalQueueService:
                 base_sha=pr_info.get("before") or pr_info.get("base_sha"),
                 head_sha=head_sha,
                 delivery_id=delivery_id,
+                billing_context=context_for_payload(
+                    {**pr_info, "delivery_id": delivery_id}, "pr_review"
+                ).to_payload(),
                 observability_session_id=observability_session_id,
                 observability_trigger_id=observability_trigger_id,
                 status="pending",
@@ -284,7 +299,7 @@ class PRReviewIncrementalQueueService:
                 .where(
                     PRReviewIncrementalQueue.repo_full_name == repo_full_name,
                     PRReviewIncrementalQueue.pr_number == pr_number,
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
                 .order_by(
                     PRReviewIncrementalQueue.created_at,
@@ -292,6 +307,18 @@ class PRReviewIncrementalQueueService:
                 )
             )
             pending = list(result.scalars().all())
+            carrier = pr_info.get("billing_context")
+            if isinstance(carrier, dict):
+                operation_id = carrier.get("operation_id")
+                pending = [
+                    item
+                    for item in pending
+                    if (item.billing_context or {}).get("operation_id") == operation_id
+                    or (
+                        not (item.billing_context or {}).get("operation_id")
+                        and item.id in pr_info.get("incremental_queue_ids", [])
+                    )
+                ]
             if not pending:
                 return None
 
@@ -358,7 +385,7 @@ class PRReviewIncrementalQueueService:
             result = await db.execute(
                 select(PRReviewIncrementalQueue).where(
                     PRReviewIncrementalQueue.id.in_(queue_ids),
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
             )
             pending = list(result.scalars().all())
@@ -383,7 +410,9 @@ class PRReviewIncrementalQueueService:
                 session_id,
             )
 
-    async def mark_skipped_for_pr(self, repo_full_name: str, pr_number: int) -> int:
+    async def mark_skipped_for_pr(
+        self, repo_full_name: str, pr_number: int, *, operation_id: str | None = None
+    ) -> int:
         """将 PR 的所有 pending 增量标记为 skipped（终态，无需 review 行）。
 
         用于 drained synchronize 任务命中 should_skip（如纯文档增量）时收尾：
@@ -398,10 +427,16 @@ class PRReviewIncrementalQueueService:
                 select(PRReviewIncrementalQueue).where(
                     PRReviewIncrementalQueue.repo_full_name == repo_full_name,
                     PRReviewIncrementalQueue.pr_number == pr_number,
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
             )
             pending = list(result.scalars().all())
+            if operation_id is not None:
+                pending = [
+                    item
+                    for item in pending
+                    if (item.billing_context or {}).get("operation_id") == operation_id
+                ]
             if not pending:
                 return 0
             consumed_at = now_utc()
@@ -421,6 +456,10 @@ class PRReviewIncrementalQueueService:
         self,
         repo_full_name: str,
         pr_number: int,
+        *,
+        actor_id: int | None = None,
+        evidence: str | None = None,
+        reason: str | None = None,
     ) -> int:
         """PR 关闭/合并时，将其所有 pending 增量标记为 cancelled。
 
@@ -430,18 +469,88 @@ class PRReviewIncrementalQueueService:
             被取消的增量条数
         """
         async with db_module.async_session() as db:
+            if actor_id is not None:
+                from backend.models.telegram_models import TelegramUser
+                from backend.services.billing_service import BillingError
+
+                actor = await db.get(TelegramUser, actor_id)
+                if actor is None or not actor.is_active or actor.role != "super_admin":
+                    raise BillingError(
+                        "Incremental recovery requires an active super-admin"
+                    )
+                if (
+                    not isinstance(evidence, str)
+                    or not evidence.strip()
+                    or len(evidence) > 2000
+                ):
+                    raise BillingError("Reviewed handoff evidence is required")
+                if (
+                    not isinstance(reason, str)
+                    or not reason.strip()
+                    or len(reason) > 1000
+                ):
+                    raise BillingError("Recovery reason is required")
             result = await db.execute(
                 select(PRReviewIncrementalQueue).where(
                     PRReviewIncrementalQueue.repo_full_name == repo_full_name,
                     PRReviewIncrementalQueue.pr_number == pr_number,
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
             )
             pending = list(result.scalars().all())
             if not pending:
                 return 0
+            # Lock wallets/operations first, consistently with BillingService.
+            # An operation already sending AI is finalized by its actual worker;
+            # closing the PR must not classify unknown upstream cost as zero.
+            from backend.services.webhook_execution_service import (
+                DeliveryConflict,
+                compensate_unstarted_review,
+            )
+
+            owners = {
+                item.billing_context["operation_id"]: item.billing_context.get(
+                    "user_id"
+                )
+                for item in pending
+                if (item.billing_context or {}).get("operation_id")
+            }
+            operation_ids = sorted(owners, key=lambda key: (owners[key] or 0, key))
+            for operation_id in operation_ids:
+                try:
+                    await compensate_unstarted_review(
+                        operation_id,
+                        db_module.async_session,
+                        db=db,
+                        outcome="cancelled",
+                    )
+                except DeliveryConflict:
+                    logger.info(
+                        "PR 关闭时增量执行已有调用/所有权，交由实际 Worker 收尾: {}",
+                        operation_id,
+                    )
             for item in pending:
                 item.status = "cancelled"
+                item.consumed_at = now_utc()
+            if actor_id is not None:
+                from backend.models.admin_action_log import AdminActionLog
+
+                db.add(
+                    AdminActionLog(
+                        admin_id=actor_id,
+                        action="billing.incremental_closed",
+                        target_type="pr_incremental",
+                        target_id=f"{repo_full_name}#{pr_number}",
+                        detail=json.dumps(
+                            {
+                                "queue_ids": [item.id for item in pending],
+                                "operation_ids": operation_ids,
+                                "evidence": evidence,
+                                "reason": reason,
+                            }
+                        ),
+                    )
+                )
             await db.commit()
             logger.info(
                 "PR 关闭，取消 {} 条 pending 增量: {}#{}",
@@ -450,6 +559,43 @@ class PRReviewIncrementalQueueService:
                 pr_number,
             )
             return len(pending)
+
+    async def finalize_for_operation(self, pr_info: dict[str, Any]) -> None:
+        """Converge queue receipts after this exact operation has finished.
+
+        Standard-mode and early failure/cancellation paths need no incremental
+        message checkpoint. Financial failure remains visible: if settlement
+        could not commit an outcome, its queue rows stay recoverable.
+        """
+        queue_ids = pr_info.get("incremental_queue_ids") or []
+        if not queue_ids:
+            return
+        from backend.models.billing_models import BillingOperation
+
+        context = context_for_payload(pr_info, "pr_review")
+        async with db_module.async_session() as db:
+            operation = await db.get(BillingOperation, context.operation_id)
+            if operation is None or operation.outcome is None:
+                return
+            result = await db.execute(
+                select(PRReviewIncrementalQueue)
+                .where(
+                    PRReviewIncrementalQueue.id.in_(queue_ids),
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
+                )
+                .with_for_update()
+            )
+            for item in result.scalars().all():
+                owner = (item.billing_context or {}).get("operation_id")
+                if owner and owner != context.operation_id:
+                    raise ValueError("Incremental operation attribution conflict")
+                item.status = (
+                    "consumed"
+                    if operation.outcome == "completed"
+                    else operation.outcome
+                )
+                item.consumed_at = now_utc()
+            await db.commit()
 
     async def list_pending(
         self,
@@ -464,7 +610,7 @@ class PRReviewIncrementalQueueService:
                 .where(
                     PRReviewIncrementalQueue.repo_full_name == repo_full_name,
                     PRReviewIncrementalQueue.pr_number == pr_number,
-                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
                 )
                 .order_by(
                     PRReviewIncrementalQueue.created_at,
@@ -472,6 +618,153 @@ class PRReviewIncrementalQueueService:
                 )
             )
             return list(result.scalars().all())
+
+    async def _dispatch_rows(self, db, queue_ids, context, operation):
+        """Validate immutable source before changing a group's dispatch state."""
+        from backend.services.billing_context import BillingContext
+        from backend.services.billing_service import BillingError
+
+        rows = (
+            (
+                await db.execute(
+                    select(PRReviewIncrementalQueue)
+                    .where(PRReviewIncrementalQueue.id.in_(queue_ids))
+                    .order_by(PRReviewIncrementalQueue.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(rows) != len(set(queue_ids)):
+            raise BillingError("Incremental queue row is missing")
+        for row in rows:
+            if (
+                context.source.get("repo_full_name") != row.repo_full_name
+                or context.source.get("pr_number") != row.pr_number
+                or operation.source.get("repo_full_name") != row.repo_full_name
+                or operation.source.get("pr_number") != row.pr_number
+                or operation.user_id != context.user_id
+                or operation.feature != context.feature
+                or operation.platform_reason != context.platform_reason
+            ):
+                raise BillingError("Queued source attribution conflict")
+            if row.billing_context is None:
+                if (
+                    context.user_id is not None
+                    or context.platform_reason
+                    != "legacy_incremental_without_verified_payer"
+                ):
+                    raise BillingError(
+                        "Legacy queue requires explicit platform ownership"
+                    )
+            else:
+                try:
+                    original = BillingContext.from_payload(row.billing_context)
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise BillingError("Invalid queued billing carrier") from exc
+                if original != context:
+                    raise BillingError("Queued operation attribution conflict")
+        return rows
+
+    async def claim_dispatch(self, pr_info: dict[str, Any]) -> bool:
+        """Fence queue handoff in SQL before creating an in-process worker."""
+        from backend.services.billing_service import BillingError, BillingService
+
+        context = context_for_payload(pr_info, "pr_review")
+        queue_ids = pr_info["incremental_queue_ids"]
+        token = str(uuid4())
+        ttl = int(
+            await get_dynamic_config("service_execution_lease_seconds", fresh=True)
+        )
+        async with db_module.async_session() as db:
+            service = BillingService(db)
+            operation = await service._operation(
+                context.operation_id, allow_missing=True
+            )
+            if operation is not None and operation.outcome is not None:
+                return False
+            if operation is not None and (
+                operation.user_id != context.user_id
+                or operation.feature != context.feature
+            ):
+                raise BillingError("Queued operation attribution conflict")
+            if operation is None:
+                if context.user_id is not None:
+                    raise BillingError("Queued admission is missing")
+                operation = await service.register_operation(
+                    None,
+                    context.operation_id,
+                    context.feature,
+                    source=dict(context.source),
+                    platform_reason=context.platform_reason,
+                )
+            rows = await self._dispatch_rows(db, queue_ids, context, operation)
+            if any(
+                row.status != "pending" or row.dispatch_token is not None
+                for row in rows
+            ):
+                return False
+            result = await db.execute(
+                update(PRReviewIncrementalQueue)
+                .where(
+                    PRReviewIncrementalQueue.id.in_(queue_ids),
+                    PRReviewIncrementalQueue.status == "pending",
+                    PRReviewIncrementalQueue.dispatch_token.is_(None),
+                )
+                .values(
+                    status="dispatching",
+                    billing_context=context.to_payload(),
+                    dispatch_token=token,
+                    dispatch_expires_at=now_utc() + timedelta(seconds=ttl),
+                )
+            )
+            if result.rowcount != len(rows):
+                raise BillingError("Incremental dispatch changed concurrently")
+            await db.commit()
+        pr_info["incremental_dispatch_token"] = token
+        return True
+
+    async def start_dispatch(self, pr_info: dict[str, Any]) -> bool:
+        """Only one worker may consume a handoff token, even on replay."""
+        from backend.services.billing_service import BillingError, BillingService
+
+        queue_ids = pr_info.get("incremental_queue_ids") or []
+        if not queue_ids:
+            return True
+        context = context_for_payload(pr_info, "pr_review")
+        token = pr_info.get("incremental_dispatch_token")
+        if not token:
+            return False
+        async with db_module.async_session() as db:
+            operation = await BillingService(db)._operation(context.operation_id)
+            if operation.outcome is not None:
+                return False
+            rows = await self._dispatch_rows(db, queue_ids, context, operation)
+            instant = now_utc()
+            if any(
+                row.status != "dispatching"
+                or row.dispatch_token != token
+                or row.dispatch_expires_at is None
+                or row.dispatch_expires_at <= instant
+                for row in rows
+            ):
+                return False
+            result = await db.execute(
+                update(PRReviewIncrementalQueue)
+                .where(
+                    PRReviewIncrementalQueue.id.in_(queue_ids),
+                    PRReviewIncrementalQueue.status == "dispatching",
+                    PRReviewIncrementalQueue.dispatch_token == token,
+                    PRReviewIncrementalQueue.dispatch_expires_at > instant,
+                )
+                .values(status="running")
+            )
+            if result.rowcount != len(rows):
+                raise BillingError("Incremental dispatch changed concurrently")
+            await db.commit()
+            return True
 
     def _build_incremental_user_message(
         self,

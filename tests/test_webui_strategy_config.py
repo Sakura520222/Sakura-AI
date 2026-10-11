@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.routing import APIRoute
@@ -83,11 +84,7 @@ async def test_save_strategies_accepts_unbounded_large_conditions(
     async def fake_log_admin_action(*_args: object, **_kwargs: object) -> None:
         return None
 
-    def fake_toast_redirect(*args: object, **kwargs: object) -> dict[str, object]:
-        return {"args": args, "kwargs": kwargs}
-
     monkeypatch.setattr(config_routes, "log_admin_action", fake_log_admin_action)
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
 
     db = _FakeSession()
     response = await config_routes.save_strategies_section(
@@ -98,7 +95,14 @@ async def test_save_strategies_accepts_unbounded_large_conditions(
         section="strategies",
     )
 
-    assert response["args"][1] == "toast.strategy_saved"
+    assert response.status_code == 302
+    target = urlsplit(response.headers["location"])
+    assert target.path == "/config"
+    query = parse_qs(target.query)
+    assert query["section"] == ["strategies"]
+    assert query["_toast_type"] == ["success"]
+    assert "已保存并即时生效" in query["_toast"][0]
+    assert "_errors" not in query
     # large 策略的无上限条件值通过校验；与内置默认相同的叶子按统一
     # section 存储契约裁剪，但读取有效配置时仍保留完整条件值。
     saved = json.loads(db.rows[0].key_value)
@@ -117,11 +121,6 @@ async def test_save_strategies_rejects_non_positive_conditions(
 ) -> None:
     monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
 
-    def fake_toast_redirect(*args: object, **kwargs: object) -> dict[str, object]:
-        return {"args": args, "kwargs": kwargs}
-
-    monkeypatch.setattr(config_routes, "toast_redirect", fake_toast_redirect)
-
     form = _strategy_form()
     form["strategy_quick_max_files"] = "0"
 
@@ -134,7 +133,19 @@ async def test_save_strategies_rejects_non_positive_conditions(
         section="strategies",
     )
 
-    assert response["args"][1] == "toast.config_validation_failed"
+    assert response.status_code == 302
+    target = urlsplit(response.headers["location"])
+    assert target.path == "/config"
+    query = parse_qs(target.query)
+    assert query["section"] == ["strategies"]
+    assert query["_toast_type"] == ["error"]
+    assert "配置保存失败" in query["_toast"][0]
+    errors = json.loads(query["_errors"][0])
+    assert len(errors) == 1
+    assert errors[0]["field"] == "strategy_quick_max_files"
+    assert errors[0]["code"] == "integer_minimum"
+    assert errors[0]["params"] == {"minimum": 1}
+    assert errors[0]["message"] == "必须是不小于 1 的整数。"
     # 校验失败不落库
     assert db.rows == [] and db.added == []
 

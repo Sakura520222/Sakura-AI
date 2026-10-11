@@ -15,6 +15,14 @@ class WebhookEventType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class PaymentWebhookConfigurationError(RuntimeError):
+    """Verification cannot run until the gateway configuration is repaired."""
+
+
+class PaymentWebhookVerificationError(ValueError):
+    """The receipt is unverified and must never be acknowledged as ignored."""
+
+
 @dataclass
 class PaymentIntentResult:
     """创建支付意图的结果"""
@@ -34,9 +42,17 @@ class WebhookEvent:
     event_type: WebhookEventType
     provider_tx_id: str = ""
     order_no: str = ""
-    amount_cents: int = 0
+    amount_cents: int | None = 0
     currency: str = ""
     raw_event: Any = None
+    event_id: str = ""
+    payment_reference_id: str = ""
+    refund_items: list[dict] = field(default_factory=list)
+    refund_total_cents: int | None = None
+    original_amount_cents: int | None = None
+    refund_evidence_complete: bool = False
+    normalization_error: str = ""
+    wire_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -94,6 +110,7 @@ class PaymentGateway(ABC):
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         """发起退款"""
 
