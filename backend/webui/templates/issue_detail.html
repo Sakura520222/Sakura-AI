@@ -200,7 +200,10 @@
 {{ super() }}
 <script>
 function reanalyze(id) {
-    fetch('/issues/' + id + '/reanalyze', {
+    const notify = (type, message) => window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { type, message }
+    }));
+    return fetch('/issues/' + id + '/reanalyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -208,12 +211,12 @@ function reanalyze(id) {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            showToast('success', _t('common.reanalyze_submitted'));
+            notify('success', {{ _('common.reanalyze_submitted') | tojson }});
         } else {
-            showToast('error', data.message || _t('common.reanalyze_failed'));
+            notify('error', data.message || {{ _('common.reanalyze_failed') | tojson }});
         }
     })
-    .catch(err => showToast('error', _t('common.request_failed')));
+    .catch(() => notify('error', {{ _('common.request_failed') | tojson }}));
 }
 </script>
 {% endblock %}

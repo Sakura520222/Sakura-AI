@@ -31,6 +31,7 @@ from backend.services.payment.gateway_base import (
     WebhookEvent,
     WebhookEventType,
 )
+from backend.services.payment.paddle_capabilities import validate_paddle_currency
 
 
 class PaddleGateway(PaymentGateway):
@@ -60,6 +61,12 @@ class PaddleGateway(PaymentGateway):
         使用非目录商品（Non-catalog price with product），
         无需预先在 Paddle Dashboard 创建 Product/Price。
         """
+        try:
+            currency = validate_paddle_currency(currency)
+        except ValueError:
+            return PaymentIntentResult(
+                success=False, error_message="Unsupported Paddle payment currency"
+            )
         try:
             from paddle_billing import Client, Environment, Options
             from paddle_billing.Entities.Shared import (

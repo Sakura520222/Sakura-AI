@@ -94,12 +94,17 @@ def test_dynamic_currency_fields_use_shared_catalog():
     for field in (
         "payment_default_currency",
         "stripe_currency",
-        "paddle_currency",
     ):
         assert get_dynamic_config_input_type(field) == "select"
         codes = [option["value"] for option in DYNAMIC_CONFIG_SELECT_OPTIONS[field]]
         assert codes[:2] == ["USD", "CNY"]
         assert set(codes) == set(CURRENCY_MINOR_EXPONENTS)
+    paddle_codes = [
+        option["value"] for option in DYNAMIC_CONFIG_SELECT_OPTIONS["paddle_currency"]
+    ]
+    assert paddle_codes[:2] == ["USD", "CNY"]
+    assert {"USD", "CNY", "EUR", "JPY"} <= set(paddle_codes)
+    assert "USDT" not in paddle_codes and "AED" not in paddle_codes
     assert DYNAMIC_CONFIG_SELECT_OPTIONS["alipay_currency"] == [
         {"value": "CNY", "label": "CNY"}
     ]
