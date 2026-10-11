@@ -6,6 +6,7 @@ GitHub publication, production database or Docker daemon is involved.
 
 import asyncio
 import json
+import subprocess
 from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -55,6 +56,26 @@ async def test_repository_skill_child_mcp_hook_repair_and_durable_finish(
         "---\nname: Review\ndescription: Review relevant evidence\n---\n"
         "ON_DEMAND_WORKFLOW_BODY\n"
     )
+    # Production worker workspaces are Git repositories. Final completion now
+    # reconciles their actual diff, including changes made by trusted hooks.
+    for argv in (
+        ["git", "init", "--quiet"],
+        ["git", "add", "."],
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "baseline",
+        ],
+    ):
+        await asyncio.to_thread(
+            subprocess.run, argv, cwd=workspace, check=True, capture_output=True
+        )
     calls = []
     child_id = None
     root_round, child_round = 0, 0

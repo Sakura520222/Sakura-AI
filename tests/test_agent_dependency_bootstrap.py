@@ -395,6 +395,9 @@ async def test_failed_setup_reaches_agent_and_is_saved_before_execution(
     loop = IterationLoopService(
         workspace,
         service.workspace_service,
+        git_workspace_service=SimpleNamespace(
+            get_changed_file_stats=AsyncMock(return_value={})
+        ),
         checkpoint=SimpleNamespace(
             save_session_result=save_result, finish_session=finish_session
         ),
