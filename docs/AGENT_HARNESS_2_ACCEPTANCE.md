@@ -146,6 +146,53 @@ UV_CACHE_DIR=/tmp/sakura-628-uv-cache uv run --no-sync python -m pytest \
 
 独立审查和两项补修的差异复核均为 spec/quality PASS。临时证据：`/tmp/sakura-661-runtime-review-tests-report.md`、`/tmp/sakura-661-audit-stream-fix-report.md`、`/tmp/sakura-661-independent-review.md`；截图在 `/tmp/sakura-661-audit-stream-browser/`。最终完整回归命令 `UV_CACHE_DIR=/tmp/sakura-661-uv-cache uv run --no-sync python -m pytest tests updater/tests sandboxer/tests -q -rs -p no:cacheprovider --tb=short`：**5189 passed / 17 skipped，134.04 秒**。跳过原因是 1 项缺少可选 aiosqlite、1 项 root/sticky、3 项 root/systemd 和 12 项显式 Docker gate；不计作已通过。仓库 Ruff 和 `git diff --check` 通过，没有运行远端 CI 或推送。
 
+## 2026-10-11 PR #661 执行效果与恢复审查修复
+
+沿用主工作区 `/home/firefly/Projects/Sakura-AI` 和 `feature/issue-628-agent-harness`，以 `cc6a585524` 为本轮基线；开始时工作区干净。本轮仅处理用户提供的四项审查反馈和直接相关的恢复、取消边界，不代表重新验收或扩展整个 #628。
+
+| 审查要求 | 已验证的实现与行为 | 对应行为测试 |
+| --- | --- | --- |
+| Hook 写入参与完成统计 | `iteration_loop.py` 在所有 Hook/子任务清理后、保存会话结果与“未修改文件”判断前，复用 `git_workspace_service.py` 的真实 Git 变更统计，合并到现有结果。包括仅 Hook 写入、模型与 Hook 混合、before/after_finish、暂存修改、删除、重命名及未跟踪目录中的文件。Git 使用 NUL 分隔的 numstat/status，保留中文、制表符、换行文件名；保留旧文本 parser 的默认接口。 | `test_completion_includes_actual_hook_changes_before_durable_result`（含完成后恢复、不重复执行 Hook）；`test_completion_accounting_failure_and_cancellation_are_durable` |
+| 项目检测取消排空 | `tools/project_detect_tool.py` shield/drain 自有线程操作，以线程安全信号和任务取消事件在下一次探测/依赖读取前停止；当前文件读取未退出前继续持有共享工作区锁。重复取消保留原取消异常。 | `test_project_detection_drains_reader_before_writer_and_stops_next_read`（直接 Task 取消、事件取消与后续排他写入） |
+| 只读子 Agent 不得声称修改文件 | `tools/base.py` 在不可变只读执行边界拒绝非空 finish_task.modified_files，返回非终止的 `SUBAGENT_INVALID_RESULT`，子 Agent 可自主修正并继续。`fullstack_expert.py` 清空旧完成 ledger 恢复的子结果；`subagents.py` 在新结果保存和旧结果读取/父级恢复投影处清空修改声明。主 Agent 的完成参数接口保留。 | `test_readonly_finish_cannot_publish_claimed_modifications`（三个入口）；`test_child_claims_do_not_survive_checkpoint_wait_or_parent_resume`；`test_legacy_child_finish_and_saved_result_never_report_claimed_files` |
+| 递归调查与恢复收到当前目录规则 | `tools/base.py` 将 search_in_files/glob 按全仓库调查预加载有明确 scope 的目录规则，与已有 Shell 规则预加载共用纯参数推导。finish_task 保留此前调查作用域和实际工具登记的写入。`fullstack_expert.py` 在 ledger 校验后，从最近成功的工作区工具批次重建恢复作用域，并在第一条恢复模型请求前重新读取当前规则；不复用旧规则正文。 | `test_recursive_investigation_receives_scoped_rules_before_results`；`test_completed_investigation_resume_refreshes_its_scope_before_model`（主/子 Agent × search/glob，规则更新与删除） |
+
+独立审查额外复现终止核对阶段的真实 TrustedGit 元数据线程取消竞态。`iteration_loop.py::_completion_changes` 在共享锁内 shield/drain 整个自有 Git 核对操作；线程和命令真正结束后才释放锁、重新抛出原 Task.cancel()。补充 `test_completion_cancellation_drains_real_git_metadata_before_next_writer`，先复现 **1 failed**，修复后通过；独立复现脚本也确认重复取消不覆盖原消息，后续写入仅在线程退出后进入。调查恢复缺口另先复现 **4 failed**，修复后通过。
+
+四项原始问题先复现 **14 failed**。补查特殊文件名、重命名、核对故障和核对期间事件取消又复现 **6 failed / 12 passed**。这些是不同快照的证据，测试数量不相加。最终新增的 23 项行为测试均包含在下列 398 项回归与完整测试中。
+
+本轮初次回归发现本地环境缺少锁定的 MCP SDK；运行 `uv sync --locked` 恢复仓库锁定依赖（包括 mcp 2.3.0），未修改依赖清单或锁文件。既有两项取消单元测试和依赖引导单元测试明确使用 Git 替身；既有 Harness E2E 的工作区补为真实 Git 仓库，符合生产 worker 工作区契约。
+
+```bash
+UV_CACHE_DIR=/tmp/sakura-661b-uv-cache uv sync --locked
+
+UV_CACHE_DIR=/tmp/sakura-661b-uv-cache uv run --no-sync python -m pytest \
+  tests/test_agent_harness_review_effects.py tests/test_agent_harness_e2e.py \
+  tests/test_agent_harness_review_runtime.py tests/test_agent_harness_runtime.py \
+  tests/test_agent_harness_checkpoint.py tests/test_agent_team_cancel_and_prompts.py \
+  tests/test_agent_dependency_bootstrap.py tests/test_agent_subagents.py \
+  tests/test_agent_repository_context.py tests/test_agent_repository_completion.py \
+  tests/test_agent_project_detect_capability.py tests/test_agent_policy_hooks_integration.py \
+  tests/test_agent_search_boundaries.py tests/test_agent_team_workspace.py \
+  -q -p no:cacheprovider --tb=short
+# 398 passed，10.05 秒。
+
+UV_CACHE_DIR=/tmp/sakura-661b-uv-cache uv run --no-sync python -m pytest \
+  tests updater/tests sandboxer/tests -q -rs -p no:cacheprovider --tb=short
+# 5212 passed / 17 skipped，103.92 秒。
+
+UV_CACHE_DIR=/tmp/sakura-661b-uv-cache RUFF_NO_CACHE=true \
+  uv run --no-sync python run_ruff.py --check
+git diff --check
+# All checks passed；diff 检查无错误。
+```
+
+限定范围的独立审查最终无待修正问题：23 项集成行为测试与独立恢复复现合跑 **25 passed**；独立 checkpoint/context 回归 **64 passed**；真实 TrustedGit 取消复现 exit 0。临时审查记录为 `/tmp/sakura-661b-independent-review.md`，可复现的集成测试已纳入仓库；临时报告可能被环境清理。
+
+证据边界：真实执行临时 Git 仓库、命令 Hook、文件读取、线程/工作区锁、asyncio 取消及 SQLite checkpoint；模型和事件发布为替身，核对故障测试使用明确的 Git 替身，元数据/检测线程测试延迟真实读取来暴露竞态。没有真实 provider、GitHub 发布、MySQL 竞争、Docker 部署或远端 Windows CI 验证；本轮不涉及 WebUI 页面改动。17 项跳过为 1 项 root/sticky、1 项可选 aiosqlite、3 项 systemd 和 12 项 Docker 门控；不能计作通过。
+
+兼容性：无新增数据库迁移、配置项、调用次数/轮数预算、审批 Agent、人工继续步骤或网络授权系统；保留既有 Sandbox/TrustedGit 边界。核对失败保留可观察的 `agent_workspace_changes_unavailable` 和非成功会话结果，不冒充完成；恢复可继续使用已提交的完成 ledger 重新核对工作区。本轮通过验证的文件允许保存为本地提交，不推送、不修改 PR 或 Issue 状态。
+
 ## Phase 1/2 保存点的历史验证
 
 以下均在 `/home/firefly/.codex/worktrees/issue-628-agent-harness/Sakura-AI` 执行。此前 900/929 等数字属于历史快照，不替代下列最终结果；重叠测试不能相加。

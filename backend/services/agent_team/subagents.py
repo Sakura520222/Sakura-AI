@@ -94,6 +94,10 @@ class SubagentStore:
                 raise ValueError("Invalid child session state")
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Invalid durable subagent state") from exc
+        if isinstance(payload, dict):
+            # Legacy child results may contain model-claimed modifications.
+            # This immutable read-only mapping is the authority on every read.
+            payload = {**payload, "modified_files": []}
         return SubagentRecord(
             row.id,
             mapping.parent_session_id,
@@ -422,6 +426,7 @@ class SubagentManager:
                 False, "子任务执行失败", error="subagent_execution_failed"
             )
         payload = asdict(result)
+        payload["modified_files"] = []
         payload["outcome"] = result.outcome
         await self.checkpoint.finish_session(child.session_id, result.outcome, payload)
 

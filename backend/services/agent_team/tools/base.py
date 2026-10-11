@@ -525,6 +525,16 @@ class ToolExecutor:
         validation_error = tool.validate_input(arguments, ctx)
         if validation_error:
             return ToolResult(success=False, error=validation_error)
+        if (
+            self._read_only
+            and function_name == "finish_task"
+            and arguments.get("modified_files")
+        ):
+            return ToolResult(
+                False,
+                error="Read-only subagents must finish with an empty modified_files list",
+                error_code="SUBAGENT_INVALID_RESULT",
+            )
 
         if not await self.capability_allowed(function_name, arguments, record=True):
             return ToolResult(
@@ -569,6 +579,48 @@ class ToolExecutor:
             result, output=output, terminal_state="success" if terminal else ""
         )
 
+    @staticmethod
+    def repository_targets(
+        calls: list[Any], ctx: ToolContext, *, preserve_batch: bool = False
+    ) -> tuple[tuple[str, ...], bool]:
+        """Derive scope from tool arguments without reading old rule bodies."""
+        repository = ctx.repository_context
+        targets = set(ctx.repository_targets) if preserve_batch else set()
+        whole = ctx.repository_whole_scope if preserve_batch else False
+        for call in calls:
+            try:
+                args = json.loads(call.function.arguments)
+            except ValueError, TypeError:
+                continue
+            if not isinstance(args, dict):
+                continue
+            name = call.function.name
+            targets.update(
+                args[key]
+                for key in ("file_path", "path", "directory")
+                if isinstance(args.get(key), str)
+            )
+            for key in ("file_paths", "modified_files"):
+                if isinstance(args.get(key), list):
+                    targets.update(item for item in args[key] if isinstance(item, str))
+            if name == "use_skill" and repository is not None:
+                entry = ctx.extra.get("skills_index", {}).get(
+                    str(args.get("slug") or ""), {}
+                )
+                if entry.get("source_type") == "repository":
+                    main = repository.relative(entry["install_path"])
+                    targets.add(str(main.parent / str(args.get("file") or "SKILL.md")))
+            # These tools can inspect descendants without explicit file paths.
+            if name in {"run_command", "search_in_files", "glob"}:
+                whole = True
+            if name == "finish_task":
+                # Completion still interprets the last investigation and all
+                # recorded writes. Do not drop its rules just before reporting.
+                targets.update(ctx.repository_targets)
+                targets.update(ctx.modified_files)
+                whole = whole or ctx.repository_whole_scope
+        return tuple(sorted(targets)), whole
+
     async def repository_requirements(
         self, calls: list[Any], ctx: ToolContext, *, preserve_batch: bool = False
     ) -> list[RepositoryInstruction]:
@@ -578,39 +630,10 @@ class ToolExecutor:
             return []
 
         def discover():
-            targets = set(ctx.repository_targets) if preserve_batch else set()
-            whole = ctx.repository_whole_scope if preserve_batch else False
             repository.diagnostics.clear()
-            for call in calls:
-                try:
-                    args = json.loads(call.function.arguments)
-                except ValueError, TypeError:
-                    continue
-                if not isinstance(args, dict):
-                    continue
-                name = call.function.name
-                targets.update(
-                    args[key]
-                    for key in ("file_path", "path", "directory")
-                    if isinstance(args.get(key), str)
-                )
-                for key in ("file_paths", "modified_files"):
-                    if isinstance(args.get(key), list):
-                        targets.update(
-                            item for item in args[key] if isinstance(item, str)
-                        )
-                if name == "use_skill":
-                    entry = ctx.extra.get("skills_index", {}).get(
-                        str(args.get("slug") or ""), {}
-                    )
-                    if entry.get("source_type") == "repository":
-                        main = repository.relative(entry["install_path"])
-                        targets.add(
-                            str(main.parent / str(args.get("file") or "SKILL.md"))
-                        )
-                if name == "run_command":
-                    whole = True
-            current_targets = tuple(sorted(targets))
+            current_targets, whole = self.repository_targets(
+                calls, ctx, preserve_batch=preserve_batch
+            )
             docs = repository.snapshot(current_targets, whole=whole)
             current = {doc.path: doc for doc in docs}
             ctx.pending_repository_targets = current_targets
