@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-from sqlalchemy import JSON, or_, select, type_coerce
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.time_service import now_utc
@@ -161,8 +161,61 @@ class PaymentEventService:
             await self.session.flush()
         return record
 
+    @staticmethod
+    def _metadata_reference(metadata_json: str | None) -> str | None:
+        """Read only a validated object; unrelated historical text may be corrupt."""
+        try:
+            metadata = json.loads(metadata_json or "{}")
+        except ValueError, TypeError:
+            return None
+        if not isinstance(metadata, dict):
+            return None
+        reference = metadata.get("payment_reference_id")
+        return reference if isinstance(reference, str) and reference else None
+
+    async def _reference_order_id(self, provider: str, reference: str) -> int | None:
+        # metadata_json is legacy TEXT, not SQL JSON. Keyset batches keep memory
+        # bounded without casting corrupt rows or assuming a database dialect.
+        # Examine all candidates to reject ambiguous ownership before any debit.
+        upper_id = (
+            await self.session.execute(
+                select(func.max(Order.id)).where(Order.payment_provider == provider)
+            )
+        ).scalar_one()
+        if upper_id is None:
+            return None
+        last_id, match_id = 0, None
+        while True:
+            rows = (
+                await self.session.execute(
+                    select(Order.id, Order.provider_tx_id, Order.metadata_json)
+                    .where(
+                        Order.payment_provider == provider,
+                        Order.id > last_id,
+                        Order.id <= upper_id,
+                    )
+                    .order_by(Order.id)
+                    .limit(200)
+                )
+            ).all()
+            if not rows:
+                return match_id
+            for row in rows:
+                if (
+                    row.provider_tx_id == reference
+                    or self._metadata_reference(row.metadata_json) == reference
+                ):
+                    if match_id is not None:
+                        raise PaymentError(
+                            "Incoming payment ownership is ambiguous",
+                            code="ambiguous_order",
+                        )
+                    match_id = row.id
+            last_id = rows[-1].id
+
     async def _order(self, record: PaymentRefundInboxEvent) -> Order:
         evidence = record.evidence
+        reference = None
         if evidence.get("reviewed_order_id"):
             statement = select(Order).where(Order.id == evidence["reviewed_order_id"])
         elif evidence.get("order_no"):
@@ -171,20 +224,12 @@ class PaymentEventService:
             reference = evidence.get("payment_reference_id") or evidence.get(
                 "provider_tx_id"
             )
-            if not reference:
+            if not isinstance(reference, str) or not reference:
                 raise PaymentError(
                     "Incoming payment ownership needs review", code="unknown_order"
                 )
-            statement = select(Order).where(
-                Order.payment_provider == record.provider,
-                or_(
-                    Order.provider_tx_id == reference,
-                    type_coerce(Order.metadata_json, JSON)[
-                        "payment_reference_id"
-                    ].as_string()
-                    == reference,
-                ),
-            )
+            order_id = await self._reference_order_id(record.provider, reference)
+            statement = select(Order).where(Order.id == order_id)
         order = (
             await self.session.execute(
                 statement.with_for_update().execution_options(populate_existing=True)
@@ -198,9 +243,27 @@ class PaymentEventService:
             raise PaymentError(
                 "Incoming payment provider differs from order", code="provider_mismatch"
             )
+        if reference and not (
+            order.provider_tx_id == reference
+            or self._metadata_reference(order.metadata_json) == reference
+        ):
+            # Candidate identity may have changed while waiting for the lock.
+            raise PaymentError(
+                "Incoming payment reference differs from its order",
+                code="payment_reference_mismatch",
+            )
+        try:
+            metadata = json.loads(order.metadata_json or "{}")
+        except ValueError, TypeError:
+            raise PaymentError(
+                "Order metadata needs review", code="order_metadata_required"
+            ) from None
+        if not isinstance(metadata, dict):
+            raise PaymentError(
+                "Order metadata needs review", code="order_metadata_required"
+            )
         native_reference = evidence.get("payment_reference_id")
         if native_reference:
-            metadata = json.loads(order.metadata_json or "{}")
             expected_reference = metadata.get("payment_reference_id")
             # Checkout ids and payment-intent ids are distinct in Stripe.
             # Other gateways use the transaction id as their payment reference.

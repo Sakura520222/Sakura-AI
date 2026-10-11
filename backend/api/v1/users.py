@@ -30,12 +30,15 @@ from backend.services.identity_service import (
     stage_notification_endpoint,
 )
 from backend.services.quota_service import QuotaService
+from backend.services.telegram_service import TelegramService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
     can_update_user_role,
 )
+from backend.webui.config_feedback import config_api_language
 from backend.webui.deps import get_db, paginate
 from backend.webui.helpers.admin_log import log_admin_action
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -158,14 +161,8 @@ async def create_user(
 
     github_matches = [
         candidate
-        for candidate in (
-            await db.execute(select(TelegramUser))
-        )
-        .scalars()
-        .all()
-        if str(getattr(candidate, "github_username", "") or "")
-        .strip()
-        .casefold()
+        for candidate in (await db.execute(select(TelegramUser))).scalars().all()
+        if str(getattr(candidate, "github_username", "") or "").strip().casefold()
         == body.github_username.casefold()
     ]
     if github_matches:
@@ -432,33 +429,46 @@ async def delete_user(
     user: dict = Depends(require_api_super_admin),
 ):
     """删除用户（超级管理员）"""
+    lang = await config_api_language(db, user)
     if user_id == user["user_id"]:
-        return error_response("不能删除自己", status_code=400)
+        return error_response(
+            i18n.t("api.cannot_delete_self", lang=lang), status_code=400
+        )
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     target = result.scalar_one_or_none()
     if not target:
-        return error_response("用户不存在", status_code=404)
+        return error_response(
+            i18n.t("toast.user_not_found", lang=lang), status_code=404
+        )
 
     github = target.github_username
     try:
-        await db.delete(target)
+        retained = await TelegramService(db).retire_user(target)
         await db.commit()
     except Exception as e:
         logger.error(f"API 用户删除失败: {e}")
         await db.rollback()
-        return error_response("用户删除失败")
+        return error_response(i18n.t("api.user_delete_failed", lang=lang))
 
-    logger.info(f"API 用户已删除: id={user_id}, github={github}, by={user['sub']}")
+    logger.info(
+        f"API 用户已移除: id={user_id}, github={github}, retained={retained}, by={user['sub']}"
+    )
     await log_admin_action(
         db,
         user["user_id"],
         "user_delete",
         "user",
         str(user_id),
-        {"github_username": github},
+        {"github_username": github, "retained_financial_records": retained},
     )
-    return success_response(message=f"用户 {github} 已删除")
+    return success_response(
+        message=i18n.t(
+            "api.user_deactivated_retained" if retained else "api.user_deleted",
+            lang=lang,
+            name=github or user_id,
+        )
+    )
 
 
 @router.patch("/{user_id}/info")
@@ -480,13 +490,17 @@ async def update_user_info(
         return error_response("用户不存在", status_code=404)
 
     # 唯一性检查（排除自身）
-    if body.telegram_id is not None and (
-        await db.execute(
-            select(TelegramUser).where(
-                TelegramUser.telegram_id == body.telegram_id, TelegramUser.id != user_id
+    if (
+        body.telegram_id is not None
+        and (
+            await db.execute(
+                select(TelegramUser).where(
+                    TelegramUser.telegram_id == body.telegram_id,
+                    TelegramUser.id != user_id,
+                )
             )
-        )
-    ).scalar_one_or_none():
+        ).scalar_one_or_none()
+    ):
         return error_response(f"Telegram ID {body.telegram_id} 已被其他用户使用")
 
     old_github = target.github_username
@@ -516,9 +530,7 @@ async def update_user_info(
             )
         except NotificationEndpointConflictError:
             await db.rollback()
-            return error_response(
-                f"Telegram ID {body.telegram_id} 已被其他用户绑定"
-            )
+            return error_response(f"Telegram ID {body.telegram_id} 已被其他用户绑定")
     target.github_username = body.github_username
     try:
         await db.commit()
