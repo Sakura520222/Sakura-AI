@@ -175,6 +175,16 @@ class EventDeliveryMixin:
         await db.rollback()
         return available
 
+    async def _record_provider_cooldown(self, db, budget_key, delay):
+        until = now_utc() + timedelta(seconds=delay)
+        await insert_once(db, NotificationProviderBudget,
+            {"channel": budget_key, "next_available_at": now_utc() - timedelta(seconds=1)}, ["channel"])
+        await db.execute(update(NotificationProviderBudget).where(
+            NotificationProviderBudget.channel == budget_key,
+            NotificationProviderBudget.next_available_at < until,
+        ).values(next_available_at=until))
+        await db.commit()
+
     async def _event_heartbeat(self, fallback, row_id, token, stop):
         interval = max(0.1, self._delivery_lease_seconds() / 3)
         while not stop.is_set():
@@ -316,14 +326,7 @@ class EventDeliveryMixin:
                 budget_key = str(delivery.channel).lower()
                 if getattr(exc, "scope", "provider") == "endpoint":
                     budget_key = f"endpoint:{budget_key}:{delivery.endpoint_id}"
-                until = now_utc() + timedelta(seconds=delay)
-                await insert_once(db, NotificationProviderBudget,
-                    {"channel": budget_key, "next_available_at": now_utc() - timedelta(seconds=1)}, ["channel"])
-                await db.execute(update(NotificationProviderBudget).where(
-                    NotificationProviderBudget.channel == budget_key,
-                    NotificationProviderBudget.next_available_at < until,
-                ).values(next_available_at=until))
-                await db.commit()
+                await self._record_provider_cooldown(db, budget_key, delay)
             logger.warning("Notification delivery failure: delivery={}, category={}", row_id, category)
             return await self._finish_event_delivery(db, row_id, token,
                 status="failed" if terminal else "pending", attempts=attempts, error_category=category,
@@ -334,8 +337,9 @@ class EventDeliveryMixin:
     async def dispatch_event(self, event_id):
         from backend.models import database as db_module
         factory = db_module.async_session
+        outcome = {"sent": 0, "failed": 0, "skipped": 0}
         if factory is None:
-            return
+            return outcome
         async with factory() as db:
             await self.materialize_event(db, event_id)
             ids = (await db.execute(select(NotificationDelivery.id).where(
@@ -343,7 +347,17 @@ class EventDeliveryMixin:
             ).limit(get_settings().notification_batch_size))).scalars().all()
         for row_id in ids:
             async with factory() as db:
-                await self.deliver_event_row(db, row_id)
+                acknowledged = await self.deliver_event_row(db, row_id)
+                row = await db.get(NotificationDelivery, row_id, populate_existing=True)
+                if not acknowledged or row is None:
+                    outcome["skipped"] += 1
+                elif row.status == "sent":
+                    outcome["sent"] += 1
+                elif row.status == "failed" or (row.status == "pending" and row.error_category == "transient"):
+                    outcome["failed"] += 1
+                else:
+                    outcome["skipped"] += 1
+        return outcome
 
     async def recover_events_once(self):
         from backend.models import database as db_module

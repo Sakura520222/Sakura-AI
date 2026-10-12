@@ -31,6 +31,7 @@ from backend.core.config import get_settings
 from backend.core.time_service import now_utc
 from backend.models.announcement_models import (
     Announcement,
+    AnnouncementType,
     DeliveryStatus,
     NotificationDelivery,
 )
@@ -44,6 +45,12 @@ from backend.services.announcement_service import (
 from backend.services.notification_dispatch import EventDeliveryMixin
 
 _SMTP_SECURITY_MODES = frozenset({"ssl", "starttls", "none"})
+
+
+def _notification_type_label(value: str) -> str:
+    if not value or value in {kind.value for kind in AnnouncementType}:
+        return announcement_type_label(value)
+    return str(value).replace(".", " ").replace("_", " ").title()
 
 # A delivery row deliberately remains ``pending``/``failed`` while a provider
 # call is in flight.  The token and expiry are the worker's lease, so adding a
@@ -149,8 +156,11 @@ class _MessageProviderAdapter:
         domain = str(getattr(get_settings(), "sanitized_app_domain", "") or "")
         if message.detail_url and domain and domain != "localhost":
             content += f"\n\n[查看详情 / Details](https://{domain}{message.detail_url})"
+        message_type = message.event_type
+        if message_type == "announcement.published":
+            message_type = (message.payload or {}).get("announcement_type", "general")
         await self.send(endpoint=endpoint, title=message.title, content=content,
-                        content_html=sanitize_markdown(content), announcement_type=message.event_type)
+                        content_html=sanitize_markdown(content), announcement_type=message_type)
 
 
 class WebUINotificationProvider(_MessageProviderAdapter):
@@ -206,7 +216,7 @@ def _announcement_email_html(
       </p>
       <h2 style="margin:0 0 20px;font-size:20px;line-height:1.4;color:#111827;"><strong>{html.escape(title)}</strong></h2>
       <div style="font-size:14px;line-height:1.75;color:#374151;">{content_html}</div>
-      <p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #f3f4f6;font-size:12px;color:#9ca3af;">此邮件由 {site_link} 公告系统发送 · Sent by {site_link}</p>
+      <p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #f3f4f6;font-size:12px;color:#9ca3af;">此邮件由 {site_link} 通知中心发送 · Sent by {site_link}</p>
     </div>
   </div>
 </body>
@@ -243,7 +253,7 @@ class EmailNotificationProvider(_MessageProviderAdapter):
         if not recipient:
             raise NotificationProviderError("Email 端点为空")
 
-        label = announcement_type_label(announcement_type)
+        label = _notification_type_label(announcement_type)
         from_name = (
             getattr(settings, "smtp_from_name", None) or ""
         ).strip() or "Sakura-AI"
@@ -414,7 +424,7 @@ class TelegramNotificationProvider(_MessageProviderAdapter):
             chat_id = int(endpoint.address)
         except (TypeError, ValueError) as exc:
             raise NotificationProviderPermanentError("Telegram 端点 ID 无效") from exc
-        label = announcement_type_label(announcement_type)
+        label = _notification_type_label(announcement_type)
         if await _send_telegram_rich(
             bot, chat_id=chat_id, label=label, title=title, content=content
         ):
@@ -933,6 +943,8 @@ class NotificationService(EventDeliveryMixin):
                 Announcement.status == "published",
             )
         )
+        if allowed_statuses is not None and set(allowed_statuses) == {DeliveryStatus.PENDING.value}:
+            conditions.append(or_(NotificationDelivery.next_retry_at.is_(None), NotificationDelivery.next_retry_at <= claimed_at))
         if expected_version is not None:
             conditions.extend(
                 [
@@ -1404,6 +1416,17 @@ class NotificationService(EventDeliveryMixin):
                 )
             except Exception as exc:  # isolate this endpoint/provider only
                 last_error = exc
+                if isinstance(exc, NotificationProviderRetryAfter):
+                    from backend.models import database as db_module
+
+                    if db_module.async_session is not None:
+                        retry_delay = exc.retry_after
+                        async def cooldown(scoped, delay=retry_delay):
+                            if callable(getattr(scoped, "get_bind", None)):
+                                await self._record_provider_cooldown(scoped, str(delivery.channel).lower(), delay)
+                        await self._run_in_fresh_session(db, cooldown)
+                if isinstance(exc, (NotificationProviderDisabled, NotificationProviderPermanentError)):
+                    break
                 if attempt + 1 < max_attempts:
                     # A zero delay is useful in tests and low-latency
                     # deployments, but it must not disable the retry budget.
@@ -1455,7 +1478,13 @@ class NotificationService(EventDeliveryMixin):
             values={
                 "status": DeliveryStatus.FAILED.value,
                 "error_message": _safe_error_message(last_error or RuntimeError()),
-                "attempts": initial_attempts + max_attempts,
+                "attempts": initial_attempts + attempt + 1,
+                "error_category": (
+                    "configuration" if isinstance(last_error, NotificationProviderDisabled)
+                    else last_error.category if isinstance(last_error, NotificationProviderPermanentError)
+                    else "rate_limit" if isinstance(last_error, NotificationProviderRetryAfter)
+                    else "transient"
+                ),
                 "next_retry_at": None,
                 "updated_at": now_utc(),
             },
@@ -1490,9 +1519,12 @@ class NotificationService(EventDeliveryMixin):
                 query = query.where(NotificationEvent.run_key == str(expected_version))
             event_ids = (await db.execute(query)).scalars().all()
             if event_ids:
+                outcome = {"sent": 0, "failed": 0, "skipped": 0}
                 for event_id in event_ids:
-                    await self.dispatch_event(event_id)
-                return {"sent": 0, "failed": 0, "skipped": 0}
+                    result = await self.dispatch_event(event_id)
+                    for key in outcome:
+                        outcome[key] += result[key]
+                return outcome
         if isinstance(announcement_or_id, Announcement):
             announcement = announcement_or_id
         else:
@@ -1525,6 +1557,7 @@ class NotificationService(EventDeliveryMixin):
                     select(NotificationDelivery).where(
                         NotificationDelivery.announcement_id == announcement.id,
                         NotificationDelivery.event_id.is_(None),
+                        or_(NotificationDelivery.next_retry_at.is_(None), NotificationDelivery.next_retry_at <= now_utc()) if pending_only else True,
                         NotificationDelivery.publication_version == expected_version,
                         NotificationDelivery.status.in_(delivery_statuses),
                     )

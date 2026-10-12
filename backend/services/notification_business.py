@@ -27,7 +27,7 @@ _OUTCOMES = {
 
 def _insert_event(conn, *, event_type, resource_type, resource_id, run_key,
                   title, content, recipient_ids=(), repo_name=None,
-                  audience="users", sensitive=False, severity="info", detail_url=None):
+                  audience="users", sensitive=False, severity="info", detail_url=None, payload=None):
     identity = [event_type, resource_type, str(resource_id), str(run_key), audience]
     key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     values = {
@@ -36,7 +36,7 @@ def _insert_event(conn, *, event_type, resource_type, resource_id, run_key,
         "run_key": str(run_key), "title": title[:500], "content": content,
         "repo_name": repo_name, "audience": audience, "sensitive": sensitive,
         "severity": severity, "detail_url": detail_url, "occurred_at": now_utc(),
-        "payload_json": "{}", "recipients_json": json.dumps(sorted(set(recipient_ids))), "status": "pending",
+        "payload_json": json.dumps(payload or {}, ensure_ascii=False), "recipients_json": json.dumps(sorted(set(recipient_ids))), "status": "pending",
     }
     if conn.dialect.name in {"mysql", "mariadb"}:
         from sqlalchemy.dialects.mysql import insert
@@ -48,6 +48,34 @@ def _insert_event(conn, *, event_type, resource_type, resource_id, run_key,
             from sqlalchemy.dialects.postgresql import insert
         statement = insert(NotificationEvent).values(**values).on_conflict_do_nothing(index_elements=["dedup_key"])
     conn.execute(statement)
+
+
+def _task_result_metadata(kind, record, outcome):
+    """Severity follows business result fields, never provider/model limits."""
+    from backend.models.database import IssuePriority, ReviewDecision
+
+    severity = "error" if outcome == "failed" else "warning" if outcome == "action_required" else "info"
+    payload = {}
+    if outcome == "completed":
+        if kind == "scan":
+            payload = {"critical_count": record.critical_count or 0, "major_count": record.major_count or 0}
+            if payload["critical_count"]:
+                severity = "critical"
+            elif payload["major_count"]:
+                severity = "warning"
+        elif kind == "issue":
+            priority = getattr(record.priority, "value", record.priority)
+            payload = {"priority": priority, "issue_number": record.issue_number}
+            if priority == IssuePriority.CRITICAL.value:
+                severity = "critical"
+            elif priority == IssuePriority.HIGH.value:
+                severity = "warning"
+        elif kind == "review":
+            decision = getattr(record.decision, "value", record.decision)
+            payload = {"decision": decision, "pr_number": record.pr_number}
+            if decision == ReviewDecision.REQUEST_CHANGES.value:
+                severity = "warning"
+    return severity, payload
 
 
 def _collect(session, *_):
@@ -109,10 +137,11 @@ def _persist(session, *_):
             else:
                 run_key = str(getattr(record, "analysis_version", None) or record.id)
             prefix = {"review": "pr", "issue": "issues", "scan": "scans", "agent": "agent-team"}[kind]
+            severity, payload = _task_result_metadata(kind, record, outcome)
             _insert_event(conn, event_type=f"{kind}.{outcome}", resource_type=kind,
                 resource_id=record.id, run_key=run_key, title=f"{repo}: {kind} {outcome}",
                 content=f"{kind.capitalize()} task #{record.id}: {outcome}.", repo_name=repo,
-                recipient_ids=ids, severity="error" if outcome == "failed" else "info", detail_url=f"/{prefix}/{record.id}")
+                recipient_ids=ids, severity=severity, payload=payload, detail_url=f"/{prefix}/{record.id}")
         elif action == "personal":
             _insert_event(conn, event_type=kind, resource_type="refund_request" if type(record).__name__ == "RefundRequest" else "payment",
                 resource_id=record.id, run_key=str(getattr(record, "reviewed_at", None) or record.id),

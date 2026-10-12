@@ -6,6 +6,7 @@ import socket
 import ssl
 import threading
 from datetime import timedelta
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -71,6 +72,14 @@ def test_hmac_verification_rejects_tampering_and_expired_replays():
     assert not webhook.verify_webhook_signature(secret, timestamp, body + b"x", signature)
     assert not webhook.verify_webhook_signature("wrong", timestamp, body, signature)
     assert not webhook.verify_webhook_signature(secret, timestamp - 301, body, signature)
+
+
+def test_http_retry_after_accepts_date_and_seconds(monkeypatch):
+    now = now_utc().replace(microsecond=0)
+    monkeypatch.setattr(webhook, "now_utc", lambda: now)
+    assert webhook.webhook_retry_after("7") == 7
+    assert webhook.webhook_retry_after(format_datetime(now + timedelta(seconds=30), usegmt=True)) == 30
+    assert webhook.webhook_retry_after("invalid") == 0
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ import ipaddress
 import json
 import secrets
 import socket
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -90,6 +91,22 @@ def webhook_signature(secret, timestamp, body):
     return "sha256=" + hmac.new(secret.encode(), str(timestamp).encode() + b"." + body, hashlib.sha256).hexdigest()
 
 
+def webhook_retry_after(value):
+    """HTTP Retry-After allows delta seconds or an aware HTTP-date."""
+    from backend.services.notification_service import normalize_retry_after
+
+    numeric = normalize_retry_after(value)
+    if numeric:
+        return numeric
+    try:
+        deadline = parsedate_to_datetime(str(value))
+        if deadline.tzinfo is None or deadline.utcoffset() is None:
+            return 0.0
+        return max(0.0, (deadline - now_utc()).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
 def verify_webhook_signature(secret, timestamp, body, signature, *, tolerance_seconds=300):
     """Receiver helper: authenticate raw bytes and enforce a replay time window.
 
@@ -155,7 +172,7 @@ class WebhookNotificationProvider:
                         if 300 <= response.status < 400:
                             raise NotificationProviderPermanentError("Webhook redirects are forbidden", "security")
                         if response.status == 429:
-                            raise NotificationProviderRetryAfter("Webhook rate limited", response.headers.get("Retry-After", 1), scope="endpoint")
+                            raise NotificationProviderRetryAfter("Webhook rate limited", webhook_retry_after(response.headers.get("Retry-After", 1)), scope="endpoint")
                         if response.status in {401, 403}:
                             raise NotificationProviderPermanentError("Webhook credential rejected", "credential")
                         if response.status >= 500 or response.status in {408, 425}:
