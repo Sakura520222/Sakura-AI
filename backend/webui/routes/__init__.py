@@ -19,6 +19,7 @@ from backend.webui.routes import (
     issues,
     legal,
     logs,
+    notifications,
     pr,
     queue,
     repos,
@@ -53,6 +54,7 @@ webui_router.include_router(config.router)
 webui_router.include_router(queue.router)
 webui_router.include_router(action_logs.router)
 webui_router.include_router(announcements.router)
+webui_router.include_router(notifications.router)
 webui_router.include_router(issues.router)
 webui_router.include_router(sse.router)
 webui_router.include_router(scans.router)

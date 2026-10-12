@@ -179,6 +179,20 @@
                                    placeholder="system / Area/City"
                                    autocomplete="off"
                                    class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
+                            {% elif item.key == 'notification_webhook_allowed_hosts' %}
+                            <input type="text" name="{{ item.key }}" value="{{ item.value }}"
+                                   x-on:input="$refs.webhookHostsChanged.value = 'true'"
+                                   class="w-72 rounded-lg border px-3 py-2 bg-white dark:bg-gray-700 text-sm">
+                            <input type="hidden" name="{{ item.key }}_changed" value="false" x-ref="webhookHostsChanged">
+                            {% elif item.key.startswith('notification_') and item.field_type == 'bool' %}
+                            <select name="{{ item.key }}" class="rounded-lg border px-3 py-2 bg-white dark:bg-gray-700 text-sm">
+                                <option value="true" {% if item.value == 'true' %}selected{% endif %}>{{ _('common.enabled') }}</option>
+                                <option value="false" {% if item.value == 'false' %}selected{% endif %}>{{ _('common.disabled') }}</option>
+                            </select>
+                            {% elif item.key.startswith('notification_') and item.field_type in ['int', 'float'] %}
+                            <input type="number" name="{{ item.key }}" value="{{ item.value }}" required
+                                   step="{{ '1' if item.field_type == 'int' else 'any' }}"
+                                   class="w-32 rounded-lg border px-3 py-2 bg-white dark:bg-gray-700 text-sm text-right">
                             {% elif item.key == 'star_aid_github_app_slug' %}
                             <input type="text"
                                    name="{{ item.key }}"
