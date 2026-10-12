@@ -599,6 +599,10 @@ def _delivery_state(row: NotificationDelivery) -> dict[str, Any]:
         "delivery_id": getattr(row, "id", None),
         "user_id": getattr(row, "user_id", None),
         "channel": str(getattr(row, "channel", "")),
+        "endpoint_id": getattr(row, "endpoint_id", None),
+        "endpoint_key": getattr(row, "endpoint_key", None),
+        "event_id": getattr(row, "event_id", None),
+        "error_category": getattr(row, "error_category", None),
         "status": str(getattr(row, "status", DeliveryStatus.PENDING.value)),
         "error_message": getattr(row, "error_message", None),
         "attempts": int(getattr(row, "attempts", 0) or 0),
@@ -626,6 +630,10 @@ async def _archive_publication(
                 publication_id=history.id,
                 user_id=getattr(row, "user_id", None),
                 channel=str(getattr(row, "channel", "")),
+                endpoint_id=getattr(row, "endpoint_id", None),
+                endpoint_key=getattr(row, "endpoint_key", None),
+                event_id=getattr(row, "event_id", None),
+                error_category=getattr(row, "error_category", None),
                 status=str(getattr(row, "status", DeliveryStatus.PENDING.value)),
                 error_message=getattr(row, "error_message", None),
                 attempts=int(getattr(row, "attempts", 0) or 0),
@@ -663,6 +671,19 @@ async def _ensure_delivery_rows(
     announcement_id: int,
     publication_version: int | None = None,
 ) -> None:
+    # The outbox event is committed with publication, before external I/O.
+    if callable(getattr(db, "get_bind", None)):
+        from backend.services.notification_events import emit_event
+
+        announcement = await db.get(Announcement, announcement_id)
+        await emit_event(
+            db, event_type="announcement.published", resource_type="announcement",
+            resource_id=announcement_id, run_key=str(publication_version or 1),
+            title=announcement.title, content=announcement.content, audience="all",
+            severity="warning" if announcement.announcement_type == "important" else "info",
+            detail_url=f"/announcements/{announcement_id}",
+        )
+        return
     users = (
         (await db.execute(select(TelegramUser).where(TelegramUser.is_active.is_(True))))
         .scalars()
@@ -730,8 +751,11 @@ async def _ensure_delivery_rows(
             reset_for_current_round(existing_by_key[key])
     for endpoint in endpoints:
         channel = str(endpoint.provider).lower()
+        from backend.services.notification_service import notification_registry
+
         if (
-            channel not in {"email", "telegram"}
+            channel not in notification_registry.channels()
+            or channel == "web"
             or endpoint.user_id not in active_user_ids
         ):
             continue
@@ -825,6 +849,7 @@ async def _pending_announcement_recovery_candidates(
         .where(
             Announcement.status == AnnouncementStatus.PUBLISHED.value,
             NotificationDelivery.status == DeliveryStatus.PENDING.value,
+            NotificationDelivery.event_id.is_(None),
             or_(
                 NotificationDelivery.next_retry_at.is_(None),
                 NotificationDelivery.next_retry_at <= now_utc(),
@@ -888,6 +913,7 @@ async def _recover_one_announcement(
                     Announcement.publication_version == expected_version,
                     NotificationDelivery.publication_version == expected_version,
                     NotificationDelivery.status == DeliveryStatus.PENDING.value,
+                    NotificationDelivery.event_id.is_(None),
                     or_(
                         NotificationDelivery.next_retry_at.is_(None),
                         NotificationDelivery.next_retry_at <= now_utc(),

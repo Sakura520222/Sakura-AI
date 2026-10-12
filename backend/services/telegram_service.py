@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
-from backend.core.time_service import get_time_service
+from backend.core.time_service import get_time_service, now_utc
 from backend.models.telegram_models import (
     QuotaUsageLog,
     RepoSubscription,
@@ -44,6 +44,19 @@ def _is_github_username_unique_error(exc: IntegrityError) -> bool:
 
 
 class TelegramService:
+    async def _notify_quota_exhausted(self, user, kind):
+        if self.session.info.get("notification_outbox") is not True:
+            return
+        from backend.services.notification_events import emit_event
+
+        await emit_event(
+            self.session, event_type="quota.exceeded", resource_type="user", resource_id=user.id,
+            run_key=f"{kind}:{now_utc().date().isoformat()}", title="Quota exhausted",
+            content=f"Your {kind} quota is exhausted. Review quota settings.",
+            recipient_ids=[user.id], severity="warning", sensitive=True, detail_url="/billing",
+        )
+        await self.session.commit()
+
     """Telegram Bot 服务类"""
 
     def __init__(self, session: AsyncSession):
@@ -170,6 +183,8 @@ class TelegramService:
             # 重新读取用户信息以确定具体哪个配额已用完
             await self.session.refresh(user)
 
+            await self._notify_quota_exhausted(user, "review")
+
             if user.daily_used >= user.daily_quota:
                 return False, f"每日配额已用完 ({user.daily_used}/{user.daily_quota})"
             elif user.weekly_used >= user.weekly_quota:
@@ -236,6 +251,7 @@ class TelegramService:
 
         if result.rowcount == 0:
             await self.session.refresh(user)
+            await self._notify_quota_exhausted(user, "issue")
 
             if user.issue_daily_used >= user.issue_daily_quota:
                 return (
@@ -309,6 +325,7 @@ class TelegramService:
 
         if result.rowcount == 0:
             await self.session.refresh(user)
+            await self._notify_quota_exhausted(user, "agent")
 
             if user.agent_daily_used >= user.agent_daily_quota:
                 return (

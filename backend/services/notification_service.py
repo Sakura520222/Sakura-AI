@@ -25,7 +25,7 @@ from typing import Any, Protocol
 import httpx
 from sqlalchemy import exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from telegram.error import RetryAfter
+from telegram.error import BadRequest, Forbidden, RetryAfter
 
 from backend.core.config import get_settings
 from backend.core.time_service import now_utc
@@ -41,6 +41,7 @@ from backend.services.announcement_service import (
     markdown_to_telegram_html,
     sanitize_markdown,
 )
+from backend.services.notification_dispatch import EventDeliveryMixin
 
 _SMTP_SECURITY_MODES = frozenset({"ssl", "starttls", "none"})
 
@@ -64,6 +65,12 @@ class NotificationProviderError(RuntimeError):
 
 class NotificationProviderDisabled(NotificationProviderError):
     """The provider is not configured in this deployment."""
+
+
+class NotificationProviderPermanentError(NotificationProviderError):
+    def __init__(self, message: str, category: str = "invalid_target"):
+        super().__init__(message)
+        self.category = category
 
 
 class NotificationProviderRetryAfter(NotificationProviderError):
@@ -99,15 +106,7 @@ class NotificationProvider(Protocol):
 
     channel: str
 
-    async def send(
-        self,
-        *,
-        endpoint: NotificationEndpoint,
-        title: str,
-        content: str,
-        content_html: str,
-        announcement_type: str,
-    ) -> None: ...
+    async def send_message(self, *, endpoint: NotificationEndpoint, message) -> None: ...
 
 
 class NotificationProviderRegistry:
@@ -128,11 +127,30 @@ class NotificationProviderRegistry:
     def channels(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
 
+    def descriptors(self) -> tuple[dict, ...]:
+        return tuple({"channel": key, "configuration_version": 1,
+                      "rate_limit_scope": "database/provider/deployment",
+                      **getattr(self._providers[key], "descriptor", {}),
+                      **(self._providers[key].deployment_status() if hasattr(self._providers[key], "deployment_status") else {})}
+                     for key in self.channels())
 
-class WebUINotificationProvider:
+
+class _MessageProviderAdapter:
+    """Compatibility facade for callers of the historical send interface."""
+
+    def deployment_status(self):
+        return {"enabled": True, "configured": True}
+
+    async def send_message(self, *, endpoint, message):
+        await self.send(endpoint=endpoint, title=message.title, content=message.content,
+                        content_html=sanitize_markdown(message.content), announcement_type=message.event_type)
+
+
+class WebUINotificationProvider(_MessageProviderAdapter):
     """Web notifications are persisted in the delivery/read tables."""
 
     channel = "web"
+    descriptor = {"fields": [], "secret_fields": [], "capabilities": ["inbox", "read_markers"]}
 
     async def send(
         self,
@@ -188,10 +206,15 @@ def _announcement_email_html(
 </html>"""
 
 
-class EmailNotificationProvider:
+class EmailNotificationProvider(_MessageProviderAdapter):
     """SMTP adapter with strict no-secret logging."""
 
     channel = "email"
+    descriptor = {"fields": ["address"], "secret_fields": [], "capabilities": ["text", "html", "verification_code"]}
+
+    def deployment_status(self):
+        settings = get_settings()
+        return {"enabled": bool(getattr(settings, "email_enabled", True)), "configured": bool(getattr(settings, "smtp_host", None) and getattr(settings, "smtp_from", None))}
 
     async def send(
         self,
@@ -263,6 +286,10 @@ class EmailNotificationProvider:
             await asyncio.to_thread(_send)
         except NotificationProviderError:
             raise
+        except smtplib.SMTPAuthenticationError as exc:
+            raise NotificationProviderPermanentError("SMTP credential rejected", "credential") from exc
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise NotificationProviderPermanentError("SMTP recipient rejected") from exc
         except Exception as exc:
             # Never include the password or full SMTP connection string in the
             # persisted error.  The exception type is enough for diagnostics.
@@ -347,10 +374,15 @@ def _legacy_telegram_text(header_html: str, content: str) -> str:
     return plain[: _TELEGRAM_LEGACY_TEXT_LIMIT - 1] + "…"
 
 
-class TelegramNotificationProvider:
+class TelegramNotificationProvider(_MessageProviderAdapter):
     """Optional Telegram adapter; it never owns authentication or users."""
 
     channel = "telegram"
+    descriptor = {"fields": [], "secret_fields": [], "capabilities": ["text", "html", "private_chat_binding"]}
+
+    def deployment_status(self):
+        settings = get_settings()
+        return {"enabled": bool(getattr(settings, "telegram_enabled", True)), "configured": bool(getattr(settings, "telegram_bot_token", None))}
 
     async def send(
         self,
@@ -370,11 +402,11 @@ class TelegramNotificationProvider:
 
         bot = get_telegram_bot()
         if bot is None:
-            raise NotificationProviderDisabled("Telegram Bot 未启动")
+            raise NotificationProviderError("Telegram Bot 暂未就绪")
         try:
             chat_id = int(endpoint.address)
         except (TypeError, ValueError) as exc:
-            raise NotificationProviderError("Telegram 端点 ID 无效") from exc
+            raise NotificationProviderPermanentError("Telegram 端点 ID 无效") from exc
         label = announcement_type_label(announcement_type)
         if await _send_telegram_rich(
             bot, chat_id=chat_id, label=label, title=title, content=content
@@ -394,6 +426,10 @@ class TelegramNotificationProvider:
                 f"Telegram 发送被限流（retry_after={retry_after:g}s）",
                 retry_after,
             ) from exc
+        except Forbidden as exc:
+            raise NotificationProviderPermanentError("Telegram credential or target rejected", "credential") from exc
+        except BadRequest as exc:
+            raise NotificationProviderPermanentError("Telegram target rejected request") from exc
         except Exception as exc:
             raise NotificationProviderError(
                 f"Telegram 发送失败（{type(exc).__name__}）"
@@ -401,10 +437,13 @@ class TelegramNotificationProvider:
 
 
 def default_notification_registry() -> NotificationProviderRegistry:
+    from backend.services.notification_webhook import WebhookNotificationProvider
+
     registry = NotificationProviderRegistry()
     registry.register(WebUINotificationProvider())
     registry.register(EmailNotificationProvider())
     registry.register(TelegramNotificationProvider())
+    registry.register(WebhookNotificationProvider())
     return registry
 
 
@@ -422,7 +461,7 @@ def _safe_error_message(exc: BaseException) -> str:
     return value[:1000] or type(exc).__name__
 
 
-class NotificationService:
+class NotificationService(EventDeliveryMixin):
     """Deliver persisted rows with bounded concurrency, retries and isolation."""
 
     def __init__(self, registry: NotificationProviderRegistry | None = None):
@@ -435,6 +474,17 @@ class NotificationService:
 
         if interval <= 0:
             return
+        from backend.models import database as db_module
+
+        if db_module.async_session is not None:
+            while True:
+                async with db_module.async_session() as session:
+                    if not callable(getattr(session, "get_bind", None)):
+                        break  # Compatibility for lightweight session adapters.
+                    available = await self._reserve_provider_start(session, channel)
+                if available is None:
+                    return
+                await asyncio.sleep(max(0.001, (available - now_utc()).total_seconds()))
         channel = str(channel).lower()
         lock = self._rate_locks.setdefault(channel, asyncio.Lock())
         async with lock:
@@ -1179,7 +1229,9 @@ class NotificationService:
             # rebind is delivered immediately and a disabled address is
             # never contacted.  No replacement means a retryable skip.
             try:
-                endpoint = await self._resolve_enabled_endpoint(db, delivery)
+                endpoint = await self._run_in_fresh_session(
+                    db, lambda scoped: self._resolve_enabled_endpoint(scoped, delivery)
+                )
             except Exception:
                 return await self._defer_eligibility_check(
                     db, delivery, announcement, lock, expected_version, worker_token
@@ -1377,6 +1429,7 @@ class NotificationService:
                     values={
                         "status": DeliveryStatus.SENT.value,
                         "error_message": None,
+                        "error_category": None,
                         "attempts": initial_attempts + attempt + 1,
                         "sent_at": now_utc(),
                         "next_retry_at": None,
@@ -1418,6 +1471,21 @@ class NotificationService:
         a new automatic retry.  The admin retry endpoint keeps the default
         ``pending`` + ``failed`` selection.
         """
+        if callable(getattr(db, "get_bind", None)):
+            from backend.models.notification_models import NotificationEvent
+
+            announcement_id = announcement_or_id.id if isinstance(announcement_or_id, Announcement) else announcement_or_id
+            query = select(NotificationEvent.id).where(
+                NotificationEvent.resource_type == "announcement",
+                NotificationEvent.resource_id == str(announcement_id),
+            )
+            if expected_version is not None:
+                query = query.where(NotificationEvent.run_key == str(expected_version))
+            event_ids = (await db.execute(query)).scalars().all()
+            if event_ids:
+                for event_id in event_ids:
+                    await self.dispatch_event(event_id)
+                return {"sent": 0, "failed": 0, "skipped": 0}
         if isinstance(announcement_or_id, Announcement):
             announcement = announcement_or_id
         else:
@@ -1449,6 +1517,7 @@ class NotificationService:
                 await db.execute(
                     select(NotificationDelivery).where(
                         NotificationDelivery.announcement_id == announcement.id,
+                        NotificationDelivery.event_id.is_(None),
                         NotificationDelivery.publication_version == expected_version,
                         NotificationDelivery.status.in_(delivery_statuses),
                     )
@@ -1671,3 +1740,4 @@ __all__ = [
     "notification_registry",
     "notification_service",
 ]
+

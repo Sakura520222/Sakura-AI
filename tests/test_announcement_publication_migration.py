@@ -52,6 +52,16 @@ def _legacy_metadata() -> MetaData:
     announcements = Announcement.__table__.to_metadata(metadata)
     AnnouncementRead.__table__.to_metadata(metadata)
     deliveries = NotificationDelivery.__table__.to_metadata(metadata)
+    # This fixture represents the pre-event schema. Remove new references
+    # rather than pretending the old installation had event/endpoint tables.
+    for key in tuple(deliveries.foreign_keys):
+        if key.parent.name in {"event_id", "endpoint_id"}:
+            deliveries.foreign_keys.remove(key)
+    for constraint in tuple(deliveries.constraints):
+        if getattr(constraint, "name", "") in {"uq_notification_event_target", "uq_notification_delivery_target"} or any(
+            column.name in {"event_id", "endpoint_id"} for column in getattr(constraint, "columns", ())
+        ):
+            deliveries.constraints.remove(constraint)
 
     # Reproduce an old schema before publication_version and delivery leases
     # were introduced.  The model indexes for removed columns must go with
@@ -61,6 +71,9 @@ def _legacy_metadata() -> MetaData:
         (deliveries, "publication_version"),
         (deliveries, "claim_token"),
         (deliveries, "claim_until"),
+        (deliveries, "event_id"),
+        (deliveries, "endpoint_id"),
+        (deliveries, "endpoint_key"),
     ):
         table._columns.remove(table.c[column_name])
         for index in tuple(table.indexes):
