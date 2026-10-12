@@ -23,12 +23,12 @@ _KEY = re.compile(
     re.IGNORECASE,
 )
 _PAIR = re.compile(
-    r"(?<![\w.-])(?P<prefix>[\"']?(?P<key>[\w.-]*(?:token|secret|password|passwd|api[_-]?key|"
+    r"(?<![\w.-])(?P<prefix>(?:\\*[\"'])?(?P<key>[\w.-]*(?:token|secret|password|passwd|api[_-]?key|"
     r"credential|private[_-]?key)|authorization|proxy-authorization|cookie|"
     r"set-cookie|client_assertion|code_verifier|code_challenge|oauth[_-]?(?:code|state)|code|state)"
-    r"[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|"
+    r"(?:\\*[\"'])?\s*[:=]\s*)(?P<value>b?(?P<quote>\\*[\"']).*?(?<!\\)(?P=quote)|"
     r"(?:Bearer|Basic)\s+[^\s,;\]}]+|[^\s&,;\]}]+)",
-    re.IGNORECASE,
+    re.IGNORECASE | re.DOTALL,
 )
 _HEADER = re.compile(
     r"(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:\s*)[^\r\n]+"
