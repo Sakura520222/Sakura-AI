@@ -1,5 +1,7 @@
 """Setup Token 管理函数单元测试。"""
 
+import pytest
+
 from backend.core.bootstrap import (
     _COOKIE_NAME,
     _has_valid_setup_cookie,
@@ -100,3 +102,40 @@ def test_has_valid_setup_cookie_no_token():
     scope = _make_scope(f"{_COOKIE_NAME}=whatever")
 
     assert _has_valid_setup_cookie(scope) is False
+
+
+def test_private_handoff_rotates_removes_and_never_logs_token(tmp_path):
+    import os
+
+    from loguru import logger
+
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    try:
+        generate_setup_token()
+        first = get_setup_token()
+        path = tmp_path / ".setup-token"
+        assert path.read_text(encoding="utf-8").strip() == first
+        if os.name != "nt":
+            assert path.stat().st_mode & 0o777 == 0o600
+        generate_setup_token()
+        second = get_setup_token()
+        assert first != second
+        assert path.read_text(encoding="utf-8").strip() == second
+        assert first not in "".join(messages)
+        assert second not in "".join(messages)
+        assert not validate_setup_token(first)
+        clear_setup_token()
+        assert not path.exists()
+    finally:
+        logger.remove(sink)
+
+
+@pytest.fixture(autouse=True)
+def private_setup_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "SAKURA_CONNECTION_CONFIG_PATH", str(tmp_path / "connection.json")
+    )
+    monkeypatch.setattr("backend.core.bootstrap._setup_token_file", None)
+    yield
+    clear_setup_token()

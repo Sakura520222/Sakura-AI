@@ -1171,6 +1171,13 @@ class ToolService:
                 work_unit, _, invocation = await self._get_parent_chain(
                     db, work_unit_id, execution.thread_id
                 )
+                logger.bind(
+                    session_id=work_unit.session_id,
+                    invocation_id=invocation.id,
+                    work_unit_id=work_unit.id,
+                    attempt_id=execution.origin_attempt_id,
+                    tool_call_id=execution.tool_call_id,
+                ).info("Activity tool execution started: {}", execution.name)
                 work_unit.current_phase = f"tool:{execution.name}"
                 invocation.current_phase = work_unit.current_phase
                 session = await db.get(

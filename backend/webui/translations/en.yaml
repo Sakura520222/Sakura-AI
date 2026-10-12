@@ -2208,6 +2208,7 @@ strategy:
 
 # ========== Activity Monitor ==========
 activity:
+  operational_logs: "Recent logs"
   title: "Live Activity Monitor"
   description: "Real-time aggregated view of PR reviews, Issue analyses, and repo scan statuses"
   connected: "Live"
@@ -2490,12 +2491,12 @@ setup:
 
   # ===== Verify page =====
   verify_title: "Setup Wizard Security Verification"
-  verify_description: "Copy the Setup Token from the application startup logs and paste it below to continue the first deployment configuration."
+  verify_description: "Obtain the Setup Token locally through start.sh or config/.setup-token, then paste it below to continue setup."
   verify_token_label: "Setup Token"
-  verify_placeholder: "Paste the Token from the logs"
+  verify_placeholder: "Paste the Token obtained locally"
   verify_submit: "Verify & Continue"
-  verify_tip: "The Token is generated on each application startup and can be found in the startup logs."
-  verify_invalid: "Invalid Token. Please check the Token in the logs."
+  verify_tip: "The Token is regenerated on startup and removed when setup completes."
+  verify_invalid: "Invalid Token. Read the current Token from the local instance again."
 
   # ===== Wizard page =====
   page_title: "Initial Setup - Sakura AI"

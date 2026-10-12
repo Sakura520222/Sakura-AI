@@ -362,7 +362,9 @@ class ScanWorker:
                 )
                 if execution is not None:
                     await _finish_execution("failed", error_message=error_message)
-                logger.error("扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message)
+                logger.error(
+                    "扫描 {} 协议解析失败，终止报告流程: {}", scan_id, error_message
+                )
                 return
 
             # 10. 聚合结果（使用 AI 评估的健康评分）
@@ -449,7 +451,7 @@ class ScanWorker:
             await _finish_execution("cancelled")
             raise
         except Exception as e:
-            logger.error(f"扫描 {scan_id} 执行失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"扫描 {scan_id} 执行失败: {e}")
             if execution is not None:
                 await _finish_execution("failed", error_message=str(e))
             await self._update_scan(
@@ -682,9 +684,8 @@ class ScanWorker:
                 sakura_section = build_sakura_knowledge_section(sakura_md, memory_md)
                 log_sakura_injection(sakura_md, memory_md)
         except Exception as e:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f".sakura/ 记忆上下文注入失败（不影响扫描）: {e}",
-                exc_info=True,
             )
 
         messages[1]["content"] = build_scan_user_message(
@@ -785,10 +786,7 @@ class ScanWorker:
                     "observer": observer,
                 }
                 call_kwargs.update(task_deadline.prepare_call(messages))
-                if (
-                    not prompt_was_sent
-                    and task_deadline.timeout_prompt_sent
-                ):
+                if not prompt_was_sent and task_deadline.timeout_prompt_sent:
                     await _event_callback("message", messages[-1])
 
                 response = await reviewer.api_client.call_with_retry(**call_kwargs)
@@ -1036,7 +1034,7 @@ class ScanWorker:
                 scan_id, report_data
             )
         except Exception as e:
-            logger.error(f"生成报告失败: {type(e).__name__}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"生成报告失败: {type(e).__name__}: {e}")
 
         return report_info
 

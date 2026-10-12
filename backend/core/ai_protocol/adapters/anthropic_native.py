@@ -36,6 +36,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 _ANTHROPIC_VERSION = "2023-06-01"
 
@@ -266,7 +267,10 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                         }
                     )
             if blocks:
-                return {"role": role if role in ("user", "assistant") else "user", "content": blocks}
+                return {
+                    "role": role if role in ("user", "assistant") else "user",
+                    "content": blocks,
+                }
         # 普通文本消息 / plain text
         return {
             "role": role if role in ("user", "assistant") else "user",
@@ -410,6 +414,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             return body
         return ""
 
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -449,6 +454,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,

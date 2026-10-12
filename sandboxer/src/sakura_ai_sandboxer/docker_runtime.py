@@ -469,6 +469,14 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "never",
             "--name",
             container_name,
+            # Bound daemon storage even if a task emits output faster than the
+            # collector can consume it. Keep docker logs available to collectors.
+            "--log-driver",
+            "json-file",
+            "--log-opt",
+            "max-size=50m",
+            "--log-opt",
+            "max-file=3",
         ]
         for label in labels:
             argv.extend(("--label", label))

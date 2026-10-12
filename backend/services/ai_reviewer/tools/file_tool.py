@@ -434,9 +434,7 @@ class FileToolHandler:
                         retry_arguments["branch"] = branch_used
                     result.update(
                         {
-                            "error": (
-                                "该路径是目录而非文件，read_file 不支持目录搜索"
-                            ),
+                            "error": ("该路径是目录而非文件，read_file 不支持目录搜索"),
                             "hint": (
                                 f"目录包含 {len(content_file)} 个项目。在目录或"
                                 "整个仓库中搜索关键词请改用 search_in_files"
@@ -734,9 +732,7 @@ class FileToolHandler:
                     search_start_idx = start_line - 1
                     search_end_idx = min(end_line, total_lines)
                     if search_start_idx >= total_lines:
-                        retry_start_line = max(
-                            1, total_lines - (end_line - start_line)
-                        )
+                        retry_start_line = max(1, total_lines - (end_line - start_line))
                         retry_arguments: dict[str, Any] = {
                             "file_path": file_path,
                             "start_line": retry_start_line,
@@ -981,7 +977,9 @@ class FileToolHandler:
             return result
 
         except Exception as e:
-            logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(
+                f"读取文件 {file_path} 时发生未预期的错误: {e}"
+            )
             return {
                 "file_path": file_path,
                 "error": f"读取文件时发生错误: {e!s}",
@@ -1105,7 +1103,9 @@ class FileToolHandler:
                 }
 
         except Exception as e:
-            logger.error(f"列出目录 {directory} 时发生未预期的错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(
+                f"列出目录 {directory} 时发生未预期的错误: {e}"
+            )
             return {
                 "directory": directory,
                 "error": f"列出目录时发生错误: {e!s}",

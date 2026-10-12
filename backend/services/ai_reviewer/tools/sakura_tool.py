@@ -74,7 +74,7 @@ class SakuraToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"读取 .sakura/ 文档失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"读取 .sakura/ 文档失败: {e}")
             return {"error": f"读取失败: {e!s}"}
 
     async def list_sakura_directory(
@@ -131,7 +131,7 @@ class SakuraToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"列出 .sakura/ 目录失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"列出 .sakura/ 目录失败: {e}")
             return {"error": f"列出目录失败: {e!s}"}
 
     async def read_sakura_memory(
@@ -182,7 +182,7 @@ class SakuraToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"读取 .sakura/memory/ 失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"读取 .sakura/memory/ 失败: {e}")
             return {"error": f"读取失败: {e!s}"}
 
     async def _get_docs_overview(self, repo: Any) -> dict[str, Any]:
@@ -238,7 +238,7 @@ class SakuraToolHandler:
             return overview
 
         except Exception as e:
-            logger.error(f"获取 .sakura/ 概览失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取 .sakura/ 概览失败: {e}")
             return {"error": f"获取概览失败: {e!s}"}
 
     async def _read_file_from_repo(self, repo: Any, path: str) -> str | None:

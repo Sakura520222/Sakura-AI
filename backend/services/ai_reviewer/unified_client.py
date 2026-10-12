@@ -44,6 +44,11 @@ from backend.core.ai_protocol.request_policy import (
     filter_reasoning_params,
     resolve_effective_request_policy,
 )
+from backend.core.log_context import (
+    model_log_fields,
+    traced_operation,
+    update_log_context,
+)
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
 )
@@ -469,6 +474,7 @@ class UnifiedAIClient:
     # ------------------------------------------------------------------
     # 核心：带故障转移的调用 / Core: fallback-aware call
     # ------------------------------------------------------------------
+    @traced_operation(model_log_fields)
     async def call_with_retry(
         self,
         chain_or_candidates: Any,
@@ -507,7 +513,11 @@ class UnifiedAIClient:
             else self._logical_call_factory
         )
         if active_observer is not None:
-            active_observer.context = active_context
+            bind = getattr(active_observer, "for_context", None)
+            if bind is not None:
+                active_observer = bind(active_context)
+            else:
+                active_observer.context = active_context
         call_state = _CallState(
             observer=active_observer,
             logical_call_factory=active_logical_call_factory,
@@ -548,6 +558,7 @@ class UnifiedAIClient:
 
         attempt_chain: list[AttemptRecord] = []
         logical_call_id = str(call_state.logical_call_factory())
+        update_log_context(logical_call_id=logical_call_id)
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
 
@@ -613,12 +624,13 @@ class UnifiedAIClient:
                     }
                     if unified_tools:
                         compressor_kwargs["tools"] = unified_tools
-                    did_compress, candidate_messages = (
-                        await self._compressor.maybe_compress(
-                            candidate,
-                            unified_messages,
-                            **compressor_kwargs,
-                        )
+                    (
+                        did_compress,
+                        candidate_messages,
+                    ) = await self._compressor.maybe_compress(
+                        candidate,
+                        unified_messages,
+                        **compressor_kwargs,
                     )
                     winner_did_compress = did_compress
                     request_messages = (
@@ -884,6 +896,7 @@ class UnifiedAIClient:
             attempts=[a.__dict__ for a in attempt_chain],
         )
 
+    @traced_operation(model_log_fields)
     async def stream_with_retry(
         self,
         chain_or_candidates: Any,
@@ -916,7 +929,11 @@ class UnifiedAIClient:
             else self._logical_call_factory
         )
         if active_observer is not None:
-            active_observer.context = active_context
+            bind = getattr(active_observer, "for_context", None)
+            if bind is not None:
+                active_observer = bind(active_context)
+            else:
+                active_observer.context = active_context
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
@@ -942,6 +959,7 @@ class UnifiedAIClient:
                     break
 
         logical_call_id = str(active_logical_call_factory())
+        update_log_context(logical_call_id=logical_call_id)
         logical_call_started = time.monotonic()
         # ``total_timeout`` is a logical-call budget.  Non-positive values have
         # historically meant that the streaming path has no total deadline;
@@ -990,18 +1008,17 @@ class UnifiedAIClient:
                         clamp_to_context=False,
                         stream=True,
                     )
-                    _compressed, candidate_messages = (
-                        await self._compressor.maybe_compress(
-                            candidate,
-                            unified_messages,
-                            tracker=None,
-                            effective_max_output_tokens=max(
-                                1, preflight_policy.max_output_tokens
-                            ),
-                            safety_reserve_tokens=(
-                                preflight_policy.safety_reserve_tokens
-                            ),
-                        )
+                    (
+                        _compressed,
+                        candidate_messages,
+                    ) = await self._compressor.maybe_compress(
+                        candidate,
+                        unified_messages,
+                        tracker=None,
+                        effective_max_output_tokens=max(
+                            1, preflight_policy.max_output_tokens
+                        ),
+                        safety_reserve_tokens=(preflight_policy.safety_reserve_tokens),
                     )
                     request_messages = (
                         candidate_messages

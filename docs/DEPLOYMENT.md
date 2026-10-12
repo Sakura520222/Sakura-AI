@@ -309,17 +309,14 @@ py scripts/dev_bootstrap.py --reset
 
 ### 安全验证
 
-首次启动时应用会生成一个随机 Token 并打印到启动日志中。访问 `/setup` 前需先在 `/setup/verify` 页面输入此 Token 完成验证：
+首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；本机管理员读取 `config/.setup-token`（Linux 权限 `0600`，Windows 继承私有配置目录 ACL），或由 `start.sh` 在部署成功后读取并显示：
 
-```
-============================================================
-Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
-  Token: <随机字符串>
-请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。
-============================================================
+```bash
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
 ```
 
-> Token 在每次应用启动时重新生成，仅当前部署会话有效。`start.sh` 的前台日志跟随会在后台部署进程结束时自动返回；部署成功后，脚本会从经身份校验的 Web 容器“当前启动”日志中提取并直接显示 Setup Token。如果提前按 `Ctrl+C` 退出了日志跟随，可从主菜单的“查看容器当前日志”→“Web”查看。
+每次进程启动会原子替换该文件，旧 Token 失效；Setup 完成后删除。源码部署用 `cat config/.setup-token`；PowerShell 用 `Get-Content config/.setup-token`。设置 `SAKURA_CONNECTION_CONFIG_PATH` 时，Token 文件位于该连接配置旁。保护配置目录的本机访问权限。
 
 ### 配置步骤
 
@@ -347,7 +344,7 @@ WebUI：`https://your-domain.com/`
 
 ## 八、查看运行日志
 
-应用使用 Loguru 输出日志：控制台（stdout）记录 `INFO` 及以上级别，落盘文件记录 `DEBUG` 及以上级别。控制台适合实时排障，文件适合详细回溯。
+应用使用 Loguru 输出日志。控制台和文件共同遵循 Settings / WebUI `log_level`，保存后立即生效，无需重启或创建新日志文件。生产默认 `INFO`；未显式配置级别的本地开发环境默认 `DEBUG`；已有数据库配置始终优先。两种环境均关闭异常局部变量诊断、统一脱敏，保留文件、函数、行号、异常链与错误类型。
 
 `start.sh` 主菜单提供两个直接入口：
 
@@ -358,10 +355,14 @@ WebUI：`https://your-domain.com/`
 
 - **源码部署**：项目根目录 `logs/app_<启动时间戳>_pid<PID>.log`
 - **Docker 部署**：容器内 `/app/logs/`，对应生产 Compose 的 `logs_data` 命名卷
-- 每次进程启动新建一个以「时间戳 + PID」命名的文件；单文件达到 **500 MB** 自动轮转；超过 **10 天** 的 `app_*.log` 自动清理
-- URL 中的密码与 Telegram Bot Token 在写入前自动脱敏，可安全分享日志
+- 每次进程启动新建一个以「时间戳 + PID」命名的文件；单文件达到 **50 MB** 自动轮转；启动和轮转时清理超过 **10 天** 的文件，并按最旧优先将历史文件压至 **500 MiB**；当前写入文件最多额外占一个轮转段
+- 新文件为 JSON Lines，每行包含 `text` 和结构化 `record`；旧文本文件保留至正常到期。异常文本位于 `record.extra.exception`，不会序列化原始异常或帧内变量。
+- HTTP 凭据、OAuth 参数、API Key、已配置密钥和 Provider 调用凭据在输出前脱敏。业务信息、路径等仍可能敏感，分享前检查范围。
+- HTTP 响应返回服务器生成的 `X-Request-ID`。日志中的 `request_id`、`task_id`、Activity `session_id` / `invocation_id` / `work_unit_id`、`logical_call_id`、`attempt_id` 和 `tool_call_id` 贯通调用链。Agent 旧会话使用 `agent:<id>`，避免和 Activity 会话混淆；无 Activity 的直接 Provider 请求使用 `send-<uuid>` attempt。
+- 超级管理员可在 Activity 会话点“近期日志”，读取当前实例最多 4 MiB 中最新 200 条匹配记录。权限仍校验会话范围，响应不缓存；不提供跨副本或过期日志搜索。多副本请用关联 ID 在各实例日志或既有日志采集系统查询。
+- Compose 为 Web / MySQL / Redis，以及 start.sh 管理的 sandboxd 与任务 runner 启用 Docker `json-file` 轮转：每份 `50m`、最多 `3` 份，约 150 MB/容器。更新配置后需重新创建容器；Docker 自动淘汰旧段，不要直接删除活跃的 Docker 日志文件。旧容器日志在旧容器删除时回收，避免同时保留大量已停止容器。
 
-### 实时跟踪控制台（INFO 及以上）
+### 实时跟踪控制台
 
 ```bash
 # 源码部署：直接运行会在当前终端实时输出
@@ -380,9 +381,9 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai `
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-### 查看落盘 DEBUG 日志
+### 查看落盘结构化日志
 
-控制台只显示 INFO；需要 DEBUG 细节或历史记录时读取文件。跟踪最新一次启动的文件：
+需要 DEBUG 细节时先在 WebUI 设置日志级别。历史详情可读取文件；可用 `jq -r .text` 将新 JSON Lines 日志还原为堆栈文本。跟踪最新一次启动的文件：
 
 ```bash
 # 源码部署
@@ -398,7 +399,7 @@ docker run --rm -v sakura-ai_logs_data:/logs alpine \
   sh -c 'tail -f "$(ls -t /logs/app_*.log | head -n1)"'
 ```
 
-### 过滤错误与提取首次部署 Token
+### 过滤错误与读取首次部署 Token
 
 ```bash
 # 统一设置 compose 调用（在 /opt/sakura-ai 下执行）
@@ -408,7 +409,7 @@ COMPOSE="docker compose --env-file .deploy/deployment.env --project-name sakura-
 $COMPOSE logs --tail=1000 web | grep -iE "error|exception|critical|traceback"
 
 # 提取 Setup Wizard 首次部署验证 Token（每次启动重新生成）
-$COMPOSE logs web | grep -A6 "Setup Wizard"
+$COMPOSE exec web cat /app/config/.setup-token
 ```
 
 > WebUI 的「审查日志」(`/logs`) 与「操作日志」(`/logs/actions`) 存于数据库，分别记录 PR 审查历史和管理员审计操作，与本节的应用运行日志文件不同。

@@ -9,6 +9,11 @@ services:
     image: sakura-ai
     container_name: sakura-ai
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     env_file:
       - ../.deploy/deployment.env

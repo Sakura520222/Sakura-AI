@@ -38,6 +38,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 # Gemini finishReason → 归一化 / Gemini finishReason → normalized
 _GEMINI_STOP_MAP: dict[str, StopReason] = {
@@ -427,6 +428,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             return body
         return ""
 
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -475,6 +477,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,

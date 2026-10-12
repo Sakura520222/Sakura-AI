@@ -104,4 +104,4 @@ class ScanScheduler:
             logger.info("✅ 本轮定时扫描任务完成")
 
         except Exception as e:
-            logger.error(f"❌ 定时扫描调度异常: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"❌ 定时扫描调度异常: {e}")

@@ -342,7 +342,7 @@ class SearchFilesToolHandler:
             return last_result
 
         except Exception as e:
-            logger.error(f"跨文件搜索 '{keyword}' 时发生错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"跨文件搜索 '{keyword}' 时发生错误: {e}")
             return {
                 "keyword": keyword,
                 "error": f"搜索失败: {e}",
@@ -504,10 +504,8 @@ class SearchFilesToolHandler:
                         if state["stop"]:
                             continue
                         try:
-                            declared_size = int(
-                                getattr(content_file, "size", 0) or 0
-                            )
-                        except (TypeError, ValueError):
+                            declared_size = int(getattr(content_file, "size", 0) or 0)
+                        except TypeError, ValueError:
                             declared_size = 0
 
                         max_file_bytes = config["max_file_bytes"]
@@ -542,8 +540,7 @@ class SearchFilesToolHandler:
                             continue
 
                         remaining_scan = (
-                            config["max_total_scan_bytes"]
-                            - state["bytes_scanned"]
+                            config["max_total_scan_bytes"] - state["bytes_scanned"]
                         )
                         if actual_size > remaining_scan:
                             skipped_by_path[file_path] = {
@@ -701,7 +698,7 @@ class SearchFilesToolHandler:
             candidates.append(file_path)
             try:
                 candidate_sizes[file_path] = int(item.get("size", 0) or 0)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 candidate_sizes[file_path] = 0
 
         config = self._get_config()
@@ -744,9 +741,7 @@ class SearchFilesToolHandler:
             }
 
         total_matches = sum(r["match_count"] for r in all_results)
-        scan_complete = (
-            scan["scan_complete"] and not candidates_truncated
-        )
+        scan_complete = scan["scan_complete"] and not candidates_truncated
 
         return {
             "keyword": keyword,
@@ -809,7 +804,7 @@ class SearchFilesToolHandler:
         try:
             tree = await asyncio.to_thread(repo.get_git_tree, sha=ref, recursive=True)
         except Exception as e:
-            logger.error(f"获取仓库文件树失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取仓库文件树失败: {e}")
             return {
                 "keyword": keyword,
                 "error": f"获取仓库文件树失败: {e}",
@@ -849,7 +844,7 @@ class SearchFilesToolHandler:
             candidate_files.append(path)
             try:
                 candidate_sizes[path] = int(getattr(entry, "size", 0) or 0)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 candidate_sizes[path] = 0
 
         # 截断到 max_files_to_search / Cap candidates before concurrent fetch

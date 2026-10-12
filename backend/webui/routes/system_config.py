@@ -287,7 +287,7 @@ async def save_system_config(
             lang=detect_language(),
         )
     except Exception as e:
-        logger.error(f"系统核心配置保存失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"系统核心配置保存失败: {e}")
         return toast_redirect(
             "/system-config/",
             "toast.save_failed",
@@ -363,11 +363,7 @@ async def fetch_github_app_slug(
     except Exception:
         body = None
 
-    client_id = (
-        str(body.get("clientId", "")).strip()
-        if isinstance(body, dict)
-        else ""
-    )
+    client_id = str(body.get("clientId", "")).strip() if isinstance(body, dict) else ""
     if not client_id:
         return {
             "success": False,
