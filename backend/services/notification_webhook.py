@@ -112,6 +112,7 @@ class WebhookNotificationProvider:
         "fields": ["url", "signing_secret"], "secret_fields": ["signing_secret"],
         "capabilities": ["json", "hmac-sha256", "ownership_challenge"],
         "rate_limit_scope": "database/provider/deployment",
+        "retry_after_scope": "endpoint",
     }
 
     def deployment_status(self):
@@ -154,7 +155,7 @@ class WebhookNotificationProvider:
                         if 300 <= response.status < 400:
                             raise NotificationProviderPermanentError("Webhook redirects are forbidden", "security")
                         if response.status == 429:
-                            raise NotificationProviderRetryAfter("Webhook rate limited", response.headers.get("Retry-After", 1))
+                            raise NotificationProviderRetryAfter("Webhook rate limited", response.headers.get("Retry-After", 1), scope="endpoint")
                         if response.status in {401, 403}:
                             raise NotificationProviderPermanentError("Webhook credential rejected", "credential")
                         if response.status >= 500 or response.status in {408, 425}:

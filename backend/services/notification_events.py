@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from backend.core.time_service import now_utc
+from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.announcement_models import Announcement
 from backend.models.notification_models import (
     NotificationEvent,
@@ -45,16 +45,22 @@ class NotificationMessage:
     severity: str
     detail_url: str | None = None
     payload: dict | None = None
+    resource: dict | None = None
+    occurred_at: str | None = None
+    run_key: str | None = None
 
     @classmethod
     def from_event(cls, event):
         return cls(event.id, event.event_type, event.title, event.content,
-                   event.severity, event.detail_url, json.loads(event.payload_json))
+                   event.severity, event.detail_url, json.loads(event.payload_json),
+                   {"type": event.resource_type, "id": event.resource_id, "repository": event.repo_name},
+                   format_rfc3339(event.occurred_at), event.run_key)
 
     def as_dict(self):
         return {"id": self.event_id, "type": self.event_type, "title": self.title,
                 "content": self.content, "severity": self.severity,
-                "detail_url": self.detail_url, "payload": self.payload or {}}
+                "detail_url": self.detail_url, "payload": self.payload or {},
+                "resource": self.resource, "occurred_at": self.occurred_at, "run_key": self.run_key}
 
 
 async def insert_once(db, model, values, conflict_columns):

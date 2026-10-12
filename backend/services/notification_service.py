@@ -76,9 +76,12 @@ class NotificationProviderPermanentError(NotificationProviderError):
 class NotificationProviderRetryAfter(NotificationProviderError):
     """Provider throttled a request and supplied a retry delay."""
 
-    def __init__(self, message: str, retry_after: object):
+    def __init__(self, message: str, retry_after: object, *, scope: str = "provider"):
         super().__init__(message)
         self.retry_after = normalize_retry_after(retry_after)
+        if scope not in {"provider", "endpoint"}:
+            raise ValueError("Invalid notification rate-limit scope")
+        self.scope = scope
 
 
 def normalize_retry_after(value: object) -> float:
@@ -142,8 +145,12 @@ class _MessageProviderAdapter:
         return {"enabled": True, "configured": True}
 
     async def send_message(self, *, endpoint, message):
-        await self.send(endpoint=endpoint, title=message.title, content=message.content,
-                        content_html=sanitize_markdown(message.content), announcement_type=message.event_type)
+        content = message.content
+        domain = str(getattr(get_settings(), "sanitized_app_domain", "") or "")
+        if message.detail_url and domain and domain != "localhost":
+            content += f"\n\n[查看详情 / Details](https://{domain}{message.detail_url})"
+        await self.send(endpoint=endpoint, title=message.title, content=content,
+                        content_html=sanitize_markdown(content), announcement_type=message.event_type)
 
 
 class WebUINotificationProvider(_MessageProviderAdapter):
