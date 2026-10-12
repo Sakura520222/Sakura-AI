@@ -16,6 +16,7 @@ from backend.core.config import (
     get_settings,
     get_strategy_config,
 )
+from backend.core.config_sections import get_section_defaults
 from backend.core.github_app import GitHubAppClient
 from backend.core.time_service import now_utc
 from backend.models.database import (
@@ -449,7 +450,13 @@ class IssueService:
                 if analysis.suggested_labels
                 else []
             )
-            labels = [f"`{label['name']}`" for label in labels_data[:5]]
+            labels = [
+                f"`{label['name'].strip()}`"
+                for label in labels_data[:5]
+                if isinstance(label, dict)
+                and isinstance(label.get("name"), str)
+                and label["name"].strip()
+            ]
         except json.JSONDecodeError, TypeError:
             pass
 
@@ -460,7 +467,13 @@ class IssueService:
                 if analysis.suggested_assignees
                 else []
             )
-            assignees = [f"@{a['username']}" for a in assignees_data[:3]]
+            assignees = [
+                f"@{a['username'].strip()}"
+                for a in assignees_data[:3]
+                if isinstance(a, dict)
+                and isinstance(a.get("username"), str)
+                and a["username"].strip()
+            ]
         except json.JSONDecodeError, TypeError:
             pass
 
@@ -518,16 +531,44 @@ class IssueService:
                 f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
             )
 
-        rendered = template.format(
-            category=analysis.category or "unknown",
-            priority=analysis.priority or "unknown",
-            feasibility=analysis.feasibility or no_feasibility,
-            summary=analysis.summary or no_summary,
-            labels=", ".join(labels) if labels else no_suggestion,
-            assignees=", ".join(assignees) if assignees else no_suggestion,
-            related_info=related_info,
-            suggested_title_section=suggested_title_section,
-        )
+        values = {
+            "category": analysis.category or "unknown",
+            "priority": analysis.priority or "unknown",
+            "feasibility": analysis.feasibility or no_feasibility,
+            "summary": analysis.summary or no_summary,
+            "labels": ", ".join(labels) if labels else no_suggestion,
+            "assignees": ", ".join(assignees) if assignees else no_suggestion,
+            "related_info": related_info,
+            "suggested_title_section": suggested_title_section,
+        }
+        defaults = get_section_defaults("strategy.issue_analysis")
+        if template in (defaults["comment_template"], defaults["comment_template_en"]):
+            # Conditional layout belongs to the built-in templates. Historical
+            # custom templates keep their exact formatting and fallback values.
+            values.update(
+                summary=(analysis.summary or "").strip(),
+                feasibility=(analysis.feasibility or "").strip()
+                or ("Unable to assess yet" if is_english else "暂无法评估"),
+                labels=", ".join(labels),
+                assignees=", ".join(assignees),
+                related_info=related_info.strip(),
+                suggested_title_section=suggested_title_section.strip()
+                if (analysis.suggested_title or "").strip()
+                else "",
+            )
+            empty_fields = {name for name, value in values.items() if not value}
+            lines = []
+            for line in template.splitlines():
+                if any("{" + name + "}" in line for name in empty_fields):
+                    continue
+                if not line.strip() and lines and not lines[-1].strip():
+                    continue
+                lines.append(line)
+            # Normalize only the layout before substitution: code fences and
+            # intentional whitespace inside the analysis must remain intact.
+            template = "\n".join(lines)
+
+        rendered = template.format(**values)
         if "{related_info}" not in template:
             rendered += relation_section
         return rendered

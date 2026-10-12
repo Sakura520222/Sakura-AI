@@ -22,6 +22,7 @@ import json
 import re
 from collections import OrderedDict
 from copy import deepcopy
+from string import Formatter
 from typing import Any
 
 from loguru import logger
@@ -132,8 +133,38 @@ def _extract_placeholders(text: str) -> frozenset[str]:
     return frozenset(_PLACEHOLDER_RE.findall(text))
 
 
+def _issue_template_fields(text: str) -> set[str]:
+    """Read actual format fields, including nested specs, but not escaped braces."""
+    fields = set()
+    for _, field, spec, _ in Formatter().parse(text):
+        if field is not None:
+            fields.add(field)
+        if spec:
+            fields.update(_issue_template_fields(spec))
+    return fields
+
+
+def _validate_issue_comment_template(path: str, text: str, default: str) -> None:
+    """Require the two conclusions; allow supported metadata to be omitted."""
+    allowed = _extract_placeholders(default)
+    try:
+        fields = _issue_template_fields(text)
+    except ValueError as exc:
+        raise ValueError(f"Issue 模板 {path} 格式无效: {exc}") from exc
+    missing = {"summary", "feasibility"} - fields
+    if missing:
+        raise ValueError(f"Issue 模板 {path} 丢失必需占位符: {sorted(missing)}")
+    unknown = fields - allowed
+    if unknown:
+        raise ValueError(f"Issue 模板 {path} 包含未知占位符: {sorted(unknown)}")
+    try:
+        text.format(**dict.fromkeys(allowed, ""))
+    except (ValueError, KeyError, IndexError) as exc:
+        raise ValueError(f"Issue 模板 {path} 格式无效: {exc}") from exc
+
+
 def _validate_template_placeholders(section_key: str, effective: dict) -> None:
-    """校验模板占位符不丢失既有集合。
+    """校验模板占位符；Issue 评论仅强制摘要与处理建议。
 
     占位符基准集合从当前内置默认模板中程序化提取（同路径字符串对比），
     不手工维护占位符清单；默认中不含占位符的字符串天然不设约束。
@@ -143,6 +174,12 @@ def _validate_template_placeholders(section_key: str, effective: dict) -> None:
     for path, text in _iter_string_leaves(effective):
         default_text = default_leaves.get(path)
         if default_text is None:
+            continue
+        if section_key == "strategy.issue_analysis" and path in {
+            "comment_template",
+            "comment_template_en",
+        }:
+            _validate_issue_comment_template(path, text, default_text)
             continue
         missing = _extract_placeholders(default_text) - _extract_placeholders(text)
         if missing:

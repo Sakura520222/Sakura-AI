@@ -12,10 +12,12 @@ from collections.abc import Mapping
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
+from starlette.datastructures import FormData
 from starlette.requests import Request
 
 from backend.core import config_sections
@@ -237,6 +239,104 @@ async def test_unified_page_renders_flat_groups_and_section_forms(
         "保存标签定义",
     ):
         assert removed_label not in html, removed_label
+
+
+class _IssueTemplateParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.fields = {}
+        self.current = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "textarea":
+            self.current = dict(attrs).get("name")
+            self.fields[self.current] = ""
+
+    def handle_data(self, data):
+        if self.current is not None:
+            self.fields[self.current] += data
+
+    def handle_endtag(self, tag):
+        if tag == "textarea":
+            self.current = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["zh-CN", "en"])
+@pytest.mark.parametrize("custom", [False, True])
+async def test_issue_template_editor_displays_defaults_or_existing_custom_values(
+    monkeypatch, language, custom
+):
+    if custom:
+        config_sections.update_section_store(
+            "strategy.issue_analysis",
+            {
+                "comment_template": "自定义\n{summary}\n{feasibility}",
+                "comment_template_en": "Custom\n{summary}\n{feasibility}",
+            },
+        )
+    monkeypatch.setattr(config_routes, "detect_language", lambda *_: language)
+    response = await config_routes.unified_config_page(
+        _make_request(),
+        db=_FakeSession(),
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        user_prefs={"language": language},
+    )
+    html = response.body.decode("utf-8")
+    parser = _IssueTemplateParser()
+    parser.feed(html)
+    effective = config_sections.get_section_config("strategy.issue_analysis")
+    assert parser.fields["issue_comment_template"] == effective["comment_template"]
+    assert (
+        parser.fields["issue_comment_template_en"] == effective["comment_template_en"]
+    )
+    assert (
+        "其他变量可省略" if language == "zh-CN" else "other variables are optional"
+    ) in html
+    assert "strategy.issue_template_layout_hint" not in html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_issue_template_form_save_validates_and_keeps_both_languages(
+    monkeypatch, invalid
+):
+    monkeypatch.setattr(config_routes, "log_admin_action", AsyncMock())
+    monkeypatch.setattr(config_routes, "detect_language", lambda *_: "en")
+    template = "Conclusion {summary}\nAction {feasibility}"
+    english = template + (" {unknown}" if invalid else " {{literal}}")
+    form = FormData(
+        {
+            "cat_name": "bug",
+            "cat_desc": "A failure",
+            "cat_keywords": "error",
+            "issue_system_prompt": "Project focus.",
+            "issue_comment_template": template,
+            "issue_comment_template_en": english,
+        }
+    )
+    db = _FakeSession()
+    response = await config_routes.save_strategies_section(
+        _FormRequest(form),
+        db=db,
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        csrf_token="test",
+        section="issue_analysis",
+    )
+    if invalid:
+        assert "_toast_type=error" in response.headers["location"]
+        assert db.added == [] and db.committed is False
+    else:
+        assert "_toast_type=error" not in response.headers["location"]
+        stored = json.loads(db.added[0].key_value)
+        assert stored["comment_template"] == template
+        assert stored["comment_template_en"] == english
+        assert (
+            config_sections.get_section_config("strategy.issue_analysis")[
+                "comment_template_en"
+            ]
+            == english
+        )
 
 
 # ---------- 分组重组（任务 5） ----------
