@@ -30,6 +30,10 @@ class AsyncDB:
     async def __aenter__(self):
         return self
 
+    @property
+    def info(self):
+        return self.session.info
+
     async def __aexit__(self, *_):
         self.session.close()
 
@@ -255,6 +259,28 @@ async def test_disabled_rules_suppress_inbox_and_announcement_prompts(event_db):
     with Session(engine) as db:
         assert db.query(UserNotification).count() == 0
         assert db.query(NotificationDelivery).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_quota_new_reset_round_emits_new_event(event_db):
+    from backend.services.telegram_service import TelegramService
+
+    engine, _ = event_db
+    async with AsyncDB(engine, outbox=True) as db:
+        user = await db.get(TelegramUser, 1)
+        user.daily_used = user.daily_quota
+        user.last_reset_daily = now_utc()
+        await db.commit()
+        source = TelegramService(db)
+        await source._notify_quota_exhausted(user, "review")
+        await source._notify_quota_exhausted(user, "review")
+        rows = (await db.execute(select(NotificationEvent))).scalars().all()
+        assert len(rows) == 1
+        user.last_reset_daily += timedelta(hours=24)
+        await db.commit()
+        await source._notify_quota_exhausted(user, "review")
+        rows = (await db.execute(select(NotificationEvent))).scalars().all()
+        assert len(rows) == 2
 
 
 @pytest.mark.asyncio
