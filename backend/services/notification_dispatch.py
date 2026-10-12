@@ -235,6 +235,13 @@ class EventDeliveryMixin:
             if provider is None:
                 raise NotificationProviderDisabled("Provider not registered")
             if delivery.channel != "web":
+                cooldown_key = f"endpoint:{str(delivery.channel).lower()}:{delivery.endpoint_id}"
+                cooldown = (await db.execute(select(NotificationProviderBudget.next_available_at).where(
+                    NotificationProviderBudget.channel == cooldown_key
+                ))).scalar_one_or_none()
+                if cooldown and cooldown > now_utc():
+                    return await self._finish_event_delivery(db, row_id, token,
+                        status="pending", error_category="rate_limit", next_retry_at=cooldown)
                 available = await self._reserve_provider_start(db, delivery.channel)
                 if available:
                     return await self._finish_event_delivery(db, row_id, token,
@@ -304,10 +311,16 @@ class EventDeliveryMixin:
             delay = max(1.0, retry_after, settings.notification_retry_initial_delay_seconds *
                         settings.notification_retry_backoff_factor ** max(0, attempts - 1))
             if retry_after:
-                # A provider's Retry-After pauses all instances, including other endpoints.
+                # Webhook Retry-After is endpoint scoped: an arbitrary user
+                # receiver must not pause unrelated webhook destinations.
+                budget_key = str(delivery.channel).lower()
+                if getattr(exc, "scope", "provider") == "endpoint":
+                    budget_key = f"endpoint:{budget_key}:{delivery.endpoint_id}"
                 until = now_utc() + timedelta(seconds=delay)
+                await insert_once(db, NotificationProviderBudget,
+                    {"channel": budget_key, "next_available_at": now_utc() - timedelta(seconds=1)}, ["channel"])
                 await db.execute(update(NotificationProviderBudget).where(
-                    NotificationProviderBudget.channel == delivery.channel,
+                    NotificationProviderBudget.channel == budget_key,
                     NotificationProviderBudget.next_available_at < until,
                 ).values(next_available_at=until))
                 await db.commit()

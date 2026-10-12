@@ -55,11 +55,11 @@ MFA lockout state resides in Redis, so its lockout and the SQL event cannot shar
 | `ineligible` | Cancelled/skipped; no external send and no automatic reactivation |
 | `infrastructure` | Pending with durable retry time; no provider attempt consumed for an unknown eligibility result |
 | `transient` | Pending until the configured attempt budget is exhausted |
-| `rate_limit` | Durable Retry-After and provider-wide cooldown |
+| `rate_limit` | Durable Retry-After; Telegram/provider cooldown or independent Webhook endpoint cooldown |
 | `configuration`, `credential`, `invalid_target`, `security`, `verification` | Terminal failure; correction and a controlled administrator retry are required |
 | `exhausted` | Terminal failure after the configured attempt budget |
 
-The provider budget table is the deployment-wide start/cooldown authority. Independent services/processes share its atomic update. Legacy pending announcements use the same budget and Provider registry. In-memory throttling exists only for lightweight compatibility adapters without an application database. The poller does not wait for a legacy active lease or busy-loop on an absent endpoint.
+The provider budget table is the deployment-wide start/cooldown authority, with microsecond MySQL precision. Independent services/processes share its atomic update. Webhook Retry-After is endpoint-scoped so one user-controlled receiver cannot pause unrelated destinations; the deployment-wide start interval still applies. Legacy pending announcements use the same budget and Provider registry. In-memory throttling exists only for lightweight compatibility adapters without an application database. The poller does not wait for a legacy active lease or busy-loop on an absent endpoint.
 
 Settings defaults are the only source of defaults. All `notification_*` controls are in `app_config` and the existing system configuration page. Recovery batches, concurrency, polling, timeouts, retry budget/backoff, response size and verification limits are configurable there.
 
@@ -73,7 +73,7 @@ Webhook endpoints require HTTPS on port 443, no URL credentials/query/fragment, 
 
 Credentials use the existing Fernet secret service, are stored separately from addresses/metadata, and are never returned by endpoint or diagnostics APIs. Replacing a signing key invalidates verification. Webhook ownership verification sends a signed random challenge and requires the receiver to echo `{"challenge":"..."}`.
 
-Webhook messages are JSON with ID, type, title, safe content, severity, relative details path and minimal payload. Headers:
+Webhook messages are JSON with ID, type, resource/repository identity, occurrence time, run key, title, safe content, severity, relative details path and minimal payload. Email/Telegram messages link to the details path when the deployment domain is configured. Headers:
 
 - `X-Sakura-Event-ID`: stable event ID
 - `X-Sakura-Timestamp`: UTC Unix seconds
