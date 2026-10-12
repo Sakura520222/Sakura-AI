@@ -183,7 +183,7 @@ class LabelService:
             )
             return labels
         except Exception as e:
-            logger.error(f"获取PR已有标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取PR已有标签失败: {e}")
             return None
 
     def format_labels_for_ai(self, labels: dict[str, dict[str, Any]]) -> str:
@@ -259,7 +259,7 @@ class LabelService:
             return self._parse_text_labels(ai_response)
 
         except Exception as e:
-            logger.error(f"解析AI标签推荐失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"解析AI标签推荐失败: {e}")
             return []
 
     def _parse_text_labels(self, text: str) -> list[dict[str, Any]]:

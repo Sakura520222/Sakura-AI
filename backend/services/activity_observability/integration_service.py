@@ -21,6 +21,7 @@ from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.log_context import invocation_log_fields, traced_operation
 from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.activity_observability_models import (
@@ -185,6 +186,11 @@ class ObservedExecutionBundle:
         except asyncio.CancelledError:
             pass
 
+    @traced_operation(
+        lambda args: invocation_log_fields(
+            getattr(args["self"], "invocation_context", None)
+        )
+    )
     async def _lease_heartbeat_loop(self, interval: float) -> None:
         while True:
             await asyncio.sleep(interval)
@@ -216,6 +222,11 @@ class ObservedExecutionBundle:
             if self.observer is not None:
                 self.observer.lease = renewed
 
+    @traced_operation(
+        lambda args: invocation_log_fields(
+            getattr(args["self"], "invocation_context", None)
+        )
+    )
     async def finish(self, status: str, *, error_message: str | None = None) -> None:
         """Persist terminal state and always attempt to release the thread lease.
 
@@ -672,6 +683,7 @@ class ActivityIntegrationService:
             work_unit_id=int(started.work_unit.id),
             thread_id=int(started.thread.id) if started.thread is not None else None,
             role_snapshot=snapshot,
+            session_id=int(started.session.id),
         )
         # Each dependency shares the currently injected DB session where one is
         # available; otherwise each operation opens its own short-lived session.
@@ -720,6 +732,9 @@ class ActivityIntegrationService:
                 if started.thread and started.thread.current_revision_id
                 else None
             )
+        )
+        logger.bind(**invocation_log_fields(context)).info(
+            "Activity execution admitted"
         )
         return ObservedExecutionBundle(
             session=started.session,
@@ -838,9 +853,7 @@ class ActivityIntegrationService:
                 exc,
             )
 
-    async def _await_admission_cleanup(
-        self, cleanup: Awaitable[None]
-    ) -> None:
+    async def _await_admission_cleanup(self, cleanup: Awaitable[None]) -> None:
         """Drain cleanup even if another cancellation reaches this task."""
         cleanup_task = asyncio.create_task(cleanup)
         while not cleanup_task.done():

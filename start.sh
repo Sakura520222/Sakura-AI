@@ -2534,6 +2534,9 @@ sandbox_start_container() {
         docker run --detach
         --name "$SANDBOX_CONTAINER_NAME" \
         --restart unless-stopped \
+        --log-driver json-file \
+        --log-opt max-size=50m \
+        --log-opt max-file=3 \
         --label ai.sakura.managed-by=sandboxd-daemon \
         --label "ai.sakura.instance-id=$instance" \
         --label "ai.sakura.protocol-version=$SANDBOX_PROTOCOL_VERSION" \
@@ -5491,13 +5494,10 @@ sandbox_controller_id_for_logs() {
 }
 
 current_setup_token() {
-    local id="" started_at="" token=""
+    local id="" token=""
     id=$(compose_service_container_id "sakura-ai" "web") || return 1
-    started_at=$(docker inspect --type container --format '{{.State.StartedAt}}' "$id" 2>/dev/null) || return 1
-    [[ -n "$started_at" && "$started_at" != "0001-01-01T00:00:00Z" ]] || return 1
-    token=$(docker logs --since "$started_at" "$id" 2>&1 \
-        | sed -nE 's/^.*Token:[[:space:]]*([A-Za-z0-9_-]{43})[[:space:]]*.*$/\1/p' \
-        | tail -n 1)
+    # Explicit local operator access; docker exec stdout is not a container log.
+    token=$(docker exec "$id" cat /app/config/.setup-token 2>/dev/null) || return 1
     [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]] || return 1
     printf '%s\n' "$token"
 }

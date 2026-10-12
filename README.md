@@ -285,15 +285,15 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）。`start.sh` 在前台等待的部署成功后会直接显示当前 Setup Token；也可在主菜单选择“查看容器当前日志”→“Web”重新查看：
+首次启动后访问 `http://localhost:8000/setup`。验证 Token 每次启动重新生成，保存在本机私有文件 `config/.setup-token`，完成 Setup 后删除，不写入日志。`start.sh` 在部署成功后读取并显示 Token；也可由本机管理员执行：
 
 ```bash
-# 也可在 /opt/sakura-ai 下直接跟踪 Web 容器日志
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
+# 源码运行：cat config/.setup-token（PowerShell：Get-Content config/.setup-token）
 ```
 
-主菜单的“查看往期运行日志”可读取持久化 DEBUG 日志；错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+主菜单的“查看往期运行日志”可读取持久化日志；日志级别热更新、关联 ID 与容量控制见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 ### 源码开发
 
@@ -378,12 +378,12 @@ uv run python -m backend.main        # 启动应用(pip 环境用 python -m back
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查
 uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
-tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
+tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新结构化运行日志
 ```
 
 首次启动进入 Bootstrap 模式，终端会打印一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
 
-> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、JSON Lines 格式、50 MB 轮转、保留 10 天并限制历史总量 500 MiB；控制台和文件共同遵循 WebUI 的日志级别，写入前统一脱敏）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 > Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 

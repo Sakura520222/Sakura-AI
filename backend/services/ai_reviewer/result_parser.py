@@ -42,7 +42,7 @@ class ReviewResultParser:
             logger.info("成功解析 {} 个标签推荐", len(recommendations))
             return recommendations
         except Exception as exc:
-            logger.error("解析标签推荐失败: {}", exc, exc_info=True)
+            logger.opt(exception=True).error("解析标签推荐失败: {}", exc)
             return []
 
     def _extract_json_from_response(self, text: str) -> Any:

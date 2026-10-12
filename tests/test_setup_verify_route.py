@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -174,3 +175,13 @@ def test_verify_page_lang_switch():
             assert "preferred_language" in resp.headers.get("set-cookie", "")
     finally:
         clear_setup_token()
+
+
+@pytest.fixture(autouse=True)
+def private_setup_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "SAKURA_CONNECTION_CONFIG_PATH", str(tmp_path / "connection.json")
+    )
+    monkeypatch.setattr("backend.core.bootstrap._setup_token_file", None)
+    yield
+    clear_setup_token()

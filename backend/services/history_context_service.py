@@ -64,7 +64,9 @@ class HistoryContextService:
             return summary
 
         except Exception as e:
-            logger.warning(f"历史审查摘要生成失败（不影响审查）: {e}", exc_info=True)
+            logger.opt(exception=True).warning(
+                f"历史审查摘要生成失败（不影响审查）: {e}"
+            )
             return None
 
     # ------------------------------------------------------------------

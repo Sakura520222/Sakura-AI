@@ -102,6 +102,7 @@ class InvocationContext:
     work_unit_id: int
     thread_id: int | None
     role_snapshot: RoleConfigSnapshot
+    session_id: int | None = None
 
     def __post_init__(self) -> None:
         _require_int(self.invocation_id, "invocation_id")

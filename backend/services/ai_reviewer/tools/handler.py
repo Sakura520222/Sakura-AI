@@ -9,6 +9,8 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.log_context import tool_log_fields, traced_operation
+
 
 class ToolHandler:
     """工具调用处理器
@@ -89,6 +91,7 @@ class ToolHandler:
         else:
             self.fetch_url_tool = None
 
+    @traced_operation(tool_log_fields, events=True)
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
     ) -> dict[str, Any]:
@@ -233,5 +236,7 @@ class ToolHandler:
                 return {"error": f"未知工具: {function_name}"}
 
         except Exception as e:
-            logger.error("执行工具 {} 失败: {}", function_name, str(e), exc_info=True)
+            logger.opt(exception=True).error(
+                "执行工具 {} 失败: {}", function_name, str(e)
+            )
             return {"error": f"工具执行失败: {e!s}"}

@@ -285,15 +285,15 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart). When `start.sh` waits in the foreground, it displays the current Setup Token immediately after a successful deployment. You can also reopen the main menu and choose **View current container logs** → **Web**:
+After first start, visit `http://localhost:8000/setup`. The verification token is regenerated on startup, handed to the local operator through the private `config/.setup-token` file, and deleted when Setup completes. It never enters application or Docker logs. `start.sh` displays it after successful deployment; a local administrator can also run:
 
 ```bash
-# Alternatively, tail the Web container directly from /opt/sakura-ai
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
+# Source checkout: cat config/.setup-token (PowerShell: Get-Content config/.setup-token)
 ```
 
-The main menu's **View previous runtime logs** entry reads persisted DEBUG logs. For error filtering and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+The main menu's **View previous runtime logs** entry reads persisted logs. For live log levels, correlation IDs and storage limits see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 ### Source Development
 
@@ -383,7 +383,7 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 
 First launch enters Bootstrap mode — a one-time verification token is printed to the terminal; enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks).
 
-> Run logs are written to `logs/app_*.log` (one file per startup, 500 MB rotation, 10-day retention; passwords and tokens are auto-redacted). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+> Run logs are written to `logs/app_*.log` (one JSON Lines file per startup, 50 MB rotation, 10-day retention and a 500 MiB history budget; both console and file obey the live WebUI log level, with redaction before output). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 > The Updater is an independent Python 3.14+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development. Its release binaries are built on Bookworm (glibc 2.36) and require the host to run glibc ≥ 2.36 (Debian 12+ / Ubuntu 24.04+).
 

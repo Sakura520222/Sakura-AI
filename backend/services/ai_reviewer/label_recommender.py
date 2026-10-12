@@ -152,7 +152,7 @@ class LabelRecommender:
             return recommendations
 
         except Exception as e:
-            logger.error(f"AI标签推荐失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"AI标签推荐失败: {e}")
             if propagate_errors:
                 raise
             return []

@@ -12,6 +12,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.log_context import tool_log_fields, traced_operation
 from backend.services.agent_team.execution import (
     ExecutionProfile,
     ExecutionRequest,
@@ -53,6 +54,7 @@ class AgentToolExecutor:
         # 保留旧属性名，外部集成仍可能读取它。
         self.executor = self.execution_runner
 
+    @traced_operation(tool_log_fields, events=True)
     async def execute_tool_call(self, tool_call: Any) -> dict[str, Any]:
         """执行单个工具调用，返回结果字典。"""
         function_name = tool_call.function.name

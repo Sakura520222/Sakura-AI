@@ -78,7 +78,7 @@ class CommentService:
             return comment
 
         except Exception as e:
-            logger.error("创建占位评论时出错: {}", e, exc_info=True)
+            logger.opt(exception=True).error("创建占位评论时出错: {}", e)
             raise
 
     async def delete_placeholder_comment(self, comment: Any):
@@ -91,7 +91,7 @@ class CommentService:
             await asyncio.to_thread(comment.delete)
             logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
         except Exception as e:
-            logger.error("删除占位评论时出错: {}", e, exc_info=True)
+            logger.opt(exception=True).error("删除占位评论时出错: {}", e)
             # 不抛出异常，因为占位评论删除失败不应影响主流程
 
     async def update_review(
@@ -191,7 +191,9 @@ class CommentService:
                         logger.info("✓ 已创建正式审查评论 (Review ID: {})", review.id)
 
                 except Exception as e:
-                    logger.error("删除评论并创建 review 失败: {}", e, exc_info=True)
+                    logger.opt(exception=True).error(
+                        "删除评论并创建 review 失败: {}", e
+                    )
                     # 降级方案：创建新的普通评论
                     review_body = self._format_comment(
                         review_result,
@@ -208,7 +210,7 @@ class CommentService:
                 logger.warning("无法更新评论：没有 PR 对象")
 
         except Exception as e:
-            logger.error("更新评论时出错: {}", e, exc_info=True)
+            logger.opt(exception=True).error("更新评论时出错: {}", e)
             raise
 
     async def update_review_with_error(
@@ -271,7 +273,9 @@ Please check system logs or contact the administrator.
                     logger.info("✓ 已创建错误评论")
 
                 except Exception as e:
-                    logger.error("删除评论并创建错误评论失败: {}", e, exc_info=True)
+                    logger.opt(exception=True).error(
+                        "删除评论并创建错误评论失败: {}", e
+                    )
                     # 降级方案：直接创建新的错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
                     logger.info("✓ 已降级为直接创建错误评论")
@@ -279,7 +283,7 @@ Please check system logs or contact the administrator.
                 logger.warning("无法更新错误评论：没有 PR 对象")
 
         except Exception as e:
-            logger.error("更新错误消息时出错: {}", e, exc_info=True)
+            logger.opt(exception=True).error("更新错误消息时出错: {}", e)
             # 如果更新失败，尝试记录日志但不中断流程
 
     async def post_review_comment(
@@ -313,7 +317,7 @@ Please check system logs or contact the administrator.
             )
 
         except Exception as e:
-            logger.error("发布评论时出错: {}", e, exc_info=True)
+            logger.opt(exception=True).error("发布评论时出错: {}", e)
             raise
 
     def _format_comment(

@@ -229,7 +229,7 @@ async def _run_docs_index(repo_name: str, user_id: int) -> None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
-        logger.error(f"WebUI 文档索引失败: {repo_name}, error={e}", exc_info=True)
+        logger.opt(exception=True).error(f"WebUI 文档索引失败: {repo_name}, error={e}")
         try:
             from backend.webui.sse import publish_event
 
@@ -289,7 +289,7 @@ async def _run_code_index(repo_name: str, user_id: int) -> None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
-        logger.error(f"WebUI 代码索引失败: {repo_name}, error={e}", exc_info=True)
+        logger.opt(exception=True).error(f"WebUI 代码索引失败: {repo_name}, error={e}")
         try:
             from backend.webui.sse import publish_event
 
@@ -344,7 +344,9 @@ async def _run_issues_index(repo_name: str, user_id: int) -> None:
             },
         )
     except Exception as e:
-        logger.error("WebUI Issues 索引失败: {}, error={}", repo_name, e, exc_info=True)
+        logger.opt(exception=True).error(
+            "WebUI Issues 索引失败: {}, error={}", repo_name, e
+        )
         try:
             from backend.webui.sse import publish_event
 
@@ -375,7 +377,7 @@ async def repo_list_page(
     try:
         installations = await _get_installations_with_stats(db)
     except Exception as e:
-        logger.error(f"获取安装仓库列表失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"获取安装仓库列表失败: {e}")
         installations = []
         error_message = "获取仓库列表失败，请检查 GitHub App 配置或稍后重试"
 
@@ -406,7 +408,7 @@ async def repo_list_fragment(
     try:
         installations = await _get_installations_with_stats(db)
     except Exception as e:
-        logger.error(f"获取安装仓库列表失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"获取安装仓库列表失败: {e}")
         installations = []
 
     return templates.TemplateResponse(
@@ -637,7 +639,7 @@ async def _run_repo_scan(repo_name: str, user_id: int) -> None:
             {"repo_name": repo_name, "scan_id": scan_id, "success": True},
         )
     except Exception as e:
-        logger.error(f"WebUI 仓库扫描失败: {repo_name}, error={e}", exc_info=True)
+        logger.opt(exception=True).error(f"WebUI 仓库扫描失败: {repo_name}, error={e}")
         try:
             from backend.webui.sse import publish_event
 

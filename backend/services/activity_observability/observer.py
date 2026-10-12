@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -12,6 +13,12 @@ from typing import Any
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.log_context import (
+    get_log_context,
+    model_log_fields,
+    traced_operation,
+    update_log_context,
+)
 from backend.services.activity_observability.artifact_projection import (
     projection_json,
 )
@@ -56,12 +63,12 @@ def fold_image_payloads(node: Any) -> Any:
             has_media = "media_type" in value or "mimeType" in value
             folded: dict[str, Any] = {}
             for key, item in value.items():
-                if key == "url" and isinstance(item, str) and item.startswith(
-                    "data:image/"
+                if (
+                    key == "url"
+                    and isinstance(item, str)
+                    and item.startswith("data:image/")
                 ):
-                    folded[key] = (
-                        f"<folded image data-url: {len(item)} chars>"
-                    )
+                    folded[key] = f"<folded image data-url: {len(item)} chars>"
                 elif key == "data" and has_media and isinstance(item, str):
                     folded[key] = f"<folded image data: {len(item)} chars>"
                 else:
@@ -95,6 +102,15 @@ class ObservedModelSender:
         self.tool_service = tool_service
         self.lease = lease
         self.last_attempt_id: int | None = None
+
+    def for_context(self, context):
+        """A caller may reuse an observer across concurrent invocation lanes."""
+        if context is self.context:
+            return self
+        bound = copy.copy(self)
+        bound.context = context
+        bound.last_attempt_id = None
+        return bound
 
     async def _best_effort(
         self,
@@ -139,7 +155,7 @@ class ObservedModelSender:
             "role",
             purpose,
         )
-        attempt_id = getattr(attempt, "id", None)
+        attempt_id = getattr(attempt, "id", None) or get_log_context().get("attempt_id")
         attempt_index = getattr(attempt, "attempt_index", None)
         thinking = (
             reasoning_snapshot.effective_thinking_mode
@@ -230,7 +246,7 @@ class ObservedModelSender:
             elapsed_seconds=elapsed,
             retry_of_attempt_id=getattr(attempt, "retry_of_attempt_id", None),
             fallback_from_attempt_id=getattr(attempt, "fallback_from_attempt_id", None),
-        ).warning(
+        ).opt(exception=error).warning(
             "AI 调用失败: call={} attempt={} provider={} model={} "
             "thinking={} effort={} category={} retryable={} elapsed={:.3f}s",
             logical_call_id,
@@ -605,6 +621,7 @@ class ObservedModelSender:
             fields=fields,
         )
 
+    @traced_operation(model_log_fields)
     async def send_embedding(
         self,
         create: Callable[[], Awaitable[Any]],
@@ -681,6 +698,7 @@ class ObservedModelSender:
         )
         return response, attempt.id if attempt is not None else None
 
+    @traced_operation(model_log_fields)
     async def send_chat(
         self,
         adapter: Any,
@@ -714,6 +732,7 @@ class ObservedModelSender:
                 reasoning_snapshot=reasoning_snapshot,
             ),
         )
+        update_log_context(attempt_id=int(attempt.id) if attempt is not None else None)
         self.last_attempt_id = int(attempt.id) if attempt is not None else None
         self._log_attempt(
             "started",
@@ -945,6 +964,7 @@ class ObservedModelSender:
             pass
         return event
 
+    @traced_operation(model_log_fields)
     async def send_stream(
         self,
         adapter: Any,
@@ -986,6 +1006,7 @@ class ObservedModelSender:
                 reasoning_snapshot=reasoning_snapshot,
             ),
         )
+        update_log_context(attempt_id=int(attempt.id) if attempt is not None else None)
         self.last_attempt_id = int(attempt.id) if attempt is not None else None
         self._log_attempt(
             "started",

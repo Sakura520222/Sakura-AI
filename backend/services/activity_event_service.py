@@ -154,7 +154,7 @@ async def _publish_activity_event(
             },
         )
     except Exception as exc:
-        logger.debug("SSE 发布活动事件失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).debug("SSE 发布活动事件失败: {}", exc)
 
 
 def _event_to_dict(event: ActivityEvent) -> dict[str, Any]:

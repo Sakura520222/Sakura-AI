@@ -74,4 +74,4 @@ class QuotaResetScheduler:
                 f"{result.affected_users}, 字段维度影响行数: {result.affected_fields}"
             )
         except Exception as e:
-            logger.error(f"❌ 定时配额重置异常: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"❌ 定时配额重置异常: {e}")

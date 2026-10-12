@@ -71,10 +71,14 @@ def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path)
 
     assert add.call_args_list[1] == call(
         str(app_log_path),
-        format=logging_bridge.FILE_LOG_FORMAT,
-        rotation="500 MB",
+        format=logging_bridge._format_record,
+        serialize=True,
+        rotation=logging_bridge.APP_LOG_ROTATION,
         retention=cleanup,
-        level="DEBUG",
+        level=0,
+        filter=logging_bridge._sink_filter,
+        diagnose=False,
+        backtrace=False,
     )
     install_standard_bridge.assert_called_once()
     remove.assert_called_once()

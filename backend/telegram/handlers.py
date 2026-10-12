@@ -150,7 +150,9 @@ async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = context.args[0].strip() if context.args else ""
     internal_user_id = await consume_telegram_binding_token(token)
     if internal_user_id is None:
-        await update.message.reply_text("绑定链接无效、已过期或已使用，请回到 WebUI 重新生成。")
+        await update.message.reply_text(
+            "绑定链接无效、已过期或已使用，请回到 WebUI 重新生成。"
+        )
         return
 
     try:
@@ -170,9 +172,13 @@ async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_id,
             exc,
         )
-        await update.message.reply_text("该 Telegram 已绑定到其他用户，或绑定信息发生冲突。")
+        await update.message.reply_text(
+            "该 Telegram 已绑定到其他用户，或绑定信息发生冲突。"
+        )
         return
-    await update.message.reply_text("✅ Telegram 通知绑定成功。你可以回到 WebUI 管理或解绑。")
+    await update.message.reply_text(
+        "✅ Telegram 通知绑定成功。你可以回到 WebUI 管理或解绑。"
+    )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -716,7 +722,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             friendly_msg = f"❌ 获取PR信息失败\n\n错误详情: {error_msg}"
 
         await update.message.reply_text(friendly_msg)
-        logger.error(f"手动触发审查失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"手动触发审查失败: {e}")
 
 
 async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -818,7 +824,7 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
-        logger.error(f"更新文档索引失败: {e!s}", exc_info=True)
+        logger.opt(exception=True).error(f"更新文档索引失败: {e!s}")
         await status_msg.edit_text(f"❌ 更新失败: {e!s}")
 
 
@@ -872,7 +878,7 @@ async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
     except Exception as e:
-        logger.error(f"获取文档状态失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"获取文档状态失败: {e}")
         await update.message.reply_text(f"❌ 获取状态失败: {e!s}")
 
 
@@ -971,7 +977,7 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(text)
 
     except Exception as e:
-        logger.error(f"代码索引失败: {e!s}", exc_info=True)
+        logger.opt(exception=True).error(f"代码索引失败: {e!s}")
         await status_msg.edit_text(f"❌ 索引失败: {e!s}")
 
 
@@ -1036,7 +1042,7 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
     except Exception as e:
-        logger.error(f"获取代码状态失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"获取代码状态失败: {e}")
         await update.message.reply_text(f"❌ 获取状态失败: {e!s}")
 
 

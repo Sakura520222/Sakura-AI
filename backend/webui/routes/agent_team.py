@@ -116,7 +116,7 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
     """Read stable prompt IDs from a checkpointed guidance message."""
     try:
         payload = json.loads(message_json or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except TypeError, ValueError, json.JSONDecodeError:
         return []
     if not isinstance(payload, dict):
         return []
@@ -131,7 +131,7 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
     for raw_id in raw_ids:
         try:
             guidance_id = int(raw_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if guidance_id > 0 and guidance_id not in guidance_ids:
             guidance_ids.append(guidance_id)
@@ -1151,9 +1151,7 @@ async def resume_task(
 ):
     """从已持久化 messages 和工作区继续运行任务。"""
     result = await db.execute(
-        select(AgentTeamTask)
-        .where(AgentTeamTask.id == task_id)
-        .with_for_update()
+        select(AgentTeamTask).where(AgentTeamTask.id == task_id).with_for_update()
     )
     task = result.scalar_one_or_none()
     if task is None:
@@ -1554,8 +1552,8 @@ async def _run_agent_task_background(task_id: int) -> None:
 
         await submit_agent_team_task(task_id)
     except Exception as exc:
-        logger.error(
-            "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True
+        logger.opt(exception=True).error(
+            "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc
         )
 
 
@@ -1568,8 +1566,8 @@ async def _resume_agent_task_background(task_id: int) -> None:
 
         await resume_agent_team_task(task_id)
     except Exception as exc:
-        logger.error(
-            "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc, exc_info=True
+        logger.opt(exception=True).error(
+            "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc
         )
 
 

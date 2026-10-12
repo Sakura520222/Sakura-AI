@@ -236,7 +236,7 @@ async def handle_github_webhook(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"处理Webhook时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理Webhook时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -364,7 +364,7 @@ async def handle_check_run_event(payload: dict[str, Any]) -> JSONResponse:
             }
         )
     except Exception as e:
-        logger.error(f"处理 check_run 事件失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 check_run 事件失败: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -445,7 +445,7 @@ async def handle_workflow_job_event(payload: dict[str, Any]) -> JSONResponse:
             }
         )
     except Exception as e:
-        logger.error(f"处理 workflow_job 事件失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 workflow_job 事件失败: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -629,8 +629,10 @@ async def handle_pull_request_event(
         author = pr_info.get("author", "")
         branch = pr_info.get("branch", "")
         is_agent_team_pr = branch.startswith("sakura-agent/")
-        if not is_agent_team_pr and bot_username and (
-            sender == bot_username or author == bot_username
+        if (
+            not is_agent_team_pr
+            and bot_username
+            and (sender == bot_username or author == bot_username)
         ):
             is_agent_team_pr = await _is_original_pr_agent_task(pr_info)
 
@@ -863,7 +865,7 @@ async def handle_pull_request_event(
         )
 
     except Exception as e:
-        logger.error(f"处理PR事件时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理PR事件时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1059,7 +1061,7 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
             except Exception as e:
                 logger.warning(f"解析 /full-review 用户配置上下文失败: {e}")
         except Exception as e:
-            logger.error(f"获取PR信息失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取PR信息失败: {e}")
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "获取PR信息失败"},
@@ -1152,7 +1154,7 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理Issue Comment事件时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1373,7 +1375,7 @@ async def handle_comment_edited_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理评论编辑事件时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理评论编辑事件时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1441,7 +1443,7 @@ async def handle_pull_request_review_event(
         )
 
     except Exception as e:
-        logger.error(f"处理PR Review事件时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理PR Review事件时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1593,7 +1595,7 @@ async def handle_revoke_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理 /revoke 命令时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 /revoke 命令时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1882,7 +1884,7 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理 Issue 事件时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 Issue 事件时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -1956,7 +1958,7 @@ async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理 /analyze 命令时出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 /analyze 命令时出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -2109,7 +2111,10 @@ def _validate_pr_head_admission(
     head_owner, head_name = head_repo_full_name.split("/", 1)
     try:
         base_client = pr_head_info.get("_base_client")
-        if head_repo_full_name.casefold() == base_repo_full_name.casefold() and base_client:
+        if (
+            head_repo_full_name.casefold() == base_repo_full_name.casefold()
+            and base_client
+        ):
             client = base_client
         else:
             client = github_app.get_repo_client(head_owner, head_name)
@@ -2469,7 +2474,7 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error("处理 /agent 命令时出错: {}", e, exc_info=True)
+        logger.opt(exception=True).error("处理 /agent 命令时出错: {}", e)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -2662,7 +2667,9 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
 
         # 回复确认评论
         branch_info = (
-            f"（忽略 base:{base_branch}，PR 修复目标仍为原 head）" if base_branch else ""
+            f"（忽略 base:{base_branch}，PR 修复目标仍为原 head）"
+            if base_branch
+            else ""
         )
         await _post_issue_comment(
             github_app,
@@ -2693,7 +2700,7 @@ async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error("处理 /agent PR 命令时出错: {}", e, exc_info=True)
+        logger.opt(exception=True).error("处理 /agent PR 命令时出错: {}", e)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -2733,7 +2740,7 @@ async def handle_installation_event(payload: dict[str, Any]) -> JSONResponse:
             content={"status": "processed", "action": action},
         )
     except Exception as e:
-        logger.error(f"处理 installation 事件出错: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"处理 installation 事件出错: {e}")
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -2839,11 +2846,10 @@ async def handle_stripe_webhook(
             content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
-        logger.error(
+        logger.opt(exception=True).error(
             "Stripe webhook unexpected error: {} - {}",
             type(e).__name__,
             e,
-            exc_info=True,
         )
         return JSONResponse(
             status_code=500,
@@ -2951,11 +2957,10 @@ async def handle_paddle_webhook(
             content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
-        logger.error(
+        logger.opt(exception=True).error(
             "Paddle webhook unexpected error: {} - {}",
             type(e).__name__,
             e,
-            exc_info=True,
         )
         return JSONResponse(
             status_code=500,
@@ -3027,11 +3032,10 @@ async def handle_alipay_webhook(
         logger.warning("Alipay webhook gateway error: {}", e)
         return PlainTextResponse("fail")
     except Exception as e:
-        logger.error(
+        logger.opt(exception=True).error(
             "Alipay webhook unexpected error: {} - {}",
             type(e).__name__,
             e,
-            exc_info=True,
         )
         return PlainTextResponse("fail")
 
@@ -3112,11 +3116,10 @@ async def handle_nowpayments_webhook(
         logger.warning("NOWPayments webhook gateway error: {}", e)
         return JSONResponse(content={"status": "error", "message": "Invalid request"})
     except Exception as e:
-        logger.error(
+        logger.opt(exception=True).error(
             "NOWPayments webhook unexpected error: {} - {}",
             type(e).__name__,
             e,
-            exc_info=True,
         )
         return JSONResponse(
             status_code=500,

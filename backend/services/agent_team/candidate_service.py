@@ -884,12 +884,11 @@ class AgentTeamCandidateService:
                         )
                     )
             except Exception:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     "GitHub Issue 状态检查失败: {}/{}#{}",
                     candidate.repo_owner,
                     candidate.repo_name,
                     candidate.source_issue_number,
-                    exc_info=True,
                 )
 
         if not closed_keys:

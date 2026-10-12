@@ -821,7 +821,7 @@ class IssueAnalyzer:
                 raise
             except Exception as e:
                 self._raise_if_cancelled(cancel_event)
-                logger.error("AI API 调用失败: {}", e, exc_info=True)
+                logger.opt(exception=True).error("AI API 调用失败: {}", e)
                 api_error_result = {
                     "category": "other",
                     "priority": "medium",

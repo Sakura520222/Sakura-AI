@@ -82,9 +82,7 @@ class TelegramService:
         return [
             user
             for user in result.scalars().all()
-            if str(getattr(user, "github_username", "") or "")
-            .strip()
-            .casefold()
+            if str(getattr(user, "github_username", "") or "").strip().casefold()
             == normalized
         ]
 
@@ -92,9 +90,7 @@ class TelegramService:
         self, github_username: str
     ) -> TelegramUser | None:
         """通过 GitHub 用户名获取用户"""
-        matches = await self._casefold_github_matches(
-            github_username, active_only=True
-        )
+        matches = await self._casefold_github_matches(github_username, active_only=True)
         if len(matches) > 1:
             logger.warning(
                 "Ambiguous case-insensitive GitHub mirror lookup: username={}",
@@ -639,11 +635,11 @@ class TelegramService:
             await self.session.rollback()
             if _is_github_username_unique_error(e):
                 return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
-            logger.error(f"用户注册失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"用户注册失败: {e}")
             return False, f"注册失败: {e!s}"
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"用户注册失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"用户注册失败: {e}")
             return False, f"注册失败: {e!s}"
 
         quota_info = (
@@ -686,7 +682,7 @@ class TelegramService:
             await self.session.commit()
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"订阅仓库失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"订阅仓库失败: {e}")
             return False, f"订阅失败: {e!s}"
         return True, f"已订阅 {repo_name}"
 
@@ -711,7 +707,7 @@ class TelegramService:
             await self.session.commit()
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"取消订阅仓库失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"取消订阅仓库失败: {e}")
             return False, f"取消订阅失败: {e!s}"
         return True, f"已取消订阅 {repo_name}"
 

@@ -246,7 +246,7 @@ class PRAnalyzer:
             return analysis
 
         except Exception as e:
-            logger.error(f"分析PR时出错: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"分析PR时出错: {e}")
             raise
 
     def _extract_changed_lines(
@@ -485,7 +485,7 @@ class PRAnalyzer:
             return structure
 
         except Exception as e:
-            logger.error(f"获取项目结构失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取项目结构失败: {e}")
             return []
 
     async def prepare_review_context(
@@ -585,5 +585,5 @@ class PRAnalyzer:
             return context
 
         except Exception as e:
-            logger.error(f"准备审查上下文时出错: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"准备审查上下文时出错: {e}")
             raise

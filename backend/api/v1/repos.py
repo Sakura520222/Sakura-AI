@@ -33,7 +33,7 @@ async def list_repos(
     try:
         installations = await _get_installations_with_stats(db)
     except Exception as e:
-        logger.error(f"API 获取仓库列表失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"API 获取仓库列表失败: {e}")
         return error_response("获取仓库列表失败", status_code=500)
 
     return success_response(data=installations)

@@ -193,26 +193,42 @@ def clear_bootstrap_cache():
 # Setup Wizard Token 安全防护
 # =============================================================================
 
-# 进程级 Token（每次启动重新生成，不持久化）
+# 进程级 Token（每次启动重新生成；仅供本机管理员读取的私有交接文件）
 _setup_token: str | None = None
+_setup_token_file: Path | None = None
 
 # Cookie 名称
 _COOKIE_NAME = "setup_verified"
 
 
 def generate_setup_token() -> None:
-    """生成 Setup Token 并醒目打印到日志。
+    """Generate a token and hand it to the local operator outside log sinks.
 
     仅在 bootstrap 模式启动时调用。每次启动生成新 Token，
     旧 Token 在进程退出后自然失效。
     """
-    global _setup_token
-    _setup_token = secrets.token_urlsafe(32)
-    logger.info("=" * 60)
-    logger.info("Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：")
-    logger.info(f"  Token: {_setup_token}")
-    logger.info("请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。")
-    logger.info("=" * 60)
+    global _setup_token, _setup_token_file
+    token = secrets.token_urlsafe(32)
+    token_path = get_connection_config_path().parent / ".setup-token"
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp creates mode 0600 on POSIX. Atomic replace never follows an
+    # existing destination symlink. Windows inherits the private config ACL.
+    fd, temporary = tempfile.mkstemp(prefix=".setup-token-", dir=token_path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(token + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, token_path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    _setup_token = token
+    _setup_token_file = token_path
+    logger.info(
+        "Setup Wizard 已启动：请在本机读取 {}，或使用 start.sh 查看 Setup Token；"
+        "在 /setup/verify 输入。凭据不会写入日志。",
+        token_path,
+    )
 
 
 def get_setup_token() -> str | None:
@@ -229,8 +245,11 @@ def validate_setup_token(submitted: str) -> bool:
 
 def clear_setup_token() -> None:
     """清除内存中的 Token。Setup 完成后调用。"""
-    global _setup_token
+    global _setup_token, _setup_token_file
     _setup_token = None
+    if _setup_token_file is not None:
+        _setup_token_file.unlink(missing_ok=True)
+        _setup_token_file = None
 
 
 def _has_valid_setup_cookie(scope: dict) -> bool:

@@ -31,6 +31,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 _RESPONSES_STATUS_MAP: dict[str, StopReason] = {
     "completed": StopReason.END_TURN,
@@ -245,6 +246,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
     def _parse_responses_usage(raw: Any) -> UnifiedUsage:
         return usage_from_mapping(raw)
 
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -291,6 +293,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,

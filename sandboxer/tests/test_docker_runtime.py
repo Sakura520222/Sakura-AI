@@ -149,6 +149,11 @@ async def test_docker_lifecycle_uses_only_fixed_server_owned_argv(tmp_path: Path
         "rm",
     ]
     create = calls[0]
+    assert create[create.index("--log-driver") + 1] == "json-file"
+    assert {create[i + 1] for i, value in enumerate(create) if value == "--log-opt"} == {
+        "max-size=50m",
+        "max-file=3",
+    }
     assert "--network" in create and create[create.index("--network") + 1] == "none"
     assert "--read-only" in create
     assert create[create.index("--user") + 1] == "65532:65532"

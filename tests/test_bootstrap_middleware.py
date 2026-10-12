@@ -6,6 +6,7 @@
 
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from starlette.testclient import TestClient
@@ -175,3 +176,13 @@ def test_bootstrap_mode_setup_without_token_redirects_to_verify():
             assert resp.headers["location"] == "/setup/verify"
     finally:
         clear_setup_token()
+
+
+@pytest.fixture(autouse=True)
+def private_setup_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "SAKURA_CONNECTION_CONFIG_PATH", str(tmp_path / "connection.json")
+    )
+    monkeypatch.setattr("backend.core.bootstrap._setup_token_file", None)
+    yield
+    clear_setup_token()
