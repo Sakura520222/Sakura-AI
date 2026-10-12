@@ -398,7 +398,7 @@ class DaemonBackend:
             dir=directory, prefix=".updater-pid.", suffix=".tmp"
         )
         try:
-            with os.fdopen(fd, "w", encoding="ascii") as f:
+            with os.fdopen(fd, "w", encoding="ascii", newline="\n") as f:
                 f.write(f"{pid}\n")
                 f.flush()
                 os.fsync(f.fileno())

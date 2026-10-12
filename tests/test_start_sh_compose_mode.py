@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_support import posix_bash
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -54,7 +56,7 @@ updater_backend() {{
 {action}
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -109,7 +111,7 @@ updater_binary_is_safe() { printf 'UNEXPECTED_BINARY_CHECK\n'; return 0; }
 ensure_updater_running
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -140,7 +142,7 @@ printf 'PROD=%s\n' "$UPDATER_PROD_COMPOSE_FILE"
 printf 'ENV=%s\n' "$UPDATER_DEPLOYMENT_ENV_FILE"
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=caller,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -197,7 +199,7 @@ DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
 should_use_production_mode {requested_prod}
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -227,7 +229,7 @@ tail() { :; }
 cmd_status
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -271,7 +273,7 @@ sandbox_lifecycle_enabled() {{ return 1; }}
 {action}
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -300,7 +302,7 @@ ensure_updater_running() { printf 'ENSURED\n'; return 0; }
 cmd_status
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -330,7 +332,7 @@ compose_result="$(detect_compose)"
 printf 'RESULT=<%s>\n' "$compose_result"
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),

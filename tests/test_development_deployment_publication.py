@@ -135,10 +135,10 @@ def test_standalone_bootstrap_consumes_the_same_complete_manifest(monkeypatch, c
 
     monkeypatch.setattr(request, "urlopen", urlopen)
     monkeypatch.setattr(sys, "argv", ["bootstrap", "edge"])
-    shell = Path("start.sh").read_text()
+    shell = Path("start.sh").read_text(encoding="utf-8")
     source = shell.split("<<'PYMANIFEST'\n", 1)[1].split("\nPYMANIFEST", 1)[0]
     parser = tmp_path / "bootstrap_parser.py"
-    parser.write_text(source)
+    parser.write_text(source, encoding="utf-8")
     if mutation:
         with pytest.raises(SystemExit):
             runpy.run_path(str(parser), run_name="__main__")

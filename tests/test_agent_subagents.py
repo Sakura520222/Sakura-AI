@@ -797,10 +797,12 @@ def test_compaction_rows_are_neither_user_guidance_nor_projected_model_context(
 )
 @pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
 async def test_delegated_project_detection_cannot_read_linked_host_dependencies(
-    tmp_path, filename, content, link_type
+    tmp_path, filename, content, link_type, request
 ):
     import os
 
+    if link_type == "symlink":
+        request.getfixturevalue("symlink_support")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     secret = tmp_path / "host-secret"

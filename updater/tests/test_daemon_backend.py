@@ -506,6 +506,7 @@ def test_resolve_executable_uses_binary_when_executable(tmp_path, monkeypatch):
     assert identity == "sakura-ai-updater"
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_resolve_executable_rejects_symlink_even_when_target_is_executable(
     tmp_path, monkeypatch
 ):
@@ -768,6 +769,7 @@ def test_ensure_runtime_tmp_rejects_symlink_without_touching_canary(
     assert not any(path == os.path.abspath(runtime_tmp) for path, _ in chmod_calls)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX group/other directory mode bits")
 def test_ensure_runtime_tmp_rejects_shared_writable_target_without_chmod(
     tmp_path, monkeypatch
 ):
@@ -1357,6 +1359,7 @@ def test_ensure_run_dir_accepts_previously_managed_directory(tmp_path, monkeypat
     assert chmod_calls == []
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_ensure_run_dir_refuses_symlinked_entry(tmp_path, monkeypatch):
     """run_dir 路径上是 symlink → 拒绝（不跟随、不接管）。"""
     real_dir = tmp_path / "real"
@@ -1575,7 +1578,7 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     """
     extraction_dir = tmp_path / "_MEIparent"
     extraction_dir.mkdir()
-    injected_path = f"{extraction_dir}:/opt/host/lib"
+    injected_path = os.pathsep.join((str(extraction_dir), "/opt/host/lib"))
     monkeypatch.setenv("LD_LIBRARY_PATH", injected_path)
     monkeypatch.setenv("SAKURA_HOST_MARKER", "required")
     monkeypatch.setattr(daemon_mod.sys, "_MEIPASS", str(extraction_dir), raising=False)
@@ -1656,7 +1659,7 @@ def test_pid_file_path_derives_from_socket_directory(tmp_path):
     assert backend.pid_file_path == str(tmp_path / "run" / "updater.pid")
     assert (
         daemon_mod.pid_file_path("/run/sakura-ai/updater.sock")
-        == "/run/sakura-ai/updater.pid"
+        == os.path.join(os.path.abspath("/run/sakura-ai"), "updater.pid")
     )
 
 
@@ -1673,13 +1676,15 @@ def test_write_pid_file_content_mode_and_atomic_replace(tmp_path, monkeypatch):
     backend._write_pid_file(4242)
     pid_path = Path(backend.pid_file_path)
     assert pid_path.read_bytes() == b"4242\n"
-    assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
     geteuid = getattr(os, "geteuid", None)
     if geteuid is not None:  # Windows 无 geteuid，仅断言 mode
         assert pid_path.stat().st_uid == geteuid()
     assert calls and os.path.basename(calls[0][0]).startswith(".")
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_write_pid_file_replaces_preplanted_symlink(tmp_path):
     """run dir 是 0770 group-writable 且无 sticky：原子替换绝不跟随预置 symlink。"""
     backend = _make_backend(tmp_path)

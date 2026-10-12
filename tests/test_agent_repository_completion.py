@@ -186,6 +186,7 @@ async def test_prefix_selector_does_not_allow_shell_syntax(tmp_path, command):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_admin_size_contract_fresh_cache_and_nofollow(tmp_path):
     ctx, path = admin_context(tmp_path, content="A" * 70000)
     tool = UseSkillTool()
@@ -623,6 +624,7 @@ async def test_live_narrowing_survives_an_ordinary_tool_checkpoint(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_admin_fallback_and_attachments_reject_secret_indirection(tmp_path):
     ctx, _ = admin_context(tmp_path)
     secret = put(tmp_path, "admin/plain.txt", "SECRET")
@@ -648,6 +650,7 @@ def test_context_secret_directories_are_not_sources(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_file_symlink_cannot_bypass_target_scope_guidance(tmp_path):
     put(tmp_path, "backend/AGENTS.md", "backend-specific guidance")
     target = put(tmp_path, "backend/file.py", "original")

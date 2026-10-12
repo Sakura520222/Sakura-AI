@@ -119,7 +119,7 @@ class RepositoryContext:
     def relative(self, path: str | Path) -> PurePosixPath:
         raw = str(path).replace("\\", "/")
         candidate = PurePosixPath(raw)
-        if candidate.is_absolute():
+        if candidate.is_absolute() or Path(raw).is_absolute():
             try:
                 candidate = PurePosixPath(Path(raw).relative_to(self.root).as_posix())
             except ValueError as exc:
@@ -131,6 +131,12 @@ class RepositoryContext:
         return candidate
 
     def _open_dir(self, relative: PurePosixPath) -> int:
+        if os.name == "nt":
+            from backend.services.agent_team.windows_filesystem import (
+                open_workspace_directory,
+            )
+
+            return open_workspace_directory(self.root, Path(relative))
         descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             for part in relative.parts:
@@ -154,6 +160,15 @@ class RepositoryContext:
             for p in relative.parts
         ):
             raise RepositoryContextError("Secret context path rejected")
+        if os.name == "nt":
+            from backend.services.agent_team.windows_filesystem import (
+                open_workspace_file,
+            )
+
+            try:
+                return open_workspace_file(self.root, Path(relative))
+            except ValueError as exc:
+                raise RepositoryContextError("Unsafe context file") from exc
         directory = self._open_dir(relative.parent)
         try:
             descriptor = os.open(
@@ -191,7 +206,7 @@ class RepositoryContext:
                 raise RepositoryContextError(
                     "DB Skill exceeds its installation size contract"
                 )
-            return data.decode("utf-8")
+            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         except (OSError, UnicodeError) as exc:
             raise RepositoryContextError("Unsafe or unreadable context file") from exc
 
@@ -203,6 +218,12 @@ class RepositoryContext:
         except OSError as exc:
             raise RepositoryContextError("Unsafe context directory") from exc
         try:
+            if os.name == "nt":
+                from backend.services.agent_team.windows_filesystem import (
+                    directory_entries,
+                )
+
+                return directory_entries(descriptor)
             result = []
             with os.scandir(descriptor) as entries:
                 for entry in entries:
@@ -240,7 +261,7 @@ class RepositoryContext:
                 # Missing optional files are normal; all other rejection is visible.
                 with os.fdopen(self._open_file(PurePosixPath(path)), "rb") as stream:
                     data = stream.read()
-                text = data.decode("utf-8")
+                text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
             except FileNotFoundError:
                 continue
             except OSError, UnicodeError, RepositoryContextError:
@@ -261,10 +282,15 @@ class RepositoryContext:
             try:
                 descriptor = self._open_dir(path.parent)
                 try:
-                    info = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
+                    if os.name == "nt":
+                        info = os.stat(self.root / str(path), follow_symlinks=False)
+                    else:
+                        info = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
                 finally:
                     os.close(descriptor)
-                if stat.S_ISLNK(info.st_mode) or not (
+                if stat.S_ISLNK(info.st_mode) or (
+                    getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ) or not (
                     stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)
                 ):
                     raise RepositoryContextError("Unsafe target file")

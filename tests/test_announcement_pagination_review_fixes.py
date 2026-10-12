@@ -166,9 +166,9 @@ async def test_archived_current_round_is_returned_with_safe_history_body(sqlite_
 
 def test_announcement_pages_and_guide_expose_the_new_contract():
     root = Path(__file__).resolve().parents[1]
-    user_page = (root / "backend/webui/templates/announcements.html").read_text()
-    admin_page = (root / "backend/webui/templates/announcements_admin.html").read_text()
-    guide = (root / "docs/TELEGRAM_SETUP.md").read_text()
+    user_page = (root / "backend/webui/templates/announcements.html").read_text(encoding="utf-8")
+    admin_page = (root / "backend/webui/templates/announcements_admin.html").read_text(encoding="utf-8")
+    guide = (root / "docs/TELEGRAM_SETUP.md").read_text(encoding="utf-8")
 
     assert "page={{ page + 1 }}" in user_page
     assert "page={{ page + 1 }}" in admin_page

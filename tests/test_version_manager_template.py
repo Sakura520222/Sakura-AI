@@ -147,7 +147,7 @@ def test_polling_retries_bounded_restart_errors_and_recovers_stale_jobs():
 
 
 def test_registry_catalog_keeps_web_current_target_selectable_for_reconcile():
-    text = (Path(__file__).resolve().parents[1] / "backend/webui/templates/version_manager.html").read_text()
+    text = (Path(__file__).resolve().parents[1] / "backend/webui/templates/version_manager.html").read_text(encoding="utf-8")
     assert "action.disabled = !UPDATE_SUPPORTED ||" in text
     assert "action.disabled = !UPDATE_SUPPORTED || isCurrent" not in text
     assert "if (image.selectable) action.addEventListener" in text
