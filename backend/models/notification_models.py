@@ -10,7 +10,7 @@ from sqlalchemy import (
 )
 
 from backend.models.database import Base, utc_now
-from backend.models.time_types import UTCDateTime
+from backend.models.time_types import UTCDateTime, UTCMicrosecondDateTime
 
 
 class NotificationEvent(Base):
@@ -70,7 +70,7 @@ class NotificationProviderBudget(Base):
     __tablename__ = "notification_provider_budgets"
 
     channel = Column(String(50), primary_key=True)
-    next_available_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    next_available_at = Column(UTCMicrosecondDateTime, nullable=False, default=utc_now)
 
 
 class NotificationAudit(Base):
