@@ -5,14 +5,20 @@
 ### 1. 规则 (rules/)
 - **review_hard_rules.md** - 审查硬规则（Major/Critical）
 - **review_patterns.md** - 审查中发现的重要模式
+- **async_concurrency_ownership_rules.md** - 异步并发、所有权状态机与真值源规则
+- **github_workflow_security_rules.md** - GitHub 工作流安全、Dependabot 补锁与凭据防线
+- **db_locking_and_financial_rules.md** - 数据库探测锁、财务边界与双栅栏派单规则
+- **ai_protocol_and_parsing_rules.md** - AI 结构化输出解析、协议适配与容错防线
 
 ### 2. 文档 (docs/)
 - **architecture_decisions.md** - 架构设计与关键决策
+- **long_term_memory_and_harness_architecture.md** - 长期记忆重构、Harness 2.0 与 IDE 双向协作架构
 
 ### 3. 计划 (plans/)
 - **experience_lessons.md** - 经验教训与常见问题模式
 - **review_checklist.md** - 审查检查清单
 - **common_issue_patterns.md** - 常见问题模式
+- **dependency_concurrency_and_cancellation_lessons.md** - 自动化依赖、并发状态机与取消观测性经验教训
 
 ## 知识分类说明
 
