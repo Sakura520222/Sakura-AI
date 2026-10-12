@@ -45,6 +45,7 @@ try:
         page.get_by_label("Minimum severity").select_option("info")
         page.get_by_role("button", name="Add", exact=True).last.click()
         expect(page.get_by_text("review.completed · alice/Sakura-AI", exact=False)).to_be_visible()
+        page.evaluate("window.scrollTo(0, 0)")
         page.screenshot(path=str(output / "settings-en.png"), full_page=True)
         page.goto("http://127.0.0.1:8646/announcements?lang=en")
         expect(page.get_by_text("Sakura-AI PR #646 review completed", exact=True)).to_be_visible()
@@ -55,6 +56,7 @@ try:
         page.screenshot(path=str(output / "history-en.png"), full_page=True)
         page.goto("http://127.0.0.1:8646/settings/")
         expect(page.get_by_label("端点名称").first).to_have_value("My verified email")
+        page.evaluate("window.scrollTo(0, 0)")
         page.screenshot(path=str(output / "settings-zh.png"), full_page=True)
         assert not errors, errors
         browser.close()

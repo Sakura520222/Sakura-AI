@@ -104,7 +104,7 @@ async def update_endpoint(endpoint_id: int, body: EndpointUpdate, user=Depends(r
     row.name, row.enabled = body.name, body.enabled
     if body.signing_secret is not None:
         secret = body.signing_secret.get_secret_value()
-        if row.provider != "webhook" or not 32 <= len(secret) <= 1024:
+        if str(row.provider).lower() != "webhook" or not 32 <= len(secret) <= 1024:
             raise HTTPException(400, "Invalid endpoint credential")
         row.secret_encrypted = encrypt_secret(secret)
         row.verified = False

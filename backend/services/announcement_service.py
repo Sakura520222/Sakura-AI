@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from loguru import logger
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import String, and_, case, cast, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1252,7 +1252,28 @@ def _announcement_filters(
             .exists()
         )
         filters.append(~read_exists)
+        filters.append(_announcement_web_preference(user_id))
     return filters
+
+
+def _announcement_web_preference(user_id: int):
+    """Keep toast/unread queries consistent with the event's WebUI routing.
+
+    The full announcement archive stays readable; preferences only affect
+    unread notifications. Apply this in SQL before pagination/counting.
+    """
+    from backend.models.notification_models import NotificationSubscription as Rule
+
+    relevant = [Rule.user_id == user_id, Rule.event_type.in_(["*", "announcement.*", "announcement.published"])]
+    any_rule = select(Rule.id).where(*relevant).exists()
+    matching = select(Rule.id).where(*relevant,
+        Rule.enabled.is_(True), Rule.endpoint_id.is_(None),
+        or_(Rule.repo_name.is_(None), Rule.repo_name == ""),
+        or_(Rule.resource_type.is_(None), Rule.resource_type == "announcement"),
+        or_(Rule.resource_id.is_(None), Rule.resource_id == cast(Announcement.id, String)),
+        or_(Rule.min_severity == "info", and_(Rule.min_severity == "warning", Announcement.announcement_type == "important")),
+    ).exists()
+    return or_(~any_rule, matching)
 
 
 def _announcement_ordering() -> tuple[Any, ...]:
@@ -1361,6 +1382,7 @@ async def unread_count(db: AsyncSession, user_id: int) -> int:
         select(func.count(Announcement.id)).where(
             Announcement.status == AnnouncementStatus.PUBLISHED.value,
             ~read_exists,
+            _announcement_web_preference(user_id),
         )
     )
     return int(result.scalar() or 0)
