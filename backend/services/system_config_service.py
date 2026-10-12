@@ -116,6 +116,15 @@ SYSTEM_CONFIG_GROUPS = [
             "notification_retry_initial_delay_seconds",
             "notification_retry_backoff_factor",
             "notification_rate_limit_seconds",
+            "notification_poll_seconds",
+            "notification_batch_size",
+            "notification_send_timeout_seconds",
+            "notification_webhook_enabled",
+            "notification_webhook_timeout_seconds",
+            "notification_webhook_response_max_bytes",
+            "notification_webhook_allowed_hosts",
+            "notification_email_verification_ttl_seconds",
+            "notification_verification_max_attempts",
         ],
     },
     {
@@ -438,6 +447,7 @@ class SystemConfigService:
                         ),
                         "sensitive": is_sensitive,
                         "requires_restart": key in RESTART_REQUIRED_KEYS,
+                        "field_type": _get_field_type(key).__name__,
                     }
                 )
             groups.append({"id": group_id, "fields": items})

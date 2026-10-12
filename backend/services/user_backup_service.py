@@ -534,6 +534,9 @@ async def export_user_backup(db: AsyncSession) -> dict[str, Any]:
                     "verified": bool(row.verified),
                     "enabled": bool(row.enabled),
                     "metadata": _metadata_from_row(row),
+                    "name": getattr(row, "name", None),
+                    "config_version": getattr(row, "config_version", 1),
+                    "secret_encrypted": getattr(row, "secret_encrypted", None),
                 }
                 for row in endpoints_by_user.get(user.id, [])
             ],
@@ -689,11 +692,31 @@ def _validate_notification_endpoints(raw: Any, index: int) -> list[dict[str, Any
         metadata = item.get("metadata")
         if metadata is not None and not isinstance(metadata, (dict, list, str, int, float, bool)):
             raise UserBackupError(f"{label} metadata 格式无效")
+        name = item.get("name")
+        if name is not None:
+            _validate_string(name, f"{label} name", 100)
+        version = item.get("config_version", 1)
+        if type(version) is not int or version != 1:
+            raise UserBackupError(f"{label}配置版本无效")
+        encrypted = item.get("secret_encrypted")
+        if encrypted is not None:
+            _validate_string(encrypted, f"{label} encrypted credential", 8192)
+        if provider == "webhook":
+            from backend.services.notification_webhook import validate_webhook_url
+            try:
+                address = validate_webhook_url(address)
+            except Exception as exc:
+                raise UserBackupError(f"{label} Webhook 配置无效") from exc
+            # Imported URLs/credentials must prove ownership in this deployment.
+            verified = False
         endpoints.append(
             {
                 "provider": provider,
                 "address": address.lower() if provider == "email" else address,
                 "verified": verified,
+                "name": name,
+                "config_version": version,
+                "secret_encrypted": encrypted,
                 # Normalize legacy unsafe combinations as early as parsing;
                 # restore applies the same rule again for programmatic callers
                 # that bypass this parser.
@@ -1843,6 +1866,9 @@ async def restore_user_backup(
                                 verified=bool(endpoint.get("verified", False)),
                                 enabled=restored_enabled,
                                 metadata_json=metadata_value,
+                                name=endpoint.get("name"),
+                                config_version=endpoint.get("config_version", 1),
+                                secret_encrypted=endpoint.get("secret_encrypted"),
                             )
                         )
                     elif existing_endpoint.user_id != user_id:
@@ -1853,6 +1879,11 @@ async def restore_user_backup(
                         existing_endpoint.verified = bool(endpoint.get("verified", False))
                         existing_endpoint.enabled = restored_enabled
                         existing_endpoint.metadata_json = metadata_value
+                        if endpoint.get("name") is not None:
+                            existing_endpoint.name = endpoint["name"]
+                        existing_endpoint.config_version = endpoint.get("config_version", 1)
+                        if endpoint.get("secret_encrypted") is not None:
+                            existing_endpoint.secret_encrypted = endpoint["secret_encrypted"]
 
         await db.commit()
     except UserBackupError:

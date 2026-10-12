@@ -1840,6 +1840,24 @@ system_config:
   key_notification_retry_backoff_factor_desc: "Multiplier applied to the delay before each retry."
   key_notification_rate_limit_seconds: "Notification Rate Limit (seconds)"
   key_notification_rate_limit_seconds_desc: "Minimum interval before each delivery attempt."
+  key_notification_poll_seconds: Notification recovery interval (seconds)
+  key_notification_poll_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_batch_size: Recovery batch size
+  key_notification_batch_size_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_send_timeout_seconds: Send timeout (seconds)
+  key_notification_send_timeout_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_enabled: Enable Webhooks
+  key_notification_webhook_enabled_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_timeout_seconds: Webhook timeout (seconds)
+  key_notification_webhook_timeout_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_response_max_bytes: Webhook maximum response bytes
+  key_notification_webhook_response_max_bytes_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_allowed_hosts: Allowed Webhook hosts
+  key_notification_webhook_allowed_hosts_desc: Comma-separated hosts; empty permits public HTTPS hosts. Private addresses are always
+  key_notification_email_verification_ttl_seconds: Email verification lifetime (seconds)
+  key_notification_email_verification_ttl_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_verification_max_attempts: Maximum endpoint verification attempts
+  key_notification_verification_max_attempts_desc: Managed by system configuration; changes apply to new notification operations.
   key_app_domain: "App Domain"
   key_app_domain_desc: "Deployment domain or IP for generating Webhook URL and OAuth callbacks"
   key_app_port: "App Port"
@@ -2634,3 +2652,50 @@ agent_plugins:
   invalid: "Invalid plugin configuration or profile. Nothing was saved."
   saved: "Plugin configuration saved."
   use_plugin_page: "Use Agent Plugins to update plugin configuration and permission profiles."
+
+notification_center:
+  name: Endpoint name
+  provider: Provider
+  address: Email or HTTPS URL
+  signing_secret: Webhook signing secret (at least 32 characters)
+  verified: Verified
+  unverified: Unverified
+  test: Send test
+  verify: Verify endpoint
+  verification_code: Email verification code
+  unbind: Unbind
+  add_endpoint: Add notification endpoint
+  preferences: Notification preferences
+  event: Event type
+  all_events: All events
+  target: Target endpoint
+  web_inbox: WebUI inbox
+  repo_scope: Repository scope (owner/repo, optional)
+  resource_type: Resource type (optional)
+  resource_id: Resource ID (optional)
+  severity: Minimum severity
+  info: Info
+  warning: Warning
+  error: Error
+  critical: Critical
+  operation_failed: Operation failed. Check endpoint eligibility, configuration and
+    delivery diagnostics.
+  saved: Saved
+  test_queued: Test queued. Check delivery diagnostics for the result.
+  verification_sent: Verification processed; for email, enter the received code and
+    verify again.
+  verification_help: Email uses an ownership code; Webhooks must echo the signed challenge.
+    Use the private chat binding below for Telegram.
+  preferences_help: Business events default to the inbox; external channels require
+    opt-in. Preferences do not grant resource access. Security and refunds use verified
+    private endpoints.
+  history: Business notification history
+  empty: No business notifications
+  details: View details
+  mark_read: Mark read
+  diagnostics: Notification delivery diagnostics
+  retry: Retry delivery
+  audit: Notification action audit
+  delivery_status: Check delivery status
+  awaiting_dispatch: Waiting for dispatch
+  replace_secret: Replace signing secret (blank keeps existing)

@@ -550,7 +550,12 @@ async def _upsert_email_endpoint(
     # older addresses are retired as before.
     if incoming_verified:
         for old_endpoint in other_results.scalars().all():
-            old_endpoint.enabled = False
+            try:
+                user_managed = json.loads(old_endpoint.metadata_json or "{}").get("source") == "user"
+            except (ValueError, AttributeError):
+                user_managed = False
+            if not user_managed:
+                old_endpoint.enabled = False
 
     # Keep legacy mirror fields available for old UI and services.  The
     # endpoint table remains authoritative for notification delivery.

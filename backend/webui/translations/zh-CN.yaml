@@ -1841,6 +1841,24 @@ system_config:
   key_notification_retry_backoff_factor_desc: "每次重试等待时间的增长倍数。"
   key_notification_rate_limit_seconds: "通知限流间隔（秒）"
   key_notification_rate_limit_seconds_desc: "同一投递尝试前的最小间隔。"
+  key_notification_poll_seconds: 通知恢复间隔（秒）
+  key_notification_poll_seconds_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_batch_size: 恢复批次大小
+  key_notification_batch_size_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_send_timeout_seconds: 发送超时（秒）
+  key_notification_send_timeout_seconds_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_webhook_enabled: 启用 Webhook
+  key_notification_webhook_enabled_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_webhook_timeout_seconds: Webhook 超时（秒）
+  key_notification_webhook_timeout_seconds_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_webhook_response_max_bytes: Webhook 最大响应字节数
+  key_notification_webhook_response_max_bytes_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_webhook_allowed_hosts: Webhook 允许域名
+  key_notification_webhook_allowed_hosts_desc: 逗号分隔的域名；空值允许公共 HTTPS 域名，私有地址始终禁止。
+  key_notification_email_verification_ttl_seconds: 邮件验证有效期（秒）
+  key_notification_email_verification_ttl_seconds_desc: 由系统配置统一管理，修改后对新的通知操作生效。
+  key_notification_verification_max_attempts: 端点验证最大尝试次数
+  key_notification_verification_max_attempts_desc: 由系统配置统一管理，修改后对新的通知操作生效。
   key_app_domain: "应用域名"
   key_app_domain_desc: "部署域名或 IP，用于生成 Webhook URL 和 OAuth 回调"
   key_app_port: "应用端口"
@@ -2635,3 +2653,45 @@ agent_plugins:
   invalid: "插件配置或权限配置无效，未保存任何修改。"
   saved: "插件配置已保存。"
   use_plugin_page: "请通过 Agent 插件页面修改插件和运行时权限配置。"
+
+notification_center:
+  name: 端点名称
+  provider: 通知渠道
+  address: 邮箱或 HTTPS 地址
+  signing_secret: Webhook 签名密钥（至少 32 字符）
+  verified: 已验证
+  unverified: 待验证
+  test: 测试发送
+  verify: 验证端点
+  verification_code: 邮件验证码
+  unbind: 解绑
+  add_endpoint: 添加通知端点
+  preferences: 通知偏好
+  event: 事件类型
+  all_events: 全部事件
+  target: 目标端点
+  web_inbox: 站内通知
+  repo_scope: 仓库范围（owner/repo，可选）
+  resource_type: 资源类型（可选）
+  resource_id: 资源 ID（可选）
+  severity: 最低严重程度
+  info: 信息
+  warning: 警告
+  error: 错误
+  critical: 严重
+  operation_failed: 操作失败，请检查端点资格、配置和发送诊断后重试。
+  saved: 已保存
+  test_queued: 测试已排队，请在发送诊断中查看结果。
+  verification_sent: 验证请求已处理；邮件端点请输入收到的验证码后再次验证。
+  verification_help: 邮件使用验证码验证归属；Webhook 需返回签名请求中的 challenge。Telegram 使用下方私聊绑定流程。
+  preferences_help: 业务事件默认保存在站内，外部渠道需显式订阅。配置偏好不会授予资源权限。个人安全和退款通知仅允许已验证的私人端点。
+  history: 业务通知历史
+  empty: 暂无业务通知
+  details: 查看详情
+  mark_read: 标记已读
+  diagnostics: 通知投递诊断
+  retry: 受控重试
+  audit: 通知操作审计
+  delivery_status: 查看发送状态
+  awaiting_dispatch: 等待后台调度
+  replace_secret: 更换签名密钥（留空保持不变）
