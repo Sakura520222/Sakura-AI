@@ -681,6 +681,7 @@ async def _ensure_delivery_rows(
             resource_id=announcement_id, run_key=str(publication_version or 1),
             title=announcement.title, content=announcement.content, audience="all",
             severity="warning" if announcement.announcement_type == "important" else "info",
+            payload={"announcement_type": announcement.announcement_type},
             detail_url=f"/announcements/{announcement_id}",
         )
         return
