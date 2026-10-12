@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
-from backend.core.time_service import get_time_service, now_utc
+from backend.core.time_service import format_rfc3339, get_time_service, now_utc
 from backend.models.telegram_models import (
     QuotaUsageLog,
     RepoSubscription,
@@ -49,9 +49,16 @@ class TelegramService:
             return
         from backend.services.notification_events import emit_event
 
+        prefix = {"review": "", "issue": "issue_", "agent": "agent_"}[kind]
+        period = next((name for name in ("daily", "weekly", "monthly") if
+                       getattr(user, f"{prefix}{name}_used") >= getattr(user, f"{prefix}{name}_quota")), "daily")
+        reset = getattr(user, f"last_reset_{prefix}{period}")
+        reset_key = format_rfc3339(reset) if reset else get_time_service().to_app_timezone(now_utc()).date().isoformat()
+        limit = getattr(user, f"{prefix}{period}_quota")
+
         await emit_event(
             self.session, event_type="quota.exceeded", resource_type="user", resource_id=user.id,
-            run_key=f"{kind}:{now_utc().date().isoformat()}", title="Quota exhausted",
+            run_key=f"{kind}:{period}:{reset_key}:{limit}", title="Quota exhausted",
             content=f"Your {kind} quota is exhausted. Review quota settings.",
             recipient_ids=[user.id], severity="warning", sensitive=True, detail_url="/billing",
         )
