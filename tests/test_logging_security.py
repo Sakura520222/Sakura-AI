@@ -94,6 +94,27 @@ def test_structured_redaction_is_recursive_and_does_not_mutate():
     assert sanitize(recursive) == {"nested": "<recursive>"}
 
 
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_escaped_nested_json_credentials_are_redacted(depth):
+    payload = {"api_key": "nested-opaque-secret", "status": 429}
+    for _ in range(depth):
+        payload = {"body": json.dumps(payload)}
+    message = "provider error " + json.dumps(payload)
+    result = sanitize_text(message)
+    assert "nested-opaque-secret" not in result
+    assert "429" in result
+
+
+@pytest.mark.parametrize(
+    "value", ['b"opaque secret with spaces"', '"opaque \\"secret\\" with spaces"']
+)
+def test_quoted_secret_values_are_consumed_completely(value):
+    result = sanitize_text("api_key=" + value + " status=429")
+    assert "opaque" not in result
+    assert "with spaces" not in result
+    assert "status=429" in result
+
+
 def test_exception_chain_notes_group_and_bound_fields_are_sanitized(secured_logs):
     console, path, records = secured_logs
     credential = "opaque-provider-value"
@@ -238,7 +259,9 @@ def test_environment_defaults_respect_explicit_log_level(
     assert "warning-visible" in output.getvalue()
 
 
-def test_standard_logging_stacklevel_preserves_the_real_caller(secured_logs, monkeypatch):
+def test_standard_logging_stacklevel_preserves_the_real_caller(
+    secured_logs, monkeypatch
+):
     import inspect
 
     _, _, records = secured_logs

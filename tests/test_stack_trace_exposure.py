@@ -27,8 +27,11 @@ class _FakeUserConfigDb:
 
 
 @pytest.fixture
-def loguru_capture():
+def loguru_capture(monkeypatch):
     """捕获 loguru 日志到 StringIO，供断言 traceback 与消息内容。"""
+    from backend.core.logging_bridge import _patch_record
+
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
     buf = io.StringIO()
     handler_id = logger.add(
         buf,
