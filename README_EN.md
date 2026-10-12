@@ -85,6 +85,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis** — Auto-classification, priority, label recommendation, duplicate detection, linked PR discovery
+- **Adaptive Analysis and Concise Comments** — Code investigation scales with validity, information, impact and complexity. Ads/spam, incomplete reports and simple questions receive brief handling; complex or high-risk issues retain evidence-based investigation. Chinese and English default comments lead with conclusions and recommended actions, fold metadata and hide empty suggestions. Existing custom templates remain supported; only `{summary}` and `{feasibility}` are required, and other supported variables may be omitted.
 - **Image Multimodal Analysis** — Screenshots in Issue bodies and comments are downloaded safely with GitHub credentials; images over 5 MiB are compressed toward 500 KiB before being fed to the AI as multimodal input (requires the per-model "supports image input" capability and the unified config toggle)
 - **Strict Issue Output Contract** — `<SAKURA_ISSUE_ANALYSIS>` envelope + multi-round repair + safe degradation
 - **Auto-labeling** — High-confidence labels applied automatically
