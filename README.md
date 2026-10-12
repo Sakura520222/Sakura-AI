@@ -200,7 +200,7 @@ PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核�
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
-- **可选通知渠道** — Telegram 作为统一公告投递的可选 Provider，与 Email/SMTP 可独立启停；个人设置支持一次性绑定/解绑 Telegram。公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）。PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除；本次变更未实现替代的业务事件通知层
+- **统一通知中心** — PR 审查、Issue 分析、扫描、Agent、公告、安全、配额、支付及退款通过持久化业务事件统一投递至 WebUI、Email、Telegram 和通用 Webhook。个人设置支持端点验证、命名、启停、测试及按事件、资源和严重程度配置偏好；公告中心整合站内历史、未读状态及管理员诊断。外部业务通知需要显式订阅，敏感账户事件仅允许已验证的私人目标。详见[通知中心架构与迁移](docs/NOTIFICATION_CENTER.md)。
 - **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
 - **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
 
