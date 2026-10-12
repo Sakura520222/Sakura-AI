@@ -398,3 +398,29 @@ async def test_permanent_credentials_fail_once_and_rate_limit_is_durable(event_d
         assert row.error_category == "credential"
         assert row.attempts == 1
         assert row.next_retry_at is None
+
+
+@pytest.mark.asyncio
+async def test_endpoint_rate_limit_does_not_pause_other_destinations(event_db):
+    engine, _ = event_db
+    class Limited(Provider):
+        async def send(self, *, endpoint, **kwargs):
+            if endpoint.id == 1:
+                raise notification_service.NotificationProviderRetryAfter("Limited target", 60, scope="endpoint")
+            await super().send(endpoint=endpoint, **kwargs)
+    provider = Limited()
+    dispatcher = service(provider)
+    async with AsyncDB(engine) as db:
+        item = await make_event(db)
+        await db.commit()
+        await dispatcher.materialize_event(db, item.id)
+        ids = (await db.execute(select(NotificationDelivery.id).where(NotificationDelivery.endpoint_id.is_not(None)))).scalars().all()
+    for row_id in ids:
+        async with AsyncDB(engine) as db:
+            await dispatcher.deliver_event_row(db, row_id)
+    assert provider.sent == [2]
+    with Session(engine) as db:
+        limited = db.query(NotificationDelivery).filter_by(endpoint_id=1).one()
+        assert limited.status == "pending"
+        assert limited.error_category == "rate_limit"
+        assert db.query(NotificationDelivery).filter_by(endpoint_id=2).one().status == "sent"

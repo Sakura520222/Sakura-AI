@@ -201,6 +201,9 @@ async def test_registered_webhook_flows_from_event_to_real_tls_receiver(tls_rece
     await dispatcher.recover_events_once()
     assert len(tls_receiver) == 1
     assert tls_receiver[0][2] == event_id
+    assert tls_receiver[0][1]["resource"] == {"type": "review", "id": "100", "repository": "alice/repo"}
+    assert tls_receiver[0][1]["occurred_at"].endswith("Z")
+    assert tls_receiver[0][1]["run_key"] == "1"
     with Session(engine) as db:
         rows = db.query(NotificationDelivery).all()
         assert {row.channel for row in rows} == {"web", "webhook"}
