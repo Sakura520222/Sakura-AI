@@ -1740,4 +1740,3 @@ __all__ = [
     "notification_registry",
     "notification_service",
 ]
-
