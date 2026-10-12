@@ -42,9 +42,10 @@ def _due(model, now):
 def _private_endpoint(endpoint):
     if not endpoint.verified:
         return False
-    if endpoint.provider == "email":
+    channel = str(endpoint.provider).lower()
+    if channel == "email":
         return True
-    if endpoint.provider == "telegram":
+    if channel == "telegram":
         return endpoint.address.isdecimal() and int(endpoint.address) > 0
     # A URL challenge proves control of a URL, not a private person's inbox.
     return False
@@ -97,12 +98,13 @@ class EventDeliveryMixin:
                     {"event_id": event_id, "user_id": user_id, "created_at": now}, ["event_id", "user_id"])
                 routed.append(("web", None, "web"))
             for endpoint in endpoints:
-                if self.registry.get(endpoint.provider) is None or endpoint.provider == "web":
+                channel = str(endpoint.provider).lower()
+                if self.registry.get(channel) is None or channel == "web":
                     continue
                 if not endpoint.verified or (is_sensitive_event(event) and not _private_endpoint(endpoint)):
                     continue
                 if _routed(event, user_id, endpoint, rules):
-                    routed.append((endpoint.provider, endpoint.id, f"endpoint:{endpoint.id}"))
+                    routed.append((channel, endpoint.id, f"endpoint:{endpoint.id}"))
             for channel, endpoint_id, key in routed:
                 await insert_once(db, NotificationDelivery, {
                     "event_id": event_id, "user_id": user_id, "endpoint_id": endpoint_id,
@@ -127,7 +129,7 @@ class EventDeliveryMixin:
         if delivery.channel != "web":
             # A missing/deleted target is never replaced with another address.
             endpoint = await db.get(NotificationEndpoint, delivery.endpoint_id, populate_existing=True) if delivery.endpoint_id else None
-            if not endpoint or endpoint.user_id != user.id or endpoint.provider != delivery.channel:
+            if not endpoint or endpoint.user_id != user.id or str(endpoint.provider).lower() != str(delivery.channel).lower():
                 return False, None
             if not endpoint.enabled or not endpoint.verified:
                 return False, None
@@ -156,6 +158,7 @@ class EventDeliveryMixin:
     async def _reserve_provider_start(self, db, channel):
         """Atomic deployment-wide start budget. No in-memory lock is required."""
         now = now_utc()
+        channel = str(channel).lower()
         interval = float(get_settings().notification_rate_limit_seconds)
         await insert_once(db, NotificationProviderBudget,
                           {"channel": channel, "next_available_at": now - timedelta(seconds=1)}, ["channel"])

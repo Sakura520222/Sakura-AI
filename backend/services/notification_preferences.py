@@ -26,7 +26,7 @@ from backend.services.secret_crypto_service import encrypt_secret
 
 
 def endpoint_view(endpoint):
-    return {"id": endpoint.id, "provider": endpoint.provider, "name": endpoint.name or endpoint.provider,
+    return {"id": endpoint.id, "provider": str(endpoint.provider).lower(), "name": endpoint.name or endpoint.provider,
             "address": urlsplit(endpoint.address).hostname if endpoint.provider == "webhook" else endpoint.address,
             "enabled": endpoint.enabled, "verified": endpoint.verified,
             "credential_configured": bool(endpoint.secret_encrypted), "config_version": endpoint.config_version}
@@ -65,9 +65,10 @@ async def create_endpoint(db, user_id, *, provider, address, name, signing_secre
 
 async def verify_endpoint(db, user_id, endpoint_id, *, code=""):
     endpoint = await owned_endpoint(db, user_id, endpoint_id)
+    channel = str(endpoint.provider).lower()
     if not endpoint.enabled:
         raise ValueError("Enable endpoint before verification")
-    if endpoint.provider == "email" and code:
+    if channel == "email" and code:
         digest = endpoint.verification_token_hash
         won = await db.execute(update(NotificationEndpoint).where(
             NotificationEndpoint.id == endpoint_id, NotificationEndpoint.user_id == user_id,
@@ -81,12 +82,12 @@ async def verify_endpoint(db, user_id, endpoint_id, *, code=""):
         endpoint.verified = True
         endpoint.verification_token_hash = None
         endpoint.verification_expires_at = None
-    elif endpoint.provider in {"email", "webhook"}:
-        available = await notification_service._reserve_provider_start(db, endpoint.provider)
+    elif channel in {"email", "webhook"}:
+        available = await notification_service._reserve_provider_start(db, channel)
         if available:
             raise ValueError("Provider is rate limited; retry later")
-        provider = notification_service.registry.get(endpoint.provider)
-        if endpoint.provider == "webhook":
+        provider = notification_service.registry.get(channel)
+        if channel == "webhook":
             await provider.verify_endpoint(endpoint)
             endpoint.verified = True
         else:

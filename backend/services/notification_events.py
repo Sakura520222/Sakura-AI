@@ -159,9 +159,7 @@ async def resource_allowed(db, user, event):
 async def candidates(db, event):
     """Map legacy subscriptions via internal user IDs, preserving opt-in."""
     ids = set(json.loads(event.recipients_json))
-    rules = (await db.execute(select(NotificationSubscription).where(
-        NotificationSubscription.enabled.is_(True)
-    ))).scalars().all()
+    rules = (await db.execute(select(NotificationSubscription))).scalars().all()
     ids.update(rule.user_id for rule in rules if rule_matches(rule, event))
     if event.repo_name:
         owners = await db.execute(select(TelegramUser.id).where(
