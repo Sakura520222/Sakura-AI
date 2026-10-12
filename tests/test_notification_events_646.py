@@ -235,6 +235,29 @@ async def test_subscriber_cannot_gain_repository_permission(event_db):
 
 
 @pytest.mark.asyncio
+async def test_disabled_rules_suppress_inbox_and_announcement_prompts(event_db):
+    from backend.models.announcement_models import Announcement
+    from backend.services.announcement_service import unread_count
+
+    engine, _ = event_db
+    with Session(engine) as db:
+        db.query(NotificationSubscription).delete()
+        db.add_all([NotificationSubscription(user_id=1, event_type="review.*", enabled=False),
+                    NotificationSubscription(user_id=1, event_type="announcement.*", enabled=False)])
+        db.add(Announcement(id=1, title="Published", content="Body", status="published", publication_version=1))
+        db.commit()
+    async with AsyncDB(engine) as db:
+        item = await make_event(db)
+        await db.commit()
+        await service(Provider()).materialize_event(db, item.id)
+        assert await unread_count(db, 1) == 0
+        assert await unread_count(db, 2) == 1  # default compatibility recipient
+    with Session(engine) as db:
+        assert db.query(UserNotification).count() == 0
+        assert db.query(NotificationDelivery).count() == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["review", "issue", "scan", "agent"])
 async def test_business_outbox_shares_commit_and_rollback(event_db, kind):
     from backend.models.agent_team_models import AgentTeamTask
