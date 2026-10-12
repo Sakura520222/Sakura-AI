@@ -44,3 +44,6 @@ def test_delivery_schema_compiles_for_production_dialects():
         assert "endpoint_key" in sql
         assert "notification_events" in sql
         assert "announcement_id INTEGER NOT NULL" not in sql
+    from backend.models.notification_models import NotificationProviderBudget
+
+    assert "DATETIME(6)" in str(CreateTable(NotificationProviderBudget.__table__).compile(dialect=mysql.dialect()))
