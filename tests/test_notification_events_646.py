@@ -123,6 +123,23 @@ def service(provider):
 
 
 @pytest.mark.asyncio
+async def test_provider_message_preserves_announcement_type_and_business_details(monkeypatch):
+    from backend.services.notification_events import NotificationMessage
+
+    received = []
+    class Capture(notification_service.EmailNotificationProvider):
+        async def send(self, **kwargs):
+            received.append(kwargs)
+    monkeypatch.setattr(notification_service, "get_settings", lambda: SimpleNamespace(sanitized_app_domain="app.example.org"))
+    provider = Capture()
+    await provider.send_message(endpoint=None, message=NotificationMessage("id", "announcement.published", "Release", "Body", "info", payload={"announcement_type": "release"}))
+    assert received[0]["announcement_type"] == "release"
+    await provider.send_message(endpoint=None, message=NotificationMessage("id2", "review.completed", "Review", "Done", "info", detail_url="/pr/100"))
+    assert "https://app.example.org/pr/100" in received[1]["content"]
+    assert notification_service._notification_type_label("review.completed") == "Review Completed"
+
+
+@pytest.mark.asyncio
 async def test_event_dedup_new_round_and_transaction_rollback(event_db):
     engine, _ = event_db
     async with AsyncDB(engine) as db:
@@ -134,6 +151,25 @@ async def test_event_dedup_new_round_and_transaction_rollback(event_db):
         await db.rollback()
     with Session(engine) as db:
         assert db.query(NotificationEvent).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_announcement_adapter_keeps_per_attempt_counts_and_no_resend(event_db):
+    from backend.models.announcement_models import Announcement
+    from backend.services.announcement_service import _ensure_delivery_rows
+
+    engine, _ = event_db
+    provider = Provider()
+    dispatcher = service(provider)
+    async with AsyncDB(engine) as db:
+        announcement = Announcement(id=1, title="Release", content="Body", status="published", publication_version=1, announcement_type="release")
+        db.add(announcement)
+        await db.flush()
+        await _ensure_delivery_rows(db, 1, 1)
+        await db.commit()
+        assert await dispatcher.broadcast_announcement(db, announcement, expected_version=1) == {"sent": 4, "failed": 0, "skipped": 0}
+        assert await dispatcher.broadcast_announcement(db, announcement, expected_version=1) == {"sent": 0, "failed": 0, "skipped": 0}
+    assert provider.sent == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -311,6 +347,26 @@ async def test_business_outbox_shares_commit_and_rollback(event_db, kind):
         record.status = "completed"  # duplicate business callback
         db.commit()
         assert db.query(NotificationEvent).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_business_result_severity_routes_critical_subscriptions(event_db):
+    from backend.models.database import IssueAnalysis
+
+    engine, _ = event_db
+    with Session(engine, info={"notification_outbox": True}) as db:
+        db.add(NotificationSubscription(user_id=1, event_type="issue.*", min_severity="critical", endpoint_id=1))
+        db.add(IssueAnalysis(repo_owner="alice", repo_name="repo", issue_number=646,
+            analysis_version=1, author="alice", title="Critical issue", status="completed", priority="critical"))
+        db.commit()
+        item = db.query(NotificationEvent).one()
+        assert item.severity == "critical"
+        assert '"issue_number": 646' in item.payload_json
+        event_id = item.id
+    async with AsyncDB(engine) as db:
+        await service(Provider()).materialize_event(db, event_id)
+    with Session(engine) as db:
+        assert db.query(NotificationDelivery).filter_by(endpoint_id=1).one().status == "pending"
 
 
 @pytest.mark.asyncio
