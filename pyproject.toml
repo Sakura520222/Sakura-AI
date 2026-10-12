@@ -28,7 +28,7 @@ dependencies = [
 
     # Agent Harness MCP runtime
     "mcp>=2.3.0,<3.0.0",
-    "httpx2>=2.10.0,<3.0.0",
+    "httpx2>=2.13.1,<3.0.0",
     "jsonschema>=4.26.0,<5.0.0",
 
     # 数据库
