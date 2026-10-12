@@ -158,7 +158,7 @@ class EventDeliveryMixin:
         now = now_utc()
         interval = float(get_settings().notification_rate_limit_seconds)
         await insert_once(db, NotificationProviderBudget,
-                          {"channel": channel, "next_available_at": now}, ["channel"])
+                          {"channel": channel, "next_available_at": now - timedelta(seconds=1)}, ["channel"])
         result = await db.execute(update(NotificationProviderBudget).where(
             NotificationProviderBudget.channel == channel,
             NotificationProviderBudget.next_available_at <= now,

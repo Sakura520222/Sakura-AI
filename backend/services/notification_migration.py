@@ -10,12 +10,17 @@ def upgrade_notification_schema(conn):
 
     inspector = inspect(conn)
     table_name = "notification_deliveries"
+    changed = False
+    if conn.dialect.name in {"mysql", "mariadb"} and inspector.has_table("notification_provider_budgets"):
+        deadline = next(item for item in inspector.get_columns("notification_provider_budgets") if item["name"] == "next_available_at")
+        if getattr(deadline["type"], "fsp", None) != 6:
+            conn.execute(text("ALTER TABLE notification_provider_budgets MODIFY COLUMN next_available_at DATETIME(6) NOT NULL"))
+            changed = True
     if not inspector.has_table(table_name):
-        return False
+        return changed
     columns = {col["name"]: col for col in inspector.get_columns(table_name)}
     constraints = {item["name"]: item for item in inspector.get_unique_constraints(table_name)}
     dialect = conn.dialect.name
-    changed = False
     if dialect == "sqlite":
         if columns["announcement_id"]["nullable"] and "uq_notification_delivery" not in constraints:
             return False
