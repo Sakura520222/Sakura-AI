@@ -509,7 +509,7 @@ class NotificationService:
             try:
                 probe = factory()
             except Exception:
-                return False
+                return None, None, True
             try:
                 if hasattr(probe, "__aenter__"):
                     async with probe as scoped:
@@ -555,7 +555,7 @@ class NotificationService:
         db: AsyncSession,
         delivery: NotificationDelivery,
         endpoint: NotificationEndpoint | None,
-    ) -> bool:
+    ) -> bool | None:
         """Read user and endpoint eligibility in one fresh transaction.
 
         Candidate endpoint rows are selected before a worker starts.  This
@@ -606,14 +606,14 @@ class NotificationService:
                 # fails closed instead of falling back to stale objects.
                 return bool(await self._run_in_fresh_session(db, read))
             except Exception:
-                return False
+                return None
 
         getter = getattr(db, "get", None)
         if callable(getter):
             try:
                 return await read(db)
             except Exception:
-                return False
+                return None
 
         # Compatibility for old in-memory fakes that have no user table.  Do
         # not allow explicit negative eligibility values to bypass checks;
@@ -655,6 +655,7 @@ class NotificationService:
             worker_token=worker_token,
             values={
                 "status": DeliveryStatus.FAILED.value,
+                "error_category": "ineligible",
                 "error_message": _safe_error_message(error),
                 "attempts": int(delivery.attempts or 0) + 1,
                 "next_retry_at": None,
@@ -662,6 +663,33 @@ class NotificationService:
             },
         )
         return None if marked is None else False
+
+    async def _defer_eligibility_check(
+        self, db, delivery, announcement, lock, expected_version, worker_token
+    ) -> bool | None:
+        """Fail closed without turning an infrastructure outage terminal."""
+        delay = max(
+            1.0,
+            float(
+                getattr(get_settings(), "notification_retry_initial_delay_seconds", 1.0)
+            ),
+        )
+        await self._mark_terminal_state(
+            db,
+            delivery,
+            announcement,
+            lock=lock,
+            expected_version=expected_version,
+            worker_token=worker_token,
+            values={
+                "status": DeliveryStatus.PENDING.value,
+                "error_category": "infrastructure",
+                "error_message": "Notification eligibility check unavailable",
+                "next_retry_at": now_utc() + timedelta(seconds=delay),
+                "updated_at": now_utc(),
+            },
+        )
+        return None
 
     @staticmethod
     def _delivery_lease_seconds() -> float:
@@ -1150,14 +1178,27 @@ class NotificationService:
             # candidate.  Re-resolve it after the claim so a Telegram/email
             # rebind is delivered immediately and a disabled address is
             # never contacted.  No replacement means a retryable skip.
-            endpoint = await self._resolve_enabled_endpoint(db, delivery)
+            try:
+                endpoint = await self._resolve_enabled_endpoint(db, delivery)
+            except Exception:
+                return await self._defer_eligibility_check(
+                    db, delivery, announcement, lock, expected_version, worker_token
+                )
             if endpoint is None:
-                await self._release_delivery_claim(
+                await self._mark_terminal_state(
                     db,
                     delivery,
                     announcement,
+                    lock=lock,
                     expected_version=expected_version,
                     worker_token=worker_token,
+                    values={
+                        "status": DeliveryStatus.CANCELLED.value,
+                        "error_category": "ineligible",
+                        "error_message": "Notification endpoint disabled or removed",
+                        "next_retry_at": None,
+                        "updated_at": now_utc(),
+                    },
                 )
                 return None
         if not await self._publication_is_current(
@@ -1268,7 +1309,12 @@ class NotificationService:
             # and this attempt.  Keep the combined eligibility snapshot
             # directly adjacent to the provider invocation so no newly
             # disabled, unverified, or re-bound recipient is contacted.
-            if not await self._eligibility_snapshot(db, delivery, endpoint):
+            eligibility = await self._eligibility_snapshot(db, delivery, endpoint)
+            if eligibility is None:
+                return await self._defer_eligibility_check(
+                    db, delivery, announcement, lock, expected_version, worker_token
+                )
+            if not eligibility:
                 return await self._finish_inactive_delivery(
                     db,
                     delivery,
@@ -1454,9 +1500,7 @@ class NotificationService:
         # accidentally turn a stale PENDING snapshot into a retry of FAILED.
         # The regular/manual path keeps the historical PENDING + FAILED claim
         # behavior by leaving ``allowed_statuses`` as ``None``.
-        allowed_statuses = (
-            (DeliveryStatus.PENDING.value,) if pending_only else None
-        )
+        allowed_statuses = (DeliveryStatus.PENDING.value,) if pending_only else None
         lock = asyncio.Lock()
 
         async def run(delivery: NotificationDelivery) -> bool | None:
