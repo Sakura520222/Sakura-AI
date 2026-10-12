@@ -172,7 +172,7 @@ def test_completed_live_view_drains_has_more_without_sse(tmp_path, method, page_
         pytest.skip("Node.js is required to execute the shipped live-view JavaScript")
     fragment = Path(
         "backend/webui/templates/components/agent_team_live_view_fragment.html"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     rendered = Template(fragment).render(_=lambda key: key)
     script = rendered.split("<script>", 1)[1].split("</script>", 1)[0]
     harness = (
@@ -251,7 +251,7 @@ def test_live_view_retains_sse_refresh_during_inflight_page(tmp_path, method):
         pytest.skip("Node.js is required to execute the shipped live-view JavaScript")
     fragment = Path(
         "backend/webui/templates/components/agent_team_live_view_fragment.html"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     rendered = Template(fragment).render(_=lambda key: key)
     script = rendered.split("<script>", 1)[1].split("</script>", 1)[0]
     harness = (

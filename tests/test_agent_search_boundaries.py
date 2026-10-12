@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 
 import pytest
 
@@ -39,6 +40,7 @@ def context(workspace, runner):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux Landlock/seccomp inspection boundary")
 async def test_real_readonly_search_rejects_outside_hardlink(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -59,9 +61,19 @@ async def test_real_readonly_search_rejects_outside_hardlink(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "replacement", ["hardlink", "symlink", "directory_symlink", "fifo"]
+    "replacement",
+    [
+        "hardlink",
+        "symlink",
+        "directory_symlink",
+        pytest.param("fifo", marks=pytest.mark.skipif(
+            not hasattr(os, "mkfifo"), reason="POSIX FIFO file semantics"
+        )),
+    ],
 )
-async def test_search_rejects_candidates_replaced_after_runner(tmp_path, replacement):
+async def test_search_rejects_candidates_replaced_after_runner(tmp_path, replacement, request):
+    if replacement in {"symlink", "directory_symlink"}:
+        request.getfixturevalue("symlink_support")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     nested = workspace / "nested"
@@ -103,7 +115,7 @@ async def test_search_rejects_candidates_replaced_after_runner(tmp_path, replace
 async def test_search_parses_only_complete_nul_records_and_preserves_filenames(
     tmp_path,
 ):
-    name = "colon:name\nsecond.txt"
+    name = "space name 二.txt" if os.name == "nt" else "colon:name\nsecond.txt"
     (tmp_path / name).write_text("needle\n")
     (tmp_path / "partial.txt").write_text("needle hidden\n")
     runner = CandidateRunner(
@@ -150,7 +162,7 @@ async def test_search_parses_only_complete_nul_records_and_preserves_filenames(
 async def test_search_literal_unicode_and_newline_pattern_semantics(
     tmp_path, keyword, ignore_case, expected
 ):
-    (tmp_path / "regular.txt").write_text("FOO[BAR\nStraße\nΣΊΓΜΑ\n")
+    (tmp_path / "regular.txt").write_text("FOO[BAR\nStraße\nΣΊΓΜΑ\n", encoding="utf-8")
     runner = CandidateRunner(ExecutionResult(exit_code=0, stdout="./regular.txt\0"))
     result = await GrepTool().execute(
         {"keyword": keyword, "case_insensitive": ignore_case, "output_mode": "content"},
@@ -165,6 +177,7 @@ async def test_search_literal_unicode_and_newline_pattern_semantics(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_search_does_not_resolve_existing_internal_symlink_candidates(tmp_path):
     (tmp_path / "regular.txt").write_text("needle\n")
     (tmp_path / "alias.txt").symlink_to(tmp_path / "regular.txt")
@@ -272,6 +285,7 @@ async def test_missing_runner_never_reads_host_content(tmp_path, monkeypatch, ru
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux Landlock/seccomp inspection boundary")
 async def test_real_search_keeps_extension_exclusions_and_nul_names(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

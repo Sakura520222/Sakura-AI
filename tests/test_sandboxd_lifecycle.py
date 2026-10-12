@@ -8,12 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_support import posix_bash
+
 ROOT = Path(__file__).parents[1]
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=script.replace("\r\n", "\n").encode("utf-8"),

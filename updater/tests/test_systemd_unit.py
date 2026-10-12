@@ -6,6 +6,7 @@ root-owned binary check is faked the same way as test_daemon_backend.py.
 
 from __future__ import annotations
 
+import os
 import stat as stat_mod
 import subprocess
 from pathlib import Path
@@ -59,6 +60,8 @@ def _make_production_backend(
     tmp_path: Path, monkeypatch, **kwargs
 ) -> DaemonBackend:
     """构造带 root-owned binary 的生产形态 backend（compose/env 可选）。"""
+    if os.name != "posix":
+        pytest.skip("Production systemd paths and ownership require POSIX")
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
     binary.chmod(0o755)
@@ -303,6 +306,8 @@ def test_install_service_fsync_failure_is_service_error(tmp_path, monkeypatch):
 
 def test_fsync_directory_flushes_real_directory(tmp_path):
     """真实目录 fsync 冒烟：Linux 上正常文件系统不抛错。"""
+    if not hasattr(os, "O_DIRECTORY"):
+        pytest.skip("POSIX directory fsync contract")
     systemd_mod._fsync_directory(str(tmp_path))
 
 
@@ -440,7 +445,7 @@ def test_run_systemctl_strips_pyinstaller_loader_env(monkeypatch, tmp_path):
     extraction_dir = tmp_path / "_MEIextract"
     extraction_dir.mkdir()
     monkeypatch.setenv(
-        "LD_LIBRARY_PATH", f"{extraction_dir}:/opt/host/lib"
+        "LD_LIBRARY_PATH", os.pathsep.join((str(extraction_dir), "/opt/host/lib"))
     )
     monkeypatch.setenv(
         "LD_PRELOAD", f"{extraction_dir}/lib/libcrypto.so.3"

@@ -37,8 +37,8 @@ def _decode_text_with_metadata(raw: bytes) -> tuple[str, str, str]:
         encoding = "utf-16-le"
     else:
         encoding = "utf-8"
-    line_ending = detect_line_ending(raw)
     text = raw.decode(encoding)
+    line_ending = detect_line_ending(text[:4096].encode("utf-8"))
     # 统一为 LF 方便内部处理
     text = text.replace("\r\n", "\n")
     return text, encoding, line_ending
@@ -47,7 +47,7 @@ def _decode_text_with_metadata(raw: bytes) -> tuple[str, str, str]:
 def read_workspace_text_with_metadata(
     workspace: str | Path, resolved: str | Path
 ) -> tuple[str, str, str, float]:
-    """Read the resolved workspace target through stable directory descriptors.
+    """Read the resolved workspace target through stable directory handles.
 
     The caller resolves safe internal symlinks and validates the workspace.
     Replacements after that check cannot redirect this open: every remaining
@@ -58,6 +58,11 @@ def read_workspace_text_with_metadata(
     relative = Path(resolved).relative_to(root)
     if not relative.parts or any(part in {".", ".."} for part in relative.parts):
         raise ValueError("A workspace file path is required")
+    if os.name == "nt":
+        from backend.services.agent_team.windows_filesystem import read_workspace_bytes
+
+        raw, mtime = read_workspace_bytes(root, relative)
+        return (*_decode_text_with_metadata(raw), mtime)
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in relative.parts[:-1]:

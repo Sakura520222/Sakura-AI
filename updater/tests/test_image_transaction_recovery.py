@@ -65,7 +65,8 @@ def test_recovery_prepared_restores_exact_rollback_bytes_and_mode(tmp_path):
     recover_pending_deployment_transaction(str(destination))
 
     assert destination.read_bytes() == b"OLD bytes\n"
-    assert os.stat(destination).st_mode & 0o7777 == 0o640
+    if os.name == "posix":
+        assert os.stat(destination).st_mode & 0o7777 == 0o640
     assert not journal.exists()
     assert not backup.exists()
 

@@ -1,7 +1,7 @@
 """Read batches and workspace-wide, writer-preferring barriers.
 
-An event-loop barrier provides writer preference, and an advisory lock on the
-workspace directory coordinates processes using the same filesystem inode.
+An event-loop barrier provides writer preference, and a native advisory lock
+coordinates processes using the same workspace filesystem identity.
 This is not a distributed task/session lease. No schema field or model argument
 participates in scheduling decisions.
 """
@@ -19,10 +19,12 @@ from weakref import WeakKeyDictionary, WeakValueDictionary
 try:
     import fcntl
 except ImportError:
-    # Windows can import/start the backend without this POSIX-only capability.
-    # Workspace operations still require a real process lock; never fall back
-    # to event-loop-only exclusion when the host cannot provide it.
     fcntl = None
+
+if os.name == "nt":
+    from backend.services.agent_team import windows_filesystem
+else:
+    windows_filesystem = None
 
 if TYPE_CHECKING:
     from backend.services.agent_team.tools.base import (
@@ -42,12 +44,14 @@ class WorkspaceBarrier:
 
     @asynccontextmanager
     async def hold(self, shared: bool) -> AsyncIterator[None]:
-        if fcntl is None or not all(
-            hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")
-        ):
+        supported = windows_filesystem is not None if os.name == "nt" else (
+            fcntl is not None
+            and all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW"))
+        )
+        if not supported:
             raise RuntimeError(
                 "workspace_lock_unavailable: Agent workspace operations require "
-                "POSIX directory-lock support on the backend host"
+                "native directory-lock support on the backend host"
             )
         async with self.condition:
             if shared:
@@ -66,31 +70,42 @@ class WorkspaceBarrier:
                     self.waiting_writers -= 1
                     self.condition.notify_all()
         directory_fd = None
+        directory_handle = None
         try:
-            # Lock the admitted directory itself: no writable lock file inside
-            # repository content, no stale-file cleanup or inode replacement.
+            # POSIX locks the admitted directory; Windows pins its identity and
+            # locks an external identity file. No lock lives in repository content.
             # Nonblocking acquisition keeps cancellation responsive without an
             # execution budget or a blocking worker thread left behind.
-            directory_fd = os.open(
-                self.workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
-            operation = (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB
+            if os.name != "nt":
+                directory_fd = os.open(
+                    self.workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                )
+                operation = (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB
             while True:
                 try:
-                    fcntl.flock(directory_fd, operation)
+                    if os.name == "nt":
+                        directory_handle = windows_filesystem.acquire_workspace_lock(
+                            self.workspace, shared=shared
+                        )
+                    else:
+                        fcntl.flock(directory_fd, operation)
                     break
                 except BlockingIOError:
                     await asyncio.sleep(0.01)
             yield
         finally:
-            if directory_fd is not None:
-                os.close(directory_fd)
-            async with self.condition:
-                if shared:
-                    self.readers -= 1
-                else:
-                    self.writer = False
-                self.condition.notify_all()
+            try:
+                if directory_fd is not None:
+                    os.close(directory_fd)
+                if directory_handle is not None:
+                    directory_handle.close()
+            finally:
+                async with self.condition:
+                    if shared:
+                        self.readers -= 1
+                    else:
+                        self.writer = False
+                    self.condition.notify_all()
 
 
 _barriers: WeakKeyDictionary = WeakKeyDictionary()
@@ -99,7 +114,7 @@ _barriers: WeakKeyDictionary = WeakKeyDictionary()
 def workspace_barrier(workspace: str) -> WorkspaceBarrier:
     loop = asyncio.get_running_loop()
     barriers = _barriers.setdefault(loop, WeakValueDictionary())
-    key = str(Path(workspace).resolve())
+    key = os.path.normcase(str(Path(workspace).resolve()))
     barrier = barriers.get(key)
     if barrier is None:
         barrier = WorkspaceBarrier(key)
