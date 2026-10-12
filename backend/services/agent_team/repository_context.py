@@ -155,9 +155,11 @@ class RepositoryContext:
     def _open_file(self, relative: PurePosixPath) -> int:
         if not relative.parts:
             raise RepositoryContextError("File path required")
+        # Match Windows' case-insensitive opens without changing the path used
+        # by the native handle checks or case-sensitive POSIX admission.
         if any(
             p.startswith(".env") or p in _SECRET_NAMES or p.endswith((".key", ".pem"))
-            for p in relative.parts
+            for p in map(os.path.normcase, relative.parts)
         ):
             raise RepositoryContextError("Secret context path rejected")
         if os.name == "nt":
