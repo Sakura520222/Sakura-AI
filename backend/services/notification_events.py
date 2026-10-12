@@ -183,4 +183,3 @@ async def candidates(db, event):
         ids.update((await db.execute(query)).scalars().all())
     # No recipient means no delivery. Never fall back from a repo to admins.
     return sorted(ids), rules
-

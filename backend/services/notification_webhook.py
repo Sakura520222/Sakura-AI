@@ -205,4 +205,3 @@ class WebhookNotificationProvider:
             echoed = ""
         if not hmac.compare_digest(str(echoed), challenge):
             raise NotificationProviderPermanentError("Webhook ownership challenge failed", "verification")
-
