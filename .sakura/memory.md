@@ -1,6 +1,6 @@
 # 项目记忆
 
-累计反思 28 次
+累计反思 33 次
 
 ## 核心审查原则
 
@@ -15,6 +15,12 @@
 - **依赖三要素与锁文件阻断**：改动 `pyproject.toml`/`requirements.txt` 须同 PR 纳入 `uv.lock` 并对齐子项目（`sandboxer`/`updater`）依赖下限；CI 必跑 `uv sync --locked`。依赖升级第 1 顺位：核查 lockfile 是否在 diff 且 CI `--locked` 是否通过
 - **精准锁升级与 Bot 审查防线**：升级优先 `uv lock --upgrade-package <pkg>` 防无关依赖漂移；Dependabot PR 默认易漏 `uv.lock` 致冒烟测试 exit 1，切忌因 patch/纯数据包麻痹 Approve；指引须兼顾本地提交与 Bot/工作流机制
 - **Dependabot 追锁与降级静默排查**：自动补锁须用 `pull_request_target` 校验 `user.login == 'dependabot[bot]'` 与最小权限；警惕补锁流水线（如 `uv-lock-sync.yml`）因缺 PAT/Secret 转入“仅告警跳过”引发降级静默失效
+
+## 跨平台抽象与文件系统安全
+
+- **Windows 路径安全准入与规范化**：涉及 `GetFinalPathNameByHandleW` 或设备级规范化校验时，基准根路径（Root/Workspace）必须统一显式 `root.resolve()`；警惕 8.3 短路径（如 `RUNNER~1`）、Junction 挂载点与驱动器映射导致前缀对比静默失效（`ELOOP` 拒绝导致静默丢结果）
+- **白名单例外收敛与跨平台锁生命周期**：放开底层校验（如 `allow_cache_redirect`）须收敛在单一受控入口（如锁锚点）且保持严格硬链/reparse point 校验；平台外置资源（如 LocalAppData 下 `.lock` 进程锁、管道）须设生命周期清理防线
+- **多模块子套件 Fixture 隔离**：拥有独立 `pyproject.toml` 的子包（`updater/`, `sandboxer/`）严禁隐式依赖父级根目录 `conftest.py`，必须在子包内自包含测试 fixture，防 pytest 根目录割裂引发收集失败
 
 ## 架构隔离与业务设计
 
