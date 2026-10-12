@@ -9,7 +9,7 @@ PyGithub>=2.10.0
 cryptography>=50.0.1
 
 # AI集成
-openai>=3.8.0
+openai>=3.26.1
 httpx>=0.28.1
 
 # Agent Harness MCP runtime
