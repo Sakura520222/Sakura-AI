@@ -5,6 +5,7 @@ import errno
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -128,3 +129,67 @@ async def test_windows_worker_temp_settings_do_not_split_workspace_locks(tmp_pat
         finally:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_windows_lock_cache_uses_redirected_file_view_with_existing_real_directory(
+    tmp_path, monkeypatch
+):
+    from backend.services.agent_team import windows_filesystem as native
+
+    logical, redirected, workspace = (
+        tmp_path / "logical", tmp_path / "redirected", tmp_path / "workspace"
+    )
+    for directory in (logical, redirected, workspace):
+        directory.mkdir()
+    logical_path = Path(native._extended_path(logical))
+    original = native._kernel32.CreateFileW
+
+    def create(path, *args):
+        requested = Path(path)
+        if requested.parent == logical_path:
+            path = native._extended_path(redirected / requested.name)
+        return original(path, *args)
+
+    monkeypatch.setattr(native, "_workspace_lock_root", lambda: logical)
+    monkeypatch.setattr(native._kernel32, "CreateFileW", create)
+    async with workspace_barrier(str(workspace)).hold(False):
+        (workspace / "file").write_text("ordinary workspace operation")
+    assert list(redirected.glob("*.lock"))
+    assert not list(logical.glob("*.lock"))
+
+
+def test_windows_cache_redirection_does_not_admit_redirected_workspace_files(tmp_path, monkeypatch):
+    from backend.services.agent_team import windows_filesystem as native
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "file"
+    target.write_text("ordinary")
+    outside = tmp_path / "outside"
+    outside.write_text("private")
+    original = native._kernel32.CreateFileW
+
+    def create(path, *args):
+        if path == native._extended_path(target):
+            path = native._extended_path(outside)
+        return original(path, *args)
+
+    monkeypatch.setattr(native._kernel32, "CreateFileW", create)
+    with pytest.raises(OSError) as error:
+        read_workspace_text_with_metadata(workspace, target)
+    assert error.value.errno == errno.ELOOP
+
+
+def test_windows_cache_anchor_rejects_hardlinked_file(tmp_path, monkeypatch):
+    from backend.services.agent_team import windows_filesystem as native
+
+    root = tmp_path / "cache"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("private")
+    os.link(outside, root / ".directory")
+    monkeypatch.setattr(native, "_workspace_lock_root", lambda: root)
+    with pytest.raises(ValueError, match="hard links"):
+        native._canonical_lock_root()
+    assert outside.read_text() == "private"

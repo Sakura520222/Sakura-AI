@@ -631,8 +631,11 @@ async def test_admin_fallback_and_attachments_reject_secret_indirection(tmp_path
     skill_dir = tmp_path / "admin/docs"
     (skill_dir / "helper.txt").symlink_to(secret)
     os.link(secret, skill_dir / "hard.txt")
-    os.mkfifo(skill_dir / "pipe.txt")
-    for filename in ("helper.txt", "hard.txt", "pipe.txt"):
+    filenames = ["helper.txt", "hard.txt"]
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(skill_dir / "pipe.txt")
+        filenames.append("pipe.txt")
+    for filename in filenames:
         result = await UseSkillTool().execute({"slug": "docs", "file": filename}, ctx)
         assert not result.success and "SECRET" not in str(result)
     alias = tmp_path / "alias"

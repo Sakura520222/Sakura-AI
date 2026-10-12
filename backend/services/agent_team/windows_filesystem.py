@@ -152,6 +152,7 @@ def close_handle(handle: int) -> None:
 def _open(
     path: str | Path, access: int, sharing: int, *, directory: bool,
     creation: int = _OPEN_EXISTING,
+    allow_cache_redirect: bool = False,
 ) -> int:
     expected = _extended_path(path)
     handle = _kernel32.CreateFileW(
@@ -171,7 +172,10 @@ def _open(
             raise ctypes.WinError(ctypes.get_last_error())
         if (
             info.attributes & _FILE_ATTRIBUTE_REPARSE_POINT
-            or _handle_path(handle) != os.path.normcase(expected)
+            or (
+                not allow_cache_redirect
+                and _handle_path(handle) != os.path.normcase(expected)
+            )
         ):
             raise OSError(errno.ELOOP, "Workspace reparse points are not admitted")
         if bool(info.attributes & _FILE_ATTRIBUTE_DIRECTORY) != directory:
@@ -200,6 +204,28 @@ def _workspace_lock_root() -> Path:
     return Path(buffer.value) / "SakuraAI" / "workspace-locks"
 
 
+def _canonical_lock_root() -> Path:
+    """Resolve the trusted OS cache's file view before admitting lock paths.
+
+    Windows packages can merge real and redirected directory contents. A
+    directory's realpath can name the real view while a child file opens in
+    the redirected view. The anchor handle identifies the actual file domain;
+    it still rejects reparse points and hard links and reads no cache content.
+    Workspace opens never enable this OS-cache-only redirection allowance.
+    """
+    root = _workspace_lock_root()
+    root.mkdir(parents=True, exist_ok=True)
+    anchor = _open(
+        root / ".directory", _GENERIC_READ | _GENERIC_WRITE,
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE, directory=False,
+        creation=_OPEN_ALWAYS, allow_cache_redirect=True,
+    )
+    try:
+        return Path(_handle_path(anchor)).parent
+    finally:
+        close_handle(anchor)
+
+
 def acquire_workspace_lock(path: str | Path, *, shared: bool) -> ExitStack:
     """Nonblocking shared/exclusive lock with stable workspace and lock identity.
 
@@ -214,11 +240,7 @@ def acquire_workspace_lock(path: str | Path, *, shared: bool) -> ExitStack:
         if not _kernel32.GetFileInformationByHandle(directory, ctypes.byref(info)):
             raise ctypes.WinError(ctypes.get_last_error())
         identity = f"{info.volume_serial:08x}-{info.index_high:08x}{info.index_low:08x}"
-        lock_root = _workspace_lock_root()
-        lock_root.mkdir(parents=True, exist_ok=True)
-        # Packaged Windows apps can redirect LocalAppData transparently.
-        # Canonicalize this OS-owned cache location before handle admission.
-        lock_root = lock_root.resolve(strict=True)
+        lock_root = _canonical_lock_root()
         lock_directory = open_directory(lock_root)
         stack.callback(close_handle, lock_directory)
         handle = _open(

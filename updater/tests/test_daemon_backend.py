@@ -217,7 +217,11 @@ def _patch_runtime_lstat(monkeypatch, target: Path, target_mode: int):
         result = real_lstat(path)
         if stat.S_ISDIR(result.st_mode):
             mode = stat.S_IMODE(result.st_mode)
-            if mode & 0o022:
+            if os.name == "nt" and absolute == os.path.dirname(normalized_target):
+                # Windows cannot represent the fixture parent's POSIX 0700
+                # mode; model it while preserving the unsafe target verbatim.
+                mode = 0o700
+            elif mode & 0o022:
                 # The pytest temporary root is intentionally shared-writable;
                 # model its ancestors as trusted private directories.
                 mode = 0o755
@@ -736,6 +740,20 @@ def test_trusted_directory_chain_allows_root_as_existing_ancestor(monkeypatch):
     )
 
     assert DaemonBackend._check_trusted_directory_chain(root, "fixture") == root
+
+
+def test_ensure_runtime_tmp_rejects_file_after_admitting_fixture_parent(tmp_path, monkeypatch):
+    backend = _make_backend(tmp_path)
+    state = Path(backend.state_dir)
+    state.mkdir(mode=0o700)
+    target = Path(backend.runtime_tmp_path)
+    target.write_text("canary")
+    _patch_runtime_lstat(monkeypatch, target, stat.S_IFREG | 0o600)
+    chmod = []
+    monkeypatch.setattr(daemon_mod.os, "chmod", lambda *args: chmod.append(args))
+    with pytest.raises(UnsafeDeploymentPathError, match="must be a directory"):
+        backend.ensure_runtime_tmp()
+    assert target.read_text() == "canary" and not chmod
 
 
 def test_ensure_runtime_tmp_rejects_symlink_without_touching_canary(
