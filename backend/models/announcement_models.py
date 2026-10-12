@@ -1,9 +1,9 @@
 """Announcements, read markers, and provider delivery state.
 
-The current delivery rows intentionally retain their historical unique key
-(``announcement_id``, ``user_id``, ``channel``).  A publication version makes
-those rows reusable for a new send round while the archive models preserve the
-content and delivery state of the previous round.
+NotificationDelivery remains here as an import compatibility facade. Its
+optional announcement identity permits business events in the same table.
+New events deduplicate per concrete endpoint; publication versions and archives
+preserve the content, read markers and outcomes of historical announcement rounds.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ class NotificationDelivery(Base):
     announcement_id = Column(
         Integer,
         ForeignKey("announcements.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     user_id = Column(
@@ -118,6 +118,9 @@ class NotificationDelivery(Base):
         index=True,
     )
     channel = Column(String(50), nullable=False)
+    event_id = Column(String(36), ForeignKey("notification_events.id", ondelete="CASCADE"), nullable=True, index=True)
+    endpoint_id = Column(Integer, ForeignKey("notification_endpoints.id", ondelete="SET NULL"), nullable=True)
+    endpoint_key = Column(String(100), nullable=False, default="legacy")
     status = Column(
         String(50), default=DeliveryStatus.PENDING.value, nullable=False, index=True
     )
@@ -140,8 +143,9 @@ class NotificationDelivery(Base):
     user = relationship("TelegramUser", foreign_keys=[user_id])
     __table_args__ = (
         UniqueConstraint(
-            "announcement_id", "user_id", "channel", name="uq_notification_delivery"
+            "announcement_id", "publication_version", "user_id", "channel", "endpoint_key", name="uq_notification_delivery_target"
         ),
+        UniqueConstraint("event_id", "user_id", "endpoint_key", name="uq_notification_event_target"),
     )
 
 
@@ -212,6 +216,10 @@ class AnnouncementDeliveryHistory(Base):
         index=True,
     )
     channel = Column(String(50), nullable=False)
+    endpoint_id = Column(Integer, nullable=True)
+    endpoint_key = Column(String(100), nullable=True)
+    event_id = Column(String(36), nullable=True)
+    error_category = Column(String(50), nullable=True)
     status = Column(String(50), nullable=False)
     error_message = Column(Text, nullable=True)
     attempts = Column(Integer, default=0, nullable=False)

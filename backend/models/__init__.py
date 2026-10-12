@@ -2,6 +2,7 @@
 
 import logging
 
+import backend.models.notification_models  # noqa: F401
 from backend.core.config import get_settings
 from backend.models.activity_observability_models import (
     ActivityArtifactAccessLog,

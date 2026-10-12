@@ -2374,6 +2374,7 @@ name = "sakura-ai"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "alembic" },
     { name = "apscheduler" },
     { name = "asyncmy" },
@@ -2425,6 +2426,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.3,<4.0.0" },
     { name = "alembic", specifier = ">=1.19.2" },
     { name = "apscheduler", specifier = ">=3.11.3" },
     { name = "asyncmy", specifier = ">=0.2.15" },

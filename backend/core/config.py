@@ -436,6 +436,15 @@ class Settings(BaseSettings):
     notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
     notification_retry_backoff_factor: float = Field(2.0, ge=1.0)
     notification_rate_limit_seconds: float = Field(0.05, ge=0)
+    notification_poll_seconds: float = Field(5.0, ge=0.1, le=300)
+    notification_batch_size: int = Field(100, ge=1, le=1000)
+    notification_send_timeout_seconds: float = Field(60.0, ge=1, le=90)
+    notification_webhook_enabled: bool = True
+    notification_webhook_timeout_seconds: float = Field(15.0, ge=1, le=60)
+    notification_webhook_response_max_bytes: int = Field(65536, ge=1024, le=1048576)
+    notification_webhook_allowed_hosts: str = ""
+    notification_email_verification_ttl_seconds: int = Field(900, ge=60, le=3600)
+    notification_verification_max_attempts: int = Field(5, ge=1, le=10)
     register_quota_multiplier: float = Field(
         0.2,
         ge=0.1,
@@ -1811,6 +1820,15 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "notification_retry_initial_delay_seconds": "通知初始重试延迟（秒）",
     "notification_retry_backoff_factor": "通知重试退避倍数",
     "notification_rate_limit_seconds": "通知限流间隔（秒）",
+    "notification_poll_seconds": "通知恢复轮询间隔（秒）",
+    "notification_batch_size": "通知恢复批次大小",
+    "notification_send_timeout_seconds": "通知发送超时（秒）",
+    "notification_webhook_enabled": "启用 Webhook 通知",
+    "notification_webhook_timeout_seconds": "Webhook 超时（秒）",
+    "notification_webhook_response_max_bytes": "Webhook 最大响应字节数",
+    "notification_webhook_allowed_hosts": "Webhook 允许的域名（逗号分隔，空值允许公共域名）",
+    "notification_email_verification_ttl_seconds": "邮件验证有效期（秒）",
+    "notification_verification_max_attempts": "端点验证最大尝试次数",
     "webui_secret_key": "WebUI 密钥",
     "app_domain": "应用域名",
     "app_port": "应用端口",
@@ -2340,6 +2358,15 @@ CORE_CONFIG_KEYS = frozenset(
         "notification_retry_initial_delay_seconds",
         "notification_retry_backoff_factor",
         "notification_rate_limit_seconds",
+        "notification_poll_seconds",
+        "notification_batch_size",
+        "notification_send_timeout_seconds",
+        "notification_webhook_enabled",
+        "notification_webhook_timeout_seconds",
+        "notification_webhook_response_max_bytes",
+        "notification_webhook_allowed_hosts",
+        "notification_email_verification_ttl_seconds",
+        "notification_verification_max_attempts",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_domain",

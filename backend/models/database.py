@@ -760,6 +760,7 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.ai_usage_models
     import backend.models.announcement_models
     import backend.models.identity_models
+    import backend.models.notification_models
     import backend.models.payment_models
     import backend.models.star_aid_models
     import backend.models.telegram_models  # noqa: F401
@@ -967,6 +968,9 @@ def init_async_db(database_url: str):
     logger = logging.getLogger(__name__)
 
     try:
+        from backend.services.notification_business import install_notification_outbox
+
+        install_notification_outbox()
         database_url = normalize_database_url(database_url)
 
         logger.info("初始化异步数据库引擎")
@@ -992,7 +996,8 @@ def init_async_db(database_url: str):
 
         # 创建异步会话工厂
         async_session = async_sessionmaker(
-            async_engine, class_=AsyncSession, expire_on_commit=False
+            async_engine, class_=AsyncSession, expire_on_commit=False,
+            info={"notification_outbox": True},
         )
 
         logger.info("✅ 异步数据库引擎初始化成功")
@@ -1521,6 +1526,10 @@ async def _auto_migrate():
 
         await _ensure_legacy_telegram_id_nullable(conn, _logger)
 
+        from backend.services.notification_migration import upgrade_notification_schema
+
+        notification_storage_changed = await conn.run_sync(upgrade_notification_schema)
+
         unique_index_created = await _ensure_observability_trigger_unique_index(
             conn, _logger
         )
@@ -1532,6 +1541,7 @@ async def _auto_migrate():
             and not unique_index_created
             and not pr_link_index_created
             and not issue_storage_changed
+            and not notification_storage_changed
         ):
             return
 
