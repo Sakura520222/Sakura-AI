@@ -48,7 +48,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "Pillow>=12.3.0",
     "tzlocal==5.4.4",
-    "tzdata==2026.4",
+    "tzdata==2026.5",
 
     # 日志
     "loguru>=0.7.3",
