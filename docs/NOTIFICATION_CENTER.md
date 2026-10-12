@@ -36,7 +36,7 @@ External delivery is retryable with internal deduplication. A receiver may have 
 | Agent | started, completed, failed, cancelled, action required | Repository owner/authorized subscribers; resume/iteration identity is preserved |
 | Announcement / release announcement | publication round | Active users, with compatibility defaults and current preferences |
 | Account security / Passkey / MFA | account change, lockout | The affected account's private verified endpoints and inbox |
-| Quota | exhaustion, deduplicated per quota kind/day | The affected account |
+| Quota | exhaustion, deduplicated per kind/period/reset/limit | The affected account |
 | Payment | fulfillment or expiration/failure | Current order owner |
 | Refund | request, completion, rejection, execution failure | Current order/request owner; explicit administrator events for pending requests/failures |
 
