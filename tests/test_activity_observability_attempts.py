@@ -1727,3 +1727,153 @@ async def test_embedding_service_without_context_uses_fake_sdk_production_path(
     service = module.EmbeddingService()
     assert await service.embed_texts(["hello"]) == [[0.1, 0.2]]
     assert service.client.max_retries == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+async def test_real_provider_attempt_logs_match_durable_activity_ids(
+    db_session, chain, monkeypatch, streaming, fails
+):
+    """SQLite Activity + real adapter + mock HTTP, including stream failure."""
+    import httpx
+    from loguru import logger
+
+    from backend.core.ai_protocol.adapters.openai_compatible import (
+        OpenAICompatibleAdapter,
+    )
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.log_context import get_log_context, log_context
+    from backend.core.logging_bridge import _patch_record
+    from backend.core.time_service import now_utc
+
+    session, thread, work_unit, _ = chain
+    revision = ActivityCanonicalContextRevision(
+        thread_id=thread.id,
+        revision_number=1,
+        message_manifest_json="[]",
+        content_hash="logging-test",
+        reason="test",
+    )
+    db_session.add(revision)
+    db_session.flush()
+    thread.current_revision_id = revision.id
+    db_session.commit()
+    context = InvocationContext(
+        session_id=session.id,
+        invocation_id=work_unit.invocation_id,
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        role_snapshot=RoleConfigSnapshot(
+            role="reviewer",
+            requested_provider="stream-provider",
+            requested_model="stream-model",
+            requested_thinking_mode=None,
+            candidate_chain=(("stream-provider", "stream-model"),),
+            account_id="account",
+            protocol_family="openai_compatible",
+            endpoint_fingerprint="a" * 64,
+            config_snapshot_version=1,
+            captured_at=now_utc(),
+        ),
+    )
+    sender = ObservedModelSender(
+        AttemptService(_AsyncAdapter(db_session)), context=context
+    )
+    captured = []
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
+    sink = logger.add(lambda message: captured.append(message.record), catch=False)
+
+    def upstream(request):
+        assert request.headers["authorization"] == "Bearer credential"
+        if fails:
+            return httpx.Response(
+                401, json={"error": {"message": "rejected credential"}}
+            )
+        if streaming:
+            chunk = {
+                "choices": [
+                    {"index": 0, "delta": {"content": "ok"}, "finish_reason": None}
+                ]
+            }
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text="data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n",
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            with log_context(
+                request_id="http-request", task_id="issue-task", worker="issue"
+            ):
+
+                async def send():
+                    kwargs = {
+                        "logical_call_id": "logged-call",
+                        "context_revision_id": revision.id,
+                    }
+                    request = UnifiedRequest(
+                        model="stream-model", messages=[], max_tokens=10
+                    )
+                    if streaming:
+                        async for _ in sender.send_stream(
+                            OpenAICompatibleAdapter(),
+                            client,
+                            _stream_candidate(),
+                            request,
+                            **kwargs,
+                        ):
+                            assert "attempt_id" not in get_log_context()
+                    else:
+                        await sender.send_chat(
+                            OpenAICompatibleAdapter(),
+                            client,
+                            _stream_candidate(),
+                            request,
+                            **kwargs,
+                        )
+
+                if fails:
+                    with pytest.raises(AIError):
+                        await send()
+                else:
+                    await send()
+                assert get_log_context() == {
+                    "request_id": "http-request",
+                    "task_id": "issue-task",
+                    "worker": "issue",
+                }
+        attempt = db_session.scalars(
+            select(ActivityModelAttempt).where(
+                ActivityModelAttempt.logical_call_id == "logged-call"
+            )
+        ).one()
+        assert attempt.status == ("failed" if fails else "completed")
+        observed = [r for r in captured if r["extra"].get("attempt_id") == attempt.id]
+        assert observed
+        for record in observed:
+            fields = record["extra"]
+            assert fields["session_id"] == session.id
+            assert fields["invocation_id"] == work_unit.invocation_id
+            assert fields["work_unit_id"] == work_unit.id
+            assert fields["logical_call_id"] == "logged-call"
+            assert fields["task_id"] == "issue-task"
+            assert fields["request_id"] == "http-request"
+            assert "rejected credential" not in record["message"]
+        if fails:
+            assert any("Traceback" in r["message"] for r in observed)
+    finally:
+        logger.remove(sink)

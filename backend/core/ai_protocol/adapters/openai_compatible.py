@@ -38,6 +38,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 # OpenAI 停止原因 → 归一化 / OpenAI stop reasons → normalized
 _OPENAI_STOP_MAP: dict[str, StopReason] = {
@@ -253,9 +254,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
                 image_entry: dict[str, Any] = {"url": url}
                 if image.detail:
                     image_entry["detail"] = image.detail
-                content_parts.append(
-                    {"type": "image_url", "image_url": image_entry}
-                )
+                content_parts.append({"type": "image_url", "image_url": image_entry})
             msg["content"] = content_parts
         elif message.content is not None:
             msg["content"] = message.content
@@ -431,6 +430,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
     # ------------------------------------------------------------------
     # chat / stream
     # ------------------------------------------------------------------
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -471,6 +471,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,

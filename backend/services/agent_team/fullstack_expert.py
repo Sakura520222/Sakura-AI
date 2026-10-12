@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from backend.core.log_context import agent_log_fields, traced_operation
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import (
     AgentContextCompressor,
@@ -348,6 +349,7 @@ class FullStackExpertAgent:
         )
         ctx.subagents = self._subagents
 
+    @traced_operation(agent_log_fields)
     async def execute(self, *args: Any, **kwargs: Any) -> FullStackResult:
         result = None
         task_cancellation = None

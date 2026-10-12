@@ -149,7 +149,7 @@ class DecisionEngine:
             )
 
         except Exception as e:
-            logger.error(f"决策引擎执行失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"决策引擎执行失败: {e}")
             # 出错时默认为COMMENT，避免阻断
             return (ReviewDecision.COMMENT, f"决策过程出现异常: {e!s}")
 

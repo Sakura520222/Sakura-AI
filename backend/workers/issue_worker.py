@@ -17,6 +17,11 @@ from backend.core.config import (
     get_settings,
 )
 from backend.core.github_app import GitHubAppClient
+from backend.core.log_context import (
+    invocation_log_fields,
+    task_logging,
+    update_log_context,
+)
 from backend.models.database import (
     IssueAnalysis,
     IssueAnalysisStatus,
@@ -76,24 +81,18 @@ class IssueWorker:
         # wake a task blocked in ``Semaphore.acquire()``; the handle lets the
         # webhook interrupt and await that task before deleting/closing an
         # Issue.
-        self._task_handles: dict[
-            str, dict[str, asyncio.Task[Any] | None]
-        ] = {}
+        self._task_handles: dict[str, dict[str, asyncio.Task[Any] | None]] = {}
         # Each task owns exactly one analysis row.  Store the immutable row
         # identity here so cancellation/failure cleanup never selects a newer
         # sibling run for the same Issue.
-        self._task_analysis_records: dict[
-            str, dict[str, tuple[int, int | None]]
-        ] = {}
+        self._task_analysis_records: dict[str, dict[str, tuple[int, int | None]]] = {}
         self._task_executions: dict[str, dict[str, Any | None]] = {}
         self._task_execution_statuses: dict[str, dict[str, str | None]] = {}
         # A worker task can hand a synchronous GitHub mutation to
         # ``asyncio.to_thread``.  Cancelling the worker only cancels the await
         # around that thread, so retain every in-flight write until its child
         # task has really finished.
-        self._task_external_writes: dict[
-            str, dict[str, set[asyncio.Task[Any]]]
-        ] = {}
+        self._task_external_writes: dict[str, dict[str, set[asyncio.Task[Any]]]] = {}
         from backend.services.activity_observability.integration_service import (
             ActivityIntegrationService,
         )
@@ -288,14 +287,10 @@ class IssueWorker:
 
     def _get_execution_status(self, task_key: str, task_id: str) -> str | None:
         return (
-            getattr(self, "_task_execution_statuses", {})
-            .get(task_key, {})
-            .get(task_id)
+            getattr(self, "_task_execution_statuses", {}).get(task_key, {}).get(task_id)
         )
 
-    def _set_execution_status(
-        self, task_key: str, task_id: str, status: str
-    ) -> None:
+    def _set_execution_status(self, task_key: str, task_id: str, status: str) -> None:
         statuses = getattr(self, "_task_execution_statuses", None)
         if statuses is None:
             self._task_execution_statuses = statuses = {}
@@ -305,9 +300,7 @@ class IssueWorker:
         self, task_key: str, task_id: str
     ) -> tuple[int, int | None] | None:
         return (
-            getattr(self, "_task_analysis_records", {})
-            .get(task_key, {})
-            .get(task_id)
+            getattr(self, "_task_analysis_records", {}).get(task_key, {}).get(task_id)
         )
 
     def _unregister_task(self, task_key: str, task_id: str) -> None:
@@ -380,7 +373,7 @@ class IssueWorker:
                         changed = True
                     pending.append(task)
                     pending_ids.append(task_id)
-            except (AttributeError, RuntimeError):
+            except AttributeError, RuntimeError:
                 # A synthetic test/task factory may expose a stale handle.  The
                 # event remains set and the normal worker cleanup still runs.
                 continue
@@ -629,6 +622,7 @@ class IssueWorker:
         """
         return
 
+    @task_logging("issue")
     async def process_issue_analysis(
         self,
         issue_info: dict[str, Any],
@@ -644,6 +638,7 @@ class IssueWorker:
         task entry after the worker has finished.
         """
         task_id = str(issue_info.get("task_id") or uuid.uuid4())
+        update_log_context(task_id=task_id)
         task_key = self._make_task_key(issue_info)
         task_events = getattr(self, "_cancel_events", {}).get(task_key, {})
         registered_event = task_events.get(task_id)
@@ -786,7 +781,11 @@ class IssueWorker:
                 cancellation_pending = True
                 raise
             finally:
-                if not cancellation_pending and execution is not None and execution_status is None:
+                if (
+                    not cancellation_pending
+                    and execution is not None
+                    and execution_status is None
+                ):
                     await _finish_execution(
                         execution_target_status or "failed",
                         error_message=(
@@ -839,6 +838,10 @@ class IssueWorker:
                 # execution and release its lease.
                 self._bind_execution(task_key, task_id, result)
 
+            update_log_context(
+                **invocation_log_fields(getattr(result, "invocation_context", None))
+            )
+
             if cancellation is not None:
                 raise cancellation
             return result
@@ -867,6 +870,9 @@ class IssueWorker:
                 role="main",
                 task_type="issue",
                 task_id=None,
+            )
+            update_log_context(
+                **invocation_log_fields(getattr(execution, "invocation_context", None))
             )
             if getattr(execution, "merged", False):
                 logger.info(
@@ -898,7 +904,9 @@ class IssueWorker:
                     max_version = await db.scalar(
                         select(func.max(IssueAnalysis.analysis_version)).where(
                             and_(
-                                IssueAnalysis.repo_name.in_([repo_name, repo_full_name]),
+                                IssueAnalysis.repo_name.in_(
+                                    [repo_name, repo_full_name]
+                                ),
                                 IssueAnalysis.repo_owner == repo_owner,
                                 IssueAnalysis.issue_number == issue_number,
                             )
@@ -1061,7 +1069,10 @@ class IssueWorker:
                             task_id,
                         )
                         try:
-                            _, cancellation_status = await self._converge_cancelled_analysis(
+                            (
+                                _,
+                                cancellation_status,
+                            ) = await self._converge_cancelled_analysis(
                                 db,
                                 analysis_id=analysis_id,
                                 issue_info=issue_info,
@@ -1133,7 +1144,9 @@ class IssueWorker:
                                 analysis_metadata=analysis_metadata,
                             )
                             if updated:
-                                logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
+                                logger.info(
+                                    f"[{task_id}] 已使用 AI 摘要更新 Issue 向量"
+                                )
                             else:
                                 logger.warning(f"[{task_id}] Issue 向量更新未完成")
                         elif summary:
@@ -1297,8 +1310,8 @@ class IssueWorker:
                                     issue_number,
                                     labels_data,
                                     db,
-                                    cancellation_checkpoint=lambda: self._raise_if_cancelled(
-                                        cancel_event
+                                    cancellation_checkpoint=lambda: (
+                                        self._raise_if_cancelled(cancel_event)
                                     ),
                                 ),
                             )
@@ -1330,21 +1343,19 @@ class IssueWorker:
                             )
                             if assignees_data:
                                 self._raise_if_cancelled(cancel_event)
-                                assign_result = (
-                                    await self._run_external_write(
-                                        task_key,
-                                        task_id,
-                                        cancel_event,
-                                        lambda: issue_service.apply_suggested_assignees(
-                                            repo_owner,
-                                            repo_name,
-                                            issue_number,
-                                            assignees_data,
-                                            cancellation_checkpoint=lambda: self._raise_if_cancelled(
-                                                cancel_event
-                                            ),
+                                assign_result = await self._run_external_write(
+                                    task_key,
+                                    task_id,
+                                    cancel_event,
+                                    lambda: issue_service.apply_suggested_assignees(
+                                        repo_owner,
+                                        repo_name,
+                                        issue_number,
+                                        assignees_data,
+                                        cancellation_checkpoint=lambda: (
+                                            self._raise_if_cancelled(cancel_event)
                                         ),
-                                    )
+                                    ),
                                 )
                                 if assign_result.get("applied"):
                                     logger.info(
@@ -1402,9 +1413,9 @@ class IssueWorker:
                         if (
                             not task_deadline.is_expired()
                             and sm_config.get("enabled", True)
-                            and sm_config.get(
-                                "issue_reflection", {}
-                            ).get("enabled", True)
+                            and sm_config.get("issue_reflection", {}).get(
+                                "enabled", True
+                            )
                         ):
                             self._raise_if_cancelled(cancel_event)
                             from backend.services.sakura_memory_service import (
@@ -1461,7 +1472,10 @@ class IssueWorker:
                     logger.info("[{}] Issue 分析已取消: {}", task_id, e)
                     cancellation_status = None
                     try:
-                        _, cancellation_status = await self._converge_cancelled_analysis(
+                        (
+                            _,
+                            cancellation_status,
+                        ) = await self._converge_cancelled_analysis(
                             db,
                             analysis_id=analysis_id,
                             issue_info=issue_info,
@@ -1520,7 +1534,10 @@ class IssueWorker:
                     if lifecycle_cancelled:
                         cancellation_status = None
                         try:
-                            _, cancellation_status = await self._converge_cancelled_analysis(
+                            (
+                                _,
+                                cancellation_status,
+                            ) = await self._converge_cancelled_analysis(
                                 db,
                                 analysis_id=analysis_id,
                                 issue_info=issue_info,
@@ -1543,7 +1560,7 @@ class IssueWorker:
                         )
                         return task_id
 
-                    logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"[{task_id}] Issue 分析失败: {e}")
 
                     # Update FAILED only for this task's active exact row.  A
                     # rowcount of zero means another lifecycle transition won;
@@ -1565,15 +1582,17 @@ class IssueWorker:
                                     IssueAnalysisStatus.FAILED.value,
                                 }
                                 and (
-                                    failed_status
-                                    == IssueAnalysisStatus.CANCELLED.value
+                                    failed_status == IssueAnalysisStatus.CANCELLED.value
                                     or getattr(failed_record, "issue_state", None)
                                     == "closed"
                                 )
                             )
                         )
                         if failed_is_cancelled:
-                            _, cancellation_status = await self._converge_cancelled_analysis(
+                            (
+                                _,
+                                cancellation_status,
+                            ) = await self._converge_cancelled_analysis(
                                 db,
                                 analysis_id=analysis_id,
                                 issue_info=issue_info,
@@ -1610,9 +1629,7 @@ class IssueWorker:
                                 await publish_event(
                                     "issue:status_changed",
                                     {
-                                        "issue_number": issue_info.get(
-                                            "issue_number"
-                                        ),
+                                        "issue_number": issue_info.get("issue_number"),
                                         "repo_name": issue_info.get("repo_name"),
                                         "status": "failed",
                                     },

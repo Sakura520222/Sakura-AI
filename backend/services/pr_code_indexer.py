@@ -154,7 +154,7 @@ class PRCodeIndexer:
             return result
 
         except Exception as e:
-            logger.error(f"索引PR #{pr_number} 代码失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"索引PR #{pr_number} 代码失败: {e}")
             return {
                 "indexed": 0,
                 "skipped": 0,

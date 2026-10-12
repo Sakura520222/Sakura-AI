@@ -18,6 +18,11 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.github_app import GitHubAppClient
+from backend.core.log_context import (
+    invocation_log_fields,
+    task_logging,
+    update_log_context,
+)
 from backend.core.time_service import now_utc
 from backend.models.database import (
     CommentSeverity,
@@ -280,9 +285,8 @@ class ReviewWorker:
                     len(ci_failures),
                 )
         except Exception as e:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"[{task_id}] 外部 CI 失败注入失败（不影响审查）: {e}",
-                exc_info=True,
             )
 
     def _register_task(self, task_key: str, force_new: bool = False) -> asyncio.Event:
@@ -529,6 +533,7 @@ class ReviewWorker:
             logger.warning("[{}] PR relations unavailable: {}", task_id, result.failure)
         return result
 
+    @task_logging("pr")
     async def process_review_task(
         self,
         pr_info: dict[str, Any],
@@ -539,9 +544,8 @@ class ReviewWorker:
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
-        task_id = str(uuid.uuid4())[
-            :8
-        ]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
+        task_id = str(uuid.uuid4())
+        update_log_context(task_id=task_id)
         task_key = self._make_task_key(pr_info)
         if task_key not in getattr(self, "_cancel_events", {}):
             self._register_task(task_key)
@@ -635,6 +639,11 @@ class ReviewWorker:
                     role="main",
                     task_type="pr",
                     task_id=None,
+                )
+                update_log_context(
+                    **invocation_log_fields(
+                        getattr(execution, "invocation_context", None)
+                    )
                 )
                 if getattr(execution, "merged", False):
                     logger.info(
@@ -1009,9 +1018,8 @@ class ReviewWorker:
                             ", ".join(parts) or "空",
                         )
                 except Exception as e:
-                    logger.warning(
+                    logger.opt(exception=True).warning(
                         f"[{task_id}] .sakura/ 记忆上下文注入失败（不影响审查）: {e}",
-                        exc_info=True,
                     )
 
                 # 6.3 注入外部 CI 失败（由 check_run/workflow_job webhook 预先采集）
@@ -1763,11 +1771,10 @@ class ReviewWorker:
                 await _finish_execution("cancelled")
                 return task_id
             except Exception as e:
-                logger.error(
+                logger.opt(exception=True).error(
                     "[{}] 处理审查任务时出错: {}",
                     task_id,
                     str(e),
-                    exc_info=True,
                 )
 
                 if review_id:
@@ -1925,9 +1932,8 @@ class ReviewWorker:
                 repo_owner=pr_info["repo_owner"],
             )
         except Exception as hist_exc:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"[{task_id}] 反思历史摘要获取失败（不影响反思）: {hist_exc}",
-                exc_info=True,
             )
             return None
 
@@ -2405,7 +2411,9 @@ class ReviewWorker:
             return decision, decision_reason, _publish_result
 
         except Exception as e:
-            logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
+            logger.opt(exception=True).error(
+                "[{}] 决策引擎执行失败: {}", task_id, str(e)
+            )
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {e!s}", None
 

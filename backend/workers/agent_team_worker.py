@@ -19,6 +19,7 @@ from pathlib import Path
 from loguru import logger
 
 from backend.core.config import get_dynamic_config_fresh, get_settings
+from backend.core.log_context import task_logging
 from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamFeedback,
@@ -268,6 +269,7 @@ class AgentTeamWorker:
             )
         return runner
 
+    @task_logging("agent")
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         # 注册取消信号
@@ -733,8 +735,8 @@ class AgentTeamWorker:
             )
             raise
         except Exception as e:
-            logger.error(
-                "Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True
+            logger.opt(exception=True).error(
+                "Agent 任务异常: task_id={}, error={}", task_id, e
             )
             await self._update_task(
                 task_id,
@@ -750,6 +752,7 @@ class AgentTeamWorker:
 
         return task_id
 
+    @task_logging("agent")
     async def process_external_review_iteration(
         self, task_id: int, review_id: int
     ) -> int:
@@ -1033,12 +1036,11 @@ class AgentTeamWorker:
             raise
         except Exception as e:
             terminal = True
-            logger.error(
+            logger.opt(exception=True).error(
                 "Agent PR 闭环迭代异常: task_id={}, review_id={}, error={}",
                 task_id,
                 review_id,
                 e,
-                exc_info=True,
             )
             await self._update_task(
                 task_id,
@@ -1054,6 +1056,7 @@ class AgentTeamWorker:
             if terminal:
                 await self._expire_pending_prompts_if_terminal(task_id)
 
+    @task_logging("agent")
     async def process_human_followup_iteration(self, task_id: int) -> int:
         """管理员后续要求：复用同一 worktree/branch/PR 继续迭代。
 
@@ -1332,11 +1335,10 @@ class AgentTeamWorker:
             raise
         except Exception as e:
             terminal = True
-            logger.error(
+            logger.opt(exception=True).error(
                 "Agent follow-up 迭代异常: task_id={}, error={}",
                 task_id,
                 e,
-                exc_info=True,
             )
             await self._update_task(
                 task_id,

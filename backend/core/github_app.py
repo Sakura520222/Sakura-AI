@@ -227,8 +227,8 @@ class GitHubAppClient:
                     }
                 )
             except Exception as e:
-                logger.warning(
-                    f"获取 installation {inst.id} 仓库失败: {e}", exc_info=True
+                logger.opt(exception=True).warning(
+                    f"获取 installation {inst.id} 仓库失败: {e}"
                 )
         return result
 
@@ -308,7 +308,7 @@ class GitHubAppClient:
             )
             return False
         except Exception as e:
-            logger.warning(f"轻量检查 GitHub App 安装状态失败: {e}", exc_info=True)
+            logger.opt(exception=True).warning(f"轻量检查 GitHub App 安装状态失败: {e}")
             return None
 
     def get_installation_client(self, repo_owner: str, repo_name: str) -> Github | None:
@@ -446,7 +446,7 @@ class GitHubAppClient:
             return labels_dict
 
         except Exception as e:
-            logger.error(f"获取仓库标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取仓库标签失败: {e}")
             return {}
 
     def get_pr_labels(
@@ -479,7 +479,7 @@ class GitHubAppClient:
             return pr_labels
 
         except Exception as e:
-            logger.error(f"获取PR标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取PR标签失败: {e}")
             return []
 
     def add_labels_to_pr(
@@ -523,7 +523,7 @@ class GitHubAppClient:
             return True
 
         except Exception as e:
-            logger.error(f"给PR添加标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"给PR添加标签失败: {e}")
             return False
 
     def remove_labels_from_pr(
@@ -566,7 +566,7 @@ class GitHubAppClient:
             return True
 
         except Exception as e:
-            logger.error(f"从PR移除标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"从PR移除标签失败: {e}")
             return False
 
     def create_label(
@@ -611,7 +611,7 @@ class GitHubAppClient:
             return True
 
         except Exception as e:
-            logger.error(f"创建标签失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"创建标签失败: {e}")
             return False
 
     def has_existing_review(
@@ -667,7 +667,7 @@ class GitHubAppClient:
             return False
 
         except Exception as e:
-            logger.error(f"检查现有Review失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"检查现有Review失败: {e}")
             # 出错时返回False，允许继续提交
             return False
 
@@ -754,7 +754,7 @@ class GitHubAppClient:
             return dismissed_count
 
         except Exception as e:
-            logger.error(f"撤回Review失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"撤回Review失败: {e}")
             return 0
 
     def delete_all_bot_comments(
@@ -831,7 +831,7 @@ class GitHubAppClient:
             return {"issue_comments": issue_deleted, "review_comments": review_deleted}
 
         except Exception as e:
-            logger.error(f"删除bot评论失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"删除bot评论失败: {e}")
             return {"issue_comments": issue_deleted, "review_comments": review_deleted}
 
     def check_collaborator_permission(
@@ -866,10 +866,9 @@ class GitHubAppClient:
             return permission
 
         except Exception as e:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"检查用户权限失败，无法确认权限 "
                 f"(repo={repo_owner}/{repo_name}, user={username}): {e}",
-                exc_info=True,
             )
             return "unknown"
 
@@ -927,7 +926,7 @@ class GitHubAppClient:
             return True
 
         except Exception as e:
-            logger.error(f"提交Review失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"提交Review失败: {e}")
             return False
 
     def submit_review_with_inline_comments(
@@ -1126,7 +1125,7 @@ class GitHubAppClient:
             else:
                 logger.error(f"提交Review失败: {error_type}: {e!s}")
 
-            logger.debug("完整异常信息:", exc_info=True)
+            logger.opt(exception=True).debug("完整异常信息:")
             if raise_on_error:
                 raise
             return {
@@ -1285,9 +1284,8 @@ class GitHubAppClient:
             )
             return {"id": check_run.id, "status": status, "conclusion": conclusion}
         except Exception as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"创建 Check Run 失败 {repo_owner}/{repo_name}@{head_sha}: {e}",
-                exc_info=True,
             )
             return None
 
@@ -1354,9 +1352,8 @@ class GitHubAppClient:
             )
             return True
         except Exception as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"更新 Check Run 失败 {repo_owner}/{repo_name} id={check_run_id}: {e}",
-                exc_info=True,
             )
             return False
 
@@ -1953,7 +1950,7 @@ async def get_pr_info_from_url(pr_url: str) -> dict[str, Any] | None:
     except ValueError:
         raise
     except Exception as e:
-        logger.error(f"从URL获取PR信息失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"从URL获取PR信息失败: {e}")
         raise
 
 

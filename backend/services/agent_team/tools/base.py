@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+from backend.core.log_context import tool_log_fields, traced_operation
 from backend.core.time_service import monotonic
 from backend.services.agent_team.execution import ExecutionRunner
 from backend.services.agent_team.skill_scope import SkillRestriction
@@ -303,6 +304,7 @@ class ToolExecutor:
         for tool in tools:
             self.register(tool)
 
+    @traced_operation(tool_log_fields, events=True)
     async def execute_tool_call(self, tool_call: Any, ctx: ToolContext) -> ToolResult:
         from backend.services.agent_team.lifecycle_hooks import HookFailure
 

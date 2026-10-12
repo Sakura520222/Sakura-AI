@@ -117,7 +117,8 @@ async def test_chromadb_connection_failure_sanitizes_response_and_logs_traceback
     # loguru 必须保留完整 traceback 与原始异常细节，供服务端排查
     assert "Traceback" in log_output
     assert "RuntimeError" in log_output
-    assert sensitive_detail in log_output
+    assert "chromadb internal error: host=10.0.0.1" in log_output
+    assert "secret-token" not in log_output
 
 
 @pytest.mark.asyncio

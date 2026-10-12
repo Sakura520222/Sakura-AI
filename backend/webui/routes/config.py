@@ -179,9 +179,7 @@ async def save_strategies_section(
                     "max_files_to_search": int(
                         float(form.get("sif_max_files_to_search", 100))
                     ),
-                    "concurrency": int(
-                        float(form.get("sif_concurrency", 8))
-                    ),
+                    "concurrency": int(float(form.get("sif_concurrency", 8))),
                     "max_file_bytes": int(
                         float(form.get("sif_max_file_bytes", 2_097_152))
                     ),
@@ -354,7 +352,7 @@ async def save_strategies_section(
             error=str(e),
         )
     except Exception as e:
-        logger.error(f"策略配置保存异常: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"策略配置保存异常: {e}")
         return toast_redirect(
             f"/config?section={section}",
             "toast.save_failed",
@@ -484,7 +482,7 @@ async def save_recommendation_settings(
             error=str(e),
         )
     except Exception as e:
-        logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"标签推荐设置保存失败: {e}")
         return toast_redirect(
             "/config?section=labels",
             "toast.save_failed",
@@ -548,7 +546,7 @@ async def save_conflict_rules(
             error=str(e),
         )
     except Exception as e:
-        logger.error(f"冲突规则保存失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"冲突规则保存失败: {e}")
         return toast_redirect(
             "/config?section=labels",
             "toast.save_failed",
@@ -615,9 +613,7 @@ def _validate_dynamic_config_value(
     if key in select_options:
         valid_values = [option["value"] for option in select_options[key]]
         if value not in valid_values:
-            raise _DynamicConfigValidationError(
-                "toast.value_invalid", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.value_invalid", field_key=key)
         return value
 
     numeric_value: int | float | None = None
@@ -632,35 +628,29 @@ def _validate_dynamic_config_value(
         }
         normalized_bool = bool_values.get(value.lower())
         if normalized_bool is None:
-            raise _DynamicConfigValidationError(
-                "toast.value_invalid", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.value_invalid", field_key=key)
         return normalized_bool
     if expected_type is int:
         try:
             numeric_value = int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             raise _DynamicConfigValidationError(
                 "toast.numeric_required", field_key=key
             ) from None
     elif expected_type is float:
         try:
             numeric_value = float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             raise _DynamicConfigValidationError(
                 "toast.numeric_required", field_key=key
             ) from None
         if not math.isfinite(numeric_value):
-            raise _DynamicConfigValidationError(
-                "toast.numeric_required", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.numeric_required", field_key=key)
 
     if key in ranges:
         min_value, max_value = ranges[key]
         if numeric_value is None:
-            raise _DynamicConfigValidationError(
-                "toast.numeric_required", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.numeric_required", field_key=key)
         if numeric_value < min_value or (
             max_value is not None and numeric_value > max_value
         ):
@@ -762,7 +752,7 @@ async def save_all_config(
             )
         except Exception as exc:
             # 批量保存不因单项异常中断：记录失败并继续后续分区
-            logger.error(f"save-all [{action}] 保存异常: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"save-all [{action}] 保存异常: {exc}")
             results.append(
                 {
                     "action": action,
@@ -888,7 +878,7 @@ async def download_user_backup(
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("用户信息备份导出失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("用户信息备份导出失败: {}", exc)
         return toast_redirect(
             "/config/backup",
             "toast.user_backup_export_failed",
@@ -948,7 +938,7 @@ async def download_config_backup(
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("配置备份导出失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("配置备份导出失败: {}", exc)
         return toast_redirect(
             "/config/backup",
             "toast.config_backup_export_failed",
@@ -983,10 +973,9 @@ async def upload_config_backup(
             refresh_imported_runtime_config(result)
         except Exception as exc:
             runtime_refresh_ok = False
-            logger.error(
+            logger.opt(exception=True).error(
                 "配置已导入，但运行时配置刷新失败，需重启应用: {}",
                 exc,
-                exc_info=True,
             )
 
         safe_filename = Path(backup_file.filename or "backup.json").name[:255]
@@ -1050,7 +1039,7 @@ async def upload_config_backup(
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("配置备份导入失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("配置备份导入失败: {}", exc)
         if result is not None:
             return toast_redirect(
                 "/config/backup",
@@ -1152,7 +1141,7 @@ async def upload_user_backup(
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("用户信息备份导入失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("用户信息备份导入失败: {}", exc)
         await db.rollback()
         return toast_redirect(
             "/config/backup",
@@ -1322,9 +1311,7 @@ async def agent_network_status(
     del user
     try:
         policy_state = await get_agent_team_network_policy_state()
-        backend_value = await get_dynamic_config_fresh(
-            "agent_team_execution_backend"
-        )
+        backend_value = await get_dynamic_config_fresh("agent_team_execution_backend")
         backend = validate_execution_backend(
             str(backend_value or ""),
             deploy_mode=str(getattr(get_settings(), "sakura_deploy_mode", "unknown")),
@@ -1369,9 +1356,7 @@ async def agent_network_status(
         dependency_network_mode = network_mode_for_policy(policy, profile="dependency")
         sandbox_status = await read_sandbox_capability_status()
         sandbox_ready = bool(sandbox_status.get("available"))
-        egress_capability = str(
-            sandbox_status.get("egress_capability", "unavailable")
-        )
+        egress_capability = str(sandbox_status.get("egress_capability", "unavailable"))
         egress_available = egress_capability == "egress"
 
     if backend == "local":
@@ -1595,7 +1580,7 @@ async def save_general_config(
             lang=detect_language(),
         )
     except Exception as e:
-        logger.error(f"全局配置保存失败: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"全局配置保存失败: {e}")
         return toast_redirect(
             "/config",
             "toast.save_failed",

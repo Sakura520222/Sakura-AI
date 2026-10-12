@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-import re
 import sys
 import threading
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from loguru import logger
 
+from backend.core.log_context import CORRELATION_FIELDS, get_log_context
+from backend.core.log_sanitizer import sanitize, sanitize_text, sensitive_key
 from backend.core.time_service import SystemClock, get_time_service
 
 APP_LOG_DIRECTORY = Path("logs")
 APP_LOG_RETENTION_DAYS = 10
+APP_LOG_ROTATION = "50 MB"
+APP_LOG_MAX_BYTES = 500 * 1024 * 1024
+_active_app_log_paths: set[Path] = set()
 # apscheduler.executors：每个 job 触发都会发 "Running job"/"executed successfully"
 # 两条 INFO；star_aid tick 即使功能关闭也保持注册（多副本观察远端开启），
 # 不过滤就会形成 Issue #650 的周期性心跳噪音。executor 的 WARNING（missed
 # run / max instances）与 ERROR（job 异常）不受影响。
 _NOISY_LOGGER_PREFIXES = ("httpx", "httpcore", "telegram", "apscheduler.executors")
-_URL_PASSWORD_PATTERN = re.compile(
-    r"(?P<prefix>[a-zA-Z][a-zA-Z0-9+.-]*://[^:/\s@]+:)[^@/\s]+(?P<suffix>@)"
-)
-_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 
 # 时间占位符必须用 strftime 规范，不能用 loguru 迷你语言（YYYY-MM-DD ... ZZ）：
 # 其 Z/ZZ token 依赖 tzinfo.utcoffset(None)，ZoneInfo 返回 None 会令格式化崩溃、
@@ -33,10 +36,10 @@ _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 CONSOLE_LOG_FORMAT = (
     "<green>{time:%Y-%m-%d %H:%M:%S.%f%z}</green>"
     " | <level>{level: <8}</level>"
-    " | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
+    " | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
 )
 FILE_LOG_FORMAT = (
-    "{time:%Y-%m-%d %H:%M:%S.%f%z} | {level: <8} | {name}:{function} - {message}"
+    "{time:%Y-%m-%d %H:%M:%S.%f%z} | {level: <8} | {name}:{function}:{line} - {message}"
 )
 
 
@@ -45,22 +48,38 @@ def _cleanup_expired_app_logs(_log_paths: list[str] | None = None) -> None:
     retention_threshold = (
         SystemClock.now_utc().timestamp() - APP_LOG_RETENTION_DAYS * 24 * 60 * 60
     )
+    files = []
     for log_path in APP_LOG_DIRECTORY.glob("app_*.log"):
+        if log_path in _active_app_log_paths:
+            continue
         try:
-            if log_path.stat().st_mtime < retention_threshold:
+            stat = log_path.stat()
+            if stat.st_mtime < retention_threshold:
                 log_path.unlink()
+            else:
+                files.append((stat.st_mtime, stat.st_size, log_path))
         except OSError:
             # 其他进程可能已完成同一历史文件的清理，或仍占用该历史文件。
+            continue
+    total = sum(size for _, size, _ in files)
+    for _, size, path in sorted(files):
+        if total <= APP_LOG_MAX_BYTES:
+            break
+        try:
+            path.unlink()
+            total -= size
+        except OSError:
             continue
 
 
 def _create_startup_log_file(
-    log_directory: Path = APP_LOG_DIRECTORY,
+    log_directory: Path | None = None,
     *,
     started_at: datetime | None = None,
     process_id: int | None = None,
 ) -> Path:
     """为本次进程启动原子地分配一个新的日志文件。"""
+    log_directory = log_directory or APP_LOG_DIRECTORY
     log_directory.mkdir(parents=True, exist_ok=True)
     startup_time = started_at or SystemClock.now_utc()
     if startup_time.tzinfo is None or startup_time.utcoffset() is None:
@@ -123,9 +142,32 @@ class InterceptHandler(logging.Handler):
                 event_time = event_time.astimezone(get_time_service().zone)
             except Exception:
                 pass
-            target_logger = patcher(
-                lambda log_record: log_record.update(time=event_time)
-            )
+
+            def original_source(log_record):
+                # LogRecord is authoritative even for QueueHandler, stacklevel,
+                # adapters, or manually emitted records with no caller stack.
+                log_record.setdefault("message", message)
+                log_record.update(
+                    time=event_time,
+                    name=record.name,
+                    module=record.module,
+                    function=record.funcName,
+                    line=record.lineno,
+                    file=SimpleNamespace(name=record.filename, path=record.pathname),
+                )
+                log_record.setdefault("extra", {}).update(
+                    getattr(record, "_sakura_context", {})
+                )
+                log_record["extra"].update(
+                    {
+                        key: value
+                        for key, value in record.__dict__.items()
+                        if key not in _STANDARD_RECORD_FIELDS
+                    }
+                )
+                _sanitize_record(log_record)
+
+            target_logger = patcher(original_source)
         target_logger.opt(exception=record.exc_info).log(
             level,
             "[{}] {}",
@@ -144,13 +186,30 @@ def _is_noisy_library_record(record: logging.LogRecord) -> bool:
 
 def _redact_standard_log_message(message: str) -> str:
     """防止标准日志中的 URL 密码和 Telegram Bot token 落盘。"""
-    message = _URL_PASSWORD_PATTERN.sub(r"\g<prefix>***\g<suffix>", message)
-    return _TELEGRAM_BOT_TOKEN_PATTERN.sub("/bot***", message)
+    return sanitize_text(message)
+
+
+_STANDARD_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "taskName",
+    "_sakura_context",
+}
 
 
 def install_standard_logging_bridge() -> None:
     """捕获标准库、Uvicorn 与第三方库的日志到 Loguru。"""
     handler = InterceptHandler()
+    previous_factory = logging.getLogRecordFactory()
+    if not getattr(previous_factory, "_sakura_context_factory", False):
+
+        def contextual_record(*args, **kwargs):
+            record = previous_factory(*args, **kwargs)
+            record._sakura_context = get_log_context()
+            return record
+
+        contextual_record._sakura_context_factory = True
+        logging.setLogRecordFactory(contextual_record)
     logging.basicConfig(handlers=[handler], level=logging.DEBUG, force=True)
     logging.captureWarnings(True)
 
@@ -174,22 +233,116 @@ def _patch_loguru_time(record: dict) -> None:
         record["time"] = record["time"].astimezone(UTC)
 
 
+def _configured_secrets() -> tuple[str, ...]:
+    from backend.core.config import get_settings
+
+    try:
+        settings = get_settings()
+        values = vars(settings)
+    except Exception:
+        # Logging the original startup/configuration error must remain possible.
+        values = os.environ
+    return tuple(
+        value
+        for key, value in values.items()
+        if sensitive_key(key) and isinstance(value, str) and value
+    )
+
+
+def _sanitize_record(record: dict) -> None:
+    secrets = _configured_secrets()
+    extra = {**get_log_context(), **record.get("extra", {})}
+    exception = record.get("exception")
+    if exception:
+        seen = set()
+        pending = [exception.value]
+        while pending:
+            error = pending.pop()
+            if error is None or id(error) in seen:
+                continue
+            seen.add(id(error))
+            for key, value in getattr(error, "_log_correlation", {}).items():
+                if key in CORRELATION_FIELDS and extra.get(key) is None:
+                    extra[key] = value
+            secrets += tuple(getattr(error, "_log_redaction_secrets", ()))
+            pending.extend((error.__cause__, error.__context__))
+            if isinstance(error, BaseExceptionGroup):
+                pending.extend(error.exceptions)
+        # Render before any sink/queue can see exception objects or frame locals.
+        # stdlib preserves cause/context, notes and ExceptionGroup branches.
+        rendered = "".join(traceback.format_exception(*exception))
+        extra["exception"] = sanitize_text(rendered, secrets=secrets)
+        record["message"] += "\n" + extra["exception"]
+        record["exception"] = None
+    record["message"] = sanitize_text(record["message"], secrets=secrets)
+    record["extra"] = sanitize(extra, secrets=secrets)
+
+
+def _patch_record(record: dict) -> None:
+    _patch_loguru_time(record)
+    _sanitize_record(record)
+
+
+def _sink_filter(record: dict) -> bool:
+    from backend.core.config import Settings, get_settings
+
+    # Read the cached Settings singleton on each record: DB loading, WebUI saves
+    # and backup restores all take effect without sink replacement/file churn.
+    try:
+        settings = get_settings()
+    except Exception:
+        settings = None
+    default_level = Settings.model_fields["log_level"].default
+    level = getattr(settings, "log_level", default_level).upper()
+    if getattr(settings, "is_development", False) and "log_level" not in getattr(
+        settings, "model_fields_set", set()
+    ):
+        level = "DEBUG"
+    try:
+        minimum = logger.level(level).no
+    except ValueError:
+        minimum = logger.level(default_level).no
+    if record["level"].no < minimum:
+        return False
+    # Per-logger patchers run after the global patcher. Sanitize their additions
+    # as well before formatting, output or queueing.
+    _sanitize_record(record)
+    return True
+
+
+def _format_record(record: dict, *, console: bool = False) -> str:
+    extra = {key: value for key, value in record["extra"].items() if key != "exception"}
+    record["context"] = json.dumps(extra, ensure_ascii=False, separators=(",", ":"))
+    return (
+        CONSOLE_LOG_FORMAT if console else FILE_LOG_FORMAT
+    ) + " | {context}\n{exception}"
+
+
 def configure_logging(*, started_at: datetime | None = None) -> None:
     """在导入应用依赖前配置完整的控制台与文件日志。"""
+    logger.remove()
+    _active_app_log_paths.clear()
     _cleanup_expired_app_logs()
     app_log_path = _create_startup_log_file(started_at=started_at)
-    logger.remove()
+    _active_app_log_paths.add(app_log_path)
     logger.add(
         sys.stdout,
-        format=CONSOLE_LOG_FORMAT,
-        level="INFO",
+        format=lambda record: _format_record(record, console=True),
+        level=0,
+        filter=_sink_filter,
+        diagnose=False,
+        backtrace=False,
     )
     logger.add(
         str(app_log_path),
-        format=FILE_LOG_FORMAT,
-        rotation="500 MB",
+        format=_format_record,
+        serialize=True,
+        rotation=APP_LOG_ROTATION,
         retention=_cleanup_expired_app_logs,
-        level="DEBUG",
+        level=0,
+        filter=_sink_filter,
+        diagnose=False,
+        backtrace=False,
     )
-    logger.configure(patcher=_patch_loguru_time)
+    logger.configure(patcher=_patch_record)
     install_standard_logging_bridge()

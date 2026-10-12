@@ -2209,6 +2209,7 @@ strategy:
 
 # ========== 实时活动监控 / Activity Monitor ==========
 activity:
+  operational_logs: "近期日志"
   title: "实时活动监控"
   description: "实时聚合 PR 审查、Issues 分析、仓库扫描的执行状态"
   connected: "实时连接"
@@ -2491,12 +2492,12 @@ setup:
 
   # ===== 验证页 / Verify page =====
   verify_title: "Setup Wizard 安全验证"
-  verify_description: "请从应用启动日志中复制 Setup Token 并粘贴到下方输入框，以继续首次部署配置。"
+  verify_description: "请通过本机 start.sh 或读取 config/.setup-token 获取 Setup Token，并粘贴到下方继续首次部署配置。"
   verify_token_label: "Setup Token"
-  verify_placeholder: "粘贴日志中的 Token"
+  verify_placeholder: "粘贴本机获取的 Token"
   verify_submit: "验证并继续"
-  verify_tip: "Token 在每次应用启动时生成，可在启动日志中找到。"
-  verify_invalid: "Token 无效，请检查日志中的 Token 是否正确。"
+  verify_tip: "Token 每次启动重新生成，完成配置后删除。"
+  verify_invalid: "Token 无效，请重新读取本机当前的 Token。"
 
   # ===== 向导页 / Wizard page =====
   page_title: "初始配置 - Sakura AI"

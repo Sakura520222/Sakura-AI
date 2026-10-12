@@ -135,6 +135,32 @@ async def activity_snapshot(
         raise HTTPException(status_code=409, detail="cursor reset required") from exc
 
 
+@router.get("/api/sessions/{session_id}/logs")
+async def activity_operational_logs(
+    session_id: int,
+    request: Request,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Super-admin diagnostics with the same session ownership check as Activity."""
+    from fastapi.responses import PlainTextResponse
+    from starlette.concurrency import run_in_threadpool
+
+    from backend.services.operational_log_service import session_logs
+
+    if user.get("role") != "super_admin":
+        raise _not_found()
+    try:
+        await _access_service(request, db).require_session_access(session_id, user, db)
+    except ActivityNotFoundError as exc:
+        raise _not_found() from exc
+    text = await run_in_threadpool(session_logs, session_id)
+    return PlainTextResponse(
+        text,
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @router.get("/api/sessions/{session_id}/events")
 async def activity_events(
     session_id: int,

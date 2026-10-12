@@ -523,7 +523,7 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
             logger.info("请访问 /setup 完成初始配置")
-            # 生成 Setup Token：用户需从日志中获取 Token 才能访问 Setup Wizard
+            # Generate the private local Setup credential (never log its value).
             generate_setup_token()
 
         # 记录启动完成时间
@@ -655,6 +655,10 @@ app.add_middleware(BootstrapMiddleware)
 
 # Deliver queued WebUI session renewals on the final response.
 app.add_middleware(WebUITokenRenewalMiddleware)
+
+from backend.core.log_context import RequestLogContextMiddleware
+
+app.add_middleware(RequestLogContextMiddleware)
 
 
 # 健康检查
@@ -811,11 +815,15 @@ def _run_serve(args: argparse.Namespace) -> int:
         start_reload_watcher(Path(__file__).resolve().parent.parent)
         logger.info("代码热重载已开启（模块级 reload，进程不重启）")
 
+    if args.log_level is not None:
+        settings.log_level = args.log_level.upper()
     config = uvicorn.Config(
         "backend.main:app",
         host=args.host,
         port=args.port if args.port is not None else settings.app_port,
-        log_level=(args.log_level or settings.log_level).lower(),
+        # Admission stays open at the bridge; both sinks enforce the live level.
+        # Otherwise a startup WARNING threshold permanently drops later DEBUG.
+        log_level="debug",
         log_config=None,
         timeout_graceful_shutdown=15,
     )

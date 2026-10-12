@@ -299,7 +299,7 @@ async def inspect_config_backup(request: Request):
             status_code=400,
         )
     except Exception as exc:
-        logger.error("Setup 备份校验失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("Setup 备份校验失败: {}", exc)
         return JSONResponse(
             {"success": False, "message": "备份文件校验失败"},
             status_code=400,
@@ -359,9 +359,7 @@ async def save_step(request: Request):
         clear_bootstrap_cache()
         return JSONResponse({"success": True, "message": "配置已保存"})
     except ValueError as exc:
-        return JSONResponse(
-            {"success": False, "message": str(exc)}, status_code=400
-        )
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
     except Exception:
         logger.exception("保存配置失败")
         return JSONResponse(
