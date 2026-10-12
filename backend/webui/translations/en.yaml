@@ -2190,7 +2190,7 @@ strategy:
   user_template_desc: "Placeholders: {title}, {file_count}, {import_context}"
   save_depgraph: "Save Dependency Graph Config"
   issue_analysis: "Issue Analysis"
-  issue_system_prompt_desc: "System prompt for Issue analysis. Defines the AI role, analysis dimensions, and output format."
+  issue_system_prompt_desc: "Issue analysis focus. Investigation adapts to validity, information, impact and complexity: spam or incomplete reports receive brief handling, while complex and high-risk issues retain deep analysis. The system supplies the structured protocol and safety constraints."
   issue_categories: "Category Definitions"
   issue_categories_desc: "Define Issue categories. Each row contains name, description, and keywords (comma separated)."
   add_category: "Add Category"
@@ -2202,6 +2202,7 @@ strategy:
   issue_comment_template_zh: "Comment Template (Chinese)"
   issue_comment_template_en: "Comment Template (English)"
   issue_template_variables: "Available template variables:"
+  issue_template_layout_hint: "Both templates must include {summary} (conclusion and evidence) and {feasibility} (recommended action); other variables are optional. Built-in defaults fold metadata and hide empty suggestions. Existing custom templates retain their layout and fallback text. Only listed variables are supported; write literal braces as {{ and }}."
   save_issue_analysis: "Save Issue Analysis Config"
   issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Issue feature toggles (enable analysis, auto assignment, title rewriting, etc.) are available in Global Config → Issue Analysis."
 

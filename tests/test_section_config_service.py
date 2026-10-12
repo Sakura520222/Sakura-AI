@@ -433,3 +433,93 @@ async def test_save_unchanged_override_skips_write(monkeypatch):
     assert result["changed"] is False
     assert result["changes"] == {}
     assert db.committed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["comment_template", "comment_template_en"])
+async def test_issue_template_optional_metadata_and_escaped_braces_round_trip(field):
+    db = _FakeSession()
+    template = "Conclusion: {summary}\nAction: {feasibility}\nLiteral: {{example}}"
+    await section_config_service.save_section(
+        db, "strategy.issue_analysis", {field: template}
+    )
+    loaded = await section_config_service.load_section(db, "strategy.issue_analysis")
+    assert loaded[field] == template
+    assert (
+        config_sections.get_section_config("strategy.issue_analysis")[field] == template
+    )
+    assert json.loads(db.rows[0].key_value) == {field: template}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["comment_template", "comment_template_en"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{summary}",
+        "{feasibility}",
+        "{{summary}} {feasibility}",
+        "{summary} {feasibility} {unknown}",
+        "{summary} {feasibility} {0}",
+        "{summary} {feasibility} {summary.__class__}",
+        "{summary} {feasibility} {summary[0]}",
+        "{summary} {feasibility} {summary:{unknown}}",
+        "{summary} {feasibility} {",
+        "{summary} {feasibility!x}",
+    ],
+)
+async def test_issue_template_rejects_missing_unknown_or_invalid_fields(
+    field, template
+):
+    db = _FakeSession()
+    with pytest.raises(ValueError, match="占位符|格式无效"):
+        await section_config_service.save_section(
+            db, "strategy.issue_analysis", {field: template}
+        )
+    assert db.rows == [] and db.added == [] and db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_issue_config_patch_preserves_historical_template_and_custom_prompt():
+    db = _FakeSession()
+    template = "Legacy\n{summary!s}\n{feasibility}\n{category} {priority}\n{labels}\n{assignees}\n{related_info}\n{suggested_title_section}"
+    await section_config_service.save_section(
+        db,
+        "strategy.issue_analysis",
+        {
+            "system_prompt": "Project-specific analysis focus.",
+            "comment_template": template,
+            "comment_template_en": template,
+        },
+    )
+    await section_config_service.save_section(
+        db,
+        "strategy.issue_analysis",
+        {
+            "max_linked_issues_in_prompt": 7,
+        },
+        mode="patch",
+    )
+    loaded = await section_config_service.load_section(db, "strategy.issue_analysis")
+    assert loaded["system_prompt"] == "Project-specific analysis focus."
+    assert loaded["comment_template"] == loaded["comment_template_en"] == template
+    assert loaded["max_linked_issues_in_prompt"] == 7
+
+
+@pytest.mark.asyncio
+async def test_saving_issue_defaults_removes_only_default_overrides():
+    db = _FakeSession()
+    defaults = config_sections.get_section_defaults("strategy.issue_analysis")
+    await section_config_service.save_section(
+        db,
+        "strategy.issue_analysis",
+        {
+            "comment_template": "Custom {summary} {feasibility}",
+        },
+    )
+    await section_config_service.save_section(db, "strategy.issue_analysis", defaults)
+    assert db.rows == []
+    assert (
+        await section_config_service.load_section(db, "strategy.issue_analysis")
+        == defaults
+    )

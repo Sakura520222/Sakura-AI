@@ -613,6 +613,7 @@
                                 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{related_info}</code>
                                 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{suggested_title_section}</code>
                             </p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_template_layout_hint') }}</p>
                             <textarea name="issue_comment_template" rows="12"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template', '') }}</textarea>
                         </div>
