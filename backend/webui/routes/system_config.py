@@ -65,6 +65,14 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
         "notification_retry_initial_delay_seconds",
         "notification_retry_backoff_factor",
         "notification_rate_limit_seconds",
+        "notification_poll_seconds",
+        "notification_batch_size",
+        "notification_send_timeout_seconds",
+        "notification_webhook_enabled",
+        "notification_webhook_timeout_seconds",
+        "notification_webhook_response_max_bytes",
+        "notification_email_verification_ttl_seconds",
+        "notification_verification_max_attempts",
         "app_port",
         "app_timezone",
         "smtp_security",
@@ -76,7 +84,7 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
 # These optional text fields support an explicit clear action.  An empty value
 # is submitted only when the browser marks that field as user-changed; an
 # untouched empty field keeps the historical "leave unchanged" behavior.
-_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug"})
+_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug", "notification_webhook_allowed_hosts"})
 
 
 @router.get("/")
