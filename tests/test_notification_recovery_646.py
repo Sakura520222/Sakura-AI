@@ -12,8 +12,15 @@ from tests.test_notification_eligibility_fixes import (
     _CountingProvider,
     _seed_delivery,
     _settings,
-    sqlite_database,  # noqa: F401
 )
+from tests.test_notification_eligibility_fixes import (
+    sqlite_database as _sqlite_database,
+)
+
+
+@pytest.fixture
+def sqlite_database(monkeypatch):
+    yield from _sqlite_database.__wrapped__(monkeypatch)
 
 
 @pytest.mark.asyncio

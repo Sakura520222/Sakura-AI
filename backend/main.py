@@ -366,13 +366,13 @@ async def lifespan(app: FastAPI):
                     # it after the optional Telegram task so its first event-loop
                     # turn observes the provider registry and Bot setup.
                     try:
-                        from backend.services.announcement_service import (
-                            recover_pending_announcement_deliveries,
+                        from backend.services.notification_service import (
+                            notification_service,
                         )
 
                         app.state.announcement_recovery_task = (
                             create_registered_background_task(
-                                recover_pending_announcement_deliveries(),
+                                notification_service.run_event_dispatcher(),
                                 "announcement.recovery",
                             )
                         )

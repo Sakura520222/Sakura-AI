@@ -8,6 +8,7 @@ which transport (WebUI / API) the attempt comes from.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -74,10 +75,26 @@ async def record_mfa_failure(user_id: int) -> int:
                 count,
                 lock_ttl,
             )
-        return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
-        return _record_mfa_failure_fallback(user_id, threshold, lock_ttl)
+        count = _record_mfa_failure_fallback(user_id, threshold, lock_ttl)
+    if count == threshold:
+        from backend.models import database as db_module
+        from backend.services.notification_events import emit_event
+
+        # Redis lockout and the SQL outbox cannot share a transaction. Lockout
+        # always takes effect; failure to record its alert remains observable.
+        if db_module.async_session is not None:
+            try:
+                async with db_module.async_session() as session:
+                    await emit_event(session, event_type="security.lockout", resource_type="user",
+                        resource_id=user_id, run_key=str(uuid.uuid4()), title="Account temporarily locked",
+                        content="Repeated MFA verification failures locked your account.",
+                        recipient_ids=[user_id], sensitive=True, severity="warning", detail_url="/settings/")
+                    await session.commit()
+            except Exception:
+                logger.warning("MFA lockout notification persistence unavailable: user_id={}", user_id)
+    return count
 
 
 def _cleanup_expired_fallbacks() -> None:
