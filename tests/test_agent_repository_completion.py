@@ -186,6 +186,7 @@ async def test_prefix_selector_does_not_allow_shell_syntax(tmp_path, command):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_admin_size_contract_fresh_cache_and_nofollow(tmp_path):
     ctx, path = admin_context(tmp_path, content="A" * 70000)
     tool = UseSkillTool()
@@ -623,14 +624,18 @@ async def test_live_narrowing_survives_an_ordinary_tool_checkpoint(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_admin_fallback_and_attachments_reject_secret_indirection(tmp_path):
     ctx, _ = admin_context(tmp_path)
     secret = put(tmp_path, "admin/plain.txt", "SECRET")
     skill_dir = tmp_path / "admin/docs"
     (skill_dir / "helper.txt").symlink_to(secret)
     os.link(secret, skill_dir / "hard.txt")
-    os.mkfifo(skill_dir / "pipe.txt")
-    for filename in ("helper.txt", "hard.txt", "pipe.txt"):
+    filenames = ["helper.txt", "hard.txt"]
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(skill_dir / "pipe.txt")
+        filenames.append("pipe.txt")
+    for filename in filenames:
         result = await UseSkillTool().execute({"slug": "docs", "file": filename}, ctx)
         assert not result.success and "SECRET" not in str(result)
     alias = tmp_path / "alias"
@@ -647,7 +652,92 @@ def test_context_secret_directories_are_not_sources(tmp_path):
     assert repo.diagnostics
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "credentials",
+        "id_rsa",
+        "id_ed25519",
+        "config/connection.json",
+        ".env.local",
+        "secret.pem",
+        "certificate.key",
+        ".aws/notes.txt",
+        ".ssh/notes.txt",
+        ".deploy/notes.txt",
+        ".git/notes.txt",
+        ".codex/notes.txt",
+        "credentials/notes.txt",
+        "keys.pem/notes.txt",
+    ],
+)
+def test_context_secret_casing_follows_native_filesystem(tmp_path, path):
+    target = put(tmp_path, path, "SECRET_CANARY")
+    repo = RepositoryContext(tmp_path)
+    with pytest.raises(RepositoryContextError, match="Secret context path rejected"):
+        repo.read_text(path)
+    alias = path.swapcase()
+    if os.name == "nt":
+        assert target.samefile(tmp_path / alias)
+        with pytest.raises(RepositoryContextError, match="Secret context path rejected"):
+            repo.read_text(alias)
+    else:
+        # Preserve admission of distinct mixed-case names on POSIX.
+        put(tmp_path, alias, "CASE_DISTINCT_CONTENT")
+        assert repo.read_text(alias) == "CASE_DISTINCT_CONTENT"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows casing aliases")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("source", [".agents/skills", ".sakura/skills", "admin", "admin-fallback"])
+@pytest.mark.parametrize(
+    ("canonical", "alias"),
+    [
+        ("credentials", "Credentials"),
+        ("nested/secret.pem", "NESTED\\Secret.PEM"),
+        ("credentials/notes.md", "CREDENTIALS/Notes.MD"),
+    ],
+)
+async def test_windows_skill_casing_rejects_secret_attachments(tmp_path, source, canonical, alias):
+    if source.startswith("."):
+        skill(tmp_path, source)
+        repo = RepositoryContext(tmp_path)
+        ctx = context(tmp_path, repo)
+        ctx.extra["skills_index"] = repo.discover_skills()
+        directory = tmp_path / source / "docs"
+    else:
+        ctx, main = admin_context(tmp_path)
+        directory = main.parent
+        if source == "admin-fallback":
+            ctx.extra.pop("skills_root")
+    # Mixed-case on-disk names must also be excluded from file listings.
+    target = put(directory, alias, "SECRET_CANARY")
+    assert target.samefile(directory / canonical)
+    tool = UseSkillTool()
+    assert (await tool.execute({"slug": "docs"}, ctx)).success
+    rejected = await tool.execute({"slug": "docs", "file": alias}, ctx)
+    assert not rejected.success and rejected.error_code == "SKILL_CONTENT_REJECTED"
+    assert "SECRET_CANARY" not in str(rejected)
+    listed = await tool.execute({"slug": "docs", "list_files": True}, ctx)
+    assert listed.success and target.relative_to(directory).as_posix() not in listed.output["files"]
+    for name in ("Guide.MD", "credentials.md", "secret.pem.md", "资料/说明.md"):
+        put(directory, name, "ORDINARY_ATTACHMENT")
+        loaded = await tool.execute({"slug": "docs", "file": name.swapcase()}, ctx)
+        assert loaded.success and loaded.output["content"] == "ORDINARY_ATTACHMENT"
+        assert loaded.output["file"] == name.swapcase()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows casing aliases")
+def test_windows_secret_directory_casing_cannot_supply_instructions(tmp_path):
+    put(tmp_path, ".aws/AGENTS.md", "SECRET_CANARY")
+    repo = RepositoryContext(tmp_path)
+    docs = repo.instructions_for(".AWS/new.py")
+    assert "SECRET_CANARY" not in repo.render(docs)
+    assert repo.diagnostics
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_file_symlink_cannot_bypass_target_scope_guidance(tmp_path):
     put(tmp_path, "backend/AGENTS.md", "backend-specific guidance")
     target = put(tmp_path, "backend/file.py", "original")

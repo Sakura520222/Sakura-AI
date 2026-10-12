@@ -26,6 +26,10 @@ from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.registry import create_executor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
+linux_only = pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux Landlock/seccomp inspection boundary"
+)
+
 
 @pytest.mark.asyncio
 async def test_old_git_reports_tool_prerequisite_without_unsafe_retry(tmp_path):
@@ -114,6 +118,7 @@ def repository(tmp_path, monkeypatch):
     "helper_type", ["external", "textconv", "fsmonitor", "clean", "process"]
 )
 @pytest.mark.parametrize("mode", ["full", "summary"])
+@linux_only
 async def test_change_inspection_never_executes_repository_helpers(
     repository, helper_type, mode
 ):
@@ -142,6 +147,7 @@ async def test_change_inspection_never_executes_repository_helpers(
 
 
 @pytest.mark.asyncio
+@linux_only
 async def test_summary_does_not_refresh_or_lock_the_index(repository):
     root, _, _, _, ctx = repository
     target = root / "evidence.txt"
@@ -158,6 +164,7 @@ async def test_summary_does_not_refresh_or_lock_the_index(repository):
 
 
 @pytest.mark.asyncio
+@linux_only
 async def test_real_diff_preserves_linked_worktree_metadata(repository):
     root, _, _, _, ctx = repository
     # Construct the normal Git linked-worktree layout in this temporary
@@ -182,6 +189,7 @@ async def test_real_diff_preserves_linked_worktree_metadata(repository):
 
 
 @pytest.mark.asyncio
+@linux_only
 async def test_missing_partial_clone_blob_never_starts_lazy_fetch(repository):
     root, git, command, marker, ctx = repository
     oid = git("rev-parse", ":evidence.txt").stdout.strip()
@@ -206,6 +214,7 @@ async def test_missing_partial_clone_blob_never_starts_lazy_fetch(repository):
         ("grep", "search_in_files", {"keyword": "after"}),
     ],
 )
+@linux_only
 async def test_read_tools_ignore_workspace_binary_shadow(
     repository, binary, tool, args
 ):
@@ -223,6 +232,7 @@ async def test_read_tools_ignore_workspace_binary_shadow(
 
 
 @pytest.mark.asyncio
+@linux_only
 async def test_filter_added_after_preflight_cannot_write(repository, monkeypatch):
     root, git, command, marker, ctx = repository
     (root / ".gitattributes").write_text("evidence.txt filter=late\n")
@@ -260,6 +270,7 @@ def test_readonly_profile_rejects_non_inspection_arguments(argv):
         )
 
 
+@linux_only
 def test_linux_kernel_boundary_denies_writes_metadata_and_sockets(tmp_path):
     from backend.services.agent_team import readonly_process
 
@@ -316,6 +327,7 @@ async def test_cancel_readonly_search_preserves_runner_cancellation(repository):
 
 
 @pytest.mark.asyncio
+@linux_only
 async def test_runner_cancels_real_readonly_child_after_spawn(repository, monkeypatch):
     _, _, _, _, ctx = repository
     event = asyncio.Event()
@@ -375,6 +387,7 @@ async def test_unknown_or_disabled_readonly_backend_never_executes(advertised):
 
 
 @pytest.mark.parametrize("missing", ["kernel", "seccomp"])
+@linux_only
 def test_unavailable_kernel_or_library_never_executes_target(tmp_path, missing):
     from backend.services.agent_team import readonly_process
 

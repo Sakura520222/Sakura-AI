@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import subprocess
 from collections import OrderedDict
 from threading import Event
@@ -17,7 +18,12 @@ from backend.models import agent_team_models as models
 from backend.models.database import AppConfig
 from backend.services.agent_team import fullstack_expert as runtime
 from backend.services.agent_team.conversation_checkpoint import ResumeCursor
-from backend.services.agent_team.execution import LocalExecutionRunner, TrustedGitRunner
+from backend.services.agent_team.execution import (
+    ExecutionProfile,
+    ExecutionResult,
+    LocalExecutionRunner,
+    TrustedGitRunner,
+)
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.repository_context import RepositoryContext
 from backend.services.agent_team.subagents import SubagentManager, SubagentStore
@@ -41,6 +47,7 @@ model_factory = fixtures.model_factory
 @pytest.fixture(autouse=True)
 def isolate_config(monkeypatch):
     monkeypatch.setattr(config, "_dynamic_config_cache", OrderedDict())
+    monkeypatch.setattr("backend.webui.sse.publish_event", AsyncMock())
 
 
 async def git(workspace, *args):
@@ -53,6 +60,15 @@ async def git(workspace, *args):
         text=True,
     )
     return result.stdout
+
+
+class _ScopeInspectionRunner(LocalExecutionRunner):
+    """Scope tests mock candidate enumeration, not the Linux OS boundary."""
+
+    async def execute(self, request):
+        if request.profile is ExecutionProfile.READ_ONLY and request.argv[0] == "grep":
+            return ExecutionResult(exit_code=0, stdout="./backend/nested/example.py\0")
+        return await super().execute(request)
 
 
 @pytest.mark.asyncio
@@ -80,6 +96,7 @@ async def test_completion_includes_actual_hook_changes_before_durable_result(
         "-m",
         "baseline",
     )
+    unusual_name = "generated/中文 file.txt" if os.name == "nt" else "generated/中文\tfile\n.txt"
     hook_code = (
         "from pathlib import Path; import subprocess; "
         "Path('tracked.txt').write_text('formatted\\n'); "
@@ -88,7 +105,7 @@ async def test_completion_includes_actual_hook_changes_before_durable_result(
         "subprocess.run(['git', 'add', '-u'], check=True); "
         "Path('generated').mkdir(exist_ok=True); "
         "Path('generated/new.txt').write_text('generated\\n'); "
-        "Path('generated/中文\\tfile\\n.txt').write_text('literal filename\\n')"
+        f"Path({unusual_name!r}).write_text('literal filename\\n')"
     )
     with Session(engine) as db:
         for key, value in {
@@ -139,7 +156,7 @@ async def test_completion_includes_actual_hook_changes_before_durable_result(
         "obsolete.txt",
         "renamed.txt",
         "generated/new.txt",
-        "generated/中文\tfile\n.txt",
+        unusual_name,
     }
     if model_writes:
         expected.add("model.txt")
@@ -537,7 +554,7 @@ async def test_recursive_investigation_receives_scoped_rules_before_results(
 
     model_factory(model)
     service = AgentTeamWorkspaceService(tmp_path.parent)
-    runner = LocalExecutionRunner(tmp_path, service)
+    runner = _ScopeInspectionRunner(tmp_path, service)
     if child:
         manager, ctx, parent_id = await fixtures.manager_for(checkpoint, tmp_path)
         ctx.workspace_service = service
@@ -586,7 +603,7 @@ async def test_completed_investigation_resume_refreshes_its_scope_before_model(
             await SubagentStore(1).create(parent.id, "spawn", "Inspect evidence", {})
         ).session_id
     service = AgentTeamWorkspaceService(tmp_path.parent)
-    runner = LocalExecutionRunner(tmp_path, service)
+    runner = _ScopeInspectionRunner(tmp_path, service)
 
     async def first(messages, **kwargs):
         results = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]

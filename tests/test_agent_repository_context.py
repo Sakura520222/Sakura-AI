@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,17 +83,20 @@ def test_target_traversal_rejected(tmp_path, target):
         RepositoryContext(tmp_path).instructions_for(target)
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_instruction_links_and_special_files_do_not_read_secrets(tmp_path):
     secret = put(tmp_path, ".env", "SECRET")
     (tmp_path / "AGENTS.md").symlink_to(secret)
-    os.mkfifo(tmp_path / "CLAUDE.md")
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(tmp_path / "CLAUDE.md")
     repo = RepositoryContext(tmp_path)
     docs = repo.instructions_for(".")
     assert docs == []
-    assert len(repo.diagnostics) == 2
+    assert len(repo.diagnostics) == (2 if hasattr(os, "mkfifo") else 1)
     assert "SECRET" not in repo.render(docs)
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_symlink_directory_and_hardlink_indirection_rejected(tmp_path):
     put(tmp_path, "private/AGENTS.md", "SECRET")
     (tmp_path / "backend").symlink_to(tmp_path / "private", target_is_directory=True)
@@ -111,7 +115,7 @@ def test_metadata_only_discovery_and_root_precedence(tmp_path):
     index = repo.discover_skills()
     assert list(index) == ["docs"]
     assert index["docs"]["source_type"] == "repository"
-    assert ".sakura/skills" in index["docs"]["install_path"]
+    assert ".sakura/skills" in Path(index["docs"]["install_path"]).as_posix()
     assert "BODY" not in json.dumps(index)
     assert "BODY" not in repo.skills_summary(index)
 
@@ -153,6 +157,7 @@ async def test_lazy_skill_load_narrows_executor_and_end_restores_normal_tools(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_repository_skill_attachments_reject_links(tmp_path):
     skill(tmp_path, ".agents/skills")
     repo = RepositoryContext(tmp_path)

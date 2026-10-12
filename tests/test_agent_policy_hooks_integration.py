@@ -1,5 +1,6 @@
 """Real executor effects obey fresh policy and trusted lifecycle hooks."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -60,9 +61,15 @@ async def test_hook_workspace_placeholder_uses_selected_runner_namespace(
         return AgentTeamNetworkPolicyState(AgentTeamNetworkPolicy.FULL_ACCESS, "test")
 
     async def load():
+        argv = ("test", "-d", "{workspace}")
+        if backend == "local":
+            argv = (
+                "python", "-c",
+                "import os,sys; sys.exit(not os.path.isdir(sys.argv[1]))", "{workspace}",
+            )
         return (
             HookConfig(
-                id="path", event="before_finish", argv=("test", "-d", "{workspace}")
+                id="path", event="before_finish", argv=argv
             ),
         )
 
@@ -938,8 +945,21 @@ async def test_real_hook_process_is_drained_on_cancellation(monkeypatch, tmp_pat
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        if sys.platform == "win32":
+            import _winapi
+
+            try:
+                handle = _winapi.OpenProcess(0x1000, False, pid)
+            except OSError as exc:
+                assert exc.winerror == 87  # ERROR_INVALID_PARAMETER: no such PID
+            else:
+                try:
+                    assert _winapi.GetExitCodeProcess(handle) != 259  # STILL_ACTIVE
+                finally:
+                    _winapi.CloseHandle(handle)
+        else:
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
         effects = [event for event in events if event.get("kind") == "hook_effect"]
         assert [event["status"] for event in effects] == ["admitted"]
     finally:

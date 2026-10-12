@@ -25,7 +25,7 @@ asyncio.run(main())
 
 
 @asynccontextmanager
-async def child_holder(workspace, shared, *, expected_returncode=0):
+async def child_holder(workspace, shared, *, expected_returncode=0, env=None):
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-I",
@@ -34,17 +34,23 @@ async def child_holder(workspace, shared, *, expected_returncode=0):
         str(Path(__file__).resolve().parents[1]),
         str(workspace),
         "shared" if shared else "exclusive",
+        env=env,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        assert await asyncio.wait_for(process.stdout.readline(), 5) == b"waiting\n"
+        assert (await asyncio.wait_for(process.stdout.readline(), 5)).rstrip(b"\r\n") == b"waiting"
         yield process
     finally:
         if process.returncode is None:
             process.stdin.write(b"release\n")
-            await process.stdin.drain()
+            try:
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                # The test may already have released the child; Windows can
+                # close its pipe before asyncio publishes the exit status.
+                pass
             try:
                 await asyncio.wait_for(process.wait(), 5)
             except TimeoutError:
@@ -63,7 +69,7 @@ async def test_process_writer_excludes_other_workspace_effects(
     tmp_path, parent_shared, child_shared
 ):
     async with child_holder(tmp_path, child_shared) as child:
-        assert await asyncio.wait_for(child.stdout.readline(), 5) == b"entered\n"
+        assert (await asyncio.wait_for(child.stdout.readline(), 5)).rstrip(b"\r\n") == b"entered"
         entered = asyncio.Event()
 
         async def operation():
@@ -85,7 +91,7 @@ async def test_process_writer_excludes_other_workspace_effects(
 @pytest.mark.asyncio
 async def test_process_shared_reads_overlap_and_cancelled_writer_releases(tmp_path):
     async with child_holder(tmp_path, True) as child:
-        assert await asyncio.wait_for(child.stdout.readline(), 5) == b"entered\n"
+        assert (await asyncio.wait_for(child.stdout.readline(), 5)).rstrip(b"\r\n") == b"entered"
         async with asyncio.timeout(5):
             async with workspace_barrier(str(tmp_path)).hold(True):
                 pass
@@ -111,7 +117,7 @@ async def test_other_workspace_is_independent(tmp_path):
     first.mkdir()
     second.mkdir()
     async with child_holder(first, False) as child:
-        assert await asyncio.wait_for(child.stdout.readline(), 5) == b"entered\n"
+        assert (await asyncio.wait_for(child.stdout.readline(), 5)).rstrip(b"\r\n") == b"entered"
         async with asyncio.timeout(5):
             async with workspace_barrier(str(second)).hold(False):
                 pass
@@ -120,9 +126,10 @@ async def test_other_workspace_is_independent(tmp_path):
 @pytest.mark.asyncio
 async def test_worker_exit_releases_kernel_lock(tmp_path):
     async with child_holder(
-        tmp_path, False, expected_returncode=-signal.SIGKILL
+        tmp_path, False,
+        expected_returncode=1 if sys.platform == "win32" else -signal.SIGKILL,
     ) as child:
-        assert await asyncio.wait_for(child.stdout.readline(), 5) == b"entered\n"
+        assert (await asyncio.wait_for(child.stdout.readline(), 5)).rstrip(b"\r\n") == b"entered"
         child.kill()
         await child.wait()
         async with asyncio.timeout(5):

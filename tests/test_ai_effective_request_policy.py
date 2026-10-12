@@ -278,7 +278,7 @@ def test_business_ai_calls_do_not_pass_raw_model_parameters():
 
     paths = [*(root / "services").rglob("*.py"), *(root / "workers").rglob("*.py")]
     for path in paths:
-        relative = str(path.relative_to(root))
+        relative = path.relative_to(root).as_posix()
         if relative in allowed_files:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

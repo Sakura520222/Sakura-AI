@@ -307,6 +307,17 @@ uv sync                # Creates .venv and installs all dependencies (incl. upda
 uv run python -m backend.main
 ```
 
+**Native Windows development (PowerShell)**: Install Git for Windows and uv, then run these commands from the repository root:
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+Dependency installation, backend development, and portable tests require neither WSL nor Git Bash. Running the application still requires MySQL/Redis; tests use service doubles. Windows CI runs the full pytest suite and Ruff. Platform-specific POSIX Bash deployment, systemd, and Linux Landlock/seccomp tests report explicit skips and remain covered by Linux CI. Symlink tests run only when the current account can create links (Windows Developer Mode is optional). See the [Deployment Guide](docs/DEPLOYMENT.md) for the Linux requirements of the Host Updater, sandboxd, and local read-only process isolation.
+
 When no deployment mode or image-build marker is present, the `backend.main` launcher automatically identifies its application child as `source`; a local `local` Agent backend does not need a separate `SAKURA_DEPLOY_MODE` setting. An explicit environment value always takes precedence, and image environments are never inferred to be source checkouts.
 
 **Classic pip (without uv)**:

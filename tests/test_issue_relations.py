@@ -522,7 +522,7 @@ async def test_closed_relation_is_history_never_duplicate(setup_relation, kind):
 async def test_actual_gitflow_occurrences_remain_related(setup_relation):
     analyzer, _, retriever, client, _ = setup_relation
     prior, current = json.loads(
-        (Path(__file__).parent / "fixtures/issue_relation_gitflow.json").read_text()
+        (Path(__file__).parent / "fixtures/issue_relation_gitflow.json").read_text(encoding="utf-8")
     )
     prior = {
         **prior,

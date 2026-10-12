@@ -6,6 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from tests.platform_support import posix_bash
+
 ROOT = Path(__file__).parents[1]
 
 _WEB_REPO = "ghcr.io/sakura520222/sakura-ai"
@@ -18,7 +20,7 @@ _FAKE_DIGEST = "sha256:" + "a" * 64
 
 def _run_bash(command: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),

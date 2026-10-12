@@ -98,3 +98,11 @@ jobs:
 
       - name: 导入主后端模块
         run: uv run --no-sync python -c "import backend.main; print('backend import ok')"
+
+      - name: Ruff 检查
+        run: uv run --no-sync ruff check .
+
+      - name: 运行完整测试
+        run: uv run --no-sync pytest -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}

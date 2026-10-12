@@ -307,6 +307,17 @@ uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
 ```
 
+**Windows 原生开发（PowerShell）**：安装 Git for Windows 和 uv 后，在仓库根目录运行：
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+依赖安装、后端开发与通用测试无需 WSL 或 Git Bash；启动应用时仍需 MySQL/Redis，测试使用模拟服务。Windows CI 执行完整 pytest 和 Ruff。POSIX Bash 部署、systemd、Linux Landlock/seccomp 等平台专用测试会明确跳过，继续由 Linux CI 验证；符号链接测试仅在当前账户具备创建权限时运行（可选开启 Windows 开发者模式）。Host Updater、sandboxd 与本地只读进程隔离的 Linux 平台要求见[部署指南](docs/DEPLOYMENT.md)。
+
 `backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
 
 **传统 pip 方式（无 uv）**：

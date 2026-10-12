@@ -262,6 +262,19 @@ uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
 ```
 
+**Windows PowerShell 开发与测试**：安装 Git for Windows、uv 后，在仓库根目录执行：
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+上述流程使用 Windows 原生 Python 3.14，不依赖 WSL/Git Bash。测试使用模拟数据库、Redis、GitHub 和 AI 服务；实际启动后端时需要准备 MySQL/Redis，再通过 Setup Wizard 配置连接。Windows CI 运行完整 pytest 与 Ruff；POSIX Bash、systemd、Linux Landlock/seccomp 和真实 Linux 容器隔离用例按平台能力明确跳过，Linux CI 保留这些检查。符号链接测试按当前账户的实际权限判断；不要求管理员运行 pytest，可选开启 Windows 开发者模式增加这部分覆盖。
+
+Windows 支持 Agent 工作区跨进程读写锁，以及安全的普通文件、仓库规则和 Skill 读取。Host Updater 的 systemd 生命周期、sandboxd 和本地只读 Git/grep 的 Landlock/seccomp 隔离仍需 Linux，相关生产部署边界保持上述说明。
+
 传统 pip 方式（无 uv）：
 
 ```bash
@@ -559,4 +572,4 @@ check/preflight 比较三个目标 digest、共同 revision、deployment.env 以
 
 ---
 
-*最后更新：2026-9-27 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-12 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

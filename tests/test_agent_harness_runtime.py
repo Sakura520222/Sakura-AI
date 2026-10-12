@@ -40,6 +40,9 @@ def trusted_runtime_dependencies(monkeypatch):
         return original(tool, args)
 
     monkeypatch.setattr(capability_policy, "tool_capabilities", probe_capabilities)
+    # Runtime scheduling tests do not exercise the Redis event transport.
+    # A real localhost connection takes seconds to fail on Windows.
+    monkeypatch.setattr("backend.webui.sse.publish_event", AsyncMock())
 
 
 def call(name, ident="call_1", **args):

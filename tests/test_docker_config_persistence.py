@@ -19,6 +19,7 @@ from scripts.merge_packaged_config import (
     BASELINE_DIRNAME,
     merge_packaged_defaults,
 )
+from tests.platform_support import posix_bash
 
 ROOT = Path(__file__).parents[1]
 DOCKERFILE = ROOT / "docker" / "Dockerfile"
@@ -65,7 +66,7 @@ grep -q 'legacy:' "$work/config/labels.yaml"
 grep -q 'mysql://preserve' "$work/config/connection.json"
 """
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={
             **os.environ,

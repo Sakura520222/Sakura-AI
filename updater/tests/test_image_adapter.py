@@ -28,14 +28,14 @@ async def test_host_command_does_not_inherit_pyinstaller_libraries(
     extraction_dir.mkdir()
     injected_path = str(extraction_dir)
     if host_library_path is not None:
-        injected_path += ":" + host_library_path
+        injected_path += os.pathsep + host_library_path
     monkeypatch.setenv("LD_LIBRARY_PATH", injected_path)
     monkeypatch.setenv("SAKURA_HOST_MARKER", "required")
     monkeypatch.setattr(sys, "_MEIPASS", str(extraction_dir), raising=False)
     adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
 
     stdout, _ = await adapter._run_command(
-        ["bash", "-c", 'printf "%s|%s" "${LD_LIBRARY_PATH-unset}" "$SAKURA_HOST_MARKER"']
+        [sys.executable, "-c", "import os; print(os.environ.get('LD_LIBRARY_PATH', 'unset') + '|' + os.environ['SAKURA_HOST_MARKER'], end='')"]
     )
 
     assert stdout == f"{host_library_path or 'unset'}|required"
@@ -49,7 +49,7 @@ async def test_source_host_command_preserves_administrator_library_path(tmp_path
     adapter = ImageAdapter("compose.yml", str(tmp_path / "deployment.env"))
 
     stdout, _ = await adapter._run_command(
-        ["bash", "-c", 'printf "%s" "$LD_LIBRARY_PATH"']
+        [sys.executable, "-c", "import os; print(os.environ['LD_LIBRARY_PATH'], end='')"]
     )
 
     assert stdout == "/opt/host/lib"

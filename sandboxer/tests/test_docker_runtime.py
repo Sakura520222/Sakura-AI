@@ -664,9 +664,12 @@ async def test_workspace_handoff_is_reused_after_venv_creation(tmp_path: Path, m
     monkeypatch.setattr(adapter, "_handoff_workspace_to_runner", fake_handoff)
     await adapter._ensure_workspace_handoff(snapshot, None)
     (workspace / ".venv" / "sandbox" / "bin").mkdir(parents=True)
-    (workspace / ".venv" / "sandbox" / "bin" / "python").symlink_to(
-        "/usr/bin/python3"
-    )
+    launcher = workspace / ".venv" / "sandbox" / "bin" / "python"
+    if os.name == "nt":
+        # Handoff reuse depends on the snapshot, not launcher link semantics.
+        launcher.write_bytes(b"sandbox interpreter")
+    else:
+        launcher.symlink_to("/usr/bin/python3")
     await adapter._ensure_workspace_handoff(snapshot, None)
 
     assert calls == [workspace]

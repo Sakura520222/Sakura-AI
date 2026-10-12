@@ -1,5 +1,6 @@
 """Optional platform locking must not prevent the backend from starting."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ def test_backend_import_without_fcntl(tmp_path):
     # simulated; the host platform and all application modules remain real.
     source = """
 import os, sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 sys.path.insert(0, sys.argv[1])
 sys.modules['fcntl'] = None
 for flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
@@ -38,15 +41,18 @@ print('backend import ok')
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["fcntl", "O_DIRECTORY", "O_NOFOLLOW"])
+@pytest.mark.parametrize(
+    "missing",
+    ["windows_filesystem"] if os.name == "nt" else ["fcntl", "O_DIRECTORY", "O_NOFOLLOW"],
+)
 async def test_unavailable_workspace_lock_rejects_effect_without_leaving_waiters(
     tmp_path, monkeypatch, missing
 ):
     barrier = tool_scheduler.workspace_barrier(str(tmp_path))
     entered = False
     with monkeypatch.context() as patch:
-        if missing == "fcntl":
-            patch.setattr(tool_scheduler, "fcntl", None)
+        if missing in {"fcntl", "windows_filesystem"}:
+            patch.setattr(tool_scheduler, missing, None)
         else:
             patch.delattr(tool_scheduler.os, missing, raising=False)
         for shared in (True, False):

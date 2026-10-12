@@ -33,6 +33,7 @@ async def test_read_file_does_not_disclose_host_hardlink(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replace_directory", [False, True])
+@pytest.mark.usefixtures("symlink_support")
 async def test_read_file_rejects_link_replacement_after_path_resolution(
     tmp_path, monkeypatch, replace_directory
 ):
@@ -86,6 +87,7 @@ async def test_ordinary_read_does_not_adopt_repository_instruction_file_filters(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("symlink_support")
 async def test_safe_internal_symlink_and_line_range_keep_read_state_and_edit_semantics(
     tmp_path,
 ):
@@ -130,6 +132,7 @@ async def test_read_keeps_utf16_and_binary_image_behavior(tmp_path):
     assert ctx.extra["file_state"].get(png) is None
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFO file semantics")
 def test_secure_workspace_read_rejects_fifo_without_blocking(tmp_path):
     from backend.services.agent_team.tools.file_utils import (
         read_workspace_text_with_metadata,

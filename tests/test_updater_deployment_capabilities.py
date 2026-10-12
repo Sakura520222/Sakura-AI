@@ -12,6 +12,7 @@ from sakura_ai_updater.ipc import create_app
 
 from backend.services.updater_client import UpdaterActionError, UpdaterClient
 from backend.webui.routes.version import build_version_info
+from tests.platform_support import posix_bash
 
 CAPABILITIES = sorted(DEPLOYMENT_CAPABILITIES)
 
@@ -105,7 +106,7 @@ updater_submit_image_transaction stable ignored
 """
     import os
 
-    result = subprocess.run(["bash"], input=script, capture_output=True, text=True,
+    result = subprocess.run([posix_bash()], input=script, capture_output=True, text=True,
                             env={**os.environ, "IDENTITY": payload}, check=False)
     assert result.returncode != 0
     assert "UNSAFE_POST" not in result.stdout

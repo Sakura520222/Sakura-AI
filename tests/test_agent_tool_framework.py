@@ -64,6 +64,17 @@ def _setup_workspace(tmp_path):
     return workspace, ctx
 
 
+class _DemoSearchRunner:
+    """Keep projection tests independent of Linux's inspection subprocess."""
+
+    def supports_profile(self, profile):
+        return profile.value == "read_only"
+
+    async def execute(self, request):
+        assert request.argv[:4] == ("grep", "-rl", "-Z", "-I")
+        return ExecutionResult(exit_code=0, stdout="./demo.py\0")
+
+
 # ── ToolResult ────────────────────────────────────────
 
 
@@ -499,6 +510,7 @@ async def test_search_in_files_invalid_regex_case_insensitive_fallback(
     monkeypatch,
 ):
     workspace, ctx = _setup_workspace(tmp_path)
+    ctx.execution_runner = _DemoSearchRunner()
 
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
@@ -542,6 +554,7 @@ async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
 @pytest.mark.asyncio
 async def test_legacy_search_in_files_reuses_grep_tool(tmp_path, monkeypatch):
     workspace, ctx = _setup_workspace(tmp_path)
+    ctx.execution_runner = _DemoSearchRunner()
 
     async def full_access_policy():
         return AgentTeamNetworkPolicy.FULL_ACCESS
