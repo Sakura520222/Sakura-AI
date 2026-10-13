@@ -1,0 +1,14 @@
+{
+  "name": "sakura-settings-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node check.mjs",
+    "test": "node --test field-controller.test.mjs",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "prettier": "^3.9.10"
+  }
+}

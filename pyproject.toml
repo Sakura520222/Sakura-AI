@@ -93,6 +93,7 @@ dependencies = [
 # importable with its own test deps (pytest-asyncio / httpx); mirrors
 # `pip install -e './updater[dev]'` from the pip workflow.
 dev = [
+    "aiosqlite>=0.22.1",
     "sakura-ai-updater[dev]",
 ]
 

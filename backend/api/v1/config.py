@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.v1.deps import limiter, require_api_super_admin
+from backend.api.v1.deps import limiter, require_api_super_admin, require_cookie_csrf
 from backend.api.v1.responses import error_response, success_response
 from backend.api.v1.schemas import (
     ConfigGeneralUpdateRequest,
@@ -22,7 +22,6 @@ from backend.core.config import (
     AI_STRATEGY_CONFIG_KEYS,
     get_label_config,
     get_settings,
-    update_settings_field,
 )
 from backend.core.config_sections import SECTION_REGISTRY
 from backend.core.setup_service import setup_service
@@ -31,7 +30,9 @@ from backend.services.label_service import label_service
 from backend.services.section_config_service import section_config_service
 from backend.webui.deps import get_db
 
-router = APIRouter(prefix="/config", tags=["Config"])
+router = APIRouter(
+    prefix="/config", tags=["Config"], dependencies=[Depends(require_cookie_csrf)]
+)
 
 _config_lock = asyncio.Lock()
 
@@ -57,9 +58,7 @@ def _normalize_label_definitions(
         name = name.strip()
         if name in normalized:
             raise ValueError(f"标签名称重复: {name}")
-        normalized[name] = {
-            key: value for key, value in label.items() if key != "name"
-        }
+        normalized[name] = {key: value for key, value in label.items() if key != "name"}
     return normalized
 
 
@@ -84,6 +83,10 @@ def _mask_sensitive(value: str, key: str) -> str:
             )
         except PluginConfigError:
             return "****"
+    from backend.services.config_metadata import SENSITIVE_KEYS
+
+    if key in SENSITIVE_KEYS:
+        return "****" if value else ""
     sensitive_keys = ("secret", "key", "token", "password", "credential")
     if key.startswith("ai_account."):
         try:
@@ -96,8 +99,6 @@ def _mask_sensitive(value: str, key: str) -> str:
         account["api_key"] = "****" if account.get("api_key") else ""
         return json.dumps(account, ensure_ascii=False)
     if any(s in key.lower() for s in sensitive_keys):
-        if value and len(value) > 8:
-            return value[:4] + "****" + value[-4:]
         return "****"
     return value
 
@@ -165,6 +166,8 @@ class AccountSaveRequest(BaseModel):
     default_model: str = ""
     enabled: bool = True
     notes: str = ""
+    updated_at: float | None = None
+    revision: int | None = Field(default=None, ge=0, strict=True)
 
 
 class RoleBindingSaveRequest(BaseModel):
@@ -230,28 +233,46 @@ async def save_ai_account(
     # API key 处理：空或脱敏 → 保留原值；新 key 去除首尾空白
     # / keep existing when blank or masked; strip surrounding whitespace from new keys
     api_key = body.api_key.strip()
+    if "****" in api_key and existing is None:
+        return error_response("A masked credential cannot create an account")
     if (not api_key or "****" in api_key) and existing is not None:
         api_key = existing.api_key
 
-    account = account_store.ProviderAccount(
-        id=account_id,
-        name=body.name.strip(),
-        provider_id=decl.id,
-        protocol=body.protocol,
-        api_base=body.api_base.strip(),
-        api_key=api_key,
-        region=body.region.strip(),
-        models=list(body.models),
-        default_model=body.default_model.strip(),
-        enabled=body.enabled,
-        notes=body.notes.strip(),
-        created_at=existing.created_at if existing else 0.0,
-    )
-    saved = await account_store.save_account(account)
-    logger.info(
-        f"AI 账号已保存 / account saved: {saved.id} ({saved.name}), by={user['sub']}"
-    )
-    return success_response(data={"account": saved.to_public_dict()})
+    from backend.core.log_sanitizer import sensitive_log_scope
+
+    with sensitive_log_scope(api_key):
+        account = account_store.ProviderAccount(
+            id=account_id,
+            name=body.name.strip(),
+            provider_id=decl.id,
+            protocol=body.protocol,
+            api_base=body.api_base.strip(),
+            api_key=api_key,
+            region=body.region.strip(),
+            models=list(body.models),
+            default_model=body.default_model.strip(),
+            enabled=body.enabled,
+            notes=body.notes.strip(),
+            created_at=existing.created_at if existing else 0.0,
+            updated_at=body.updated_at
+            if body.updated_at is not None
+            else (existing.updated_at if existing else 0.0),
+            revision=body.revision
+            if body.revision is not None
+            else (existing.revision if existing else 0),
+        )
+        try:
+            saved = await account_store.save_account(account)
+        except account_store.AccountConflictError:
+            return error_response(
+                "Account changed; reload before saving",
+                code="CONFLICT",
+                status_code=409,
+            )
+        logger.info(
+            f"AI 账号已保存 / account saved: {saved.id} ({saved.name}), by={user['sub']}"
+        )
+        return success_response(data={"account": saved.to_public_dict()})
 
 
 @router.delete("/ai/accounts/{account_id}")
@@ -347,17 +368,11 @@ async def save_ai_bindings(
 # AI 调用策略（超时/重试/故障转移）/ AI call-strategy settings
 # =========================================================================
 
-AI_STRATEGY_KEYS: list[str] = list(AI_STRATEGY_CONFIG_KEYS)
+from backend.services.config_metadata import AI_STRATEGY_RANGES
 
-_AI_STRATEGY_RANGES = {
-    "ai_api_timeout_seconds": (1.0, 3600.0),
-    "ai_api_max_retries": (0, 20),
-    "ai_api_initial_retry_delay_seconds": (0.0, 60.0),
-    "ai_api_total_timeout_seconds": (1.0, 7200.0),
-    "ai_fallback_max_candidates": (1, 10),
-    "context_compression_threshold": (0.1, 1.0),
-    "activity_artifact_retention_days": (1, 3650),
-}
+_AI_STRATEGY_RANGES = AI_STRATEGY_RANGES
+
+AI_STRATEGY_KEYS: list[str] = list(AI_STRATEGY_CONFIG_KEYS)
 
 
 class AIStrategyRequest(BaseModel):
@@ -415,27 +430,15 @@ async def put_ai_strategy_settings(
     if not payload:
         return error_response("没有需要更新的调用策略参数")
 
-    for key, value in payload.items():
-        if key in _AI_STRATEGY_RANGES:
-            lo, hi = _AI_STRATEGY_RANGES[key]
-            try:
-                numeric = float(value)
-            except TypeError, ValueError:
-                return error_response(f"{key} 取值无效")
-            if not (lo <= numeric <= hi):
-                return error_response(f"{key} 取值需在 {lo}~{hi} 之间")
-        str_val = (
-            "true" if value is True else ("false" if value is False else str(value))
-        )
-        result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
-        cfg = result.scalar_one_or_none()
-        if cfg is None:
-            db.add(AppConfig(key_name=key, key_value=str_val, description=key))
-        else:
-            cfg.key_value = str_val
-        update_settings_field(key, str_val)
+    from backend.services.config_center_service import (
+        ConfigError,
+        config_center_service,
+    )
 
-    await db.commit()
+    try:
+        await config_center_service.save_app_updates(db, payload, strict=True)
+    except ConfigError as exc:
+        return error_response(exc.code)
     logger.info(
         f"AI 调用策略已更新 / ai strategy saved: {list(payload.keys())}, by={user['sub']}"
     )
@@ -512,48 +515,42 @@ async def put_model_override(
     if body.thinking_mode and not body.thinking:
         return error_response("启用思考模式前必须启用 thinking 能力")
 
-    payload: dict[str, Any] = {
-        "context_window_tokens": int(body.context_window_tokens or 0),
-        "max_output_tokens": int(body.max_output_tokens or 0),
-        "capabilities": {
-            "vision": bool(body.vision),
-            "tools": True,
-            "streaming": True,
-            "reasoning_content": bool(body.reasoning_content),
-            "thinking": bool(body.thinking),
-            "effort": bool(body.effort_enabled),
-            "temperature": body.temperature_enabled
-            if body.temperature_enabled is not None
-            else True,
-            "top_p": body.top_p_enabled if body.top_p_enabled is not None else True,
-            "top_k": bool(body.top_k_enabled),
-        },
-        "reasoning_params": {
-            "max_output_tokens": int(body.max_output_tokens or 4096),
-        },
-    }
-    if body.effort:
-        payload["reasoning_params"]["effort"] = body.effort
-    if body.thinking_mode:
-        payload["reasoning_params"]["thinking"] = {"type": body.thinking_mode}
-    if body.temperature is not None:
-        payload["reasoning_params"]["temperature"] = body.temperature
-    if body.top_p is not None:
-        payload["reasoning_params"]["top_p"] = body.top_p
-    if body.top_k is not None:
-        payload["reasoning_params"]["top_k"] = body.top_k
+    from backend.services.config_center_service import (
+        ConfigError,
+        config_center_service,
+    )
+    from backend.services.config_metadata import replace_path
 
-    key = _model_override_key(body.provider, body.model)
-    result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
-    cfg = result.scalar_one_or_none()
-    serialized = json.dumps(payload, ensure_ascii=False)
-    if cfg is None:
-        db.add(AppConfig(key_name=key, key_value=serialized, description=key))
-    else:
-        cfg.key_value = serialized
-    await db.commit()
-    logger.info(f"模型覆盖已保存 / model override saved: {key}, by={user['sub']}")
-    return success_response(data=payload)
+    paths = {
+        "vision": ("capabilities", "vision"),
+        "thinking": ("capabilities", "thinking"),
+        "effort_enabled": ("capabilities", "effort"),
+        "reasoning_content": ("capabilities", "reasoning_content"),
+        "temperature_enabled": ("capabilities", "temperature"),
+        "top_p_enabled": ("capabilities", "top_p"),
+        "top_k_enabled": ("capabilities", "top_k"),
+        "thinking_mode": ("reasoning_params", "thinking"),
+        "effort": ("reasoning_params", "effort"),
+        "temperature": ("reasoning_params", "temperature"),
+        "top_p": ("reasoning_params", "top_p"),
+        "top_k": ("reasoning_params", "top_k"),
+    }
+    payload = {}
+    for key, value in body.model_dump(exclude_unset=True).items():
+        if key in {"provider", "model"}:
+            continue
+        if key in {"context_window_tokens", "max_output_tokens"} and value == 0:
+            value = None  # Historical zero means inherit model metadata.
+        if key == "thinking_mode":
+            value = {"type": value} if value else None
+        payload = replace_path(payload, paths.get(key, (key,)), value)
+    try:
+        saved = await config_center_service.save_model_overrides(
+            db, body.provider, body.model, payload
+        )
+    except ConfigError, ValueError:
+        return error_response("Invalid model override")
+    return success_response(data=saved)
 
 
 @router.delete("/ai/model-override")
@@ -564,13 +561,15 @@ async def delete_model_override(
     user: dict = Depends(require_api_super_admin),
 ):
     """清除单个模型的用户覆盖，回退到内置/自动元数据 / Clear a model override."""
-    from sqlalchemy import delete as sa_delete
+    from backend.services.config_center_service import config_center_service
 
-    key = _model_override_key(provider, model)
-    await db.execute(sa_delete(AppConfig).where(AppConfig.key_name == key))
-    await db.commit()
-    logger.info(f"模型覆盖已清除 / model override cleared: {key}, by={user['sub']}")
-    return success_response(data={"deleted": key})
+    try:
+        await config_center_service.save_model_overrides(
+            db, provider, model, {}, reset=True
+        )
+    except ValueError:
+        return error_response("Invalid model override")
+    return success_response(data={"deleted": _model_override_key(provider, model)})
 
 
 @router.get("/general")
@@ -594,7 +593,6 @@ async def update_general_config(
     user: dict = Depends(require_api_super_admin),
 ):
     """更新全局配置"""
-    from sqlalchemy import select
 
     configs = body.configs
     if not configs:
@@ -625,26 +623,15 @@ async def update_general_config(
             detail=", ".join(sorted(reserved_keys)),
         )
 
-    async with _config_lock:
-        for key, value in configs.items():
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == key)
-            )
-            config = result.scalar_one_or_none()
-            if config:
-                config.key_value = str(value)
-            else:
-                db.add(AppConfig(key_name=key, key_value=str(value)))
+    from backend.services.config_center_service import (
+        ConfigError,
+        config_center_service,
+    )
 
-        await db.commit()
-
-    # 重新加载动态配置
     try:
-        from backend.core.config import load_dynamic_configs_to_settings
-
-        await load_dynamic_configs_to_settings()
-    except Exception as e:
-        logger.warning(f"重载动态配置失败: {e}")
+        await config_center_service.save_app_updates(db, configs)
+    except ConfigError as exc:
+        return error_response(exc.code)
 
     logger.info(f"API 更新全局配置: {list(configs.keys())}, by={user['sub']}")
     return success_response(message="配置已更新")

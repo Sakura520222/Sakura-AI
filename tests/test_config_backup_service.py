@@ -563,28 +563,7 @@ class _ScalarResult:
         return self._rows
 
 
-class _FakeSession:
-    def __init__(self, rows: list[AppConfig]):
-        self.rows = rows
-        self.added: list[AppConfig] = []
-        self.deleted: list[AppConfig] = []
-        self.committed = False
-        self.rolled_back = False
-
-    async def execute(self, _query):
-        return _ScalarResult(self.rows)
-
-    def add(self, row: AppConfig) -> None:
-        self.added.append(row)
-
-    async def delete(self, row: AppConfig) -> None:
-        self.deleted.append(row)
-
-    async def commit(self) -> None:
-        self.committed = True
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 @pytest.mark.asyncio

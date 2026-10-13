@@ -6,7 +6,7 @@ Unified section config read/write service.
     WebUI 表单 POST / REST API 写端点
       → SectionConfigService.save_section()
           1. 结构校验（按节注册的 validator；只校验类型/格式，不设数值上限）
-          2. 每节一把 asyncio.Lock 内事务 upsert app_config 单键（值为 JSON 文本）
+          2. 数据库事务锁与持久化版本串行化跨进程写入（值为 JSON 文本）
           3. update_section_store 同步进程内存 + 按节归属 reload facade 单例
           4. 返回变更日志（prompt 类节仅记录长度与 sha256 摘要，避免审计膨胀）
 
@@ -16,12 +16,10 @@ reset_section 删除 DB 键并清除 store 覆盖，回退内置默认。
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
 from collections import OrderedDict
-from copy import deepcopy
 from string import Formatter
 from typing import Any
 
@@ -31,18 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import (
     get_dynamic_config,
-    reload_label_config,
-    reload_strategy_config,
 )
 from backend.core.config_sections import (
-    _PRUNED,
     SECTION_REGISTRY,
-    _prune_default_equal_leaves,
-    clear_section_store,
     deep_merge,
     get_section_config,
     get_section_defaults,
-    update_section_store,
 )
 from backend.models.database import AppConfig
 
@@ -493,10 +485,6 @@ def _leaf_diff(old: Any, new: Any, *, digest: bool, path: str = "") -> ChangeLog
 class SectionConfigService:
     """统一配置节读写服务（单例）。"""
 
-    def __init__(self) -> None:
-        # 每节一把锁，防止同一节的并发读-改-写竞态
-        self._locks: dict[str, asyncio.Lock] = {}
-
     # ---------- 读取 ----------
 
     async def load_section(self, db: AsyncSession, section_key: str) -> dict:
@@ -549,73 +537,20 @@ class SectionConfigService:
         校验对象是有效值（默认 ← 覆盖合并），保证落库后组合总是合法；
         与内置默认完全等价的保存会移除 DB 覆盖（保持「无覆盖=用默认」语义）。
         """
-        spec = SECTION_REGISTRY.get(section_key)
-        if spec is None:
-            raise KeyError(f"未注册的配置节: {section_key}")
-        if not isinstance(data, dict):
-            raise ValueError(f"配置节 [{section_key}] 数据必须是 JSON 对象")
-        if mode not in ("replace", "patch"):
-            raise ValueError(f"未知的保存模式: {mode}")
+        from backend.services.config_center_service import config_center_service
 
-        async with self._get_lock(section_key):
-            old_override = await self._load_override(db, section_key)
-            old_effective = deep_merge(spec["defaults"], old_override or {})
-            if mode == "patch":
-                new_override = deep_merge(old_override or {}, data)
-            else:
-                new_override = deepcopy(data)
-            new_effective = deep_merge(spec["defaults"], new_override)
-
-            validate_section_config(section_key, new_effective)
-
-            # 只从覆盖树中裁掉与当前内置默认相等的叶子；非默认叶子、
-            # 未知键以及 patch 模式合并保留下来的旧覆盖必须继续持久化。
-            pruned_override = _prune_default_equal_leaves(
-                spec["defaults"], new_effective
-            )
-
-            changes = _leaf_diff(
-                old_effective,
-                new_effective,
-                digest=section_key in _PROMPT_HEAVY_SECTIONS,
-            )
-
-            if pruned_override is _PRUNED:
-                # 与内置默认无差异：移除 DB 覆盖回退默认，避免物化默认值
-                existed = await self._delete_row(db, section_key)
-                if existed:
-                    clear_section_store(section_key)
-                    self._reload_for_target(spec["target"])
-                return {
-                    "section": section_key,
-                    "changed": existed,
-                    "changes": changes,
-                }
-
-            new_override = pruned_override
-            new_json = json.dumps(new_override, ensure_ascii=False, sort_keys=True)
-            old_json = json.dumps(
-                old_override or {}, ensure_ascii=False, sort_keys=True
-            )
-            if new_json == old_json:
-                return {"section": section_key, "changed": False, "changes": {}}
-
-            await self._upsert_row(db, section_key, new_json)
-            update_section_store(section_key, new_override)
-            self._reload_for_target(spec["target"])
-            return {"section": section_key, "changed": True, "changes": changes}
+        return await config_center_service.save_section(
+            db, section_key, data, mode=mode
+        )
 
     async def reset_section(self, db: AsyncSession, section_key: str) -> dict:
-        """重置某节：删除 DB 键 + 清除 store 覆盖，回退内置默认。"""
-        spec = SECTION_REGISTRY.get(section_key)
-        if spec is None:
-            raise KeyError(f"未注册的配置节: {section_key}")
-        async with self._get_lock(section_key):
-            existed = await self._delete_row(db, section_key)
-            if existed:
-                clear_section_store(section_key)
-                self._reload_for_target(spec["target"])
-        return {"section": section_key, "existed": existed}
+        """Delete only this section's override, under the shared database lock."""
+        from backend.services.config_center_service import config_center_service
+
+        result = await config_center_service.save_section(
+            db, section_key, {}, reset=True
+        )
+        return {"section": section_key, "existed": result["existed"]}
 
     # ---------- 审计 ----------
 
@@ -625,22 +560,6 @@ class SectionConfigService:
         return result.get("changes") or {}
 
     # ---------- 内部 ----------
-
-    def _get_lock(self, section_key: str) -> asyncio.Lock:
-        """获取某节的异步锁（注册表键有限，无需清理）。"""
-        lock = self._locks.get(section_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[section_key] = lock
-        return lock
-
-    @staticmethod
-    def _reload_for_target(target: str) -> None:
-        """按节归属刷新 facade 单例（lru_cache 清除）。"""
-        if target == "strategy":
-            reload_strategy_config()
-        elif target == "label":
-            reload_label_config()
 
     @staticmethod
     async def _load_override(db: AsyncSession, section_key: str) -> dict | None:
@@ -661,45 +580,6 @@ class SectionConfigService:
             return None
         return data
 
-    @staticmethod
-    async def _upsert_row(db: AsyncSession, section_key: str, value_json: str) -> None:
-        """事务内 upsert 单个 app_config 键（值为 JSON 文本）。"""
-        try:
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == section_key)
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg is None:
-                db.add(
-                    AppConfig(
-                        key_name=section_key,
-                        key_value=value_json,
-                        description=section_key,
-                    )
-                )
-            else:
-                cfg.key_value = value_json
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
-    @staticmethod
-    async def _delete_row(db: AsyncSession, section_key: str) -> bool:
-        """事务内删除节键；键不存在返回 False。"""
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == section_key)
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg is None:
-            return False
-        try:
-            await db.delete(cfg)
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-        return True
 
 
 section_config_service = SectionConfigService()

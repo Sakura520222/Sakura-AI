@@ -76,15 +76,7 @@
             {% endcall %}
         {% endif %}
 
-        {% call domain(_('nav.settings_domain'), ['settings', 'config_unified', 'config_ai', 'config_backup', 'system_config']) %}
-            {{ link('/settings/', _('nav.personal_settings'), 'settings') }}
-            {% if current_user and current_user.role == 'super_admin' %}
-                {{ link('/config', _('nav.review_config'), 'config_unified') }}
-                {{ link('/config/ai', _('nav.ai_config'), 'config_ai') }}
-                {{ link('/system-config/', _('nav.system_config'), 'system_config') }}
-                {{ link('/config/backup', _('nav.config_backup'), 'config_backup') }}
-            {% endif %}
-        {% endcall %}
+        {{ link('/settings-center/personal', _('config_center.title'), 'config_center') }}
     </nav>
 </aside>
 

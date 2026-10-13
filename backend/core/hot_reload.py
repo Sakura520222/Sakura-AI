@@ -53,6 +53,7 @@ RELOAD_BLOCKED_PREFIXES: frozenset[str] = frozenset(
         "backend.core.rate_limit",
         "backend.core.server_runtime",
         "backend.core.logging_bridge",
+        "backend.services.config_runtime",
         # Both scopes hold tokens across requests/provider awaits. Reloading
         # their ContextVars would invalidate tokens of active operations.
         "backend.core.log_context",

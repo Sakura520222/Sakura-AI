@@ -22,22 +22,7 @@ class _Result:
         return None
 
 
-class _DbStub:
-    """保存模型覆盖所需的最小异步会话桩 / Minimal async session stub."""
-
-    def __init__(self):
-        self.added = []
-        self.commits = 0
-
-    async def execute(self, statement):
-        del statement
-        return _Result()
-
-    def add(self, value):
-        self.added.append(value)
-
-    async def commit(self):
-        self.commits += 1
+from tests.config_sqlite_session import SQLiteConfigSession as _DbStub
 
 
 @pytest.mark.asyncio
