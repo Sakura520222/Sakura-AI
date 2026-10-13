@@ -101,9 +101,13 @@ async def test_live_issue_completion_and_close_race_emit_only_committed_transiti
         events = (await db.execute(select(NotificationEvent).where(NotificationEvent.resource_type == "issue"))).scalars().all()
         assert record.issue_state == "closed"
         assert record.status in {"completed", "cancelled"}
-        assert [event.event_type for event in events] == [f"issue.{record.status}"]
+        # Seeding an active task through an application session legitimately
+        # emits started. The concurrent writers must add exactly one terminal.
+        assert len(events) == 2
+        by_type = {event.event_type: event for event in events}
+        assert set(by_type) == {"issue.started", f"issue.{record.status}"}
         if record.status == "completed":
-            assert events[0].severity == "warning"
+            assert by_type["issue.completed"].severity == "warning"
 
 
 @pytest.mark.asyncio
