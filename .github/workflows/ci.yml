@@ -37,7 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -e './updater[dev]'
-          pip install ruff pytest pytest-asyncio
+          pip install ruff pytest pytest-asyncio aiosqlite
 
       - name: Ruff 检查
         run: ruff check .
@@ -46,6 +46,31 @@ jobs:
         run: pytest -q
         env:
           PYTHONPATH: ${{ github.workspace }}
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tests/webui/package-lock.json
+
+      - name: 验证配置中心前端与浏览器流程
+        working-directory: tests/webui
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npx playwright install --with-deps chromium
+          npm run e2e
+        env:
+          SAKURA_E2E_PYTHON: python
+
+      - name: 保存浏览器诊断
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: settings-browser-results
+          path: tests/webui/test-results
 
   updater-quality:
     name: Updater 质量检查
@@ -106,3 +131,49 @@ jobs:
         run: uv run --no-sync pytest -q
         env:
           PYTHONPATH: ${{ github.workspace }}
+
+  settings-databases:
+    name: Settings database (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: mysql
+            image: mysql:8.4
+            driver: mysql+asyncmy
+            user: root
+            port: 3306
+            health: mysqladmin ping --silent
+          - engine: postgresql
+            image: postgres:17
+            driver: postgresql+asyncpg
+            user: postgres
+            port: 5432
+            health: pg_isready -U postgres
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+          MYSQL_DATABASE: settings_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_DB: settings_test
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: >-
+          --health-cmd "${{ matrix.health }}"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - name: Verify transactions and independent writers on the server dialect
+        run: uv run --no-sync pytest tests/test_config_center.py -q
+        env:
+          SAKURA_CONFIG_TEST_DATABASE_URL: ${{ matrix.driver }}://${{ matrix.user }}:${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:${{ matrix.port }}/settings_test

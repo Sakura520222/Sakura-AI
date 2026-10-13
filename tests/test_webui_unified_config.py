@@ -71,25 +71,7 @@ class _ScalarsResult:
         return []
 
 
-class _FakeSession:
-    """最小 AsyncSession 模拟：记录新增行，execute 恒空。"""
-
-    def __init__(self) -> None:
-        self.added: list = []
-        self.committed = False
-        self.rolled_back = False
-
-    async def execute(self, _stmt):
-        return _ScalarResult()
-
-    def add(self, row) -> None:
-        self.added.append(row)
-
-    async def commit(self) -> None:
-        self.committed = True
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 class _FormRequest:
@@ -182,63 +164,28 @@ def test_agent_team_config_save_endpoint_removed():
 async def test_unified_page_renders_flat_groups_and_section_forms(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """GET /config 渲染含平铺动态组卡片与策略/标签节表单锚点。"""
-    monkeypatch.setattr(config_routes, "detect_language", lambda prefs: "zh-CN")
-
     response = await config_routes.unified_config_page(
         _make_request(),
         db=_FakeSession(),
         user={"sub": "admin", "role": "super_admin", "user_id": 1},
         user_prefs={"language": "zh-CN"},
     )
-    html = response.body.decode("utf-8")
+    assert response.status_code == 302
+    assert response.headers["location"] == "/settings-center/review"
+    from backend.webui.routes.config_center import center_page
 
-    # 平铺动态组卡片
-    for probe in (
-        "section-basic",
-        "section-web-search",
-        "section-issue",
-        "section-agent-team",
-        'action="/config/general/save"',
-        "sakura_enabled",
-    ):
-        assert probe in html, probe
-    assert "section-label-behavior" not in html
-
-    # 策略 7 节表单（含 pr_summary，A10）与标签 3 节表单
-    for probe in (
-        "section-strategy-strategies",
-        "section-strategy-filters",
-        "section-strategy-context",
-        "section-strategy-policy",
-        "section-strategy-issue-analysis",
-        "section-strategy-depgraph",
-        "section-strategy-pr-summary",
-        "section-label-recommendation",
-        "section-label-conflict",
-        "section-label-definitions",
-    ):
-        assert probe in html, probe
-
-    # 左侧锚点导航
-    assert 'id="configForm"' in html or 'name="csrf_token"' in html
-
-    # 右上角唯一保存按钮；10 个分区保存按钮文案已全部合并移除
-    # （导航栏另有退出登录 submit 按钮，故按按钮文案断言而非 type="submit"）
-    assert 'id="save-all-btn"' in html
-    for removed_label in (
-        "保存策略配置",
-        "保存过滤规则",
-        "保存上下文增强配置",
-        "保存审查政策",
-        "保存 Issue 分析配置",
-        "保存依赖图配置",
-        "保存 PR 总结模板",
-        "保存推荐设置",
-        "保存冲突规则",
-        "保存标签定义",
-    ):
-        assert removed_label not in html, removed_label
+    response = await center_page(
+        _make_request(),
+        "review",
+        user={"sub": "admin", "role": "super_admin", "user_id": 1},
+        user_prefs={"language": "zh-CN"},
+        db=_FakeSession(),
+    )
+    html = response.body.decode()
+    assert 'id="settings-fields"' in html
+    assert 'id="save-all-btn"' not in html
+    assert 'action="/config/general/save"' not in html
+    assert 'data-category-link="issue"' in html
 
 
 class _IssueTemplateParser(HTMLParser):
@@ -267,33 +214,46 @@ class _IssueTemplateParser(HTMLParser):
 async def test_issue_template_editor_displays_defaults_or_existing_custom_values(
     monkeypatch, language, custom
 ):
-    if custom:
-        config_sections.update_section_store(
-            "strategy.issue_analysis",
-            {
-                "comment_template": "自定义\n{summary}\n{feasibility}",
-                "comment_template_en": "Custom\n{summary}\n{feasibility}",
-            },
+    from backend.models.database import AppConfig
+    from backend.services.config_center_service import config_center_service
+
+    db = _FakeSession(
+        [
+            AppConfig(
+                key_name="strategy.issue_analysis",
+                key_value=json.dumps(
+                    {
+                        "comment_template": "自定义\n{summary}\n{feasibility}",
+                        "comment_template_en": "Custom\n{summary}\n{feasibility}",
+                    }
+                ),
+            )
+        ]
+        if custom
+        else []
+    )
+    # A projection uses persisted overrides, not a mutated process-local facade.
+    # Supply only the real app/revision rows needed by this unit projection.
+    user = {"sub": "admin", "role": "super_admin", "user_id": 1}
+    from backend.models.database import Base, UserConfig, WebUIConfig
+
+    Base.metadata.create_all(
+        db.engine, tables=[UserConfig.__table__, WebUIConfig.__table__]
+    )
+    fields = {
+        item["id"]: item
+        for item in await config_center_service.describe(
+            db, user, category="issue", lang=language
         )
-    monkeypatch.setattr(config_routes, "detect_language", lambda *_: language)
-    response = await config_routes.unified_config_page(
-        _make_request(),
-        db=_FakeSession(),
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        user_prefs={"language": language},
-    )
-    html = response.body.decode("utf-8")
-    parser = _IssueTemplateParser()
-    parser.feed(html)
-    effective = config_sections.get_section_config("strategy.issue_analysis")
-    assert parser.fields["issue_comment_template"] == effective["comment_template"]
-    assert (
-        parser.fields["issue_comment_template_en"] == effective["comment_template_en"]
-    )
-    assert (
-        "其他变量可省略" if language == "zh-CN" else "other variables are optional"
-    ) in html
-    assert "strategy.issue_template_layout_hint" not in html
+    }
+    for key in ("comment_template", "comment_template_en"):
+        item = fields[f"section/strategy.issue_analysis/{key}"]
+        assert "{summary}" in item["value"] and "{feasibility}" in item["value"]
+        assert item["source"] == ("database" if custom else "builtin")
+        if custom:
+            assert item["value"].startswith(
+                "Custom" if key.endswith("_en") else "自定义"
+            )
 
 
 @pytest.mark.asyncio
@@ -375,12 +335,9 @@ def test_depgraph_mode_removed_from_dynamic_group():
 
 def test_depgraph_template_falls_back_to_static_mode():
     """模板上下文缺少 mode 时应与运行时默认值一致地选择 static。"""
-    template = (
-        Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_unified.html"
-    ).read_text(encoding="utf-8")
+    from backend.services.config_metadata import field_catalog
+    assert field_catalog()["global/pr_dependency_graph_mode"].default == "static"
 
-    assert template.count("dg.get('mode', 'static')") == 2
-    assert "dg.get('mode', 'ai')" not in template
 
 
 def test_issue_config_hint_excludes_removed_auto_comment_toggle():
@@ -555,21 +512,13 @@ def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
         / "backend"
         / "webui"
         / "templates"
-        / "config_unified.html"
+        / "components" / "config_network_status.html"
     ).read_text(encoding="utf-8")
     en = (
-        Path(__file__).parents[1]
-        / "backend"
-        / "webui"
-        / "translations"
-        / "en.yaml"
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "en.yaml"
     ).read_text(encoding="utf-8")
     zh = (
-        Path(__file__).parents[1]
-        / "backend"
-        / "webui"
-        / "translations"
-        / "zh-CN.yaml"
+        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "zh-CN.yaml"
     ).read_text(encoding="utf-8")
 
     assert "not_applicable: labels.notApplicable" in template
@@ -587,40 +536,18 @@ def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
 async def test_dependency_retry_inputs_render_bounds_and_typed_steps(
     monkeypatch, saved_delay
 ):
-    monkeypatch.setattr(config_routes, "detect_language", lambda prefs: "zh-CN")
+    from backend.services.config_metadata import field_catalog
+
+    fields = field_catalog()
+    attempts = fields["global/agent_team_dependency_install_attempts"]
+    delay = fields["global/agent_team_dependency_retry_delay_seconds"]
+    assert attempts.type == "integer" and attempts.constraints == {"ge": 1, "le": 5}
+    assert delay.type == "number" and delay.constraints == {"ge": 0.0, "le": 60.0}
     db = _FakeSession()
+    from backend.services.config_center_service import config_center_service
 
-    async def read_saved_config(_stmt):
-        row = SimpleNamespace(
-            key_name="agent_team_dependency_retry_delay_seconds", key_value=saved_delay
-        )
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
-
-    monkeypatch.setattr(db, "execute", read_saved_config)
-    response = await config_routes.unified_config_page(
-        _make_request(),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        user_prefs={"language": "zh-CN"},
-    )
-    inputs = {}
-
-    class InputParser(HTMLParser):
-        def handle_starttag(self, tag, attrs):
-            if tag == "input":
-                values = dict(attrs)
-                inputs[values.get("name")] = values
-
-    InputParser().feed(response.body.decode("utf-8"))
-    for key, minimum, maximum, step in (
-        ("agent_team_dependency_install_attempts", "1", "5", "1"),
-        ("agent_team_dependency_retry_delay_seconds", "0", "60", "any"),
-    ):
-        assert inputs[key]["type"] == "number"
-        assert inputs[key].get("min") == minimum
-        assert inputs[key].get("max") == maximum
-        assert inputs[key].get("step") == step
-    assert inputs["agent_team_dependency_retry_delay_seconds"]["value"] == saved_delay
+    await config_center_service.save_app_updates(db, {delay.key: saved_delay})
+    assert float(db.rows[0].key_value) == float(saved_delay)
 
 
 @pytest.mark.parametrize(
@@ -657,7 +584,9 @@ async def test_general_save_rejects_dependency_retry_out_of_range(
     assert calls[0][1]["field_key"] == key
 
 
-@pytest.mark.parametrize(("attempts", "delay"), [("1", "0"), ("5", "60"), ("3", "0.25")])
+@pytest.mark.parametrize(
+    ("attempts", "delay"), [("1", "0"), ("5", "60"), ("3", "0.25")]
+)
 @pytest.mark.asyncio
 async def test_general_save_accepts_dependency_retry_bounds_and_fractional_delay(
     monkeypatch, attempts, delay

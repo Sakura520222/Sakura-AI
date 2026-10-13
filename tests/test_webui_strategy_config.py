@@ -37,25 +37,7 @@ class _ScalarResult:
         return None
 
 
-class _FakeSession:
-    """最小 AsyncSession 模拟（无既有节覆盖行）。"""
-
-    def __init__(self) -> None:
-        self.rows: list = []
-        self.added: list = []
-
-    async def execute(self, _stmt):
-        return _ScalarResult()
-
-    def add(self, row) -> None:
-        self.added.append(row)
-
-    async def commit(self) -> None:
-        self.rows.extend(self.added)
-        self.added = []
-
-    async def rollback(self) -> None:
-        self.added = []
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 def _strategy_form() -> dict[str, str]:

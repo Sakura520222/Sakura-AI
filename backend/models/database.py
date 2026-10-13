@@ -431,6 +431,15 @@ class AppConfig(Base):
         return f"<AppConfig(key={self.key_name})>"
 
 
+class ConfigRevision(Base):
+    """Durable write locks/revisions; retained when an override is deleted."""
+
+    __tablename__ = "config_revisions"
+
+    scope_key = Column(String(255), primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+
+
 class UserConfig(Base):
     """用户级业务配置表 / User-scoped business configuration."""
 
@@ -766,14 +775,8 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.telegram_models  # noqa: F401
 
 
-# app_config 默认行的单一来源说明：
-# - 键值一律从 Settings 单例派生（_build_default_configs），同步/异步建库
-#   路径共用同一份定义，禁止再手抄数值。
-# - 仅收录不在 DYNAMIC_CONFIG_GROUPS 中的基础键；动态组已注册的键（如
-#   issue_auto_assign）由
-#   _append_dynamic_config_defaults 从 Settings 统一补插，保持每键单源。
-# - app_version 暂为模块级字面量：单一来源化（backend/__version__ 派生）
-#   列入后续路线（docs/plans/2026-08-16-unified-config-store.md §6）。
+# Startup seeds only the version marker. Dynamic defaults remain inherited;
+# the definition-only helper below is retained for migration/calibration tooling.
 APP_VERSION_DEFAULT = "3.2.5"
 
 
@@ -789,14 +792,7 @@ def _settings_default_to_str(value: object) -> str:
 
 
 def _build_default_configs() -> list:
-    """构建 app_config 种子默认行（同步/异步建库路径共用的单一来源）。
-
-    Values are derived from the Settings singleton so DB seed rows can never
-    drift from code defaults. This replaces the two hand-copied tables that
-    previously disagreed on ``review_timeout_seconds`` (600/300),
-    ``web_search_enabled`` (true/false) and ``web_search_*`` limits — Settings
-    现值（异步路径语义）为准。
-    """
+    """Seed the version marker only; never materialize runtime defaults."""
     return [
         AppConfig(
             key_name="app_version",
@@ -807,20 +803,21 @@ def _build_default_configs() -> list:
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
-    """向 default_configs 列表追加动态配置默认值"""
+    """Build immutable definition rows for tooling, not for startup insertion."""
     try:
         _ensure_model_modules_imported()
 
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
             DYNAMIC_CONFIG_LABELS,
-            get_settings,
+            Settings,
         )
 
-        settings = get_settings()
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
-                default_val = _settings_default_to_str(getattr(settings, key, ""))
+                default_val = _settings_default_to_str(
+                    Settings.model_fields[key].get_default(call_default_factory=True)
+                )
                 default_configs.append(
                     AppConfig(
                         key_name=key,
@@ -847,7 +844,7 @@ async def insert_default_configs_async():
     default_configs = _build_default_configs()
 
     # 从 config 模块追加动态配置默认值
-    _append_dynamic_config_defaults(default_configs)
+    # Defaults are inherited, never materialized as database overrides.
 
     try:
         async with async_session() as session:
@@ -923,7 +920,7 @@ def init_database(database_url: str):
             default_configs = _build_default_configs()
 
             # 从 config 模块追加动态配置默认值
-            _append_dynamic_config_defaults(default_configs)
+            # Defaults are inherited, never materialized as database overrides.
 
             added = 0
             for cfg in default_configs:
@@ -1025,9 +1022,9 @@ class WebUIConfig(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, unique=True, nullable=False)
-    theme = Column(String(10), default="light")  # light / dark
-    language = Column(String(10), default="zh-CN")
-    items_per_page = Column(Integer, default=20)
+    theme = Column(String(10), nullable=True)  # light / dark
+    language = Column(String(10), nullable=True)
+    items_per_page = Column(Integer, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)

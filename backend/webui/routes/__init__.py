@@ -14,6 +14,7 @@ from backend.webui.routes import (
     auth,
     billing,
     config,
+    config_center,
     dashboard,
     github_app,
     issues,
@@ -51,6 +52,7 @@ webui_router.include_router(github_app.router)
 webui_router.include_router(logs.router)
 webui_router.include_router(settings.router)
 webui_router.include_router(config.router)
+webui_router.include_router(config_center.router)
 webui_router.include_router(queue.router)
 webui_router.include_router(action_logs.router)
 webui_router.include_router(announcements.router)

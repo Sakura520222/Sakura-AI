@@ -69,10 +69,11 @@ class ProviderAccount:
     notes: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
+    revision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """完整序列化（含明文 key，仅内部使用）/ Full serialization (internal)."""
-        return asdict(self)
+        return {key: value for key, value in asdict(self).items() if key != "revision"}
 
     def to_public_dict(self) -> dict[str, Any]:
         """API/UI 安全视图：api_key 脱敏 / Safe view with masked api_key."""
@@ -114,9 +115,7 @@ def _mask_api_key(key: str) -> str:
     """脱敏 API Key / Mask an API key for display."""
     if not key:
         return ""
-    if len(key) <= 8:
-        return "****"
-    return key[:4] + "****" + key[-4:]
+    return "****"
 
 
 def generate_account_id() -> str:
@@ -157,6 +156,7 @@ def _account_from_dict(data: dict[str, Any]) -> ProviderAccount:
         notes=str(data.get("notes") or ""),
         created_at=float(data.get("created_at") or 0.0),
         updated_at=float(data.get("updated_at") or 0.0),
+        revision=int(data.get("revision") or 0),
     )
 
 
@@ -254,9 +254,9 @@ def validate_role_bindings_payload(
 async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
     """从 AppConfig 批量加载明文配置 / Load plaintext values from AppConfig."""
     try:
-        from sqlalchemy import select
+        from sqlalchemy import literal, select
 
-        from backend.models.database import AppConfig, async_session
+        from backend.models.database import AppConfig, ConfigRevision, async_session
     except Exception:
         return {}
 
@@ -266,9 +266,23 @@ async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
     try:
         async with async_session() as session:
             result = await session.execute(
-                select(AppConfig).where(AppConfig.key_name.in_(keys))
+                select(AppConfig, ConfigRevision.revision)
+                .outerjoin(
+                    ConfigRevision,
+                    ConfigRevision.scope_key == literal("app/") + AppConfig.key_name,
+                )
+                .where(AppConfig.key_name.in_(keys))
             )
-            return {c.key_name: c.key_value for c in result.scalars().all()}
+            values = {}
+            for config, revision in result.all():
+                value = config.key_value
+                if config.key_name.startswith(_ACCOUNT_PREFIX):
+                    account = _safe_json_loads(value)
+                    if isinstance(account, dict):
+                        account["revision"] = revision or 0
+                        value = json.dumps(account, ensure_ascii=False)
+                values[config.key_name] = value
+            return values
     except Exception as exc:
         logger.debug("加载 AppConfig 失败 / failed to load AppConfig: {}", exc)
         return {}
@@ -299,47 +313,109 @@ async def _fetch_all_account_keys() -> list[str]:
         return []
 
 
-async def _upsert_app_config(key: str, value: str, description: str = "") -> None:
-    """插入或更新 AppConfig 行 / Upsert an AppConfig row."""
-    try:
-        from sqlalchemy import select
+class AccountConflictError(ValueError):
+    """A stale account editor must not restore old credentials."""
 
-        from backend.models.database import AppConfig, async_session
-    except Exception:
-        return
+
+async def _upsert_app_config(
+    key: str,
+    value: str,
+    description: str = "",
+    *,
+    expected_updated_at: float | None = None,
+    expected_revision: int | None = None,
+) -> int:
+    from sqlalchemy import select
+
+    from backend.core.log_sanitizer import sensitive_log_scope
+    from backend.models.database import AppConfig, async_session
+    from backend.services.config_store import lock_config
 
     if async_session is None:
-        return
+        raise RuntimeError("Configuration database is unavailable")
+    parsed = _safe_json_loads(value)
+    secret = parsed.get("api_key") if isinstance(parsed, dict) else None
+    with sensitive_log_scope(value, secret):
+        async with async_session() as session:
+            await lock_config(session, "validation/global")
+            revision = await lock_config(session, "app/" + key)
+            if expected_revision is not None and expected_revision != revision.revision:
+                raise AccountConflictError("Account changed; reload before saving")
+            row = (
+                await session.execute(
+                    select(AppConfig).where(AppConfig.key_name == key).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if expected_updated_at is not None:
+                current = _safe_json_loads(row.key_value) if row else {}
+                actual = float((current or {}).get("updated_at") or 0)
+                if actual != expected_updated_at:
+                    raise AccountConflictError("Account changed; reload before saving")
+            if key == _ROLE_BINDINGS_KEY:
+                accounts = (
+                    (
+                        await session.execute(
+                            select(AppConfig.key_name).where(
+                                AppConfig.key_name.like("ai_account.%")
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                _, error = validate_role_bindings_payload(
+                    parsed, {name.removeprefix(_ACCOUNT_PREFIX) for name in accounts}
+                )
+                if error:
+                    raise ValueError("Invalid account binding")
+            if row is None:
+                session.add(
+                    AppConfig(key_name=key, key_value=value, description=description)
+                )
+            else:
+                row.key_value = value
+            revision.revision += 1
+            await session.commit()
+            return revision.revision
 
+
+async def _delete_app_config(key: str) -> bool:
+    from sqlalchemy import delete, select
+
+    from backend.models.database import AppConfig, async_session
+    from backend.services.config_store import lock_config
+
+    if async_session is None:
+        raise RuntimeError("Configuration database is unavailable")
     async with async_session() as session:
+        await lock_config(session, "validation/global")
+        revision = await lock_config(session, "app/" + key)
+        if key.startswith(_ACCOUNT_PREFIX):
+            raw = (
+                await session.execute(
+                    select(AppConfig.key_value)
+                    .where(AppConfig.key_name == _ROLE_BINDINGS_KEY)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            bindings = _safe_json_loads(raw) or {}
+            for entry in bindings.values():
+                binding = (
+                    _role_binding_from_dict(entry) if isinstance(entry, dict) else None
+                )
+                if binding and any(
+                    assignment.account == key.removeprefix(_ACCOUNT_PREFIX)
+                    for assignment in [binding.primary, *binding.fallback]
+                ):
+                    return False
         result = await session.execute(
-            select(AppConfig).where(AppConfig.key_name == key)
+            delete(AppConfig).where(AppConfig.key_name == key)
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            session.add(
-                AppConfig(key_name=key, key_value=value, description=description)
-            )
-        else:
-            row.key_value = value
+        if not result.rowcount:
+            return False
+        revision.revision += 1
         await session.commit()
-
-
-async def _delete_app_config(key: str) -> None:
-    """删除 AppConfig 行 / Delete an AppConfig row."""
-    try:
-        from sqlalchemy import delete
-
-        from backend.models.database import AppConfig, async_session
-    except Exception:
-        return
-
-    if async_session is None:
-        return
-
-    async with async_session() as session:
-        await session.execute(delete(AppConfig).where(AppConfig.key_name == key))
-        await session.commit()
+        return True
 
 
 # =============================================================================
@@ -400,11 +476,14 @@ async def save_account(account: ProviderAccount) -> ProviderAccount:
     now = _now()
     if account.created_at == 0.0:
         account.created_at = now
+    expected_updated_at = account.updated_at
     account.updated_at = now
-    await _upsert_app_config(
+    account.revision = await _upsert_app_config(
         f"{_ACCOUNT_PREFIX}{account.id}",
         json.dumps(account.to_dict(), ensure_ascii=False),
         description=f"AI provider account {account.name}",
+        expected_updated_at=expected_updated_at,
+        expected_revision=account.revision,
     )
     return account
 
@@ -420,8 +499,7 @@ async def delete_account(account_id: str) -> bool:
         for fb in binding.fallback:
             if fb.account == account_id:
                 return False
-    await _delete_app_config(f"{_ACCOUNT_PREFIX}{account_id}")
-    return True
+    return await _delete_app_config(f"{_ACCOUNT_PREFIX}{account_id}")
 
 
 async def count_accounts() -> int:

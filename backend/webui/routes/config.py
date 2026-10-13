@@ -12,18 +12,14 @@ from urllib.parse import parse_qsl, urlsplit
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
 from backend.core.config import (
-    BASIC_CONFIG_KEYS,
     get_dynamic_config_fresh,
     get_settings,
 )
-from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import filename_timestamp
-from backend.models.database import AppConfig, _settings_default_to_str
 from backend.services.agent_team.network_policy import (
     AgentTeamNetworkPolicy,
     NetworkCapability,
@@ -54,11 +50,9 @@ from backend.services.user_backup_service import (
     serialize_user_backup,
 )
 from backend.webui.deps import (
-    get_csrf_serializer,
     get_db,
     get_templates,
     get_user_preferences,
-    render_template,
     require_csrf,
     require_csrf_header,
     require_super_admin,
@@ -785,18 +779,10 @@ async def ai_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """AI 提供商账号配置页（多厂商持久化、随时切换、故障转移链）."""
-    from backend.webui.routes.auth import APP_VERSION
+    from fastapi.responses import RedirectResponse
 
-    return render_template(
-        "config_ai.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_ai",
-        app_version=APP_VERSION,
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/ai" + query, status_code=302)
 
 
 # ========== 配置备份与恢复 ==========
@@ -808,15 +794,10 @@ async def config_backup_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """配置备份页面。"""
-    return render_template(
-        "config_backup.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_backup",
-    )
+    from fastapi.responses import RedirectResponse
+
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/backup" + query, status_code=302)
 
 
 @router.post("/backup/export/users")
@@ -1153,112 +1134,6 @@ async def upload_user_backup(
         await backup_file.close()
 
 
-async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
-    """读取 AppConfig 并组装动态配置分组数据（平铺键卡片渲染上下文）。
-
-    Build dynamic config group context shared by the unified config page
-    (labels/descriptions resolve via i18n with DYNAMIC_* fallbacks).
-    """
-    from backend.core.config import (
-        DYNAMIC_CONFIG_GROUPS,
-        DYNAMIC_CONFIG_LABELS,
-        DYNAMIC_CONFIG_RANGES,
-        DYNAMIC_CONFIG_SELECT_OPTIONS,
-        DYNAMIC_CONFIG_SENSITIVE_KEYS,
-        _get_field_type,
-        get_dynamic_config_input_type,
-        get_settings,
-        mask_sensitive_value,
-    )
-    from backend.webui.i18n import i18n as _i18n
-
-    result = await db.execute(select(AppConfig).order_by(AppConfig.id))
-    configs = result.scalars().all()
-    config_map = {c.key_name: c.key_value for c in configs}
-
-    settings = get_settings()
-    dynamic_groups = []
-    for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
-        items = []
-        for key in group_data["keys"]:
-            default_val = _settings_default_to_str(getattr(settings, key, ""))
-            value = config_map.get(key, default_val)
-            input_type = get_dynamic_config_input_type(key)
-            is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-
-            display_value = (
-                mask_sensitive_value(value) if (is_sensitive and value) else value
-            )
-
-            # Translate select options via i18n
-            raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
-            translated_options = []
-            for opt in raw_options:
-                opt_key = f"config.option.{key}_{opt['value']}"
-                opt_label = _i18n.t(opt_key, lang=lang)
-                # Fallback to original label if key not found
-                translated_options.append(
-                    {
-                        "value": opt["value"],
-                        "label": opt_label if opt_key != opt_label else opt["label"],
-                    }
-                )
-
-            items.append(
-                {
-                    "key": key,
-                    "label": (
-                        translated_label
-                        if (
-                            translated_label := _i18n.t(
-                                f"config.label.{key}", lang=lang
-                            )
-                        )
-                        != f"config.label.{key}"
-                        else DYNAMIC_CONFIG_LABELS.get(key, key)
-                    ),
-                    "description": (
-                        ""
-                        if not group_data.get("descriptions", {}).get(key)
-                        else (
-                            translated
-                            if (translated := _i18n.t(f"config.desc.{key}", lang=lang))
-                            != f"config.desc.{key}"
-                            else group_data["descriptions"][key]
-                        )
-                    ),
-                    "input_type": input_type,
-                    "step": "any" if _get_field_type(key) is float else "1",
-                    "value": display_value,
-                    "default": mask_sensitive_value(default_val)
-                    if (is_sensitive and default_val)
-                    else default_val,
-                    "sensitive": is_sensitive,
-                    "select_options": translated_options,
-                    "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
-                    "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
-                }
-            )
-        dynamic_groups.append(
-            {
-                "id": group_id,
-                "label": (
-                    translated_group
-                    if (
-                        translated_group := _i18n.t(
-                            f"config.group.{group_id}", lang=lang
-                        )
-                    )
-                    != f"config.group.{group_id}"
-                    else group_data["label"]
-                ),
-                "icon": group_data.get("icon", ""),
-                "fields": items,
-            }
-        )
-    return dynamic_groups
-
-
 @router.get("")
 async def unified_config_page(
     request: Request,
@@ -1266,35 +1141,10 @@ async def unified_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """全局配置页：平铺动态配置组 + 策略/标签节表单单页呈现。"""
-    lang = detect_language(user_prefs)
-    dynamic_groups = await _build_dynamic_groups(db, lang)
+    from fastapi.responses import RedirectResponse
 
-    strategy_data = get_sections_for_target("strategy")
-    pr_dependency_graph = dict(strategy_data.get("pr_dependency_graph", {}))
-    pr_dependency_graph["mode"] = await section_config_service.resolve_depgraph_mode()
-    label_data = get_sections_for_target("label")
-
-    return render_template(
-        "config_unified.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_unified",
-        dynamic_groups=dynamic_groups,
-        strategies=strategy_data.get("strategies", {}),
-        file_filters=strategy_data.get("file_filters", {}),
-        context_enhancement=strategy_data.get("context_enhancement", {}),
-        review_policy=strategy_data.get("review_policy", {}),
-        pr_dependency_graph=pr_dependency_graph,
-        issue_analysis=strategy_data.get("issue_analysis", {}),
-        pr_summary=strategy_data.get("pr_summary", {}),
-        scan=strategy_data.get("scan", {}),
-        labels=label_data.get("labels", {}),
-        recommendation=label_data.get("recommendation", {}),
-        conflict_rules=label_data.get("conflict_rules", {}),
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/review" + query, status_code=302)
 
 
 @router.get("/agent-network-status", response_class=JSONResponse)
@@ -1409,8 +1259,8 @@ async def save_general_config(
     """保存全局配置页的全部平铺键（通用逐键 upsert 循环）。
 
     review_basic / web_search 等原手写键段已注册进 DYNAMIC_CONFIG_GROUPS，
-    与其余动态组共用同一循环；bool 未勾选时表单不提交，按 Settings
-    字段类型回填 "false"（与既有 checkbox 语义一致）。
+    与其余动态组共用同一校验服务；仅修改明确提交的字段。
+    旧客户端关闭开关时需明确提交 false，缺省字段始终保持不变。
     """
     try:
         form = await request.form()
@@ -1455,12 +1305,7 @@ async def save_general_config(
 
                 raw = form.get(key)
                 if raw is None:
-                    # boolean 字段未勾选时表单不提交
-                    # 从 Settings 获取类型判断
-                    if _get_field_type(key) is bool:
-                        raw = "false"
-                    else:
-                        continue
+                    continue
 
                 try:
                     val = _validate_dynamic_config_value(
@@ -1481,80 +1326,11 @@ async def save_general_config(
 
                 validated_values.append((key, val, is_sensitive))
 
-        changed = {}
-        for key, val, is_sensitive in validated_values:
-            # 保存
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == key)
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg is None:
-                # 首次创建
-                cfg = AppConfig(key_name=key, key_value=val, description=key)
-                db.add(cfg)
-                changed[key] = {
-                    "old": "(无)",
-                    "new": _mask(val) if is_sensitive else val,
-                    "raw_new": val,
-                }
-            elif cfg.key_value != val:
-                if is_sensitive:
-                    changed[key] = {
-                        "old": _mask(cfg.key_value),
-                        "new": _mask(val),
-                        "raw_new": val,
-                    }
-                else:
-                    changed[key] = {
-                        "old": cfg.key_value,
-                        "new": val,
-                        "raw_new": val,
-                    }
-                cfg.key_value = val
+        from backend.services.config_center_service import config_center_service
 
-        if not changed:
-            return toast_redirect(
-                "/config",
-                "toast.config_saved_restart",
-                lang=detect_language(),
-            )
-
-        await db.commit()
-
-        # 清除动态配置缓存 + 同步 Settings 单例
-        from backend.core.config import (
-            get_all_dynamic_config_keys,
-            invalidate_dynamic_config_cache,
-            update_settings_field,
+        changed = await config_center_service.save_app_updates(
+            db, {key: val for key, val, _ in validated_values}
         )
-
-        all_dynamic_keys = get_all_dynamic_config_keys()
-        invalidate_dynamic_config_cache(all_dynamic_keys)
-
-        # 即时更新 Settings 单例，无需重启
-        for key, change in changed.items():
-            if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
-                update_settings_field(key, change.get("raw_new", change["new"]))
-
-        # 即时重置信号量，使并发配置立即生效
-        if "max_concurrent_issues" in changed:
-            # 延迟导入避免 config ↔ worker 循环引用
-            from backend.workers.issue_worker import reset_issue_semaphore
-
-            reset_issue_semaphore()
-
-        if "max_concurrent_reviews" in changed:
-            # 延迟导入避免 config ↔ worker 循环引用
-            from backend.workers.review_worker import reset_review_semaphore
-
-            reset_review_semaphore()
-
-        if "star_aid_scheduler_enabled" in changed:
-            from backend.services.star_aid_scheduler import get_star_aid_scheduler
-
-            star_sched = get_star_aid_scheduler()
-            if star_sched is not None:
-                star_sched.restart_if_needed()
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
