@@ -201,6 +201,21 @@ _setup_token_file: Path | None = None
 _COOKIE_NAME = "setup_verified"
 
 
+def _create_setup_token_tempfile(directory: Path) -> tuple[int, str]:
+    if os.name == "nt":
+        from backend.core.windows_private_file import create_private_tempfile
+
+        return create_private_tempfile(directory, prefix=".setup-token-")
+    return tempfile.mkstemp(prefix=".setup-token-", dir=directory)
+
+
+def _remove_setup_token_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("无法清理 Setup Token 私有文件 {}；请在本机清理该文件。", path)
+
+
 def generate_setup_token() -> None:
     """Generate a token and hand it to the local operator outside log sinks.
 
@@ -211,17 +226,21 @@ def generate_setup_token() -> None:
     token = secrets.token_urlsafe(32)
     token_path = get_connection_config_path().parent / ".setup-token"
     token_path.parent.mkdir(parents=True, exist_ok=True)
-    # mkstemp creates mode 0600 on POSIX. Atomic replace never follows an
-    # existing destination symlink. Windows inherits the private config ACL.
-    fd, temporary = tempfile.mkstemp(prefix=".setup-token-", dir=token_path.parent)
+    # Restrict access at creation on both platforms. Atomic replacement does
+    # not follow an existing destination symlink or broaden the private ACL.
+    fd, temporary = _create_setup_token_tempfile(token_path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream = os.fdopen(fd, "w", encoding="utf-8")
+        fd = None  # stream now owns the descriptor, including write failures.
+        with stream:
             stream.write(token + "\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, token_path)
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        if fd is not None:
+            os.close(fd)
+        _remove_setup_token_file(Path(temporary))
     _setup_token = token
     _setup_token_file = token_path
     logger.info(
@@ -247,9 +266,11 @@ def clear_setup_token() -> None:
     """清除内存中的 Token。Setup 完成后调用。"""
     global _setup_token, _setup_token_file
     _setup_token = None
-    if _setup_token_file is not None:
-        _setup_token_file.unlink(missing_ok=True)
-        _setup_token_file = None
+    path, _setup_token_file = _setup_token_file, None
+    if path is not None:
+        # Completion has already committed configuration/admin state. A scanner
+        # holding the inert handoff file must not suppress success or restart.
+        _remove_setup_token_file(path)
 
 
 def _has_valid_setup_cookie(scope: dict) -> bool:

@@ -293,6 +293,52 @@ def test_blocked_modules_report_restart_required(hot_env):
     assert result.reloaded == []
 
 
+@pytest.mark.parametrize("name", ["log_context", "log_sanitizer"])
+def test_logging_context_scopes_survive_reload_request(hot_env, monkeypatch, name):
+    from backend.core import log_context as context_module
+    from backend.core import log_sanitizer as sanitizer_module
+
+    module_name = f"backend.core.{name}"
+    module = context_module if name == "log_context" else sanitizer_module
+    scope = (
+        context_module.log_context(request_id="active-request")
+        if name == "log_context"
+        else sanitizer_module.sensitive_log_scope("opaque-active-secret")
+    )
+    variable_name = "_context" if name == "log_context" else "_scoped_secrets"
+    original_variable = getattr(module, variable_name)
+    path = hot_env.write_module(f"backend/core/{name}.py", "")
+    monkeypatch.setattr(hot_reload, "_affected_closure", lambda changed: {module_name})
+    reloaded = []
+
+    def reload_module(name):
+        reloaded.append(name)
+        # An actual reload reconstructs the ContextVar while the scope is active.
+        from contextvars import ContextVar
+
+        default = types.MappingProxyType({}) if variable_name == "_context" else ()
+        monkeypatch.setattr(
+            module, variable_name, ContextVar("reloaded", default=default)
+        )
+
+    monkeypatch.setattr(hot_reload, "_reload_module", reload_module)
+    with scope:
+        try:
+            result = hot_reload.apply_code_changes([path], root=hot_env.root)
+            assert result.blocked_restart == [module_name]
+            assert not result.reloaded and not reloaded
+            assert getattr(module, variable_name) is original_variable
+            if name == "log_context":
+                assert (
+                    context_module.get_log_context()["request_id"] == "active-request"
+                )
+            else:
+                assert sanitizer_module.sanitize_text("opaque-active-secret") == "***"
+        finally:
+            # Keep a failing regression isolated from other tests in this process.
+            setattr(module, variable_name, original_variable)
+
+
 @pytest.mark.parametrize(
     ("rel", "module_name"),
     [
