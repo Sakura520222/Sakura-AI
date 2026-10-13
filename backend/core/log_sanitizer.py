@@ -1,8 +1,8 @@
 """Credential redaction shared by operational and persisted audit logs.
 
-Keep diagnostic keys, error types and stack frames. Never inspect object attributes
-or traceback locals. Scoped credentials cover opaque provider keys without keeping
-them forever in a process-global registry.
+Keep diagnostic keys, error types and stack frames. Only explicit exception
+redaction metadata is inspected; never inspect arbitrary attributes or traceback
+locals. Scoped credentials do not live in a process-global registry.
 """
 
 from __future__ import annotations
@@ -92,8 +92,41 @@ def sensitive_log_scope(*values: object):
     token = _scoped_secrets.set((*_scoped_secrets.get(), *secrets))
     try:
         yield
+    except BaseException as error:
+        # Frameworks/workers can log this error after the ambient scope closes.
+        # Keep the original object and its graph safe without extending the scope.
+        _retain_scoped_exception_secrets(error)
+        raise
     finally:
         _scoped_secrets.reset(token)
+
+
+def _exception_nodes(error: BaseException):
+    pending = [error]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        pending.extend((current.__cause__, current.__context__))
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+
+
+def _retain_scoped_exception_secrets(error: BaseException) -> None:
+    nodes = list(_exception_nodes(error))
+    values = set(_scoped_secrets.get())
+    for current in nodes:
+        values.update(getattr(current, "_log_redaction_secrets", ()))
+    if not values:
+        return
+    secrets = tuple(values)
+    # Derived groups discard custom root attributes but retain their children.
+    # Carry the immutable knowledge on each node, including existing provenance.
+    for current in nodes:
+        current._log_redaction_secrets = secrets
 
 
 def _percent_projection(text: str) -> tuple[bytes, list[tuple[int, int]]]:
@@ -195,17 +228,8 @@ def sanitize_exception_text(
     exception and use its attached redaction knowledge, including nested causes.
     """
     values = set(secrets)
-    pending = [error]
-    seen = set()
-    while pending:
-        current = pending.pop()
-        if current is None or id(current) in seen:
-            continue
-        seen.add(id(current))
+    for current in _exception_nodes(error):
         values.update(getattr(current, "_log_redaction_secrets", ()))
-        pending.extend((current.__cause__, current.__context__))
-        if isinstance(current, BaseExceptionGroup):
-            pending.extend(current.exceptions)
     return sanitize_text(str(error), secrets=tuple(values))
 
 
