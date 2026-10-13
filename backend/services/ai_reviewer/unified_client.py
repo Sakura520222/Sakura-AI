@@ -664,7 +664,7 @@ class UnifiedAIClient:
                 except Exception as exc:
                     if is_billing_failure(exc):
                         raise
-                            logger.warning(
+                    logger.warning(
                         "主动压缩预检失败，按原消息继续: {}",
                         sanitize_exception_text(exc),
                     )
@@ -1041,7 +1041,7 @@ class UnifiedAIClient:
                 except Exception as exc:
                     if is_billing_failure(exc):
                         raise
-                            logger.warning(
+                    logger.warning(
                         "流式主动压缩预检失败，按原消息继续: {}",
                         sanitize_exception_text(exc),
                     )

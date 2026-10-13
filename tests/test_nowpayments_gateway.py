@@ -56,7 +56,8 @@ class TestCurrencyConversion:
             result = gateway._to_minor_units(None, "USD")
 
         assert result == 0
-        mock_logger.warning.assert_called_once_with(
+        mock_logger.opt.assert_called_once_with(exception=True)
+        mock_logger.opt.return_value.warning.assert_called_once_with(
             "Invalid amount '{}' for currency '{}', defaulting to 0",
             None,
             "USD",
@@ -69,7 +70,8 @@ class TestCurrencyConversion:
             result = gateway._to_minor_units("not-a-number", "USD")
 
         assert result == 0
-        mock_logger.warning.assert_called_once_with(
+        mock_logger.opt.assert_called_once_with(exception=True)
+        mock_logger.opt.return_value.warning.assert_called_once_with(
             "Invalid amount '{}' for currency '{}', defaulting to 0",
             "not-a-number",
             "USD",

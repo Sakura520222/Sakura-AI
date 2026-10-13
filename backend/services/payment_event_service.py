@@ -3,9 +3,11 @@
 import hashlib
 import json
 
+from loguru import logger
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.time_service import now_utc
 from backend.models.billing_models import BillingTransaction
 from backend.models.legacy_entitlement_models import (
@@ -108,6 +110,9 @@ class PaymentEventService:
         if received is None or received.evidence != evidence:
             raise PaymentError("Provider event identity conflicts with prior evidence")
         await self.session.commit()
+        logger.bind(
+            provider=provider, payment_event_id=record.id, status=record.status
+        ).info("Verified payment receipt persisted")
         if record.status == "processed":
             return record
         return await self.replay(record.id)
@@ -133,9 +138,9 @@ class PaymentEventService:
                 if record.evidence["type"] == WebhookEventType.PAYMENT_COMPLETED.value:
                     await self._payment(record)
                 elif record.evidence["type"] == WebhookEventType.PAYMENT_REFUNDED.value:
-                    if not await self._resolve_paddle_pending(record):
+                    if not await self._resolve_refund_pending(record):
                         await self._refund(record)
-                        await self._supersede_paddle_pending(record)
+                        await self._supersede_refund_pending(record)
                 else:
                     raise PaymentError(
                         "Unsupported incoming payment event", code="unsupported_event"
@@ -153,12 +158,27 @@ class PaymentEventService:
                     )
                 )
                 await self.session.flush()
+                logger.bind(
+                    provider=record.provider,
+                    payment_event_id=record.id,
+                    order_id=record.order_id,
+                ).info("Payment receipt effects staged")
         except (PaymentError, BillingError, ValueError) as exc:
             # Receipt remains committed even when the financial savepoint fails.
             record = await self.session.get(PaymentRefundInboxEvent, event_id)
             record.status = "pending_reconciliation"
-            record.pending_reason = getattr(exc, "code", "invalid_provider_evidence")
+            record.pending_reason = (
+                getattr(exc, "code", None) or "invalid_provider_evidence"
+            )
             await self.session.flush()
+            logger.bind(
+                provider=record.provider,
+                payment_event_id=record.id,
+                pending_reason=record.pending_reason,
+            ).opt(exception=True).warning(
+                "Payment receipt requires reconciliation: {}",
+                sanitize_exception_text(exc),
+            )
         return record
 
     @staticmethod
@@ -330,23 +350,86 @@ class PaymentEventService:
             return None
         return reference, source, amount, currency.upper()
 
-    def _paddle_lifecycle_query(self, record, identity, *, pending):
-        return (
+    def _refund_lifecycle_identities(self, record, *, pending):
+        evidence = record.evidence
+        if record.provider == "paddle":
+            identity = self._paddle_refund_identity(
+                evidence, {"pending_approval"} if pending else {"succeeded", "rejected"}
+            )
+            return [identity] if identity else []
+        if record.provider != "stripe":
+            return []
+        native_type = (evidence.get("wire_evidence") or {}).get("event_type")
+        single_refund = native_type in {
+            "refund.created",
+            "refund.updated",
+            "refund.failed",
+            "charge.refund.updated",
+        }
+        if (
+            evidence.get("type") != WebhookEventType.PAYMENT_REFUNDED.value
+            or evidence.get("normalization_error")
+            or not (single_refund or (not pending and native_type == "charge.refunded"))
+        ):
+            return []
+        source = evidence.get("payment_reference_id")
+        items = evidence.get("refund_items") or []
+        if not isinstance(source, str) or not source or not items:
+            return []
+        if single_refund and (
+            len(items) != 1 or items[0].get("id") != evidence.get("provider_tx_id")
+        ):
+            return []
+        statuses = (
+            {"pending", "requires_action"}
+            if pending
+            else {"succeeded", "failed", "canceled"}
+        )
+        identities = []
+        for item in items:
+            reference, amount, currency = (
+                item.get("id"),
+                item.get("amount_cents"),
+                item.get("currency"),
+            )
+            if (
+                not isinstance(reference, str)
+                or not reference
+                or len(reference) > 191
+                or not isinstance(amount, int)
+                or isinstance(amount, bool)
+                or amount <= 0
+                or not isinstance(currency, str)
+                or not currency
+            ):
+                return []
+            if item.get("status") in statuses:
+                identities.append((reference, source, amount, currency.upper()))
+        return identities
+
+    def _refund_lifecycle_query(self, record, identity, *, pending):
+        statement = (
             select(PaymentRefundInboxEvent)
             .where(
-                PaymentRefundInboxEvent.provider == "paddle",
+                PaymentRefundInboxEvent.provider == record.provider,
                 PaymentRefundInboxEvent.id != record.id,
                 PaymentRefundInboxEvent.status
                 == ("pending_reconciliation" if pending else "processed"),
-                PaymentRefundInboxEvent.evidence["provider_tx_id"].as_string()
-                == identity[0],
                 PaymentRefundInboxEvent.evidence["payment_reference_id"].as_string()
                 == identity[1],
             )
             .execution_options(populate_existing=True)
         )
+        # Stripe charge receipts can contain multiple native refunds. Their
+        # exact IDs, amounts and currencies are checked after this current read.
+        if pending or record.provider == "paddle":
+            statement = statement.where(
+                PaymentRefundInboxEvent.evidence["provider_tx_id"].as_string()
+                == identity[0]
+            )
+        return statement
 
-    def _append_paddle_superseded(self, pending, terminal, identity):
+    def _append_refund_superseded(self, pending, terminal, identity):
         # The projection closes, but the native pending observation and every
         # received/reviewed audit remain intact for source reconstruction.
         self.session.add(
@@ -363,20 +446,25 @@ class PaymentEventService:
                 },
             )
         )
+        logger.bind(
+            provider=pending.provider,
+            payment_event_id=pending.id,
+            terminal_event_id=terminal.id,
+            order_id=terminal.order_id,
+        ).info("Refund receipt superseded by verified terminal evidence")
 
-    async def _resolve_paddle_pending(self, record):
-        if record.provider != "paddle":
+    async def _resolve_refund_pending(self, record):
+        identities = self._refund_lifecycle_identities(record, pending=True)
+        if not identities:
             return False
-        identity = self._paddle_refund_identity(record.evidence, {"pending_approval"})
-        if identity is None:
-            return False
+        identity = identities[0]
         # Wait for the order lock before reading terminal observations. A refund
         # already executing in another worker can then commit its terminal event.
         order = await self._order(record)
         terminals = (
             (
                 await self.session.execute(
-                    self._paddle_lifecycle_query(
+                    self._refund_lifecycle_query(
                         record, identity, pending=False
                     ).with_for_update(skip_locked=True)
                 )
@@ -386,66 +474,59 @@ class PaymentEventService:
         )
         for terminal in terminals:
             if (
-                self._paddle_refund_identity(
-                    terminal.evidence, {"succeeded", "rejected"}
-                )
-                == identity
+                identity in self._refund_lifecycle_identities(terminal, pending=False)
                 and terminal.order_id == order.id
             ):
-                self._append_paddle_superseded(record, terminal, identity)
+                self._append_refund_superseded(record, terminal, identity)
                 return True
         # A locked terminal event is deliberately skipped: retain this receipt
         # as pending and let the existing replay/reconciliation entry resolve it.
         # The locking read also bypasses an earlier MySQL repeatable-read snapshot.
         return False
 
-    async def _supersede_paddle_pending(self, record):
-        if record.provider != "paddle":
-            return
-        identity = self._paddle_refund_identity(
-            record.evidence, {"succeeded", "rejected"}
-        )
-        if identity is None:
+    async def _supersede_refund_pending(self, record):
+        identities = self._refund_lifecycle_identities(record, pending=False)
+        if not identities:
             return
         terminal_order = await self.session.get(Order, record.order_id)
         if terminal_order is None:
             return
-        pending_rows = (
-            (
-                await self.session.execute(
-                    self._paddle_lifecycle_query(
-                        record, identity, pending=True
-                    ).with_for_update(skip_locked=True)
+        for identity in identities:
+            pending_rows = (
+                (
+                    await self.session.execute(
+                        self._refund_lifecycle_query(
+                            record, identity, pending=True
+                        ).with_for_update(skip_locked=True)
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        for pending in pending_rows:
-            if (
-                self._paddle_refund_identity(pending.evidence, {"pending_approval"})
-                != identity
-            ):
-                continue
-            if pending.evidence.get("reviewed_order_id") not in {
-                None,
-                terminal_order.id,
-            } or pending.evidence.get("order_no") not in {
-                None,
-                "",
-                terminal_order.order_no,
-            }:
-                continue  # Do not lock another order for conflicting ownership.
-            try:
-                order = await self._order(pending)
-            except PaymentError:
-                continue  # Conflicting ownership remains explicitly pending.
-            if order.id != record.order_id:
-                continue
-            pending.status = "processed"
-            pending.pending_reason = None
-            pending.resolved_at = now_utc()
-            self._append_paddle_superseded(pending, record, identity)
+            for pending in pending_rows:
+                if identity not in self._refund_lifecycle_identities(
+                    pending, pending=True
+                ):
+                    continue
+                if pending.evidence.get("reviewed_order_id") not in {
+                    None,
+                    terminal_order.id,
+                } or pending.evidence.get("order_no") not in {
+                    None,
+                    "",
+                    terminal_order.order_no,
+                }:
+                    continue  # Do not lock another order for conflicting ownership.
+                try:
+                    order = await self._order(pending)
+                except PaymentError:
+                    continue  # Conflicting ownership remains explicitly pending.
+                if order.id != record.order_id:
+                    continue
+                pending.status = "processed"
+                pending.pending_reason = None
+                pending.resolved_at = now_utc()
+                self._append_refund_superseded(pending, record, identity)
         # An in-flight pending replay is skipped to avoid event/order lock
         # inversion; after it gets the order lock it resolves against this event.
 
@@ -512,7 +593,7 @@ class PaymentEventService:
                     )
                 except ValueError as exc:
                     raise PaymentError(
-                        str(exc), code="refund_evidence_incomplete"
+                        sanitize_exception_text(exc), code="refund_evidence_incomplete"
                     ) from exc
                 if raw == order.provider_tx_id and wire.get("out_request_no") != raw:
                     raise PaymentError(
@@ -595,7 +676,9 @@ class PaymentEventService:
         try:
             reference = AlipayGateway.refund_reference_id(trade_no, request_no)
         except ValueError as exc:
-            raise PaymentError(str(exc), code="refund_evidence_incomplete") from exc
+            raise PaymentError(
+                sanitize_exception_text(exc), code="refund_evidence_incomplete"
+            ) from exc
         order = await self._order(record)
         await BillingService(self.session).get_wallet(order.user_id)
         if trade_no != order.provider_tx_id:

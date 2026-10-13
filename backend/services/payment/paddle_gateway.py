@@ -21,6 +21,7 @@ import re
 
 from loguru import logger
 
+from backend.core.log_sanitizer import sanitize_exception_text, sanitize_text
 from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
@@ -30,12 +31,15 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
 from backend.services.payment.paddle_capabilities import validate_paddle_currency
 
 
 class PaddleGateway(PaymentGateway):
     """Paddle Billing 网关（使用 paddle-python-sdk）"""
+
+    LOG_SECRET_ATTRIBUTES = ("_api_key", "_webhook_secret")
 
     def __init__(self, api_key: str, webhook_secret: str):
         self._api_key = api_key
@@ -45,6 +49,7 @@ class PaddleGateway(PaymentGateway):
     # 创建支付
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -138,7 +143,7 @@ class PaddleGateway(PaymentGateway):
                 "Paddle Transaction created: tx_id={}, order_no={}, checkout_url={}",
                 tx_id,
                 order_no,
-                checkout_url[:80] if checkout_url else "(empty)",
+                sanitize_text(checkout_url)[:80] if checkout_url else "(empty)",
             )
 
             return PaymentIntentResult(
@@ -153,7 +158,7 @@ class PaddleGateway(PaymentGateway):
                 },
             )
         except ImportError:
-            logger.error(
+            logger.opt(exception=True).error(
                 "paddle-python-sdk is not installed. Run: pip install paddle-python-sdk"
             )
             return PaymentIntentResult(
@@ -161,16 +166,17 @@ class PaddleGateway(PaymentGateway):
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle create_payment failed: {}", e)
+            logger.opt(exception=True).error("Paddle create_payment failed: {}", e)
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
     # ------------------------------------------------------------------
     # Webhook 验证
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -334,6 +340,7 @@ class PaddleGateway(PaymentGateway):
     # 退款
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
@@ -421,14 +428,14 @@ class PaddleGateway(PaymentGateway):
                 else "pending",
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return RefundResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            error_str = str(e)
-            logger.error("Paddle refund failed: {}", error_str)
+            error_str = sanitize_exception_text(e)
+            logger.opt(exception=True).error("Paddle refund failed: {}", error_str)
             return RefundResult(
                 success=False,
                 error_message=error_str,
@@ -438,6 +445,7 @@ class PaddleGateway(PaymentGateway):
     # 查询支付状态
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def get_payment_status(
         self,
         provider_tx_id: str,
@@ -487,18 +495,19 @@ class PaddleGateway(PaymentGateway):
                 },
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return PaymentStatusResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle get_payment_status failed: {}", e)
+            logger.opt(exception=True).error("Paddle get_payment_status failed: {}", e)
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     async def cancel_payment(
         self,
         provider_tx_id: str,
@@ -532,14 +541,14 @@ class PaddleGateway(PaymentGateway):
                 status="cancelled",
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return RefundResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle cancel failed: {}", e)
+            logger.opt(exception=True).error("Paddle cancel failed: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
