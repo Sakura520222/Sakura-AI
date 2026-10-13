@@ -942,6 +942,13 @@ class PaymentEventService:
                     )
                 prior_units = 0
                 if purchase:
+                    if cumulative != gateway_total and not PaymentService(
+                        self.session
+                    )._is_credits_only_snapshot(order.plan_snapshot):
+                        raise PaymentError(
+                            "Partial refunds require a Credits-only purchased snapshot",
+                            code="partial_refund_unsupported",
+                        )
                     reversals = (
                         (
                             await self.session.execute(
