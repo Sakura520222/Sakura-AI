@@ -26,7 +26,7 @@ TIME_PRIMITIVE_ALLOWLIST = (
     },
     {
         "file": "backend/services/payment/alipay_gateway.py",
-        "position": "backend/services/payment/alipay_gateway.py:639",
+        "position": "backend/services/payment/alipay_gateway.py:773",
         "primitive": "datetime.now(bj_tz)",
         "category": "fixed-protocol-timezone",
         "reason": "Alipay requires its timestamp in fixed UTC+08:00 protocol time.",

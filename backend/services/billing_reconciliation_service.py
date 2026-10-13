@@ -26,6 +26,9 @@ from backend.services.ai_usage_service import (
 from backend.services.billing_price_identity import canonical_price_call_kind
 from backend.services.billing_pricing import calculate_price
 from backend.services.billing_service import BillingError, BillingService
+from backend.services.service_execution_capacity import (
+    has_live_service_execution_ownership,
+)
 
 
 async def resolve_billing_call(
@@ -86,6 +89,14 @@ async def resolve_billing_call(
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
+    # Row locks serialize writes, but the provider request runs without them.
+    # Reviewed evidence may replace its result only after execution has ended.
+    if operation.outcome is None:
+        raise BillingError("Reconciliation requires a terminal billing operation")
+    if await has_live_service_execution_ownership(
+        session, operation.operation_id, for_update=True
+    ):
+        raise BillingError("Reconciliation cannot replace Usage owned by a live worker")
     frozen = (
         await session.execute(
             select(BillingUsageCharge.id)

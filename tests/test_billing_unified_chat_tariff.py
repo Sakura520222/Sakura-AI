@@ -292,12 +292,13 @@ async def test_pending_historic_stream_reconciliation_retains_original_price(db)
 async def test_unified_stream_reconciliation_still_rejects_wrong_kind_or_account(
     db, kind, account
 ):
-    _, _, attempt = await historic_stream(db, reported=False)
+    service, _, attempt = await historic_stream(db, reported=False)
     profile = await BillingService(db).publish_price(
         "p", "m", kind, PRICE, actor_id=1, account_id=account
     )
     actor = await db.get(TelegramUser, 1)
     actor.role = "super_admin"
+    await service.finish_operation("historic", "completed")
     with pytest.raises(BillingError, match="exact matching"):
         await resolve_billing_call(
             db,
@@ -313,10 +314,11 @@ async def test_unified_stream_reconciliation_still_rejects_wrong_kind_or_account
 
 @pytest.mark.asyncio
 async def test_pending_new_call_does_not_adopt_unpinned_legacy_stream_tariff(db):
-    _, legacy, attempt = await historic_stream(db, reported=False)
+    service, legacy, attempt = await historic_stream(db, reported=False)
     attempt.price_profile_id = None
     actor = await db.get(TelegramUser, 1)
     actor.role = "super_admin"
+    await service.finish_operation("historic", "completed")
     with pytest.raises(BillingError, match="exact matching"):
         await resolve_billing_call(
             db,
