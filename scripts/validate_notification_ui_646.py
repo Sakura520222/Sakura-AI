@@ -63,9 +63,22 @@ try:
         expect(page.locator('#agent-task-detail')).to_be_visible()
         assert page.evaluate("window.agentTeamState.selectedTaskId") == "646"
         page.screenshot(path=str(output / "agent-deep-link-en.png"), full_page=True)
+        page.goto("http://127.0.0.1:8646/system-config/?lang=en")
+        page.get_by_role("button", name="Notification Scheduling", exact=True).click()
+        webhook_control = page.locator('select[name="notification_webhook_enabled"]')
+        expect(webhook_control).to_have_value("false")
+        page.locator('input[name="notification_send_timeout_seconds"]').fill("12")
+        with page.expect_response(lambda response: response.url.endswith("/system-config/save") and response.request.method == "POST") as saved:
+            page.locator('#systemConfigForm button[type="submit"]').click()
+        assert saved.value.status == 302, saved.value.status
+        page.goto("http://127.0.0.1:8646/system-config/?lang=en")
+        page.get_by_role("button", name="Notification Scheduling", exact=True).click()
+        expect(webhook_control).to_have_value("false")
+        expect(page.locator('input[name="notification_send_timeout_seconds"]')).to_have_value("12")
+        page.screenshot(path=str(output / "system-config-disabled-webhook.png"), full_page=True)
         assert not errors, errors
         browser.close()
-    print("Notification browser E2E passed: rename, test queue, scoped preference, read state, diagnostics, bilingual render, Agent deep link")
+    print("Notification browser E2E passed: rename, test queue, scoped preference, read state, diagnostics, bilingual render, Agent deep link, disabled Webhook config save")
 finally:
     server.terminate()
     try:

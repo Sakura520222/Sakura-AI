@@ -44,6 +44,16 @@ def _is_github_username_unique_error(exc: IntegrityError) -> bool:
 
 
 class TelegramService:
+    @staticmethod
+    def _quota_denial_reason(user, kind):
+        prefix, label = {"review": ("", ""), "issue": ("issue_", "Issue "), "agent": ("agent_", "Agent ")}[kind]
+        for period, period_label in (("daily", "每日"), ("weekly", "每周"), ("monthly", "每月")):
+            used = getattr(user, f"{prefix}{period}_used")
+            limit = getattr(user, f"{prefix}{period}_quota")
+            if used >= limit:
+                return f"{label}{period_label}配额已用完 ({used}/{limit})"
+        return f"{label}配额已用完"
+
     async def _notify_quota_exhausted(self, user, kind):
         if self.session.info.get("notification_outbox") is not True:
             return
@@ -56,13 +66,25 @@ class TelegramService:
         reset_key = format_rfc3339(reset) if reset else get_time_service().to_app_timezone(now_utc()).date().isoformat()
         limit = getattr(user, f"{prefix}{period}_quota")
 
-        await emit_event(
-            self.session, event_type="quota.exceeded", resource_type="user", resource_id=user.id,
-            run_key=f"{kind}:{period}:{reset_key}:{limit}", title="Quota exhausted",
-            content=f"Your {kind} quota is exhausted. Review quota settings.",
-            recipient_ids=[user.id], severity="warning", sensitive=True, detail_url="/billing",
-        )
-        await self.session.commit()
+        user_id = user.id
+        try:
+            await emit_event(
+                self.session, event_type="quota.exceeded", resource_type="user", resource_id=user_id,
+                run_key=f"{kind}:{period}:{reset_key}:{limit}", title="Quota exhausted",
+                content=f"Your {kind} quota is exhausted. Review quota settings.",
+                recipient_ids=[user_id], severity="warning", sensitive=True, detail_url="/billing",
+            )
+            await self.session.commit()
+        except Exception as exc:
+            # The quota UPDATE already denied admission. An optional alert
+            # must not change that result or leave this session poisoned.
+            try:
+                await self.session.rollback()
+            except Exception as rollback_exc:
+                logger.warning("Quota alert rollback failed (user_id={}, kind={}, category={})",
+                    user_id, kind, type(rollback_exc).__name__)
+            logger.warning("Quota alert persistence failed (user_id={}, kind={}, category={})",
+                user_id, kind, type(exc).__name__)
 
     """Telegram Bot 服务类"""
 
@@ -189,20 +211,9 @@ class TelegramService:
         if result.rowcount == 0:
             # 重新读取用户信息以确定具体哪个配额已用完
             await self.session.refresh(user)
-
+            reason = self._quota_denial_reason(user, "review")
             await self._notify_quota_exhausted(user, "review")
-
-            if user.daily_used >= user.daily_quota:
-                return False, f"每日配额已用完 ({user.daily_used}/{user.daily_quota})"
-            elif user.weekly_used >= user.weekly_quota:
-                return False, f"每周配额已用完 ({user.weekly_used}/{user.weekly_quota})"
-            elif user.monthly_used >= user.monthly_quota:
-                return (
-                    False,
-                    f"每月配额已用完 ({user.monthly_used}/{user.monthly_quota})",
-                )
-            else:
-                return False, "配额已用完"
+            return False, reason
 
         # 记录日志
         log = QuotaUsageLog(
@@ -258,25 +269,9 @@ class TelegramService:
 
         if result.rowcount == 0:
             await self.session.refresh(user)
+            reason = self._quota_denial_reason(user, "issue")
             await self._notify_quota_exhausted(user, "issue")
-
-            if user.issue_daily_used >= user.issue_daily_quota:
-                return (
-                    False,
-                    f"Issue 每日配额已用完 ({user.issue_daily_used}/{user.issue_daily_quota})",
-                )
-            elif user.issue_weekly_used >= user.issue_weekly_quota:
-                return (
-                    False,
-                    f"Issue 每周配额已用完 ({user.issue_weekly_used}/{user.issue_weekly_quota})",
-                )
-            elif user.issue_monthly_used >= user.issue_monthly_quota:
-                return (
-                    False,
-                    f"Issue 每月配额已用完 ({user.issue_monthly_used}/{user.issue_monthly_quota})",
-                )
-            else:
-                return False, "Issue 配额已用完"
+            return False, reason
 
         log = QuotaUsageLog(
             telegram_user_id=user.id,
@@ -332,25 +327,9 @@ class TelegramService:
 
         if result.rowcount == 0:
             await self.session.refresh(user)
+            reason = self._quota_denial_reason(user, "agent")
             await self._notify_quota_exhausted(user, "agent")
-
-            if user.agent_daily_used >= user.agent_daily_quota:
-                return (
-                    False,
-                    f"Agent 每日配额已用完 ({user.agent_daily_used}/{user.agent_daily_quota})",
-                )
-            elif user.agent_weekly_used >= user.agent_weekly_quota:
-                return (
-                    False,
-                    f"Agent 每周配额已用完 ({user.agent_weekly_used}/{user.agent_weekly_quota})",
-                )
-            elif user.agent_monthly_used >= user.agent_monthly_quota:
-                return (
-                    False,
-                    f"Agent 每月配额已用完 ({user.agent_monthly_used}/{user.agent_monthly_quota})",
-                )
-            else:
-                return False, "Agent 配额已用完"
+            return False, reason
 
         log = QuotaUsageLog(
             telegram_user_id=user.id,
