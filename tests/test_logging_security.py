@@ -1,19 +1,29 @@
 """Exercise the actual Loguru sinks, bridge and hostile credential surfaces."""
 
 import ast
+import asyncio
 import io
 import json
 import logging
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 from urllib.parse import quote
 
+import h11
 import pytest
 from loguru import logger
 from redis.asyncio.connection import parse_url
+from starlette.middleware.errors import ServerErrorMiddleware
+from uvicorn.protocols.http.flow_control import FlowControl
+from uvicorn.protocols.http.h11_impl import RequestResponseCycle
 
 from backend.core.config import get_settings
-from backend.core.log_context import log_context
+from backend.core.log_context import (
+    RequestLogContextMiddleware,
+    get_log_context,
+    log_context,
+)
 from backend.core.log_sanitizer import sanitize, sanitize_text, sensitive_log_scope
 from backend.core.logging_bridge import (
     InterceptHandler,
@@ -488,3 +498,275 @@ def test_local_variables_are_never_dumped_even_in_debug_mode(secured_logs):
     output = console.getvalue() + path.read_text(encoding="utf-8")
     assert "failing_function" in output and "RuntimeError" in output
     assert "must-not-dump-locals" not in output
+
+
+async def _run_request_server(app, scope, monkeypatch):
+    """Exercise real server exception handling without a network listener."""
+    standard = logging.getLogger("uvicorn.error")
+    monkeypatch.setattr(standard, "handlers", [InterceptHandler()])
+    monkeypatch.setattr(standard, "level", logging.ERROR)
+    monkeypatch.setattr(standard, "propagate", False)
+    connection = h11.Connection(h11.SERVER)
+    connection.receive_data(b"GET /failure HTTP/1.1\r\nHost: testserver\r\n\r\n")
+    connection.next_event()
+    connection.next_event()
+    transport = Mock(spec=asyncio.Transport)
+    cycle = RequestResponseCycle(
+        scope=scope,
+        conn=connection,
+        transport=transport,
+        flow=FlowControl(transport),
+        logger=standard,
+        access_logger=standard,
+        access_log=False,
+        default_headers=[],
+        message_event=asyncio.Event(),
+        on_response=Mock(),
+    )
+    await cycle.run_asgi(ServerErrorMiddleware(RequestLogContextMiddleware(app)))
+    return cycle, transport
+
+
+def _request_scope(headers=(), query=b""):
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "scheme": "http",
+        "method": "GET",
+        "path": "/failure",
+        "raw_path": b"/failure",
+        "root_path": "",
+        "query_string": query,
+        "headers": [(b"host", b"testserver"), *headers],
+        "client": ("127.0.0.1", 1234),
+        "server": ("testserver", 80),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["code", "state", "encoded", "x-api-key", "cookie"])
+@pytest.mark.parametrize("kind", ["error", "cause", "group", "cancelled", "base_group"])
+async def test_request_secret_survives_outer_server_exception_logging(
+    secured_logs, monkeypatch, source, kind
+):
+    console, path, records = secured_logs
+    secret = "opaque-request-value-713"
+    headers = []
+    query = b""
+    if source == "encoded":
+        secret += "+/with space"
+        query = ("CoDe=" + quote(secret, safe="")).encode()
+    elif source in {"code", "state"}:
+        query = f"{source}={secret}".encode()
+    elif source == "cookie":
+        secret = "session=" + secret
+        headers = [(b"cookie", secret.encode())]
+    else:
+        headers = [(source.encode(), secret.encode())]
+
+    message = f"transport rejected {secret}; HTTP 503 timeout=30 input_tokens=42"
+    if kind == "error":
+        error = RuntimeError(message)
+    elif kind == "cause":
+        error = RuntimeError(
+            "request validation failed; HTTP 503 timeout=30 input_tokens=42"
+        )
+        error.__cause__ = ValueError(message)
+    elif kind == "group":
+        error = ExceptionGroup("request batch " + secret, [ValueError(message)])
+        error.add_note("private note " + secret)
+    elif kind == "cancelled":
+        error = asyncio.CancelledError(message)
+    else:
+        error = BaseExceptionGroup(
+            "cancelled request " + secret,
+            [asyncio.CancelledError(message), RuntimeError(message)],
+        )
+    original_args = error.args
+    observed = []
+
+    async def failing_app(scope, receive, send):
+        observed.append(get_log_context()["request_id"])
+        raise error
+
+    cycle, transport = await _run_request_server(
+        failing_app, _request_scope(headers, query), monkeypatch
+    )
+    assert error.args == original_args
+    assert get_log_context() == {}
+    assert sanitize_text(secret) == secret  # no process-global credential cache
+    assert cycle.response_complete
+    wire = b"".join(call.args[0] for call in transport.write.call_args_list)
+    assert b"500 Internal Server Error" in wire
+    assert secret.encode() not in wire
+    outer = [record for record in records if record["name"] == "uvicorn.error"]
+    assert len(outer) == 1
+    assert "HTTP 503 timeout=30 input_tokens=42" in outer[0]["extra"]["exception"]
+    if isinstance(error, Exception):
+        assert outer[0]["extra"]["request_id"] == observed[0]
+    inner_failures = [
+        record for record in records if "HTTP request failed" in record["message"]
+    ]
+    assert len(inner_failures) == (1 if isinstance(error, Exception) else 0)
+    output = console.getvalue() + path.read_text(encoding="utf-8") + str(records)
+    assert secret not in output and quote(secret, safe="") not in output
+    stored = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert stored[-1]["record"]["name"] == "uvicorn.error"
+    assert "Traceback" in stored[-1]["text"] and "***" in stored[-1]["text"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["leaf", "subgroup", "split_match", "split_rest"])
+async def test_request_group_derivatives_keep_scoped_secrets(secured_logs, operation):
+    console, path, _ = secured_logs
+    secret = "opaque-group-request-921"
+    group = ExceptionGroup(
+        "request batch " + secret,
+        [ValueError("leaf " + secret), RuntimeError("other " + secret)],
+    )
+    group._log_redaction_secrets = ("earlier-provider-secret",)
+
+    async def failing_app(scope, receive, send):
+        raise group
+
+    with pytest.raises(ExceptionGroup) as caught:
+        await RequestLogContextMiddleware(failing_app)(
+            _request_scope(query=f"code={secret}".encode()), None, None
+        )
+    assert caught.value is group
+    if operation == "leaf":
+        error = group.exceptions[0]
+    elif operation == "subgroup":
+        error = group.subgroup(ValueError)
+    else:
+        match, rest = group.split(ValueError)
+        error = match if operation == "split_match" else rest
+    logger.opt(exception=error).error("derived request failure")
+    output = console.getvalue() + path.read_text(encoding="utf-8")
+    assert secret not in output and "earlier-provider-secret" not in output
+    assert "***" in output and "ValueError" in output
+
+
+@pytest.mark.asyncio
+async def test_request_failure_secrets_are_isolated_and_preserve_existing_metadata(
+    secured_logs,
+):
+    barrier = asyncio.Barrier(2)
+    saved = []
+
+    async def run(number):
+        secret = f"opaque-request-isolation-{number}"
+        inherited = f"opaque-caller-secret-{number}"
+        error = RuntimeError(f"echo {secret} and {inherited}")
+        error._log_redaction_secrets = ("earlier-provider-secret",)
+        error._log_correlation = {
+            "session_id": number,
+            "logical_call_id": f"provider-{number}",
+        }
+
+        async def app(scope, receive, send):
+            await barrier.wait()
+            raise error
+
+        with (
+            log_context(clear=True, request_id=f"caller-{number}"),
+            sensitive_log_scope(inherited),
+        ):
+            with pytest.raises(RuntimeError) as caught:
+                await RequestLogContextMiddleware(app)(
+                    _request_scope(query=f"code={secret}".encode()), None, None
+                )
+            assert caught.value is error
+            assert get_log_context() == {"request_id": f"caller-{number}"}
+            assert sanitize_text(inherited) == "***" and sanitize_text(secret) == secret
+        assert set(error._log_redaction_secrets) == {
+            secret,
+            inherited,
+            "earlier-provider-secret",
+        }
+        assert error._log_correlation == {
+            "session_id": number,
+            "logical_call_id": f"provider-{number}",
+        }
+        saved.append(error)
+
+    await asyncio.gather(run(1), run(2))
+    assert get_log_context() == {}
+    console, path, _ = secured_logs
+    for error in saved:
+        logger.opt(exception=error).error("deferred request failure")
+    output = console.getvalue() + path.read_text(encoding="utf-8")
+    assert "opaque-request-isolation" not in output
+    assert "opaque-caller-secret" not in output
+
+
+@pytest.mark.asyncio
+async def test_successful_request_and_non_http_passthrough_remain_compatible(
+    secured_logs,
+):
+    secret = "opaque-success-control-852"
+    messages = []
+
+    async def app(scope, receive, send):
+        if scope["type"] == "http":
+            assert sanitize_text(secret) == "***"
+        else:
+            assert get_log_context() == {"request_id": "caller-control"}
+            assert "request_id" not in scope.get("state", {})
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def send(message):
+        messages.append(message)
+
+    middleware = RequestLogContextMiddleware(app)
+    with log_context(clear=True, request_id="caller-control"):
+        await middleware(_request_scope(query=f"code={secret}".encode()), None, send)
+        assert get_log_context() == {"request_id": "caller-control"}
+        assert messages[0]["status"] == 200
+        assert b"x-request-id" in dict(messages[0]["headers"])
+        await middleware({"type": "websocket"}, None, send)
+    assert sanitize_text(secret) == secret
+
+
+def test_scoped_exception_retention_handles_cycles_without_mutating_errors(
+    secured_logs,
+):
+    console, path, _ = secured_logs
+    secret = "opaque-cycle-request-623"
+    error = RuntimeError("root " + secret)
+    cause = ValueError("cause " + secret)
+    error.__cause__ = cause
+    cause.__context__ = error
+    cause._log_redaction_secrets = ("earlier-provider-secret",)
+    error.add_note("a diagnostic note")
+    with pytest.raises(RuntimeError) as caught:
+        with sensitive_log_scope(secret):
+            raise error
+    assert caught.value is error and error.__cause__ is cause
+    assert cause.__context__ is error and error.__notes__ == ["a diagnostic note"]
+    assert set(cause._log_redaction_secrets) == {secret, "earlier-provider-secret"}
+    logger.opt(exception=cause).error("isolated cause failure")
+    output = console.getvalue() + path.read_text(encoding="utf-8")
+    assert secret not in output
+    assert "ValueError" in output and "diagnostic note" in output
+
+
+def test_empty_or_handled_scopes_do_not_add_unrelated_exception_metadata():
+    empty_error = RuntimeError("normal error")
+    with pytest.raises(RuntimeError) as caught:
+        with sensitive_log_scope():
+            raise empty_error
+    assert caught.value is empty_error
+    assert not hasattr(empty_error, "_log_redaction_secrets")
+    handled = ValueError("already handled")
+    with sensitive_log_scope("opaque-handled-control"):
+        try:
+            raise handled
+        except ValueError:
+            pass
+    assert not hasattr(handled, "_log_redaction_secrets")
+    assert sanitize_text("opaque-handled-control") == "opaque-handled-control"
