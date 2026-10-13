@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlencode
 import httpx
 from loguru import logger
 
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
@@ -33,11 +34,14 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
 
 
 class AlipayGateway(PaymentGateway):
     """支付宝电脑网站支付网关（alipay.trade.page.pay）"""
+
+    LOG_SECRET_ATTRIBUTES = ("_app_private_key",)
 
     GATEWAY_URL = "https://openapi.alipay.com/gateway.do"
     GATEWAY_SANDBOX_URL = "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
@@ -221,7 +225,7 @@ class AlipayGateway(PaymentGateway):
             )
             return True
         except Exception as e:
-            logger.warning("Alipay RSA2 verify failed: {}", e)
+            logger.opt(exception=True).warning("Alipay RSA2 verify failed: {}", e)
             return False
 
     # ------------------------------------------------------------------
@@ -254,6 +258,7 @@ class AlipayGateway(PaymentGateway):
     # 创建支付（电脑网站支付）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -326,13 +331,14 @@ class AlipayGateway(PaymentGateway):
             logger.opt(exception=True).error("Alipay create_payment error: {}", e)
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
     # ------------------------------------------------------------------
     # Webhook 验签（支付宝异步通知）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -496,10 +502,10 @@ class AlipayGateway(PaymentGateway):
             )
 
         except Exception as e:
-            logger.error("Alipay webhook verification error: {}", e)
+            logger.opt(exception=True).error("Alipay webhook verification error: {}", e)
             return WebhookEvent(
                 event_type=WebhookEventType.UNKNOWN,
-                raw_event={"error": str(e)},
+                raw_event={"error": sanitize_exception_text(e)},
             )
 
     # ------------------------------------------------------------------
@@ -556,6 +562,7 @@ class AlipayGateway(PaymentGateway):
             "reference_id": cls.refund_reference_id(trade_no, request_no),
         }
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
@@ -571,7 +578,9 @@ class AlipayGateway(PaymentGateway):
             try:
                 request = self.refund_request_evidence(provider_tx_id, idempotency_key)
             except ValueError as exc:
-                return RefundResult(success=False, error_message=str(exc))
+                return RefundResult(
+                    success=False, error_message=sanitize_exception_text(exc)
+                )
             biz_content["out_request_no"] = request["out_request_no"]
         if amount_cents is not None:
             biz_content["refund_amount"] = f"{Decimal(amount_cents) / Decimal(100):.2f}"
@@ -626,12 +635,13 @@ class AlipayGateway(PaymentGateway):
 
         except Exception as e:
             logger.opt(exception=True).error("Alipay refund error: {}", e)
-            return RefundResult(success=False, error_message=str(e))
+            return RefundResult(success=False, error_message=sanitize_exception_text(e))
 
     # ------------------------------------------------------------------
     # 订单状态查询
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def get_payment_status(
         self,
         provider_tx_id: str,
@@ -695,9 +705,10 @@ class AlipayGateway(PaymentGateway):
             logger.opt(exception=True).error("Alipay get_payment_status error: {}", e)
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     async def cancel_payment(
         self,
         provider_tx_id: str,
@@ -756,7 +767,7 @@ class AlipayGateway(PaymentGateway):
             logger.opt(exception=True).error("Alipay close error: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
     # ------------------------------------------------------------------

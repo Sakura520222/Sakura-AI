@@ -358,7 +358,7 @@ async def record_ai_usage_best_effort(**kwargs: Any) -> bool:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.bind(error_type=type(exc).__name__).warning(
+        logger.bind(error_type=type(exc).__name__).opt(exception=True).warning(
             "AI usage 账本写入失败，业务调用继续: error_type={}",
             type(exc).__name__,
         )
@@ -1002,13 +1002,12 @@ async def finish_ai_call(
         await service.settle_operation(context.operation_id)
         await db.commit()
         if reviewed_event is not None and inserted:
-            logger.warning(
-                "Late AI Usage evidence retained for operator review: "
-                "call_id={}, usage_record_key={}, reconciliation_event_id={}",
-                call_id,
-                key,
-                reviewed_event.id,
-            )
+            logger.bind(
+                billing_operation_id=context.operation_id,
+                billing_call_id=call_id,
+                usage_record_key=key,
+                reconciliation_event_id=reviewed_event.id,
+            ).warning("Late AI Usage evidence retained for operator review")
         return inserted
 
 

@@ -162,7 +162,7 @@ def test_every_validation_reason_has_translations(locale):
     from pathlib import Path
 
     translations = yaml.safe_load(
-        Path(f"backend/webui/translations/{locale}.yaml").read_text()
+        Path(f"backend/webui/translations/{locale}.yaml").read_text(encoding="utf-8")
     )["section_validation"]
     assert set(service.SECTION_VALIDATION_CODES) <= set(translations)
     assert all(

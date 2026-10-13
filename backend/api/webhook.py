@@ -3163,7 +3163,9 @@ async def _handle_payment_webhook(request: Request, provider: str):
     except Exception as exc:
         # Non-2xx asks the gateway to retry. No provider payload, token, stack
         # trace, or success-shaped financial result is returned to callers.
-        logger.error("{} payment receipt failed: {}", provider, type(exc).__name__)
+        logger.bind(provider=provider).opt(exception=True).error(
+            "Payment receipt failed: {}", type(exc).__name__
+        )
         return (
             PlainTextResponse("fail", status_code=503)
             if provider == "alipay"

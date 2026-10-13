@@ -184,7 +184,9 @@ async def redeem_code(
     try:
         order = await svc.redeem_code(user["user_id"], code)
         await db.commit()
-        logger.info(f"User {user['sub']} redeemed code {code}, order {order.order_no}")
+        logger.bind(user_id=user["user_id"], order_id=order.id).info(
+            "Redeem request committed"
+        )
         return toast_redirect(
             "/billing/",
             "toast.redeem_success",
@@ -956,7 +958,7 @@ async def admin_create_plan(
         )
     except Exception as e:
         await db.rollback()
-        logger.error(f"Failed to create plan: {e}")
+        logger.opt(exception=True).error("Failed to create plan: {}", e)
         return toast_redirect(
             "/billing/admin/plans",
             "toast.save_failed",

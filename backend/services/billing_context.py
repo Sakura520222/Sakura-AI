@@ -15,6 +15,8 @@ from types import MappingProxyType
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from loguru import logger
+
 
 @dataclass(frozen=True, slots=True)
 class BillingContext:
@@ -73,7 +75,12 @@ def bind_billing_context(
     )
     outcome_token = _operation_outcome.set(None)
     try:
-        yield context
+        with logger.contextualize(
+            billing_operation_id=context.operation_id if context else None,
+            billing_feature=context.feature if context else None,
+            payer_user_id=context.user_id if context else None,
+        ):
+            yield context
     finally:
         _current_billing_context.reset(token)
         _operation_runtime.reset(runtime_token)

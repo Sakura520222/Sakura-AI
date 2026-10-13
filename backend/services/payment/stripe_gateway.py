@@ -9,6 +9,7 @@ from decimal import Decimal
 import stripe
 from loguru import logger
 
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.services.payment.currency_units import currency_minor_exponent
 from backend.services.payment.gateway_base import (
     PaymentGateway,
@@ -19,11 +20,14 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
 
 
 class StripeGateway(PaymentGateway):
     """Stripe Checkout Session 网关"""
+
+    LOG_SECRET_ATTRIBUTES = ("_api_key", "_webhook_secret")
 
     def __init__(self, api_key: str, webhook_secret: str):
         self._api_key = api_key
@@ -57,6 +61,7 @@ class StripeGateway(PaymentGateway):
             )
         return int(value)
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -115,18 +120,21 @@ class StripeGateway(PaymentGateway):
                 },
             )
         except stripe.error.StripeError as e:
-            logger.error("Stripe create_payment failed: {}", e)
+            logger.opt(exception=True).error("Stripe create_payment failed: {}", e)
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
         except Exception as e:
-            logger.error("Unexpected error in Stripe create_payment: {}", e)
+            logger.opt(exception=True).error(
+                "Unexpected error in Stripe create_payment: {}", e
+            )
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -147,10 +155,14 @@ class StripeGateway(PaymentGateway):
                 secret=self._webhook_secret,
             )
         except stripe.error.SignatureVerificationError as exc:
-            logger.warning("Stripe webhook signature verification failed")
+            logger.opt(exception=True).warning(
+                "Stripe webhook signature verification failed"
+            )
             raise PaymentWebhookVerificationError("Invalid Stripe signature") from exc
         except ValueError as exc:
-            logger.warning("Stripe webhook payload could not be parsed")
+            logger.opt(exception=True).warning(
+                "Stripe webhook payload could not be parsed"
+            )
             raise PaymentWebhookVerificationError("Invalid Stripe payload") from exc
 
         # Stripe SDK v15+ returns stripe.Event (StripeObject), not a dict.
@@ -167,6 +179,8 @@ class StripeGateway(PaymentGateway):
             "charge.refunded": WebhookEventType.PAYMENT_REFUNDED,
             "refund.created": WebhookEventType.PAYMENT_REFUNDED,
             "refund.updated": WebhookEventType.PAYMENT_REFUNDED,
+            "refund.failed": WebhookEventType.PAYMENT_REFUNDED,
+            "charge.refund.updated": WebhookEventType.PAYMENT_REFUNDED,
         }
         resolved_type = type_map.get(event_type, WebhookEventType.UNKNOWN)
 
@@ -226,7 +240,7 @@ class StripeGateway(PaymentGateway):
                     amount_cents, currency, inbound=True
                 )
             except ValueError:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     "Stripe payment amount/currency requires provider reconciliation"
                 )
                 # Signature and financial event identity are already verified.
@@ -309,6 +323,7 @@ class StripeGateway(PaymentGateway):
             wire_evidence=wire_evidence,
         )
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
@@ -367,18 +382,19 @@ class StripeGateway(PaymentGateway):
                 status=refund_obj.status or "",
             )
         except stripe.error.StripeError as e:
-            logger.error("Stripe refund failed: {}", e)
+            logger.opt(exception=True).error("Stripe refund failed: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
         except Exception as e:
-            logger.error("Unexpected error in Stripe refund: {}", e)
+            logger.opt(exception=True).error("Unexpected error in Stripe refund: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     async def get_payment_status(
         self,
         provider_tx_id: str,
@@ -405,18 +421,21 @@ class StripeGateway(PaymentGateway):
                 },
             )
         except stripe.error.StripeError as e:
-            logger.error("Stripe get_payment_status failed: {}", e)
+            logger.opt(exception=True).error("Stripe get_payment_status failed: {}", e)
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
         except Exception as e:
-            logger.error("Unexpected error in Stripe get_payment_status: {}", e)
+            logger.opt(exception=True).error(
+                "Unexpected error in Stripe get_payment_status: {}", e
+            )
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     async def cancel_payment(
         self,
         provider_tx_id: str,
@@ -447,14 +466,14 @@ class StripeGateway(PaymentGateway):
                 status="cancelled",
             )
         except stripe.error.StripeError as e:
-            logger.error("Stripe cancel failed: {}", e)
+            logger.opt(exception=True).error("Stripe cancel failed: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
         except Exception as e:
-            logger.error("Unexpected error in Stripe cancel: {}", e)
+            logger.opt(exception=True).error("Unexpected error in Stripe cancel: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
