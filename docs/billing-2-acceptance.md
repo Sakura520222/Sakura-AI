@@ -640,6 +640,32 @@ Worker，旧回执缺少可信交接证据时保留待核对。CLI 默认只读�
 PostgreSQL 多 Worker 验收或远端 CI 完成证据，不将本地结果描述为生产验收。
 变基使用 develop 已锁定的依赖；本次修复没有修改依赖清单或锁文件。
 
+## 2026-10-13 PR #660 变基与审查修复
+
+- 已变基到 `develop` 的 `5e379ade`，合并日志追踪与计费/派单装饰器，保留
+  异常脱敏、取消传播及原有任务恢复行为。
+- Stripe 按原生退款 ID、PaymentIntent、金额、币种和订单收敛非终态回执；
+  支持成功/失败/取消、终态先到、累计多退款通知、原生失败及兼容更新事件。
+  原始接收/审核证据不被覆盖，追加 superseded 审计；冲突继续待核对。
+- 兑换码使用当前锁定读及保存点处理并发唯一键冲突，赢家订单只发放一次；
+  失败请求的新订单、占用次数及兑换记录一起撤回，调用方事务保留。
+- 计费准入、结算、不可变定价版本、回执持久化及收敛补充结构化日志。
+  网关调用绑定具体凭据/验签头作用域，异常副本和截断 URL 先统一脱敏；
+  兑换日志及 PaymentLog 使用内部兑换码 ID。控制台和 JSON Lines 实际输出
+  覆盖异常堆栈、编码后的 opaque key、作用域退出后重新记录、线程和并发隔离。
+- `test_logging_review_regressions` 的扫描替身补齐计费入口所需读取；翻译
+  校验显式使用 UTF-8，保持 Windows 测试可执行，没有新增 skip。
+
+新增证据位于 `test_review_stripe_refund_lifecycle`、`test_review_redeem_concurrency`
+和 `test_billing_operational_logs`。与既有 Paddle/支付宝/退款身份套件联合运行
+为 94 passed；新增三个文件再次验证为 35 passed。日志、配置、计费 Worker、
+恢复和扫描超时相关套件为 79 passed。全仓 Ruff、`run_ruff.py --check`、相关
+Python 文件格式检查及 `git diff --check` 均通过。
+
+本次不新增数据库结构或配置项，不修改商业价格、不调用真实支付网关。
+兑换竞态证据使用真实 SQLite 唯一约束/保存点、受控快照模拟及 MySQL 当前读
+SQL 校验；不将其描述为原生 MySQL 多 Worker 部署验收。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库
