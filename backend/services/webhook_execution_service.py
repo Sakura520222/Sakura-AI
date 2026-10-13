@@ -35,6 +35,7 @@ class DeliveryClaim:
     owner_token: str
     session_factory: object
     effects_started: bool = False
+    dispatch_payload: dict | None = None
 
 
 _delivery_claim: ContextVar[DeliveryClaim | None] = ContextVar(
@@ -66,12 +67,15 @@ def _identity(payload, feature, delivery_id):
 
 
 def _replay_response(receipt):
+    from backend.services.webhook_review_dispatch import public_response
+
+    saved = public_response(receipt)
     if receipt.status == "accepted":
         return JSONResponse(
             content={
-                **(receipt.response or {}),
+                **saved,
                 "status": "deduplicated",
-                "original_status": (receipt.response or {}).get("status"),
+                "original_status": saved.get("status"),
             }
         )
     return JSONResponse(
@@ -105,6 +109,43 @@ async def _claim(payload, feature, delivery_id, session_factory):
                 raise DeliveryConflict(
                     "Verified delivery payload conflicts with receipt"
                 )
+            from backend.services.service_execution_capacity import (
+                has_live_service_execution_ownership,
+            )
+            from backend.services.webhook_review_dispatch import (
+                carrier,
+                claim_queued_dispatch,
+            )
+
+            data = carrier(receipt)
+            operation = await BillingService(db)._operation(
+                operation_id, allow_missing=True
+            )
+            if (
+                data
+                and data.get("state") == "queued"
+                and operation
+                and operation.outcome is None
+            ):
+                payload = await claim_queued_dispatch(db, receipt, token)
+                return DeliveryClaim(receipt_id, token, session_factory, True, payload)
+            if (
+                receipt.status == "accepted"
+                and (not data or data.get("state") == "started")
+                and (receipt.response or {}).get("status") == "accepted"
+                and (receipt.response or {}).get("reason")
+                != "operator_verified_handoff"
+            ):
+                if (
+                    (operation is None or operation.outcome is None)
+                    and not await has_live_service_execution_ownership(
+                        db, operation_id, for_update=True
+                    )
+                    and not await _has_incremental_carrier(db, receipt, operation)
+                ):
+                    receipt.status = "pending_reconciliation"
+                    await db.commit()
+                    return _replay_response(receipt)
             if receipt.status in {"processing", "pending_reconciliation", "retryable"}:
                 operation = await BillingService(db)._operation(
                     operation_id, allow_missing=True
@@ -119,11 +160,23 @@ async def _claim(payload, feature, delivery_id, session_factory):
                             "Verified delivery operation source conflict"
                         )
                     receipt.status = "accepted"
+                    from backend.services.webhook_review_dispatch import DISPATCH_KEY
+
                     receipt.response = {
                         "status": "accepted",
                         "operation_id": operation_id,
                         "outcome": operation.outcome,
+                        **(
+                            {DISPATCH_KEY: {**data, "state": "terminal"}}
+                            if data
+                            else {}
+                        ),
                     }
+                    await db.commit()
+                elif await has_live_service_execution_ownership(
+                    db, operation_id, for_update=True
+                ) or await _has_incremental_carrier(db, receipt, operation):
+                    receipt.status = "accepted"
                     await db.commit()
             if receipt.status != "retryable":
                 return _replay_response(receipt)
@@ -190,6 +243,53 @@ async def _claim(payload, feature, delivery_id, session_factory):
     return DeliveryClaim(receipt_id, token, session_factory)
 
 
+async def _has_incremental_carrier(db, receipt, operation):
+    """A matched queue row proves durable handoff independently of live workers."""
+    from backend.models.database import PRReviewIncrementalQueue
+    from backend.services.billing_context import BillingContext
+    from backend.services.pr_review_incremental_queue import PENDING_QUEUE_STATES
+
+    if receipt.feature != "pr_review" or operation is None:
+        return False
+    expected = {key: value for key, value in receipt.source.items() if key != "action"}
+    if operation.feature != receipt.feature or any(
+        (operation.source or {}).get(key) != value for key, value in expected.items()
+    ):
+        return False
+    rows = (
+        (
+            await db.execute(
+                select(PRReviewIncrementalQueue)
+                .where(
+                    PRReviewIncrementalQueue.billing_context["operation_id"].as_string()
+                    == receipt.operation_id,
+                    PRReviewIncrementalQueue.repo_full_name
+                    == expected["repo_full_name"],
+                    PRReviewIncrementalQueue.pr_number == expected["pr_number"],
+                    PRReviewIncrementalQueue.status.in_(PENDING_QUEUE_STATES),
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        try:
+            context = BillingContext.from_payload(row.billing_context)
+        except TypeError, ValueError, KeyError:
+            continue
+        if (
+            context.operation_id == receipt.operation_id
+            and context.feature == receipt.feature
+            and context.user_id == operation.user_id
+            and all(context.source.get(key) == value for key, value in expected.items())
+        ):
+            return True
+    return False
+
+
 async def mark_delivery_side_effects():
     """Persist the uncertain external/queue window before entering it."""
     claim = _delivery_claim.get()
@@ -212,36 +312,51 @@ async def mark_delivery_side_effects():
 
 
 async def _finish(claim, response=None):
+    from backend.models.billing_models import BillingOperation
+    from backend.services.service_execution_capacity import (
+        has_live_service_execution_ownership,
+    )
+    from backend.services.webhook_review_dispatch import DISPATCH_KEY, carrier
+
     success = response is not None and response.status_code < 500
     async with claim.session_factory() as db:
-        result = await db.execute(
-            update(WebhookExecutionReceipt)
-            .where(
-                WebhookExecutionReceipt.receipt_id == claim.receipt_id,
-                WebhookExecutionReceipt.owner_token == claim.owner_token,
-                WebhookExecutionReceipt.status.in_(
-                    ["processing", "pending_reconciliation"]
-                ),
-            )
-            .values(
-                status="accepted"
-                if success
-                else (
-                    "pending_reconciliation" if claim.effects_started else "retryable"
-                ),
-                response=json.loads(response.body) if success else None,
-            )
+        receipt = await db.get(
+            WebhookExecutionReceipt,
+            claim.receipt_id,
+            with_for_update=True,
+            populate_existing=True,
         )
-        await db.commit()
-        if result.rowcount != 1:
-            current = await db.get(WebhookExecutionReceipt, claim.receipt_id)
-            if (
-                current is not None
-                and current.owner_token == claim.owner_token
-                and current.status == "accepted"
-            ):
-                return  # A committed acknowledgement whose response was lost.
+        if receipt is None or receipt.owner_token != claim.owner_token:
             raise DeliveryConflict("Webhook receipt acknowledgement was not persisted")
+        data = carrier(receipt)
+        saved = json.loads(response.body) if success else None
+        proven = True
+        if (
+            success
+            and saved.get("status") == "accepted"
+            and (data is None or data.get("state") == "started")
+        ):
+            operation = await db.get(BillingOperation, receipt.operation_id)
+            proven = (
+                bool(operation and operation.outcome is not None)
+                or await _has_incremental_carrier(db, receipt, operation)
+                or await has_live_service_execution_ownership(
+                    db, receipt.operation_id, for_update=True
+                )
+            )
+        if success and proven:
+            receipt.status = "accepted"
+            receipt.response = {**saved, **({DISPATCH_KEY: data} if data else {})}
+        else:
+            receipt.status = (
+                "pending_reconciliation"
+                if claim.effects_started or not proven or data
+                else "retryable"
+            )
+            if saved:
+                receipt.response = {**saved, **({DISPATCH_KEY: data} if data else {})}
+        await db.commit()
+        return proven
 
 
 def verified_delivery(feature, session_factory, *, predicate=None):
@@ -285,8 +400,33 @@ def verified_delivery(feature, session_factory, *, predicate=None):
                 return claim
             context_token = _delivery_claim.set(claim)
             try:
+                if claim.dispatch_payload is not None:
+                    from backend.services.webhook_review_dispatch import (
+                        dispatch_restored,
+                        public_response,
+                    )
+
+                    await dispatch_restored(claim.dispatch_payload, feature)
+                    async with session_factory() as db:
+                        receipt = await db.get(
+                            WebhookExecutionReceipt, claim.receipt_id
+                        )
+                        restored_response = JSONResponse(public_response(receipt))
+                    await _finish(claim, restored_response)
+                    async with session_factory() as db:
+                        receipt = await db.get(
+                            WebhookExecutionReceipt, claim.receipt_id
+                        )
+                        return _replay_response(receipt)
                 response = await handler(payload, *args, **kwargs)
-                await _finish(claim, response)
+                if not await _finish(claim, response):
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "status": "error",
+                            "reason": "delivery_handoff_unconfirmed",
+                        },
+                    )
                 return response
             except BaseException:
                 await _finish(claim)

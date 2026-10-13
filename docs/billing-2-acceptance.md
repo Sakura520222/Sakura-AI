@@ -587,6 +587,59 @@ gate 3，本轮没有新增 skip。没有运行真实 AI、支付/退款、生�
 重发，回滚保留所有财务与交接记录。原生 MySQL/PostgreSQL 多 Worker 的
 本轮新增交接场景尚未实测；SQLite 事务证据不替代原生部署验收。
 
+## 自动投递、退款身份与 Usage 对账（审查 f9fb37fb36）
+
+2026-10-13，先在干净的 feature/billing-system-2.0 工作区 fetch 并变基到
+origin/develop 8c7a5e2fb0e7ba661c5d8b08502a327ddcc162b8，变基后 HEAD 为
+ddd8d39112c4a31c4436365b62384d38cd004402。唯一冲突保留双方所需的测试导入；
+已验证 develop 为 HEAD 祖先。下述新补丁未暂存、提交或推送，没有生产动作。
+
+| 审查项 | 状态与实现位置 | 可重复验收证据 |
+| --- | --- | --- |
+| 自动 PR/Issue 的成功回执早于持久 Worker | 完成。webhook_review_dispatch 保存私有 queued 载体及原财务入场，启动/重送恢复直接派发；SQL token fence、started 待核对、持久取消及账务过期保护；main 注册并观察恢复任务 | test_review_automatic_delivery_dispatch：22 项，原生提交器第一条 Worker 指令前模拟进程退出、PR/Issue 启动恢复/重放、旧 Worker 及重复 Worker、真实用量与账本、单条失败隔离；test_webhook_execution_reconciliation/test_service_billing_liveness 等保留原断言 |
+| /analyze 重投递重复派发 | 完成。handle_issue_analyze_command 在配额和派发前领取 issue_analysis 回执 | 同一新增套件中的真实 ASGI、签名 webhook、SQL 付款者/次数/预留及并发投递证明仅派发一次 |
+| 外部退款人工确认没有原生退款身份 | 完成。payment_service 在审核/冻结/入账前核实身份，payment_event_service 绑定相同退款，CLI 显示原 wire 证据；Alipay 区分请求身份及累计通知，历史无确证保持待核对 | test_review_refund_reconciliation_identity/test_review_alipay_refund_identity：缺 ID、重放、迟到回调、不同部分退款、中断恢复、历史 trade-only/NULL 身份、规范化及原始请求号反例；完整退款相关套件见下表 |
+| 活动 Worker 的用量被人工替代后双扣 | 完成。billing_reconciliation_service 拒绝非终态及有效 Worker 所有权；ai_usage_service 追加已审核请求的迟到结果证据，billing_service 核实关系后排除重复结算 | test_review_usage_reconciliation_liveness/test_review_usage_reconciliation_late_results：活动 queued/running 所有权、终态无所有权反例、审核后迟到结果、未知/部分原记录、不同实际请求、证据伪造、提交失败重试及账本重建 |
+
+独立复核发现并修复了增量回执重放误降级、旧回执身份继承、数据库等待前
+取消信号未发出、queued 载体过期被误收回，以及历史支付宝规范化身份重复
+冲销。新增测试均先复现相应失败：增量重放 503、下一增量 body=0/队列 running、
+取消事件 unset、重复人工确认两条审计，以及同一历史退款再次冲销 30 分。
+真实 SQL/runner 复核确认增量只执行一次、按原 operation 结算，取消成功和
+持久写入失败均先通知并等待清理、失败继续抛出，没有后续发布。
+
+变基后的基线全量有 20 个 Issue 模板验证失败。兼容修复保留 develop 的必需
+占位符规则，并恢复 Billing 的结构化字段错误和双语提示；未知占位符/格式
+错误不泄露用户输入或底层异常。test_issue_template_validation_feedback 新增
+44 项反例与有效模板/双语校验，未放宽原有断言。中途全量的两项剩余失败为
+支付宝文件位移导致协议时间白名单行号失配、旧 PR 关闭夹具缺少实际数据库；
+分别同步精确位置和 SQL 夹具，未新增时间原语或 skip。
+
+| 最终实际运行的检查 | 结果 |
+| --- | --- |
+| `UV_CACHE_DIR=/tmp/sakura-billing-uv-cache uv run --no-sync python -m pytest -q -rs --tb=short --junitxml=/tmp/sakura-f9-final.xml` | 6241 passed、41 既有环境条件 skip，184.57s，无失败；含主应用、updater、sandboxer |
+| `uv run --no-sync python -m pytest -q tests/test_review_automatic_delivery_dispatch.py tests/test_webhook_execution_reconciliation.py tests/test_billing_incremental_operations.py tests/test_issue_worker_cancellation.py tests/test_webhook_billing_admission.py tests/test_webhook_incremental_queue.py tests/test_webhook_auto_review_toggle.py --tb=short`（同一 UV_CACHE_DIR） | 98 passed，23.21s |
+| 用量对账十套件：review_usage_reconciliation_late_results/liveness、billing_reconciliation/account_reconciliation、review_billing_reconciliation_meters、billing_unified_chat_tariff/settlement、service_billing_liveness、billing_usage_attribution/account_usage | 124 passed，11.20s |
+| `uv run --no-sync python -m pytest tests/test_review_alipay_refund_identity.py tests/test_review_refund_reconciliation_identity.py tests/test_alipay_gateway.py tests/test_billing_entitlements.py tests/test_billing_payment_events.py tests/test_billing_payment_lifecycle_review.py tests/test_billing_paddle_refund_lifecycle.py tests/test_billing_refund_presend.py tests/test_review_refund_rounding_presend.py tests/test_payment_service.py tests/test_billing_credits_api.py tests/test_billing_wallet.py tests/test_billing_settlement.py tests/test_stripe_gateway.py tests/test_paddle_gateway.py -q --tb=short --show-capture=no`（同一 UV_CACHE_DIR） | 301 passed，19.88s；独立复核再次运行两个退款身份文件为 45 passed |
+| 时间原语、Issue 模板字段反馈、section_config_service、webui_unified_config | 150 passed，5.15s |
+| `uv run --no-sync python -m ruff check .`、`uv run --no-sync python run_ruff.py --check` | venv Ruff 0.17.0 全仓通过 |
+| `uv run --no-sync python -m ruff format --check`（全部 27 个相关 Python 文件）、`git diff --check` | 通过 |
+| `scripts/reconcile_payment_refunds.py --help`、`scripts/reconcile_webhook_executions.py --help` | 通过；未应用生产清单或发起外部请求 |
+
+41 项 skip 为原生 Windows 24、Docker gate 12、root/sticky gate 1、可选
+aiosqlite 1、systemd gate 3；本轮补丁没有新增 skip。Ruff 使用 venv 0.17.0，
+没有使用历史临时 Ruff 路径。最终 27 个 Python 文件哈希留存于
+/tmp/sakura-f9-final-source-sha256.txt，JUnit 留存于上述路径；都是本地临时证据，
+不会写入生产或替代远端 CI。
+
+本次没有新增数据库结构。恢复载体复用现有 JSON 列；必须统一升级并排空旧
+Worker，旧回执缺少可信交接证据时保留待核对。CLI 默认只读，只有审核明确
+证据后才 apply；自动重新派发仅针对持久 queued 载体，未知 started 请求不
+自动重发。退款核对必须关联原生请求身份；历史缺证据不自动转换流水。
+完整操作及回滚边界见 [Billing 2.0](billing-2.md)。本轮没有原生 MySQL/
+PostgreSQL 多 Worker 验收或远端 CI 完成证据，不将本地结果描述为生产验收。
+变基使用 develop 已锁定的依赖；本次修复没有修改依赖清单或锁文件。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

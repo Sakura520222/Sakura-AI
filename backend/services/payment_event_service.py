@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.time_service import now_utc
@@ -449,7 +449,240 @@ class PaymentEventService:
         # An in-flight pending replay is skipped to avoid event/order lock
         # inversion; after it gets the order lock it resolves against this event.
 
+    async def _alipay_refund_attempts(self, order_id, reference, request_no):
+        identities = [
+            PaymentRefundAttempt.provider_refund_id == reference,
+            PaymentRefundAttempt.evidence["refund_request"]["reference_id"].as_string()
+            == reference,
+        ]
+        if request_no is not None:
+            identities.extend(
+                [
+                    PaymentRefundAttempt.idempotency_key == request_no,
+                    PaymentRefundAttempt.evidence["refund_request"][
+                        "out_request_no"
+                    ].as_string()
+                    == request_no,
+                ]
+            )
+        return (
+            (
+                await self.session.execute(
+                    select(PaymentRefundAttempt)
+                    .where(
+                        PaymentRefundAttempt.order_id == order_id,
+                        or_(*identities),
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                    .limit(2)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    async def _alipay_refund_evidence(self, record):
+        """A cumulative notification needs one exact audited native request."""
+        if record.provider != "alipay":
+            return
+        from backend.services.payment.alipay_gateway import AlipayGateway
+
+        evidence = record.evidence
+        wire = evidence.get("wire_evidence") or {}
+        if evidence.get("refund_evidence_complete"):
+            order = await self._order(record)
+            await BillingService(self.session).get_wallet(order.user_id)
+            service = PaymentService(self.session)
+            items = []
+            for item in evidence.get("refund_items") or []:
+                raw = item.get("id")
+                request_no = (
+                    wire.get("out_request_no")
+                    if AlipayGateway.is_refund_reference(raw)
+                    else raw
+                )
+                try:
+                    reference = (
+                        raw
+                        if AlipayGateway.is_refund_reference(raw)
+                        else AlipayGateway.refund_reference_id(
+                            order.provider_tx_id, raw
+                        )
+                    )
+                except ValueError as exc:
+                    raise PaymentError(
+                        str(exc), code="refund_evidence_incomplete"
+                    ) from exc
+                if raw == order.provider_tx_id and wire.get("out_request_no") != raw:
+                    raise PaymentError(
+                        "An Alipay payment ID cannot identify a reviewed refund",
+                        code="refund_evidence_incomplete",
+                    )
+                attempts = await self._alipay_refund_attempts(
+                    order.id, reference, request_no
+                )
+                if len(attempts) > 1:
+                    raise PaymentError(
+                        "Alipay native refund request is ambiguous",
+                        code="refund_reference_conflict",
+                    )
+                if attempts:
+                    attempt = attempts[0]
+                    native = await service._alipay_refund_identity(
+                        attempt, order, request_no, verified_native=True
+                    )
+                    if (
+                        native != reference
+                        or attempt.gateway_amount_cents != item.get("amount_cents")
+                        or str(attempt.gateway_currency).upper()
+                        != str(item.get("currency") or evidence.get("currency")).upper()
+                    ):
+                        raise PaymentError(
+                            "Alipay refund differs from its audited request",
+                            code="refund_intent_mismatch",
+                        )
+                    service._bind_refund_identity(
+                        attempt, reference, actor_id=record.actor_id
+                    )
+                else:
+                    await service._assert_alipay_reference_mapping(order)
+                    if request_no is None:
+                        known_reference = (
+                            await self.session.execute(
+                                select(PaymentRefundReference.id)
+                                .where(
+                                    PaymentRefundReference.provider == "alipay",
+                                    PaymentRefundReference.reference_id == reference,
+                                )
+                                .with_for_update()
+                            )
+                        ).scalar_one_or_none()
+                        legacy_attempt = (
+                            await self.session.execute(
+                                select(PaymentRefundAttempt.id)
+                                .where(
+                                    PaymentRefundAttempt.order_id == order.id,
+                                    PaymentRefundAttempt.evidence["refund_request"][
+                                        "reference_id"
+                                    ]
+                                    .as_string()
+                                    .is_(None),
+                                    or_(
+                                        PaymentRefundAttempt.provider_refund_id.is_(
+                                            None
+                                        ),
+                                        PaymentRefundAttempt.provider_refund_id == "",
+                                        PaymentRefundAttempt.provider_refund_id
+                                        == order.provider_tx_id,
+                                    ),
+                                    PaymentRefundAttempt.status != "failed",
+                                )
+                                .with_for_update()
+                                .limit(1)
+                            )
+                        ).scalar_one_or_none()
+                        if known_reference is None and legacy_attempt is not None:
+                            raise PaymentError(
+                                "Legacy Alipay refunds require the audited out_request_no",
+                                code="refund_evidence_incomplete",
+                            )
+                items.append({**item, "id": reference})
+            record.evidence = {**evidence, "refund_items": items}
+            return
+        request_no = wire.get("out_request_no")
+        trade_no = wire.get("trade_no")
+        try:
+            reference = AlipayGateway.refund_reference_id(trade_no, request_no)
+        except ValueError as exc:
+            raise PaymentError(str(exc), code="refund_evidence_incomplete") from exc
+        order = await self._order(record)
+        await BillingService(self.session).get_wallet(order.user_id)
+        if trade_no != order.provider_tx_id:
+            raise PaymentError(
+                "Alipay refund trade differs from the order",
+                code="refund_reference_conflict",
+            )
+        metadata = json.loads(order.metadata_json or "{}")
+        cumulative = evidence.get("refund_total_cents")
+        prior_cash = metadata.get("refunded_gateway_amount_cents", 0)
+        if (
+            not isinstance(cumulative, int)
+            or isinstance(cumulative, bool)
+            or cumulative <= 0
+        ):
+            raise PaymentError(
+                "Alipay refund total needs provider review",
+                code="refund_evidence_incomplete",
+            )
+        attempts = await self._alipay_refund_attempts(order.id, reference, request_no)
+        service = PaymentService(self.session)
+        if len(attempts) == 1:
+            attempt = attempts[0]
+            native = await service._alipay_refund_identity(
+                attempt, order, request_no, verified_native=True
+            )
+            amount = attempt.gateway_amount_cents
+            if (
+                native != reference
+                or not isinstance(amount, int)
+                or isinstance(amount, bool)
+                or amount <= 0
+                or str(attempt.gateway_currency).upper() != "CNY"
+                or attempt.status
+                not in {"pending", "unknown", "upstream_succeeded", "succeeded"}
+                or cumulative < amount
+                or (attempt.status == "succeeded" and cumulative > prior_cash)
+                or (attempt.status != "succeeded" and cumulative != prior_cash + amount)
+            ):
+                raise PaymentError(
+                    "Alipay cumulative refund differs from its audited request",
+                    code="refund_intent_mismatch",
+                )
+            service._bind_refund_identity(attempt, reference, actor_id=record.actor_id)
+        elif not attempts:
+            await service._assert_alipay_reference_mapping(order)
+            prior = (
+                await self.session.execute(
+                    select(PaymentRefundReference)
+                    .where(
+                        PaymentRefundReference.provider == "alipay",
+                        PaymentRefundReference.reference_id == reference,
+                        PaymentRefundReference.order_id == order.id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                prior is None
+                or cumulative < prior.amount_cents
+                or cumulative > prior_cash
+            ):
+                raise PaymentError(
+                    "Alipay cumulative refund lacks request-specific amount evidence",
+                    code="refund_evidence_incomplete",
+                )
+            amount = prior.amount_cents
+        else:
+            raise PaymentError(
+                "Alipay native refund request is ambiguous",
+                code="refund_reference_conflict",
+            )
+        record.evidence = {
+            **evidence,
+            "refund_evidence_complete": True,
+            "refund_items": [
+                {
+                    "id": reference,
+                    "amount_cents": amount,
+                    "currency": "CNY",
+                    "status": "succeeded",
+                }
+            ],
+        }
+
     async def _refund(self, record):
+        await self._alipay_refund_evidence(record)
         evidence = record.evidence
         denied = evidence.get("refund_items") or []
         if denied and all(
@@ -676,6 +909,10 @@ class PaymentEventService:
                 ).scalar_one_or_none()
                 if (
                     active_attempt
+                    and not active_attempt.provider_refund_id
+                    # Alipay request identities are resolved from exact evidence
+                    # above; another refund's amount cannot establish that request.
+                    and record.provider != "alipay"
                     and active_attempt.gateway_amount_cents == amount
                     and str(active_attempt.gateway_currency).upper() == currency
                 ):

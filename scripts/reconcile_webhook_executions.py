@@ -17,6 +17,7 @@ from backend.services.webhook_execution_reconciliation import (
     list_pending_receipts,
     reconcile_receipt,
 )
+from backend.services.webhook_review_dispatch import public_response
 
 
 async def run(args):
@@ -36,7 +37,7 @@ async def run(args):
                 report = {
                     "receipt_id": receipt.receipt_id,
                     "status": receipt.status,
-                    "response": receipt.response,
+                    "response": public_response(receipt),
                 }
             else:
                 report = {

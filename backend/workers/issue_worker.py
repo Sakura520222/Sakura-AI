@@ -49,6 +49,11 @@ from backend.services.service_execution_capacity import (
     ServiceExecutionLeaseLost,
     ServiceExecutionLimiter,
 )
+from backend.services.webhook_review_dispatch import (
+    delivery_worker,
+    detached_delivery_context,
+    prepare_delivery_dispatch,
+)
 
 # The legacy helper name is retained, but capacity belongs to the shared DB.
 _issue_semaphore = ServiceExecutionLimiter("issue_analysis")
@@ -354,9 +359,9 @@ class IssueWorker:
         registered task handles as well and await their completion so lifecycle
         webhooks can safely delete/close the Issue after worker cleanup.
         """
+        from backend.services.webhook_review_dispatch import cancel_queued_deliveries
+
         task_events = getattr(self, "_cancel_events", {}).get(task_key, {})
-        if not task_events:
-            return False
         task_handles = getattr(self, "_task_handles", {}).get(task_key, {})
         changed = False
         pending: list[asyncio.Task[Any]] = []
@@ -400,6 +405,15 @@ class IssueWorker:
                 seen.add(marker)
                 pending_all.append(task)
 
+        # Signal live workers before database I/O: an upstream result may return
+        # while the durable cancellation is waiting on another transaction.
+        persistence_error: BaseException | None = None
+        persisted = 0
+        try:
+            persisted = await cancel_queued_deliveries("issue_analysis", task_key)
+        except BaseException as exc:
+            persistence_error = exc
+
         drain_cancellation: asyncio.CancelledError | None = None
         if pending_all:
             try:
@@ -425,9 +439,11 @@ class IssueWorker:
                 self._unregister_task(task_key, task_id)
         if changed:
             logger.info("[cancel] 已终止 Issue 分析任务: {}", task_key)
+        if persistence_error is not None:
+            raise persistence_error
         if drain_cancellation is not None:
             raise drain_cancellation
-        return changed
+        return changed or bool(persisted)
 
     @staticmethod
     def _raise_if_cancelled(cancel_event: asyncio.Event | None) -> None:
@@ -638,6 +654,7 @@ class IssueWorker:
         return
 
     @task_logging("issue")
+    @delivery_worker("issue_analysis")
     @durable_reanalysis_worker
     @billable_payload("issue_analysis")
     async def process_issue_analysis(
@@ -654,7 +671,9 @@ class IssueWorker:
         synchronously when the coroutine starts and always removes only its own
         task entry after the worker has finished.
         """
-        if issue_info.get("_reanalysis_receipt_id"):
+        if issue_info.get("_reanalysis_receipt_id") or issue_info.get(
+            "_delivery_receipt_id"
+        ):
             # The outer receipt fence already proved this durable admission.
             # Include failures/cancellation before the capacity acquisition in
             # settlement, instead of leaving a known unstarted reservation.
@@ -1743,14 +1762,16 @@ def get_issue_worker() -> IssueWorker:
 
 async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
-    ensure_background_admission("issue")
     task_id = (
         str(issue_info["task_id"])
         if issue_info.get("_reanalysis_receipt_id")
+        or issue_info.get("_delivery_receipt_id")
         else str(uuid.uuid4())
     )
     issue_info["task_id"] = task_id
     context_for_payload(issue_info, "issue_analysis")
+    await prepare_delivery_dispatch(issue_info, "issue_analysis")
+    ensure_background_admission("issue")
     worker = get_issue_worker()
     if issue_info.get("_reanalysis_receipt_id"):
         existing_handle = (
@@ -1768,13 +1789,14 @@ async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     )
     task: asyncio.Task[Any] | None = None
     try:
-        task = asyncio.create_task(
-            worker.process_issue_analysis(
-                issue_info,
-                deadline=deadline,
-                cancel_event=cancel_event,
+        with detached_delivery_context():
+            task = asyncio.create_task(
+                worker.process_issue_analysis(
+                    issue_info,
+                    deadline=deadline,
+                    cancel_event=cancel_event,
+                )
             )
-        )
         worker._bind_task_handle(task_key, task_id, task)
         register_background_task(task, "issue")
     except DatabaseResetRuntimeAdmissionClosed:

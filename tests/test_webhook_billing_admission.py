@@ -53,6 +53,12 @@ def webhook_runtime(sql_runtime, monkeypatch):
             return True, ""
 
     async def submit(info):
+        # This queue boundary now includes a durable carrier, not just a string.
+        from backend.services.webhook_review_dispatch import prepare_delivery_dispatch
+
+        await prepare_delivery_dispatch(
+            info, "pr_review" if "pr_number" in info else "issue_analysis"
+        )
         submitted.append(dict(info))
         return "owner1/repo#7"
 
@@ -364,6 +370,7 @@ async def test_delivery_receipt_fences_parallel_handlers_and_replays_acknowledge
         calls.append(payload)
         entered.set()
         await release.wait()
+        await completed(factory, "pr_review", "parallel-delivery", 7)
         return webhook.JSONResponse(content={"status": "accepted", "task_key": "saved"})
 
     payload = automatic_pr()
@@ -409,6 +416,7 @@ async def test_delivery_receipt_binds_body_and_feature_and_remembers_skips(sql_r
 
     @verified_delivery("issue_analysis", factory)
     async def issue(payload):
+        await completed(factory, "issue_analysis", "same-delivery", 8)
         return webhook.JSONResponse(content={"status": "accepted"})
 
     assert (await issue(automatic_issue(delivery="same-delivery"))).status_code == 200
