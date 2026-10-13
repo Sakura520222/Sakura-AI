@@ -153,7 +153,11 @@ def traced_operation(fields=None, *, events: bool = False):
                         log_context(clear=True, **state),
                         sensitive_log_scope(*secrets),
                     ):
-                        await iterator.aclose()
+                        try:
+                            await iterator.aclose()
+                        except BaseException as exc:
+                            failed(exc, secrets)
+                            raise
 
             return stream
 

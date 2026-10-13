@@ -49,6 +49,7 @@ from backend.core.log_context import (
     traced_operation,
     update_log_context,
 )
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
 )
@@ -653,12 +654,15 @@ class UnifiedAIClient:
                             except Exception as exc:
                                 logger.warning(
                                     "主动压缩可观测性记录失败（不影响审查）: {}",
-                                    exc,
+                                    sanitize_exception_text(exc),
                                 )
                 except UsagePersistenceError:
                     raise
                 except Exception as exc:
-                    logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
+                    logger.warning(
+                        "主动压缩预检失败，按原消息继续: {}",
+                        sanitize_exception_text(exc),
+                    )
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -792,7 +796,9 @@ class UnifiedAIClient:
                         category=exc.category.value,
                         elapsed=time.monotonic() - start,
                         retry=0,
-                        fallback_reason=str(exc)[:200],
+                        fallback_reason=sanitize_exception_text(
+                            exc, secrets=(candidate.credential,)
+                        )[:200],
                     )
                 )
                 logger.warning(
@@ -801,7 +807,7 @@ class UnifiedAIClient:
                     len(selected),
                     served_by,
                     exc.category.value,
-                    exc,
+                    sanitize_exception_text(exc, secrets=(candidate.credential,)),
                 )
 
                 # 认证、权限和模型不存在：当前候选不重试，直接故障转移。
@@ -1028,7 +1034,10 @@ class UnifiedAIClient:
                 except UsagePersistenceError:
                     raise
                 except Exception as exc:
-                    logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
+                    logger.warning(
+                        "流式主动压缩预检失败，按原消息继续: {}",
+                        sanitize_exception_text(exc),
+                    )
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -1420,7 +1429,9 @@ class UnifiedAIClient:
                     logger.warning(
                         "AI 调用失败 [{}]: {}，{:.1f}s 后重试 ({}/{}) role={} model={}",
                         exc.category.value,
-                        str(exc)[:160],
+                        sanitize_exception_text(exc, secrets=(candidate.credential,))[
+                            :160
+                        ],
                         delay,
                         attempt + 1,
                         cfg.max_retries + 1,
@@ -1588,7 +1599,7 @@ class UnifiedAIClient:
         except UsagePersistenceError:
             raise
         except Exception as exc:
-            logger.warning("压缩恢复失败: {}", exc)
+            logger.warning("压缩恢复失败: {}", sanitize_exception_text(exc))
             return None
         if compressed is None:
             return None
@@ -1603,7 +1614,10 @@ class UnifiedAIClient:
                         trigger_reason="provider_overflow",
                     )
                 except Exception as exc:
-                    logger.warning("压缩上下文持久化失败，跳过压缩重试: {}", exc)
+                    logger.warning(
+                        "压缩上下文持久化失败，跳过压缩重试: {}",
+                        sanitize_exception_text(exc),
+                    )
                     return None
 
         compressed_request = UnifiedRequest(

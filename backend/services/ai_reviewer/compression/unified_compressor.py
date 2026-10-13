@@ -32,6 +32,7 @@ from backend.core.ai_protocol.request_policy import (
     filter_reasoning_params,
 )
 from backend.core.config import get_settings
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -353,7 +354,10 @@ class UnifiedContextCompressor:
                 timeout=120.0,
             )
         except Exception as exc:
-            logger.warning("压缩摘要调用失败，放弃压缩: {}", exc)
+            logger.warning(
+                "压缩摘要调用失败，放弃压缩: {}",
+                sanitize_exception_text(exc, secrets=(candidate.credential,)),
+            )
             return None
 
         if self.usage_callback is not None:

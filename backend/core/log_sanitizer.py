@@ -11,10 +11,11 @@ import re
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from urllib.parse import quote, quote_plus, unquote
+from urllib.parse import quote_plus, unquote
 
 REDACTED = "***"
 _scoped_secrets: ContextVar[tuple[str, ...]] = ContextVar("log_secrets", default=())
+_HEX_VALUES = {ord(char): int(char, 16) for char in "0123456789abcdefABCDEF"}
 _KEY = re.compile(
     r"(?:authorization|proxy_authorization|cookie|set_cookie|password|passwd|"
     r"client_secret|client_assertion|private_key|api_key|apikey|access_token|"
@@ -70,13 +71,64 @@ def sensitive_log_scope(*values: object):
         _scoped_secrets.reset(token)
 
 
+def _percent_projection(text: str) -> tuple[bytes, list[tuple[int, int]]]:
+    """Decode nested percent escapes in one pass, retaining original spans.
+
+    Each reduction consumes two bytes, so deeply encoded input cannot require
+    repeated whole-message decoding. Raw Unicode and encoded UTF-8 share the
+    same byte representation; unmatched diagnostic text stays untouched.
+    """
+    nodes = []
+    for position, char in enumerate(text):
+        for byte in char.encode("utf-8", errors="surrogatepass"):
+            nodes.append((byte, position, position + 1))
+            while (
+                len(nodes) >= 3
+                and nodes[-3][0] == ord("%")
+                and nodes[-2][0] in _HEX_VALUES
+                and nodes[-1][0] in _HEX_VALUES
+            ):
+                byte = (_HEX_VALUES[nodes[-2][0]] << 4) | _HEX_VALUES[nodes[-1][0]]
+                start, end = nodes[-3][1], nodes[-1][2]
+                del nodes[-3:]
+                nodes.append((byte, start, end))
+    return bytes(node[0] for node in nodes), [(node[1], node[2]) for node in nodes]
+
+
+def _replace_encoded_secret(text: str, secret: str) -> str:
+    if "%" not in text and (" " not in secret or "+" not in text):
+        return text
+    projection, spans = _percent_projection(text)
+    aliases = {
+        _percent_projection(secret)[0],
+        _percent_projection(quote_plus(secret))[0],
+    }
+    matches = []
+    for alias in aliases:
+        start = 0
+        while (position := projection.find(alias, start)) != -1:
+            end = position + len(alias)
+            matches.append((spans[position][0], spans[end - 1][1]))
+            start = end
+    pieces = []
+    start = 0
+    for position, end in sorted(matches):
+        if position >= start:
+            pieces.extend((text[start:position], REDACTED))
+        elif end <= start:
+            continue
+        start = end
+    pieces.append(text[start:])
+    return "".join(pieces)
+
+
 def sanitize_text(value: str, *, secrets: tuple[str, ...] = ()) -> str:
     text = value
     for secret in sorted({*_scoped_secrets.get(), *secrets}, key=len, reverse=True):
         if not secret:
             continue
-        for encoded in {secret, quote(secret, safe=""), quote_plus(secret)}:
-            text = text.replace(encoded, REDACTED)
+        text = text.replace(secret, REDACTED)
+        text = _replace_encoded_secret(text, secret)
     text = _PEM.sub(REDACTED, text)
     text = _USERINFO.sub(r"\1***\2", text)
     text = _BOT.sub("/bot***", text)
@@ -107,6 +159,29 @@ def sanitize_text(value: str, *, secrets: tuple[str, ...] = ()) -> str:
     )
     text = _AUTH.sub(r"\1 ***", text)
     return _TOKEN.sub(REDACTED, text)
+
+
+def sanitize_exception_text(
+    error: BaseException, *, secrets: tuple[str, ...] = ()
+) -> str:
+    """Redact before creating truncated logs or persisted diagnostic copies.
+
+    Provider errors can outlive their credential scope. Preserve the original
+    exception and use its attached redaction knowledge, including nested causes.
+    """
+    values = set(secrets)
+    pending = [error]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        values.update(getattr(current, "_log_redaction_secrets", ()))
+        pending.extend((current.__cause__, current.__context__))
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+    return sanitize_text(str(error), secrets=tuple(values))
 
 
 def sanitize(value: object, *, secrets: tuple[str, ...] = (), _seen=None) -> object:
