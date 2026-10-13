@@ -212,7 +212,11 @@ class LegacyEntitlementService:
                 await self.session.execute(
                     select(LegacyEntitlement)
                     .where(*self.active_conditions(user.id), remaining > 0)
-                    .order_by(LegacyEntitlement.expires_at.asc(), LegacyEntitlement.id)
+                    .order_by(
+                        LegacyEntitlement.expires_at.is_(None),
+                        LegacyEntitlement.expires_at.asc(),
+                        LegacyEntitlement.id,
+                    )
                     .with_for_update()
                 )
             )
