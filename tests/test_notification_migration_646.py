@@ -9,6 +9,32 @@ from backend.models.database import _build_add_column_sql
 from backend.services.notification_migration import upgrade_notification_schema
 
 
+def test_alter_constraints_preserves_later_create_table_ddl(monkeypatch):
+    from types import SimpleNamespace
+
+    import sqlalchemy
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateTable
+
+    from backend.models.announcement_models import NotificationDelivery
+
+    inspector = SimpleNamespace(
+        has_table=lambda name: name == "notification_deliveries",
+        get_columns=lambda _name: [{"name": "announcement_id", "nullable": True}],
+        get_unique_constraints=lambda _name: [{"name": "uq_notification_delivery"}],
+    )
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda _conn: inspector)
+    emitted = []
+    conn = SimpleNamespace(dialect=postgresql.dialect(), execute=emitted.append)
+    before = str(CreateTable(NotificationDelivery.__table__).compile(dialect=conn.dialect))
+    assert "uq_notification_event_target" in before
+    assert upgrade_notification_schema(conn)
+    after = str(CreateTable(NotificationDelivery.__table__).compile(dialect=conn.dialect))
+    assert after == before
+    assert any("ADD CONSTRAINT uq_notification_event_target" in str(statement.compile(dialect=conn.dialect))
+        for statement in emitted)
+
+
 def test_upgrade_preserves_ids_outcomes_and_is_idempotent():
     engine = create_engine("sqlite://")
     with engine.begin() as db:
