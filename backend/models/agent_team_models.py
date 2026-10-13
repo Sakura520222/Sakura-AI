@@ -94,6 +94,9 @@ class AgentTeamTask(Base):
     base_branch = Column(String(255), nullable=True)
     base_commit_sha = Column(String(64), nullable=True)
     resume_count = Column(Integer, default=0, nullable=False)
+    # A full retry is a new execution even if it fails before any iteration.
+    # Zero preserves the identity of tasks imported from older deployments.
+    execution_round = Column(Integer, default=0, server_default="0", nullable=False)
     failed_phase = Column(String(50), nullable=True)
     failed_role = Column(String(50), nullable=True)
     rate_limit_reset_at = Column(UTCDateTime, nullable=True)

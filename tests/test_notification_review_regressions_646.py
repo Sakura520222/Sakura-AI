@@ -184,8 +184,8 @@ async def test_agent_initiator_receives_events_but_subscribers_and_repo_owners_d
         db.commit()
         events = db.query(NotificationEvent).all()
         assert {(row.event_type, row.run_key) for row in events} == {
-            ("agent.started", "0:0"), ("agent.action_required", "0:0"),
-            ("agent.started", "1:0"), ("agent.completed", "1:0"),
+            ("agent.started", "1:0:0"), ("agent.action_required", "1:0:0"),
+            ("agent.started", "1:1:0"), ("agent.completed", "1:1:0"),
         }
         assert all(json.loads(row.recipients_json) == [2] for row in events)
         assert all(row.detail_url == "/agent-team/?task_id=10" for row in events)
