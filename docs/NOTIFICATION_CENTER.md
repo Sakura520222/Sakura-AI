@@ -23,6 +23,8 @@ Application sessions opt into `notification_business` through `session.info['not
 
 The existing runtime supervisor owns one bounded polling dispatcher. Event fanout is transactional, takes a database row lock with `SKIP LOCKED`, and creates inbox and delivery rows using database uniqueness. A crashed fanout rolls back completely. Pending infrastructure failures persist their category and next execution time.
 
+Fanout filters event families and scope/severity matches in SQL, deduplicates target tuples and groups routing by user. Disabled or nonmatching scoped rules still suppress compatibility defaults. Users/endpoints are fetched in configured batches; the resource snapshot is reused only within that transaction. User shared locks precede endpoint locks, preserving the lock order with serialized preference writes and foreign-key checks. Endpoint row locks serialize fanout with disabling, so disabling also cancels rows produced by a concurrent fanout before that transaction can finish. Sending and history still recheck current access independently. Repeated subscription writes serialize on the user's row and update the existing event/scope/endpoint rule rather than creating duplicates; existing duplicate rules for that scope are consolidated on update.
+
 Delivery claims use conditional SQL updates and bounded leases. Every worker refreshes account status, the exact endpoint owner/enabled/verified state, resource access and routing preferences before sending. A final lease fence persists the attempt count before external I/O. A heartbeat renews slow sends; result updates require the same token. Announcement sends also require the original publication version to remain published.
 
 External delivery is retryable with internal deduplication. A receiver may have accepted a message when the process loses the acknowledgement, so end-to-end exactly-once delivery is not promised. Webhook receivers should deduplicate `X-Sakura-Event-ID`.
@@ -71,9 +73,13 @@ Settings defaults are the only source of defaults. All `notification_*` controls
 
 Personal Settings provides endpoint names, enabling/disabling, soft unbinding, tests, status inspection, Email verification codes, Webhook verification/credential replacement and subscriptions. Multiple verified Email endpoints are independent; GitHub primary-email synchronization retires previous OAuth-managed addresses and preserves separately verified user-managed addresses. Telegram uses its existing one-time private-chat binding handshake.
 
+Disabling or unbinding an endpoint atomically cancels its pending deliveries and clears their lease/retry state; re-enabling it does not replay that queue. Sent/failed history and other endpoints remain unchanged. Telegram activation requires the existing binding handshake, preserving the single active chat; the generic endpoint API can edit or disable the current binding but cannot reactivate a retired one.
+
 The existing Announcement Center includes business inbox history/read markers and super-admin provider status, failure categories, statistics, controlled retries and audit records. Announcement rows are excluded in SQL before business-history pagination; legacy announcement reading remains independent. Agent details link to `/agent-team/?task_id=<id>`, validate the current task scope on entry and select the task in the existing console. Tests use the normal persisted event pipeline and the same permission/network policies. Users can inspect only their own endpoint delivery statuses. No channel gets an extra top-level navigation page.
 
 Webhook endpoints require HTTPS on port 443, no URL credentials/query/fragment, and optional administrator-controlled host allowlisting. All DNS answers must be public; private/loopback/link-local/reserved/multicast/IPv4-mapped/transition addresses are denied. Validated addresses are pinned to the actual connection while TLS verifies the original host. Environment proxies and redirects are disabled. DNS, transport and response reads are bounded; response bodies never enter diagnostics. Internal targets are deliberately unsupported.
+
+Creation validates all DNS answers before persisting an endpoint. Unsafe DNS is rejected without saving; DNS timeout/unavailability returns a retryable API failure. Verification and delivery revalidate independently and pin the admitted addresses, so a later DNS change cannot bypass the sending policy.
 
 Credentials use the existing Fernet secret service, are stored separately from addresses/metadata, and are never returned by endpoint or diagnostics APIs. Replacing a signing key invalidates verification. Webhook ownership verification sends a signed random challenge and requires the receiver to echo `{"challenge":"..."}`.
 
@@ -92,6 +98,8 @@ Stop all application instances before upgrading; do not mix old and new senders 
 Historical delivery rows keep their IDs, statuses, attempts, publication versions and `event_id=NULL`. They are neither copied into new pending events nor automatically rebroadcast. Current legacy pending rows still recover through the compatibility path; failed/sent/archived rows remain historical. Existing announcement content snapshots and read markers stay intact, and new archived states retain endpoint/event identities. Agent tasks receive an additive `execution_round` column defaulting to zero; existing statuses and counters are preserved without generating historical events.
 
 User backups include endpoint names, configuration versions and encrypted Webhook credentials. Imported Webhooks require a fresh ownership challenge. If the receiving deployment uses a different encryption key, replace the endpoint's signing credential and verify it again; plaintext credentials are not exported. Database/Redis connection settings retain the existing backup-restore protection.
+
+User restoration disables the ORM notification hook for its entire transaction, including flushes and passkey restoration, and restores the caller's exact session setting on success, failure or cancellation. Historical account/MFA/role changes cannot create security events or alert restored endpoints; subsequent live changes still use the outbox. Cancellation rolls back before the hook is restored.
 
 ## Verification and acceptance evidence
 

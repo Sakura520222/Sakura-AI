@@ -17,7 +17,6 @@ from backend.models.identity_models import NotificationEndpoint
 from backend.models.notification_models import (
     NotificationEvent,
     NotificationProviderBudget,
-    NotificationSubscription,
     UserNotification,
 )
 from backend.models.telegram_models import TelegramUser
@@ -27,7 +26,7 @@ from backend.services.notification_events import (
     insert_once,
     is_sensitive_event,
     resource_allowed,
-    rule_matches,
+    routing_rules,
 )
 
 
@@ -54,12 +53,9 @@ def _private_endpoint(endpoint):
 def _routed(event, user_id, endpoint, rules):
     if event.event_type == "endpoint.test":
         return endpoint is not None and endpoint.id == json.loads(event.payload_json).get("endpoint_id")
-    user_rules = [rule for rule in rules if rule.user_id == user_id and
-                  rule.event_type in {"*", event.event_type, event.event_type.split(".")[0] + ".*"}]
-    matches = [rule for rule in user_rules if rule_matches(rule, event)]
     target = endpoint.id if endpoint else None
-    if user_rules:
-        return any(rule.endpoint_id == target for rule in matches)
+    if user_id in rules:
+        return target in rules[user_id]
     # Preserve existing announcement routing; new business events require
     # explicit external opt-in. A station inbox is independent of providers.
     return endpoint is None or event.event_type == "announcement.published"
@@ -85,41 +81,62 @@ class EventDeliveryMixin:
         # rolls back both ownership and rows. Unique keys protect replays.
         ids, rules = await candidates(db, event)
         count = 0
-        for user_id in ids:
-            user = await db.get(TelegramUser, user_id, populate_existing=True)
-            if not await resource_allowed(db, user, event):
-                continue
-            endpoints = (await db.execute(select(NotificationEndpoint).where(
-                NotificationEndpoint.user_id == user_id, NotificationEndpoint.enabled.is_(True)
-            ))).scalars().all()
-            routed = []
-            if _routed(event, user_id, None, rules):
-                await insert_once(db, UserNotification,
-                    {"event_id": event_id, "user_id": user_id, "created_at": now}, ["event_id", "user_id"])
-                routed.append(("web", None, "web"))
-            for endpoint in endpoints:
-                channel = str(endpoint.provider).lower()
-                if self.registry.get(channel) is None or channel == "web":
-                    continue
-                if not endpoint.verified or (is_sensitive_event(event) and not _private_endpoint(endpoint)):
-                    continue
-                if _routed(event, user_id, endpoint, rules):
-                    routed.append((channel, endpoint.id, f"endpoint:{endpoint.id}"))
-            for channel, endpoint_id, key in routed:
-                await insert_once(db, NotificationDelivery, {
-                    "event_id": event_id, "user_id": user_id, "endpoint_id": endpoint_id,
-                    "endpoint_key": key, "channel": channel, "status": "pending", "attempts": 0,
-                    "publication_version": int(event.run_key) if event.resource_type == "announcement" else 1,
-                    "announcement_id": int(event.resource_id) if event.resource_type == "announcement" else None,
-                    "created_at": now, "updated_at": now,
-                }, ["event_id", "user_id", "endpoint_key"])
-                count += 1
+        resource_cache = {}  # Only this fanout transaction; sends/history read afresh.
+        batch_size = max(1, int(get_settings().notification_batch_size))
+        for offset in range(0, len(ids), batch_size):
+            batch_ids = ids[offset:offset + batch_size]
+            users = (await db.execute(select(TelegramUser).where(
+                TelegramUser.id.in_(batch_ids)
+            ).order_by(TelegramUser.id).with_for_update(read=True)
+              .execution_options(populate_existing=True))).scalars().all()
+            allowed_users = []
+            for user in users:
+                if await resource_allowed(db, user, event, resource_cache=resource_cache):
+                    allowed_users.append(user)
+            endpoints_by_user = {}
+            if allowed_users:
+                endpoints = (await db.execute(select(NotificationEndpoint).where(
+                    NotificationEndpoint.user_id.in_([user.id for user in allowed_users]),
+                    NotificationEndpoint.enabled.is_(True)
+                ).order_by(NotificationEndpoint.id).with_for_update()
+                  .execution_options(populate_existing=True))).scalars().all()
+                for endpoint in endpoints:
+                    endpoints_by_user.setdefault(endpoint.user_id, []).append(endpoint)
+            for user in allowed_users:
+                count += await self._materialize_recipient(db, event, user.id,
+                    endpoints_by_user.get(user.id, ()), rules, now)
         await db.execute(update(NotificationEvent).where(
             NotificationEvent.id == event_id, NotificationEvent.claim_token == token
         ).values(status="ready" if count else "no_recipients", error_category=None if count else "no_recipients",
                  claim_token=None, claim_until=None))
         await db.commit()
         return True
+
+    async def _materialize_recipient(self, db, event, user_id, endpoints, rules, now):
+        """Write one recipient using prefiltered, grouped routing and endpoints."""
+        event_id = event.id
+        routed = []
+        if _routed(event, user_id, None, rules):
+            await insert_once(db, UserNotification,
+                {"event_id": event_id, "user_id": user_id, "created_at": now}, ["event_id", "user_id"])
+            routed.append(("web", None, "web"))
+        for endpoint in endpoints:
+            channel = str(endpoint.provider).lower()
+            if self.registry.get(channel) is None or channel == "web":
+                continue
+            if not endpoint.verified or (is_sensitive_event(event) and not _private_endpoint(endpoint)):
+                continue
+            if _routed(event, user_id, endpoint, rules):
+                routed.append((channel, endpoint.id, f"endpoint:{endpoint.id}"))
+        for channel, endpoint_id, key in routed:
+            await insert_once(db, NotificationDelivery, {
+                "event_id": event_id, "user_id": user_id, "endpoint_id": endpoint_id,
+                "endpoint_key": key, "channel": channel, "status": "pending", "attempts": 0,
+                "publication_version": int(event.run_key) if event.resource_type == "announcement" else 1,
+                "announcement_id": int(event.resource_id) if event.resource_type == "announcement" else None,
+                "created_at": now, "updated_at": now,
+            }, ["event_id", "user_id", "endpoint_key"])
+        return len(routed)
 
     async def _event_eligible(self, db, delivery, event):
         user = await db.get(TelegramUser, delivery.user_id, populate_existing=True)
@@ -135,9 +152,7 @@ class EventDeliveryMixin:
                 return False, None
             if is_sensitive_event(event) and not _private_endpoint(endpoint):
                 return False, None
-        rules = (await db.execute(select(NotificationSubscription).where(
-            NotificationSubscription.user_id == user.id
-        ))).scalars().all()
+        rules = await routing_rules(db, event, user_ids=[user.id])
         return _routed(event, user.id, endpoint, rules), endpoint
 
     async def _finish_event_delivery(self, db, delivery_id, token, **values):

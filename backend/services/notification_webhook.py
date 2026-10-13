@@ -72,6 +72,19 @@ async def resolve_public_addresses(host):
     return sorted(addresses)
 
 
+async def validate_webhook_destination(value):
+    """Admit endpoints only after bounded DNS validation; sends revalidate."""
+    from backend.services.notification_service import NotificationProviderError
+
+    url = validate_webhook_url(value)
+    try:
+        async with asyncio.timeout(get_settings().notification_webhook_timeout_seconds):
+            await resolve_public_addresses(urlsplit(url).hostname)
+    except (OSError, TimeoutError) as exc:
+        raise NotificationProviderError("Webhook DNS unavailable") from exc
+    return url
+
+
 class _PinnedResolver(AbstractResolver):
     def __init__(self, hostname, addresses):
         self.hostname, self.addresses = hostname, addresses

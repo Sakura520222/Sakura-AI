@@ -2685,10 +2685,10 @@ notification_center:
   verification_sent: Verification processed; for email, enter the received code and
     verify again.
   verification_help: Email uses an ownership code; Webhooks must echo the signed challenge.
-    Use the private chat binding below for Telegram.
+    Telegram activation or replacement requires the private chat binding below.
   preferences_help: Business events default to the inbox; external channels require
     opt-in. Preferences do not grant resource access. Security and refunds use verified
-    private endpoints.
+    private endpoints. Adding the same event, scope and endpoint updates its rule.
   history: Business notification history
   empty: No business notifications
   details: View details

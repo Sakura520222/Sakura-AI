@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -1171,6 +1172,27 @@ async def _optional_model_rows(db: AsyncSession, model: Any) -> tuple[list[Any],
 
 
 async def restore_user_backup(
+    db: AsyncSession,
+    document: dict[str, Any],
+) -> UserImportResult:
+    """Restore historical state without emitting live account-change events."""
+    info = getattr(db, "info", {})
+    missing = object()
+    previous = info.get("notification_outbox", missing)
+    info["notification_outbox"] = False
+    try:
+        return await _restore_user_backup(db, document)
+    except asyncio.CancelledError:
+        await db.rollback()
+        raise
+    finally:
+        if previous is missing:
+            info.pop("notification_outbox", None)
+        else:
+            info["notification_outbox"] = previous
+
+
+async def _restore_user_backup(
     db: AsyncSession,
     document: dict[str, Any],
 ) -> UserImportResult:
