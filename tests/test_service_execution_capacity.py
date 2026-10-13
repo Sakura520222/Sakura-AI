@@ -5,6 +5,7 @@ import importlib
 import multiprocessing
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from queue import Empty
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -201,7 +202,7 @@ async def test_database_configuration_limits_each_feature_without_billing(capaci
         await limiter.release(lease)
 
 
-def capacity_process(path, queue):
+def capacity_process(path, queue, ready, release):
     module = core()
     engine = create_engine(
         f"sqlite:///{path}", connect_args={"autocommit": False, "timeout": 0.2}
@@ -214,9 +215,11 @@ def capacity_process(path, queue):
             lease_seconds=2,
             poll_seconds=0.005,
         )
+        await asyncio.to_thread(ready.wait, 20)
         async with limiter.slot("pr_review"):
             queue.put(("enter", monotonic()))
-            await asyncio.sleep(0.08)
+            if not await asyncio.to_thread(release.wait, 20):
+                raise TimeoutError("Parent did not release the test capacity lease")
             queue.put(("leave", monotonic()))
 
     try:
@@ -231,16 +234,35 @@ def test_multiple_processes_share_one_database_capacity(capacity_db):
     _, _, _, path = capacity_db
     ctx = multiprocessing.get_context("spawn")
     queue = ctx.Queue()
+    ready = ctx.Barrier(6)
+    release = ctx.Event()
     workers = [
-        ctx.Process(target=capacity_process, args=(path, queue)) for _ in range(5)
+        ctx.Process(target=capacity_process, args=(path, queue, ready, release))
+        for _ in range(5)
     ]
-    for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join(20)
-        assert not worker.is_alive()
-        assert worker.exitcode == 0
-    events = [queue.get(timeout=1) for _ in range(10)]
+    events = []
+    try:
+        for worker in workers:
+            worker.start()
+        # Spawn/import latency must not determine the observed concurrency.
+        # Every worker is ready before acquisition, and both admitted workers
+        # retain their SQL leases until the parent has observed them together.
+        ready.wait(timeout=20)
+        events = [queue.get(timeout=20) for _ in range(2)]
+        assert all(kind == "enter" for kind, _ in events)
+        with pytest.raises(Empty):
+            queue.get(timeout=0.1)
+    finally:
+        release.set()
+        for worker in workers:
+            if worker.pid is not None:
+                worker.join(20)
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(5)
+    assert all(worker.exitcode == 0 for worker in workers)
+    events.extend(queue.get(timeout=1) for _ in range(8))
+    queue.close()
     assert all(kind != "error" for kind, _ in events)
     running = maximum = 0
     for kind, _ in sorted(events, key=lambda event: event[1]):
