@@ -278,8 +278,10 @@ async def test_live_legacy_unique_key_and_nullability_upgrade(live_db):
         # A later fresh schema must still have both uniqueness contracts after
         # this process has executed ALTER TABLE against the legacy schema.
         conn = await db.connection()
+        await conn.run_sync(AnnouncementDeliveryHistory.__table__.drop)
         await conn.run_sync(NotificationDelivery.__table__.drop)
         await conn.run_sync(NotificationDelivery.__table__.create)
+        await conn.run_sync(AnnouncementDeliveryHistory.__table__.create)
         constraints = await conn.run_sync(lambda connection: inspect(connection).get_unique_constraints("notification_deliveries"))
         assert {"uq_notification_delivery_target", "uq_notification_event_target"} <= {row["name"] for row in constraints}
         await db.commit()
