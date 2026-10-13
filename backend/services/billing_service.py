@@ -10,10 +10,12 @@ import hashlib
 from datetime import timedelta
 from decimal import Decimal, localcontext
 
+from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.config import get_dynamic_config
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.time_service import now_utc
 from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.billing_models import (
@@ -1027,6 +1029,15 @@ class BillingService:
             # Multi-worker races are constrained by SQL, rather than a local
             # lock. The caller can retry after refreshing the transaction.
             raise BillingConflict() from None
+        logger.bind(
+            price_profile_id=profile.id,
+            price_version=profile.version,
+            account_id=account_id,
+            provider_id=provider_id,
+            model_id=model_id,
+            call_kind=call_kind,
+            actor_id=actor_id,
+        ).info("Immutable price version staged")
         return profile
 
     async def _price(self, provider_id, model_id, call_kind, *, account_id=None):
@@ -1156,6 +1167,13 @@ class BillingService:
         ttl = int(await self._setting("billing_reservation_ttl_seconds") or 3600)
         operation.expires_at = now_utc() + timedelta(seconds=ttl)
         await self.session.flush()
+        logger.bind(
+            billing_operation_id=operation_id,
+            user_id=user_id,
+            feature=feature,
+            charging_enabled=enabled,
+            reserve_units=operation.reserve_units,
+        ).info("Billing admission staged")
         return operation
 
     async def _check_plan_admission(self, user_id, feature, *, check_daily=True):
@@ -1489,6 +1507,11 @@ class BillingService:
 
     async def settle_operation(self, operation_id):
         operation = await self._operation(operation_id)
+        previous_state = (
+            operation.status,
+            operation.pending_reason,
+            operation.settled_units,
+        )
         usages = (
             (
                 await self.session.execute(
@@ -1642,7 +1665,12 @@ class BillingService:
             try:
                 quote = calculate_price(usage, profile.config)
             except PricingPending as exc:
-                pending = str(exc)[:128]
+                pending = sanitize_exception_text(exc)[:128]
+                logger.bind(
+                    billing_operation_id=operation_id,
+                    price_profile_id=profile.id,
+                    usage_record_key=usage.record_key,
+                ).opt(exception=True).debug("Usage pricing requires reconciliation")
                 continue
             self.session.add(
                 BillingUsageCharge(
@@ -1797,6 +1825,20 @@ class BillingService:
                     min(target_reserve, max(available_for_op, operation.reserve_units)),
                 )
         await self.session.flush()
+        if previous_state != (
+            operation.status,
+            operation.pending_reason,
+            operation.settled_units,
+        ):
+            logger.bind(
+                billing_operation_id=operation_id,
+                user_id=operation.user_id,
+                feature=operation.feature,
+                status=operation.status,
+                pending_reason=operation.pending_reason,
+                settled_units=operation.settled_units,
+                reserve_units=operation.reserve_units,
+            ).log("WARNING" if pending else "INFO", "Billing settlement staged")
         return operation
 
     async def reconcile_wallet(self, user_id):

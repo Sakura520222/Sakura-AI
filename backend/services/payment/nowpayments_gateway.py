@@ -35,6 +35,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 import httpx
 from loguru import logger
 
+from backend.core.log_sanitizer import sanitize_exception_text, sanitize_text
 from backend.services.payment.currency_units import currency_minor_exponent
 from backend.services.payment.gateway_base import (
     PaymentGateway,
@@ -45,11 +46,14 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
 
 
 class NowPaymentsGateway(PaymentGateway):
     """NOWPayments 虚拟币支付网关（USDT TRC-20 等）"""
+
+    LOG_SECRET_ATTRIBUTES = ("_api_key", "_ipn_secret")
 
     API_URL = "https://api.nowpayments.io"
     SANDBOX_URL = "https://api-sandbox.nowpayments.io"
@@ -125,7 +129,7 @@ class NowPaymentsGateway(PaymentGateway):
             body = resp.json()
             msg = body.get("message", "") or str(body)
         except Exception:
-            msg = resp.text[:500]
+            msg = sanitize_text(resp.text)[:500]
         return ValueError(f"NOWPayments API error {resp.status_code}: {msg}")
 
     @classmethod
@@ -145,7 +149,7 @@ class NowPaymentsGateway(PaymentGateway):
         try:
             value = Decimal(str(amount))
         except InvalidOperation, ValueError:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Invalid amount '{}' for currency '{}', defaulting to 0",
                 amount,
                 currency,
@@ -197,13 +201,14 @@ class NowPaymentsGateway(PaymentGateway):
                 return False
             return True
         except Exception as e:
-            logger.warning("NOWPayments IPN verify failed: {}", e)
+            logger.opt(exception=True).warning("NOWPayments IPN verify failed: {}", e)
             return False
 
     # ------------------------------------------------------------------
     # 创建支付
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -272,13 +277,14 @@ class NowPaymentsGateway(PaymentGateway):
             logger.opt(exception=True).error("NOWPayments create_payment error: {}", e)
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
     # ------------------------------------------------------------------
     # Webhook 验签（IPN 回调）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -379,13 +385,16 @@ class NowPaymentsGateway(PaymentGateway):
             )
 
         except Exception as exc:
-            logger.error("NOWPayments webhook parsing failed: {}", type(exc).__name__)
+            logger.opt(exception=True).error(
+                "NOWPayments webhook parsing failed: {}", type(exc).__name__
+            )
             raise
 
     # ------------------------------------------------------------------
     # 退款（NOWPayments 不支持 API 退款）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
@@ -409,6 +418,7 @@ class NowPaymentsGateway(PaymentGateway):
     # 支付状态查询
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def get_payment_status(self, provider_tx_id: str) -> PaymentStatusResult:
         """查询支付状态"""
         try:
@@ -449,5 +459,5 @@ class NowPaymentsGateway(PaymentGateway):
             )
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )

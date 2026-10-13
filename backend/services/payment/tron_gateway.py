@@ -37,6 +37,7 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
 
 # USDT TRC-20 合约地址
@@ -45,6 +46,8 @@ USDT_TRC20_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
 class TronGateway(PaymentGateway):
     """自建 TRON USDT 收款网关（通过 TronGrid API）"""
+
+    LOG_SECRET_ATTRIBUTES = ("_api_key",)
 
     TRONGRID_API = "https://api.trongrid.io"
     TRONSCAN_API = "https://apilist.tronscanapi.com"
@@ -108,6 +111,7 @@ class TronGateway(PaymentGateway):
     # TronGrid API
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def _get_trc20_transfers(self, address: str, limit: int = 20) -> list[dict]:
         """查询最近 TRC-20 USDT 转账到指定地址"""
         url = f"{self.TRONGRID_API}/v1/accounts/{address}/transactions/trc20"
@@ -127,7 +131,7 @@ class TronGateway(PaymentGateway):
                 data = resp.json()
                 return data.get("data", [])
         except Exception as e:
-            logger.warning("TronGrid query failed: {}", e)
+            logger.opt(exception=True).warning("TronGrid query failed: {}", e)
             return []
 
     def _parse_transfer_amount(self, raw: str) -> Decimal | None:
@@ -142,6 +146,7 @@ class TronGateway(PaymentGateway):
     # 创建支付
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -189,6 +194,7 @@ class TronGateway(PaymentGateway):
     # Webhook（TRON 没有主动回调，使用轮询模式）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -201,6 +207,7 @@ class TronGateway(PaymentGateway):
     # 退款（TRON 链上无法自动退款）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
@@ -218,6 +225,7 @@ class TronGateway(PaymentGateway):
     # 查询支付状态（通过 TronGrid API）
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def get_payment_status(
         self,
         provider_tx_id: str,
@@ -241,6 +249,7 @@ class TronGateway(PaymentGateway):
             },
         )
 
+    @payment_gateway_operation
     async def check_payment_by_amount(
         self,
         order_no: str,

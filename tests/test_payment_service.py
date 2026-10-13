@@ -36,6 +36,7 @@ def mock_session():
     session.get = AsyncMock(return_value=None)
     session.execute = AsyncMock()
     session.add = MagicMock()
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     return session
 
 

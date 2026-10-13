@@ -20,7 +20,7 @@ from backend.core.log_context import (
     update_log_context,
 )
 from backend.core.logging_bridge import _format_record, _patch_record
-from backend.models.scan_models import ScanStatus
+from backend.models.scan_models import RepoScan, ScanStatus
 from backend.services.ai_reviewer.compression.unified_compressor import (
     UnifiedContextCompressor,
 )
@@ -28,8 +28,35 @@ from backend.services.ai_reviewer.unified_client import FallbackConfig, UnifiedA
 from backend.services.operational_log_service import session_logs
 from backend.workers import scan_worker as scan_module
 from backend.workers.scan_worker import ScanWorker
-from tests.test_scan_worker_timeout import _AsyncSession
+from tests.test_scan_worker_timeout import _AsyncSession as _ScanSession
 from tests.test_unified_client_fallback import _candidate
+
+
+class _AsyncSession(_ScanSession):
+    """Support the composed billing entrypoint without performing provider calls."""
+
+    def __init__(self, scan):
+        super().__init__(scan)
+        scan.billing_operation_id = None
+        scan.trigger_type = (
+            "manual"
+            if scan.triggered_by.startswith(("webui:", "api:"))
+            else "scheduled"
+        )
+
+    async def execute(self, statement):
+        expression = statement.column_descriptions[0]["expr"]
+        if expression is RepoScan:
+            self.scan.id = statement.compile().params["id_1"]
+            return SimpleNamespace(scalar_one=lambda: self.scan)
+        if statement.column_descriptions[0]["name"] == "status":
+            # These fixtures model terminal worker failures. Financial effects
+            # themselves are covered by the real-SQL billing worker suites.
+            return SimpleNamespace(scalar_one=lambda: ScanStatus.FAILED.value)
+        return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    async def commit(self):
+        pass
 
 
 @pytest.fixture

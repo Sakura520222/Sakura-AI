@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.log_sanitizer import sanitize_exception_text, sensitive_log_scope
 from backend.core.time_service import now_utc
 from backend.models.legacy_entitlement_models import (
     LegacyEntitlement,
@@ -272,7 +273,7 @@ class PaymentService:
                     results.append(plan)
                 except PaymentError as e:
                     logger.warning("batch_delete: plan {} failed: {}", pid, e)
-                    failed.append({"id": pid, "reason": str(e)})
+                    failed.append({"id": pid, "reason": sanitize_exception_text(e)})
         return {"success": results, "failed": failed}
 
     async def batch_toggle_plans(self, plan_ids: list[int]) -> dict:
@@ -403,7 +404,7 @@ class PaymentService:
             if key in self.REDEEM_CODE_UPDATE_FIELDS and value is not None:
                 setattr(code, key, value)
         await self.session.flush()
-        logger.info("Updated redeem code {} (id={})", code.code, code_id)
+        logger.bind(redeem_code_id=code_id).info("Redeem code updated")
         return code
 
     async def delete_redeem_code(self, code_id: int) -> RedeemCode:
@@ -419,7 +420,7 @@ class PaymentService:
 
         await self.session.delete(code)
         await self.session.flush()
-        logger.info("Deleted redeem code {} (id={})", code.code, code_id)
+        logger.bind(redeem_code_id=code_id).info("Redeem code deleted")
         return code
 
     async def batch_delete_redeem_codes(self, code_ids: list[int]) -> dict:
@@ -441,7 +442,9 @@ class PaymentService:
                 results.append(code)
             elif code:
                 skipped.append({"id": cid, "reason": f"already_used:{code.used_count}"})
-                logger.info("Skipped deleting used code {} (id={})", code.code, cid)
+                logger.bind(redeem_code_id=cid).info(
+                    "Used redeem code deletion skipped"
+                )
             else:
                 skipped.append({"id": cid, "reason": "not_found"})
         if results:
@@ -462,12 +465,44 @@ class PaymentService:
                 results.append(code)
             except PaymentError as e:
                 logger.info("Skipped code {}: {}", cid, e)
-                skipped.append({"id": cid, "reason": str(e)})
+                skipped.append({"id": cid, "reason": sanitize_exception_text(e)})
         return {"success": results, "skipped": skipped}
 
     # ========== 用户兑换/购买 ==========
 
     async def redeem_code(self, user_id: int, code: str) -> Order:
+        with sensitive_log_scope(code):
+            return await self._redeem_code(user_id, code)
+
+    async def _redeem_replay(self, redeem_id: int, user_id: int) -> Order | None:
+        # A locking/current read sees a winner committed while this request
+        # waited for the code row, even with a prior repeatable-read snapshot.
+        previous = (
+            await self.session.execute(
+                select(RedeemCodeRedemption)
+                .where(
+                    RedeemCodeRedemption.redeem_code_id == redeem_id,
+                    RedeemCodeRedemption.user_id == user_id,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if previous is None:
+            return None
+        order = await self.session.get(
+            Order, previous.order_id, with_for_update=True, populate_existing=True
+        )
+        if order is None:
+            raise PaymentError(
+                "Redeemed order needs audit", code="redemption_order_missing"
+            )
+        logger.bind(user_id=user_id, redeem_code_id=redeem_id, order_id=order.id).info(
+            "Redeem request replayed existing order"
+        )
+        return order
+
+    async def _redeem_code(self, user_id: int, code: str) -> Order:
         user = await self.session.get(TelegramUser, user_id)
         if not user:
             raise PaymentError("User not found")
@@ -480,21 +515,16 @@ class PaymentService:
                 )
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         redeem = (await self.session.execute(stmt)).scalar_one_or_none()
         if not redeem:
             raise PaymentError("Invalid or inactive redeem code")
 
-        previous = (
-            await self.session.execute(
-                select(RedeemCodeRedemption).where(
-                    RedeemCodeRedemption.redeem_code_id == redeem.id,
-                    RedeemCodeRedemption.user_id == user_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if previous:
-            return await self.session.get(Order, previous.order_id)
+        redeem_id = redeem.id
+        previous = await self._redeem_replay(redeem_id, user_id)
+        if previous is not None:
+            return previous
         if redeem.status != RedeemCodeStatus.ACTIVE.value:
             raise PaymentError("Invalid or inactive redeem code")
 
@@ -513,48 +543,55 @@ class PaymentService:
                 code="snapshot_required",
             )
         snapshot = redeem.plan_snapshot
-        result = await self.session.execute(
-            update(RedeemCode)
-            .where(
-                RedeemCode.id == redeem.id,
-                RedeemCode.status == RedeemCodeStatus.ACTIVE.value,
-                RedeemCode.used_count < RedeemCode.max_uses,
-            )
-            .values(used_count=RedeemCode.used_count + 1)
-        )
-        if not result.rowcount:
-            raise PaymentError("Redeem code has been fully used")
-        await self.session.refresh(redeem)
-        if redeem.used_count >= redeem.max_uses:
-            redeem.status = RedeemCodeStatus.EXHAUSTED.value
-
-        order = Order(
-            order_no=self._generate_order_no(),
-            user_id=user_id,
-            plan_id=plan.id,
-            amount_cents=snapshot["price_cents"],
-            currency=snapshot["currency"],
-            status=OrderStatus.PAID.value,
-            payment_provider="redeem_code",
-            provider_tx_id=code,
-            plan_snapshot=snapshot,
-            paid_at=now_utc(),
-        )
-        self.session.add(order)
-        await self.session.flush()
-
-        self.session.add(
-            RedeemCodeRedemption(
-                redeem_code_id=redeem.id, user_id=user_id, order_id=order.id
-            )
-        )
-        await self.session.flush()
+        try:
+            # Roll back all losing effects, including the consumed slot and
+            # provisional order, while preserving the caller's transaction.
+            async with self.session.begin_nested():
+                result = await self.session.execute(
+                    update(RedeemCode)
+                    .where(
+                        RedeemCode.id == redeem_id,
+                        RedeemCode.status == RedeemCodeStatus.ACTIVE.value,
+                        RedeemCode.used_count < RedeemCode.max_uses,
+                    )
+                    .values(used_count=RedeemCode.used_count + 1)
+                )
+                if not result.rowcount:
+                    raise PaymentError("Redeem code has been fully used")
+                await self.session.refresh(redeem)
+                if redeem.used_count >= redeem.max_uses:
+                    redeem.status = RedeemCodeStatus.EXHAUSTED.value
+                order = Order(
+                    order_no=self._generate_order_no(),
+                    user_id=user_id,
+                    plan_id=plan.id,
+                    amount_cents=snapshot["price_cents"],
+                    currency=snapshot["currency"],
+                    status=OrderStatus.PAID.value,
+                    payment_provider="redeem_code",
+                    provider_tx_id=code,
+                    plan_snapshot=snapshot,
+                    paid_at=now_utc(),
+                )
+                self.session.add(order)
+                await self.session.flush()
+                self.session.add(
+                    RedeemCodeRedemption(
+                        redeem_code_id=redeem_id, user_id=user_id, order_id=order.id
+                    )
+                )
+                await self.session.flush()
+        except IntegrityError:
+            previous = await self._redeem_replay(redeem_id, user_id)
+            if previous is None:
+                raise
+            return previous
 
         await self._log_payment(
             order_id=order.id,
             user_id=user_id,
             action=PaymentAction.CREATE,
-            detail=f"Order created via redeem code: {code}",
+            detail=f"Order created via redeem code ID: {redeem_id}",
         )
         await self._log_payment(
             order_id=order.id,
@@ -565,8 +602,8 @@ class PaymentService:
 
         order = await self._fulfill_order(order, user, plan)
 
-        logger.info(
-            f"User {user_id} redeemed code {code} for plan {plan.name}, order {order.order_no}"
+        logger.bind(user_id=user_id, redeem_code_id=redeem_id, order_id=order.id).info(
+            "Redeem order fulfilled"
         )
         return order
 
@@ -719,7 +756,7 @@ class PaymentService:
         try:
             gateway = await get_gateway(order.payment_provider)
         except (ValueError, RuntimeError) as exc:
-            raise PaymentError(str(exc)) from exc
+            raise PaymentError(sanitize_exception_text(exc)) from exc
         if order.payment_provider == "tron":
             from backend.services.payment.tron_gateway import TronGateway
 
@@ -1423,7 +1460,7 @@ class PaymentService:
                     )
                 except ValueError as exc:
                     raise PaymentError(
-                        str(exc), code="refund_evidence_incomplete"
+                        sanitize_exception_text(exc), code="refund_evidence_incomplete"
                     ) from exc
         attempt = PaymentRefundAttempt(
             order_id=order.id,
@@ -1460,7 +1497,7 @@ class PaymentService:
                     purchase.id, f"{key}:hold", units=target_units
                 )
             except BillingError as exc:
-                raise PaymentError(str(exc), code=exc.code) from exc
+                raise PaymentError(sanitize_exception_text(exc), code=exc.code) from exc
         if gateway is None:
             attempt.status = "upstream_succeeded"
             return await self._finalize_refund(attempt, order)
@@ -1613,7 +1650,9 @@ class PaymentService:
                         order.provider_tx_id, supplied
                     )
             except ValueError as exc:
-                raise PaymentError(str(exc), code="refund_evidence_incomplete") from exc
+                raise PaymentError(
+                    sanitize_exception_text(exc), code="refund_evidence_incomplete"
+                ) from exc
             return self._native_refund_identity(attempt, reference)
         if saved not in (None, "", order.provider_tx_id):
             raise PaymentError(
@@ -1641,7 +1680,9 @@ class PaymentService:
                 order.provider_tx_id, attempt.idempotency_key
             )
         except ValueError as exc:
-            raise PaymentError(str(exc), code="refund_evidence_incomplete") from exc
+            raise PaymentError(
+                sanitize_exception_text(exc), code="refund_evidence_incomplete"
+            ) from exc
         if proof == expected and supplied in (
             None,
             expected["out_request_no"],
@@ -2144,8 +2185,8 @@ class PaymentService:
             )
         except Exception as exc:
             refund_request.status = RefundRequestStatus.FAILED.value
-            refund_request.error_message = str(exc)
-            logger.warning(
+            refund_request.error_message = sanitize_exception_text(exc)
+            logger.opt(exception=True).warning(
                 "Refund request failed during approval: request_id={}, error={}",
                 request_id,
                 exc,
@@ -2153,7 +2194,7 @@ class PaymentService:
             try:
                 await self.session.flush()
             except Exception as flush_exc:
-                logger.error(
+                logger.opt(exception=flush_exc).error(
                     "Failed to flush refund failure state: request_id={}, error={}",
                     request_id,
                     flush_exc,

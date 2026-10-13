@@ -3,7 +3,78 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import wraps
+from inspect import iscoroutinefunction, signature
 from typing import Any
+
+from loguru import logger
+
+from backend.core.log_sanitizer import sanitize_text, sensitive_key, sensitive_log_scope
+
+
+def payment_gateway_operation(function):
+    """Protect SDK/HTTP work and copied errors without replacing request context."""
+    call_signature = signature(function)
+
+    def scope(gateway, args, kwargs):
+        arguments = call_signature.bind(gateway, *args, **kwargs).arguments
+        headers = arguments.get("headers") or {}
+        return sensitive_log_scope(
+            *(getattr(gateway, name, None) for name in gateway.LOG_SECRET_ATTRIBUTES),
+            *(
+                value
+                for name, value in headers.items()
+                if sensitive_key(name)
+                or "signature" in name.lower()
+                or name.lower() == "x-nowpayments-sig"
+            ),
+        )
+
+    def safe_result(result):
+        if getattr(result, "error_message", None):
+            result.error_message = sanitize_text(result.error_message)
+        return result
+
+    if iscoroutinefunction(function):
+
+        @wraps(function)
+        async def call(self, *args, **kwargs):
+            with (
+                logger.contextualize(
+                    payment_gateway=type(self).__name__,
+                    payment_action=function.__name__,
+                ),
+                scope(self, args, kwargs),
+            ):
+                try:
+                    return safe_result(await function(self, *args, **kwargs))
+                except Exception:
+                    logger.opt(exception=True).error("Payment gateway operation failed")
+                    raise
+
+    else:
+
+        @wraps(function)
+        def call(self, *args, **kwargs):
+            with (
+                logger.contextualize(
+                    payment_gateway=type(self).__name__,
+                    payment_action=function.__name__,
+                ),
+                scope(self, args, kwargs),
+            ):
+                try:
+                    return safe_result(function(self, *args, **kwargs))
+                except (
+                    PaymentWebhookConfigurationError,
+                    PaymentWebhookVerificationError,
+                ):
+                    raise
+                except Exception:
+                    logger.opt(exception=True).error("Payment gateway operation failed")
+                    raise
+
+    return call
 
 
 class WebhookEventType(str, Enum):
@@ -81,6 +152,8 @@ class PaymentStatusResult:
 
 class PaymentGateway(ABC):
     """支付网关抽象基类"""
+
+    LOG_SECRET_ATTRIBUTES: tuple[str, ...] = ()
 
     @abstractmethod
     async def create_payment(
