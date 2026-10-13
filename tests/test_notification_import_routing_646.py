@@ -179,4 +179,3 @@ async def test_announcement_fanout_batches_queries_and_shares_transaction_resour
     with Session(engine) as check:
         assert check.query(UserNotification).count() == total
         assert check.query(NotificationDelivery).count() == total * 2
-
