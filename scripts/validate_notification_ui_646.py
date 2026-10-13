@@ -58,9 +58,14 @@ try:
         expect(page.get_by_label("端点名称").first).to_have_value("My verified email")
         page.evaluate("window.scrollTo(0, 0)")
         page.screenshot(path=str(output / "settings-zh.png"), full_page=True)
+        page.goto("http://127.0.0.1:8646/agent-team/?task_id=646&lang=en")
+        expect(page.locator('#agent-task-detail')).to_contain_text("Notification deep link task")
+        expect(page.locator('#agent-task-detail')).to_be_visible()
+        assert page.evaluate("window.agentTeamState.selectedTaskId") == "646"
+        page.screenshot(path=str(output / "agent-deep-link-en.png"), full_page=True)
         assert not errors, errors
         browser.close()
-    print("Notification browser E2E passed: rename, test queue, scoped preference, read state, diagnostics, bilingual render")
+    print("Notification browser E2E passed: rename, test queue, scoped preference, read state, diagnostics, bilingual render, Agent deep link")
 finally:
     server.terminate()
     try:

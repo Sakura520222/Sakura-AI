@@ -479,9 +479,13 @@ class IssueWorker:
                 error_message=reason,
             )
         )
+        rowcount = getattr(update_result, "rowcount", None)
+        if rowcount is None or rowcount > 0:
+            from backend.services.notification_business import emit_task_event
+
+            await emit_task_event(db, "issue", record, "cancelled")
         await db.commit()
 
-        rowcount = getattr(update_result, "rowcount", None)
         if rowcount is None or rowcount > 0:
             # Keep lightweight test doubles and the identity map in sync with
             # the conditional UPDATE without issuing a second SELECT.
@@ -591,9 +595,13 @@ class IssueWorker:
                 error_message=reason,
             )
         )
+        rowcount = getattr(update_result, "rowcount", None)
+        if rowcount is None or rowcount > 0:
+            from backend.services.notification_business import emit_task_event
+
+            await emit_task_event(db, "issue", record, "failed")
         await db.commit()
 
-        rowcount = getattr(update_result, "rowcount", None)
         if rowcount is None or rowcount > 0:
             record.status = IssueAnalysisStatus.FAILED.value
             record.error_message = reason
