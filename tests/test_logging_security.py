@@ -6,9 +6,11 @@ import json
 import logging
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from loguru import logger
+from redis.asyncio.connection import parse_url
 
 from backend.core.config import get_settings
 from backend.core.log_context import log_context
@@ -74,6 +76,192 @@ def test_credentials_are_redacted_without_erasing_diagnostics(payload):
     assert sanitize_text("HTTP 429 provider=example timeout=30 input_tokens=128") == (
         "HTTP 429 provider=example timeout=30 input_tokens=128"
     )
+
+
+@pytest.mark.parametrize(
+    "uri,expected",
+    [
+        ("redis://:opaque-redis-pw@host:6379/3", "redis://:***@host:6379/3"),
+        ("rediss://:opaque-redis-pw@[::1]:6380/3", "rediss://:***@[::1]:6380/3"),
+        (
+            "redis://:opaque%40redis%3Apw@host/3?socket_timeout=2",
+            "redis://:***@host/3?socket_timeout=2",
+        ),
+        ("redis://default:opaque-redis-pw@host/3", "redis://default:***@host/3"),
+        ("redis://app@team:opaque-redis-pw@host/3", "redis://app@team:***@host/3"),
+        ("redis://:opaque@redis@pw@host/3", "redis://:***@host/3"),
+        ("redis://default:opaque@redis@pw@host/3", "redis://default:***@host/3"),
+        (
+            "redis://:opaque@pw@host?name=user@example.test#details@support",
+            "redis://:***@host?name=user@example.test#details@support",
+        ),
+        ("unix://:opaque-redis-pw@/tmp/redis.sock", "unix://:***@/tmp/redis.sock"),
+        (
+            "redis://host:6379/3?socket_timeout=2",
+            "redis://host:6379/3?socket_timeout=2",
+        ),
+        ("rediss://[::1]:6380/3", "rediss://[::1]:6380/3"),
+        ("redis://default@host/3", "redis://default@host/3"),
+        ("redis://default:@host/3", "redis://default:@host/3"),
+        ("redis://app@team:@host/3", "redis://app@team:@host/3"),
+        (
+            "redis://host:6379?name=user@example.test#details@support",
+            "redis://host:6379?name=user@example.test#details@support",
+        ),
+    ],
+)
+def test_redis_uri_redaction_preserves_connection_diagnostics(uri, expected):
+    assert sanitize_text(uri) == expected
+    assert sanitize({"endpoint": uri}) == {"endpoint": expected}
+
+
+@pytest.mark.parametrize("standard", [False, True])
+@pytest.mark.parametrize("scheme", ["redis", "rediss"])
+def test_password_only_redis_url_is_safe_in_exception_and_persisted_logs(
+    secured_logs, monkeypatch, standard, scheme
+):
+    console, path, records = secured_logs
+    password = "opaque-redis-password-718"
+    uri = f"{scheme}://:{password}@host:6379/3?socket_timeout=2"
+    monkeypatch.setattr(get_settings(), "redis_url", uri)
+    try:
+        raise RuntimeError(f"connection failed for {uri}")
+    except RuntimeError as error:
+        if standard:
+            record = logging.LogRecord(
+                "redis.client",
+                logging.ERROR,
+                "/redis/client.py",
+                42,
+                "Redis error at %s",
+                (uri,),
+                sys.exc_info(),
+                func="connect",
+            )
+            record.endpoint = uri
+            InterceptHandler().emit(record)
+        else:
+            logger.bind(endpoint=uri).opt(exception=error).error(
+                "Redis error at {}", uri
+            )
+
+    output = console.getvalue() + path.read_text(encoding="utf-8")
+    assert password not in output and password not in str(records)
+    clean = f"{scheme}://:***@host:6379/3?socket_timeout=2"
+    stored = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert stored["record"]["extra"]["endpoint"] == clean
+    assert "RuntimeError" in stored["text"] and "Traceback" in stored["text"]
+    assert clean in stored["text"]
+
+
+@pytest.mark.parametrize("standard", [False, True])
+@pytest.mark.parametrize("config_available", [True, False])
+@pytest.mark.parametrize(
+    ("uri", "clean"),
+    [
+        ("redis://:opaque redis password@host/3", "redis://:***@host/3"),
+        ("redis://:opaque\tredis password@host/3", "redis://:***@host/3"),
+        ("redis://:opaque%40redis%3Apw@host/3", "redis://:***@host/3"),
+        ("redis://:opaque%2540redis%253Apw@host/3", "redis://:***@host/3"),
+        (
+            "unix://:opaque-redis-password@/tmp/redis.sock",
+            "unix://:***@/tmp/redis.sock",
+        ),
+        (
+            "redis://host:6379/3?password=opaque+redis%40pw",
+            "redis://host:6379/3?password=***",
+        ),
+    ],
+)
+def test_configured_redis_password_echo_is_redacted(
+    secured_logs, monkeypatch, uri, clean, config_available, standard
+):
+    console, path, records = secured_logs
+    if config_available:
+        monkeypatch.setattr(get_settings(), "redis_url", uri)
+    else:
+
+        def unavailable_settings():
+            raise ValueError("configuration could not be loaded")
+
+        monkeypatch.setattr("backend.core.config.get_settings", unavailable_settings)
+        monkeypatch.setenv("REDIS_URL", uri)
+
+    # Use the installed driver's interpretation without making a Redis connection.
+    password = parse_url(uri)["password"]
+    encoded_password = quote(password, safe="")
+    try:
+        raise RuntimeError(f"Redis rejected {password}; endpoint {uri}")
+    except RuntimeError as error:
+        fields = {
+            "endpoint": uri,
+            "echoed_value": password,
+            "encoded_value": encoded_password,
+            "encoded_endpoint": quote(uri, safe=""),
+            "diagnostic": "connection failed at host:6379 database 3",
+        }
+        if standard:
+            record = logging.LogRecord(
+                "redis.client",
+                logging.ERROR,
+                "/redis/client.py",
+                42,
+                "Redis connection failed",
+                (),
+                sys.exc_info(),
+                func="connect",
+            )
+            record.__dict__.update(fields)
+            InterceptHandler().emit(record)
+        else:
+            logger.bind(**fields).opt(exception=error).error("Redis connection failed")
+
+    output = console.getvalue() + path.read_text(encoding="utf-8") + str(records)
+    assert password not in output and encoded_password not in output
+    stored = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    extra = stored["record"]["extra"]
+    assert extra["endpoint"] == clean
+    assert extra["echoed_value"] == "***" and extra["encoded_value"] == "***"
+    assert "***" in extra["encoded_endpoint"]
+    assert extra["diagnostic"] == "connection failed at host:6379 database 3"
+    assert "Traceback" in extra["exception"] and "RuntimeError" in extra["exception"]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "redis://host:6379/3?name=user@example.test#details@support",
+        "rediss://[::1]:6380/3?socket_timeout=2",
+        "redis://default@host/3",
+        "redis://default:@host/3",
+        "redis://app@team:@host/3",
+    ],
+)
+def test_configured_redis_url_without_password_keeps_diagnostics(
+    secured_logs, monkeypatch, uri
+):
+    console, path, records = secured_logs
+    monkeypatch.setattr(get_settings(), "redis_url", uri)
+    logger.bind(endpoint=uri).info("Redis connection to {}", uri)
+    assert records[-1]["extra"]["endpoint"] == uri
+    assert uri in console.getvalue()
+    assert uri in path.read_text(encoding="utf-8")
+
+
+def test_invalid_redis_config_does_not_break_error_logging(secured_logs, monkeypatch):
+    console, path, records = secured_logs
+    uri = "redis://:opaque-invalid-redis-password@[broken"
+    monkeypatch.setattr(get_settings(), "redis_url", uri)
+    try:
+        parse_url(uri)
+    except ValueError as error:
+        logger.bind(endpoint=uri).opt(exception=error).error(
+            "Invalid Redis URL: {}", uri
+        )
+    output = console.getvalue() + path.read_text(encoding="utf-8") + str(records)
+    assert "opaque-invalid-redis-password" not in output
+    assert records[-1]["extra"]["endpoint"] == "redis://:***@[broken"
+    assert "ValueError: Invalid IPv6 URL" in output
 
 
 def test_structured_redaction_is_recursive_and_does_not_mutate():
