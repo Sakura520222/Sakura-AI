@@ -8,7 +8,7 @@ from contextlib import suppress
 from datetime import timedelta
 
 from loguru import logger
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import exists, func, or_, select, update
 
 from backend.core.config import get_settings
 from backend.core.time_service import now_utc
@@ -64,10 +64,25 @@ def _routed(event, user_id, endpoint, rules):
 class EventDeliveryMixin:
     async def materialize_event(self, db, event_id):
         """Create inbox/delivery rows and finish fanout in one transaction."""
+        identity = (await db.execute(select(NotificationEvent.resource_type, NotificationEvent.resource_id).where(
+            NotificationEvent.id == event_id
+        ))).one_or_none()
+        if identity is None:
+            await db.rollback()
+            return False
+        resource_cache = {}
+        if identity.resource_type == "announcement":
+            # Publication/withdrawal already lock lifecycle before event rows.
+            # Keep the same order and retain the lock through fanout commit.
+            announcement = (await db.execute(select(Announcement).where(
+                Announcement.id == int(identity.resource_id)
+            ).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+            resource_cache[(Announcement, int(identity.resource_id))] = announcement
         event = (await db.execute(select(NotificationEvent).where(
             NotificationEvent.id == event_id, *_due(NotificationEvent, now_utc())
         ).with_for_update(skip_locked=True))).scalar_one_or_none()
         if not event or event.status != "pending":
+            await db.rollback()
             return False
         token = secrets.token_urlsafe(32)
         now = now_utc()
@@ -79,9 +94,8 @@ class EventDeliveryMixin:
             return False
         # This claim is deliberately held in the fanout transaction. A crash
         # rolls back both ownership and rows. Unique keys protect replays.
-        ids, rules = await candidates(db, event)
+        ids, _ = await candidates(db, event, include_rules=False)
         count = 0
-        resource_cache = {}  # Only this fanout transaction; sends/history read afresh.
         batch_size = max(1, int(get_settings().notification_batch_size))
         for offset in range(0, len(ids), batch_size):
             batch_ids = ids[offset:offset + batch_size]
@@ -89,6 +103,7 @@ class EventDeliveryMixin:
                 TelegramUser.id.in_(batch_ids)
             ).order_by(TelegramUser.id).with_for_update(read=True)
               .execution_options(populate_existing=True))).scalars().all()
+            rules = await routing_rules(db, event, user_ids=[user.id for user in users], locked=True)
             allowed_users = []
             for user in users:
                 if await resource_allowed(db, user, event, resource_cache=resource_cache):
@@ -200,6 +215,27 @@ class EventDeliveryMixin:
         ).values(next_available_at=until))
         await db.commit()
 
+    async def _reserve_event_start(self, db, row_id, token, channel):
+        """Drain short SQL budget waits while preserving a bounded lease."""
+        loop = asyncio.get_running_loop()
+        window = max(0.0, min(float(get_settings().notification_poll_seconds), self._delivery_lease_seconds() / 3))
+        deadline = loop.time() + window
+        while True:
+            available = await self._reserve_provider_start(db, channel)
+            if available is None:
+                return True, None
+            delay = max(0.001, (available - now_utc()).total_seconds())
+            if loop.time() + delay >= deadline:
+                return True, available
+            renewed = await db.execute(update(NotificationDelivery).where(
+                NotificationDelivery.id == row_id, NotificationDelivery.status == "pending",
+                NotificationDelivery.claim_token == token, NotificationDelivery.claim_until > now_utc(),
+            ).values(claim_until=now_utc() + timedelta(seconds=self._delivery_lease_seconds())))
+            await db.commit()
+            if renewed.rowcount != 1:
+                return False, None
+            await asyncio.sleep(delay)
+
     async def _event_heartbeat(self, fallback, row_id, token, stop):
         interval = max(0.1, self._delivery_lease_seconds() / 3)
         while not stop.is_set():
@@ -246,6 +282,7 @@ class EventDeliveryMixin:
         db.expunge(delivery)
         db.expunge(event)
         attempts = delivery.attempts
+        attempt_started = False
         settings = get_settings()
         try:
             if attempts >= settings.notification_retry_max_attempts:
@@ -267,7 +304,9 @@ class EventDeliveryMixin:
                 if cooldown and cooldown > now_utc():
                     return await self._finish_event_delivery(db, row_id, token,
                         status="pending", error_category="rate_limit", next_retry_at=cooldown)
-                available = await self._reserve_provider_start(db, delivery.channel)
+                owned, available = await self._reserve_event_start(db, row_id, token, delivery.channel)
+                if not owned:
+                    return False
                 if available:
                     return await self._finish_event_delivery(db, row_id, token,
                         status="pending", error_category="rate_limit", next_retry_at=available)
@@ -299,6 +338,7 @@ class EventDeliveryMixin:
                 return False
             await db.commit()
             attempts += 1
+            attempt_started = True
             stop = asyncio.Event()
             heartbeat = asyncio.create_task(self._event_heartbeat(db, row_id, token, stop))
             try:
@@ -313,7 +353,7 @@ class EventDeliveryMixin:
                 heartbeat.cancel()
                 with suppress(asyncio.CancelledError):
                     await heartbeat
-            return await self._finish_event_delivery(db, row_id, token, status="sent", attempts=attempts,
+            return await self._finish_event_delivery(db, row_id, token, status="sent",
                 sent_at=now_utc(), next_retry_at=None, error_message=None, error_category=None)
         except asyncio.CancelledError:
             # Unacknowledged sends retain their lease and may be redelivered after expiry.
@@ -330,9 +370,20 @@ class EventDeliveryMixin:
                 category, terminal = exc.category, True
             elif isinstance(exc, NotificationProviderRetryAfter):
                 category, retry_after = "rate_limit", exc.retry_after
-            elif attempts:
+            elif attempt_started:
                 category = "transient"
-            terminal = terminal or attempts >= settings.notification_retry_max_attempts
+            # The SQL fence owns attempt accounting, including an ambiguous
+            # commit acknowledgement. Never overwrite it from a stale copy.
+            persisted = (await db.execute(select(NotificationDelivery.attempts).where(
+                NotificationDelivery.id == row_id, NotificationDelivery.claim_token == token
+            ))).scalar_one_or_none()
+            if persisted is None:
+                await db.rollback()
+                return False
+            attempts = int(persisted)
+            cause_category = category
+            if not terminal and attempts >= settings.notification_retry_max_attempts:
+                category, terminal = "exhausted", True
             delay = max(1.0, retry_after, settings.notification_retry_initial_delay_seconds *
                         settings.notification_retry_backoff_factor ** max(0, attempts - 1))
             if retry_after:
@@ -344,9 +395,9 @@ class EventDeliveryMixin:
                 await self._record_provider_cooldown(db, budget_key, delay)
             logger.warning("Notification delivery failure: delivery={}, category={}", row_id, category)
             return await self._finish_event_delivery(db, row_id, token,
-                status="failed" if terminal else "pending", attempts=attempts, error_category=category,
+                status="failed" if terminal else "pending", error_category=category,
                 # Persist only normalized classes, never a URL/response body/provider secret.
-                error_message=f"Notification delivery: {category}",
+                error_message=f"Notification delivery: {category}" + (f" ({cause_category})" if category != cause_category else ""),
                 next_retry_at=None if terminal else now_utc() + timedelta(seconds=delay))
 
     async def dispatch_event(self, event_id):
@@ -357,9 +408,7 @@ class EventDeliveryMixin:
             return outcome
         async with factory() as db:
             await self.materialize_event(db, event_id)
-            ids = (await db.execute(select(NotificationDelivery.id).where(
-                NotificationDelivery.event_id == event_id, *_due(NotificationDelivery, now_utc())
-            ).limit(get_settings().notification_batch_size))).scalars().all()
+            ids = (await db.execute(self._event_delivery_query(event_id))).scalars().all()
         for row_id in ids:
             async with factory() as db:
                 acknowledged = await self.deliver_event_row(db, row_id)
@@ -374,7 +423,17 @@ class EventDeliveryMixin:
                     outcome["skipped"] += 1
         return outcome
 
-    async def recover_events_once(self):
+    @staticmethod
+    def _event_delivery_query(event_id=None):
+        conditions = [NotificationDelivery.event_id.is_not(None), *_due(NotificationDelivery, now_utc())]
+        if event_id is not None:
+            conditions.append(NotificationDelivery.event_id == event_id)
+        ranked = select(NotificationDelivery.id, func.row_number().over(
+            partition_by=func.lower(NotificationDelivery.channel), order_by=NotificationDelivery.id
+        ).label("position")).where(*conditions).subquery()
+        return select(ranked.c.id).order_by(ranked.c.position, ranked.c.id).limit(get_settings().notification_batch_size)
+
+    async def _recover_legacy_once(self):
         from backend.models import database as db_module
         factory = db_module.async_session
         if factory is None:
@@ -390,6 +449,27 @@ class EventDeliveryMixin:
                     await self.broadcast_announcement(db, announcement_id, expected_version=version, pending_only=True)
             except Exception:
                 logger.warning("Legacy notification recovery unavailable: announcement={}", announcement_id)
+
+    async def _next_recovery_delay(self, factory):
+        delay = max(0.001, float(get_settings().notification_poll_seconds))
+        now = now_utc()
+        async with factory() as db:
+            for model in (NotificationEvent, NotificationDelivery):
+                deadline = (await db.execute(select(func.min(model.next_retry_at)).where(
+                    model.status == "pending", model.next_retry_at > now,
+                    or_(model.claim_token.is_(None), model.claim_until.is_(None), model.claim_until <= now),
+                ))).scalar_one_or_none()
+                if deadline:
+                    delay = min(delay, max(0.001, (deadline - now).total_seconds()))
+        return delay
+
+    async def recover_events_once(self, *, include_legacy=True):
+        from backend.models import database as db_module
+        factory = db_module.async_session
+        if factory is None:
+            return float(get_settings().notification_poll_seconds)
+        if include_legacy:
+            await self._recover_legacy_once()
         async with factory() as db:
             events = (await db.execute(select(NotificationEvent.id).where(
                 *_due(NotificationEvent, now_utc())
@@ -406,27 +486,47 @@ class EventDeliveryMixin:
                         next_retry_at=now_utc() + timedelta(seconds=get_settings().notification_poll_seconds)))
                     await db.commit()
         async with factory() as db:
-            rows = (await db.execute(select(NotificationDelivery.id).where(
-                NotificationDelivery.event_id.is_not(None), *_due(NotificationDelivery, now_utc())
-            ).order_by(NotificationDelivery.id).limit(get_settings().notification_batch_size))).scalars().all()
+            rows = (await db.execute(self._event_delivery_query())).scalars().all()
         semaphore = asyncio.Semaphore(get_settings().notification_max_concurrency)
+        progressed = False
 
         async def send(row_id):
+            nonlocal progressed
             async with semaphore:
                 try:
                     async with factory() as db:
-                        await self.deliver_event_row(db, row_id)
+                        if await self.deliver_event_row(db, row_id):
+                            progressed = True
                 except Exception:
                     logger.warning("Notification worker unavailable: delivery={}", row_id)
 
         await asyncio.gather(*(send(row_id) for row_id in rows))
+        if progressed and len(rows) >= get_settings().notification_batch_size:
+            return 0.001  # Continue draining a real backlog, never failed claims.
+        return await self._next_recovery_delay(factory)
 
-    async def run_event_dispatcher(self):
+    async def _run_legacy_recovery(self):
         while True:
             try:
-                await self.recover_events_once()
+                await self._recover_legacy_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("Notification recovery unavailable; retrying after poll interval")
-            await asyncio.sleep(get_settings().notification_poll_seconds)
+                logger.warning("Legacy notification recovery unavailable; retrying after poll interval")
+            await asyncio.sleep(max(0.001, float(get_settings().notification_poll_seconds)))
+
+    async def run_event_dispatcher(self):
+        # Both bounded lanes belong to the same supervised task and use the
+        # same SQL claims/provider budgets. Legacy network waits cannot stop
+        # the business-event lane; cancellation joins both lanes.
+        async with asyncio.TaskGroup() as group:
+            group.create_task(self._run_legacy_recovery())
+            while True:
+                delay = max(0.001, float(get_settings().notification_poll_seconds))
+                try:
+                    delay = await self.recover_events_once(include_legacy=False)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("Notification recovery unavailable; retrying after poll interval")
+                await asyncio.sleep(delay)

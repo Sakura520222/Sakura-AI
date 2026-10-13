@@ -14,7 +14,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text, UniqueConstrai
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base, utc_now
-from backend.models.time_types import UTCDateTime
+from backend.models.time_types import UTCDateTime, UTCMicrosecondDateTime
 
 
 class AnnouncementType(str, enum.Enum):
@@ -128,7 +128,7 @@ class NotificationDelivery(Base):
     error_category = Column(String(50), nullable=True)
     attempts = Column(Integer, default=0, nullable=False)
     sent_at = Column(UTCDateTime, nullable=True)
-    next_retry_at = Column(UTCDateTime, nullable=True)
+    next_retry_at = Column(UTCMicrosecondDateTime, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     publication_version = Column(Integer, default=1, nullable=False, index=True)

@@ -152,7 +152,7 @@ async def resource_allowed(db, user, event, *, resource_cache=None):
 
         row = await _resource_record(db, AgentTeamTask, event.resource_id, resource_cache)
         return bool(row and (user.role in {"admin", "super_admin"}
-            or (user.github_username and row.started_by == user.github_username)))
+            or (user.github_username and (row.started_by or "").casefold() == user.github_username.casefold())))
     if event.resource_type == "announcement":
         row = await _resource_record(db, Announcement, event.resource_id, resource_cache)
         return bool(row and row.status == "published" and str(row.publication_version) == event.run_key)
@@ -182,25 +182,32 @@ async def resource_allowed(db, user, event, *, resource_cache=None):
     return event.audience == "admins" or user.id in json.loads(event.recipients_json)
 
 
-async def routing_rules(db, event, *, user_ids=None):
-    """Filter event families/scopes in SQL and group targets once per user.
-
-    An empty target set still denotes explicit preferences: disabled or
-    nonmatching scoped rules must suppress legacy/default routing.
-    """
+def _rule_scope_matches(event):
     rule = NotificationSubscription
-    matches = and_(
+    return and_(
         rule.enabled.is_(True),
         or_(rule.repo_name.is_(None), rule.repo_name == "", func.lower(rule.repo_name) == (event.repo_name or "").casefold()),
         or_(rule.resource_type.is_(None), rule.resource_type == "", rule.resource_type == event.resource_type),
         or_(rule.resource_id.is_(None), rule.resource_id == "", rule.resource_id == event.resource_id),
         case(SEVERITIES, value=rule.min_severity, else_=0) <= SEVERITIES.get(event.severity, 0),
     )
-    query = select(rule.user_id, rule.endpoint_id, matches).distinct().where(
+
+
+async def routing_rules(db, event, *, user_ids=None, locked=False):
+    """Group routing; empty targets still suppress compatibility defaults."""
+    rule = NotificationSubscription
+    matches = _rule_scope_matches(event)
+    query = select(rule.user_id, rule.endpoint_id, matches).where(
         rule.event_type.in_(["*", event.event_type, event.event_type.split(".")[0] + ".*"])
     )
     if user_ids is not None:
         query = query.where(rule.user_id.in_(user_ids))
+    if locked:
+        # Locking reads also see the current committed rules under MySQL's
+        # REPEATABLE READ. The caller has already locked the recipient rows.
+        query = query.order_by(rule.id).with_for_update(read=True)
+    else:
+        query = query.distinct()
     grouped = {}
     for user_id, endpoint_id, matched in (await db.execute(query)).all():
         targets = grouped.setdefault(user_id, set())
@@ -209,19 +216,26 @@ async def routing_rules(db, event, *, user_ids=None):
     return grouped
 
 
-async def candidates(db, event):
+async def candidates(db, event, *, include_rules=True):
     """Map legacy subscriptions via internal user IDs, preserving opt-in."""
     ids = set(json.loads(event.recipients_json))
-    rules = await routing_rules(db, event)
-    ids.update(user_id for user_id, targets in rules.items() if targets)
+    rules = None
+    if include_rules:
+        rules = await routing_rules(db, event)
+        ids.update(user_id for user_id, targets in rules.items() if targets)
+    else:
+        ids.update((await db.execute(select(NotificationSubscription.user_id).distinct().where(
+            NotificationSubscription.event_type.in_(["*", event.event_type, event.event_type.split(".")[0] + ".*"]),
+            _rule_scope_matches(event),
+        ))).scalars().all())
     if event.repo_name:
         owners = await db.execute(select(TelegramUser.id).where(
-            TelegramUser.github_username == event.repo_name.split("/")[0]
+            func.lower(TelegramUser.github_username) == event.repo_name.split("/")[0].casefold()
         ))
         ids.update(owners.scalars().all())
         legacy = await db.execute(select(TelegramUser.id).join(
             UserRepoSubscription, TelegramUser.telegram_id == UserRepoSubscription.telegram_id
-        ).where(UserRepoSubscription.repo_name == event.repo_name))
+        ).where(func.lower(UserRepoSubscription.repo_name) == event.repo_name.casefold()))
         ids.update(legacy.scalars().all())
     if event.audience in {"all", "admins"}:
         query = select(TelegramUser.id).where(TelegramUser.is_active.is_(True))

@@ -469,12 +469,11 @@ notification_registry = default_notification_registry()
 
 def _safe_error_message(exc: BaseException) -> str:
     """Bound and redact provider errors before persisting them."""
-    value = str(exc).replace("\x00", " ").strip()
+    from backend.core.log_sanitizer import sanitize_exception_text
+
     settings = get_settings()
-    for secret_name in ("smtp_password", "telegram_bot_token"):
-        secret = getattr(settings, secret_name, None)
-        if secret:
-            value = value.replace(str(secret), "***")
+    value = sanitize_exception_text(exc, secrets=[getattr(settings, key, "") for key in
+        ("smtp_password", "telegram_bot_token")]).replace("\x00", " ").strip()
     return value[:1000] or type(exc).__name__
 
 

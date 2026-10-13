@@ -21,6 +21,13 @@ def upgrade_notification_schema(conn):
         if getattr(deadline["type"], "fsp", None) != 6:
             conn.execute(text("ALTER TABLE notification_provider_budgets MODIFY COLUMN next_available_at DATETIME(6) NOT NULL"))
             changed = True
+    if conn.dialect.name in {"mysql", "mariadb"}:
+        for name in ("notification_deliveries", "notification_events"):
+            if inspector.has_table(name):
+                retry = next((col for col in inspector.get_columns(name) if col["name"] == "next_retry_at"), None)
+                if retry and getattr(retry["type"], "fsp", None) != 6:
+                    conn.execute(text(f"ALTER TABLE {name} MODIFY COLUMN next_retry_at DATETIME(6) NULL"))
+                    changed = True
     if not inspector.has_table(table_name):
         return changed
     columns = {col["name"]: col for col in inspector.get_columns(table_name)}

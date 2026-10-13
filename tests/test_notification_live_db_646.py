@@ -13,12 +13,19 @@ from backend.core.config import get_settings
 from backend.models import Base
 from backend.models import database as db_module
 from backend.models.agent_team_models import AgentTeamTask
-from backend.models.announcement_models import NotificationDelivery
+from backend.models.announcement_models import (
+    Announcement,
+    AnnouncementDeliveryHistory,
+    AnnouncementPublicationHistory,
+    AnnouncementRead,
+    NotificationDelivery,
+)
 from backend.models.database import IssueAnalysis, UserConfig, WebUIConfig
 from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.notification_models import (
     NotificationAudit,
     NotificationEvent,
+    NotificationLockoutRound,
     NotificationSubscription,
 )
 from backend.models.telegram_models import (
@@ -60,7 +67,8 @@ async def live_db(monkeypatch):
         "agent_team_tasks",
     }
     table_names.update(model.__tablename__ for model in (
-        UserConfig, WebUIConfig, UserIdentity, UserRecoveryCode, UserWebAuthnCredential, NotificationAudit
+        UserConfig, WebUIConfig, UserIdentity, UserRecoveryCode, UserWebAuthnCredential, NotificationAudit,
+        NotificationLockoutRound, AnnouncementPublicationHistory, AnnouncementDeliveryHistory, AnnouncementRead
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
@@ -90,11 +98,16 @@ async def test_live_database_concurrent_producers_share_event(live_db):
     async def produce():
         async with live_db() as db:
             item = await emit_event(db, event_type="review.completed", resource_type="review", resource_id=1,
-                run_key="1", title="Completed", content="Ready", repo_name="alice/repo", recipient_ids=[1])
+                run_key="1", title="Completed", content="Ready", repo_name="ALICE/repo", recipient_ids=[])
             await db.commit()
             return item.id
     ids = await asyncio.gather(*(produce() for _ in range(4)))
     assert len(set(ids)) == 1
+    async with live_db() as db:
+        from backend.services.notification_events import candidates
+
+        item = await db.get(NotificationEvent, ids[0])
+        assert (await candidates(db, item))[0] == [1]
 
 
 @pytest.mark.asyncio
@@ -367,9 +380,21 @@ async def test_live_endpoint_disable_serializes_with_fanout_and_fences_old_rows(
 
 @pytest.mark.asyncio
 async def test_live_subscription_write_serializes_with_fanout_without_lock_inversion(live_db, monkeypatch):
+    from backend.services import notification_dispatch
+
     entered, release = asyncio.Event(), asyncio.Event()
     dispatcher = NotificationService(NotificationProviderRegistry({}))
     original = dispatcher._materialize_recipient
+    original_candidates = notification_dispatch.candidates
+
+    async def change_before_user_lock(*args, **kwargs):
+        result = await original_candidates(*args, **kwargs)
+        async with live_db() as db:
+            await save_subscription(db, 1, {"event_type": "review.*", "endpoint_id": None,
+                "enabled": True, "min_severity": "info"})
+        return result
+
+    monkeypatch.setattr(notification_dispatch, "candidates", change_before_user_lock)
 
     async def pause(*args):
         entered.set()
@@ -404,3 +429,66 @@ async def test_live_subscription_write_serializes_with_fanout_without_lock_inver
         await asyncio.wait_for(fanout, 10)
         if writer is not None:
             await asyncio.wait_for(writer, 10)
+    async with live_db() as db:
+        from backend.models.notification_models import UserNotification
+
+        assert (await db.execute(select(UserNotification.user_id))).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_live_lockout_rounds_and_withdrawal_have_durable_boundaries(live_db, monkeypatch):
+    from datetime import timedelta
+
+    from backend.core.time_service import now_utc
+    from backend.services.announcement_service import withdraw_announcement
+    from backend.services.notification_business import (
+        emit_mfa_lockout_event,
+        reset_mfa_lockout_round,
+    )
+
+    started = now_utc()
+    async def lock():
+        async with live_db() as db:
+            item = await emit_mfa_lockout_event(db, 1, started, 60)
+            await db.commit()
+            return item.id
+    assert len(set(await asyncio.gather(*(lock() for _ in range(3))))) == 1
+    async with live_db() as db:
+        await reset_mfa_lockout_round(db, 1, started + timedelta(seconds=1))
+        assert await emit_mfa_lockout_event(db, 1, started, 60) is None
+        await emit_mfa_lockout_event(db, 1, started + timedelta(seconds=2), 60)
+        db.add(Announcement(id=646, title="Publication", content="Body", status="published", publication_version=1))
+        await db.commit()
+        item = await emit_event(db, event_type="announcement.published", resource_type="announcement",
+            resource_id=646, run_key="1", title="Publication", content="Body", audience="all")
+        await db.commit()
+        event_id = item.id
+    entered, release = asyncio.Event(), asyncio.Event()
+    dispatcher = NotificationService(NotificationProviderRegistry({}))
+    original = dispatcher._materialize_recipient
+    async def pause(*args):
+        entered.set()
+        await release.wait()
+        return await original(*args)
+    monkeypatch.setattr(dispatcher, "_materialize_recipient", pause)
+    async def fanout():
+        async with live_db() as db:
+            await dispatcher.materialize_event(db, event_id)
+    async def withdraw():
+        async with live_db() as db:
+            await withdraw_announcement(db, 646)
+    worker = asyncio.create_task(fanout())
+    withdrawal = None
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        withdrawal = asyncio.create_task(withdraw())
+        await asyncio.sleep(0.1)
+        assert not withdrawal.done()
+    finally:
+        release.set()
+        await worker
+        if withdrawal is not None:
+            await withdrawal
+    async with live_db() as db:
+        assert len((await db.execute(select(NotificationEvent).where(NotificationEvent.event_type == "security.lockout"))).scalars().all()) == 2
+        assert (await db.execute(select(AnnouncementDeliveryHistory).where(AnnouncementDeliveryHistory.event_id == event_id))).scalar_one().source_delivery_id is not None
