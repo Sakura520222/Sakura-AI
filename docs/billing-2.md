@@ -564,6 +564,18 @@ Paddle adjustment.created 的 pending_approval 与后续 approved/rejected 共�
 或来源矛盾继续待核对。锁竞争中被跳过的行由现有 payment-events replay 入口
 在锁释放后关闭，不再次请求退款或要求猜测原始证据。
 
+Stripe 的 `refund.created` 中 `pending`/`requires_action` 同样按原生退款 ID
+与 PaymentIntent 关联；`refund.updated`、`refund.failed`、`charge.refund.updated`
+或完整 `charge.refunded` 中的终态证据核对成功后，关闭匹配的旧待核对回执。
+支持终态先到及多笔原生退款的累计通知；失败/取消不会产生退款流水，已成功
+退款与后续失败证据冲突时继续待核对。原始接收和人工审核证据保持不变，
+仅追加 `superseded` 审计。协议见 [Stripe Refunds](https://docs.stripe.com/api/refunds)
+及 [事件类型](https://docs.stripe.com/api/events/types)。
+
+同一用户重复兑换多次可用兑换码时，以 MySQL 当前锁定读读取已有兑换记录；
+并发唯一键冲突通过保存点撤回失败请求的新订单与已占用次数，再读取并返回
+赢家订单，不重复发放 Credits，也不回滚调用方的其他事务变更。
+
 用户订单的删除操作改为隐藏列表记录，保留购买快照、支付日志、退款流水和
 永久发票指纹。已隐藏订单仍参与回调、退款和审计；不能借清理页面释放发票身份。
 
