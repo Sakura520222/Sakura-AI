@@ -256,8 +256,25 @@ def test_windows_token_is_private_before_write_and_after_rotation(
         ctypes.c_void_p,
     ]
     advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
     kernel.LocalFree.argtypes = [ctypes.c_void_p]
     kernel.LocalFree.restype = ctypes.c_void_p
+
+    def as_sddl(security):
+        sddl = wintypes.LPWSTR()
+        try:
+            assert advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                security, 1, 5, ctypes.byref(sddl), None
+            )
+            return sddl.value
+        finally:
+            kernel.LocalFree(sddl)
 
     def descriptor(fd):
         security = ctypes.c_void_p()
@@ -272,14 +289,9 @@ def test_windows_token_is_private_before_write_and_after_rotation(
             ctypes.byref(security),
         )
         assert result == 0
-        sddl = wintypes.LPWSTR()
         try:
-            assert advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                security, 1, 5, ctypes.byref(sddl), None
-            )
-            return sddl.value
+            return as_sddl(security)
         finally:
-            kernel.LocalFree(sddl)
             kernel.LocalFree(security)
 
     identity = subprocess.run(
@@ -291,7 +303,16 @@ def test_windows_token_is_private_before_write_and_after_rotation(
     import csv
 
     sid = next(csv.reader([identity.strip()]))[1]
-    expected = f"O:{sid}D:P(A;;FA;;;{sid})"
+    # Windows may serialize the very same SID as LA/SY or another well-known
+    # alias. Normalize both representations while retaining exact ACL equality.
+    expected_descriptor = ctypes.c_void_p()
+    assert advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"O:{sid}D:P(A;;FA;;;{sid})", 1, ctypes.byref(expected_descriptor), None
+    )
+    try:
+        expected = as_sddl(expected_descriptor)
+    finally:
+        kernel.LocalFree(expected_descriptor)
     observed = []
     original_fdopen = os.fdopen
 
