@@ -647,6 +647,7 @@ class ObservedModelSender:
                 context_revision_id=None,
             ),
         )
+        update_log_context(attempt_id=int(attempt.id) if attempt is not None else None)
         try:
             response = await create()
         except asyncio.CancelledError:

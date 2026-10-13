@@ -285,7 +285,7 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`。验证 Token 每次启动重新生成，保存在本机私有文件 `config/.setup-token`，完成 Setup 后删除，不写入日志。`start.sh` 在部署成功后读取并显示 Token；也可由本机管理员执行：
+首次启动后访问 `http://localhost:8000/setup`。验证 Token 每次启动重新生成，保存在本机私有文件 `config/.setup-token`，完成 Setup 后立即失效并尝试删除，不写入日志。文件被占用无法删除时会记录清理警告，不影响配置完成或重启。`start.sh` 在部署成功后读取并显示 Token；也可由本机管理员执行：
 
 ```bash
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
@@ -381,7 +381,7 @@ uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pyte
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新结构化运行日志
 ```
 
-首次启动进入 Bootstrap 模式，终端会打印一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
+首次启动进入 Bootstrap 模式，用 `cat config/.setup-token`（PowerShell：`Get-Content config/.setup-token`）读取一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。Token 不写入终端日志；Windows 文件使用仅允许进程用户访问的受保护 ACL，需使用支持 ACL 的文件系统（如 NTFS）。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务），默认 Token 位于 `.sakura/dev/.setup-token`；指定 `SAKURA_CONNECTION_CONFIG_PATH` 时位于对应连接配置旁。
 
 > 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、JSON Lines 格式、50 MB 轮转、保留 10 天并限制历史总量 500 MiB；控制台和文件共同遵循 WebUI 的日志级别，写入前统一脱敏）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
