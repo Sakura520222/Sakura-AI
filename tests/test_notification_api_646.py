@@ -1,5 +1,6 @@
 """HTTP authorization, CSRF, inbox ownership and credential regression tests."""
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -15,10 +16,11 @@ from backend.services.secret_crypto_service import decrypt_secret
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
+    get_user_preferences,
     require_auth,
     require_super_admin,
 )
-from backend.webui.routes import notifications
+from backend.webui.routes import agent_team, notifications
 from tests.test_notification_events_646 import AsyncDB
 from tests.test_notification_events_646 import event_db as _event_db
 
@@ -33,6 +35,7 @@ def client(api_db):
     engine, _ = api_db
     app = FastAPI()
     app.include_router(notifications.router)
+    app.include_router(agent_team.router)
 
     async def database():
         async with AsyncDB(engine) as db:
@@ -47,6 +50,7 @@ def client(api_db):
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[require_auth] = identity
     app.dependency_overrides[require_super_admin] = admin
+    app.dependency_overrides[get_user_preferences] = lambda: {"language": "en", "theme": "light", "items_per_page": 20}
     with TestClient(app) as http:
         http.headers["X-CSRF-Token"] = get_csrf_serializer().dumps({})
         yield http
@@ -121,6 +125,74 @@ def test_test_send_is_persisted_and_unbind_does_not_change_role(client, api_db):
     with Session(api_db[0]) as db:
         assert db.get(NotificationEndpoint, 1).enabled is False
         assert db.get(TelegramUser, 1).role == "user"
+
+
+def test_business_history_excludes_announcements_before_pagination(client, api_db):
+    with Session(api_db[0]) as db:
+        # Older business notifications must fill both pages even when recent
+        # announcement fanout has inserted more than a whole page of inbox rows.
+        for number in range(1, 166):
+            announcement = number > 55
+            event = NotificationEvent(id=f"event-{number}", dedup_key=f"{number:064x}",
+                event_type="announcement.published" if announcement else "review.completed",
+                resource_type="announcement" if announcement else "review", resource_id=str(number),
+                repo_name=None if announcement else "alice/repo", run_key="1", title=f"Item {number}", content="Done")
+            db.add(event)
+            db.flush()
+            db.add(UserNotification(id=number, user_id=1, event_id=event.id))
+        db.commit()
+    first = client.get("/notifications/history").json()
+    second = client.get("/notifications/history?page=2").json()
+    third = client.get("/notifications/history?page=3").json()
+    assert [item["id"] for item in first["items"]] == list(range(55, 5, -1))
+    assert first["has_next"] is True
+    assert [item["id"] for item in second["items"]] == list(range(5, 0, -1))
+    assert second["has_next"] is False
+    assert third["items"] == [] and third["has_next"] is False
+    assert first["unread"] == second["unread"] == 55
+
+
+def test_scan_history_and_unread_use_current_admin_scope(client, api_db):
+    from backend.models.telegram_models import TelegramUser
+
+    with Session(api_db[0]) as db:
+        event = NotificationEvent(id="scan-event", dedup_key="f" * 64,
+            event_type="scan.completed", resource_type="scan", resource_id="10", repo_name="alice/repo",
+            run_key="1", title="Private scan", content="Scan summary")
+        db.add(event)
+        db.flush()
+        db.add(UserNotification(user_id=1, event_id=event.id))  # historical delivery before the ACL fix
+        db.commit()
+    assert client.get("/notifications/history").json() == {"items": [], "has_next": False, "page": 1, "unread": 0}
+    with Session(api_db[0]) as db:
+        db.get(TelegramUser, 1).role = "admin"
+        db.commit()
+    response = client.get("/notifications/history").json()
+    assert [item["title"] for item in response["items"]] == ["Private scan"]
+    assert response["unread"] == 1
+
+
+def test_agent_notification_page_selects_only_an_authorized_task(client, api_db, monkeypatch):
+    from backend.models.agent_team_models import AgentTeamTask
+    from backend.services.telegram_service import TelegramService
+
+    monkeypatch.setattr(TelegramService, "get_user_quota_info", AsyncMock(return_value=None))
+    monkeypatch.setattr(agent_team, "_load_workspace_summary", lambda: {
+        "root": "test-workspace", "count": 0, "total_size_bytes": 0, "total_size_label": "0 B",
+    })
+    with Session(api_db[0]) as db:
+        db.add_all([AgentTeamTask(id=number, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
+            source_type="manual_issue", title=f"Agent task {number}", status="completed", started_by=initiator)
+            for number, initiator in [(10, "alice"), (11, "bob")]])
+        db.commit()
+    response = client.get("/agent-team/?task_id=10")
+    assert response.status_code == 200
+    assert "this.selectTask(10)" in response.text
+    assert "Agent task 10" in client.get("/agent-team/tasks/10/detail-fragment").text
+    assert client.get("/agent-team/?task_id=11").status_code == 403
+    assert client.get("/agent-team/?task_id=999").status_code == 404
+    assert client.get("/agent-team/?task_id=0").status_code == 422
+    assert client.get("/agent-team/").status_code == 200
 
 
 def test_email_verification_uses_hashed_code_and_persistent_attempt_limit(client, api_db, monkeypatch):
