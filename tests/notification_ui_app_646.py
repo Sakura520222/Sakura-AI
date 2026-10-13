@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from backend.core.config import get_settings
 from backend.models import Base
 from backend.models import database as db_module
 from backend.models.agent_team_models import AgentTeamTask
@@ -23,12 +24,19 @@ from backend.webui.deps import (
     require_auth,
     require_super_admin,
 )
-from backend.webui.routes import agent_team, announcements, notifications, settings
+from backend.webui.routes import (
+    agent_team,
+    announcements,
+    notifications,
+    settings,
+    system_config,
+)
 from tests.test_notification_events_646 import AsyncDB
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 Base.metadata.create_all(engine)
 db_module.async_session = lambda: AsyncDB(engine)
+get_settings().notification_webhook_enabled = False
 
 
 async def seed():
@@ -51,6 +59,7 @@ app.include_router(settings.router)
 app.include_router(announcements.router)
 app.include_router(notifications.router)
 app.include_router(agent_team.router)
+app.include_router(system_config.router)
 
 
 async def identity():

@@ -52,6 +52,8 @@ MFA lockout state resides in Redis, so its lockout and the SQL event cannot shar
 
 ## States, recovery and throttling
 
+Scan status/outbox commit failures propagate after the worker's bounded database retries; a rolled-back terminal state is never treated as a successful update. Quota denial is already determined by its atomic SQL update: optional exhaustion-alert insert/commit failures roll back, emit a sanitized warning, and preserve the original denial reason and Agent orphan-task cleanup. The reason is captured before rollback can expire the user object. System configuration renders effective booleans as `true`/`false` and preserves numeric zero, so saving unrelated settings cannot silently enable environment-disabled Webhooks.
+
 | Category | Outcome |
 |---|---|
 | `ineligible` | Cancelled/skipped; no external send and no automatic reactivation |

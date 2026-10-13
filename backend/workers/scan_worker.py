@@ -1069,3 +1069,4 @@ class ScanWorker:
             await _db_retry(_update)
         except Exception as e:
             logger.error(f"更新扫描记录失败 (scan_id={scan_id}): {e}")
+            raise
