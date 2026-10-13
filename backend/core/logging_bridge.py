@@ -15,7 +15,12 @@ from types import SimpleNamespace
 from loguru import logger
 
 from backend.core.log_context import CORRELATION_FIELDS, get_log_context
-from backend.core.log_sanitizer import sanitize, sanitize_text, sensitive_key
+from backend.core.log_sanitizer import (
+    sanitize,
+    sanitize_text,
+    sensitive_key,
+    url_password_secrets,
+)
 from backend.core.time_service import SystemClock, get_time_service
 
 APP_LOG_DIRECTORY = Path("logs")
@@ -242,11 +247,16 @@ def _configured_secrets() -> tuple[str, ...]:
     except Exception:
         # Logging the original startup/configuration error must remain possible.
         values = os.environ
-    return tuple(
-        value
-        for key, value in values.items()
-        if sensitive_key(key) and isinstance(value, str) and value
-    )
+    secrets = []
+    for key, value in values.items():
+        if not isinstance(value, str) or not value:
+            continue
+        if sensitive_key(key):
+            secrets.append(value)
+        elif key.lower() == "redis_url":
+            # Redis errors may echo only the decoded password, or an encoded URI.
+            secrets.extend(url_password_secrets(value))
+    return tuple(secrets)
 
 
 def _sanitize_record(record: dict) -> None:

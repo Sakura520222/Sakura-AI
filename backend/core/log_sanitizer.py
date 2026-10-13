@@ -11,7 +11,7 @@ import re
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from urllib.parse import quote_plus, unquote
+from urllib.parse import parse_qsl, quote_plus, unquote, urlsplit
 
 REDACTED = "***"
 _scoped_secrets: ContextVar[tuple[str, ...]] = ContextVar("log_secrets", default=())
@@ -35,7 +35,9 @@ _HEADER = re.compile(
     r"(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:\s*)[^\r\n]+"
 )
 _QUERY = re.compile(r"([?&#;])([^\s?&#;=]+)=([^\s&#;\"'<>]*)")
-_USERINFO = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s@]+:)[^@/\s]+(@)", re.IGNORECASE)
+# Empty usernames are valid (notably Redis). The last @ within the authority
+# separates the password from the host; query/fragment @ characters do not.
+_USERINFO = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s?#]*:)[^/\s?#]+(@)", re.IGNORECASE)
 _BOT = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 _AUTH = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _TOKEN = re.compile(
@@ -59,6 +61,29 @@ def sensitive_key(key: object) -> bool:
     if normalized.endswith(("_tokens", "_token_count", "_token_limit")):
         return False
     return bool(_KEY.search(normalized))
+
+
+def url_password_secrets(value: str) -> tuple[str, ...]:
+    """Collect raw/decoded connection passwords while retaining endpoint diagnostics."""
+    authority = re.split(r"[/?#]", value.partition("://")[2], maxsplit=1)[0]
+    userinfo, separator, _ = authority.rpartition("@")
+    raw_password = userinfo.partition(":")[2] if separator else ""
+    # Keep the raw form too: urllib removes literal tabs/newlines from URLs.
+    passwords = [raw_password, unquote(raw_password)]
+    raw_query = value.partition("#")[0].partition("?")[2]
+    passwords.extend(item for key, item in parse_qsl(raw_query) if key == "password")
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        # A malformed configured URI must not prevent logging its original error.
+        pass
+    else:
+        if parsed.password:
+            passwords.extend((parsed.password, unquote(parsed.password)))
+        passwords.extend(
+            item for key, item in parse_qsl(parsed.query) if key == "password"
+        )
+    return tuple(dict.fromkeys(password for password in passwords if password))
 
 
 @contextmanager
