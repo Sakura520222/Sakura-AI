@@ -47,3 +47,14 @@ def test_delivery_schema_compiles_for_production_dialects():
     from backend.models.notification_models import NotificationProviderBudget
 
     assert "DATETIME(6)" in str(CreateTable(NotificationProviderBudget.__table__).compile(dialect=mysql.dialect()))
+
+
+def test_agent_round_upgrade_preserves_legacy_tasks_without_replay():
+    engine = create_engine("sqlite://")
+    with engine.begin() as db:
+        db.execute(text("CREATE TABLE agent_team_tasks (id INTEGER PRIMARY KEY, status VARCHAR(50))"))
+        db.execute(text("INSERT INTO agent_team_tasks VALUES (7, 'completed')"))
+        assert upgrade_notification_schema(db) is True
+        assert upgrade_notification_schema(db) is False
+        assert tuple(db.execute(text("SELECT id, status, execution_round FROM agent_team_tasks")).one()) == (7, "completed", 0)
+    engine.dispose()
