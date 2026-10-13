@@ -329,13 +329,15 @@ async def test_business_outbox_shares_commit_and_rollback(event_db, kind):
     engine, _ = event_db
     classes = {"review": PRReview, "issue": IssueAnalysis, "scan": RepoScan, "agent": AgentTeamTask}
     values = {"repo_owner": "alice", "repo_name": "repo", "status": "completed"}
-    values.update({"review": {"pr_id": 500, "strategy": "comprehensive", "author": "alice"},
-        "issue": {"issue_number": 42, "analysis_version": 1, "author": "alice", "title": "Issue"},
+    values.update({"review": {"pr_id": 500, "strategy": "comprehensive", "author": "ALIce"},
+        "issue": {"issue_number": 42, "analysis_version": 1, "author": "ALIce", "title": "Issue"},
         "scan": {"trigger_type": "manual"}, "agent": {"repo_full_name": "alice/repo", "source_type": "manual_issue", "title": "Task"}}[kind])
     with Session(engine, info={"notification_outbox": True}) as db:
         db.add(classes[kind](**values))
         db.flush()
         assert db.query(NotificationEvent).one().event_type == f"{kind}.completed"
+        if kind in {"review", "issue"}:
+            assert db.query(NotificationEvent).one().recipients_json == "[1]"
         db.rollback()
     with Session(engine) as db:
         assert db.query(NotificationEvent).count() == 0
@@ -454,6 +456,28 @@ async def test_permanent_credentials_fail_once_and_rate_limit_is_durable(event_d
         assert row.error_category == "credential"
         assert row.attempts == 1
         assert row.next_retry_at is None
+
+    # Short budget contention must drain this cycle, not sleep for a whole
+    # poll; a final transient failure is exhausted, not permanently transient.
+    settings.notification_rate_limit_seconds = 0.01
+    settings.notification_poll_seconds = 0.3
+    settings.notification_retry_max_attempts = 1
+    provider = Provider()
+    provider.fail = {2}
+    dispatcher = service(provider)
+    async with AsyncDB(engine) as db:
+        item = await make_event(db, run="drain")
+        await db.commit()
+        await dispatcher.materialize_event(db, item.id)
+        event_id = item.id
+    await dispatcher.recover_events_once()
+    with Session(engine) as db:
+        rows = db.query(NotificationDelivery).filter_by(event_id=event_id).all()
+        assert all(row.status != "pending" for row in rows)
+        failed = next(row for row in rows if row.endpoint_id == 2)
+        assert failed.error_category == "exhausted" and failed.attempts == 1
+        assert "transient" in failed.error_message
+    assert provider.sent == [1]
 
 
 @pytest.mark.asyncio

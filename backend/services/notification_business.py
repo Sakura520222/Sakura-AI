@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import timedelta
 
-from sqlalchemy import event, inspect, select
+from sqlalchemy import event, func, inspect, select
 from sqlalchemy.orm import Session
 
 from backend.core.time_service import now_utc
@@ -125,12 +126,59 @@ async def emit_task_event(db, kind, record, outcome, *, refresh=False):
             await db.refresh(record)
         initiator = _task_initiator(kind, record)
         ids = (await db.execute(select(TelegramUser.id).where(
-            TelegramUser.github_username == initiator
+            func.lower(TelegramUser.github_username) == initiator.casefold()
         ))).scalars().all() if initiator else []
         return await emit_event(db, **_task_event_values(kind, record, outcome, ids))
     except BaseException:
         await db.rollback()
         raise
+
+
+async def _lockout_round(db, user_id):
+    from backend.models.notification_models import NotificationLockoutRound
+    from backend.services.notification_events import insert_once
+
+    await insert_once(db, NotificationLockoutRound, {"user_id": user_id, "generation": 0}, ["user_id"])
+    return (await db.execute(select(NotificationLockoutRound).where(
+        NotificationLockoutRound.user_id == user_id
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+
+
+async def emit_mfa_lockout_event(db, user_id, started_at, ttl):
+    """Collapse fallback/Redis callbacks into one persisted lock generation."""
+    from backend.services.notification_events import emit_event
+
+    current = await _lockout_round(db, user_id)
+    if current.reset_at and started_at <= current.reset_at:
+        return None  # A successful reset has superseded this delayed callback.
+    if current.active_until is None or started_at >= current.active_until:
+        current.generation += 1
+        current.started_at = started_at
+    current.latest_started_at = max(current.latest_started_at, started_at) if current.latest_started_at else started_at
+    until = started_at + timedelta(seconds=ttl)
+    current.active_until = max(current.active_until, until) if current.active_until else until
+    return await emit_event(db, event_type="security.lockout", resource_type="user", resource_id=user_id,
+        run_key=f"lock:{current.generation}", title="Account temporarily locked",
+        content="Repeated MFA verification failures locked your account.", recipient_ids=[user_id],
+        sensitive=True, severity="warning", detail_url="/settings/")
+
+
+async def reset_mfa_lockout_round(db, user_id, reset_at):
+    current = await _lockout_round(db, user_id)
+    if current.reset_at and reset_at <= current.reset_at:
+        return
+    current.reset_at = reset_at
+    if current.active_until and current.latest_started_at > reset_at:
+        if current.started_at <= reset_at:
+            # The primary reset completed before a new lock, but its SQL
+            # update arrived later. Split the window instead of losing the
+            # new alert or invalidating the new lock's deduplication round.
+            latest = current.latest_started_at
+            ttl = (current.active_until - latest).total_seconds()
+            current.active_until = None
+            await emit_mfa_lockout_event(db, user_id, latest, ttl)
+    else:
+        current.active_until = None
 
 
 def _assign_agent_execution_round(session, record, status):
@@ -214,7 +262,7 @@ def _persist(session, *_):
         if action == "task":
             initiator = _task_initiator(kind, record)
             ids = conn.execute(select(TelegramUser.id).where(
-                TelegramUser.github_username == initiator
+                func.lower(TelegramUser.github_username) == initiator.casefold()
             )).scalars().all() if initiator else []
             _insert_event(conn, **_task_event_values(kind, record, outcome, ids))
         elif action == "personal":

@@ -36,7 +36,10 @@ from backend.models.telegram_models import (
     UserRole,
     UserWebAuthnCredential,
 )
-from backend.services.identity_service import create_user_and_flush
+from backend.services.identity_service import (
+    create_user_and_flush,
+    retire_notification_endpoint,
+)
 from backend.services.two_factor_service import (
     TwoFactorNotConfiguredError,
     decrypt_totp_secret,
@@ -1858,7 +1861,7 @@ async def _restore_user_backup(
                         int(target.id), []
                     ):
                         if existing_endpoint.address not in enabled_addresses:
-                            existing_endpoint.enabled = False
+                            await retire_notification_endpoint(db, existing_endpoint)
                 for endpoint in endpoints:
                     key = (
                         endpoint["provider"].casefold(),
@@ -1900,6 +1903,8 @@ async def _restore_user_backup(
                     else:
                         existing_endpoint.verified = bool(endpoint.get("verified", False))
                         existing_endpoint.enabled = restored_enabled
+                        if not restored_enabled:
+                            await retire_notification_endpoint(db, existing_endpoint)
                         existing_endpoint.metadata_json = metadata_value
                         if endpoint.get("name") is not None:
                             existing_endpoint.name = endpoint["name"]
