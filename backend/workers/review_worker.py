@@ -43,7 +43,9 @@ from backend.services.billing_context import (
     billable_platform,
     context_for_payload,
     enrich_billing_source,
+    get_billing_context,
     get_pending_billing_failure,
+    mark_registered_operation,
 )
 from backend.services.check_run_service import (
     CheckRunService,
@@ -62,6 +64,11 @@ from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
 from backend.services.service_execution_capacity import (
     ServiceExecutionLimiter,
     current_service_execution_failure,
+)
+from backend.services.webhook_review_dispatch import (
+    delivery_worker,
+    detached_delivery_context,
+    prepare_delivery_dispatch,
 )
 
 settings = get_settings()
@@ -577,6 +584,7 @@ class ReviewWorker:
         return result
 
     @task_logging("pr")
+    @delivery_worker("pr_review")
     @billable_payload("pr_review")
     @_review_capacity_cleanup
     async def process_review_task(
@@ -586,6 +594,8 @@ class ReviewWorker:
         deadline: AITaskDeadline | None = None,
     ) -> str:
         """处理审查任务"""
+        if pr_info.get("_delivery_receipt_id"):
+            mark_registered_operation(get_billing_context().operation_id)
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
@@ -2578,6 +2588,14 @@ def get_worker() -> ReviewWorker:
     return _worker_instance
 
 
+async def cancel_review_task_durably(task_key):
+    from backend.services.webhook_review_dispatch import cancel_queued_deliveries
+
+    cancelled = get_worker().cancel_task(task_key)
+    persisted = await cancel_queued_deliveries("pr_review", task_key)
+    return cancelled or bool(persisted)
+
+
 async def submit_review_task(pr_info: dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）
 
@@ -2585,14 +2603,18 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
         str: Task key in format "owner/repo#pr_number", used for cancellation.
              The internal task_id (short UUID) is logged by process_review_task.
     """
-    ensure_background_admission("review")
     context_for_payload(pr_info, "pr_review")
+    await prepare_delivery_dispatch(pr_info, "pr_review")
+    ensure_background_admission("review")
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
 
     # 直接异步执行，并保留后台任务引用避免被 GC。
-    task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    with detached_delivery_context():
+        task = asyncio.create_task(
+            _run_review_task_with_timeout(worker, pr_info, task_key)
+        )
     try:
         register_background_task(task, "review")
     except DatabaseResetRuntimeAdmissionClosed:
@@ -2737,6 +2759,10 @@ async def _drain_pending_incremental(pr_info: dict[str, Any]) -> bool:
         # Pre-migration rows without an execution carrier have explicit platform
         # ownership. New rows reuse the exact already admitted financial identity.
         drain_pr_info.pop("billing_context", None)
+        # The increment has its own durable queue fence and admitted operation.
+        # Never reuse the previous full review's delivery claim.
+        drain_pr_info.pop("_delivery_receipt_id", None)
+        drain_pr_info.pop("_delivery_owner_token", None)
         queue_identity = ",".join(str(item.id) for item in pending)
         drain_pr_info["delivery_id"] = (
             getattr(pending[0], "delivery_id", None)

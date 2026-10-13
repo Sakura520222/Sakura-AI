@@ -63,11 +63,15 @@ async def run(args):
                             {
                                 "id": row.id,
                                 "order_id": row.order_id,
+                                "idempotency_key": row.idempotency_key,
                                 "status": row.status,
                                 "amount_cents": row.amount_cents,
                                 "currency": row.currency,
+                                "gateway_amount_cents": row.gateway_amount_cents,
+                                "gateway_currency": row.gateway_currency,
                                 "credit_hold_units": row.credit_hold_units,
                                 "provider_refund_id": row.provider_refund_id,
+                                "refund_request": row.evidence.get("refund_request"),
                             }
                             for row in attempts
                         ],
@@ -87,7 +91,10 @@ def main():
     parser.add_argument(
         "--evidence", help="Provider dashboard/request evidence; exclude credentials"
     )
-    parser.add_argument("--provider-refund-id")
+    parser.add_argument(
+        "--provider-refund-id",
+        help="Native provider refund/adjustment ID (Alipay uses out_request_no); external refunded outcomes require this or a saved native ID",
+    )
     parser.add_argument("--limit", type=int, default=100)
     args = parser.parse_args()
     if args.apply and not all(

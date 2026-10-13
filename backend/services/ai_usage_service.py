@@ -2,7 +2,7 @@
 
 Business result tables only describe the primary PR/Issue/Agent/Scan result and
 therefore cannot account for summaries, label selection, compression, RAG, or
-other auxiliary model calls.  This module writes one idempotent ledger row at
+other auxiliary model calls.  This module writes idempotent ledger facts at
 the common provider-success boundaries and exposes safe aggregate queries for
 the dashboard.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Self
@@ -766,7 +767,7 @@ async def finish_ai_call(
     usage_complete: bool = True,
     session_factory: Any = None,
 ) -> bool:
-    """Atomically persist actual usage with the attempt's recoverable result state."""
+    """Persist actual Usage or linked late evidence while preserving reviewed fees."""
     context = get_billing_context()
     if context is None:
         return await record_ai_usage_best_effort(
@@ -793,7 +794,10 @@ async def finish_ai_call(
         if context.user_id is not None:
             raise RuntimeError("Billing database is unavailable")
         return False
-    from backend.models.billing_models import BillingCallAttempt
+    from backend.models.billing_models import (
+        BillingCallAttempt,
+        BillingReconciliationEvent,
+    )
     from backend.services.billing_service import BillingService
 
     counters = extract_provider_usage(usage, input_only=input_only)
@@ -833,6 +837,25 @@ async def finish_ai_call(
         outcome=outcome,
         occurred_at=now_utc(),
     )
+    immutable_fields = (
+        "user_id",
+        "operation_id",
+        "feature",
+        "provider_id",
+        "account_id",
+        "model_id",
+        "call_kind",
+        "protocol_family",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "cache_creation_tokens",
+        "reasoning_tokens",
+        "usage_reported",
+        "usage_complete",
+        "outcome",
+        "billing_units",
+    )
     async with session_factory() as db:
         service = BillingService(db)
         # Match settlement/reconciliation lock ordering: wallet -> operation ->
@@ -843,6 +866,7 @@ async def finish_ai_call(
                 select(BillingCallAttempt)
                 .where(BillingCallAttempt.call_id == call_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if attempt is None or attempt.operation_id != context.operation_id:
@@ -856,32 +880,100 @@ async def finish_ai_call(
             or attempt.call_kind != call_kind
         ):
             raise RuntimeError("Billing attempt routing does not match its result")
+        reviewed_event = None
+        if attempt.usage_record_key and attempt.usage_record_key != key:
+            selected = (
+                await db.execute(
+                    select(AIUsageRecord)
+                    .where(AIUsageRecord.record_key == attempt.usage_record_key)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if selected is not None and selected.role == "reconciliation":
+                if (
+                    selected.actual_call_id is not None
+                    or selected.operation_id != context.operation_id
+                    or selected.user_id != context.user_id
+                    or selected.provider_id != provider_id
+                    or selected.account_id != account_id
+                    or selected.model_id != model_id
+                    or selected.call_kind != call_kind
+                ):
+                    raise RuntimeError("Reviewed Usage does not match its call attempt")
+                events = (
+                    (
+                        await db.execute(
+                            select(BillingReconciliationEvent)
+                            .where(BillingReconciliationEvent.call_id == call_id)
+                            .with_for_update()
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                reviewed_event = next(
+                    (
+                        event
+                        for event in events
+                        if selected.record_key
+                        == "reconciled:"
+                        + hashlib.sha256(
+                            f"{call_id}:{event.event_key}".encode()
+                        ).hexdigest()
+                    ),
+                    None,
+                )
+                if reviewed_event is None:
+                    raise RuntimeError("Reviewed Usage has no matching audit event")
+                original = (
+                    await db.execute(
+                        select(AIUsageRecord)
+                        .where(AIUsageRecord.actual_call_id == call_id)
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                # The actual-call uniqueness constraint preserves any earlier
+                # unknown/partial result. Append late facts with an explicit link
+                # to the reviewed selection; they never become another request.
+                digest = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "call_id": call_id,
+                            "selected_usage_record_key": selected.record_key,
+                            "result": {
+                                field: getattr(record, field)
+                                for field in immutable_fields
+                            },
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                key = record.record_key = f"late-actual:{digest}"
+                record.actual_call_id = None
+                record.role = "late_actual"
+                record.source = {
+                    **dict(context.source),
+                    "billing_late_result": {
+                        "call_id": call_id,
+                        "reconciliation_event_id": reviewed_event.id,
+                        "selected_usage_record_key": selected.record_key,
+                        "original_usage_record_key": original.record_key
+                        if original is not None
+                        else None,
+                    },
+                }
         inserted = await _insert_record(db, record)
         if not inserted:
             existing = (
                 await db.execute(
-                    select(AIUsageRecord).where(AIUsageRecord.record_key == key)
+                    select(AIUsageRecord)
+                    .where(AIUsageRecord.record_key == key)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one()
-            immutable_fields = (
-                "user_id",
-                "operation_id",
-                "feature",
-                "provider_id",
-                "account_id",
-                "model_id",
-                "call_kind",
-                "protocol_family",
-                "input_tokens",
-                "output_tokens",
-                "cached_input_tokens",
-                "cache_creation_tokens",
-                "reasoning_tokens",
-                "usage_reported",
-                "usage_complete",
-                "outcome",
-                "billing_units",
-            )
             if any(
                 getattr(existing, field) != getattr(record, field)
                 for field in immutable_fields
@@ -889,8 +981,8 @@ async def finish_ai_call(
                 raise RuntimeError(
                     "Repeated usage result changed immutable financial intent"
                 )
-        # Duplicate delivery must never downgrade a resolved attempt.
-        if inserted or attempt.usage_record_key is None:
+        # Duplicate or late delivery must never replace a reviewed selection.
+        if reviewed_event is None and (inserted or attempt.usage_record_key is None):
             attempt.usage_record_key = key
             attempt.state = (
                 "usage_known"
@@ -909,6 +1001,14 @@ async def finish_ai_call(
             attempt.updated_at = now_utc()
         await service.settle_operation(context.operation_id)
         await db.commit()
+        if reviewed_event is not None and inserted:
+            logger.warning(
+                "Late AI Usage evidence retained for operator review: "
+                "call_id={}, usage_record_key={}, reconciliation_event_id={}",
+                call_id,
+                key,
+                reviewed_event.id,
+            )
         return inserted
 
 

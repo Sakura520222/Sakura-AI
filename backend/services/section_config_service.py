@@ -88,6 +88,8 @@ SECTION_VALIDATION_CODES = frozenset(
         "number_required",
         "number_range",
         "missing_placeholders",
+        "unknown_placeholders",
+        "invalid_template_format",
         "invalid_option",
         "save_mode",
         "invalid_config",
@@ -226,18 +228,29 @@ def _validate_issue_comment_template(path: str, text: str, default: str) -> None
     allowed = _extract_placeholders(default)
     try:
         fields = _issue_template_fields(text)
-    except ValueError as exc:
-        raise ValueError(f"Issue 模板 {path} 格式无效: {exc}") from exc
+    except ValueError:
+        raise SectionConfigValidationError(
+            f"Issue 模板 {path} 格式无效", path, "invalid_template_format"
+        ) from None
     missing = {"summary", "feasibility"} - fields
     if missing:
-        raise ValueError(f"Issue 模板 {path} 丢失必需占位符: {sorted(missing)}")
+        raise SectionConfigValidationError(
+            f"Issue 模板 {path} 丢失必需占位符: {sorted(missing)}",
+            path,
+            "missing_placeholders",
+            params={"placeholders": ", ".join(sorted(missing))},
+        )
     unknown = fields - allowed
     if unknown:
-        raise ValueError(f"Issue 模板 {path} 包含未知占位符: {sorted(unknown)}")
+        raise SectionConfigValidationError(
+            f"Issue 模板 {path} 包含未知占位符", path, "unknown_placeholders"
+        )
     try:
         text.format(**dict.fromkeys(allowed, ""))
-    except (ValueError, KeyError, IndexError) as exc:
-        raise ValueError(f"Issue 模板 {path} 格式无效: {exc}") from exc
+    except ValueError, KeyError, IndexError:
+        raise SectionConfigValidationError(
+            f"Issue 模板 {path} 格式无效", path, "invalid_template_format"
+        ) from None
 
 
 def _validate_template_placeholders(section_key: str, effective: dict) -> None:

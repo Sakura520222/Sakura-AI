@@ -220,6 +220,7 @@ async def lifespan(app: FastAPI):
         telegram_task = None
         redis_listener_task = None
         app.state.announcement_recovery_task = None
+        app.state.webhook_review_recovery_task = None
         outbox_dispatcher = None
         scan_scheduler = None
         quota_reset_scheduler = None
@@ -349,6 +350,15 @@ async def lifespan(app: FastAPI):
                     register_scan_scheduler(None)
                     create_registered_background_task(
                         config_runtime_sync.run(), "configuration_sync"
+                    )
+                    from backend.services.webhook_review_dispatch import (
+                        resume_queued_deliveries,
+                    )
+
+                    app.state.webhook_review_recovery_task = (
+                        create_registered_background_task(
+                            resume_queued_deliveries(), "webhook.review_recovery"
+                        )
                     )
                     # Telegram is an optional notification provider.  A missing
                     # token must never prevent GitHub OAuth, Passkey, or the

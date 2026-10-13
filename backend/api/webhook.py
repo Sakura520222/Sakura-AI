@@ -537,6 +537,25 @@ async def handle_pull_request_event(
             try:
                 worker = get_worker()
                 cancelled = worker.cancel_task(task_key)
+                from backend.services.webhook_review_dispatch import (
+                    cancel_queued_deliveries,
+                )
+
+                try:
+                    await cancel_queued_deliveries(
+                        "pr_review", task_key, session_factory=get_async_session
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Review cancellation was not persisted: {}", type(exc).__name__
+                    )
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "status": "error",
+                            "reason": "delivery_cancellation_unavailable",
+                        },
+                    )
                 if cancelled:
                     logger.info(f"[webhook] PR closed event: 已取消审查任务 {task_key}")
                 else:
@@ -2047,6 +2066,7 @@ async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
 
+@verified_delivery("issue_analysis", lambda: get_async_session())
 async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /analyze 命令（手动触发 Issue 分析）"""
     try:

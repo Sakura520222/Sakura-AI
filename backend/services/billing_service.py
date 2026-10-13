@@ -6,6 +6,7 @@ External AI/payment requests must run outside these transactions.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import timedelta
 from decimal import Decimal, localcontext
 
@@ -24,6 +25,7 @@ from backend.models.billing_models import (
     BillingNotice,
     BillingOperation,
     BillingPriceProfile,
+    BillingReconciliationEvent,
     BillingReservationEvent,
     BillingTransaction,
     BillingUsageCharge,
@@ -1518,14 +1520,85 @@ class BillingService:
             for attempt in attempts
             if attempt.usage_record_key
         }
+        usage_by_key = {usage.record_key: usage for usage in usages}
+        late_evidence_keys = set()
+        for usage in usages:
+            if usage.role != "late_actual" or usage.actual_call_id is not None:
+                continue
+            reference = (
+                usage.source.get("billing_late_result")
+                if isinstance(usage.source, dict)
+                else None
+            )
+            if not isinstance(reference, dict):
+                continue
+            call_id = reference.get("call_id")
+            event_id = reference.get("reconciliation_event_id")
+            selected_key = reference.get("selected_usage_record_key")
+            original_key = reference.get("original_usage_record_key")
+            if (
+                not isinstance(call_id, str)
+                or isinstance(event_id, bool)
+                or not isinstance(event_id, int)
+                or not isinstance(selected_key, str)
+                or (original_key is not None and not isinstance(original_key, str))
+            ):
+                continue
+            attempt = by_call.get(call_id)
+            selected = usage_by_key.get(selected_key)
+            original = usage_by_key.get(original_key)
+            if (
+                attempt is None
+                or attempt.usage_record_key != selected_key
+                or selected is None
+                or selected.role != "reconciliation"
+                or selected.actual_call_id is not None
+                or (
+                    original_key is not None
+                    and (original is None or original.actual_call_id != call_id)
+                )
+                or any(
+                    getattr(usage, field) != getattr(selected, field)
+                    or getattr(usage, field) != getattr(attempt, field)
+                    for field in (
+                        "operation_id",
+                        "provider_id",
+                        "account_id",
+                        "model_id",
+                        "call_kind",
+                    )
+                )
+                or usage.user_id != operation.user_id
+                or selected.user_id != operation.user_id
+            ):
+                continue
+            event = (
+                await self.session.execute(
+                    select(BillingReconciliationEvent)
+                    .where(BillingReconciliationEvent.id == event_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                event is not None
+                and event.call_id == call_id
+                and selected_key
+                == "reconciled:"
+                + hashlib.sha256(f"{call_id}:{event.event_key}".encode()).hexdigest()
+            ):
+                late_evidence_keys.add(usage.record_key)
         # Reconciliation appends a replacement usage row without deleting the
-        # original unknown/partial evidence. Only the resolved row is priced.
+        # original unknown/partial or linked late evidence. Only the resolved
+        # row is priced; an unverified audit label cannot suppress a real charge.
         usages = [
             usage
             for usage in usages
-            if not usage.actual_call_id
-            or usage.actual_call_id not in by_call
-            or by_call[usage.actual_call_id].usage_record_key == usage.record_key
+            if usage.record_key not in late_evidence_keys
+            and (
+                not usage.actual_call_id
+                or usage.actual_call_id not in by_call
+                or by_call[usage.actual_call_id].usage_record_key == usage.record_key
+            )
         ]
         pending = None
         for usage in usages:
@@ -1848,8 +1921,13 @@ class BillingService:
             from backend.services.pr_review_incremental_recovery import (
                 has_recoverable_incremental_carrier,
             )
+            from backend.services.webhook_review_dispatch import (
+                has_recoverable_review_carrier,
+            )
 
-            if await has_recoverable_incremental_carrier(
+            if await has_recoverable_review_carrier(
+                self.session, operation
+            ) or await has_recoverable_incremental_carrier(
                 self.session, operation.operation_id
             ):
                 # A durable increment waiting for another review is recoverable

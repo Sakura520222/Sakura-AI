@@ -394,6 +394,74 @@ class AlipayGateway(PaymentGateway):
             except ValueError, TypeError, InvalidOperation:
                 normalization_error = "provider_amount_requires_review"
 
+            has_refund = "out_biz_no" in flat_params
+            if "refund_fee" in flat_params:
+                try:
+                    refund_value = Decimal(str(flat_params["refund_fee"]))
+                    has_refund = (
+                        has_refund or not refund_value.is_finite() or refund_value != 0
+                    )
+                except ValueError, TypeError, InvalidOperation:
+                    has_refund = True
+            if has_refund:
+                # Page-pay refund notifications carry a cumulative total. Keep
+                # the native request identity; never turn that total into a delta.
+                refund_total = None
+                reference = ""
+                request_no = flat_params.get("out_biz_no")
+                try:
+                    value = Decimal(str(flat_params.get("refund_fee")))
+                    with localcontext() as context:
+                        context.prec = max(
+                            context.prec, len(value.as_tuple().digits) + 2
+                        )
+                        minor = value * Decimal(100)
+                        if (
+                            not value.is_finite()
+                            or value <= 0
+                            or minor != minor.to_integral_value()
+                            or amount_cents is None
+                            or minor > amount_cents
+                        ):
+                            raise ValueError("Invalid cumulative Alipay refund amount")
+                        refund_total = int(minor)
+                except ValueError, TypeError, InvalidOperation:
+                    normalization_error = "provider_amount_requires_review"
+                try:
+                    reference = self.refund_reference_id(trade_no, request_no)
+                except ValueError:
+                    normalization_error = (
+                        normalization_error or "refund_evidence_incomplete"
+                    )
+                return WebhookEvent(
+                    event_type=WebhookEventType.PAYMENT_REFUNDED,
+                    provider_tx_id=trade_no,
+                    payment_reference_id=trade_no,
+                    order_no=out_trade_no,
+                    currency="CNY",
+                    event_id=flat_params.get("notify_id") or "",
+                    original_amount_cents=amount_cents,
+                    refund_total_cents=refund_total,
+                    refund_items=[
+                        {
+                            "id": reference,
+                            "amount_cents": None,
+                            "currency": "CNY",
+                            "status": "succeeded",
+                        }
+                    ]
+                    if reference
+                    else [],
+                    refund_evidence_complete=False,
+                    normalization_error=normalization_error,
+                    wire_evidence={
+                        "trade_no": trade_no,
+                        "out_request_no": request_no,
+                        "refund_fee": flat_params.get("refund_fee"),
+                        "trade_status": trade_status,
+                    },
+                )
+
             # 交易状态映射
             if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED"):
                 event_type = WebhookEventType.PAYMENT_COMPLETED
@@ -438,6 +506,56 @@ class AlipayGateway(PaymentGateway):
     # 退款
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def refund_reference_id(trade_no: str, request_no: str) -> str:
+        """Qualify out_request_no, which is unique only within its payment trade."""
+        import hashlib
+        import json
+
+        for value in (trade_no, request_no):
+            if (
+                not isinstance(value, str)
+                or not value
+                or value != value.strip()
+                or len(value) > 64  # Alipay's documented trade/request field limits.
+            ):
+                raise ValueError("Alipay refund requires exact trade/request identity")
+        native = json.dumps(
+            [trade_no, request_no], ensure_ascii=True, separators=(",", ":")
+        )
+        return f"alipay:{hashlib.sha256(native.encode()).hexdigest()}"
+
+    @staticmethod
+    def is_refund_reference(value) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 71
+            and value.startswith("alipay:")
+            and all(char in "0123456789abcdef" for char in value[7:])
+        )
+
+    @classmethod
+    def refund_request_evidence(cls, trade_no: str, request_key: str) -> dict:
+        """Record the exact bounded request sent on the wire, including long keys."""
+        import hashlib
+
+        if (
+            not isinstance(request_key, str)
+            or not request_key
+            or request_key != request_key.strip()
+        ):
+            raise ValueError("Alipay refund requires an audited request key")
+        request_no = (
+            request_key
+            if len(request_key) <= 64
+            else hashlib.sha256(request_key.encode()).hexdigest()
+        )
+        return {
+            "trade_no": trade_no,
+            "out_request_no": request_no,
+            "reference_id": cls.refund_reference_id(trade_no, request_no),
+        }
+
     async def refund(
         self,
         provider_tx_id: str,
@@ -450,7 +568,11 @@ class AlipayGateway(PaymentGateway):
 
         biz_content: dict = {"trade_no": provider_tx_id}
         if idempotency_key:
-            biz_content["out_request_no"] = idempotency_key
+            try:
+                request = self.refund_request_evidence(provider_tx_id, idempotency_key)
+            except ValueError as exc:
+                return RefundResult(success=False, error_message=str(exc))
+            biz_content["out_request_no"] = request["out_request_no"]
         if amount_cents is not None:
             biz_content["refund_amount"] = f"{Decimal(amount_cents) / Decimal(100):.2f}"
         if reason:
@@ -477,9 +599,21 @@ class AlipayGateway(PaymentGateway):
             code = result.get("code")
 
             if code == "10000":
+                if result.get("trade_no", provider_tx_id) != provider_tx_id:
+                    return RefundResult(
+                        success=False,
+                        error_message="Alipay refund trade identity mismatch",
+                    )
+                # trade_no is the original payment; it cannot distinguish refunds.
+                # Without out_request_no, Alipay defaults to the merchant order no.
+                request_no = biz_content.get("out_request_no") or result.get(
+                    "out_trade_no"
+                )
                 return RefundResult(
                     success=True,
-                    refund_id=result.get("trade_no", provider_tx_id),
+                    refund_id=self.refund_reference_id(provider_tx_id, request_no)
+                    if request_no
+                    else "",
                     amount_cents=amount_cents or 0,
                     status="succeeded",
                 )

@@ -17,6 +17,8 @@ section_validation:
   number_required: "必须是数值。"
   number_range: "必须在 {minimum} 到 {maximum} 之间。"
   missing_placeholders: "模板缺少必需占位符：{placeholders}。"
+  unknown_placeholders: "模板包含未知占位符，请使用支持的占位符名称。"
+  invalid_template_format: "模板格式无效，请检查花括号、类型转换和格式说明。"
   invalid_option: "请选择以下值之一：{options}。"
   save_mode: "不支持的保存模式，请选择：{options}。"
   invalid_config: "配置节无效，请检查标出的字段。"

@@ -17,6 +17,8 @@ section_validation:
   number_required: "Must be a number."
   number_range: "Must be between {minimum} and {maximum}."
   missing_placeholders: "Required template placeholders are missing: {placeholders}."
+  unknown_placeholders: "Template contains unsupported placeholders. Use the supported placeholder names."
+  invalid_template_format: "Invalid template format. Check braces, conversions, and format specifications."
   invalid_option: "Choose one of: {options}."
   save_mode: "Unsupported save mode. Choose one of: {options}."
   invalid_config: "Invalid section configuration. Check the highlighted fields."

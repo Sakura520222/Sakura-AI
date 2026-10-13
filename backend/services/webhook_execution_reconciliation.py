@@ -3,7 +3,7 @@
 import json
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from backend.core.time_service import now_utc
 from backend.models.admin_action_log import AdminActionLog
@@ -15,6 +15,8 @@ from backend.services.billing_service import BillingError, BillingService
 
 
 async def list_pending_receipts(db, *, limit=100, offset=0):
+    from backend.services.webhook_review_dispatch import DISPATCH_KEY, carrier
+
     if not 1 <= limit <= 1000 or offset < 0:
         raise ValueError("Invalid pagination")
     rows = (
@@ -22,8 +24,14 @@ async def list_pending_receipts(db, *, limit=100, offset=0):
             await db.execute(
                 select(WebhookExecutionReceipt)
                 .where(
-                    WebhookExecutionReceipt.status.in_(
-                        ["processing", "pending_reconciliation", "retryable"]
+                    or_(
+                        WebhookExecutionReceipt.status.in_(
+                            ["processing", "pending_reconciliation", "retryable"]
+                        ),
+                        WebhookExecutionReceipt.response[DISPATCH_KEY][
+                            "state"
+                        ].as_string()
+                        == "queued",
                     )
                 )
                 .order_by(
@@ -45,6 +53,7 @@ async def list_pending_receipts(db, *, limit=100, offset=0):
             "operation_id": row.operation_id,
             "status": row.status,
             "source": row.source,
+            "dispatch_state": carrier(row).get("state") if carrier(row) else None,
         }
         for row in rows
     ]
@@ -76,7 +85,17 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
     ).scalar_one_or_none()
     if receipt is None:
         raise BillingError("Webhook receipt does not exist")
-    if receipt.status == "accepted":
+    from backend.services.webhook_review_dispatch import DISPATCH_KEY, carrier
+
+    dispatch = carrier(receipt)
+    if receipt.status == "accepted" and (
+        dispatch is None
+        or dispatch.get("state") == "terminal"
+        or (
+            resolution == "accepted"
+            and (receipt.response or {}).get("reason") == "operator_verified_handoff"
+        )
+    ):
         return receipt  # Repeating the same operator action has no new effect.
     previous_status = receipt.status
     agent_task = None
@@ -132,6 +151,10 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
     elif resolution == "accepted":
         response = {"status": "accepted", "reason": "operator_verified_handoff"}
     else:
+        if dispatch is not None and dispatch.get("state") == "started":
+            raise BillingError(
+                "Claimed review delivery requires execution reconciliation"
+            )
         if (
             receipt.feature == "agent"
             or (
@@ -197,7 +220,22 @@ async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, r
     # Fence a late original handler acknowledgement after an operator resolves
     # its crashed/unknown window. That handler cannot overwrite the audit result.
     receipt.owner_token = str(uuid4())
-    receipt.response = {**response, "operation_id": receipt.operation_id}
+    receipt.response = {
+        **response,
+        "operation_id": receipt.operation_id,
+        **(
+            {
+                DISPATCH_KEY: {
+                    **dispatch,
+                    "state": "terminal"
+                    if resolution != "accepted"
+                    else dispatch["state"],
+                }
+            }
+            if dispatch
+            else {}
+        ),
+    }
     db.add(
         AdminActionLog(
             admin_id=actor_id,
