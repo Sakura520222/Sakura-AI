@@ -161,6 +161,7 @@ def _assign_agent_execution_round(session, record, status):
 
 def _collect(session, *_):
     if not session.info.get("notification_outbox"):
+        session.info.pop("notification_changes", None)
         return
     from backend.models.agent_team_models import AgentTeamTask
     from backend.models.database import IssueAnalysis, PRReview
@@ -206,7 +207,7 @@ def _collect(session, *_):
 
 def _persist(session, *_):
     changes = session.info.pop("notification_changes", [])
-    if not changes:
+    if not changes or not session.info.get("notification_outbox"):
         return
     conn = session.connection()
     for action, record, kind, outcome in changes:

@@ -1,5 +1,7 @@
 """HTTP authorization, CSRF, inbox ownership and credential regression tests."""
+import asyncio
 import json
+import socket
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,7 +33,11 @@ def api_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def client(api_db):
+def client(api_db, monkeypatch):
+    async def public_dns(_loop, _host, _port, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", public_dns)
     engine, _ = api_db
     app = FastAPI()
     app.include_router(notifications.router)
@@ -88,6 +94,139 @@ def test_webhook_credentials_are_encrypted_and_not_echoed(client, api_db):
     assert client.post("/notifications/endpoints", json={
         "provider": "webhook", "address": "https://127.0.0.1/private", "name": "Unsafe", "signing_secret": secret,
     }).status_code == 400
+
+
+@pytest.mark.parametrize("addresses", [
+    ["10.0.0.1"], ["127.0.0.1"], ["192.0.2.1"], ["169.254.169.254"],
+    ["93.184.216.34", "10.0.0.1"], ["::1"], ["::ffff:93.184.216.34"],
+])
+def test_webhook_creation_rejects_all_unsafe_dns_without_persisting(client, api_db, monkeypatch, addresses):
+    async def dns(_loop, _host, _port, **_kwargs):
+        return [(socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_STREAM,
+            socket.IPPROTO_TCP, "", (ip, 443)) for ip in addresses]
+
+    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", dns)
+    with Session(api_db[0]) as db:
+        before = db.query(NotificationEndpoint).count()
+    response = client.post("/notifications/endpoints", json={"provider": "webhook",
+        "address": "https://example.org/hook", "name": "Unsafe", "signing_secret": "s" * 32})
+    assert response.status_code == 400
+    with Session(api_db[0]) as db:
+        assert db.query(NotificationEndpoint).count() == before
+
+
+def test_webhook_creation_dns_failure_is_retryable_and_bounded(client, api_db, monkeypatch):
+    from backend.services import notification_webhook
+
+    async def blocked(_host):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(notification_webhook, "resolve_public_addresses", blocked)
+    monkeypatch.setattr(notification_webhook.get_settings(), "notification_webhook_timeout_seconds", 0.01)
+    response = client.post("/notifications/endpoints", json={"provider": "webhook",
+        "address": "https://example.org/hook", "name": "DNS unavailable", "signing_secret": "s" * 32})
+    assert response.status_code == 503
+    with Session(api_db[0]) as db:
+        assert db.query(NotificationEndpoint).count() == 2
+
+
+@pytest.mark.asyncio
+async def test_disable_then_enable_does_not_reactivate_pending_or_claimed_deliveries(client, api_db):
+    from backend.core.time_service import now_utc
+    from backend.models.announcement_models import NotificationDelivery
+    from tests.test_notification_events_646 import Provider, make_event, service
+
+    engine, _ = api_db
+    provider = Provider()
+    dispatcher = service(provider)
+    async with AsyncDB(engine) as db:
+        event = await make_event(db)
+        await db.commit()
+        await dispatcher.materialize_event(db, event.id)
+    with Session(engine) as db:
+        pending = db.query(NotificationDelivery).filter_by(endpoint_id=1).one()
+        pending.claim_token, pending.claim_until = "old-lease", now_utc()
+        pending.next_retry_at = now_utc()
+        pending_id = pending.id
+        sent_event = NotificationEvent(id="already-sent", dedup_key="f" * 64,
+            event_type="review.completed", resource_type="review", resource_id="100",
+            run_key="2", title="Sent", content="Done")
+        db.add(sent_event)
+        db.flush()
+        db.add(NotificationDelivery(event_id=sent_event.id, user_id=1, endpoint_id=1,
+            endpoint_key="endpoint:1", channel="email", status="sent", attempts=1))
+        db.commit()
+    assert client.patch("/notifications/endpoints/1", json={"name": "Off", "enabled": False}).status_code == 200
+    assert client.patch("/notifications/endpoints/1", json={"name": "On", "enabled": True}).status_code == 200
+    with Session(engine) as db:
+        row = db.get(NotificationDelivery, pending_id)
+        assert row.status == "cancelled" and row.error_category == "ineligible"
+        assert row.claim_token is row.claim_until is row.next_retry_at is None
+        assert db.query(NotificationDelivery).filter_by(event_id="already-sent").one().status == "sent"
+        other_id = db.query(NotificationDelivery).filter_by(endpoint_id=2).one().id
+    async with AsyncDB(engine) as db:
+        assert await dispatcher.deliver_event_row(db, pending_id) is False
+        assert await dispatcher.deliver_event_row(db, other_id) is True
+    assert provider.sent == [2]
+
+
+@pytest.mark.asyncio
+async def test_retired_telegram_requires_binding_handshake_not_generic_toggle(client, api_db):
+    from backend.services.identity_service import stage_notification_endpoint
+
+    engine, _ = api_db
+    with Session(engine) as db:
+        db.add_all([NotificationEndpoint(id=3, user_id=1, provider="telegram", address="10001", verified=True, enabled=True),
+            NotificationEndpoint(id=4, user_id=1, provider="telegram", address="10002", verified=True, enabled=False)])
+        db.commit()
+    assert client.patch("/notifications/endpoints/4", json={"name": "Old", "enabled": True}).status_code == 409
+    assert client.patch("/notifications/endpoints/3", json={"name": "Current", "enabled": True}).status_code == 200
+    async with AsyncDB(engine) as db:
+        await stage_notification_endpoint(db, 1, "telegram", "10002", verified=True)
+        await db.commit()
+    with Session(engine) as db:
+        assert [row.id for row in db.query(NotificationEndpoint).filter_by(provider="telegram", enabled=True)] == [4]
+
+
+def test_subscription_repeated_posts_upsert_and_repair_existing_duplicates(client, api_db):
+    from backend.models.notification_models import NotificationSubscription
+
+    body = {"event_type": "announcement.*", "repo_name": "ALICE/Repo", "endpoint_id": 1}
+    first = client.post("/notifications/subscriptions", json=body)
+    assert first.status_code == 200
+    first_id = first.json()["id"]
+    assert {client.post("/notifications/subscriptions", json=body).json()["id"] for _ in range(5)} == {first_id}
+    with Session(api_db[0]) as db:
+        db.add(NotificationSubscription(user_id=1, event_type="announcement.*", repo_name="alice/repo",
+            resource_type="", resource_id="", endpoint_id=1))
+        db.commit()
+    changed = client.post("/notifications/subscriptions", json={**body, "enabled": False, "min_severity": "error"})
+    assert changed.status_code == 200 and changed.json()["id"] == first_id
+    with Session(api_db[0]) as db:
+        row = db.query(NotificationSubscription).filter_by(event_type="announcement.*").one()
+        assert row.enabled is False and row.min_severity == "error" and row.repo_name == "ALICE/Repo"
+
+
+@pytest.mark.asyncio
+async def test_user_backup_upload_uses_import_scope_in_an_enabled_application_session(client, api_db):
+    from backend.services.user_backup_service import serialize_user_backup
+    from backend.webui.routes.config import router as config_router
+    from tests.test_notification_import_routing_646 import changed_backup
+
+    client.app.include_router(config_router)
+    client.app.dependency_overrides[require_super_admin] = lambda: {"user_id": 1, "role": "super_admin"}
+    async with AsyncDB(api_db[0]) as db:
+        document = await changed_backup(db)
+    response = client.post("/config/backup/users/import", follow_redirects=False,
+        data={"csrf_token": get_csrf_serializer().dumps({})},
+        files={"backup_file": ("users.json", serialize_user_backup(document), "application/json")})
+    assert response.status_code == 302
+    with Session(api_db[0]) as db:
+        from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
+
+        assert db.get(TelegramUser, 1).role == "admin"
+        assert db.query(UserWebAuthnCredential).count() == 1
+        assert db.query(NotificationEvent).count() == 0
 
 
 @pytest.mark.asyncio

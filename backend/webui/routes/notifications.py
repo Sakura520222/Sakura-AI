@@ -25,13 +25,16 @@ from backend.services.notification_events import (
     resource_allowed,
 )
 from backend.services.notification_preferences import (
+    cancel_endpoint_deliveries,
     create_endpoint,
     endpoint_view,
     owned_endpoint,
+    save_subscription,
     verify_endpoint,
 )
 from backend.services.notification_service import (
     NotificationProviderError,
+    NotificationProviderPermanentError,
     notification_service,
 )
 from backend.services.secret_crypto_service import encrypt_secret
@@ -91,23 +94,29 @@ async def add_endpoint(body: EndpointCreate, user=Depends(require_auth), db=Depe
     except IntegrityError:
         await db.rollback()
         raise HTTPException(409, "Notification address is already bound") from None
-    except (ValueError, NotificationProviderError):
+    except (ValueError, NotificationProviderPermanentError):
         raise HTTPException(400, "Invalid notification endpoint configuration") from None
+    except NotificationProviderError:
+        raise HTTPException(503, "Notification provider unavailable") from None
 
 
 @router.patch("/endpoints/{endpoint_id}", dependencies=[Depends(require_csrf_header)])
 async def update_endpoint(endpoint_id: int, body: EndpointUpdate, user=Depends(require_auth), db=Depends(get_db)):
     try:
-        row = await owned_endpoint(db, int(user["user_id"]), endpoint_id)
+        row = await owned_endpoint(db, int(user["user_id"]), endpoint_id, for_update=True)
     except ValueError:
         raise HTTPException(404, "Notification endpoint not found") from None
-    row.name, row.enabled = body.name, body.enabled
+    if str(row.provider).lower() == "telegram" and body.enabled and not row.enabled:
+        raise HTTPException(409, "Use the existing Telegram binding handshake to activate this endpoint")
     if body.signing_secret is not None:
         secret = body.signing_secret.get_secret_value()
         if str(row.provider).lower() != "webhook" or not 32 <= len(secret) <= 1024:
             raise HTTPException(400, "Invalid endpoint credential")
         row.secret_encrypted = encrypt_secret(secret)
         row.verified = False
+    row.name, row.enabled = body.name, body.enabled
+    if not body.enabled:
+        await cancel_endpoint_deliveries(db, endpoint_id)
     db.add(NotificationAudit(actor_id=int(user["user_id"]), action="endpoint.updated", target_id=str(endpoint_id)))
     await db.commit()
     return endpoint_view(row)
@@ -116,16 +125,13 @@ async def update_endpoint(endpoint_id: int, body: EndpointUpdate, user=Depends(r
 @router.delete("/endpoints/{endpoint_id}", dependencies=[Depends(require_csrf_header)])
 async def remove_endpoint(endpoint_id: int, user=Depends(require_auth), db=Depends(get_db)):
     try:
-        row = await owned_endpoint(db, int(user["user_id"]), endpoint_id)
+        row = await owned_endpoint(db, int(user["user_id"]), endpoint_id, for_update=True)
     except ValueError:
         raise HTTPException(404, "Notification endpoint not found") from None
     # Retain endpoint identity for diagnostic history. No authentication row or
     # role is changed, including the legacy Telegram account mirror.
     row.enabled = False
-    await db.execute(update(NotificationDelivery).where(
-        NotificationDelivery.endpoint_id == endpoint_id, NotificationDelivery.status == "pending"
-    ).values(status="cancelled", error_category="ineligible", next_retry_at=None,
-             claim_token=None, claim_until=None, updated_at=now_utc()))
+    await cancel_endpoint_deliveries(db, endpoint_id)
     db.add(NotificationAudit(actor_id=int(user["user_id"]), action="endpoint.unbound", target_id=str(endpoint_id)))
     await db.commit()
     return {"ok": True}
@@ -186,11 +192,10 @@ async def add_subscription(body: Preference, user=Depends(require_auth), db=Depe
             raise HTTPException(404, "Notification endpoint not found") from None
     # Persisting a preference grants no resource permission. Fanout/send/read
     # independently evaluate the current application resource ACL.
-    row = NotificationSubscription(user_id=int(user["user_id"]), **body.model_dump())
-    db.add(row)
-    await db.flush()
-    db.add(NotificationAudit(actor_id=int(user["user_id"]), action="subscription.created", target_id=str(row.id)))
-    await db.commit()
+    try:
+        row = await save_subscription(db, int(user["user_id"]), body.model_dump())
+    except ValueError:
+        raise HTTPException(404, "Notification user not found") from None
     return {"id": row.id}
 
 
