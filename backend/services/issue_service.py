@@ -358,13 +358,15 @@ class IssueService:
             [IssueAnalysisStatus.PENDING.value, IssueAnalysisStatus.ANALYZING.value]
         )]
         cancelled_records = []
-        if notification_outbox_enabled(db):
+        outbox = notification_outbox_enabled(db)
+        returning = outbox and db.get_bind().dialect.update_returning
+        if outbox and not returning:
             # MySQL lacks UPDATE RETURNING. Lock the active snapshot so each
             # event describes a transition performed by this transaction.
             cancelled_records = (await db.execute(select(IssueAnalysis).where(
                 and_(*active_conditions)
             ).with_for_update())).scalars().all()
-        cancelled_result = await db.execute(
+        cancel_statement = (
             update(IssueAnalysis)
             .where(and_(*active_conditions))
             .values(
@@ -372,6 +374,15 @@ class IssueService:
                 issue_state="closed",
             )
         )
+        if returning:
+            # RETURNING describes the rows actually transitioned, including
+            # tasks inserted after an earlier lifecycle read on PostgreSQL.
+            cancelled_result = await db.execute(cancel_statement.returning(IssueAnalysis))
+            cancelled_records = cancelled_result.scalars().all()
+            cancelled_count = len(cancelled_records)
+        else:
+            cancelled_result = await db.execute(cancel_statement)
+            cancelled_count = int(getattr(cancelled_result, "rowcount", 0) or 0)
         state_result = await db.execute(
             update(IssueAnalysis).where(and_(*identity)).values(issue_state="closed")
         )
@@ -380,7 +391,7 @@ class IssueService:
         await db.commit()
 
         return {
-            "cancelled": int(getattr(cancelled_result, "rowcount", 0) or 0),
+            "cancelled": cancelled_count,
             "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
         }
 
