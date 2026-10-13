@@ -173,7 +173,8 @@ async def test_announcement_fanout_batches_queries_and_shares_transaction_resour
             sql_event.remove(engine, "before_cursor_execute", capture)
     rule_queries = [sql for sql in queries if "FROM notification_subscriptions" in sql]
     endpoint_queries = [sql for sql in queries if "FROM notification_endpoints" in sql]
-    assert len(rule_queries) == 1 and "event_type IN" in rule_queries[0]
+    assert len(rule_queries) <= 1 + math.ceil(total / settings.notification_batch_size)
+    assert all("event_type IN" in sql for sql in rule_queries)
     assert len(endpoint_queries) == math.ceil(total / settings.notification_batch_size)
     assert sum("FROM announcements" in sql for sql in queries) == 1
     with Session(engine) as check:

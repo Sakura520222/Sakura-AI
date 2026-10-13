@@ -1,5 +1,6 @@
 """Channel-independent outbox, per-user inbox, routing and deployment budgets."""
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     ForeignKey,
@@ -34,7 +35,7 @@ class NotificationEvent(Base):
     occurred_at = Column(UTCDateTime, nullable=False, default=utc_now)
     status = Column(String(30), nullable=False, default="pending", index=True)
     error_category = Column(String(50), nullable=True)
-    next_retry_at = Column(UTCDateTime, nullable=True, index=True)
+    next_retry_at = Column(UTCMicrosecondDateTime, nullable=True, index=True)
     claim_token = Column(String(128), nullable=True)
     claim_until = Column(UTCDateTime, nullable=True)
 
@@ -71,6 +72,18 @@ class NotificationProviderBudget(Base):
 
     channel = Column(String(50), primary_key=True)
     next_available_at = Column(UTCMicrosecondDateTime, nullable=False, default=utc_now)
+
+
+class NotificationLockoutRound(Base):
+    """Durable alert identity only; Redis/fallback still enforce MFA locks."""
+    __tablename__ = "notification_lockout_rounds"
+
+    user_id = Column(Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), primary_key=True)
+    generation = Column(BigInteger, nullable=False, default=0)
+    started_at = Column(UTCMicrosecondDateTime, nullable=True)
+    latest_started_at = Column(UTCMicrosecondDateTime, nullable=True)
+    active_until = Column(UTCMicrosecondDateTime, nullable=True)
+    reset_at = Column(UTCMicrosecondDateTime, nullable=True)
 
 
 class NotificationAudit(Base):

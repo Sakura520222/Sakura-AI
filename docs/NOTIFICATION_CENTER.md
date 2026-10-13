@@ -52,6 +52,8 @@ Security, payment, refund and quota types are intrinsically sensitive even if a 
 
 MFA lockout state resides in Redis, so its lockout and the SQL event cannot share one transaction. A failure to persist that alert is logged without undoing the account lock. This does not redesign the existing authentication/lockout system.
 
+`notification_lockout_rounds` stores notification-only generations and reset/window timestamps under a row lock. Concurrent Redis/fallback callbacks share one event identity; successful resets and expired windows admit a new generation, while superseded callbacks are ignored. Redis and the existing fallback still enforce authentication. SQL alert/reset persistence failures remain observable and do not undo primary authentication state. The standard additive migrator creates the table without replaying old alerts.
+
 ## States, recovery and throttling
 
 Scan status/outbox commit failures propagate after the worker's bounded database retries; a rolled-back terminal state is never treated as a successful update. Quota denial is already determined by its atomic SQL update: optional exhaustion-alert insert/commit failures roll back, emit a sanitized warning, and preserve the original denial reason and Agent orphan-task cleanup. The reason is captured before rollback can expire the user object. System configuration renders effective booleans as `true`/`false` and preserves numeric zero, so saving unrelated settings cannot silently enable environment-disabled Webhooks.
@@ -66,6 +68,10 @@ Scan status/outbox commit failures propagate after the worker's bounded database
 | `exhausted` | Terminal failure after the configured attempt budget |
 
 The provider budget table is the deployment-wide start/cooldown authority, with microsecond MySQL precision. Independent services/processes share its atomic update. Webhook Retry-After is endpoint-scoped so one user-controlled receiver cannot pause unrelated destinations; the deployment-wide start interval still applies. Legacy pending announcements use the same budget and Provider registry. In-memory throttling exists only for lightweight compatibility adapters without an application database. The poller does not wait for a legacy active lease or busy-loop on an absent endpoint.
+
+Short provider-budget waits drain inside a bounded, lease-fenced worker. Recovery wakes at the earliest durable retry deadline and selects channels fairly. A bounded child lane of the same supervised dispatcher recovers legacy announcements using the same SQL claims/budgets; its network waits do not block business events. Final attempt-budget failures use `exhausted`, retaining only the normalized cause. Completion/error paths never overwrite SQL attempt counts from detached snapshots. MySQL event/delivery retry deadlines retain microseconds.
+
+Announcement fanout locks lifecycle before event, matching publication/withdrawal ordering and preserving immutable archived outcomes. Routing is reread after each recipient batch is locked, using current locking reads on MySQL REPEATABLE READ. GitHub owner/author/initiator and legacy repository names match case-insensitively. Runtime endpoint retirement, backup restore, OAuth email rotation and Telegram rebinding cancel exact old endpoint queues; binding operations serialize on the user row.
 
 Settings defaults are the only source of defaults. All `notification_*` controls are in `app_config` and the existing system configuration page. Recovery batches, concurrency, polling, timeouts, retry budget/backoff, response size and verification limits are configurable there.
 
