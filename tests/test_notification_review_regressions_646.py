@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.dml import Update
 
 from backend.models.agent_team_models import AgentTeamTask
 from backend.models.announcement_models import NotificationDelivery
@@ -118,6 +119,33 @@ async def test_issue_close_cancels_only_active_owner_scoped_versions(event_db):
         }
         assert db.get(IssueAnalysis, 12).status == "completed"
         assert (db.get(IssueAnalysis, 13).status, db.get(IssueAnalysis, 13).issue_state) == ("analyzing", "open")
+
+
+@pytest.mark.asyncio
+async def test_issue_close_emits_for_every_row_changed_by_the_update(event_db):
+    engine, _ = event_db
+    with Session(engine) as db:
+        db.add(issue())
+        db.commit()
+
+    class InsertBeforeUpdate(AsyncDB):
+        inserted = False
+
+        async def execute(self, statement, *args, **kwargs):
+            if isinstance(statement, Update) and statement.table.name == "issue_analyses" and not self.inserted:
+                self.inserted = True
+                # A new version can become visible between a prior SELECT
+                # snapshot and the bulk write. Test actual SQL-returned rows.
+                self.session.add(issue(11, analysis_version=2))
+                self.session.flush()
+            return await super().execute(statement, *args, **kwargs)
+
+    async with InsertBeforeUpdate(engine, outbox=True) as db:
+        result = await IssueService().mark_issue_closed("alice", "repo", 646, db)
+        assert result["cancelled"] == 2
+    with Session(engine) as db:
+        assert {row.resource_id for row in db.query(NotificationEvent).filter_by(event_type="issue.cancelled")} == {"10", "11"}
+        assert {row.status for row in db.query(IssueAnalysis)} == {"cancelled"}
 
 
 @pytest.mark.asyncio
