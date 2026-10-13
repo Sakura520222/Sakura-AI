@@ -17,6 +17,11 @@ from backend.core.config import (
     get_settings,
     get_user_dynamic_config,
 )
+from backend.core.log_context import (
+    invocation_log_fields,
+    task_logging,
+    update_log_context,
+)
 from backend.core.time_service import now_utc
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -161,8 +166,10 @@ class ScanWorker:
 
         return await _db_retry(_create)
 
+    @task_logging("scan")
     async def process_scan(self, scan_id: int):
         """执行扫描主流程"""
+        update_log_context(task_id=scan_id)
         # Deadline starts before semaphore admission so queueing time is part of
         # the same task budget.  It is soft: only the next AI call is forced to
         # produce a tool-free final response.
@@ -190,6 +197,7 @@ class ScanWorker:
             )
             return None
 
+    @task_logging("scan")
     async def _process_scan_inner(
         self,
         scan_id: int,
@@ -197,6 +205,7 @@ class ScanWorker:
         deadline: AITaskDeadline | None = None,
     ):
         """扫描内部逻辑"""
+        update_log_context(task_id=scan_id)
         from backend.models.database import async_session
 
         # 轮次与 token 均不设上限，由模型自然停止（与 Issue 分析一致）
@@ -250,6 +259,9 @@ class ScanWorker:
 
             # 2. 观测接入（threaded：对话流实时可见；失败降级继续）
             execution = await self._start_threaded_execution(scan_id, repo_name)
+            update_log_context(
+                **invocation_log_fields(getattr(execution, "invocation_context", None))
+            )
 
             # 3. 更新状态为 INDEXING
             await self._update_scan(
