@@ -208,6 +208,7 @@ async def test_live_agent_round_migration_preserves_existing_tasks(live_db):
         assert await conn.run_sync(upgrade_notification_schema) is True
         assert await conn.run_sync(upgrade_notification_schema) is False
         await db.commit()
+
     async with live_db() as db:
         task = await db.get(AgentTeamTask, 646)
         assert (task.status, task.execution_round) == ("completed", 0)
@@ -259,6 +260,15 @@ async def test_live_legacy_unique_key_and_nullability_upgrade(live_db):
         await db.execute(text("ALTER TABLE notification_deliveries ADD CONSTRAINT uq_notification_delivery UNIQUE (announcement_id, user_id, channel)"))
         assert await conn.run_sync(upgrade_notification_schema) is True
         assert await conn.run_sync(upgrade_notification_schema) is False
+        await db.commit()
+
+        # A later fresh schema must still have both uniqueness contracts after
+        # this process has executed ALTER TABLE against the legacy schema.
+        conn = await db.connection()
+        await conn.run_sync(NotificationDelivery.__table__.drop)
+        await conn.run_sync(NotificationDelivery.__table__.create)
+        constraints = await conn.run_sync(lambda connection: inspect(connection).get_unique_constraints("notification_deliveries"))
+        assert {"uq_notification_delivery_target", "uq_notification_event_target"} <= {row["name"] for row in constraints}
         await db.commit()
 
 
