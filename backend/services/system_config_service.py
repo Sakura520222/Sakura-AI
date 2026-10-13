@@ -24,7 +24,7 @@ from backend.core.config import (
     update_settings_field,
 )
 from backend.core.time_service import InvalidTimezoneError, resolve_timezone
-from backend.models.database import AppConfig
+from backend.models.database import AppConfig, _settings_default_to_str
 
 # 敏感键（在页面显示时脱敏）
 SYSTEM_SENSITIVE_KEYS = frozenset(
@@ -430,12 +430,20 @@ class SystemConfigService:
             group_id = group_def["id"]
             items = []
             for key in group_def["keys"]:
-                value = config_map.get(key) or str(getattr(settings, key, "") or "")
+                default_value = getattr(settings, key, None)
+                effective_value = config_map.get(key)
+                if effective_value is None:
+                    effective_value = default_value
+                field_type = _get_field_type(key)
+
+                value = "" if effective_value is None else _settings_default_to_str(effective_value)
+                if field_type is bool:
+                    value = value.lower()
                 is_sensitive = key in SYSTEM_SENSITIVE_KEYS
                 display_value = (
                     mask_sensitive_value(value) if (is_sensitive and value) else value
                 )
-                default_val = str(getattr(settings, key, "") or "")
+                default_val = "" if default_value is None else _settings_default_to_str(default_value)
                 items.append(
                     {
                         "key": key,
@@ -447,7 +455,7 @@ class SystemConfigService:
                         ),
                         "sensitive": is_sensitive,
                         "requires_restart": key in RESTART_REQUIRED_KEYS,
-                        "field_type": _get_field_type(key).__name__,
+                        "field_type": field_type.__name__,
                     }
                 )
             groups.append({"id": group_id, "fields": items})
