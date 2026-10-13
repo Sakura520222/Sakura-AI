@@ -58,7 +58,10 @@ def upgrade_notification_schema(conn):
         keyword = "INDEX" if dialect in {"mysql", "mariadb"} else "CONSTRAINT"
         conn.execute(text(f"ALTER TABLE notification_deliveries DROP {keyword} uq_notification_delivery"))
         changed = True
-    for constraint in NotificationDelivery.__table__.constraints:
+    # AddConstraint marks its constraint as excluded from inline CREATE TABLE.
+    # Never attach that DDL state to the application's shared mapped metadata.
+    target = NotificationDelivery.__table__.to_metadata(MetaData())
+    for constraint in target.constraints:
         if constraint.name and constraint.name.startswith("uq_notification_") and constraint.name not in constraints:
             conn.execute(AddConstraint(constraint))
             changed = True
