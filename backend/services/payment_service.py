@@ -1326,13 +1326,7 @@ class PaymentService:
                     "Partial refunds are disabled by the configured entitlement policy",
                     code="partial_refund_unsupported",
                 )
-            snapshot = order.plan_snapshot
-            if (
-                any(snapshot.get(key, 0) for key in self._plan_quota_values(Plan()))
-                or snapshot.get("rate_limits")
-                or snapshot.get("concurrency_limit")
-                or Decimal(snapshot.get("credit_grant", "0")) <= 0
-            ):
+            if not self._is_credits_only_snapshot(order.plan_snapshot):
                 raise PaymentError(
                     "Partial refunds require a Credits-only purchased snapshot",
                     code="partial_refund_unsupported",
@@ -2522,6 +2516,14 @@ class PaymentService:
             or concurrency_limit < 1
         ):
             raise PaymentError("concurrency_limit must be a positive integer")
+
+    def _is_credits_only_snapshot(self, snapshot: dict) -> bool:
+        return not (
+            any(snapshot.get(key, 0) for key in self._plan_quota_values(Plan()))
+            or snapshot.get("rate_limits")
+            or snapshot.get("concurrency_limit")
+            or Decimal(snapshot.get("credit_grant", "0")) <= 0
+        )
 
     def _snapshot_plan(self, plan: Plan) -> dict:
         self._validate_billing_plan(
