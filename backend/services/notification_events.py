@@ -133,6 +133,16 @@ async def resource_allowed(db, user, event):
         return False
     if event.audience == "admins" and user.role not in {"admin", "super_admin"}:
         return False
+    # These resources have stricter WebUI scopes than generic repositories.
+    # Check them before owner/subscription eligibility can grant access.
+    if event.resource_type == "scan":
+        return user.role in {"admin", "super_admin"}
+    if event.resource_type == "agent":
+        from backend.models.agent_team_models import AgentTeamTask
+
+        row = await db.get(AgentTeamTask, int(event.resource_id), populate_existing=True)
+        return bool(row and (user.role in {"admin", "super_admin"}
+            or (user.github_username and row.started_by == user.github_username)))
     if event.resource_type == "announcement":
         row = await db.get(Announcement, int(event.resource_id), populate_existing=True)
         return bool(row and row.status == "published" and str(row.publication_version) == event.run_key)

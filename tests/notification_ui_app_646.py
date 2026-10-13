@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.models import Base
 from backend.models import database as db_module
+from backend.models.agent_team_models import AgentTeamTask
 from backend.models.identity_models import NotificationEndpoint
 from backend.models.telegram_models import TelegramUser
 from backend.services.notification_events import emit_event
@@ -22,7 +23,7 @@ from backend.webui.deps import (
     require_auth,
     require_super_admin,
 )
-from backend.webui.routes import announcements, notifications, settings
+from backend.webui.routes import agent_team, announcements, notifications, settings
 from tests.test_notification_events_646 import AsyncDB
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -34,6 +35,8 @@ async def seed():
     async with AsyncDB(engine) as db:
         db.add(TelegramUser(id=1, github_username="alice", role="super_admin", is_active=True))
         db.add(NotificationEndpoint(id=1, user_id=1, provider="email", address="alice@example.org", name="Personal email", enabled=True, verified=True))
+        db.add(AgentTeamTask(id=646, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
+            source_type="manual_issue", title="Notification deep link task", status="completed", started_by="alice"))
         await db.commit()
         item = await emit_event(db, event_type="review.completed", resource_type="review", resource_id=646,
             run_key="browser-fixture", title="Sakura-AI PR #646 review completed", content="The review is complete. Open the review to inspect the result.",
@@ -47,6 +50,7 @@ app = FastAPI()
 app.include_router(settings.router)
 app.include_router(announcements.router)
 app.include_router(notifications.router)
+app.include_router(agent_team.router)
 
 
 async def identity():

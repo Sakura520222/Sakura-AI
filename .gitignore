@@ -61,6 +61,7 @@ docker/ssl/
 .coverage
 htmlcov/
 .pytest_cache/
+/test-results/
 
 # Config (contains sensitive database credentials)
 config/connection.json

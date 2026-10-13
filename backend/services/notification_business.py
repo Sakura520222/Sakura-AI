@@ -2,7 +2,7 @@
 
 The application sessionmaker enables this hook explicitly; migrations and
 historical imports do not. No provider is invoked from an ORM transaction.
-Bulk SQL writers must call emit_event explicitly (quota and MFA lockout do).
+Bulk task writers call emit_task_event explicitly before committing.
 """
 from __future__ import annotations
 
@@ -78,6 +78,59 @@ def _task_result_metadata(kind, record, outcome):
     return severity, payload
 
 
+def notification_outbox_enabled(db):
+    """Use the same explicit opt-in for ORM and bulk application writes."""
+    return getattr(db, "info", {}).get("notification_outbox") is True
+
+
+def _task_initiator(kind, record):
+    return record.started_by if kind == "agent" else getattr(record, "author", None)
+
+
+def _task_event_values(kind, record, outcome, recipient_ids):
+    repo = getattr(record, "repo_full_name", None) or record.repo_name
+    if "/" not in repo:
+        repo = f"{record.repo_owner}/{repo}"
+    if kind == "agent":
+        run_key = f"{record.resume_count}:{record.iteration_count}"
+        detail_url = f"/agent-team/?task_id={record.id}"
+    else:
+        run_key = str(getattr(record, "analysis_version", None) or record.id)
+        prefix = {"review": "pr", "issue": "issues", "scan": "scans"}[kind]
+        detail_url = f"/{prefix}/{record.id}"
+    severity, payload = _task_result_metadata(kind, record, outcome)
+    return {"event_type": f"{kind}.{outcome}", "resource_type": kind,
+        "resource_id": record.id, "run_key": run_key, "title": f"{repo}: {kind} {outcome}",
+        "content": f"{kind.capitalize()} task #{record.id}: {outcome}.", "repo_name": repo,
+        "recipient_ids": recipient_ids, "severity": severity, "payload": payload, "detail_url": detail_url}
+
+
+async def emit_task_event(db, kind, record, outcome, *, refresh=False):
+    """Persist a successful bulk transition on the caller's transaction.
+
+    The caller must first win its conditional UPDATE or lock the affected rows.
+    This uses the ORM adapter's identity, so a later flush/repeated callback
+    cannot create a second event. Import/migration sessions remain opted out.
+    Any persistence failure rolls back the transition before a worker can
+    catch the exception and accidentally commit state without its event.
+    """
+    if not notification_outbox_enabled(db):
+        return
+    from backend.services.notification_events import emit_event
+
+    try:
+        if refresh:
+            await db.refresh(record)
+        initiator = _task_initiator(kind, record)
+        ids = (await db.execute(select(TelegramUser.id).where(
+            TelegramUser.github_username == initiator
+        ))).scalars().all() if initiator else []
+        return await emit_event(db, **_task_event_values(kind, record, outcome, ids))
+    except BaseException:
+        await db.rollback()
+        raise
+
+
 def _collect(session, *_):
     if not session.info.get("notification_outbox"):
         return
@@ -127,21 +180,11 @@ def _persist(session, *_):
     conn = session.connection()
     for action, record, kind, outcome in changes:
         if action == "task":
-            repo = getattr(record, "repo_full_name", None) or record.repo_name
-            if "/" not in repo:
-                repo = f"{record.repo_owner}/{repo}"
-            author = getattr(record, "author", None)
-            ids = conn.execute(select(TelegramUser.id).where(TelegramUser.github_username == author)).scalars().all() if author else []
-            if kind == "agent":
-                run_key = f"{record.resume_count}:{record.iteration_count}"
-            else:
-                run_key = str(getattr(record, "analysis_version", None) or record.id)
-            prefix = {"review": "pr", "issue": "issues", "scan": "scans", "agent": "agent-team"}[kind]
-            severity, payload = _task_result_metadata(kind, record, outcome)
-            _insert_event(conn, event_type=f"{kind}.{outcome}", resource_type=kind,
-                resource_id=record.id, run_key=run_key, title=f"{repo}: {kind} {outcome}",
-                content=f"{kind.capitalize()} task #{record.id}: {outcome}.", repo_name=repo,
-                recipient_ids=ids, severity=severity, payload=payload, detail_url=f"/{prefix}/{record.id}")
+            initiator = _task_initiator(kind, record)
+            ids = conn.execute(select(TelegramUser.id).where(
+                TelegramUser.github_username == initiator
+            )).scalars().all() if initiator else []
+            _insert_event(conn, **_task_event_values(kind, record, outcome, ids))
         elif action == "personal":
             _insert_event(conn, event_type=kind, resource_type="refund_request" if type(record).__name__ == "RefundRequest" else "payment",
                 resource_id=record.id, run_key=str(getattr(record, "reviewed_at", None) or record.id),

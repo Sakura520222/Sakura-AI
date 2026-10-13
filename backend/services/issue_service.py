@@ -25,6 +25,10 @@ from backend.models.database import (
     IssueAnalysisStatus,
     PRIssueLink,
 )
+from backend.services.notification_business import (
+    emit_task_event,
+    notification_outbox_enabled,
+)
 
 
 def _apply_scope_filter(query, scope_filter):
@@ -244,6 +248,10 @@ class IssueService:
             )
         )
 
+        if getattr(update_result, "rowcount", None) != 0:
+            # The conditional write holds the row lock until this transaction
+            # commits. Read the persisted result metadata for the event snapshot.
+            await emit_task_event(db, "issue", record, "completed", refresh=True)
         await db.commit()
         if getattr(update_result, "rowcount", None) == 0:
             # The row was cancelled/closed by another transaction after the
@@ -346,19 +354,19 @@ class IssueService:
         if not identity:
             return {"cancelled": 0, "state_updated": 0}
 
+        active_conditions = [*identity, IssueAnalysis.status.in_(
+            [IssueAnalysisStatus.PENDING.value, IssueAnalysisStatus.ANALYZING.value]
+        )]
+        cancelled_records = []
+        if notification_outbox_enabled(db):
+            # MySQL lacks UPDATE RETURNING. Lock the active snapshot so each
+            # event describes a transition performed by this transaction.
+            cancelled_records = (await db.execute(select(IssueAnalysis).where(
+                and_(*active_conditions)
+            ).with_for_update())).scalars().all()
         cancelled_result = await db.execute(
             update(IssueAnalysis)
-            .where(
-                and_(
-                    *identity,
-                    IssueAnalysis.status.in_(
-                        [
-                            IssueAnalysisStatus.PENDING.value,
-                            IssueAnalysisStatus.ANALYZING.value,
-                        ]
-                    ),
-                )
-            )
+            .where(and_(*active_conditions))
             .values(
                 status=IssueAnalysisStatus.CANCELLED.value,
                 issue_state="closed",
@@ -367,6 +375,8 @@ class IssueService:
         state_result = await db.execute(
             update(IssueAnalysis).where(and_(*identity)).values(issue_state="closed")
         )
+        for record in cancelled_records:
+            await emit_task_event(db, "issue", record, "cancelled")
         await db.commit()
 
         return {

@@ -5,7 +5,15 @@ import json
 import re
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -480,9 +488,16 @@ async def agent_team_page(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
+    task_id: int | None = Query(None, ge=1),
 ):
     """Agent 专家团队独立页面。"""
     is_admin = _is_admin(user)
+    if task_id is not None:
+        task = await db.get(AgentTeamTask, task_id)
+        if task is None:
+            raise HTTPException(404, "Task not found")
+        if not is_admin and task.started_by != user["sub"]:
+            raise HTTPException(403, "Forbidden")
     stats = await _load_stats(db, user=user)
     agent_quota = None
     if not is_admin:
@@ -511,6 +526,7 @@ async def agent_team_page(
         status_options=[status.value for status in AgentTeamTaskStatus],
         is_admin=is_admin,
         agent_quota=agent_quota,
+        selected_task_id=task_id,
     )
 
 

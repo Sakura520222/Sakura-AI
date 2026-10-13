@@ -210,19 +210,23 @@ async def remove_subscription(subscription_id: int, user=Depends(require_auth), 
 @router.get("/history")
 async def history(user=Depends(require_auth), db=Depends(get_db), page: int = Query(1, ge=1)):
     owner = await db.get(TelegramUser, int(user["user_id"]), populate_existing=True)
+    if not owner or not owner.is_active:
+        return {"items": [], "has_next": False, "page": page, "unread": 0}
+    scope = [UserNotification.user_id == user["user_id"], NotificationEvent.resource_type != "announcement"]
+    if owner.role not in {"admin", "super_admin"}:
+        scope.append(NotificationEvent.resource_type != "scan")
     rows = (await db.execute(select(UserNotification, NotificationEvent).join(
         NotificationEvent, NotificationEvent.id == UserNotification.event_id
-    ).where(UserNotification.user_id == user["user_id"]).order_by(UserNotification.id.desc()).offset((page - 1) * 50).limit(51))).all()
+    ).where(*scope).order_by(UserNotification.id.desc()).offset((page - 1) * 50).limit(51))).all()
     items = []
     for inbox, item in rows[:50]:
-        if item.resource_type == "announcement" or not await resource_allowed(db, owner, item):
-            continue  # Announcements retain their existing version-aware reader.
+        if not await resource_allowed(db, owner, item):
+            continue
         items.append({"id": inbox.id, "type": item.event_type, "title": item.title,
             "content": item.content, "severity": item.severity, "detail_url": item.detail_url,
             "read": inbox.read_at is not None, "occurred_at": format_rfc3339(item.occurred_at)})
     unread = (await db.execute(select(func.count(UserNotification.id)).join(NotificationEvent,
-        NotificationEvent.id == UserNotification.event_id).where(UserNotification.user_id == user["user_id"],
-        UserNotification.read_at.is_(None), NotificationEvent.resource_type != "announcement"))).scalar_one()
+        NotificationEvent.id == UserNotification.event_id).where(*scope, UserNotification.read_at.is_(None)))).scalar_one()
     return {"items": items, "has_next": len(rows) > 50, "page": page, "unread": unread}
 
 
