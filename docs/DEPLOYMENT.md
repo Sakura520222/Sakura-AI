@@ -309,14 +309,14 @@ py scripts/dev_bootstrap.py --reset
 
 ### 安全验证
 
-首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；本机管理员读取 `config/.setup-token`（Linux 权限 `0600`，Windows 继承私有配置目录 ACL），或由 `start.sh` 在部署成功后读取并显示：
+首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；本机管理员读取 `config/.setup-token`（Linux 权限 `0600`，Windows 在创建文件时设置仅允许进程用户访问的受保护 ACL，要求文件系统支持 ACL），或由 `start.sh` 在部署成功后读取并显示：
 
 ```bash
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
   -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
 ```
 
-每次进程启动会原子替换该文件，旧 Token 失效；Setup 完成后删除。源码部署用 `cat config/.setup-token`；PowerShell 用 `Get-Content config/.setup-token`。设置 `SAKURA_CONNECTION_CONFIG_PATH` 时，Token 文件位于该连接配置旁。保护配置目录的本机访问权限。
+每次进程启动会原子替换该文件，旧 Token 失效；Setup 完成后立即撤销内存凭据并尝试删除文件。文件被占用时记录清理警告，配置完成与重启仍正常进行；本机管理员解除占用后可清理残留文件，其内容已不能用于验证。源码部署用 `cat config/.setup-token`；PowerShell 用 `Get-Content config/.setup-token`。设置 `SAKURA_CONNECTION_CONFIG_PATH` 时，Token 文件位于该连接配置旁。保护配置目录的本机访问权限。
 
 ### 配置步骤
 

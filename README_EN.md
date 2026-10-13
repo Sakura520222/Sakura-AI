@@ -285,7 +285,7 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup`. The verification token is regenerated on startup, handed to the local operator through the private `config/.setup-token` file, and deleted when Setup completes. It never enters application or Docker logs. `start.sh` displays it after successful deployment; a local administrator can also run:
+After first start, visit `http://localhost:8000/setup`. The verification token is regenerated on startup and handed to the local operator through the private `config/.setup-token` file. Setup completion immediately revokes it and attempts deletion. If a file lock prevents deletion, a cleanup warning is logged and completion/restart still succeeds. It never enters application or Docker logs. `start.sh` displays it after successful deployment; a local administrator can also run:
 
 ```bash
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
@@ -381,7 +381,7 @@ uv run python -m pytest -q           # Run tests (pip envs: python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 ```
 
-First launch enters Bootstrap mode — a one-time verification token is printed to the terminal; enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks).
+First launch enters Bootstrap mode. Read the one-time verification token with `cat config/.setup-token` (PowerShell: `Get-Content config/.setup-token`), enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. The token never enters terminal logs. Windows files use a protected ACL granting access only to the process user and require an ACL-capable filesystem such as NTFS. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks); its default token path is `.sakura/dev/.setup-token`. With `SAKURA_CONNECTION_CONFIG_PATH`, the token lives beside that connection config.
 
 > Run logs are written to `logs/app_*.log` (one JSON Lines file per startup, 50 MB rotation, 10-day retention and a 500 MiB history budget; both console and file obey the live WebUI log level, with redaction before output). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
