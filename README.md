@@ -454,3 +454,11 @@ Made by [Sakura520222](https://github.com/Sakura520222)
 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
 
 </div>
+
+### 统一配置中心
+
+侧边栏的「配置中心」按个人、AI、PR、Issue、Agent、标签与扫描、系统、备份分类。
+普通字段自动保存，逐项显示状态并可删除覆盖以恢复继承值；版本冲突保留草稿。
+凭据、账号安全、导入和危险操作保留专用确认。旧配置 URL 与已有数据保持兼容。
+数据库/Redis 连接由部署配置管理，不通过运行时覆盖切换。详见
+[配置契约、迁移与回滚说明](docs/configuration-center.md)。

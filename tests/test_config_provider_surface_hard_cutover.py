@@ -1,6 +1,5 @@
 """供应商协议硬切换的配置 surface 回归测试。"""
 
-from pathlib import Path
 
 import pytest
 
@@ -99,10 +98,8 @@ def test_ai_retry_zero_is_valid_in_api_and_webui():
     assert request.ai_api_max_retries == 0
     assert _AI_STRATEGY_RANGES["ai_api_max_retries"] == (0, 20)
 
-    template = (
-        Path(__file__).parents[1] / "backend" / "webui" / "templates" / "config_ai.html"
-    ).read_text(encoding="utf-8")
-    assert 'min="0" max="20" x-model.number="strategy.ai_api_max_retries"' in template
+    from backend.services.config_metadata import field_catalog
+    assert field_catalog()["global/ai_api_max_retries"].constraints == {"ge": 0, "le": 20}
 
 
 @pytest.mark.asyncio

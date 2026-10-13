@@ -15,7 +15,7 @@ from backend.core.config_section_defaults import (
     LABEL_SECTION_DEFAULTS,
     STRATEGY_SECTION_DEFAULTS,
 )
-from backend.services import section_config_service as service_module
+from backend.services import config_runtime as service_module
 from backend.services.section_config_service import (
     SECTION_VALIDATORS,
     section_config_service,
@@ -44,37 +44,7 @@ class _Result:
         return self._rows[0]
 
 
-class _FakeSession:
-    """最小 AsyncSession 模拟：select/add/delete/commit/rollback。
-
-    commit 时把 added 行并入 rows，delete 时移除，模拟事务生效。
-    """
-
-    def __init__(self, rows: list | None = None):
-        self.rows: list = list(rows or [])
-        self.added: list = []
-        self.committed = False
-        self.rolled_back = False
-
-    async def execute(self, _stmt):
-        return _Result(self.rows)
-
-    def add(self, row) -> None:
-        self.added.append(row)
-
-    async def delete(self, row) -> None:
-        if row in self.rows:
-            self.rows.remove(row)
-
-    async def commit(self) -> None:
-        self.committed = True
-        self.rows.extend(self.added)
-        self.added = []
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
-        self.added = []
-
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 # --- 校验器注册表完整性 ---
 

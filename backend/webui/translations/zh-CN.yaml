@@ -2695,3 +2695,166 @@ notification_center:
   delivery_status: 查看发送状态
   awaiting_dispatch: 等待后台调度
   replace_secret: 更换签名密钥（留空保持不变）
+
+config_center:
+  title: 配置中心
+  description: 按分类管理配置；普通修改自动保存。
+  search: 搜索全部配置
+  search_placeholder: 名称、说明或配置键
+  categories: 配置分类
+  loading: 正在加载…
+  empty: 此分类的专用操作见下方。
+  advanced: 高级设置
+  reset: 恢复默认
+  retry: 重试
+  saved: 已保存
+  saving: 正在保存…
+  unchanged: 未修改
+  unsaved: 尚未保存
+  failed: 保存失败
+  restart_required: 已保存，重启后生效
+  pending: 已持久化，运行时更新待重试
+  source: 配置来源
+  builtin: 内置默认
+  environment: 部署环境
+  database: 数据库覆盖
+  user: 用户覆盖
+  default: 内置默认值
+  inherited: 继承值
+  confirmed: 确认并保存
+  credential: 已配置凭据；输入新值才会修改
+  credential_empty: 未配置凭据
+  confirm_secret: 确认替换此凭据？此操作可能影响正在运行的服务。
+  confirm_reset: 删除此字段的覆盖并重新继承默认值？其他字段不变。
+  conflict: 配置已被其他标签页或管理员修改。草稿已保留，请重新载入服务端值后编辑。
+  reload_field: 采用服务端值
+  invalid_type: 类型不正确，请检查输入。
+  invalid_choice: 请选择有效选项。
+  out_of_range: 输入超出允许范围。
+  invalid_value: 值未通过领域校验。
+  invalid_structure: 结构或模板占位符未通过校验。
+  invalid_request: 请求格式无效。
+  cross_field: 相关字段不满足约束。
+  credential_required: 请输入新凭据，不能提交空值或掩码。
+  confirmation_required: 此操作需要明确确认。
+  not_resettable: 此项无安全的通用默认值，请使用专用操作。
+  unknown_field: 配置项不存在或无权访问。
+  storage_unavailable: 存储暂不可用，请重试；草稿已保留。
+  network: 网络请求失败或超时，请重试。
+  leave: 还有未保存的修改，确定离开？
+  no_results: 未找到匹配配置
+  model: 模型能力覆盖
+  provider: 提供商
+  model_id: 模型 ID
+  load_model: 打开模型设置
+  bindings: 角色绑定（账号与模型作为一个原子配置）
+  invalid_json: 请输入合法 JSON。
+  theme: 主题
+  confirm_discard: 放弃本地草稿并读取当前服务端值？
+  category:
+    personal: 个人设置
+    ai: AI 与模型
+    review: PR 审查
+    issue: Issue 分析
+    agent: Agent
+    labels: 标签与扫描
+    system: 系统与集成
+    backup: 备份与恢复
+  fetch_slug: 自动获取 GitHub App Slug
+  test_connection: 测试连接
+  account: AI 账号
+  fallback: 回退链（JSON 数组，按顺序尝试）
+  select_account: 选择账号
+  follow_main: 跟随主角色
+  restart: 重启应用
+  deployment: 部署配置
+  deployment_owned: 部署连接由 connection.json 或环境变量管理。请在部署配置中修改并重启；运行中不写入无效的数据库覆盖。
+  field:
+    approve: "批准模板"
+    approve_threshold: "批准阈值"
+    auto_create: "自动创建"
+    auto_create_subdirs: "自动创建子目录"
+    auto_init: "自动初始化"
+    block_on_critical: "存在严重问题时自动阻断"
+    block_threshold: "阻断阈值"
+    categories: "分类定义"
+    cleanup_old_reflections: "清理旧反思"
+    code_extensions: "代码文件扩展名"
+    color: "颜色"
+    comment: "评论模板"
+    comment_template: "评论模板"
+    comment_template_en: "英文评论模板"
+    concurrency: "并发数"
+    confidence_threshold: "置信度阈值"
+    default_branch_count: "默认返回分支数量"
+    default_commit_count: "默认返回提交数量"
+    default_context_lines: "默认上下文行数"
+    default_max_results: "默认最大结果数"
+    description: "说明"
+    documentation: "文档冲突规则"
+    enable_ai_tools: "启用 AI 函数工具"
+    enable_idempotency_check: "启用幂等检查"
+    enable_project_structure: "启用项目结构展示"
+    enabled: "启用"
+    enhancement: "功能增强冲突规则"
+    ignored_patterns: "忽略的文件模式"
+    init_commit_message: "初始化提交说明"
+    interval: "间隔"
+    issue_reference_keywords: "PR-Issue 关联关键词"
+    keywords: "关键词"
+    max_annotations_per_record: "单记录注释上限"
+    max_changed_files: "变更文件上限"
+    max_comments: "评论上限"
+    max_context_lines: "最大上下文行数"
+    max_file_bytes: "单文件字节上限"
+    max_file_lines: "单文件最大读取行数"
+    max_file_output_chars: "单次返回最大字符数"
+    max_file_size: "单文件最大大小 (字节)"
+    max_files: "最大文件数"
+    max_files_for_deep_strategy: "Deep 策略最大文件数"
+    max_files_to_search: "最大搜索文件数"
+    max_lines: "最大行数"
+    max_linked_issues_in_prompt: "提示词关联 Issue 上限"
+    max_major_issues: "重大问题数量上限"
+    max_matches_per_file: "单文件匹配上限"
+    max_memory_chars: "记忆字符上限"
+    max_new_commits: "新提交上限"
+    max_output_chars: "输出字符上限"
+    max_records: "记录数量上限"
+    max_sakura_chars: "Sakura 字符上限"
+    max_structure_files: "项目结构最大文件数"
+    max_total_scan_bytes: "扫描总字节上限"
+    min_reflections: "最少反思数量"
+    model: "模型"
+    name: "名称"
+    partial_commit: "允许部分提交"
+    placeholder: "占位内容"
+    priority: "优先级"
+    prompt: "提示词"
+    prompt_template: "提示词模板"
+    refactor: "重构冲突规则"
+    repo_overrides: "仓库专属覆盖"
+    request_changes: "请求修改模板"
+    retention_days: "保留天数"
+    skip_binary: "跳过二进制文件"
+    skip_extensions: "跳过的扩展名"
+    skip_paths: "跳过的路径"
+    skip_placeholder: "跳过占位内容"
+    style: "风格冲突规则"
+    system_prompt: "系统提示词"
+    test: "测试冲突规则"
+    use_search_api: "优先使用 GitHub Search API"
+    user_template: "用户提示词模板"
+  group:
+    strategy.strategies: 审查分级与提示词
+    strategy.file_filters: 文件过滤
+    strategy.context_enhancement: 上下文增强与记忆
+    strategy.review_policy: 批准与阻止策略
+    strategy.issue_analysis: Issue 分析与评论模板
+    strategy.pr_summary: PR 摘要提示词
+    strategy.pr_dependency_graph: PR 依赖图提示词
+    strategy.scan: 扫描提示词
+    label.definitions: 标签定义
+    label.recommendation: 标签推荐
+    label.conflict_rules: 标签冲突规则
+    preferences: 界面与输出偏好

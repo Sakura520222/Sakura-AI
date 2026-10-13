@@ -79,6 +79,8 @@ deploy.py
 .claude/
 CLAUDE.md
 node_modules/
+tests/webui/test-results/
+tests/webui/playwright-report/
 workplace/
 Skills/
 .venv/

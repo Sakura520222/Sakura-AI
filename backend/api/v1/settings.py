@@ -5,13 +5,15 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.v1.deps import require_api_auth
+from backend.api.v1.deps import require_api_auth, require_cookie_csrf
 from backend.api.v1.responses import success_response
 from backend.core.time_service import get_time_service
 from backend.models.database import WebUIConfig
-from backend.webui.deps import get_db, invalidate_user_prefs_cache
+from backend.webui.deps import get_db
 
-router = APIRouter(prefix="/settings", tags=["Settings"])
+router = APIRouter(
+    prefix="/settings", tags=["Settings"], dependencies=[Depends(require_cookie_csrf)]
+)
 
 VALID_THEMES = ("light", "dark", "system")
 VALID_ITEMS_PER_PAGE = (10, 20, 50, 100)
@@ -29,9 +31,9 @@ async def get_settings(
     config = result.scalar_one_or_none()
 
     data = {
-        "theme": config.theme if config else "system",
-        "language": config.language if config else "zh-CN",
-        "items_per_page": config.items_per_page if config else 20,
+        "theme": (config.theme or "system") if config else "system",
+        "language": (config.language or "zh-CN") if config else "zh-CN",
+        "items_per_page": (config.items_per_page or 20) if config else 20,
     }
 
     return success_response(data=data)
@@ -44,37 +46,18 @@ async def update_settings(
     db: AsyncSession = Depends(get_db),
 ):
     """更新个人偏好设置"""
-    theme = body.get("theme")
-    items_per_page = body.get("items_per_page")
-    language = body.get("language")
-
-    result = await db.execute(
-        select(WebUIConfig).where(WebUIConfig.user_id == user["user_id"])
+    from backend.api.v1.responses import error_response
+    from backend.services.config_center_service import (
+        ConfigError,
+        config_center_service,
     )
-    config = result.scalar_one_or_none()
 
-    if config:
-        if theme is not None and theme in VALID_THEMES:
-            config.theme = theme
-        if items_per_page is not None and int(items_per_page) in VALID_ITEMS_PER_PAGE:
-            config.items_per_page = int(items_per_page)
-        if language is not None:
-            config.language = language
-    else:
-        config = WebUIConfig(
-            user_id=user["user_id"],
-            theme=theme if theme in VALID_THEMES else "system",
-            language=language or "zh-CN",
-            items_per_page=(
-                int(items_per_page)
-                if items_per_page and int(items_per_page) in VALID_ITEMS_PER_PAGE
-                else 20
-            ),
-        )
-        db.add(config)
-
-    await db.commit()
-    invalidate_user_prefs_cache(user["user_id"])
+    if set(body) - {"theme", "language", "items_per_page"}:
+        return error_response("unknown_field")
+    try:
+        await config_center_service.save_preferences(db, user, body)
+    except ConfigError as exc:
+        return error_response(exc.code)
 
     logger.info(f"API 设置已更新: user={user['sub']}")
     return success_response(message="设置已更新")

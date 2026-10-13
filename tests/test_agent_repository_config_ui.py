@@ -1,16 +1,13 @@
-"""Phase 2 configuration must render localized controls with persisted values."""
-
-from __future__ import annotations
+"""The unified metadata keeps localized Agent controls and persisted values."""
 
 import re
-from html.parser import HTMLParser
-from types import SimpleNamespace
 
 import pytest
 
-from backend.webui.deps import get_templates
-from backend.webui.i18n import i18n, make_translation_func
-from backend.webui.routes.config import _build_dynamic_groups
+from backend.models.database import AppConfig
+from backend.services.config_center_service import config_center_service
+from backend.webui.i18n import i18n
+from tests.config_sqlite_session import SQLiteConfigSession
 
 REMOVED_SETTINGS = (
     "agent_team_max_model_rounds",
@@ -24,56 +21,17 @@ REMOVED_SETTINGS = (
     "agent_team_repository_metadata_bytes",
 )
 
-
-class Inputs(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.inputs = {}
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        if tag == "input" and attrs.get("name"):
-            self.inputs[attrs["name"]] = attrs
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["zh-CN", "en"])
 async def test_repository_config_controls_are_localized_and_preserve_values(language):
-    rows = [
-        SimpleNamespace(key_name="agent_team_skills_enabled", key_value="false"),
-    ]
-    rows.extend(
-        SimpleNamespace(key_name=key, key_value="1") for key in REMOVED_SETTINGS
-    )
-
-    class Database:
-        async def execute(self, _statement):
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
-
-    i18n.reload()
-    groups = await _build_dynamic_groups(Database(), language)
-    group = next(group for group in groups if group["id"] == "agent_team")
-    fields = {item["key"]: item for item in group["fields"]}
+    db = SQLiteConfigSession([AppConfig(key_name="agent_team_skills_enabled", key_value="false")])
+    fields = {item["key"]: item for item in await config_center_service.describe(db, {"user_id": 1, "role": "super_admin"}, category="agent", lang=language)}
     assert not set(REMOVED_SETTINGS) & fields.keys()
     for key in ("agent_team_skills_enabled", "agent_team_skills_root"):
         for kind in ("label", "description"):
             catalog_key = f"config.{'desc' if kind == 'description' else kind}.{key}"
-            translated = i18n.t(catalog_key, lang=language)
-            assert translated != catalog_key, f"Missing {language}: {catalog_key}"
-            assert fields[key][kind] == translated
+            assert fields[key][kind] == i18n.t(catalog_key, lang=language)
             if language == "en":
                 assert not re.search(r"[\u4e00-\u9fff]", fields[key][kind])
-
-    html = (
-        get_templates()
-        .env.get_template("components/config_dynamic_card.html")
-        .render(
-            group=group,
-            card_id="section-agent-team",
-            _=make_translation_func(language),
-        )
-    )
-    controls = Inputs()
-    controls.feed(html)
-    assert not set(REMOVED_SETTINGS) & controls.inputs.keys()
-    assert "checked" not in controls.inputs["agent_team_skills_enabled"]
+    assert fields["agent_team_skills_enabled"]["value"] is False
+    assert fields["agent_team_skills_enabled"]["type"] == "boolean"

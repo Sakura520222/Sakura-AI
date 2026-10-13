@@ -30,7 +30,8 @@ def test_sidebar_groups_domains_without_leaking_admin_links(role):
     assert 'href="/settings/about"' not in html
     assert 'href="/github-app/"' in html
     assert ('href="/logs/actions/"' in html) == (role != "user")
-    assert ('href="/config"' in html) == (role == "super_admin")
+    assert html.count('href="/settings-center/personal"') == 1
+    assert 'href="/config"' not in html
     assert ('href="/billing/admin/plans"' in html) == (role == "super_admin")
 
 

@@ -89,6 +89,16 @@ def render_template(
     lang = detect_language(user_prefs)
     context["_"] = make_translation_func(lang)
     context["lang"] = lang
+    if template_name in {
+        "config_center.html",
+        "config_ai.html",
+        "settings.html",
+        "system_config.html",
+        "config_backup.html",
+    }:
+        from backend.webui.i18n import i18n
+
+        context["center_messages"] = i18n.namespace("config_center", lang)
     context["supported_languages"] = SUPPORTED_LANGUAGES
     context["request"] = request
     time_service = get_time_service()
@@ -257,6 +267,8 @@ def _is_mfa_enrollment_path(path: str) -> bool:
     """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
     allowed_exact = {
         "/settings/",
+        "/settings-center",
+        "/settings-center/personal",
         "/auth/logout",
     }
     allowed_prefixes = (
@@ -480,7 +492,7 @@ async def refresh_login_claims(payload: dict) -> dict | None:
     """从数据库刷新正式登录令牌中的权威用户声明。"""
     try:
         user_id = int(payload.get("user_id"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
     async with db_module.async_session() as db:

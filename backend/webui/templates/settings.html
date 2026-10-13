@@ -1,110 +1,51 @@
-{% extends "base.html" %}
-
-{% block title %}{{ _('settings.title') }} - Sakura AI{% endblock %}
-
-{% block content %}
+{% extends "config_center.html" %}
+{% set category = "personal" %}
+{% block center_operations %}
 <div class="space-y-6">
-    <!-- 页面标题 -->
-    <div>
-        <h1 class="text-2xl font-bold">{{ _('settings.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('settings.description') }}</p>
-    </div>
-
-    <!-- 设置表单 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-            <div class="space-y-6">
-                <!-- 界面语言 / Language -->
-                <div>
-                    <h3 class="text-base font-medium">{{ _('settings.language') }}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.language_desc') }}</p>
-                    <select name="language" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <option value="zh-CN" {% if language == 'zh-CN' %}selected{% endif %}>{{ _('settings.languages.zh-CN') }}</option>
-                        <option value="en" {% if language == 'en' %}selected{% endif %}>{{ _('settings.languages.en') }}</option>
-                    </select>
-                </div>
-
-                <!-- 每页显示条数 -->
-                <div>
-                    <h3 class="text-base font-medium">{{ _('settings.items_per_page') }}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.items_per_page_desc') }}</p>
-                    <select name="items_per_page" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10 {{ _('settings.items_per_page_unit') }}</option>
-                        <option value="20" {% if items_per_page == 20 %}selected{% endif %}>20 {{ _('settings.items_per_page_unit') }}</option>
-                        <option value="50" {% if items_per_page == 50 %}selected{% endif %}>50 {{ _('settings.items_per_page_unit') }}</option>
-                        <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100 {{ _('settings.items_per_page_unit') }}</option>
-                    </select>
-                </div>
-
-                <!-- AI 审查偏好 / AI Review Preferences -->
-                <div class="pt-6 border-t border-gray-200 dark:border-gray-700">
-                    <h3 class="text-base font-medium">{{ _('settings.ai_review_preferences') }}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.ai_review_preferences_desc') }}</p>
-                    <label class="block mt-4 text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('settings.output_language') }}</label>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.output_language_desc') }}</p>
-                    <select name="output_language" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <option value="" {% if output_language == '' %}selected{% endif %}>{{ _('settings.output_languages.inherit') }}</option>
-                        <option value="zh-CN" {% if output_language == 'zh-CN' %}selected{% endif %}>{{ _('settings.output_languages.zh-CN') }}</option>
-                        <option value="en" {% if output_language == 'en' %}selected{% endif %}>{{ _('settings.output_languages.en') }}</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- 保存按钮 -->
-            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                    {{ _('common.save') }}
-                </button>
-            </div>
-        </form>
-    </div>
-
     <!-- Notification endpoints -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h3 class="text-base font-medium">{{ _('settings.notification_endpoints') }}</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.notification_endpoints_desc') }}</p>
+        <h3 class="text-base font-medium" data-setting-i18n="settings.notification_endpoints">{{ _('settings.notification_endpoints') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1" data-setting-i18n="settings.notification_endpoints_desc">{{ _('settings.notification_endpoints_desc') }}</p>
         {% include "_notification_settings.html" %}
         <form method="POST" action="/settings/telegram/bind" class="mt-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">{{ _('settings.generate_telegram_binding') }}</button>
+            <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors" data-setting-i18n="settings.generate_telegram_binding">{{ _('settings.generate_telegram_binding') }}</button>
         </form>
         {% if telegram_binding %}
         <div class="mt-4 rounded-lg border border-pink-200 dark:border-pink-800 bg-pink-50 dark:bg-pink-900/20 p-4">
-            <p class="text-sm font-medium">{{ _('settings.telegram_binding_ready') }}</p>
+            <p class="text-sm font-medium" data-setting-i18n="settings.telegram_binding_ready">{{ _('settings.telegram_binding_ready') }}</p>
             {% if telegram_binding.deep_link %}
             <a href="{{ telegram_binding.deep_link }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block text-sm text-pink-600 hover:underline">{{ _('settings.open_telegram_binding') }}</a>
             {% endif %}
             <p class="mt-2 text-xs text-gray-600 dark:text-gray-300 break-all">{{ telegram_binding.deep_link or telegram_binding.token }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('settings.telegram_binding_expiry') }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-setting-i18n="settings.telegram_binding_expiry">{{ _('settings.telegram_binding_expiry') }}</p>
         </div>
         {% endif %}
     </div>
 
     <!-- 安全设置 / Security Settings -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-        <h3 class="text-base font-medium">{{ _('settings.security') }}</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.security_desc') }}</p>
+        <h3 class="text-base font-medium" data-setting-i18n="settings.security">{{ _('settings.security') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1" data-setting-i18n="settings.security_desc">{{ _('settings.security_desc') }}</p>
 
         {% if mfa_enrollment_required %}
         <div class="mt-4 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-4">
-            <h4 class="text-sm font-semibold text-orange-800 dark:text-orange-200">{{ _('settings.mfa_required_title') }}</h4>
-            <p class="mt-1 text-sm text-orange-700 dark:text-orange-300">{{ _('settings.mfa_required_desc') }}</p>
+            <h4 class="text-sm font-semibold text-orange-800 dark:text-orange-200" data-setting-i18n="settings.mfa_required_title">{{ _('settings.mfa_required_title') }}</h4>
+            <p class="mt-1 text-sm text-orange-700 dark:text-orange-300" data-setting-i18n="settings.mfa_required_desc">{{ _('settings.mfa_required_desc') }}</p>
         </div>
         {% endif %}
 
         <div class="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900/40">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <h4 class="text-sm font-semibold">{{ _('settings.two_factor_auth') }}</h4>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('settings.two_factor_auth_desc') }}</p>
+                    <h4 class="text-sm font-semibold" data-setting-i18n="settings.two_factor_auth">{{ _('settings.two_factor_auth') }}</h4>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" data-setting-i18n="settings.two_factor_auth_desc">{{ _('settings.two_factor_auth_desc') }}</p>
                     <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         {{ _('common.status') }}:
                         {% if two_factor_enabled %}
-                        <span class="text-green-600 dark:text-green-400 font-medium">{{ _('common.enabled') }}</span>
+                        <span class="text-green-600 dark:text-green-400 font-medium" data-setting-i18n="common.enabled">{{ _('common.enabled') }}</span>
                         {% else %}
-                        <span class="text-gray-500 dark:text-gray-400 font-medium">{{ _('common.disabled') }}</span>
+                        <span class="text-gray-500 dark:text-gray-400 font-medium" data-setting-i18n="common.disabled">{{ _('common.disabled') }}</span>
                         {% endif %}
                         {% if two_factor_enabled %}
                         · {{ _('settings.recovery_codes_remaining') }}: {{ recovery_code_count }}
@@ -116,7 +57,7 @@
             {% if not two_factor_enabled and not totp_setup %}
             <form method="POST" action="/settings/2fa/setup" class="mt-4">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors" data-setting-i18n="settings.enable_two_factor">
                     {{ _('settings.enable_two_factor') }}
                 </button>
             </form>
@@ -124,7 +65,7 @@
 
                         {% if totp_setup %}
                         <div class="mt-5 p-4 rounded-xl bg-white dark:bg-gray-800 border border-pink-200 dark:border-pink-800">
-                            <h4 class="text-sm font-semibold">{{ _('settings.setup_two_factor') }}</h4>
+                            <h4 class="text-sm font-semibold" data-setting-i18n="settings.setup_two_factor">{{ _('settings.setup_two_factor') }}</h4>
                             <ol class="mt-2 list-decimal list-inside text-sm text-gray-600 dark:text-gray-300 space-y-1">
                                 <li>{{ _('settings.scan_totp_qr') }}</li>
                                 <li>{{ _('settings.enter_totp_code') }}</li>
@@ -136,7 +77,7 @@
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required placeholder="123456"
                                        class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors" data-setting-i18n="settings.confirm_enable_two_factor">
                                     {{ _('settings.confirm_enable_two_factor') }}
                                 </button>
                             </form>
@@ -145,8 +86,8 @@
 
                         {% if recovery_codes %}
                         <div class="mt-5 p-4 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
-                            <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-200">{{ _('settings.recovery_codes') }}</h4>
-                            <p class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">{{ _('settings.recovery_codes_warning') }}</p>
+                            <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-200" data-setting-i18n="settings.recovery_codes">{{ _('settings.recovery_codes') }}</h4>
+                            <p class="mt-1 text-sm text-yellow-700 dark:text-yellow-300" data-setting-i18n="settings.recovery_codes_warning">{{ _('settings.recovery_codes_warning') }}</p>
                             <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-sm">
                                 {% for recovery_code in recovery_codes %}
                                 <code class="px-3 py-2 rounded bg-white dark:bg-gray-800 border border-yellow-200 dark:border-yellow-800">{{ recovery_code }}</code>
@@ -159,22 +100,22 @@
                         <div class="mt-5 grid gap-4 md:grid-cols-2">
                             <form method="POST" action="/settings/2fa/recovery-codes/regenerate" class="p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <h4 class="text-sm font-semibold">{{ _('settings.regenerate_recovery_codes') }}</h4>
-                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('settings.regenerate_recovery_codes_desc') }}</p>
+                                <h4 class="text-sm font-semibold" data-setting-i18n="settings.regenerate_recovery_codes">{{ _('settings.regenerate_recovery_codes') }}</h4>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-setting-i18n="settings.regenerate_recovery_codes_desc">{{ _('settings.regenerate_recovery_codes_desc') }}</p>
                                 <input name="code" type="text" inputmode="numeric" required placeholder="{{ _('settings.current_totp_code') }}"
                                        class="mt-3 w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <button type="submit" class="mt-3 px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
+                                <button type="submit" class="mt-3 px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors" data-setting-i18n="settings.regenerate">
                                     {{ _('settings.regenerate') }}
                                 </button>
                             </form>
 
                             <form method="POST" action="/settings/2fa/disable" class="p-4 rounded-xl bg-white dark:bg-gray-800 border border-red-200 dark:border-red-800">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <h4 class="text-sm font-semibold text-red-700 dark:text-red-300">{{ _('settings.disable_two_factor') }}</h4>
-                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('settings.disable_two_factor_desc') }}</p>
+                                <h4 class="text-sm font-semibold text-red-700 dark:text-red-300" data-setting-i18n="settings.disable_two_factor">{{ _('settings.disable_two_factor') }}</h4>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-setting-i18n="settings.disable_two_factor_desc">{{ _('settings.disable_two_factor_desc') }}</p>
                                 <input name="code" type="text" required placeholder="{{ _('settings.current_totp_or_recovery_code') }}"
                                        class="mt-3 w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none">
-                                <button type="submit" class="mt-3 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors">
+                                <button type="submit" class="mt-3 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors" data-setting-i18n="settings.disable_two_factor">
                                     {{ _('settings.disable_two_factor') }}
                                 </button>
                             </form>
@@ -185,10 +126,10 @@
         <div class="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900/40">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                 <div>
-                    <h4 class="text-sm font-semibold">{{ _('settings.passkeys') }}</h4>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('settings.passkeys_desc') }}</p>
+                    <h4 class="text-sm font-semibold" data-setting-i18n="settings.passkeys">{{ _('settings.passkeys') }}</h4>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" data-setting-i18n="settings.passkeys_desc">{{ _('settings.passkeys_desc') }}</p>
                 </div>
-                <button type="button" id="register-passkey-btn" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                <button type="button" id="register-passkey-btn" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors" data-setting-i18n="settings.add_passkey">
                     {{ _('settings.add_passkey') }}
                 </button>
             </div>
@@ -207,14 +148,14 @@
                         </div>
                         <form method="POST" action="/settings/passkeys/{{ passkey.id }}/delete">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                            <button type="submit" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" data-setting-i18n="common.delete">
                                 {{ _('common.delete') }}
                             </button>
                         </form>
                     </div>
                     {% endfor %}
                 {% else %}
-                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('settings.no_passkeys') }}</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-setting-i18n="settings.no_passkeys">{{ _('settings.no_passkeys') }}</p>
                 {% endif %}
             </div>
         </div>

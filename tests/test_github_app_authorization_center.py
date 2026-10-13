@@ -31,7 +31,11 @@ from backend.webui.routes import github_app, repos, star_aid, system_config
 
 def _route(router: Any, path: str, method: str = "GET") -> APIRoute:
     for route in router.routes:
-        if isinstance(route, APIRoute) and route.path == path and method in route.methods:
+        if (
+            isinstance(route, APIRoute)
+            and route.path == path
+            and method in route.methods
+        ):
             return route
     raise AssertionError(f"Route {method} {path} was not found")
 
@@ -202,7 +206,9 @@ class _AsyncClient:
                             "visibility": (
                                 "internal"
                                 if index == 8
-                                else "private" if index % 2 == 0 else "public"
+                                else "private"
+                                if index % 2 == 0
+                                else "public"
                             ),
                             "html_url": "https://github.com/alice/repo",
                             "raw_unconstrained_field": "must-not-render",
@@ -297,10 +303,14 @@ async def test_separate_app_without_slug_does_not_fall_back_to_review_app(
             return ("review-app", "Iv1.review")
 
     monkeypatch.setattr(github_app, "_app_slug", None)
-    monkeypatch.setattr(github_app, "get_settings", lambda: SimpleNamespace(
-        star_aid_github_app_slug="",
-        star_aid_github_app_client_id="Iv1.separate",
-    ))
+    monkeypatch.setattr(
+        github_app,
+        "get_settings",
+        lambda: SimpleNamespace(
+            star_aid_github_app_slug="",
+            star_aid_github_app_client_id="Iv1.separate",
+        ),
+    )
     monkeypatch.setattr(core_github_app, "GitHubAppClient", FakeMainApp)
 
     assert await github_app._get_install_url() is None
@@ -416,7 +426,9 @@ def _configure_valid_user(
     monkeypatch.setattr(
         service_module.credential_service,
         "get_effective_access_token",
-        lambda session, user_id: _await_value(("token", GitHubCallResult(success=True))),
+        lambda session, user_id: _await_value(
+            ("token", GitHubCallResult(success=True))
+        ),
     )
     return settings
 
@@ -481,7 +493,9 @@ async def test_user_installations_use_github_user_scope_and_dto_boundary(
     assert installation["permissions"] == {"metadata": True, "administration": False}
     assert installation["repositories"][-1]["visibility"] == "internal"
     assert installation["repositories"][-1]["private"] is True
-    assert all("raw_unconstrained_field" not in row for row in installation["repositories"])
+    assert all(
+        "raw_unconstrained_field" not in row for row in installation["repositories"]
+    )
 
 
 @pytest.mark.asyncio
@@ -787,9 +801,9 @@ async def test_github_401_does_not_commit_replaced_credential_revocation(
 
 def test_authorization_template_is_parseable_and_has_no_operations_actions() -> None:
     template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
-    fragment = (
-        template_root / "components/github_app_list_fragment.html"
-    ).read_text(encoding="utf-8")
+    fragment = (template_root / "components/github_app_list_fragment.html").read_text(
+        encoding="utf-8"
+    )
     Environment().parse(fragment)
 
     assert "data-github-app-repository-filter" in fragment
@@ -808,11 +822,13 @@ def test_authorization_template_is_parseable_and_has_no_operations_actions() -> 
 def test_error_authorization_renders_failure_not_connected_state() -> None:
     template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
     environment = Environment(
-        loader=DictLoader({
-            "components/github_app_list_fragment.html": (
-                template_root / "components/github_app_list_fragment.html"
-            ).read_text(encoding="utf-8")
-        }),
+        loader=DictLoader(
+            {
+                "components/github_app_list_fragment.html": (
+                    template_root / "components/github_app_list_fragment.html"
+                ).read_text(encoding="utf-8")
+            }
+        ),
         autoescape=True,
     )
     authorization = service_module.GitHubUserAuthorization(
@@ -848,18 +864,20 @@ def test_github_app_translations_cover_internal_repository_label() -> None:
 def test_connected_authorization_template_renders_with_strict_variables() -> None:
     template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
     environment = Environment(
-        loader=DictLoader({
-            "base.html": (
-                "{% block content %}{% endblock %}"
-                "{% block extra_scripts %}{% endblock %}"
-            ),
-            "github_app.html": (template_root / "github_app.html").read_text(
-                encoding="utf-8"
-            ),
-            "components/github_app_list_fragment.html": (
-                template_root / "components/github_app_list_fragment.html"
-            ).read_text(encoding="utf-8"),
-        }),
+        loader=DictLoader(
+            {
+                "base.html": (
+                    "{% block content %}{% endblock %}"
+                    "{% block extra_scripts %}{% endblock %}"
+                ),
+                "github_app.html": (template_root / "github_app.html").read_text(
+                    encoding="utf-8"
+                ),
+                "components/github_app_list_fragment.html": (
+                    template_root / "components/github_app_list_fragment.html"
+                ).read_text(encoding="utf-8"),
+            }
+        ),
         undefined=StrictUndefined,
         autoescape=True,
     )
@@ -985,9 +1003,7 @@ async def test_github_app_slug_fetch_reuses_review_app_identity(
     monkeypatch.setattr(
         system_config, "detect_language", lambda user_prefs: user_prefs["language"]
     )
-    monkeypatch.setattr(
-        system_config, "make_translation_func", make_translation_func
-    )
+    monkeypatch.setattr(system_config, "make_translation_func", make_translation_func)
 
     result = await system_config.fetch_github_app_slug(
         _JsonRequest({"clientId": "Iv1.review"}),
@@ -1022,19 +1038,13 @@ async def test_github_app_slug_fetch_rejects_separate_app_without_guessing(
 
 
 def test_system_config_slug_field_has_dedicated_auto_fetch_button() -> None:
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/system_config.html"
+    controller = (
+        Path(__file__).resolve().parents[1] / "backend/webui/assets/settings/center.js"
     ).read_text(encoding="utf-8")
-
-    assert 'x-ref="githubAppSlugInput"' in template
-    assert "fetchGithubAppSlug($refs.githubAppSlugInput)" in template
-    assert template.count("fetchGithubAppSlug(") >= 2
-    assert 'name="star_aid_github_app_slug_changed"' in template
-    assert (
-        'x-on:input="$refs.star_aid_github_app_slug_changed.value = \'true\'"'
-        in template
-    )
+    assert 'field.key === "star_aid_github_app_slug"' in controller
+    assert '"/system-config/github-app-slug"' in controller
+    assert "input.value = data.slug" in controller
+    assert 'input.dispatchEvent(new Event("input"))' in controller
 
 
 def test_user_authorization_discovery_timeout_is_independently_configurable() -> None:

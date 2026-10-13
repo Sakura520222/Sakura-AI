@@ -2699,3 +2699,168 @@ notification_center:
   delivery_status: Check delivery status
   awaiting_dispatch: Waiting for dispatch
   replace_secret: Replace signing secret (blank keeps existing)
+
+config_center:
+  title: Configuration centre
+  description: Browse by category. Ordinary changes save automatically.
+  search: Search all settings
+  search_placeholder: Name, description or configuration key
+  categories: Settings categories
+  loading: Loading…
+  empty: Dedicated operations for this category appear below.
+  advanced: Advanced settings
+  reset: Restore default
+  retry: Retry
+  saved: Saved
+  saving: Saving…
+  unchanged: Unchanged
+  unsaved: Unsaved changes
+  failed: Save failed
+  restart_required: Saved; restart required
+  pending: Persisted; runtime update pending retry
+  source: Configuration source
+  builtin: Built-in default
+  environment: Deployment environment
+  database: Database override
+  user: User override
+  default: Built-in default
+  inherited: Inherited value
+  confirmed: Confirm and save
+  credential: Credential configured; enter a new value to replace it
+  credential_empty: No credential configured
+  confirm_secret: Replace this credential? This may affect running services.
+  confirm_reset: Remove this field override and inherit its default? Other fields
+    stay unchanged.
+  conflict: Another tab or administrator changed this setting. Your draft is preserved.
+    Load the server value before editing again.
+  reload_field: Use server value
+  invalid_type: Incorrect type. Check the input.
+  invalid_choice: Choose a valid option.
+  out_of_range: Value is outside the allowed range.
+  invalid_value: Value failed domain validation.
+  invalid_structure: Invalid structure or missing template placeholders.
+  invalid_request: Invalid request format.
+  cross_field: Related fields do not satisfy their constraints.
+  credential_required: Enter a new credential; empty or masked values are not accepted.
+  confirmation_required: Explicit confirmation is required.
+  not_resettable: There is no safe generic default; use the dedicated operation.
+  unknown_field: Setting not found or access denied.
+  storage_unavailable: Storage is unavailable. Retry; your draft is preserved.
+  network: Request failed or timed out. Please retry.
+  leave: There are unsaved changes. Leave this page?
+  no_results: No matching settings
+  model: Model capability overrides
+  provider: Provider
+  model_id: Model ID
+  load_model: Open model settings
+  bindings: Role bindings (account and model form one atomic setting)
+  invalid_json: Enter valid JSON.
+  theme: Theme
+  confirm_discard: Discard your draft and load the current server value?
+  category:
+    personal: Personal
+    ai: AI and models
+    review: PR review
+    issue: Issue analysis
+    agent: Agent
+    labels: Labels and scans
+    system: System and integrations
+    backup: Backup and restore
+  fetch_slug: Fetch GitHub App slug
+  test_connection: Test connection
+  account: AI account
+  fallback: Fallback chain (JSON array, in order)
+  select_account: Select an account
+  follow_main: Follow main role
+  restart: Restart application
+  deployment: Deployment configuration
+  deployment_owned: Connections are owned by connection.json or deployment environment variables. Edit deployment configuration and restart; runtime database overrides cannot move the live connection.
+  field:
+    approve: "Approve"
+    approve_threshold: "Approve threshold"
+    auto_create: "Auto create"
+    auto_create_subdirs: "Auto create subdirs"
+    auto_init: "Auto init"
+    block_on_critical: "Block on critical"
+    block_threshold: "Block threshold"
+    categories: "Categories"
+    cleanup_old_reflections: "Cleanup old reflections"
+    code_extensions: "Code extensions"
+    color: "Color"
+    comment: "Comment"
+    comment_template: "Comment template"
+    comment_template_en: "Comment template en"
+    concurrency: "Concurrency"
+    confidence_threshold: "Confidence threshold"
+    default_branch_count: "Default branch count"
+    default_commit_count: "Default commit count"
+    default_context_lines: "Default context lines"
+    default_max_results: "Default max results"
+    description: "Description"
+    documentation: "Documentation"
+    enable_ai_tools: "Enable ai tools"
+    enable_idempotency_check: "Enable idempotency check"
+    enable_project_structure: "Enable project structure"
+    enabled: "Enabled"
+    enhancement: "Enhancement"
+    ignored_patterns: "Ignored patterns"
+    init_commit_message: "Init commit message"
+    interval: "Interval"
+    issue_reference_keywords: "Issue reference keywords"
+    keywords: "Keywords"
+    max_annotations_per_record: "Max annotations per record"
+    max_changed_files: "Max changed files"
+    max_comments: "Max comments"
+    max_context_lines: "Max context lines"
+    max_file_bytes: "Max file bytes"
+    max_file_lines: "Max file lines"
+    max_file_output_chars: "Max file output chars"
+    max_file_size: "Max file size"
+    max_files: "Max files"
+    max_files_for_deep_strategy: "Max files for deep strategy"
+    max_files_to_search: "Max files to search"
+    max_lines: "Max lines"
+    max_linked_issues_in_prompt: "Max linked issues in prompt"
+    max_major_issues: "Max major issues"
+    max_matches_per_file: "Max matches per file"
+    max_memory_chars: "Max memory chars"
+    max_new_commits: "Max new commits"
+    max_output_chars: "Max output chars"
+    max_records: "Max records"
+    max_sakura_chars: "Max sakura chars"
+    max_structure_files: "Max structure files"
+    max_total_scan_bytes: "Max total scan bytes"
+    min_reflections: "Min reflections"
+    model: "Model"
+    name: "Name"
+    partial_commit: "Partial commit"
+    placeholder: "Placeholder"
+    priority: "Priority"
+    prompt: "Prompt"
+    prompt_template: "Prompt template"
+    refactor: "Refactor"
+    repo_overrides: "Repo overrides"
+    request_changes: "Request changes"
+    retention_days: "Retention days"
+    skip_binary: "Skip binary"
+    skip_extensions: "Skip extensions"
+    skip_paths: "Skip paths"
+    skip_placeholder: "Skip placeholder"
+    style: "Style"
+    system_prompt: "System prompt"
+    test: "Test"
+    use_search_api: "Use search api"
+    user_template: "User template"
+  group:
+    strategy.strategies: Strategies
+    strategy.file_filters: File filters
+    strategy.context_enhancement: Context enhancement
+    strategy.review_policy: Review policy
+    strategy.issue_analysis: Issue analysis
+    strategy.pr_summary: Pr summary
+    strategy.pr_dependency_graph: Pr dependency graph
+    strategy.scan: Scan
+    label.definitions: Definitions
+    label.recommendation: Recommendation
+    label.conflict_rules: Conflict rules
+    preferences: Preferences

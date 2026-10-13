@@ -7,6 +7,7 @@ from backend.api.v1 import (
     auth,
     billing,
     config,
+    config_center,
     dashboard,
     events,
     issues,
@@ -36,6 +37,7 @@ api_v1_router.include_router(issues.router)
 api_v1_router.include_router(users.router)
 api_v1_router.include_router(repos.router)
 api_v1_router.include_router(config.router)
+api_v1_router.include_router(config_center.router)
 api_v1_router.include_router(logs.router)
 api_v1_router.include_router(queue.router)
 api_v1_router.include_router(scans.router)

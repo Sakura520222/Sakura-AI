@@ -15,10 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.config import get_settings
 from backend.core.time_service import (
     InvalidTimezoneError,
-    format_rfc3339,
-    get_localzone_name,
-    get_time_service,
-    now_utc,
     resolve_timezone,
 )
 from backend.services.database_reset_runtime_service import (
@@ -36,10 +32,8 @@ from backend.services.system_config_service import (
     system_config_service,
 )
 from backend.webui.deps import (
-    get_csrf_serializer,
     get_db,
     get_user_preferences,
-    render_template,
     require_csrf,
     require_csrf_header,
     require_super_admin,
@@ -94,32 +88,10 @@ async def system_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """渲染系统核心配置页面"""
-    groups, _ = await system_config_service.load_grouped_configs(db)
-    time_service = get_time_service()
-    try:
-        detected_system_timezone = get_localzone_name()
-    except Exception:
-        detected_system_timezone = "unavailable"
-    time_status = {
-        "configured_timezone": get_settings().app_timezone,
-        "resolved_timezone": time_service.resolved_timezone,
-        "system_timezone": detected_system_timezone,
-        "current_utc": format_rfc3339(now_utc()),
-        "current_local": time_service.format_display(now_utc()),
-    }
+    from fastapi.responses import RedirectResponse
 
-    return render_template(
-        "system_config.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="system_config",
-        groups=groups,
-        database_reset_confirmation=DATABASE_RESET_CONFIRMATION,
-        time_status=time_status,
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/system" + query, status_code=302)
 
 
 @router.post("/save")
@@ -318,10 +290,18 @@ async def test_connection(
         # 延迟导入：避免模块级别循环依赖
         from backend.core.setup_service import setup_service
 
+        url = body.get("url", "")
+        if body.get("use_saved") is True and not url:
+            # Tests use the active connection; credentials never return to the browser.
+            url = getattr(
+                get_settings(),
+                "database_url" if test_type == "database" else "redis_url",
+                "",
+            )
         if test_type == "database":
-            result = await setup_service.test_database_connection(body.get("url", ""))
+            result = await setup_service.test_database_connection(url)
         else:
-            result = await setup_service.test_redis_connection(body.get("url", ""))
+            result = await setup_service.test_redis_connection(url)
         return {
             "success": result.get("success", False),
             "message": result.get("message", ""),

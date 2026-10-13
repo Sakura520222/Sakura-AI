@@ -13,19 +13,7 @@ class _ScalarResult:
         return None
 
 
-class _RecordingDb:
-    def __init__(self):
-        self.added = []
-        self.commits = 0
-
-    async def execute(self, _statement):
-        return _ScalarResult()
-
-    def add(self, value):
-        self.added.append(value)
-
-    async def commit(self):
-        self.commits += 1
+from tests.config_sqlite_session import SQLiteConfigSession as _RecordingDb
 
 
 def test_observability_settings_are_runtime_strategy_keys():
@@ -53,8 +41,7 @@ async def test_observability_settings_save_to_app_config_and_refresh_runtime(
     db = _RecordingDb()
     refreshed = []
     monkeypatch.setattr(
-        config_api,
-        "update_settings_field",
+        "backend.services.config_runtime.update_settings_field",
         lambda key, value: refreshed.append((key, value)),
     )
     request = config_api.AIStrategyRequest(
@@ -94,8 +81,7 @@ async def test_observability_retention_rejects_out_of_range_value(monkeypatch):
     db = _RecordingDb()
     refreshed = []
     monkeypatch.setattr(
-        config_api,
-        "update_settings_field",
+        "backend.services.config_runtime.update_settings_field",
         lambda key, value: refreshed.append((key, value)),
     )
 

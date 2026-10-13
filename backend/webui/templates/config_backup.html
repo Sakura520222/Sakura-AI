@@ -1,14 +1,7 @@
-{% extends "base.html" %}
-
-{% block title %}{{ _('config.backup_title') }} - Sakura AI{% endblock %}
-
-{% block content %}
+{% extends "config_center.html" %}
+{% set category = "backup" %}
+{% block center_operations %}
 <div class="space-y-5">
-    <div>
-        <h1 class="text-2xl font-bold">{{ _('config.backup_title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.backup_subtitle') }}</p>
-    </div>
-
     <div class="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
         <div class="flex items-start gap-3">
             <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

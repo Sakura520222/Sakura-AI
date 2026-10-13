@@ -281,7 +281,7 @@ class SystemConfigService:
                 )
             try:
                 numeric_value = float(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 raise SystemConfigValidationError(
                     key,
                     "必须是有限数值",
@@ -301,14 +301,10 @@ class SystemConfigService:
             lower = constraints.get("ge", constraints.get("gt"))
             upper = constraints.get("le", constraints.get("lt"))
             lower_invalid = lower is not None and (
-                numeric_value < lower
-                if "ge" in constraints
-                else numeric_value <= lower
+                numeric_value < lower if "ge" in constraints else numeric_value <= lower
             )
             upper_invalid = upper is not None and (
-                numeric_value > upper
-                if "le" in constraints
-                else numeric_value >= upper
+                numeric_value > upper if "le" in constraints else numeric_value >= upper
             )
             if lower_invalid or upper_invalid:
                 if lower is not None and upper is not None:
@@ -443,7 +439,8 @@ class SystemConfigService:
                 display_value = (
                     mask_sensitive_value(value) if (is_sensitive and value) else value
                 )
-                default_val = "" if default_value is None else _settings_default_to_str(default_value)
+                builtin_default = Settings.model_fields[key].get_default(call_default_factory=True)
+                default_val = "" if builtin_default is None else _settings_default_to_str(builtin_default)
                 items.append(
                     {
                         "key": key,
@@ -476,52 +473,12 @@ class SystemConfigService:
         Returns:
             (changed, needs_restart): 变更日志和是否需要重启
         """
-        # This must stay a pure phase.  In particular, do not query or mutate
-        # ORM rows, commit, invalidate caches, or update the Settings singleton
-        # until every item in the batch has passed type and bound validation.
+        from backend.services.config_center_service import config_center_service
+
         validated_updates = self.validate_updates(updates)
         if not validated_updates:
             return {}, False
-
-        # Read all current rows before mutating any of them.  A later query
-        # failure therefore cannot leave an earlier item partially changed in
-        # the current transaction/session.
-        current_rows: dict[str, AppConfig | None] = {}
-        for key in validated_updates:
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == key)
-            )
-            current_rows[key] = result.scalar_one_or_none()
-
-        changed: dict[str, dict[str, Any]] = {}
-        for key, val in validated_updates.items():
-            is_sensitive = key in SYSTEM_SENSITIVE_KEYS
-            cfg = current_rows[key]
-
-            if cfg is None:
-                changed[key] = {
-                    "old": "(无)",
-                    "new": self._mask(val, is_sensitive),
-                    "raw_new": val,
-                }
-            elif cfg.key_value != val:
-                changed[key] = {
-                    "old": self._mask(cfg.key_value, is_sensitive),
-                    "new": self._mask(val, is_sensitive),
-                    "raw_new": val,
-                }
-
-        # Apply the already validated batch as one mutation phase.
-        for key, val in validated_updates.items():
-            cfg = current_rows[key]
-            if cfg is None:
-                db.add(AppConfig(key_name=key, key_value=val, description=key))
-            elif key in changed:
-                cfg.key_value = val
-
-        if changed:
-            await db.commit()
-
+        changed = await config_center_service.save_app_updates(db, validated_updates)
         return changed, bool(set(changed) & RESTART_REQUIRED_KEYS)
 
     async def apply_live_settings(self, changed: dict[str, dict[str, str]]) -> None:

@@ -116,3 +116,17 @@ async def require_api_super_admin(request: Request) -> dict:
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
+
+
+async def require_cookie_csrf(request: Request) -> None:
+    """Cookie-authenticated configuration writes require CSRF, including legacy APIs."""
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    if request.headers.get("authorization", "").startswith("Bearer "):
+        return
+    if request.cookies.get(WEBUI_TOKEN_COOKIE_NAME):
+        from backend.webui.deps import validate_csrf_token
+
+        token = request.headers.get("x-csrf-token", "")
+        if not token or not validate_csrf_token(token):
+            raise HTTPException(status_code=403, detail="CSRF verification failed")

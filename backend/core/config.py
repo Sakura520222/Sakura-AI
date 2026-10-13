@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # 用户可见时间的应用时区；system 在每次进程启动时解析为系统 IANA 区域。
     app_timezone: str = "system"
     log_level: str = "INFO"
+    config_sync_interval_seconds: float = Field(2.0, ge=0.1, le=60.0)
     sakura_env: str = Field(
         "production",
         description="运行环境标识（production / development）",

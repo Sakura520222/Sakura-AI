@@ -56,6 +56,35 @@ class ScanScheduler:
         except Exception as e:
             logger.error(f"❌ 扫描调度器启动失败: {e}")
 
+    def reconfigure(self):
+        """Reconcile future scans without cancelling an already running scan."""
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        settings = get_settings()
+        enabled = settings.enable_repo_scan and settings.enable_scheduler
+        if not self._scheduler or not self._scheduler.running:
+            if enabled:
+                self.start()
+                if not self._scheduler or not self._scheduler.running:
+                    raise RuntimeError("Repository scan scheduler did not start")
+            return
+        job = self._scheduler.get_job("repo_scan")
+        if not enabled:
+            if job:
+                self._scheduler.remove_job("repo_scan")
+        elif job:
+            self._scheduler.reschedule_job(
+                "repo_scan",
+                trigger=IntervalTrigger(minutes=settings.scan_interval_minutes),
+            )
+        else:
+            self._scheduler.add_job(
+                self._run_scheduled_scan,
+                trigger=IntervalTrigger(minutes=settings.scan_interval_minutes),
+                id="repo_scan",
+                replace_existing=True,
+            )
+
     def stop(self):
         """停止调度器"""
         if self._scheduler and self._scheduler.running:

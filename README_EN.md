@@ -454,3 +454,12 @@ Made by [Sakura520222](https://github.com/Sakura520222)
 Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI/issues) · Email: <Sakura520222@outlook.com>
 
 </div>
+
+### Unified configuration centre
+
+The single Settings entry groups Personal, AI, PR, Issue, Agent, Labels/Scans,
+System and Backup. Ordinary fields save automatically with per-field status and
+reset by removing overrides; version conflicts preserve drafts. Credentials,
+account security, imports and dangerous operations retain dedicated confirmation.
+Existing configuration URLs and data remain compatible. Database/Redis connections
+stay deployment-owned. See the [configuration contract, migration and rollback guide](docs/configuration-center.md).

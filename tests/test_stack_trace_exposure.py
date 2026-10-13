@@ -78,8 +78,8 @@ async def test_user_config_invalid_value_sanitizes_response_and_logs_traceback(
 
     # loguru 必须记录完整 traceback（回归守护点）
     assert "Traceback" in log_output
-    assert "ValueError" in log_output
-    assert "output_language 仅允许为空、zh-CN 或 en" in log_output
+    assert "ConfigError" in log_output
+    assert "invalid_choice" in log_output
 
 
 @pytest.mark.asyncio
@@ -138,6 +138,12 @@ async def test_user_config_unexpected_error_logs_traceback_and_sanitizes(
     from backend.api.v1.user_config import update_user_config
 
     db = AsyncMock()
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    db.get_bind = Mock(
+        return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
     db.execute = AsyncMock(
         side_effect=RuntimeError("db connection lost: pool exhausted, host=internal-db")
     )

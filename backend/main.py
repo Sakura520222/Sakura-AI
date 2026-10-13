@@ -341,6 +341,15 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
 
                 if _should_start_background_tasks(settings):
+                    from backend.services.config_runtime import (
+                        config_runtime_sync,
+                        register_scan_scheduler,
+                    )
+
+                    register_scan_scheduler(None)
+                    create_registered_background_task(
+                        config_runtime_sync.run(), "configuration_sync"
+                    )
                     # Telegram is an optional notification provider.  A missing
                     # token must never prevent GitHub OAuth, Passkey, or the
                     # WebUI from starting.
@@ -476,6 +485,11 @@ async def lifespan(app: FastAPI):
 
                         scan_scheduler = ScanScheduler()
                         scan_scheduler.start()
+                        from backend.services.config_runtime import (
+                            register_scan_scheduler,
+                        )
+
+                        register_scan_scheduler(scan_scheduler)
                         app.state.scan_scheduler = scan_scheduler
                         existing_supervisor.register_scheduler(scan_scheduler)
                     except Exception as e:
@@ -594,6 +608,9 @@ async def lifespan(app: FastAPI):
         # backwards-compatible monkeypatches in isolated lifespan tests.
     finally:
         if runtime_context_token is not None:
+            from backend.services.config_runtime import register_scan_scheduler
+
+            register_scan_scheduler(None)
             reset_runtime_supervisor(runtime_context_token)
 
 

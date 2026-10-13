@@ -122,6 +122,8 @@ def _normalize_imported_smtp_security(value: str) -> str:
     if lowered in ("ssl", "starttls", "none"):
         return lowered
     raise ConfigBackupError("配置项 smtp_security 的值无效")
+
+
 _POSITIVE_INTEGER_KEYS = {
     "max_concurrent_reviews",
     "review_timeout_seconds",
@@ -753,6 +755,9 @@ async def restore_config_backup(
         conditions.append(AppConfig.key_name.in_(LABEL_CONFIG_KEYS))
 
     try:
+        from backend.services.config_store import lock_config
+
+        await lock_config(db, "validation/global")
         result = await db.execute(select(AppConfig).where(or_(*conditions)))
         existing_rows = result.scalars().all()
         existing = {row.key_name: row for row in existing_rows}
@@ -780,6 +785,11 @@ async def restore_config_backup(
             for key, record in imported.items()
             if key not in protected_restore_keys
         }
+        for key in sorted(
+            (set(existing) | set(applied_imported)) - protected_restore_keys
+        ):
+            revision = await lock_config(db, "app/" + key)
+            revision.revision += 1
 
         created = 0
         updated = 0
