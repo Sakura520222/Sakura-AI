@@ -10,7 +10,7 @@ import json
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, or_, select
 
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.announcement_models import Announcement
@@ -127,7 +127,17 @@ def rule_matches(rule, event):
     )
 
 
-async def resource_allowed(db, user, event):
+async def _resource_record(db, model, row_id, cache):
+    key = (model, int(row_id))
+    if cache is not None and key in cache:
+        return cache[key]
+    row = await db.get(model, key[1], populate_existing=True)
+    if cache is not None:
+        cache[key] = row
+    return row
+
+
+async def resource_allowed(db, user, event, *, resource_cache=None):
     """Match current WebUI resource scopes; subscriptions never grant access."""
     if not user or not user.is_active:
         return False
@@ -140,17 +150,17 @@ async def resource_allowed(db, user, event):
     if event.resource_type == "agent":
         from backend.models.agent_team_models import AgentTeamTask
 
-        row = await db.get(AgentTeamTask, int(event.resource_id), populate_existing=True)
+        row = await _resource_record(db, AgentTeamTask, event.resource_id, resource_cache)
         return bool(row and (user.role in {"admin", "super_admin"}
             or (user.github_username and row.started_by == user.github_username)))
     if event.resource_type == "announcement":
-        row = await db.get(Announcement, int(event.resource_id), populate_existing=True)
+        row = await _resource_record(db, Announcement, event.resource_id, resource_cache)
         return bool(row and row.status == "published" and str(row.publication_version) == event.run_key)
     if event.resource_type in {"payment", "refund_request"}:
         from backend.models.payment_models import Order, RefundRequest
 
         model = Order if event.resource_type == "payment" else RefundRequest
-        row = await db.get(model, int(event.resource_id), populate_existing=True)
+        row = await _resource_record(db, model, event.resource_id, resource_cache)
         return bool(row and (row.user_id == user.id or event.audience == "admins"))
     if event.resource_type == "user" and event.audience != "admins":
         return event.resource_id == str(user.id) and user.id in json.loads(event.recipients_json)
@@ -164,7 +174,7 @@ async def resource_allowed(db, user, event):
         from backend.models.database import IssueAnalysis, PRReview
         model = {"review": PRReview, "issue": IssueAnalysis}.get(event.resource_type)
         if model:
-            row = await db.get(model, int(event.resource_id), populate_existing=True)
+            row = await _resource_record(db, model, event.resource_id, resource_cache)
             return bool(row and username and (row.author or "").casefold() == username)
         return False
     if event.audience == "all":
@@ -172,11 +182,38 @@ async def resource_allowed(db, user, event):
     return event.audience == "admins" or user.id in json.loads(event.recipients_json)
 
 
+async def routing_rules(db, event, *, user_ids=None):
+    """Filter event families/scopes in SQL and group targets once per user.
+
+    An empty target set still denotes explicit preferences: disabled or
+    nonmatching scoped rules must suppress legacy/default routing.
+    """
+    rule = NotificationSubscription
+    matches = and_(
+        rule.enabled.is_(True),
+        or_(rule.repo_name.is_(None), rule.repo_name == "", func.lower(rule.repo_name) == (event.repo_name or "").casefold()),
+        or_(rule.resource_type.is_(None), rule.resource_type == "", rule.resource_type == event.resource_type),
+        or_(rule.resource_id.is_(None), rule.resource_id == "", rule.resource_id == event.resource_id),
+        case(SEVERITIES, value=rule.min_severity, else_=0) <= SEVERITIES.get(event.severity, 0),
+    )
+    query = select(rule.user_id, rule.endpoint_id, matches).distinct().where(
+        rule.event_type.in_(["*", event.event_type, event.event_type.split(".")[0] + ".*"])
+    )
+    if user_ids is not None:
+        query = query.where(rule.user_id.in_(user_ids))
+    grouped = {}
+    for user_id, endpoint_id, matched in (await db.execute(query)).all():
+        targets = grouped.setdefault(user_id, set())
+        if matched:
+            targets.add(endpoint_id)
+    return grouped
+
+
 async def candidates(db, event):
     """Map legacy subscriptions via internal user IDs, preserving opt-in."""
     ids = set(json.loads(event.recipients_json))
-    rules = (await db.execute(select(NotificationSubscription))).scalars().all()
-    ids.update(rule.user_id for rule in rules if rule_matches(rule, event))
+    rules = await routing_rules(db, event)
+    ids.update(user_id for user_id, targets in rules.items() if targets)
     if event.repo_name:
         owners = await db.execute(select(TelegramUser.id).where(
             TelegramUser.github_username == event.repo_name.split("/")[0]

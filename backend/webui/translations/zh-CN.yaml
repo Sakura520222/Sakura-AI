@@ -2683,8 +2683,8 @@ notification_center:
   saved: 已保存
   test_queued: 测试已排队，请在发送诊断中查看结果。
   verification_sent: 验证请求已处理；邮件端点请输入收到的验证码后再次验证。
-  verification_help: 邮件使用验证码验证归属；Webhook 需返回签名请求中的 challenge。Telegram 使用下方私聊绑定流程。
-  preferences_help: 业务事件默认保存在站内，外部渠道需显式订阅。配置偏好不会授予资源权限。个人安全和退款通知仅允许已验证的私人端点。
+  verification_help: 邮件使用验证码验证归属；Webhook 需返回签名请求中的 challenge。Telegram 启用或更换目标必须使用下方私聊绑定流程。
+  preferences_help: 业务事件默认保存在站内，外部渠道需显式订阅。配置偏好不会授予资源权限。个人安全和退款通知仅允许已验证的私人端点。重复添加相同事件、范围和端点会更新已有规则。
   history: 业务通知历史
   empty: 暂无业务通知
   details: 查看详情

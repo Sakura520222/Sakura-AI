@@ -14,18 +14,28 @@ from backend.models import Base
 from backend.models import database as db_module
 from backend.models.agent_team_models import AgentTeamTask
 from backend.models.announcement_models import NotificationDelivery
-from backend.models.database import IssueAnalysis
-from backend.models.identity_models import NotificationEndpoint
+from backend.models.database import IssueAnalysis, UserConfig, WebUIConfig
+from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.notification_models import (
+    NotificationAudit,
     NotificationEvent,
     NotificationSubscription,
 )
-from backend.models.telegram_models import TelegramUser
+from backend.models.telegram_models import (
+    TelegramUser,
+    UserRecoveryCode,
+    UserWebAuthnCredential,
+)
 from backend.services import notification_events, telegram_service
 from backend.services.issue_service import IssueService
 from backend.services.notification_business import install_notification_outbox
 from backend.services.notification_events import emit_event
 from backend.services.notification_migration import upgrade_notification_schema
+from backend.services.notification_preferences import (
+    cancel_endpoint_deliveries,
+    owned_endpoint,
+    save_subscription,
+)
 from backend.services.notification_service import (
     NotificationProviderRegistry,
     NotificationService,
@@ -49,6 +59,9 @@ async def live_db(monkeypatch):
         "issue_analyses",
         "agent_team_tasks",
     }
+    table_names.update(model.__tablename__ for model in (
+        UserConfig, WebUIConfig, UserIdentity, UserRecoveryCode, UserWebAuthnCredential, NotificationAudit
+    ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
         await conn.run_sync(lambda db: Base.metadata.drop_all(db, tables=tables))
@@ -247,3 +260,137 @@ async def test_live_legacy_unique_key_and_nullability_upgrade(live_db):
         assert await conn.run_sync(upgrade_notification_schema) is True
         assert await conn.run_sync(upgrade_notification_schema) is False
         await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_live_backup_restore_suppresses_historical_security_events(live_db):
+    from backend.services.user_backup_service import restore_user_backup
+    from tests.test_notification_import_routing_646 import changed_backup
+
+    async with live_db() as db:
+        result = await restore_user_backup(db, await changed_backup(db))
+        assert result.passkeys_created == 1 and db.info["notification_outbox"] is True
+        assert (await db.execute(select(NotificationEvent))).scalars().all() == []
+        user = await db.get(TelegramUser, 1)
+        assert user.role == "admin"
+        user.role = "user"
+        await db.commit()
+    async with live_db() as db:
+        assert (await db.execute(select(NotificationEvent))).scalar_one().event_type == "security.changed"
+
+
+@pytest.mark.asyncio
+async def test_live_concurrent_subscription_upserts_share_one_rule(live_db):
+    async def save():
+        async with live_db() as db:
+            row = await save_subscription(db, 1, {"event_type": "review.*", "repo_name": "ALICE/Repo",
+                "resource_type": None, "resource_id": None, "endpoint_id": 1, "enabled": True, "min_severity": "info"})
+            return row.id
+
+    assert len(set(await asyncio.gather(*(save() for _ in range(6))))) == 1
+    async with live_db() as db:
+        row = (await db.execute(select(NotificationSubscription).where(
+            NotificationSubscription.repo_name == "ALICE/Repo"
+        ))).scalar_one()
+        assert row.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_live_endpoint_disable_serializes_with_fanout_and_fences_old_rows(live_db, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    sent = []
+
+    class Provider:
+        channel = "email"
+
+        async def send(self, **_):
+            sent.append(1)
+
+    dispatcher = NotificationService(NotificationProviderRegistry({"email": Provider()}))
+    original = dispatcher._materialize_recipient
+
+    async def pause(*args):
+        entered.set()  # Fanout has locked its exact endpoints before this call.
+        await release.wait()
+        return await original(*args)
+
+    monkeypatch.setattr(dispatcher, "_materialize_recipient", pause)
+    async with live_db() as db:
+        item = await emit_event(db, event_type="review.completed", resource_type="review", resource_id=1,
+            run_key="disable-race", title="Completed", content="Ready", repo_name="alice/repo", recipient_ids=[1])
+        await db.commit()
+        event_id = item.id
+
+    async def materialize():
+        async with live_db() as db:
+            return await dispatcher.materialize_event(db, event_id)
+
+    async def disable():
+        async with live_db() as db:
+            endpoint = await owned_endpoint(db, 1, 1, for_update=True)
+            endpoint.enabled = False
+            await cancel_endpoint_deliveries(db, 1)
+            await db.commit()
+
+    fanout = asyncio.create_task(materialize())
+    disabler = None
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        disabler = asyncio.create_task(disable())
+        await asyncio.sleep(0.1)
+        assert not disabler.done()
+    finally:
+        release.set()
+        await fanout
+        if disabler is not None:
+            await disabler
+    async with live_db() as db:
+        row = (await db.execute(select(NotificationDelivery))).scalar_one()
+        assert row.status == "cancelled" and row.claim_token is row.next_retry_at is None
+        row_id = row.id
+        endpoint = await db.get(NotificationEndpoint, 1)
+        endpoint.enabled = True
+        await db.commit()
+        assert await dispatcher.deliver_event_row(db, row_id) is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_live_subscription_write_serializes_with_fanout_without_lock_inversion(live_db, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    dispatcher = NotificationService(NotificationProviderRegistry({}))
+    original = dispatcher._materialize_recipient
+
+    async def pause(*args):
+        entered.set()
+        await release.wait()
+        return await original(*args)
+
+    monkeypatch.setattr(dispatcher, "_materialize_recipient", pause)
+    async with live_db() as db:
+        item = await emit_event(db, event_type="review.completed", resource_type="review", resource_id=1,
+            run_key="subscribe-race", title="Completed", content="Ready", repo_name="alice/repo", recipient_ids=[1])
+        await db.commit()
+        event_id = item.id
+
+    async def materialize():
+        async with live_db() as db:
+            return await dispatcher.materialize_event(db, event_id)
+
+    async def subscribe():
+        async with live_db() as db:
+            return await save_subscription(db, 1, {"event_type": "review.completed", "repo_name": "alice/repo",
+                "resource_type": None, "resource_id": None, "endpoint_id": 1, "enabled": True, "min_severity": "info"})
+
+    fanout = asyncio.create_task(materialize())
+    writer = None
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        writer = asyncio.create_task(subscribe())
+        await asyncio.sleep(0.1)
+        assert not writer.done()
+    finally:
+        release.set()
+        await asyncio.wait_for(fanout, 10)
+        if writer is not None:
+            await asyncio.wait_for(writer, 10)
