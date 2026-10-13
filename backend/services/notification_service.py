@@ -472,8 +472,9 @@ def _safe_error_message(exc: BaseException) -> str:
     from backend.core.log_sanitizer import sanitize_exception_text
 
     settings = get_settings()
-    value = sanitize_exception_text(exc, secrets=[getattr(settings, key, "") for key in
-        ("smtp_password", "telegram_bot_token")]).replace("\x00", " ").strip()
+    secrets = tuple(str(value) for key in ("smtp_password", "telegram_bot_token")
+        if (value := getattr(settings, key, None)))
+    value = sanitize_exception_text(exc, secrets=secrets).replace("\x00", " ").strip()
     return value[:1000] or type(exc).__name__
 
 
