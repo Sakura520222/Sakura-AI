@@ -38,7 +38,7 @@ def client(api_db):
     app.include_router(agent_team.router)
 
     async def database():
-        async with AsyncDB(engine) as db:
+        async with AsyncDB(engine, outbox=True) as db:
             yield db
 
     async def identity():
@@ -193,6 +193,45 @@ def test_agent_notification_page_selects_only_an_authorized_task(client, api_db,
     assert client.get("/agent-team/?task_id=999").status_code == 404
     assert client.get("/agent-team/?task_id=0").status_code == 422
     assert client.get("/agent-team/").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_agent_retry_creates_a_new_persisted_round_before_cloning(client, api_db, monkeypatch):
+    from backend.models import database as db_module
+    from backend.models.agent_team_models import AgentTeamTask
+    from backend.workers.agent_team_worker import AgentTeamWorker
+
+    engine, _ = api_db
+    monkeypatch.setattr(agent_team, "_check_and_consume_agent_quota", AsyncMock(return_value=(True, "")))
+    monkeypatch.setattr(agent_team, "_run_agent_task_background", AsyncMock())
+    monkeypatch.setattr(db_module, "async_session", lambda: AsyncDB(engine, outbox=True))
+    monkeypatch.setattr("backend.webui.sse.publish_event", AsyncMock())
+    with Session(engine) as db:
+        db.add(AgentTeamTask(id=10, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
+            source_type="manual_issue", title="Retry task", status="failed", started_by="alice"))
+        db.commit()
+    token = get_csrf_serializer().dumps({})
+    worker = AgentTeamWorker.__new__(AgentTeamWorker)
+    for number in (1, 2):
+        assert client.post("/agent-team/tasks/10/retry", data={"csrf_token": token}).json()["success"] is True
+        # Repeated queued admission is the same pending execution, not a new
+        # run. The normal retry route and worker status writer use real SQL.
+        assert client.post("/agent-team/tasks/10/retry", data={"csrf_token": token}).json()["success"] is True
+        with Session(engine) as db:
+            assert db.get(AgentTeamTask, 10).execution_round == number
+        if number == 1:
+            await worker._update_task(10, status="cloning")
+            await worker._update_task(10, status="cloning")  # duplicate start callback
+        await worker._update_task(10, status="failed", error_message="Failure before iterations")
+        await worker._update_task(10, status="failed")  # duplicate terminal callback
+    with Session(engine) as db:
+        events = db.query(NotificationEvent).filter_by(resource_type="agent").all()
+        assert {(item.event_type, item.run_key) for item in events} == {
+            ("agent.started", "1:0:0"), ("agent.failed", "1:0:0"), ("agent.failed", "2:0:0"),
+        }
+        assert len(events) == 3
+        task = db.get(AgentTeamTask, 10)
+        assert (task.execution_round, task.resume_count, task.iteration_count) == (2, 0, 0)
 
 
 def test_email_verification_uses_hashed_code_and_persistent_attempt_limit(client, api_db, monkeypatch):

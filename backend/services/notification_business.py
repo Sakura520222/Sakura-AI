@@ -93,6 +93,8 @@ def _task_event_values(kind, record, outcome, recipient_ids):
         repo = f"{record.repo_owner}/{repo}"
     if kind == "agent":
         run_key = f"{record.resume_count}:{record.iteration_count}"
+        if record.execution_round:
+            run_key = f"{record.execution_round}:{run_key}"
         detail_url = f"/agent-team/?task_id={record.id}"
     else:
         run_key = str(getattr(record, "analysis_version", None) or record.id)
@@ -131,6 +133,32 @@ async def emit_task_event(db, kind, record, outcome, *, refresh=False):
         raise
 
 
+def _assign_agent_execution_round(session, record, status):
+    """Serialize admissions with the task write, including duplicate queues.
+
+    Queueing starts a round before skills/cloning can fail. Terminal events
+    refresh its persisted identity under the same lock. Migration/import
+    sessions do not opt in, and round zero retains legacy event identities.
+    """
+    from backend.models.agent_team_models import AgentTeamTask
+
+    if record in session.new:
+        if status in {"queued", "cloning"}:
+            record.execution_round = (record.execution_round or 0) + 1
+        return
+    current = session.connection().execute(select(
+        AgentTeamTask.execution_round, AgentTeamTask.status
+    ).where(AgentTeamTask.id == record.id).with_for_update()).one_or_none()
+    if current is None:
+        return  # The ORM flush will reject a concurrently deleted task.
+    run = current.execution_round or 0
+    if status == "queued" and current.status != "queued":
+        run += 1
+    elif status == "cloning" and not run and current.status in {"queued", "candidate"}:
+        run = 1  # First execution of a legacy queued task after migration.
+    record.execution_round = run
+
+
 def _collect(session, *_):
     if not session.info.get("notification_outbox"):
         return
@@ -148,8 +176,11 @@ def _collect(session, *_):
             value = getattr(record.status, "value", record.status)
             outcome = _OUTCOMES.get(value)
             # Agent phase changes are deliberately not process notifications.
-            if isinstance(record, AgentTeamTask) and value not in {"cloning", "completed", "failed", "cancelled", "waiting_human"}:
-                continue
+            if isinstance(record, AgentTeamTask):
+                if value in {"queued", "cloning", "completed", "failed", "cancelled", "waiting_human"}:
+                    _assign_agent_execution_round(session, record, value)
+                if value not in {"cloning", "completed", "failed", "cancelled", "waiting_human"}:
+                    continue
             if isinstance(record, RepoScan) and value == "analyzing":
                 continue
             if outcome:

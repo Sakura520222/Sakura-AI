@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from backend.core.config import get_settings
 from backend.models import Base
 from backend.models import database as db_module
+from backend.models.agent_team_models import AgentTeamTask
 from backend.models.announcement_models import NotificationDelivery
 from backend.models.database import IssueAnalysis
 from backend.models.identity_models import NotificationEndpoint
@@ -43,6 +44,7 @@ async def live_db(monkeypatch):
         "notification_deliveries", "user_notifications", "notification_subscriptions",
         "notification_provider_budgets", "user_repo_subscriptions",
         "issue_analyses",
+        "agent_team_tasks",
     }
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
@@ -108,6 +110,49 @@ async def test_live_issue_completion_and_close_race_emit_only_committed_transiti
         assert set(by_type) == {"issue.started", f"issue.{record.status}"}
         if record.status == "completed":
             assert by_type["issue.completed"].severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_live_agent_duplicate_admissions_and_early_retry_failures(live_db):
+    async with live_db(info={"notification_outbox": False}) as db:
+        db.add(AgentTeamTask(id=646, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
+            source_type="manual_issue", title="Task", status="failed", started_by="alice"))
+        await db.commit()
+
+    async def queue():
+        async with live_db() as db:
+            task = await db.get(AgentTeamTask, 646)
+            task.status = "queued"
+            await db.commit()
+
+    for expected_round in (1, 2):
+        await asyncio.gather(queue(), queue())
+        async with live_db() as db:
+            task = await db.get(AgentTeamTask, 646)
+            assert task.execution_round == expected_round
+            task.status = "failed"  # before skills/cloning/iteration begins
+            await db.commit()
+    async with live_db() as db:
+        events = (await db.execute(select(NotificationEvent).where(NotificationEvent.resource_type == "agent"))).scalars().all()
+        assert {event.run_key for event in events} == {"1:0:0", "2:0:0"}
+        assert len(events) == 2
+
+
+@pytest.mark.asyncio
+async def test_live_agent_round_migration_preserves_existing_tasks(live_db):
+    async with live_db(info={"notification_outbox": False}) as db:
+        db.add(AgentTeamTask(id=646, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
+            source_type="manual_issue", title="Task", status="completed", started_by="alice"))
+        await db.commit()
+        await db.execute(text("ALTER TABLE agent_team_tasks DROP COLUMN execution_round"))
+        conn = await db.connection()
+        assert await conn.run_sync(upgrade_notification_schema) is True
+        assert await conn.run_sync(upgrade_notification_schema) is False
+        await db.commit()
+    async with live_db() as db:
+        task = await db.get(AgentTeamTask, 646)
+        assert (task.status, task.execution_round) == ("completed", 0)
+        assert (await db.execute(select(NotificationEvent))).scalars().all() == []
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,11 @@ def upgrade_notification_schema(conn):
     inspector = inspect(conn)
     table_name = "notification_deliveries"
     changed = False
+    if inspector.has_table("agent_team_tasks"):
+        agent_columns = {item["name"] for item in inspector.get_columns("agent_team_tasks")}
+        if "execution_round" not in agent_columns:
+            conn.execute(text("ALTER TABLE agent_team_tasks ADD COLUMN execution_round INTEGER NOT NULL DEFAULT 0"))
+            changed = True
     if conn.dialect.name in {"mysql", "mariadb"} and inspector.has_table("notification_provider_budgets"):
         deadline = next(item for item in inspector.get_columns("notification_provider_budgets") if item["name"] == "next_available_at")
         if getattr(deadline["type"], "fsp", None) != 6:
@@ -23,7 +28,7 @@ def upgrade_notification_schema(conn):
     dialect = conn.dialect.name
     if dialect == "sqlite":
         if columns["announcement_id"]["nullable"] and "uq_notification_delivery" not in constraints:
-            return False
+            return changed
         # SQLite is a test dialect; production uses PostgreSQL or MySQL.
         # Create/copy/swap instead of dropping data or recreating identities.
         if conn.execute(text("PRAGMA foreign_keys")).scalar():
