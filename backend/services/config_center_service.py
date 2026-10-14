@@ -77,6 +77,20 @@ class ConfigError(ValueError):
         super().__init__(code)
 
 
+class ConfigChanges(dict):
+    """Legacy change mapping with an explicit post-commit outcome."""
+
+    effect = "live"
+    pending_fields: tuple[str, ...] = ()
+
+    def status(self):
+        return {
+            "persisted": True,
+            "effect": self.effect,
+            "pending_fields": list(self.pending_fields),
+        }
+
+
 def serialize_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -157,7 +171,20 @@ def _strict_tree(default: Any, value: Any) -> None:
 
 
 class ConfigCenterService:
-    async def _clear_depgraph_mode(self, db):
+    async def _apply_committed(self, values, revisions):
+        """Persistence has succeeded; a failed effect is retryable, not a failed write."""
+        try:
+            await apply_config_values(values)
+        except BaseException as exc:
+            config_runtime_sync.pending.update(revisions)
+            if not isinstance(exc, Exception):
+                raise
+            logger.exception("Configuration committed; runtime application pending")
+            return "pending"
+        config_runtime_sync.record_applied(revisions)
+        return "live"
+
+    async def _clear_depgraph_mode(self, db, revisions):
         """The historical section mode wins over the flat key at runtime.
 
         Move only that leaf back to the canonical scalar path, retaining prompts.
@@ -176,6 +203,7 @@ class ConfigCenterService:
             value = json.dumps(raw, ensure_ascii=False) if raw else None
             await self._write_app(db, key, value)
             revision.revision += 1
+            revisions["app/" + key] = revision.revision
             return {key: value}
         return {}
 
@@ -255,11 +283,14 @@ class ConfigCenterService:
                     old = {
                         row.key_name: row.key_value for row in result.scalars().all()
                     }
-                    changed = {}
+                    changed = ConfigChanges()
+                    committed_revisions = {}
                     aliases = {}
                     for key, value in normalized.items():
                         if key == "pr_dependency_graph_mode":
-                            aliases.update(await self._clear_depgraph_mode(db))
+                            aliases.update(
+                                await self._clear_depgraph_mode(db, committed_revisions)
+                            )
                         if old.get(key) == value:
                             continue
                         await self._write_app(db, key, value)
@@ -269,6 +300,21 @@ class ConfigCenterService:
                             "new": "****" if catalog[key].sensitive else value,
                             "raw_new": value,
                         }
+                    # Retry a committed/pending write even when its value is unchanged.
+                    values = dict(aliases)
+                    for key, value in normalized.items():
+                        unit = "app/" + key
+                        revision = locks[key].revision
+                        if (
+                            key in changed
+                            or unit in config_runtime_sync.pending
+                            or (
+                                revision
+                                and config_runtime_sync.seen.get(unit, 0) != revision
+                            )
+                        ):
+                            values[key] = value
+                            committed_revisions[unit] = revision
                     if changed or aliases:
                         await db.commit()
                     else:
@@ -276,12 +322,13 @@ class ConfigCenterService:
                 except BaseException:
                     await db.rollback()
                     raise
-                await apply_config_values(
-                    {
-                        **aliases,
-                        **{key: change["raw_new"] for key, change in changed.items()},
-                    }
+                changed.effect = await self._apply_committed(
+                    values, committed_revisions
                 )
+                if changed.effect == "pending":
+                    changed.pending_fields = tuple(sorted(values))
+                elif any(catalog[key].requires_restart for key in changed):
+                    changed.effect = "restart_required"
         return changed
 
     async def save_preferences(self, db, user, updates):
@@ -361,6 +408,7 @@ class ConfigCenterService:
                 if changed:
                     await self._write_app(db, section_key, raw)
                     revision.revision += 1
+                committed_revisions = {"app/" + section_key: revision.revision}
                 if changed:
                     await db.commit()
                 else:
@@ -368,12 +416,16 @@ class ConfigCenterService:
             except BaseException:
                 await db.rollback()
                 raise
-            await apply_config_values({section_key: raw})
+            effect = await self._apply_committed(
+                {section_key: raw}, committed_revisions
+            )
         return {
             "section": section_key,
             "changed": changed,
             "existed": changed,
             "changes": changes,
+            "persisted": True,
+            "effect": effect,
         }
 
     def allowed_fields(self, user: dict) -> dict[str, ConfigField]:
@@ -737,6 +789,7 @@ class ConfigCenterService:
                     if version != state["version"]:
                         raise ConfigError("conflict", status=409, field_id=field_id)
                     committed = {}
+                    committed_revisions = {}
                     if item.storage == "preference":
                         await self._write_preference(db, item, user, value, reset)
                     elif item.storage in {"section", "binding", "model"}:
@@ -805,12 +858,15 @@ class ConfigCenterService:
                         committed[item.key] = raw
                     else:
                         if item.key == "pr_dependency_graph_mode":
-                            committed.update(await self._clear_depgraph_mode(db))
+                            committed.update(
+                                await self._clear_depgraph_mode(db, committed_revisions)
+                            )
                         raw = None if reset else serialize_value(value)
                         await self.validate_app_combination(db, {item.key: raw})
                         await self._write_app(db, item.key, raw)
                         committed[item.key] = raw
                     revision.revision += 1
+                    committed_revisions[self.unit(item, user)] = revision.revision
                     # Metadata-only audit is in the same transaction; values,
                     # credentials, prompts and exception copies never enter it.
                     db.add(
@@ -843,14 +899,14 @@ class ConfigCenterService:
                 effect = "restart_required" if item.requires_restart else "live"
                 try:
                     await apply_config_values(committed)
-                    config_runtime_sync.pending.discard(self.unit(item, user))
                     if item.scope == "user":
                         from backend.webui.deps import invalidate_user_prefs_cache
 
                         invalidate_user_prefs_cache(int(user["user_id"]))
                         invalidate_user_dynamic_config_cache(int(user["user_id"]))
+                    config_runtime_sync.record_applied(committed_revisions)
                 except Exception:
-                    config_runtime_sync.pending.add(self.unit(item, user))
+                    config_runtime_sync.pending.update(committed_revisions)
                     logger.exception(
                         "Configuration committed; runtime application pending"
                     )

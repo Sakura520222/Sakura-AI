@@ -1960,6 +1960,7 @@ toast:
   agent_skill_installed: "Skill installed successfully"
   agent_skill_install_failed: "Skill installation failed"
   config_saved_live: "Configuration saved and applied"
+  config_saved_pending: "Configuration saved. Runtime application is pending and will be retried."
   config_backup_export_failed: "Configuration backup export failed: {reason}"
   config_backup_invalid: "Invalid backup file: {reason}"
   config_backup_import_failed: "Configuration backup import failed; current configuration was not changed"

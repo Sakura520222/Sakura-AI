@@ -486,6 +486,10 @@ class SystemConfigService:
 
     async def apply_live_settings(self, changed: dict[str, dict[str, str]]) -> None:
         """将变更同步到 Settings 单例"""
+        from backend.services.config_center_service import ConfigChanges
+
+        if isinstance(changed, ConfigChanges):
+            return  # Shared save service already applied or scheduled these effects.
         all_dynamic_keys = get_all_dynamic_config_keys()
         invalidate_dynamic_config_cache(all_dynamic_keys)
         for key, change in changed.items():
