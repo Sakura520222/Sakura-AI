@@ -548,6 +548,8 @@ async function load() {
     const response = await fetch("/api/v1/config/ai/accounts");
     accounts = (await response.json()).data?.accounts || [];
   }
+  const theme = data.fields.find((field) => field.id === "personal/theme");
+  if (theme) applyTheme(theme.value);
   renderFields(data.fields, document.getElementById("settings-fields"));
   const index = await client.read({ language, search: true });
   searchIndex = index.fields;

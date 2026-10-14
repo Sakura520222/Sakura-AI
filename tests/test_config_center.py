@@ -96,6 +96,248 @@ async def field(service, db, field_id, user=ADMIN):
     )
 
 
+@pytest_asyncio.fixture
+async def config_http(config_db):
+    from backend.api.v1 import config, settings
+    from backend.api.v1.deps import require_api_super_admin
+
+    app = FastAPI()
+    for router in (config.router, settings.router, config_center.router):
+        app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[require_api_auth] = lambda: USER
+    app.dependency_overrides[require_api_super_admin] = lambda: ADMIN
+    app.dependency_overrides[require_csrf_header] = lambda: "valid"
+
+    async def session():
+        async with config_db() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = session
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest.mark.asyncio
+async def test_legacy_settings_accept_numeric_strings_but_center_stays_strict(
+    config_http,
+):
+    response = await config_http.patch(
+        "/api/v1/settings", json={"theme": "dark", "language": "en"}
+    )
+    assert response.status_code == 200
+    for value in ("10", "20", "50", "100", 20.0):
+        response = await config_http.patch(
+            "/api/v1/settings", json={"items_per_page": value}
+        )
+        assert response.status_code == 200 and response.json()["success"]
+        saved = (await config_http.get("/api/v1/settings")).json()["data"]
+        assert saved == {
+            "theme": "dark",
+            "language": "en",
+            "items_per_page": int(value),
+        }
+    for value in ("invalid", "21", [], True):
+        response = await config_http.patch(
+            "/api/v1/settings", json={"items_per_page": value}
+        )
+        assert not response.json()["success"]
+    current = next(
+        item
+        for item in (await config_http.get("/api/v1/config-center")).json()["fields"]
+        if item["id"] == "personal/items_per_page"
+    )
+    for value in ("20", 20.0):
+        response = await config_http.patch(
+            "/api/v1/config-center",
+            json={
+                "field": current["id"],
+                "version": current["version"],
+                "value": value,
+            },
+        )
+        assert response.status_code == 422
+    assert (await config_http.get("/api/v1/settings")).json()["data"] == {
+        "theme": "dark",
+        "language": "en",
+        "items_per_page": 20,
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_general_projects_inheritance_without_materializing_rows(
+    config_db, config_http, monkeypatch
+):
+    from backend.core.config import get_all_dynamic_config_keys
+    from backend.models.database import _build_default_configs
+
+    monkeypatch.setenv("REVIEW_TIMEOUT_SECONDS", "321")
+    monkeypatch.setenv("OUTPUT_LANGUAGE", "en")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "opaque-environment-credential")
+    get_settings().review_timeout_seconds = 999
+    async with config_db() as db:
+        db.add_all(_build_default_configs())
+        await db.commit()
+    response = await config_http.get("/api/v1/config/general")
+    configs = response.json()["data"]["configs"]
+    assert set(get_all_dynamic_config_keys()) <= configs.keys()
+    assert configs["review_timeout_seconds"] == "321"
+    assert configs["enable_auto_review"] == "true"
+    assert configs["output_language"] == "en"
+    assert configs["embedding_api_key"] == "****"
+    assert "opaque-environment-credential" not in response.text
+    async with config_db() as db:
+        assert len((await db.execute(select(AppConfig))).scalars().all()) == 1
+        db.add_all(
+            [
+                AppConfig(key_name="review_timeout_seconds", key_value="123"),
+                AppConfig(key_name="enable_auto_review", key_value="false"),
+                AppConfig(key_name="output_language", key_value=""),
+                AppConfig(
+                    key_name="embedding_api_key", key_value="opaque-database-credential"
+                ),
+                AppConfig(key_name="historical_extension", key_value="retained"),
+            ]
+        )
+        await db.commit()
+    response = await config_http.get("/api/v1/config/general")
+    configs = response.json()["data"]["configs"]
+    assert configs["review_timeout_seconds"] == "123"
+    assert configs["enable_auto_review"] == "false"
+    assert configs["output_language"] == ""
+    assert configs["historical_extension"] == "retained"
+    assert configs["embedding_api_key"] == "****"
+    assert "opaque-database-credential" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "reflection/model",
+        "reflection/prompt_template",
+        "issue_reflection/model",
+        "issue_reflection/prompt_template",
+        "consolidation/model",
+    ],
+)
+async def test_nullable_section_strings_save_and_reset_without_changing_siblings(
+    config_db, path
+):
+    from backend.services.config_metadata import lookup_path, replace_path
+
+    service = ConfigCenterService()
+    section = "strategy.context_enhancement"
+    nested_path = ("sakura_memory", *path.split("/"))
+    key = f"section/{section}/" + "/".join(nested_path)
+    async with config_db() as db:
+        await service.save_section(db, section, {"max_file_size": 123456}, mode="patch")
+        current = await field(service, db, key)
+        assert current["default"] is None and current["type"] == "string"
+        saved = await service.mutate(
+            db, ADMIN, key, version=current["version"], value="custom-model-or-template"
+        )
+        assert saved["value"] == "custom-model-or-template"
+        assert lookup_path(get_section_config(section), nested_path) == saved["value"]
+        for invalid in (42, False, [], {}):
+            with pytest.raises(ConfigError, match="invalid_type"):
+                await service.save_section(
+                    db, section, replace_path({}, nested_path, invalid), mode="patch"
+                )
+        reset = await service.mutate(
+            db, ADMIN, key, version=saved["version"], reset=True
+        )
+        assert reset["value"] is None and reset["source"] == "builtin"
+        raw = (await db.execute(select(AppConfig))).scalar_one().key_value
+        assert json.loads(raw) == {"max_file_size": 123456}
+        # The legacy whole-section path also accepts the declared nullable type.
+        await service.save_section(
+            db, section, replace_path({}, nested_path, "legacy-string"), mode="patch"
+        )
+        assert (await field(service, db, key))["value"] == "legacy-string"
+        await service.save_section(
+            db, section, replace_path({}, nested_path, None), mode="patch"
+        )
+        assert (await field(service, db, key))["value"] is None
+
+
+@pytest.mark.asyncio
+async def test_personal_language_inherits_explicit_empty_global_override(
+    config_db, monkeypatch
+):
+    monkeypatch.setenv("OUTPUT_LANGUAGE", "en")
+    service = ConfigCenterService()
+    async with config_db() as db:
+        await service.save_app_updates(db, {"output_language": ""})
+        current = await field(service, db, "personal/output_language", USER)
+        assert current["value"] == current["inheritedValue"] == ""
+        assert current["source"] == "database"
+        assert get_settings().output_language == ""
+        saved = await service.mutate(
+            db, USER, current["id"], version=current["version"], value="zh-CN"
+        )
+        reset = await service.mutate(
+            db, USER, current["id"], version=saved["version"], reset=True
+        )
+        assert reset["value"] == "" and reset["source"] == "database"
+        global_field = await field(service, db, "global/output_language")
+        await service.mutate(
+            db, ADMIN, global_field["id"], version=global_field["version"], reset=True
+        )
+        inherited = await field(service, db, current["id"], USER)
+        assert inherited["value"] == "en" and inherited["source"] == "environment"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("section", "path", "value"),
+    [
+        ("strategy.context_enhancement", "max_file_size", 123456),
+        ("label.recommendation", "confidence_threshold", 0.91),
+    ],
+)
+async def test_remote_section_writes_and_resets_are_pending_until_reconciled(
+    config_db, section, path, value
+):
+    from backend.services.config_runtime import config_runtime_sync
+    from backend.services.config_store import lock_config
+
+    service = ConfigCenterService()
+    key = f"section/{section}/{path}"
+    async with config_db() as db:
+        initial = await field(service, db, key)
+        assert initial["effect"] == "live"
+        # A different process commits without touching this process's section store.
+        async with config_db() as remote:
+            revision = await lock_config(remote, "app/" + section)
+            remote.add(AppConfig(key_name=section, key_value=json.dumps({path: value})))
+            revision.revision += 1
+            await remote.commit()
+        await db.rollback()
+        changed = await field(service, db, key)
+        assert changed["value"] == value and changed["effect"] == "pending"
+        assert not config_runtime_sync.pending
+        assert get_section_config(section)[path] == initial["value"]
+        await config_runtime_sync.refresh(db)
+        assert (await field(service, db, key))["effect"] == "live"
+        assert get_section_config(section)[path] == value
+        async with config_db() as remote:
+            revision = await lock_config(remote, "app/" + section)
+            row = (await remote.execute(select(AppConfig))).scalar_one()
+            await remote.delete(row)
+            revision.revision += 1
+            await remote.commit()
+        await db.rollback()
+        reset = await field(service, db, key)
+        assert reset["value"] == initial["value"] and reset["effect"] == "pending"
+        await config_runtime_sync.refresh(db)
+        assert (await field(service, db, key))["effect"] == "live"
+        # Successful local application should not look pending until the next poll.
+        await service.save_section(db, section, {path: value}, mode="patch")
+        assert (await field(service, db, key))["effect"] == "live"
+
+
 @pytest.mark.asyncio
 async def test_save_reset_inheritance_and_unsubmitted_booleans(config_db, monkeypatch):
     monkeypatch.setenv("REVIEW_TIMEOUT_SECONDS", "321")

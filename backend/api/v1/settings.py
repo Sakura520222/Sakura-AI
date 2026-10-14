@@ -54,6 +54,13 @@ async def update_settings(
 
     if set(body) - {"theme", "language", "items_per_page"}:
         return error_response("unknown_field")
+    # This legacy endpoint accepted int-compatible values before the typed centre.
+    # Keep coercion here; the config-centre JSON contract remains strict.
+    if body.get("items_per_page") is not None:
+        try:
+            body = {**body, "items_per_page": int(body["items_per_page"])}
+        except ValueError, TypeError, OverflowError:
+            return error_response("invalid_type")
     try:
         await config_center_service.save_preferences(db, user, body)
     except ConfigError as exc:

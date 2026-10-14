@@ -20,6 +20,8 @@ from backend.api.v1.schemas import (
 )
 from backend.core.config import (
     AI_STRATEGY_CONFIG_KEYS,
+    Settings,
+    get_all_dynamic_config_keys,
     get_label_config,
     get_settings,
 )
@@ -577,11 +579,18 @@ async def get_general_config(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """获取全局配置"""
+    """获取全局配置，兼容未物化默认行的新数据库。"""
+    from backend.services.config_center_service import serialize_value
+
+    deployment = Settings()
+    configs = {
+        key: serialize_value(getattr(deployment, key))
+        for key in get_all_dynamic_config_keys()
+    }
     result = await db.execute(select(AppConfig).order_by(AppConfig.key_name))
-    configs = {}
     for row in result.scalars().all():
-        configs[row.key_name] = _mask_sensitive(row.key_value, row.key_name)
+        configs[row.key_name] = row.key_value
+    configs = {key: _mask_sensitive(value, key) for key, value in configs.items()}
 
     return success_response(data={"configs": configs})
 

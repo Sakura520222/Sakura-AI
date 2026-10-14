@@ -30,6 +30,7 @@ from backend.core.config_sections import (
     SECTION_REGISTRY,
     _prune_default_equal_leaves,
     deep_merge,
+    get_section_config,
 )
 from backend.core.log_sanitizer import sensitive_log_scope
 from backend.models.admin_action_log import AdminActionLog
@@ -43,6 +44,7 @@ from backend.services.config_metadata import (
     lookup_path,
     model_fields,
     replace_path,
+    value_type,
 )
 from backend.services.config_runtime import apply_config_values, config_runtime_sync
 from backend.services.config_store import config_version, lock_config
@@ -51,6 +53,15 @@ from backend.services.system_config_service import (
     SYSTEM_CONFIG_UPDATE_KEYS,
     system_config_service,
 )
+
+FIELD_TYPES = {
+    "boolean": (bool,),
+    "integer": (int,),
+    "number": (int, float),
+    "string": (str,),
+    "array": (list,),
+    "object": (dict,),
+}
 
 
 class ConfigError(ValueError):
@@ -88,15 +99,7 @@ def validate_field(item: ConfigField, value: Any, *, strict=True) -> Any:
             )
         except ValueError, TypeError:
             raise ConfigError("invalid_type", field_id=item.id) from None
-    types = {
-        "boolean": (bool,),
-        "integer": (int,),
-        "number": (int, float),
-        "string": (str,),
-        "array": (list,),
-        "object": (dict,),
-    }
-    if type(value) not in types[item.type]:
+    if type(value) not in FIELD_TYPES[item.type]:
         raise ConfigError("invalid_type", field_id=item.id)
     if item.type == "number" and not math.isfinite(value):
         raise ConfigError("invalid_type", field_id=item.id)
@@ -140,13 +143,16 @@ def _parse_override(raw: str | None) -> dict:
 
 def _strict_tree(default: Any, value: Any) -> None:
     """Check known leaves; extensible map validation belongs to its domain."""
+    if default is None and value is None:
+        return
     if isinstance(default, dict) and isinstance(value, dict):
         for key in default.keys() & value.keys():
             _strict_tree(default[key], value[key])
     elif isinstance(default, float):
         if type(value) not in {float, int} or not math.isfinite(value):
             raise ConfigError("invalid_type")
-    elif type(default) is not type(value):
+    # Nullable leaves use the same non-null type as their field descriptor.
+    elif type(value) not in FIELD_TYPES[value_type(default)]:
         raise ConfigError("invalid_type")
 
 
@@ -450,12 +456,12 @@ class ConfigCenterService:
                 global_row = app.get(item.key)
                 inherited = (
                     _cast_config_type(global_row.key_value, str)
-                    if global_row and global_row.key_value
+                    if global_row is not None and global_row.key_value is not None
                     else getattr(deployment, item.key)
                 )
                 source = (
                     "database"
-                    if global_row and global_row.key_value
+                    if global_row is not None and global_row.key_value is not None
                     else (
                         "environment"
                         if item.key in deployment.model_fields_set
@@ -533,6 +539,11 @@ class ConfigCenterService:
                 if item.key == "log_level"
                 else getattr(get_settings(), item.key, effective)
             )
+            pending = pending or effective != current
+        elif revision and item.storage == "section":
+            # Remote commits cannot populate this process's pending set. Compare
+            # the cached section value until the revision poll applies the change.
+            current = lookup_path(get_section_config(item.key), item.path, item.default)
             pending = pending or effective != current
         return {
             "value": None if item.sensitive else effective,
