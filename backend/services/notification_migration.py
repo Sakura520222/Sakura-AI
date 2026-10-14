@@ -11,11 +11,12 @@ def upgrade_notification_schema(conn):
     inspector = inspect(conn)
     table_name = "notification_deliveries"
     changed = False
-    if inspector.has_table("agent_team_tasks"):
-        agent_columns = {item["name"] for item in inspector.get_columns("agent_team_tasks")}
-        if "execution_round" not in agent_columns:
-            conn.execute(text("ALTER TABLE agent_team_tasks ADD COLUMN execution_round INTEGER NOT NULL DEFAULT 0"))
-            changed = True
+    for name in ("agent_team_tasks", "repo_scans"):
+        if inspector.has_table(name):
+            task_columns = {item["name"] for item in inspector.get_columns(name)}
+            if "execution_round" not in task_columns:
+                conn.execute(text(f"ALTER TABLE {name} ADD COLUMN execution_round INTEGER NOT NULL DEFAULT 0"))
+                changed = True
     if conn.dialect.name in {"mysql", "mariadb"} and inspector.has_table("notification_provider_budgets"):
         deadline = next(item for item in inspector.get_columns("notification_provider_budgets") if item["name"] == "next_available_at")
         if getattr(deadline["type"], "fsp", None) != 6:

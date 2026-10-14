@@ -331,12 +331,12 @@ async def test_business_outbox_shares_commit_and_rollback(event_db, kind):
     values = {"repo_owner": "alice", "repo_name": "repo", "status": "completed"}
     values.update({"review": {"pr_id": 500, "strategy": "comprehensive", "author": "ALIce"},
         "issue": {"issue_number": 42, "analysis_version": 1, "author": "ALIce", "title": "Issue"},
-        "scan": {"trigger_type": "manual"}, "agent": {"repo_full_name": "alice/repo", "source_type": "manual_issue", "title": "Task"}}[kind])
+        "scan": {"trigger_type": "manual", "triggered_by": "ALIce"}, "agent": {"repo_full_name": "alice/repo", "source_type": "manual_issue", "title": "Task"}}[kind])
     with Session(engine, info={"notification_outbox": True}) as db:
         db.add(classes[kind](**values))
         db.flush()
         assert db.query(NotificationEvent).one().event_type == f"{kind}.completed"
-        if kind in {"review", "issue"}:
+        if kind in {"review", "issue", "scan"}:
             assert db.query(NotificationEvent).one().recipients_json == "[1]"
         db.rollback()
     with Session(engine) as db:
@@ -349,6 +349,13 @@ async def test_business_outbox_shares_commit_and_rollback(event_db, kind):
         record.status = "completed"  # duplicate business callback
         db.commit()
         assert db.query(NotificationEvent).count() == 1
+        if kind in {"review", "issue"}:
+            from backend.webui.deps import build_user_scope_filter
+
+            record.repo_owner = "Acme"
+            db.commit()
+            scope = build_user_scope_filter({"sub": "alice", "role": "user"}, classes[kind])
+            assert db.scalars(select(classes[kind]).where(scope)).one().id == record.id
 
 
 @pytest.mark.asyncio

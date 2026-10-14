@@ -8,6 +8,7 @@ import json
 import re
 import secrets
 from datetime import timedelta
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, or_, select, update
@@ -42,7 +43,7 @@ async def owned_endpoint(db, user_id, endpoint_id, *, for_update=False):
         NotificationEndpoint.id == endpoint_id, NotificationEndpoint.user_id == user_id
     )
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     row = (await db.execute(query)).scalar_one_or_none()
     if not row:
         raise ValueError("Notification endpoint not found")
@@ -121,35 +122,63 @@ async def verify_endpoint(db, user_id, endpoint_id, *, code=""):
     channel = str(endpoint.provider).lower()
     if not endpoint.enabled:
         raise ValueError("Enable endpoint before verification")
+    # Provider I/O and budget commits must not retain a mutable/expired ORM
+    # snapshot. Admit the result only for the exact configuration challenged.
+    snapshot = SimpleNamespace(**{key: getattr(endpoint, key) for key in (
+        "id", "user_id", "provider", "address", "secret_encrypted", "config_version",
+    )})
+    scope = (
+        NotificationEndpoint.id == endpoint_id, NotificationEndpoint.user_id == user_id,
+        NotificationEndpoint.provider == snapshot.provider,
+        NotificationEndpoint.address == snapshot.address,
+        NotificationEndpoint.config_version == snapshot.config_version,
+        NotificationEndpoint.secret_encrypted == snapshot.secret_encrypted,
+        NotificationEndpoint.enabled.is_(True),
+    )
     if channel == "email" and code:
         digest = endpoint.verification_token_hash
+        if not digest:
+            raise ValueError("Verification code invalid or expired")
+        valid = hmac.compare_digest(digest, hashlib.sha256(code.encode()).hexdigest())
+        values = {"verification_attempts": NotificationEndpoint.verification_attempts + 1}
+        if valid:
+            values.update(verified=True, verification_token_hash=None, verification_expires_at=None)
         won = await db.execute(update(NotificationEndpoint).where(
-            NotificationEndpoint.id == endpoint_id, NotificationEndpoint.user_id == user_id,
-            NotificationEndpoint.enabled.is_(True), NotificationEndpoint.verification_token_hash == digest,
+            *scope, NotificationEndpoint.verification_token_hash == digest,
             NotificationEndpoint.verification_expires_at >= now_utc(),
             NotificationEndpoint.verification_attempts < get_settings().notification_verification_max_attempts,
-        ).values(verification_attempts=NotificationEndpoint.verification_attempts + 1))
-        await db.commit()
-        if won.rowcount != 1 or not digest or not hmac.compare_digest(digest, hashlib.sha256(code.encode()).hexdigest()):
+        ).values(**values).execution_options(synchronize_session=False))
+        if won.rowcount != 1:
+            await db.rollback()
             raise ValueError("Verification code invalid or expired")
-        endpoint.verified = True
-        endpoint.verification_token_hash = None
-        endpoint.verification_expires_at = None
+        if not valid:
+            await db.commit()
+            raise ValueError("Verification code invalid or expired")
     elif channel in {"email", "webhook"}:
         available = await notification_service._reserve_provider_start(db, channel)
         if available:
             raise ValueError("Provider is rate limited; retry later")
         provider = notification_service.registry.get(channel)
         if channel == "webhook":
-            await provider.verify_endpoint(endpoint)
-            endpoint.verified = True
+            await provider.verify_endpoint(snapshot)
+            won = await db.execute(update(NotificationEndpoint).where(*scope).values(
+                verified=True
+            ).execution_options(synchronize_session=False))
+            if won.rowcount != 1:
+                await db.rollback()
+                raise ValueError("Endpoint configuration changed; verify again")
         else:
             token = secrets.token_urlsafe(24)
-            endpoint.verification_token_hash = hashlib.sha256(token.encode()).hexdigest()
-            endpoint.verification_expires_at = now_utc() + timedelta(seconds=get_settings().notification_email_verification_ttl_seconds)
-            endpoint.verification_attempts = 0
+            won = await db.execute(update(NotificationEndpoint).where(*scope).values(
+                verification_token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                verification_expires_at=now_utc() + timedelta(seconds=get_settings().notification_email_verification_ttl_seconds),
+                verification_attempts=0,
+            ).execution_options(synchronize_session=False))
+            if won.rowcount != 1:
+                await db.rollback()
+                raise ValueError("Endpoint configuration changed; verify again")
             await db.commit()
-            await asyncio.wait_for(provider.send_message(endpoint=endpoint, message=NotificationMessage(
+            await asyncio.wait_for(provider.send_message(endpoint=snapshot, message=NotificationMessage(
                 "verification:" + secrets.token_urlsafe(16), "endpoint.verify", "Verify your notification email",
                 f"Your Sakura-AI verification code is: {token}\nEnter it in your notification settings.", "info"
             )), get_settings().notification_send_timeout_seconds)
@@ -157,4 +186,7 @@ async def verify_endpoint(db, user_id, endpoint_id, *, code=""):
         raise NotificationProviderPermanentError("Use Telegram binding handshake", "verification")
     db.add(NotificationAudit(actor_id=user_id, action="endpoint.verification", target_id=str(endpoint_id)))
     await db.commit()
+    endpoint = (await db.execute(select(NotificationEndpoint).where(
+        NotificationEndpoint.id == endpoint_id, NotificationEndpoint.user_id == user_id,
+    ).execution_options(populate_existing=True))).scalar_one()
     return endpoint_view(endpoint)

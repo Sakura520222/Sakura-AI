@@ -85,7 +85,11 @@ def notification_outbox_enabled(db):
 
 
 def _task_initiator(kind, record):
-    return record.started_by if kind == "agent" else getattr(record, "author", None)
+    if kind == "agent":
+        return record.started_by
+    if kind == "scan":
+        return record.triggered_by
+    return getattr(record, "author", None)
 
 
 def _task_event_values(kind, record, outcome, recipient_ids):
@@ -99,6 +103,8 @@ def _task_event_values(kind, record, outcome, recipient_ids):
         detail_url = f"/agent-team/?task_id={record.id}"
     else:
         run_key = str(getattr(record, "analysis_version", None) or record.id)
+        if kind == "scan" and record.execution_round:
+            run_key = f"{record.execution_round}:{run_key}"
         prefix = {"review": "pr", "issue": "issues", "scan": "scans"}[kind]
         detail_url = f"/{prefix}/{record.id}"
     severity, payload = _task_result_metadata(kind, record, outcome)
@@ -181,7 +187,7 @@ async def reset_mfa_lockout_round(db, user_id, reset_at):
         current.active_until = None
 
 
-def _assign_agent_execution_round(session, record, status):
+def _assign_task_execution_round(session, record, status):
     """Serialize admissions with the task write, including duplicate queues.
 
     Queueing starts a round before skills/cloning can fail. Terminal events
@@ -189,21 +195,29 @@ def _assign_agent_execution_round(session, record, status):
     sessions do not opt in, and round zero retains legacy event identities.
     """
     from backend.models.agent_team_models import AgentTeamTask
+    from backend.models.scan_models import RepoScan
+
+    model = type(record)
+    admission, start, legacy = ("queued", "cloning", {"queued", "candidate"}) if model is AgentTeamTask else (
+        "pending", "indexing", {"pending"}
+    )
+    if model not in {AgentTeamTask, RepoScan}:
+        raise ValueError("Unsupported task execution round")
 
     if record in session.new:
-        if status in {"queued", "cloning"}:
+        if status in {admission, start}:
             record.execution_round = (record.execution_round or 0) + 1
         return
     current = session.connection().execute(select(
-        AgentTeamTask.execution_round, AgentTeamTask.status
-    ).where(AgentTeamTask.id == record.id).with_for_update()).one_or_none()
+        model.execution_round, model.status
+    ).where(model.id == record.id).with_for_update()).one_or_none()
     if current is None:
         return  # The ORM flush will reject a concurrently deleted task.
     run = current.execution_round or 0
-    if status == "queued" and current.status != "queued":
+    if status == admission and current.status != admission:
         run += 1
-    elif status == "cloning" and not run and current.status in {"queued", "candidate"}:
-        run = 1  # First execution of a legacy queued task after migration.
+    elif status == start and not run and current.status in legacy:
+        run = 1  # First execution of a legacy pending task after migration.
     record.execution_round = run
 
 
@@ -227,11 +241,14 @@ def _collect(session, *_):
             # Agent phase changes are deliberately not process notifications.
             if isinstance(record, AgentTeamTask):
                 if value in {"queued", "cloning", "completed", "failed", "cancelled", "waiting_human"}:
-                    _assign_agent_execution_round(session, record, value)
+                    _assign_task_execution_round(session, record, value)
                 if value not in {"cloning", "completed", "failed", "cancelled", "waiting_human"}:
                     continue
-            if isinstance(record, RepoScan) and value == "analyzing":
-                continue
+            if isinstance(record, RepoScan):
+                if value in {"pending", "indexing", "completed", "failed", "cancelled"}:
+                    _assign_task_execution_round(session, record, value)
+                if value == "analyzing":
+                    continue
             if outcome:
                 changes.append(("task", record, kinds[type(record)], outcome))
         elif isinstance(record, Order) and state.attrs.status.history.has_changes():
