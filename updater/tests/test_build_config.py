@@ -44,7 +44,10 @@ def test_root_ci_installs_updater_before_recursive_tests():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     python_quality = workflow.split("  updater-quality:", maxsplit=1)[0]
 
-    assert "pip install -e './updater[dev]'" in python_quality
+    install = "python -m pip install -r requirements-dev.txt"
+    assert python_quality.index(install) < python_quality.index("run: pytest -q")
+    requirements = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+    assert "-e ./updater[dev]" in requirements.splitlines()
 
 
 def test_build_script_has_pinned_bookworm_and_outer_elf_gate():
