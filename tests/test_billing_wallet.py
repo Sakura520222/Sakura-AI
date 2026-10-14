@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
+from backend.models.admin_action_log import AdminActionLog
 from backend.models.billing_models import BillingTransaction, BillingWallet
 from backend.models.database import Base
 from backend.models.telegram_models import TelegramUser
@@ -120,6 +121,33 @@ async def test_idempotency_key_cannot_change_financial_intent(db):
     await svc.grant(1, 10, "same")
     with pytest.raises(BillingError):
         await svc.grant(1, 11, "same")
+
+
+@pytest.mark.asyncio
+async def test_adjustment_replay_keeps_one_audit_in_the_same_session(db):
+    svc = BillingService(db)
+    first = await svc.adjust(
+        1, "1.000001", idempotency_key="single-audit", actor_id=1, reason="TEST"
+    )
+    second = await svc.adjust(
+        1, "1.000001", idempotency_key="single-audit", actor_id=1, reason="TEST"
+    )
+    assert first.id == second.id
+    audits = (
+        (
+            await db.execute(
+                select(AdminActionLog).where(
+                    AdminActionLog.action == "billing_adjust_wallet"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 1
+    assert audits[0].target_id == "1" and audits[0].admin_id == 1
+    db.session.rollback()
+    assert (await db.execute(select(AdminActionLog))).scalars().all() == []
 
 
 @pytest.mark.asyncio

@@ -119,10 +119,12 @@ async def require_api_super_admin(request: Request) -> dict:
 
 
 async def require_cookie_csrf(request: Request) -> None:
-    """Cookie-authenticated configuration writes require CSRF, including legacy APIs."""
+    """Cookie-authenticated API writes require CSRF, including legacy APIs."""
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
-    if request.headers.get("authorization", "").startswith("Bearer "):
+    authorization = request.headers.get("authorization", "")
+    # Match authentication: an empty Bearer suffix falls back to the cookie.
+    if authorization.startswith("Bearer ") and authorization[7:]:
         return
     if request.cookies.get(WEBUI_TOKEN_COOKIE_NAME):
         from backend.webui.deps import validate_csrf_token

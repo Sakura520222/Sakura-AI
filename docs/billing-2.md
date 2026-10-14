@@ -637,6 +637,17 @@ Prompt、响应、凭据、内部价格快照或无权访问仓库；低余额�
 提醒使用同事务的敏感 `billing.low_balance` 通知事件，按现有通知偏好进入
 通知中心、邮件或私有 Telegram；拒绝 Webhook、共享/未验证目标及其他用户。
 事件失败回滚扣费，历史余额提醒接口仍可读取旧记录，新提醒不新增第二套收件箱。
+付款事件的 API 重放在 cookie 认证时校验 CSRF；非空 bearer 和显式查询令牌
+保持既有认证行为，空 bearer 不能绕过 cookie 的校验。钱包调整的管理员审计
+由新财务流水在保存点内创建，API、WebUI 及同会话重放共用该入口，不重复记账。
+
+MySQL 定价身份（provider/account/model/scope/call kind）使用
+`utf8mb4_0900_bin`，同时区分大小写、Unicode 字符和末尾空格；MariaDB 兼容
+分支使用 `utf8mb4_nopad_bin`。启动时对旧表逐列进行幂等 COLLATION 迁移，保留
+原宽度、NULL/default/comment、唯一索引、不可变触发器及全部历史价格/版本，
+不改数据库级排序规则，不重算已冻结账单。MySQL 要求支持该规则（8.0.17+，
+当前部署 8.4）；升级需要该表的 ALTER 权限，失败会阻止启动。NO PAD 的原因见
+[MySQL 官方说明](https://dev.mysql.com/doc/refman/8.4/en/charset-binary-collations.html)。
 
 用户用量、全局 Token 总数及按应用时区划分的趋势图共用审核证据验证规则，
 只计入选中的对账 Usage；原始观测和有效关联的迟到观测保留为审计。伪造标签

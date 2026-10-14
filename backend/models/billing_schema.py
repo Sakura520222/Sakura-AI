@@ -181,11 +181,66 @@ def _ensure_usage_charge_currency_width(connection, inspector):
     return bool(statements)
 
 
+def _ensure_price_identity_collation(connection, inspector):
+    """Change comparison semantics without rewriting immutable financial facts."""
+    from backend.models.billing_types import price_identity_collation
+
+    desired = price_identity_collation(connection.dialect)
+    table_name = "billing_price_profiles"
+    if desired is None or not inspector.has_table(table_name):
+        return False
+    columns = {item["name"]: item for item in inspector.get_columns(table_name)}
+    collations = dict(
+        connection.execute(
+            text(
+                "SELECT COLUMN_NAME, COLLATION_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+            ),
+            {"table_name": table_name},
+        ).all()
+    )
+    identifiers = connection.dialect.identifier_preparer
+    statements = []
+    for name in ("provider_id", "account_id", "scope_key", "model_id", "call_kind"):
+        column = columns.get(name)
+        if column is None:
+            continue  # The startup additive migrator supplies missing columns.
+        if not isinstance(column["type"], VARCHAR) or any(
+            column.get(key) for key in ("computed", "identity")
+        ):
+            raise RuntimeError(
+                f"Conflicting pricing identity column: {table_name}.{name}"
+            )
+        if collations.get(name) == desired:
+            continue
+        exact_type = column["type"].copy()
+        exact_type.charset = "utf8mb4"
+        exact_type.collation = desired
+        reflected = Column(
+            name,
+            exact_type,
+            nullable=column["nullable"],
+            server_default=text(column["default"])
+            if column.get("default") is not None
+            else None,
+            comment=column.get("comment"),
+        )
+        definition = str(CreateColumn(reflected).compile(dialect=connection.dialect))
+        statements.append(
+            f"ALTER TABLE {identifiers.quote(table_name)} MODIFY COLUMN {definition}"
+        )
+    # Validate every definition before applying DDL; keep guards and index identities.
+    for statement in statements:
+        connection.execute(text(statement))
+    return bool(statements)
+
+
 def ensure_billing_schema(connection):
     from sqlalchemy import inspect
 
     inspector = inspect(connection)
     changed = _ensure_usage_charge_currency_width(connection, inspector)
+    changed = _ensure_price_identity_collation(connection, inspector) or changed
     if inspector.has_table("billing_price_profiles"):
         from backend.models.billing_models import BillingPriceProfile
 
