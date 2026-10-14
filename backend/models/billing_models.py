@@ -15,6 +15,7 @@ from sqlalchemy import (
     event,
 )
 
+from backend.models.billing_types import PricingIdentityString
 from backend.models.database import Base, utc_now
 from backend.models.time_types import UTCDateTime
 
@@ -145,16 +146,19 @@ class BillingPriceProfile(Base):
         ),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    provider_id = Column(String(128), nullable=False)
+    provider_id = Column(PricingIdentityString(128), nullable=False)
     # The provider remains the actual upstream, while account identity selects
     # a tariff. A non-NULL discriminator also constrains legacy/provider scopes
     # on databases where nullable UNIQUE columns allow repeated NULL values.
-    account_id = Column(String(128), nullable=True)
+    account_id = Column(PricingIdentityString(128), nullable=True)
     scope_key = Column(
-        String(136), nullable=False, default="provider", server_default="provider"
+        PricingIdentityString(136),
+        nullable=False,
+        default="provider",
+        server_default="provider",
     )
-    model_id = Column(String(255), nullable=False)
-    call_kind = Column(String(32), nullable=False)
+    model_id = Column(PricingIdentityString(255), nullable=False)
+    call_kind = Column(PricingIdentityString(32), nullable=False)
     version = Column(Integer, nullable=False)
     config = Column(JSON, nullable=False)
     actor_id = Column(Integer, nullable=False)

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from backend.core.config import get_settings
 from backend.models import Base
 from backend.models import database as db_module
+from backend.models.admin_action_log import AdminActionLog
 from backend.models.agent_team_models import AgentTeamTask
 from backend.models.announcement_models import (
     Announcement,
@@ -93,6 +94,7 @@ async def live_db(monkeypatch):
         QuotaUsageLog, AppConfig,
         BillingTransaction, BillingCreditLot, BillingCreditHold, BillingCreditDebt,
         BillingDebtFunding,
+        AdminActionLog,
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
