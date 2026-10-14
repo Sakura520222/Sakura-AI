@@ -3137,10 +3137,16 @@ async def _handle_payment_webhook(request: Request, provider: str):
                 WebhookEventType.PAYMENT_COMPLETED,
                 WebhookEventType.PAYMENT_REFUNDED,
             }:
-                record = await PaymentEventService(db).accept(
+                payment_events = PaymentEventService(db)
+                record = await payment_events.accept(
                     provider, event, payload_hash=hashlib.sha256(payload).hexdigest()
                 )
                 await db.commit()
+                if (
+                    provider == "stripe"
+                    and event.event_type == WebhookEventType.PAYMENT_COMPLETED
+                ):
+                    await payment_events.replay_stripe_refunds_after_commit(record.id)
                 # Alipay requires a literal ACK. Pending source review is safe
                 # to acknowledge only because its verified receipt is durable.
                 if provider == "alipay":

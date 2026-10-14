@@ -6,6 +6,7 @@
 - Ollama: 本地模型
 """
 
+import math
 import threading
 from typing import Any
 from uuid import uuid4
@@ -15,6 +16,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from backend.core.config import get_settings
+from backend.core.log_sanitizer import sanitize_exception_text, sensitive_log_scope
 from backend.services.activity_observability.contracts import InvocationContext
 from backend.services.ai_usage_service import ProviderUsageMeter, is_billing_failure
 
@@ -408,8 +410,6 @@ class RerankerService:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
             if strict:
-                import math
-
                 if type(top_k) is not int or top_k <= 0:
                     raise ValueError("Invalid strict reranker top_k")
                 # Invalid policy must not turn valid provider results into an
@@ -427,88 +427,79 @@ class RerankerService:
 
             # 调用 Rerank API
             logical_call_id = str(uuid4())
-            async with ProviderUsageMeter(
-                provider_id=self.provider,
-                model_id=settings.rerank_model,
-                protocol_family="siliconflow-rerank",
-                call_kind="rerank",
-                role="rerank",
-                logical_call_id=logical_call_id,
-                input_only=True,
-            ) as usage_meter:
-                response = await self.client.post(
-                    "",
-                    json={
-                        "model": settings.rerank_model,
-                        "query": query,
-                        "documents": texts,
-                        "top_n": top_n,
-                    },
-                )
-
-                response.raise_for_status()
-                results = response.json()
-
-                usage_meter.usage = results
-
-            # 解析结果
-            if not isinstance(results, dict) or not isinstance(
-                results.get("results"), list
+            authorization = getattr(self.client, "headers", {}).get("Authorization", "")
+            with sensitive_log_scope(
+                getattr(settings, "rerank_api_key", None),
+                authorization,
+                authorization.removeprefix("Bearer "),
             ):
-                if strict:
-                    raise ValueError("Malformed reranker response")
-                logger.warning("Rerank API 返回格式异常")
-                return docs[:top_k]
-
-            if strict:
-                # Validate the requested provider count before threshold filtering:
-                # complete low scores may filter to empty, a partial response may not.
-                if len(results["results"]) != top_n:
-                    raise ValueError("Malformed reranker result count")
-                seen = set()
-                for result in results["results"]:
-                    if (
-                        not isinstance(result, dict)
-                        or type(result.get("index")) is not int
-                        or not 0 <= result["index"] < len(docs)
-                        or result["index"] in seen
-                        or type(result.get("relevance_score")) not in (float, int)
-                        or not math.isfinite(result["relevance_score"])
+                async with ProviderUsageMeter(
+                    provider_id=self.provider,
+                    model_id=settings.rerank_model,
+                    protocol_family="siliconflow-rerank",
+                    call_kind="rerank",
+                    role="rerank",
+                    logical_call_id=logical_call_id,
+                    input_only=True,
+                ) as usage_meter:
+                    response = await self.client.post(
+                        "",
+                        json={
+                            "model": settings.rerank_model,
+                            "query": query,
+                            "documents": texts,
+                            "top_n": top_n,
+                        },
+                    )
+                    response.raise_for_status()
+                    results = response.json()
+                    # Keep real Usage even when the ranking is inadmissible.
+                    # Validation belongs inside the attempt's failure boundary.
+                    usage_meter.usage = results
+                    if not isinstance(results, dict) or not isinstance(
+                        results.get("results"), list
                     ):
-                        raise ValueError("Malformed reranker result")
-                    seen.add(result["index"])
-
-            # 过滤低于阈值的文档
-            filtered_results = [
-                r
-                for r in results["results"]
-                if r.get("relevance_score", 0) >= score_threshold
-            ]
-
-            if not filtered_results:
-                logger.debug("所有文档都低于阈值 {}，返回空列表", score_threshold)
-                return []
-
-            # 根据返回的索引重新排序
-            reranked_docs = [docs[r["index"]] for r in filtered_results[:top_k]]
-
-            logger.debug(
-                f"✅ 重排序完成: {len(docs)} -> {len(reranked_docs)} "
-                f"(阈值: {score_threshold})"
-            )
-            return reranked_docs
+                        raise ValueError("Malformed reranker response")
+                    if strict and len(results["results"]) != top_n:
+                        raise ValueError("Malformed reranker result count")
+                    seen = set()
+                    for result in results["results"]:
+                        if (
+                            not isinstance(result, dict)
+                            or type(result.get("index")) is not int
+                            or not 0 <= result["index"] < len(docs)
+                            or result["index"] in seen
+                            or type(result.get("relevance_score")) not in (float, int)
+                            or not math.isfinite(result["relevance_score"])
+                        ):
+                            raise ValueError("Malformed reranker result")
+                        seen.add(result["index"])
+                    filtered_results = [
+                        r
+                        for r in results["results"]
+                        if r["relevance_score"] >= score_threshold
+                    ]
+                    reranked_docs = [docs[r["index"]] for r in filtered_results[:top_k]]
+                    logger.bind(
+                        input_count=len(docs), result_count=len(reranked_docs)
+                    ).debug("Rerank response validated")
+                    return reranked_docs
 
         except httpx.HTTPError as e:
             if strict:
                 raise
-            logger.warning("SiliconFlow Rerank API 请求失败: {}", e)
+            logger.opt(exception=True).warning(
+                "SiliconFlow Rerank API 请求失败: {}", sanitize_exception_text(e)
+            )
             return docs[:top_k]
         except Exception as e:
             if is_billing_failure(e):
                 raise
             if strict:
                 raise
-            logger.warning("SiliconFlow 重排序失败: {}", e)
+            logger.opt(exception=True).warning(
+                "SiliconFlow 重排序失败: {}", sanitize_exception_text(e)
+            )
             return docs[:top_k]
 
     async def close(self):
