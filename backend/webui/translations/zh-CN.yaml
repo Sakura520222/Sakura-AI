@@ -2721,6 +2721,7 @@ config_center:
   user: 用户覆盖
   default: 内置默认值
   inherited: 继承值
+  follow_request_language: 跟随请求/界面语言
   confirmed: 确认并保存
   credential: 已配置凭据；输入新值才会修改
   credential_empty: 未配置凭据

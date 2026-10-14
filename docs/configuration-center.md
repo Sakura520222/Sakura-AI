@@ -95,7 +95,11 @@ source hot reload so active synchronization state is not replaced.
   reconciled without changing its prompt overrides.
 * Personal null columns mean inheritance. Reset touches one column; output
   language deletes its UserConfig override and inherits global output language.
-  Other users' preferences remain unchanged.
+  An explicit empty output-language string follows the request/UI language and
+  remains distinct from deletion, including through legacy forms/APIs. Other
+  users' preferences remain unchanged.
+* Nonsensitive nullable scalars can reset to null or an environment-provided
+  value. Restart-only fields still require restart when their runtime value differs.
 * Model defaults use the provider/model metadata resolver. Reset deletes one
   capability/parameter override; legacy partial updates preserve omitted fields.
 * Credentials require explicit confirm-and-save. Empty/masked values are rejected
@@ -120,6 +124,7 @@ warning. Credentials are never persisted in browser storage.
 
 ```sh
 uv sync --locked
+# Classic pip: python -m pip install -r requirements-dev.txt
 uv run pytest -q
 uv run python run_ruff.py --check
 uv run python -m compileall -q backend

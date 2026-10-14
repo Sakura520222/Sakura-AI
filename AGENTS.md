@@ -9,8 +9,7 @@ Sakura AI is a Python 3.14+ FastAPI service for GitHub PR/Issue review, WebUI ad
 ```bash
 uv sync
 # Classic pip alternative:
-python -m pip install -r requirements.txt
-python -m pip install -e "./updater[dev]"
+python -m pip install -r requirements-dev.txt
 python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 python scripts/dev_bootstrap.py
 python -m pytest -q
@@ -23,6 +22,8 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 `uv sync` is the recommended setup: it creates `.venv`, installs all dependencies including the editable updater package, and locks them in `uv.lock`. In a uv environment, prefix commands with `uv run` (e.g. `uv run python -m pytest -q`) instead of activating `.venv`. `requirements.txt` remains the authoritative dependency source for pip/Docker builds; the root `pyproject.toml` mirrors it line by line, enforced by `tests/test_uv_pyproject.py` — update both when changing dependencies. Install the updater editable package (or use `uv sync`) before running the full suite. Source development supports Windows 11 x86_64, Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported), and Apple Silicon macOS 14+. Native Windows PowerShell supports `uv sync --locked`, `uv run pytest`, and Ruff without WSL/Git Bash. Keep portable tests active on every platform; check prerequisites only for POSIX deployment scripts, Linux isolation/systemd, or link privileges. Windows workspace locking and secure reads use native handles; do not remove cross-process exclusion or path-admission checks. The Host Updater, sandboxd, and local read-only Landlock/seccomp process isolation retain their Linux requirements. `run_ruff.py` without `--check` may modify and format files; use the check form for read-only validation.
+
+Classic pip development uses `requirements-dev.txt`, which includes runtime requirements, the editable updater with its test extras, and the SQLite test driver. Keep its development dependencies aligned with the `pyproject.toml` dev group; the pip CI job installs this same manifest.
 
 ## Coding Style and Testing
 

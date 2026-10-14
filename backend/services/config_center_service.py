@@ -469,7 +469,7 @@ class ConfigCenterService:
                     )
                 )
                 row = personal.get(item.key)
-                if row and row.config_value:
+                if row is not None and row.config_value is not None:
                     override, source = row.config_value, "user"
                 effective = override if override is not None else inherited
                 identity = [getattr(row, "updated_at", None), override, effective]

@@ -2725,6 +2725,7 @@ config_center:
   user: User override
   default: Built-in default
   inherited: Inherited value
+  follow_request_language: Follow request/UI language
   confirmed: Confirm and save
   credential: Credential configured; enter a new value to replace it
   credential_empty: No credential configured

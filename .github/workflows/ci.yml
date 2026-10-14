@@ -30,14 +30,15 @@ jobs:
         with:
           python-version: '3.14'
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            updater/pyproject.toml
 
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e './updater[dev]'
-          pip install ruff pytest pytest-asyncio aiosqlite
+          python -m pip install -r requirements-dev.txt
 
       - name: Ruff 检查
         run: ruff check .
