@@ -46,11 +46,23 @@ async def changed_backup(db):
 async def test_real_backup_restore_suppresses_security_and_passkey_events_only_during_import(event_db):
     engine, _ = event_db
     async with AsyncDB(engine, outbox=True) as db:
+        endpoint = await db.get(NotificationEndpoint, 1)
+        endpoint.config_version = 3
+        endpoint.verification_token_hash = "c" * 64
+        await db.commit()
         document = await changed_backup(db)
         # A failed earlier flush can leave its before_flush collection in info.
         db.info["notification_changes"] = [("security", await db.get(TelegramUser, 1), "Old change", "old-run")]
         result = await user_backup_service.restore_user_backup(db, document)
         assert result.passkeys_created == 1 and db.info["notification_outbox"] is True
+        endpoint = await db.get(NotificationEndpoint, 1)
+        assert endpoint.config_version == 4 and endpoint.verification_token_hash is None
+        # The application's own export stays importable after toggles/rotation
+        # and after a restore; generations are configuration fences, not schema versions.
+        exported = await user_backup_service.export_user_backup(db)
+        parsed = user_backup_service.parse_user_backup(user_backup_service.serialize_user_backup(exported))
+        await user_backup_service.restore_user_backup(db, parsed)
+        assert (await db.get(NotificationEndpoint, 1)).config_version == 5
         assert (await db.get(TelegramUser, 1)).role == "admin"
         with Session(engine) as check:
             assert check.query(NotificationEvent).count() == 0
