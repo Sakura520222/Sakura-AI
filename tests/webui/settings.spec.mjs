@@ -142,6 +142,41 @@ test("personal permissions, language autosave and dark mode", async ({
   await context.close();
 });
 
+for (const theme of ["dark", "light", "system"]) {
+  test(`initial load restores persisted ${theme} theme in a fresh browser`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ colorScheme: "dark" });
+    await context.addCookies([
+      { name: "test-role", value: "user", domain: "127.0.0.1", path: "/" },
+    ]);
+    const state = await (
+      await context.request.get("/api/v1/config-center?category=personal")
+    ).json();
+    const field = state.fields.find((item) => item.id === "personal/theme");
+    const saved = await context.request.patch("/api/v1/config-center", {
+      headers: { "X-CSRF-Token": state.csrf },
+      data: { field: field.id, version: field.version, value: theme },
+    });
+    expect(saved.status()).toBe(200);
+    const page = await context.newPage();
+    const writes = [];
+    page.on("request", (request) => {
+      if (request.method() === "PATCH") writes.push(request);
+    });
+    await ready(page, "personal");
+    await expect(row(page, field.id).locator("select")).toHaveValue(theme);
+    if (theme === "light")
+      await expect(page.locator("html")).not.toHaveClass(/dark/);
+    else await expect(page.locator("html")).toHaveClass(/dark/);
+    expect(await page.evaluate(() => localStorage.getItem("theme"))).toBe(
+      theme,
+    );
+    expect(writes).toHaveLength(0);
+    await context.close();
+  });
+}
+
 for (const viewport of [
   { width: 1440, height: 1000 },
   { width: 820, height: 1100 },
