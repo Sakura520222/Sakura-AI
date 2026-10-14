@@ -181,7 +181,7 @@ class CreateOrderRequest(BaseModel):
 
 class RefundRequest(BaseModel):
     amount_cents: int | None = Field(
-        None, ge=1, description="Integer minor units of the order currency"
+        None, strict=True, ge=1, description="Integer minor units of the order currency"
     )
     idempotency_key: str | None = Field(None, min_length=1, max_length=160)
 

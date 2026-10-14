@@ -24,7 +24,6 @@ from backend.models.billing_models import (
     BillingCreditHold,
     BillingCreditLot,
     BillingDebtFunding,
-    BillingNotice,
     BillingOperation,
     BillingPriceProfile,
     BillingReconciliationEvent,
@@ -611,10 +610,29 @@ class BillingService:
             <= wallet.low_balance_threshold_units
         )
         if below and not wallet.low_balance_notified and transaction.delta_units < 0:
-            self.session.add(
-                BillingNotice(user_id=wallet.user_id, transaction_id=transaction.id)
+            from backend.services.notification_events import emit_event
+
+            event = await emit_event(
+                self.session,
+                event_type="billing.low_balance",
+                resource_type="user",
+                resource_id=wallet.user_id,
+                run_key=f"transaction:{transaction.id}",
+                title="Credits balance is low / Credits 余额偏低",
+                content="Available Credits reached your warning threshold. / 可用 Credits 已达到提醒阈值，请查看余额。",
+                recipient_ids=[wallet.user_id],
+                severity="warning",
+                sensitive=True,
+                detail_url="/billing/credits",
+                payload={"transaction_id": transaction.id},
             )
             wallet.low_balance_notified = True
+            logger.bind(
+                user_id=wallet.user_id,
+                billing_operation_id=transaction.operation_id,
+                transaction_id=transaction.id,
+                notification_event_id=event.id,
+            ).info("Low-balance notification staged with financial transaction")
         elif not below:
             wallet.low_balance_notified = False
 

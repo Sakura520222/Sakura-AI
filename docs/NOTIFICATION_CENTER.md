@@ -39,6 +39,7 @@ External delivery is retryable with internal deduplication. A receiver may have 
 | Announcement / release announcement | publication round | Active users, with compatibility defaults and current preferences |
 | Account security / Passkey / MFA | account change, lockout | The affected account's private verified endpoints and inbox |
 | Quota | exhaustion, deduplicated per kind/period/reset/limit | The affected account |
+| Credits balance | `billing.low_balance`, once per low-balance episode | The wallet owner, according to current routing preferences |
 | Payment | fulfillment or expiration/failure | Current order owner |
 | Refund | request, completion, rejection, execution failure | Current order/request owner; explicit administrator events for pending requests/failures |
 
@@ -48,7 +49,9 @@ Severity uses business result metadata: critical scan findings/critical Issues a
 
 Business events default to the user's inbox. External endpoints require a matching subscription. Existing announcement routing remains enabled by default for verified enabled endpoints; setting announcement preferences replaces that default. Rules select event/family, repository, resource type/ID, minimum severity and one explicit endpoint (NULL means WebUI). Disabled rules provide explicit opt-out. Current rules and ACLs are checked again before sending/retrying; ACLs are also checked when reading history. Announcement preferences affect unread prompts while the full announcement archive remains accessible.
 
-Security, payment, refund and quota types are intrinsically sensitive even if a producer omits the flag. Sensitive events cannot use an all-user audience and do not use Webhooks or shared targets. Telegram remains private-chat only. Ownership uniqueness for private addresses is retained.
+Security, payment, refund, quota and billing types are intrinsically sensitive even if a producer omits the flag. Sensitive events cannot use an all-user audience and do not use Webhooks or shared targets. Telegram remains private-chat only. Ownership uniqueness for private addresses is retained.
+
+`billing.low_balance` is emitted in the wallet debit transaction with the internal transaction ID as its run identity. An episode emits once; a top-up above the threshold re-arms it. Event insertion failure rolls back the debit and ledger entry, and a caller rollback removes the event too. New alerts use the existing inbox/subscriptions/delivery rows, with a link to `/billing/credits`; historical `billing_notices` rows and their owned read endpoints remain compatible without creating another new inbox.
 
 MFA lockout state resides in Redis, so its lockout and the SQL event cannot share one transaction. A failure to persist that alert is logged without undoing the account lock. This does not redesign the existing authentication/lockout system.
 

@@ -241,13 +241,13 @@ async def test_existing_refund_attempt_keeps_amount_and_is_not_requested_twice(
     request = await service.submit_refund_request(order.id, user.id)
     result = await service.approve_refund_request(request.id, reviewer_id=user.id)
     await db.commit()
-    assert result.status == "failed"
+    assert result.status == "pending"
     attempt = (await db.execute(select(PaymentRefundAttempt))).scalar_one()
     original_identity = (attempt.id, attempt.idempotency_key, attempt.amount_cents)
     assert attempt.status == "unknown"
     result = await service.approve_refund_request(request.id, reviewer_id=user.id)
     await db.commit()
-    assert result.status == "failed"
+    assert result.status == "pending"
     assert (
         attempt.id,
         attempt.idempotency_key,

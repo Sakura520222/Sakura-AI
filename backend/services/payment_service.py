@@ -15,9 +15,10 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_dynamic_config, get_settings
 from backend.core.log_sanitizer import sanitize_exception_text, sensitive_log_scope
-from backend.core.time_service import now_utc
+from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.legacy_entitlement_models import (
     LegacyEntitlement,
+    LegacyEntitlementEvent,
     PaymentReceipt,
     PaymentRefundAttempt,
     PaymentRefundAttemptEvent,
@@ -1570,6 +1571,7 @@ class PaymentService:
             attempt.status = "upstream_succeeded"
             return await self._finalize_refund(attempt, order)
         provider_tx_id = order.provider_tx_id
+        await self._reconcile_refund_request(attempt, order)
         await self.session.flush()
         await self.session.commit()  # release order and wallet locks before I/O
         try:
@@ -1600,11 +1602,23 @@ class PaymentService:
                 code="refund_outcome_conflict",
             )
         attempt.provider_refund_id = result.refund_id or None
-        if not result.success or result.status not in {"succeeded", "approved"}:
+        confirmed = result.success and result.status in {"succeeded", "approved"}
+        amount_matches = (
+            type(result.amount_cents) is int
+            and result.amount_cents == attempt.gateway_amount_cents
+        )
+        if not confirmed or not amount_matches:
+            pending_reason = (
+                "refund_amount_mismatch" if confirmed else "refund_outcome_unknown"
+            )
             attempt.status = "unknown"
             attempt.evidence = {
                 **attempt.evidence,
                 "gateway_error": "Upstream refund was not confirmed; inspect provider independently",
+                "pending_reason": pending_reason,
+                "reported_gateway_amount_cents": result.amount_cents
+                if type(result.amount_cents) is int
+                else None,
             }
             self.session.add(
                 PaymentRefundAttemptEvent(
@@ -1615,7 +1629,18 @@ class PaymentService:
                     evidence=attempt.evidence,
                 )
             )
+            await self._reconcile_refund_request(attempt, order)
             await self.session.commit()
+            logger.bind(
+                order_id=order.id,
+                user_id=order.user_id,
+                refund_attempt_id=attempt.id,
+                pending_reason=pending_reason,
+                gateway_amount_cents=attempt.gateway_amount_cents,
+                reported_gateway_amount_cents=attempt.evidence[
+                    "reported_gateway_amount_cents"
+                ],
+            ).warning("Refund outcome committed for reconciliation")
             raise PaymentError(
                 "Refund outcome needs provider reconciliation",
                 code="refund_reconciliation_required",
@@ -1628,7 +1653,10 @@ class PaymentService:
                 event_key=f"{key}:upstream",
                 status="upstream_succeeded",
                 actor_id=operator_id,
-                evidence={"provider_refund_id": result.refund_id},
+                evidence={
+                    "provider_refund_id": result.refund_id,
+                    "gateway_amount_cents": result.amount_cents,
+                },
             )
         )
         await self.session.commit()
@@ -1821,6 +1849,7 @@ class PaymentService:
         from backend.services.billing_service import BillingService
 
         if attempt.status == "succeeded":
+            await self._reconcile_refund_request(attempt, order)
             return order
         if attempt.status != "upstream_succeeded":
             raise PaymentError(
@@ -1865,6 +1894,7 @@ class PaymentService:
             await self._reconcile_refunded_subscription(order)
         attempt.status = "succeeded"
         attempt.active_order_id = None
+        await self._reconcile_refund_request(attempt, order)
         self.session.add(
             PaymentRefundAttemptEvent(
                 attempt_id=attempt.id,
@@ -1884,6 +1914,58 @@ class PaymentService:
         await self.session.flush()
         return order
 
+    async def _reconcile_refund_request(
+        self, attempt: PaymentRefundAttempt, order: Order
+    ) -> RefundRequest | None:
+        """Reflect verified financial state without turning an unknown send into failure."""
+        prefix = "refund-request:"
+        if not attempt.idempotency_key.startswith(prefix):
+            return None
+        try:
+            request_id = int(attempt.idempotency_key[len(prefix) :])
+        except ValueError:
+            return None
+        if request_id <= 0 or attempt.idempotency_key != f"{prefix}{request_id}":
+            return None
+        request = (
+            await self.session.execute(
+                select(RefundRequest)
+                .where(
+                    RefundRequest.id == request_id,
+                    RefundRequest.order_id == order.id,
+                    RefundRequest.user_id == order.user_id,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if request is None:
+            return None
+        if attempt.status == "succeeded":
+            request.status = RefundRequestStatus.APPROVED.value
+            if request.processed_at is None:
+                request.processed_at = now_utc()
+            request.error_message = None
+        elif attempt.status == "failed":
+            request.status = RefundRequestStatus.FAILED.value
+            request.processed_at = None
+            request.error_message = (
+                "Provider confirmed that the refund was not executed"
+            )
+        else:
+            request.status = RefundRequestStatus.PENDING.value
+            request.processed_at = None
+            request.error_message = "Refund outcome needs provider reconciliation"
+        logger.bind(
+            order_id=order.id,
+            user_id=order.user_id,
+            refund_attempt_id=attempt.id,
+            refund_request_id=request.id,
+            refund_attempt_status=attempt.status,
+            refund_request_status=request.status,
+        ).info("Refund request reconciliation staged")
+        return request
+
     async def _reconcile_refunded_subscription(self, order: Order) -> None:
         """Rebuild the subscription summary after revoking a purchased source."""
         subscription = (
@@ -1899,30 +1981,90 @@ class PaymentService:
             )
         ).scalar_one_or_none()
         if subscription:
-            remaining_ends = (
+            at = now_utc()
+            remaining = (
                 (
                     await self.session.execute(
-                        select(LegacyEntitlement.expires_at)
+                        select(LegacyEntitlement)
                         .where(
                             LegacyEntitlement.user_id == order.user_id,
                             LegacyEntitlement.revoked_at.is_(None),
                             LegacyEntitlement.snapshot["id"].as_integer()
                             == order.plan_id,
                         )
+                        .order_by(LegacyEntitlement.starts_at, LegacyEntitlement.id)
                         .with_for_update()
+                        .execution_options(populate_existing=True)
                     )
                 )
                 .scalars()
                 .all()
             )
+            # Remove only the refunded gap. Preserve an already-started period
+            # and each queued source's purchased duration and remaining allowance.
+            anchor = max(
+                (
+                    entry.expires_at
+                    for entry in remaining
+                    if entry.starts_at <= at
+                    and entry.expires_at is not None
+                    and entry.expires_at > at
+                ),
+                default=at,
+            )
+            for entry in remaining:
+                if (
+                    entry.starts_at <= at
+                    or entry.expires_at is None
+                    or entry.expires_at <= entry.starts_at
+                ):
+                    continue
+                if entry.starts_at > anchor:
+                    previous_start, previous_end = entry.starts_at, entry.expires_at
+                    entry.starts_at = anchor
+                    entry.expires_at = anchor + (previous_end - previous_start)
+                    self.session.add(
+                        LegacyEntitlementEvent(
+                            entitlement_id=entry.id,
+                            event_key=f"order:{order.id}:reschedule:{entry.id}",
+                            kind="subscription_rescheduled",
+                            reason="Verified full refund removed an earlier period",
+                            detail={
+                                "refund_order_id": order.id,
+                                "previous_starts_at": format_rfc3339(previous_start),
+                                "previous_expires_at": format_rfc3339(previous_end),
+                                "starts_at": format_rfc3339(entry.starts_at),
+                                "expires_at": format_rfc3339(entry.expires_at),
+                            },
+                        )
+                    )
+                    logger.bind(
+                        order_id=order.id,
+                        user_id=order.user_id,
+                        entitlement_id=entry.id,
+                        subscription_id=subscription.id,
+                    ).info("Queued subscription period rescheduled in transaction")
+                anchor = max(anchor, entry.expires_at)
             latest = max(
-                (value for value in remaining_ends if value is not None),
+                (
+                    entry.expires_at
+                    for entry in remaining
+                    if entry.expires_at is not None
+                ),
                 default=None,
             )
-            if latest and latest > now_utc():
+            if latest:
                 subscription.expires_at = latest
-            else:
-                subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.status = (
+                SubscriptionStatus.ACTIVE.value
+                if any(
+                    entry.starts_at <= at
+                    and entry.expires_at is not None
+                    and entry.expires_at > at
+                    for entry in remaining
+                )
+                else SubscriptionStatus.EXPIRED.value
+            )
             logger.bind(
                 order_id=order.id,
                 user_id=order.user_id,
@@ -2054,6 +2196,7 @@ class PaymentService:
             )
         attempt.status = "failed"
         attempt.active_order_id = None
+        await self._reconcile_refund_request(attempt, order)
         await self.session.flush()
         return order
 
@@ -2201,6 +2344,13 @@ class PaymentService:
         if not refund_request:
             raise PaymentError(f"Refund request not found: {request_id}")
 
+        order = await self.session.get(
+            Order,
+            refund_request.order_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        await self.session.refresh(refund_request, with_for_update=True)
         if refund_request.status not in {
             RefundRequestStatus.PENDING.value,
             RefundRequestStatus.FAILED.value,
@@ -2214,14 +2364,9 @@ class PaymentService:
         refund_request.reviewed_at = now
         refund_request.review_note = (review_note or "").strip() or None
 
+        refund_order_id = refund_request.order_id
+        key = f"refund-request:{refund_request.id}"
         try:
-            key = f"refund-request:{refund_request.id}"
-            order = await self.session.get(
-                Order,
-                refund_request.order_id,
-                with_for_update=True,
-                populate_existing=True,
-            )
             if order is None:
                 raise PaymentError("Order not found or not refundable")
             attempt = (
@@ -2262,10 +2407,39 @@ class PaymentService:
                 reviewer_id,
             )
         except Exception as exc:
-            refund_request.status = RefundRequestStatus.FAILED.value
-            refund_request.error_message = sanitize_exception_text(exc)
+            if not getattr(self.session, "is_active", True):
+                logger.opt(exception=True).error(
+                    "Refund approval transaction failed: request_id={}", request_id
+                )
+                raise
+            attempt_id = (
+                await self.session.execute(
+                    select(PaymentRefundAttempt.id).where(
+                        PaymentRefundAttempt.idempotency_key == key
+                    )
+                )
+            ).scalar_one_or_none()
+            attempt = None
+            if attempt_id is not None:
+                order, attempt = await self._locked_refund_state(
+                    refund_order_id, attempt_id
+                )
+            linked = (
+                await self._reconcile_refund_request(attempt, order)
+                if attempt is not None and order is not None
+                else None
+            )
+            if linked is not None:
+                refund_request = linked
+            else:
+                refund_request.status = (
+                    RefundRequestStatus.PENDING.value
+                    if getattr(exc, "code", None) == "refund_reconciliation_required"
+                    else RefundRequestStatus.FAILED.value
+                )
+                refund_request.error_message = sanitize_exception_text(exc)
             logger.opt(exception=True).warning(
-                "Refund request failed during approval: request_id={}, error={}",
+                "Refund request approval needs attention: request_id={}, error={}",
                 request_id,
                 exc,
             )
@@ -2292,6 +2466,26 @@ class PaymentService:
         if not refund_request:
             raise PaymentError(f"Refund request not found: {request_id}")
 
+        # Serialize review decisions with refund staging/finalization on the order.
+        await self.session.get(
+            Order,
+            refund_request.order_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        active = (
+            await self.session.execute(
+                select(PaymentRefundAttempt)
+                .where(PaymentRefundAttempt.active_order_id == refund_request.order_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if active is not None:
+            raise PaymentError(
+                "Refund outcome needs provider reconciliation",
+                code="refund_reconciliation_required",
+            )
+        await self.session.refresh(refund_request, with_for_update=True)
         if refund_request.status not in {
             RefundRequestStatus.PENDING.value,
             RefundRequestStatus.FAILED.value,

@@ -15,7 +15,11 @@ from backend.models.billing_models import (
     BillingUsageCharge,
     BillingWallet,
 )
-from backend.services.ai_usage_service import fetch_usage_summary, finish_ai_call
+from backend.services.ai_usage_service import (
+    fetch_global_token_totals,
+    fetch_usage_summary,
+    finish_ai_call,
+)
 from backend.services.billing_context import BillingContext, bind_billing_context
 from backend.services.billing_reconciliation_service import resolve_billing_call
 from backend.services.billing_service import BillingService
@@ -77,6 +81,9 @@ async def test_usage_totals_do_not_trust_unvalidated_late_labels(sql_runtime, ch
         assert rows[0]["calls"] == 2
         assert rows[0]["input_tokens"] == 1007
         assert rows[0]["output_tokens"] == 103
+        global_totals = await fetch_global_token_totals(db)
+        assert global_totals.recorded_calls == 2
+        assert (global_totals.input_tokens, global_totals.output_tokens) == (1007, 103)
 
 
 async def finish_result(
@@ -164,6 +171,10 @@ async def test_late_actual_result_preserves_reviewed_selection_and_one_charge(
         assert totals[0]["calls"] == 1
         assert totals[0]["input_tokens"] == 1000
         assert totals[0]["output_tokens"] == 100
+        global_totals = await fetch_global_token_totals(db)
+        assert global_totals.recorded_calls == 1
+        assert global_totals.unreported_usage_calls == 0
+        assert (global_totals.input_tokens, global_totals.output_tokens) == (1000, 100)
     async with factory() as db:
         assert (await resolve_billing_call(db, **evidence())).id == event_id
         service = BillingService(db)
