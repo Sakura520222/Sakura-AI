@@ -371,12 +371,26 @@ async def test_live_legacy_unique_key_and_nullability_upgrade(live_db):
 
 @pytest.mark.asyncio
 async def test_live_backup_restore_suppresses_historical_security_events(live_db):
-    from backend.services.user_backup_service import restore_user_backup
+    from backend.services.user_backup_service import (
+        export_user_backup,
+        parse_user_backup,
+        restore_user_backup,
+        serialize_user_backup,
+    )
     from tests.test_notification_import_routing_646 import changed_backup
 
     async with live_db() as db:
+        endpoint = await db.get(NotificationEndpoint, 1)
+        endpoint.config_version = 3
+        endpoint.verification_token_hash = "c" * 64
+        await db.commit()
         result = await restore_user_backup(db, await changed_backup(db))
         assert result.passkeys_created == 1 and db.info["notification_outbox"] is True
+        endpoint = await db.get(NotificationEndpoint, 1)
+        assert endpoint.config_version == 4 and endpoint.verification_token_hash is None
+        exported = await export_user_backup(db)
+        await restore_user_backup(db, parse_user_backup(serialize_user_backup(exported)))
+        assert (await db.get(NotificationEndpoint, 1)).config_version == 5
         assert (await db.execute(select(NotificationEvent))).scalars().all() == []
         user = await db.get(TelegramUser, 1)
         assert user.role == "admin"
