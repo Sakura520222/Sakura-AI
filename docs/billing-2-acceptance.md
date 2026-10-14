@@ -682,6 +682,27 @@ SQL 校验；不将其描述为原生 MySQL 多 Worker 部署验收。
 service_feature/service_resource_id。相关六套件为 123 passed、2 既有平台
 条件 skip，控制台和序列化日志另验证了失效诊断的来源及关联信息。
 
+## 2026-10-14 PR #660 审查修复（基线 f4ce76fd）
+
+| 审查问题 | 修复及回归证据 |
+| --- | --- |
+| 畸形重排被记为 completed | 结果形状、索引、重复项和分数在 ProviderUsageMeter 内校验；真实 Usage 留存为 failed。test_billing_auxiliary_errors 验证 22 个失败模式/冻结策略组合，覆盖默认不收费、开启失败收费以及结算前开关变化；严格数量不完整判失败，有效非严格部分/空结果保持成功 |
+| Stripe 早到退款未重放 | 核实付款引用后同事务重放匹配回执，忙碌回执在付款提交后逐条提交；查询先有界枚举，再按主键当前锁定读，避免 JSON 扫描锁定无关回执。test_review_payment_ordering_and_subscriptions 覆盖终态先到、非终态后终态、忙碌跳过及付款重投递恢复、两笔部分退款累计、跨通道/来源/订单及金额币种冲突，编译 MySQL/PostgreSQL 锁查询 |
+| 历史兑换记录表为空导致重复发放 | 先按用户、通道及兑换码当前锁定读历史成功订单，以保存点补登记关联，不占次数、不发权益、不修改原订单或快照。test_review_historical_redeem_replay 覆盖 paid/fulfilled/refunded、缺购买快照及停用报价、他人/取消订单反例、补登记唯一冲突恢复及调用方事务保留；既有并发失利保存点测试继续生效 |
+| 外部全额退款订阅仍 active | 外部 Stripe/Paddle 退款及本地退款共用订阅摘要核对，最后来源撤销则 expired，保留其他同套餐购买周期。test_review_payment_ordering_and_subscriptions 同时验证 get_active_subscription、权益撤销、剩余周期到期值及钱包来源冲正 |
+
+初始重排回归 22 项全部复现失败；历史兑换、Stripe 乱序和订阅摘要测试也
+复现原行为。新增共 47 项回归，相关计费、支付、订阅、严格重排及日志套件
+为 324 passed。退款锁查询收窄后，付款乱序/订阅文件的 16 项再次通过。
+日志验证使用实际控制台和序列化 sink，覆盖客户端已有 opaque 凭据与配置
+热更新后的凭据差异、URL 编码值、失败 Usage、作用域退出后重新记录的堆栈
+以及 request/attempt/billing-operation 关联；不记录请求内容。
+
+全仓 Ruff、run_ruff.py --check、修改的 Python 文件格式及 git diff --check
+均通过。实现不新增数据库结构、配置键或依赖；历史兑换关联按重放惰性补齐，
+不改商业报价或生产余额，不调用真实 AI/支付/退款。并发证据仍为真实 SQLite
+唯一约束/保存点与受控锁冲突模拟，不等同原生 MySQL 多进程部署验收。
+
 ## 原有上线边界
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库

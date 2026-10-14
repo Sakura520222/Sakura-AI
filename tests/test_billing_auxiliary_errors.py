@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -29,6 +30,79 @@ from tests.test_billing_usage_attribution import (
 )
 
 sql_runtime = runtime_fixture
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("charge_failed", [False, True])
+@pytest.mark.parametrize(
+    ("ranking", "strict"),
+    [
+        ({}, False),
+        ({"results": None}, False),
+        ({"results": [None]}, False),
+        ({"results": [{"relevance_score": 0.9}]}, False),
+        ({"results": [{"index": 0}]}, False),
+        ({"results": [{"index": True, "relevance_score": 0.9}]}, False),
+        ({"results": [{"index": 9, "relevance_score": 0.9}]}, False),
+        ({"results": [{"index": 0, "relevance_score": "bad"}]}, False),
+        ({"results": [{"index": 0, "relevance_score": float("inf")}]}, False),
+        ({"results": [{"index": 0, "relevance_score": 0.9}] * 2}, False),
+        ({"results": [{"index": 0, "relevance_score": 0.9}]}, True),
+    ],
+)
+async def test_malformed_success_response_preserves_usage_as_failed_call(
+    sql_runtime, monkeypatch, charge_failed, ranking, strict
+):
+    factory, engine, policy = sql_runtime
+    policy["billing_charge_failed_calls"] = charge_failed
+    await fund_and_price(
+        factory, kinds=("rerank",), provider="siliconflow", model="aux"
+    )
+    monkeypatch.setattr(
+        embedding_service, "get_settings", lambda: SimpleNamespace(rerank_model="aux")
+    )
+    payload = {
+        **ranking,
+        "usage": {
+            "prompt_tokens": 1000,
+            "total_tokens": 1000,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+    }
+    # A response double permits non-finite values without a JSON serializer rejecting them.
+    service = embedding_service.RerankerService.__new__(
+        embedding_service.RerankerService
+    )
+    service.provider = "siliconflow"
+    service.client = SimpleNamespace(
+        post=AsyncMock(
+            return_value=SimpleNamespace(
+                raise_for_status=lambda: None, json=lambda: payload
+            )
+        )
+    )
+    docs = [{"content": "first"}, {"content": "second"}]
+    context = BillingContext(1, str(uuid4()), "pr_review")
+    with bind_billing_context(context):
+        if strict:
+            with pytest.raises(ValueError, match="Malformed"):
+                await service._rerank_via_siliconflow("test", docs, 2, 0.1, strict=True)
+        else:
+            assert await service._rerank_via_siliconflow("test", docs, 2, 0.1) == docs
+        # Settlement must use the policy frozen before the provider call.
+        policy["billing_charge_failed_calls"] = not charge_failed
+        await finish_billing_operation("completed")
+    with Session(engine) as db:
+        usage = db.scalar(select(AIUsageRecord))
+        assert usage.outcome == "failed"
+        assert usage.input_tokens == 1000
+        assert usage.usage_reported is True
+        assert Decimal(db.scalar(select(BillingUsageCharge)).provider_cost) == Decimal(
+            "0.002"
+        )
+        assert db.get(BillingOperation, context.operation_id).settled_units == (
+            200_000 if charge_failed else 0
+        )
 
 
 @pytest.mark.asyncio
