@@ -24,10 +24,12 @@ from tests.test_billing_entitlements import db as real_database_fixture
 from tests.test_logging_security import secured_logs as real_log_fixture
 from tests.test_paddle_gateway import paddle_sdk_mock as mock_checkout_sdk_fixture
 from tests.test_review_redeem_concurrency import voucher
+from tests.test_service_execution_capacity import capacity_db as real_capacity_fixture
 
 db = real_database_fixture
 secured_logs = real_log_fixture
 paddle_sdk_mock = mock_checkout_sdk_fixture
+capacity_db = real_capacity_fixture
 
 
 @pytest.mark.asyncio
@@ -285,3 +287,33 @@ async def test_escaping_redeem_integrity_error_remains_safe_after_scope_exit(
         assert code.code not in rendered
         assert "IntegrityError" in rendered
         assert "UNIQUE constraint failed" in rendered
+
+
+@pytest.mark.asyncio
+async def test_service_ownership_failure_keeps_safe_traceback_and_structured_ids(
+    capacity_db, secured_logs
+):
+    console, path, records = secured_logs
+    module, limiter, _, _ = capacity_db
+    limiter.heartbeat_seconds = 0.01
+    error = RuntimeError("ownership renewal database unavailable")
+
+    async def fail(_resource):
+        raise error
+
+    limiter.renew = fail
+    with log_context(request_id="request-ownership"):
+        with pytest.raises(module.ServiceExecutionLeaseLost):
+            async with asyncio.timeout(10), limiter.slot("pr_review"):
+                await asyncio.Event().wait()
+    failure = next(
+        record
+        for record in records
+        if record["message"].startswith("Service execution ownership lost")
+    )
+    assert failure["extra"]["service_feature"] == "pr_review"
+    assert failure["extra"]["service_resource_id"]
+    assert failure["extra"]["request_id"] == "request-ownership"
+    for rendered in (console.getvalue(), path.read_text(encoding="utf-8")):
+        assert "RuntimeError" in rendered
+        assert "ownership renewal database unavailable" in rendered

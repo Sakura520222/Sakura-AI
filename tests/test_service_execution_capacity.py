@@ -165,11 +165,37 @@ async def test_expired_owner_cannot_renew_or_release_replacement(capacity_db):
 async def test_heartbeat_keeps_running_task_and_loss_stops_owner(
     capacity_db, monkeypatch
 ):
-    module, limiter, _, _ = capacity_db
-    limiter.lease_seconds = 0.12
+    module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
+    limiter.lease_seconds = 2
     limiter.heartbeat_seconds = 0.025
-    async with limiter.slot("pr_review"):
-        await asyncio.sleep(0.2)
+    renewed_twice = asyncio.Event()
+    renewals = 0
+    real_renew = limiter.renew
+
+    async def advance_and_renew(lease):
+        nonlocal instant, renewals
+        # Advance the domain clock by less than one TTL per actual SQL renewal.
+        # This proves extension past the initial expiry without a CPU/IO race.
+        instant += timedelta(seconds=1)
+        renewed = await real_renew(lease)
+        if renewed:
+            renewals += 1
+            if renewals >= 2:
+                renewed_twice.set()
+        return renewed
+
+    monkeypatch.setattr(limiter, "renew", advance_and_renew)
+    async with limiter.slot("pr_review") as lease:
+        initial_expiry = instant + timedelta(seconds=lease.duration_seconds)
+        await asyncio.wait_for(renewed_twice.wait(), 10)
+        assert instant >= initial_expiry
+        with Session(engine) as session:
+            assert (
+                session.get(module.ServiceExecutionLease, lease.token).expires_at
+                > instant
+            )
         assert await limiter.try_acquire("pr_review") is None
 
     async def database_failure(_lease):
@@ -177,8 +203,8 @@ async def test_heartbeat_keeps_running_task_and_loss_stops_owner(
 
     monkeypatch.setattr(limiter, "renew", database_failure)
     with pytest.raises(module.ServiceExecutionLeaseLost):
-        async with limiter.slot("pr_review"):
-            await asyncio.sleep(0.2)
+        async with asyncio.timeout(10), limiter.slot("pr_review"):
+            await asyncio.Event().wait()
     assert await limiter.try_acquire("pr_review") is not None
 
 
