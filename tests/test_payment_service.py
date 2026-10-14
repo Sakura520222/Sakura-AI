@@ -212,7 +212,13 @@ class TestRedeemCodeUsage:
         empty_result.scalar_one_or_none.return_value = None
         updated_result = MagicMock(rowcount=1)
         mock_session.execute = AsyncMock(
-            side_effect=[redeem_result, empty_result, plan_result, updated_result]
+            side_effect=[
+                redeem_result,
+                empty_result,
+                empty_result,
+                plan_result,
+                updated_result,
+            ]
         )
 
         async def refresh_code(value, **kwargs):
@@ -251,7 +257,13 @@ class TestRedeemCodeUsage:
         empty_result.scalar_one_or_none.return_value = None
         updated_result = MagicMock(rowcount=1)
         mock_session.execute = AsyncMock(
-            side_effect=[redeem_result, empty_result, plan_result, updated_result]
+            side_effect=[
+                redeem_result,
+                empty_result,
+                empty_result,
+                plan_result,
+                updated_result,
+            ]
         )
 
         async def refresh_code(value, **kwargs):
@@ -291,7 +303,7 @@ class TestRedeemCodeUsage:
         mock_result.scalar_one_or_none.return_value = expired_code
         empty_result = MagicMock()
         empty_result.scalar_one_or_none.return_value = None
-        mock_session.execute.side_effect = [mock_result, empty_result]
+        mock_session.execute.side_effect = [mock_result, empty_result, empty_result]
 
         with pytest.raises(PaymentError, match="expired"):
             await svc.redeem_code(user_id=1, code="EXPIREDCODE")
@@ -311,7 +323,7 @@ class TestRedeemCodeUsage:
         mock_result.scalar_one_or_none.return_value = exhausted_code
         empty_result = MagicMock()
         empty_result.scalar_one_or_none.return_value = None
-        mock_session.execute.side_effect = [mock_result, empty_result]
+        mock_session.execute.side_effect = [mock_result, empty_result, empty_result]
 
         with pytest.raises(PaymentError, match="fully used"):
             await svc.redeem_code(user_id=1, code="USEDCODE")

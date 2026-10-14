@@ -53,7 +53,7 @@ def provider(monkeypatch):
             usage.append(kwargs)
 
     # Capture the actual response boundary introduced by durable billing;
-    # these tests still assert successful API usage survives invalid ranking.
+    # Invalid ranking retains actual Usage while the attempt is failed.
     monkeypatch.setattr(
         ai_usage_service, "begin_ai_call", AsyncMock(return_value=False)
     )
@@ -73,10 +73,11 @@ async def test_strict_rerank_rejects_wrong_count_before_filtering(
     ]
     with pytest.raises(ValueError, match="Malformed"):
         await service.rerank("query", docs, top_k=top_k, strict=True)
-    # Successful API usage is accounted even when its result is inadmissible.
+    # Actual API Usage survives even when its result is inadmissible.
     assert len(usage) == 1
     assert usage[0]["usage"] == response
     assert usage[0]["input_only"] is True
+    assert usage[0]["outcome"] == "failed"
 
 
 @pytest.mark.asyncio

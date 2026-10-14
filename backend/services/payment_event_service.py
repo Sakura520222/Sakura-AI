@@ -4,7 +4,7 @@ import hashlib
 import json
 
 from loguru import logger
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.log_sanitizer import sanitize_exception_text
@@ -315,6 +315,140 @@ class PaymentEventService:
             metadata = json.loads(order.metadata_json or "{}")
             metadata["payment_reference_id"] = evidence["payment_reference_id"]
             order.metadata_json = json.dumps(metadata)
+            await self.session.flush()
+            if record.provider == "stripe":
+                await self._replay_stripe_refunds(order, skip_locked=True)
+
+    async def replay_stripe_refunds_after_commit(self, event_id: int) -> None:
+        """Drain busy early receipts after the caller commits payment effects.
+
+        Commit each replay before taking another inbox lock. This phase owns
+        its transactions and must run with no uncommitted caller work.
+        """
+        record = await self.session.get(
+            PaymentRefundInboxEvent, event_id, populate_existing=True
+        )
+        if (
+            record is None
+            or record.provider != "stripe"
+            or record.status != "processed"
+            or record.evidence.get("type") != WebhookEventType.PAYMENT_COMPLETED.value
+            or not record.evidence.get("payment_reference_id")
+        ):
+            return
+        order = await self.session.get(Order, record.order_id, populate_existing=True)
+        if (
+            order is None
+            or order.payment_provider != "stripe"
+            or self._metadata_reference(order.metadata_json)
+            != record.evidence["payment_reference_id"]
+        ):
+            return
+        await self._replay_stripe_refunds(order, skip_locked=False, commit_each=True)
+
+    @staticmethod
+    def _stripe_refund_replay_query(
+        order_id, order_no, reference, after_id, upper_id, *, skip_locked, event_id=None
+    ):
+        evidence = PaymentRefundInboxEvent.evidence
+        query = (
+            select(PaymentRefundInboxEvent)
+            .where(
+                PaymentRefundInboxEvent.provider == "stripe",
+                PaymentRefundInboxEvent.status == "pending_reconciliation",
+                evidence["type"].as_string() == WebhookEventType.PAYMENT_REFUNDED.value,
+                or_(
+                    evidence["payment_reference_id"].as_string() == reference,
+                    and_(
+                        or_(
+                            evidence["payment_reference_id"].as_string().is_(None),
+                            evidence["payment_reference_id"].as_string() == "",
+                        ),
+                        evidence["provider_tx_id"].as_string() == reference,
+                    ),
+                ),
+                or_(
+                    PaymentRefundInboxEvent.order_id.is_(None),
+                    PaymentRefundInboxEvent.order_id == order_id,
+                ),
+                or_(
+                    evidence["reviewed_order_id"].as_integer().is_(None),
+                    evidence["reviewed_order_id"].as_integer() == order_id,
+                ),
+                or_(
+                    evidence["order_no"].as_string().is_(None),
+                    evidence["order_no"].as_string() == "",
+                    evidence["order_no"].as_string() == order_no,
+                ),
+                PaymentRefundInboxEvent.id > after_id,
+                PaymentRefundInboxEvent.id <= upper_id,
+            )
+            .order_by(PaymentRefundInboxEvent.id)
+            .limit(200)
+            .execution_options(populate_existing=True)
+        )
+        if event_id is not None:
+            # Lock by primary key, not by a JSON-filtered scan that can acquire
+            # unrelated receipt locks under MySQL repeatable-read isolation.
+            query = (
+                query.where(PaymentRefundInboxEvent.id == event_id)
+                .limit(1)
+                .with_for_update(skip_locked=skip_locked)
+            )
+        return query
+
+    async def _replay_stripe_refunds(self, order, *, skip_locked, commit_each=False):
+        reference = self._metadata_reference(order.metadata_json)
+        if not reference:
+            return
+        order_id, order_no = order.id, order.order_no
+        upper_id = (
+            await self.session.execute(select(func.max(PaymentRefundInboxEvent.id)))
+        ).scalar() or 0
+        after_id = 0
+        replayed = 0
+        while after_id < upper_id:
+            # Payment holds order/wallet locks, so it must skip busy inbox rows.
+            # After commit, lock one receipt at a time before its order/wallet.
+            query = self._stripe_refund_replay_query(
+                order_id,
+                order_no,
+                reference,
+                after_id,
+                upper_id,
+                skip_locked=skip_locked,
+            )
+            if commit_each:
+                query = query.limit(1)
+            candidates = (await self.session.execute(query)).scalars().all()
+            if not candidates:
+                break
+            candidate_ids = [candidate.id for candidate in candidates]
+            for candidate_id in candidate_ids:
+                current = (
+                    await self.session.execute(
+                        self._stripe_refund_replay_query(
+                            order_id,
+                            order_no,
+                            reference,
+                            after_id,
+                            upper_id,
+                            skip_locked=skip_locked,
+                            event_id=candidate_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if current is not None:
+                    await self.replay(candidate_id)
+                    replayed += 1
+                if commit_each:
+                    await self.session.commit()
+            after_id = candidate_ids[-1]
+        if replayed:
+            logger.bind(order_id=order_id, replay_count=replayed).info(
+                "Stripe refund receipt replays {}",
+                "committed" if commit_each else "staged",
+            )
 
     @staticmethod
     def _paddle_refund_identity(evidence, statuses):
@@ -1094,6 +1228,9 @@ class PaymentEventService:
                         order.id, reason="Verified upstream full refund"
                     )
                     order.status = "refunded"
+                    await PaymentService(self.session)._reconcile_refunded_subscription(
+                        order
+                    )
             self.session.add(
                 PaymentRefundReference(
                     provider=record.provider,

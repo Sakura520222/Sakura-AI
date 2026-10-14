@@ -91,6 +91,11 @@ async def test_uniqueness_conflict_returns_winner_without_second_order_or_use(
                 return await original_execute(
                     statement.where(RedeemCodeRedemption.id == -1)
                 )
+        if (
+            getattr(statement, "column_descriptions", [{}])[0].get("entity") is Order
+            and len(reads) == 1
+        ):
+            return await original_execute(statement.where(Order.id == -1))
         return await original_execute(statement, *args, **kwargs)
 
     monkeypatch.setattr(db, "execute", miss_once)

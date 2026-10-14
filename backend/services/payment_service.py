@@ -474,7 +474,9 @@ class PaymentService:
         with sensitive_log_scope(code):
             return await self._redeem_code(user_id, code)
 
-    async def _redeem_replay(self, redeem_id: int, user_id: int) -> Order | None:
+    async def _redeem_replay(
+        self, redeem_id: int, user_id: int, code: str
+    ) -> Order | None:
         # A locking/current read sees a winner committed while this request
         # waited for the code row, even with a prior repeatable-read snapshot.
         previous = (
@@ -489,7 +491,52 @@ class PaymentService:
             )
         ).scalar_one_or_none()
         if previous is None:
-            return None
+            # Upgrades start with an empty redemption table. Legacy orders
+            # recorded the voucher in provider_tx_id; never reissue their benefits.
+            historical = (
+                await self.session.execute(
+                    select(Order)
+                    .where(
+                        Order.user_id == user_id,
+                        Order.payment_provider == "redeem_code",
+                        Order.provider_tx_id == code,
+                        Order.status.in_({"paid", "fulfilled", "refunded"}),
+                    )
+                    .order_by(Order.id)
+                    .limit(1)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if historical is None:
+                return None
+            historical_id = historical.id
+            try:
+                async with self.session.begin_nested():
+                    previous = RedeemCodeRedemption(
+                        redeem_code_id=redeem_id,
+                        user_id=user_id,
+                        order_id=historical_id,
+                    )
+                    self.session.add(previous)
+                    await self.session.flush()
+                logger.bind(
+                    user_id=user_id, redeem_code_id=redeem_id, order_id=historical_id
+                ).info("Historical redeem replay link staged")
+            except IntegrityError:
+                previous = (
+                    await self.session.execute(
+                        select(RedeemCodeRedemption)
+                        .where(
+                            RedeemCodeRedemption.redeem_code_id == redeem_id,
+                            RedeemCodeRedemption.user_id == user_id,
+                        )
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
+                if previous is None:
+                    raise
         order = await self.session.get(
             Order, previous.order_id, with_for_update=True, populate_existing=True
         )
@@ -522,7 +569,7 @@ class PaymentService:
             raise PaymentError("Invalid or inactive redeem code")
 
         redeem_id = redeem.id
-        previous = await self._redeem_replay(redeem_id, user_id)
+        previous = await self._redeem_replay(redeem_id, user_id, code)
         if previous is not None:
             return previous
         if redeem.status != RedeemCodeStatus.ACTIVE.value:
@@ -582,7 +629,7 @@ class PaymentService:
                 )
                 await self.session.flush()
         except IntegrityError:
-            previous = await self._redeem_replay(redeem_id, user_id)
+            previous = await self._redeem_replay(redeem_id, user_id, code)
             if previous is None:
                 raise
             return previous
@@ -1794,43 +1841,7 @@ class PaymentService:
                 order.id, actor_id=attempt.actor_id
             )
             order.status = OrderStatus.REFUNDED.value
-            subscription = (
-                await self.session.execute(
-                    select(UserSubscription)
-                    .where(
-                        UserSubscription.user_id == order.user_id,
-                        UserSubscription.plan_id == order.plan_id,
-                        UserSubscription.quota_application_version == 2,
-                    )
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
-                )
-            ).scalar_one_or_none()
-            if subscription:
-                remaining_ends = (
-                    (
-                        await self.session.execute(
-                            select(LegacyEntitlement.expires_at)
-                            .where(
-                                LegacyEntitlement.user_id == order.user_id,
-                                LegacyEntitlement.revoked_at.is_(None),
-                                LegacyEntitlement.snapshot["id"].as_integer()
-                                == order.plan_id,
-                            )
-                            .with_for_update()
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-                latest = max(
-                    (value for value in remaining_ends if value is not None),
-                    default=None,
-                )
-                if latest and latest > now_utc():
-                    subscription.expires_at = latest
-                else:
-                    subscription.status = SubscriptionStatus.EXPIRED.value
+            await self._reconcile_refunded_subscription(order)
         attempt.status = "succeeded"
         attempt.active_order_id = None
         self.session.add(
@@ -1851,6 +1862,52 @@ class PaymentService:
         )
         await self.session.flush()
         return order
+
+    async def _reconcile_refunded_subscription(self, order: Order) -> None:
+        """Rebuild the subscription summary after revoking a purchased source."""
+        subscription = (
+            await self.session.execute(
+                select(UserSubscription)
+                .where(
+                    UserSubscription.user_id == order.user_id,
+                    UserSubscription.plan_id == order.plan_id,
+                    UserSubscription.quota_application_version == 2,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if subscription:
+            remaining_ends = (
+                (
+                    await self.session.execute(
+                        select(LegacyEntitlement.expires_at)
+                        .where(
+                            LegacyEntitlement.user_id == order.user_id,
+                            LegacyEntitlement.revoked_at.is_(None),
+                            LegacyEntitlement.snapshot["id"].as_integer()
+                            == order.plan_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            latest = max(
+                (value for value in remaining_ends if value is not None),
+                default=None,
+            )
+            if latest and latest > now_utc():
+                subscription.expires_at = latest
+            else:
+                subscription.status = SubscriptionStatus.EXPIRED.value
+            logger.bind(
+                order_id=order.id,
+                user_id=order.user_id,
+                subscription_id=subscription.id,
+                status=subscription.status,
+            ).info("Refund subscription summary staged")
 
     async def reconcile_refund(
         self,

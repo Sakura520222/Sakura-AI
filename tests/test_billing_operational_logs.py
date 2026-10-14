@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ from starlette.requests import Request
 
 from backend.core.log_context import get_log_context, log_context
 from backend.models.payment_models import PaymentLog
+from backend.services import ai_usage_service, embedding_service
 from backend.services.billing_context import BillingContext, bind_billing_context
 from backend.services.billing_service import BillingService
 from backend.services.payment.alipay_gateway import AlipayGateway
@@ -30,6 +32,67 @@ db = real_database_fixture
 secured_logs = real_log_fixture
 paddle_sdk_mock = mock_checkout_sdk_fixture
 capacity_db = real_capacity_fixture
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [False, True])
+async def test_rerank_failure_and_caller_relog_redact_opaque_credentials(
+    secured_logs, monkeypatch, strict
+):
+    console, path, records = secured_logs
+    secret = "opaque/rerank@credential+value"
+    error = RuntimeError(f"HTTP 503 {secret} encoded={quote(secret, safe='')}")
+    service = embedding_service.RerankerService.__new__(
+        embedding_service.RerankerService
+    )
+    service.provider = "siliconflow"
+
+    async def fault(*args, **kwargs):
+        logger.debug("Rerank SDK credential {}", secret)
+        raise error
+
+    service.client = SimpleNamespace(
+        post=fault, headers={"Authorization": f"Bearer {secret}"}
+    )
+    monkeypatch.setattr(
+        embedding_service,
+        "get_settings",
+        lambda: SimpleNamespace(rerank_model="model", rerank_api_key="hot-updated-key"),
+    )
+    monkeypatch.setattr(
+        ai_usage_service, "begin_ai_call", AsyncMock(return_value=False)
+    )
+    finish = AsyncMock()
+    monkeypatch.setattr(ai_usage_service, "finish_ai_call", finish)
+    docs = [{"content": "private prompt"}]
+    private_query = "private query"
+    with log_context(request_id="rerank-request", attempt_id=91):
+        with bind_billing_context(BillingContext(7, "rerank-operation", "pr_review")):
+            if strict:
+                with pytest.raises(RuntimeError) as failure:
+                    await service._rerank_via_siliconflow(
+                        private_query, docs, 1, 0.1, strict=True
+                    )
+                logger.opt(exception=failure.value).warning("Rerank caller failure")
+            else:
+                assert (
+                    await service._rerank_via_siliconflow(private_query, docs, 1, 0.1)
+                    == docs
+                )
+    assert finish.await_args.kwargs["outcome"] == "failed"
+    for rendered in (console.getvalue(), path.read_text(encoding="utf-8")):
+        assert secret not in rendered
+        assert quote(secret, safe="") not in rendered
+        assert "RuntimeError" in rendered
+        assert "HTTP 503" in rendered
+        assert "private query" not in rendered
+        assert "private prompt" not in rendered
+    failure_record = next(
+        record for record in records if record["extra"].get("exception")
+    )
+    assert failure_record["extra"]["request_id"] == "rerank-request"
+    assert failure_record["extra"]["attempt_id"] == 91
+    assert failure_record["extra"]["billing_operation_id"] == "rerank-operation"
 
 
 @pytest.mark.asyncio
