@@ -76,7 +76,7 @@ def test_endpoint_ownership_csrf_and_admin_scope(client, api_db):
     assert client.post("/notifications/endpoints/1/test", json={}).status_code == 422
 
 
-def test_webhook_credentials_are_encrypted_and_not_echoed(client, api_db):
+def test_webhook_credentials_are_encrypted_and_not_echoed(client, api_db, monkeypatch):
     secret = "private-key-never-returned-or-logged-646"
     response = client.post("/notifications/endpoints", json={
         "provider": "webhook", "address": "https://example.org/receiver", "name": "Deploy", "signing_secret": secret,
@@ -91,6 +91,24 @@ def test_webhook_credentials_are_encrypted_and_not_echoed(client, api_db):
         assert endpoint.verified is False
     assert secret not in client.get("/notifications/settings").text
     assert client.post(f"/notifications/endpoints/{endpoint_id}/test", json={}).status_code == 400
+    replacement = "replacement-signing-secret-never-echoed-646"
+
+    async def rotate_during_challenge(endpoint):
+        assert decrypt_secret(endpoint.secret_encrypted) == secret
+        response = await asyncio.to_thread(client.patch, f"/notifications/endpoints/{endpoint_id}", json={
+            "name": "Deploy", "enabled": True, "signing_secret": replacement,
+        })
+        assert response.status_code == 200
+
+    provider = notification_service.registry.get("webhook")
+    monkeypatch.setattr(provider, "verify_endpoint", rotate_during_challenge)
+    assert client.post(f"/notifications/endpoints/{endpoint_id}/verify", json={}).status_code == 400
+    with Session(api_db[0]) as db:
+        endpoint = db.get(NotificationEndpoint, endpoint_id)
+        assert endpoint.verified is False and endpoint.config_version == 2
+        assert decrypt_secret(endpoint.secret_encrypted) == replacement
+    monkeypatch.setattr(provider, "verify_endpoint", AsyncMock())
+    assert client.post(f"/notifications/endpoints/{endpoint_id}/verify", json={}).json()["verified"] is True
     assert client.post("/notifications/endpoints", json={
         "provider": "webhook", "address": "https://127.0.0.1/private", "name": "Unsafe", "signing_secret": secret,
     }).status_code == 400
@@ -322,12 +340,17 @@ def test_agent_notification_page_selects_only_an_authorized_task(client, api_db,
     with Session(api_db[0]) as db:
         db.add_all([AgentTeamTask(id=number, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
             source_type="manual_issue", title=f"Agent task {number}", status="completed", started_by=initiator)
-            for number, initiator in [(10, "alice"), (11, "bob")]])
+            for number, initiator in [(10, "ALIce"), (11, "bob")]])
         db.commit()
     response = client.get("/agent-team/?task_id=10")
     assert response.status_code == 200
     assert "this.selectTask(10)" in response.text
     assert "Agent task 10" in client.get("/agent-team/tasks/10/detail-fragment").text
+    listing = client.get("/agent-team/list-fragment").text
+    assert "Agent task 10" in listing and "Agent task 11" not in listing
+    assert client.get("/agent-team/tasks/11/detail-fragment").status_code == 403
+    assert client.get("/agent-team/api/tasks/10/prompts").status_code == 200
+    assert client.get("/agent-team/api/tasks/11/prompts").status_code == 403
     assert client.get("/agent-team/?task_id=11").status_code == 403
     assert client.get("/agent-team/?task_id=999").status_code == 404
     assert client.get("/agent-team/?task_id=0").status_code == 422
@@ -338,16 +361,20 @@ def test_agent_notification_page_selects_only_an_authorized_task(client, api_db,
 async def test_agent_retry_creates_a_new_persisted_round_before_cloning(client, api_db, monkeypatch):
     from backend.models import database as db_module
     from backend.models.agent_team_models import AgentTeamTask
+    from backend.models.telegram_models import TelegramUser
+    from backend.services import telegram_service
     from backend.workers.agent_team_worker import AgentTeamWorker
 
     engine, _ = api_db
-    monkeypatch.setattr(agent_team, "_check_and_consume_agent_quota", AsyncMock(return_value=(True, "")))
+    monkeypatch.setattr(telegram_service, "is_payment_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(agent_team, "_run_agent_task_background", AsyncMock())
     monkeypatch.setattr(db_module, "async_session", lambda: AsyncDB(engine, outbox=True))
     monkeypatch.setattr("backend.webui.sse.publish_event", AsyncMock())
     with Session(engine) as db:
+        user = db.get(TelegramUser, 1)
+        user.agent_daily_quota = user.agent_weekly_quota = user.agent_monthly_quota = 10
         db.add(AgentTeamTask(id=10, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
-            source_type="manual_issue", title="Retry task", status="failed", started_by="alice"))
+            source_type="manual_issue", title="Retry task", status="failed", started_by="ALIce"))
         db.commit()
     token = get_csrf_serializer().dumps({})
     worker = AgentTeamWorker.__new__(AgentTeamWorker)

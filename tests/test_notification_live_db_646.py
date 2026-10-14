@@ -28,6 +28,8 @@ from backend.models.notification_models import (
     NotificationLockoutRound,
     NotificationSubscription,
 )
+from backend.models.payment_models import Order, PaymentLog, Plan, RedeemCode
+from backend.models.scan_models import RepoScan
 from backend.models.telegram_models import (
     TelegramUser,
     UserRecoveryCode,
@@ -42,6 +44,7 @@ from backend.services.notification_preferences import (
     cancel_endpoint_deliveries,
     owned_endpoint,
     save_subscription,
+    verify_endpoint,
 )
 from backend.services.notification_service import (
     NotificationProviderRegistry,
@@ -65,10 +68,12 @@ async def live_db(monkeypatch):
         "notification_provider_budgets", "user_repo_subscriptions",
         "issue_analyses",
         "agent_team_tasks",
+        "repo_scans",
     }
     table_names.update(model.__tablename__ for model in (
         UserConfig, WebUIConfig, UserIdentity, UserRecoveryCode, UserWebAuthnCredential, NotificationAudit,
-        NotificationLockoutRound, AnnouncementPublicationHistory, AnnouncementDeliveryHistory, AnnouncementRead
+        NotificationLockoutRound, AnnouncementPublicationHistory, AnnouncementDeliveryHistory, AnnouncementRead,
+        Order, PaymentLog, Plan, RedeemCode,
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
@@ -91,6 +96,75 @@ async def live_db(monkeypatch):
         async with engine.begin() as conn:
             await conn.run_sync(lambda db: Base.metadata.drop_all(db, tables=tables))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_live_gateway_expiration_emits_once_and_rolls_back_with_its_event(live_db, monkeypatch):
+    from backend.services.payment_service import PaymentService
+
+    async with live_db(info={"notification_outbox": False}) as db:
+        db.add(Plan(id=1, name="Plan", price_cents=100))
+        await db.flush()
+        db.add_all([Order(id=number, order_no=f"EXPIRE_{number}", user_id=1, plan_id=1,
+            amount_cents=100, currency="USD", status="pending", payment_provider="stripe") for number in (646, 647)])
+        await db.commit()
+
+    async def expire():
+        async with live_db() as db:
+            await PaymentService(db).cancel_and_commit_if_needed("EXPIRE_646")
+
+    await asyncio.gather(expire(), expire())
+    async with live_db() as db:
+        event = (await db.execute(select(NotificationEvent))).scalar_one()
+        assert event.event_type == "payment.failed" and event.recipients_json == "[1]"
+        assert (await db.get(Order, 646)).status == "cancelled"
+
+    async def unavailable(*_args, **_kwargs):
+        raise RuntimeError("Injected outbox failure")
+
+    monkeypatch.setattr(notification_events, "emit_event", unavailable)
+    async with live_db() as db:
+        with pytest.raises(RuntimeError, match="outbox failure"):
+            await PaymentService(db).cancel_expired_order("EXPIRE_647")
+        await db.commit()  # Later caller cleanup cannot commit a state-only transition.
+        assert (await db.get(Order, 647)).status == "pending"
+        assert (await db.execute(select(PaymentLog).where(PaymentLog.order_id == 647))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_live_webhook_challenge_cannot_verify_a_replaced_credential(live_db, monkeypatch):
+    from backend.services.notification_service import notification_service
+    from backend.services.secret_crypto_service import encrypt_secret
+
+    async with live_db() as db:
+        db.add(NotificationEndpoint(id=2, user_id=1, provider="webhook", address="https://example.org/hook",
+            secret_encrypted=encrypt_secret("a" * 32), enabled=True, verified=False))
+        await db.commit()
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def challenge(_endpoint):
+        entered.set()
+        await resume.wait()
+
+    monkeypatch.setattr(notification_service.registry.get("webhook"), "verify_endpoint", challenge)
+
+    async def verify():
+        async with live_db() as db:
+            return await verify_endpoint(db, 1, 2)
+
+    task = asyncio.create_task(verify())
+    await asyncio.wait_for(entered.wait(), 10)
+    async with live_db() as db:
+        endpoint = await owned_endpoint(db, 1, 2, for_update=True)
+        endpoint.secret_encrypted, endpoint.verified = encrypt_secret("b" * 32), False
+        endpoint.config_version += 1
+        await db.commit()
+    resume.set()
+    with pytest.raises(ValueError, match="configuration changed"):
+        await asyncio.wait_for(task, 10)
+    async with live_db() as db:
+        endpoint = await db.get(NotificationEndpoint, 2)
+        assert endpoint.verified is False and endpoint.config_version == 2
 
 
 @pytest.mark.asyncio
@@ -185,28 +259,32 @@ async def test_live_issue_completion_and_close_race_emit_only_committed_transiti
 
 
 @pytest.mark.asyncio
-async def test_live_agent_duplicate_admissions_and_early_retry_failures(live_db):
+@pytest.mark.parametrize("kind", ["agent", "scan"])
+async def test_live_agent_duplicate_admissions_and_early_retry_failures(live_db, kind):
+    model = AgentTeamTask if kind == "agent" else RepoScan
+    values = {"id": 646, "repo_owner": "Acme", "repo_name": "repo", "status": "failed"}
+    values.update({"repo_full_name": "Acme/repo", "source_type": "manual_issue", "title": "Task", "started_by": "alice"}
+        if kind == "agent" else {"trigger_type": "manual"})
     async with live_db(info={"notification_outbox": False}) as db:
-        db.add(AgentTeamTask(id=646, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
-            source_type="manual_issue", title="Task", status="failed", started_by="alice"))
+        db.add(model(**values))
         await db.commit()
 
     async def queue():
         async with live_db() as db:
-            task = await db.get(AgentTeamTask, 646)
-            task.status = "queued"
+            task = await db.get(model, 646)
+            task.status = "queued" if kind == "agent" else "pending"
             await db.commit()
 
     for expected_round in (1, 2):
         await asyncio.gather(queue(), queue())
         async with live_db() as db:
-            task = await db.get(AgentTeamTask, 646)
+            task = await db.get(model, 646)
             assert task.execution_round == expected_round
             task.status = "failed"  # before skills/cloning/iteration begins
             await db.commit()
     async with live_db() as db:
-        events = (await db.execute(select(NotificationEvent).where(NotificationEvent.resource_type == "agent"))).scalars().all()
-        assert {event.run_key for event in events} == {"1:0:0", "2:0:0"}
+        events = (await db.execute(select(NotificationEvent).where(NotificationEvent.resource_type == kind))).scalars().all()
+        assert {event.run_key for event in events} == ({"1:0:0", "2:0:0"} if kind == "agent" else {"1:646", "2:646"})
         assert len(events) == 2
 
 
@@ -215,8 +293,10 @@ async def test_live_agent_round_migration_preserves_existing_tasks(live_db):
     async with live_db(info={"notification_outbox": False}) as db:
         db.add(AgentTeamTask(id=646, repo_full_name="Acme/repo", repo_owner="Acme", repo_name="repo",
             source_type="manual_issue", title="Task", status="completed", started_by="alice"))
+        db.add(RepoScan(id=646, repo_name="repo", repo_owner="Acme", trigger_type="manual", status="failed"))
         await db.commit()
-        await db.execute(text("ALTER TABLE agent_team_tasks DROP COLUMN execution_round"))
+        for name in ("agent_team_tasks", "repo_scans"):
+            await db.execute(text(f"ALTER TABLE {name} DROP COLUMN execution_round"))
         conn = await db.connection()
         assert await conn.run_sync(upgrade_notification_schema) is True
         assert await conn.run_sync(upgrade_notification_schema) is False
@@ -225,6 +305,8 @@ async def test_live_agent_round_migration_preserves_existing_tasks(live_db):
     async with live_db() as db:
         task = await db.get(AgentTeamTask, 646)
         assert (task.status, task.execution_round) == ("completed", 0)
+        scan = await db.get(RepoScan, 646)
+        assert (scan.status, scan.execution_round) == ("failed", 0)
         assert (await db.execute(select(NotificationEvent))).scalars().all() == []
 
 

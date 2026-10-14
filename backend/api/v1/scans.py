@@ -244,7 +244,8 @@ async def retry_scan(
     """重试失败的扫描"""
     from backend.workers.scan_worker import ScanWorker
 
-    result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id))
+    result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id)
+        .with_for_update().execution_options(populate_existing=True))
     scan = result.scalar_one_or_none()
     if not scan:
         return error_response("扫描记录不存在", status_code=404)

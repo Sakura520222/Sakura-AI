@@ -56,6 +56,10 @@ MFA lockout state resides in Redis, so its lockout and the SQL event cannot shar
 
 ## States, recovery and throttling
 
+Gateway expiration keeps the established `cancelled` order state and explicitly persists `payment.failed` in that transaction. User cancellation remains distinct. Confirmation, expiration, cancellation and refund writers lock and refresh the order before deciding its transition; repeated or competing callbacks cannot overwrite a committed terminal state. An expiration-event failure rolls back the order and payment log before propagating.
+
+Scan retries advance a persisted `execution_round` under the scan row lock, including failure before indexing. Duplicate pending admissions share a round. Legacy round zero retains the record-ID key; later rounds include the generation. Agent retry admission retains its task lock through quota consumption and queue commit; the quota service supports a caller-owned successful transaction while preserving the default commit and denial behavior.
+
 Scan status/outbox commit failures propagate after the worker's bounded database retries; a rolled-back terminal state is never treated as a successful update. Quota denial is already determined by its atomic SQL update: optional exhaustion-alert insert/commit failures roll back, emit a sanitized warning, and preserve the original denial reason and Agent orphan-task cleanup. The reason is captured before rollback can expire the user object. System configuration renders effective booleans as `true`/`false` and preserves numeric zero, so saving unrelated settings cannot silently enable environment-disabled Webhooks.
 
 | Category | Outcome |
@@ -76,6 +80,10 @@ Announcement fanout locks lifecycle before event, matching publication/withdrawa
 Settings defaults are the only source of defaults. All `notification_*` controls are in `app_config` and the existing system configuration page. Recovery batches, concurrency, polling, timeouts, retry budget/backoff, response size and verification limits are configurable there.
 
 ## Endpoint and Webhook operations
+
+Verification uses an immutable configuration snapshot across provider I/O. Its conditional SQL update checks ownership, provider, address, enabled state, configuration generation and encrypted credential. Credential replacement and disable/re-enable transitions advance the generation; restore cannot rewind it. A stale challenge cannot mark a replacement credential verified. Email code consumption, expiration/attempt checks and verification succeed in one conditional update, so replacing a code cannot be overwritten by an older verification. Imports clear pending codes.
+
+GitHub identities compare case-insensitively in PR/Issue list/detail scopes and all Agent entry, list, detail, prompt, stream and task-operation scopes, matching notification authorization on both database dialects. Preference deletion uses the same user-before-rule lock order as updates and fanout.
 
 Personal Settings provides endpoint names, enabling/disabling, soft unbinding, tests, status inspection, Email verification codes, Webhook verification/credential replacement and subscriptions. Multiple verified Email endpoints are independent; GitHub primary-email synchronization retires previous OAuth-managed addresses and preserves separately verified user-managed addresses. Telegram uses its existing one-time private-chat binding handshake.
 
@@ -103,7 +111,7 @@ Stop all application instances before upgrading; do not mix old and new senders 
 
 Constraint ALTER statements use isolated table metadata, retaining the mapped schema's inline uniqueness declarations for later fresh table creation in the same process. Real database regressions verify both upgrade idempotency and creating a fresh delivery table after an upgrade.
 
-Historical delivery rows keep their IDs, statuses, attempts, publication versions and `event_id=NULL`. They are neither copied into new pending events nor automatically rebroadcast. Current legacy pending rows still recover through the compatibility path; failed/sent/archived rows remain historical. Existing announcement content snapshots and read markers stay intact, and new archived states retain endpoint/event identities. Agent tasks receive an additive `execution_round` column defaulting to zero; existing statuses and counters are preserved without generating historical events.
+Historical delivery rows keep their IDs, statuses, attempts, publication versions and `event_id=NULL`. They are neither copied into new pending events nor automatically rebroadcast. Current legacy pending rows still recover through the compatibility path; failed/sent/archived rows remain historical. Existing announcement content snapshots and read markers stay intact, and new archived states retain endpoint/event identities. Agent tasks and repository scans receive an additive `execution_round` column defaulting to zero; existing statuses and counters are preserved without generating historical events.
 
 User backups include endpoint names, configuration versions and encrypted Webhook credentials. Imported Webhooks require a fresh ownership challenge. If the receiving deployment uses a different encryption key, replace the endpoint's signing credential and verify it again; plaintext credentials are not exported. Database/Redis connection settings retain the existing backup-restore protection.
 

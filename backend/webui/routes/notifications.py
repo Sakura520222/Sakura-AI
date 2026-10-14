@@ -108,6 +108,8 @@ async def update_endpoint(endpoint_id: int, body: EndpointUpdate, user=Depends(r
         raise HTTPException(404, "Notification endpoint not found") from None
     if str(row.provider).lower() == "telegram" and body.enabled and not row.enabled:
         raise HTTPException(409, "Use the existing Telegram binding handshake to activate this endpoint")
+    if body.signing_secret is not None or row.enabled != body.enabled:
+        row.config_version = (row.config_version or 1) + 1
     if body.signing_secret is not None:
         secret = body.signing_secret.get_secret_value()
         if str(row.provider).lower() != "webhook" or not 32 <= len(secret) <= 1024:
@@ -130,6 +132,8 @@ async def remove_endpoint(endpoint_id: int, user=Depends(require_auth), db=Depen
         raise HTTPException(404, "Notification endpoint not found") from None
     # Retain endpoint identity for diagnostic history. No authentication row or
     # role is changed, including the legacy Telegram account mirror.
+    if row.enabled:
+        row.config_version = (row.config_version or 1) + 1
     row.enabled = False
     await cancel_endpoint_deliveries(db, endpoint_id)
     db.add(NotificationAudit(actor_id=int(user["user_id"]), action="endpoint.unbound", target_id=str(endpoint_id)))
@@ -201,6 +205,8 @@ async def add_subscription(body: Preference, user=Depends(require_auth), db=Depe
 
 @router.delete("/subscriptions/{subscription_id}", dependencies=[Depends(require_csrf_header)])
 async def remove_subscription(subscription_id: int, user=Depends(require_auth), db=Depends(get_db)):
+    # Keep the user -> rule lock order used by fanout and preference upserts.
+    await db.get(TelegramUser, int(user["user_id"]), with_for_update=True, populate_existing=True)
     row = (await db.execute(select(NotificationSubscription).where(
         NotificationSubscription.id == subscription_id, NotificationSubscription.user_id == user["user_id"]
     ))).scalar_one_or_none()

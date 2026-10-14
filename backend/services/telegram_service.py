@@ -286,7 +286,7 @@ class TelegramService:
         return True, ""
 
     async def check_and_consume_agent_quota(
-        self, github_username: str, repo_name: str = "", task_id: int = 0
+        self, github_username: str, repo_name: str = "", task_id: int = 0, *, commit: bool = True
     ):
         """检查并消费 Agent 配额"""
         from sqlalchemy import update
@@ -303,7 +303,7 @@ class TelegramService:
         if await is_payment_enabled():
             await PaymentService(self.session).expire_due_subscriptions(user.id)
         await QuotaService(self.session).reset_user_quotas_if_expired(
-            user, include_pr=False, include_issue=False, include_agent=True
+            user, include_pr=False, include_issue=False, include_agent=True, commit=commit
         )
 
         stmt = (
@@ -340,7 +340,8 @@ class TelegramService:
         )
         self.session.add(log)
 
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
         return True, ""
 
     async def add_user(

@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
@@ -136,7 +136,8 @@ def build_user_scope_filter(user: dict, model: type) -> Any | None:
     """
     if user.get("role") in ("admin", "super_admin"):
         return None
-    return or_(model.repo_owner == user["sub"], model.author == user["sub"])
+    username = user["sub"].casefold()
+    return or_(func.lower(model.repo_owner) == username, func.lower(model.author) == username)
 
 
 async def paginate(
