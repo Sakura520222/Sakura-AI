@@ -749,7 +749,7 @@ class TestConfirmPayment:
 
 @pytest.mark.asyncio
 class TestCancelExpiredOrder:
-    async def test_cancel_expired_order(self, svc, mock_session):
+    async def test_cancel_expired_order(self, svc, mock_session, monkeypatch):
         from backend.models.payment_models import Order
 
         order = Order(
@@ -764,10 +764,15 @@ class TestCancelExpiredOrder:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = order
         mock_session.execute.return_value = mock_result
+        emit = AsyncMock()
+        monkeypatch.setattr("backend.services.notification_events.emit_event", emit)
 
         cancelled = await svc.cancel_expired_order("ORD_EXPIRED")
 
         assert cancelled.status == OrderStatus.CANCELLED.value
+        assert emit.await_args.kwargs["event_type"] == "payment.failed"
+        assert emit.await_args.kwargs["recipient_ids"] == [1]
+        mock_session.commit.assert_not_awaited()
 
     async def test_cancel_non_pending_order_returns_none(self, svc, mock_session):
         from backend.models.payment_models import Order

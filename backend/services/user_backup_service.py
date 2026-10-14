@@ -1908,7 +1908,14 @@ async def _restore_user_backup(
                         existing_endpoint.metadata_json = metadata_value
                         if endpoint.get("name") is not None:
                             existing_endpoint.name = endpoint["name"]
-                        existing_endpoint.config_version = endpoint.get("config_version", 1)
+                        # An import is a new configuration, never a rewind of
+                        # a live verification request's admission generation.
+                        existing_endpoint.config_version = max(
+                            (existing_endpoint.config_version or 1) + 1, endpoint.get("config_version", 1)
+                        )
+                        existing_endpoint.verification_token_hash = None
+                        existing_endpoint.verification_expires_at = None
+                        existing_endpoint.verification_attempts = 0
                         if endpoint.get("secret_encrypted") is not None:
                             existing_endpoint.secret_encrypted = endpoint["secret_encrypted"]
 

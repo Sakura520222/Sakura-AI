@@ -528,6 +528,8 @@ async def _upsert_email_endpoint(
         # must not silently reactivate it.  Only a new endpoint, or an
         # unverified endpoint transitioning to verified, may be enabled.
         if incoming_verified and reactivate and not was_verified:
+            if not endpoint.enabled:
+                endpoint.config_version = (endpoint.config_version or 1) + 1
             endpoint.enabled = True
         elif not was_verified:
             # Correct rows created by older versions that enabled an unverified
@@ -1040,6 +1042,8 @@ async def stage_notification_endpoint(
         if endpoint.id is None and hasattr(db, "flush"):
             await _flush_session(db)
     else:
+        if not endpoint.enabled:
+            endpoint.config_version = (endpoint.config_version or 1) + 1
         endpoint.enabled = True
         endpoint.verified = bool(endpoint.verified or verified)
         if metadata is not None:
@@ -1120,6 +1124,8 @@ async def unbind_notification_endpoint(
 
 async def retire_notification_endpoint(db, endpoint):
     """Retire an exact target and its queue in the caller's transaction."""
+    if endpoint.enabled:
+        endpoint.config_version = (endpoint.config_version or 1) + 1
     endpoint.enabled = False
     if endpoint.id is not None and callable(getattr(db, "get_bind", None)):
         from backend.services.notification_preferences import cancel_endpoint_deliveries

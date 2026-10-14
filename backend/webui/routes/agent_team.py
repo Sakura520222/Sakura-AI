@@ -167,15 +167,20 @@ def _is_admin(user: dict) -> bool:
     return user.get("role") in ("admin", "super_admin")
 
 
+def _can_access_task(user: dict, task: AgentTeamTask) -> bool:
+    username = (user.get("sub") or "").casefold()
+    return _is_admin(user) or bool(username and (task.started_by or "").casefold() == username)
+
+
 def _build_task_owner_filter(user: dict):
     """非管理员用户只能看到自己创建的任务"""
     if _is_admin(user):
         return None
-    return AgentTeamTask.started_by == user["sub"]
+    return func.lower(AgentTeamTask.started_by) == (user.get("sub") or "").casefold()
 
 
 async def _check_and_consume_agent_quota(
-    db: AsyncSession, user: dict
+    db: AsyncSession, user: dict, *, commit: bool = True
 ) -> tuple[bool, str]:
     """非管理员用户消费 Agent 配额，管理员跳过"""
     if _is_admin(user):
@@ -184,9 +189,8 @@ async def _check_and_consume_agent_quota(
     from backend.services.telegram_service import TelegramService
 
     service = TelegramService(db)
-    return await service.check_and_consume_agent_quota(
-        github_username=user["sub"],
-    )
+    options = {} if commit else {"commit": False}
+    return await service.check_and_consume_agent_quota(github_username=user["sub"], **options)
 
 
 async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
@@ -496,7 +500,7 @@ async def agent_team_page(
         task = await db.get(AgentTeamTask, task_id)
         if task is None:
             raise HTTPException(404, "Task not found")
-        if not is_admin and task.started_by != user["sub"]:
+        if not _can_access_task(user, task):
             raise HTTPException(403, "Forbidden")
     stats = await _load_stats(db, user=user)
     agent_quota = None
@@ -646,7 +650,7 @@ async def task_detail_fragment(
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse(
             {"success": False, "message": "无权查看此任务"}, status_code=403
         )
@@ -1109,13 +1113,14 @@ async def retry_task(
     csrf_token: str = Depends(require_csrf),
 ):
     """重试失败或卡住的任务。"""
-    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id)
+        .with_for_update().execution_options(populate_existing=True))
     task = result.scalar_one_or_none()
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse(
             {"success": False, "message": "无权操作此任务"}, status_code=403
         )
@@ -1131,7 +1136,8 @@ async def retry_task(
         )
 
     # Agent 配额消费（确认任务可重试后再扣费）
-    ok, msg = await _check_and_consume_agent_quota(db, user)
+    # Retain admission's row lock through quota consumption and queue commit.
+    ok, msg = await _check_and_consume_agent_quota(db, user, commit=False)
     if not ok:
         return JSONResponse({"success": False, "message": msg}, status_code=200)
 
@@ -1174,7 +1180,7 @@ async def resume_task(
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse(
             {"success": False, "message": "无权操作此任务"}, status_code=403
         )
@@ -1236,7 +1242,7 @@ async def cancel_task(
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse(
             {"success": False, "message": "无权操作此任务"}, status_code=403
         )
@@ -1294,7 +1300,7 @@ async def delete_task(
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse(
             {"success": False, "message": "无权操作此任务"}, status_code=403
         )
@@ -1756,7 +1762,7 @@ async def task_stream_data(
         return JSONResponse(
             {"success": False, "error": "Task not found"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     # Sessions for this task
@@ -1935,7 +1941,7 @@ async def submit_user_prompt(
         return JSONResponse(
             {"success": False, "error": "Task not found"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     can_send, disabled_reason = _can_send_agent_prompt(task)
@@ -2056,7 +2062,7 @@ async def list_user_prompts(
         return JSONResponse(
             {"success": False, "error": "Task not found"}, status_code=404
         )
-    if not _is_admin(user) and task.started_by != user["sub"]:
+    if not _can_access_task(user, task):
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     rows = (
