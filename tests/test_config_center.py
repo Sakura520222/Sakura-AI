@@ -159,7 +159,8 @@ async def test_local_commit_poll_preserves_the_active_semaphore(
             await config_runtime.config_runtime_sync.refresh(db)
             apply.assert_not_awaited()
             assert await getattr(module, f"_get_{family}_semaphore")() is semaphore
-            assert await db.get(ServiceExecutionLease, lease.token) is not None
+            async with config_db() as lease_db:
+                assert await lease_db.get(ServiceExecutionLease, lease.token) is not None
             assert config_runtime.config_runtime_sync.seen["app/" + key] == 1
 
 
@@ -196,7 +197,8 @@ async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
         async with semaphore.slot() as lease:
             await config_runtime.config_runtime_sync.refresh(db)
             assert await review_worker._get_review_semaphore() is semaphore
-            assert await db.get(ServiceExecutionLease, lease.token) is not None
+            async with config_db() as lease_db:
+                assert await lease_db.get(ServiceExecutionLease, lease.token) is not None
             assert not config_runtime.config_runtime_sync.pending
 
 
