@@ -30,6 +30,17 @@ ADMIN = {"user_id": 1, "role": "super_admin", "sub": "admin"}
 USER = {"user_id": 2, "role": "user", "sub": "user"}
 
 
+@pytest.mark.asyncio
+async def test_configuration_center_rejects_negative_credit_reserve_before_commit(config_db):
+    service = ConfigCenterService()
+    async with config_db() as db:
+        current = await field(service, db, "global/billing_initial_reserve_credits")
+        with pytest.raises(ConfigError, match="invalid_value"):
+            await service.mutate(db, ADMIN, current["id"], version=current["version"], value="-1")
+        assert (await db.execute(select(AppConfig).where(AppConfig.key_name == "billing_initial_reserve_credits"))).scalar_one_or_none() is None
+        assert (await field(service, db, current["id"]))["version"] == current["version"]
+
+
 @pytest_asyncio.fixture
 async def config_db(tmp_path):
     import os
@@ -61,6 +72,13 @@ async def config_db(tmp_path):
         WebUIConfig.__table__,
         AdminActionLog.__table__,
     ]
+    from backend.models.service_execution_models import (
+        ServiceExecutionGate,
+        ServiceExecutionLease,
+        ServiceExecutionOwnership,
+    )
+
+    tables.extend([ServiceExecutionGate.__table__, ServiceExecutionLease.__table__, ServiceExecutionOwnership.__table__])
     async with engine.begin() as connection:
         if remote:
             await connection.run_sync(
@@ -118,7 +136,11 @@ async def test_local_commit_poll_preserves_the_active_semaphore(
 
     module = import_module(f"backend.workers.{family}_worker")
     monkeypatch.setattr(database, "async_session", config_db)
-    monkeypatch.setattr(module, f"_{family}_semaphore", None)
+    from backend.models.service_execution_models import ServiceExecutionLease
+    from backend.services.service_execution_capacity import ServiceExecutionLimiter
+
+    limiter = ServiceExecutionLimiter("pr_review" if family == "review" else "issue_analysis")
+    monkeypatch.setattr(module, f"_{family}_semaphore", limiter)
     key = f"max_concurrent_{family}s"
     setattr(get_settings(), key, 3)
     service = ConfigCenterService()
@@ -131,17 +153,14 @@ async def test_local_commit_poll_preserves_the_active_semaphore(
         else:
             await service.save_app_updates(db, {key: 1})
         semaphore = await getattr(module, f"_get_{family}_semaphore")()
-        await semaphore.acquire()
-        try:
+        async with semaphore.slot() as lease:
             apply = AsyncMock(wraps=config_runtime.apply_config_values)
             monkeypatch.setattr(config_runtime, "apply_config_values", apply)
             await config_runtime.config_runtime_sync.refresh(db)
             apply.assert_not_awaited()
             assert await getattr(module, f"_get_{family}_semaphore")() is semaphore
-            assert semaphore.locked()
+            assert await db.get(ServiceExecutionLease, lease.token) is not None
             assert config_runtime.config_runtime_sync.seen["app/" + key] == 1
-        finally:
-            semaphore.release()
 
 
 @pytest.mark.asyncio
@@ -153,7 +172,10 @@ async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
     from backend.workers import review_worker
 
     monkeypatch.setattr(database, "async_session", config_db)
-    monkeypatch.setattr(review_worker, "_review_semaphore", None)
+    from backend.models.service_execution_models import ServiceExecutionLease
+    from backend.services.service_execution_capacity import ServiceExecutionLimiter
+
+    monkeypatch.setattr(review_worker, "_review_semaphore", ServiceExecutionLimiter("pr_review"))
     get_settings().max_concurrent_reviews = 3
     original_apply = config_center_service.apply_config_values
 
@@ -171,14 +193,11 @@ async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
             "app/max_concurrent_reviews" not in config_runtime.config_runtime_sync.seen
         )
         semaphore = await review_worker._get_review_semaphore()
-        await semaphore.acquire()
-        try:
+        async with semaphore.slot() as lease:
             await config_runtime.config_runtime_sync.refresh(db)
             assert await review_worker._get_review_semaphore() is semaphore
-            assert semaphore.locked()
+            assert await db.get(ServiceExecutionLease, lease.token) is not None
             assert not config_runtime.config_runtime_sync.pending
-        finally:
-            semaphore.release()
 
 
 @pytest_asyncio.fixture

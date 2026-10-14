@@ -1082,6 +1082,7 @@ class UnifiedAIClient:
                 thinking=policy.thinking,
                 effort=policy.effort,
                 stream=True,
+                include_stream_usage=getattr(candidate.model.capabilities, "stream_usage", True),
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
                 candidate,

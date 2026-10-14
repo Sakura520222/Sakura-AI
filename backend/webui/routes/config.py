@@ -1667,10 +1667,22 @@ async def save_general_config(
 
                 validated_values.append((key, val, is_sensitive))
 
+        from backend.services.billing_configuration_service import (
+            BillingConfigurationError,
+            validate_billing_configuration,
+        )
+        from backend.services.billing_service import BillingError
         from backend.services.config_center_service import config_center_service
 
+        updates = {key: val for key, val, _ in validated_values}
+        try:
+            await validate_billing_configuration(db, updates)
+        except (BillingConfigurationError, BillingError) as exc:
+            errors.extend(_billing_issues(exc, lang))
+        if errors:
+            return config_save_response(request, "/config", "toast.config_fields_invalid", lang=lang, errors=errors)
         changed = await config_center_service.save_app_updates(
-            db, {key: val for key, val, _ in validated_values}
+            db, updates
         )
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
@@ -1685,11 +1697,10 @@ async def save_general_config(
         await log_admin_action(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
-        return toast_redirect(
-            "/config",
+        return config_save_response(
+            request, "/config",
             "toast.config_saved_pending" if getattr(changed, "effect", "live") == "pending" else "toast.config_saved_live",
-            "warning" if getattr(changed, "effect", "live") == "pending" else "success",
-            lang=detect_language(),
+            lang=lang,
         )
 
     except ValueError:

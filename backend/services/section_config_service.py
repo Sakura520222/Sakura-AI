@@ -732,6 +732,11 @@ class SectionConfigService:
         """
         from backend.services.config_center_service import config_center_service
 
+        if mode not in {"replace", "patch"}:
+            raise SectionConfigValidationError("Unknown save mode", "mode", "save_mode",
+                                               params={"options": "replace, patch"}, section=section_key)
+        if mode == "replace" and isinstance(data, dict) and section_key in SECTION_REGISTRY:
+            validate_section_config(section_key, deep_merge(SECTION_REGISTRY[section_key]["defaults"], data))
         return await config_center_service.save_section(
             db, section_key, data, mode=mode
         )

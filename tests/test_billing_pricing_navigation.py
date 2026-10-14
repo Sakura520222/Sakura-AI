@@ -80,9 +80,9 @@ def test_payment_config_card_exposes_both_setup_pages_without_enabling_payment(l
     parser = LinkParser()
     html = (
         get_templates()
-        .get_template("components/config_dynamic_card.html")
+        .get_template("components/billing_config_links.html")
         .render(
-            group={"id": "payment", "label": "Billing", "fields": []},
+            category="system",
             card_id="section-group-payment",
             current_user={"role": "super_admin"},
             settings=SimpleNamespace(payment_enabled=False, billing_enabled=False),
@@ -103,9 +103,9 @@ def test_payment_config_card_exposes_both_setup_pages_without_enabling_payment(l
 def test_pricing_setup_card_links_do_not_leak_to_other_roles_or_groups(role, group):
     html = (
         get_templates()
-        .get_template("components/config_dynamic_card.html")
+        .get_template("components/billing_config_links.html")
         .render(
-            group={"id": group, "label": "Test", "fields": []},
+            category="system" if group == "payment" else "ai",
             card_id="section-group-test",
             current_user={"role": role},
         )

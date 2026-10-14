@@ -1,4 +1,5 @@
 """Real MySQL/PostgreSQL transaction tests; skipped without an isolated test DB."""
+
 import asyncio
 import os
 from unittest.mock import AsyncMock
@@ -187,18 +188,24 @@ async def test_live_database_concurrent_producers_share_event(live_db):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["review", "issue", "agent"])
 @pytest.mark.parametrize("failure", ["insert", "commit"])
-async def test_live_quota_denial_survives_alert_failure_without_expired_attribute_reads(live_db, monkeypatch, kind, failure):
+async def test_live_quota_denial_survives_alert_failure_without_expired_attribute_reads(
+    live_db, monkeypatch, kind, failure
+):
     async with live_db() as db:
         user = await db.get(TelegramUser, 1)
         for prefix in ("", "issue_", "agent_"):
             for period in ("daily", "weekly", "monthly"):
-                setattr(user, f"{prefix}{period}_quota", 10 if period == "daily" else 20)
+                setattr(
+                    user, f"{prefix}{period}_quota", 10 if period == "daily" else 20
+                )
                 setattr(user, f"{prefix}{period}_used", 10 if period == "daily" else 0)
                 from backend.core.time_service import now_utc
 
                 setattr(user, f"last_reset_{prefix}{period}", now_utc())
         await db.commit()
-    monkeypatch.setattr(telegram_service, "is_payment_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        telegram_service, "is_payment_enabled", AsyncMock(return_value=False)
+    )
     original_emit = notification_events.emit_event
 
     async def fail_after_insert(*args, **kwargs):
@@ -210,21 +217,33 @@ async def test_live_quota_denial_survives_alert_failure_without_expired_attribut
     async with live_db() as db:
         user = await db.get(TelegramUser, 1)
         if failure == "commit":
-            monkeypatch.setattr(db, "commit", AsyncMock(side_effect=RuntimeError("alert commit unavailable")))
+            monkeypatch.setattr(
+                db,
+                "commit",
+                AsyncMock(side_effect=RuntimeError("alert commit unavailable")),
+            )
         service = TelegramService(db)
         if kind == "review":
             result = await service.check_and_consume_quota("alice", "Acme/repo", 646)
         elif kind == "issue":
-            result = await service.check_and_consume_issue_quota("alice", "Acme/repo", 646)
+            result = await service.check_and_consume_issue_quota(
+                "alice", "Acme/repo", 646
+            )
         else:
-            result = await service.check_and_consume_agent_quota("alice", "Acme/repo", 646)
+            result = await service.check_and_consume_agent_quota(
+                "alice", "Acme/repo", 646
+            )
         assert result[0] is False
-        assert "每日配额已用完 (10/10)" in result[1]
+        assert "每日次数限流已达到 (10/10)" in result[1]
         assert inspect(user).expired
     async with live_db() as db:
         assert (await db.execute(select(NotificationEvent))).scalars().all() == []
         user = await db.get(TelegramUser, 1)
-        assert (user.daily_used, user.issue_daily_used, user.agent_daily_used) == (10, 10, 10)
+        assert (user.daily_used, user.issue_daily_used, user.agent_daily_used) == (
+            10,
+            10,
+            10,
+        )
 
 
 @pytest.mark.asyncio

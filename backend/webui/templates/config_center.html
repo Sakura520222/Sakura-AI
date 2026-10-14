@@ -18,6 +18,7 @@
         </nav>
         <section class="settings-content" aria-label="{{ _('config_center.category.' ~ category) }}">
             <h2 id="settings-category-title">{{ _('config_center.category.' ~ category) }}</h2>
+            {% include 'components/billing_config_links.html' %}
             {% if category == 'ai' %}{{ self.center_operations() }}{% endif %}
             <div id="settings-error" role="alert" hidden></div>
             <div id="settings-fields" aria-busy="true"><p role="status">{{ _('config_center.loading') }}</p></div>

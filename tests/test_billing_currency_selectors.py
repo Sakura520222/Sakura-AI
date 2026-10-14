@@ -26,7 +26,6 @@ from backend.services.payment.currency_units import CURRENCY_MINOR_EXPONENTS
 from backend.webui import deps
 from backend.webui.routes.billing import _pricing_editor_values
 from backend.webui.routes.config import (
-    _build_dynamic_groups,
     _DynamicConfigValidationError,
     _validate_dynamic_config_value,
 )
@@ -141,11 +140,18 @@ async def test_global_currency_render_keeps_unknown_history_and_supported_lowerc
         db.add(AppConfig(key_name="stripe_currency", key_value="ZZZ"))
         db.add(AppConfig(key_name="paddle_currency", key_value="usd"))
         await db.commit()
-        groups = await _build_dynamic_groups(db, "en")
-        fields = {field["key"]: field for group in groups for field in group["fields"]}
-        assert fields["stripe_currency"]["value"] == "ZZZ"
-        assert fields["stripe_currency"]["select_options"][-1]["disabled"] is True
-        assert fields["paddle_currency"]["value"] == "USD"
+        from backend.services.config_center_service import ConfigCenterService
+
+        projection = await ConfigCenterService().describe(
+            db,
+            {"user_id": 1, "role": "super_admin", "sub": "admin"},
+            category="system",
+            lang="en",
+        )
+        fields = {field["id"]: field for field in projection}
+        assert fields["global/stripe_currency"]["value"] == "ZZZ"
+        assert fields["global/paddle_currency"]["value"] == "USD"
+        assert "ZZZ" not in fields["global/stripe_currency"]["constraints"]["enum"]
         assert (
             await db.execute(
                 select(AppConfig.key_value).where(

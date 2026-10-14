@@ -248,7 +248,6 @@ def billable_record(feature: str):
             from backend.models import database as database_module
             from backend.models.agent_team_models import AgentTeamTask
             from backend.models.scan_models import RepoScan
-            from backend.models.telegram_models import TelegramUser
             from backend.services.ai_usage_service import finish_billing_operation
 
             factory = database_module.async_session
@@ -286,36 +285,27 @@ def billable_record(feature: str):
                 user_id = None
                 platform_reason = None
                 if feature == "repo_scan":
-                    trigger = record.triggered_by or ""
-                    if record.trigger_type == "manual" and trigger.startswith(
-                        ("webui:", "api:")
-                    ):
-                        try:
-                            candidate_id = int(trigger.rsplit(":", 1)[-1])
-                        except ValueError:
-                            candidate_id = None
-                        user_id = (
-                            await db.execute(
-                                select(TelegramUser.id).where(
-                                    TelegramUser.id == candidate_id,
-                                    TelegramUser.is_active,
-                                )
-                            )
-                        ).scalar_one_or_none()
-                    if user_id is not None:
-                        role = (
-                            await db.execute(
-                                select(TelegramUser.role).where(
-                                    TelegramUser.id == user_id
-                                )
-                            )
-                        ).scalar_one()
-                        if role in {"admin", "super_admin"}:
-                            user_id = None
-                            platform_reason = "administrator_repo_scan"
-                    if user_id is None and platform_reason is None:
-                        platform_reason = "scheduled_or_unbound_repo_scan"
                     source = {"repo_full_name": record.repo_name, "scan_id": record.id}
+                    from backend.models.billing_models import BillingOperation
+
+                    operation = await db.get(
+                        BillingOperation, record.billing_operation_id
+                    )
+                    if operation is not None:
+                        if (
+                            operation.feature != feature
+                            or not isinstance(operation.source, dict)
+                            or any(
+                                operation.source.get(key) != value
+                                for key, value in source.items()
+                            )
+                        ):
+                            raise ValueError("Scan billing operation ownership changed")
+                        user_id = operation.user_id
+                        platform_reason = operation.platform_reason
+                        source = dict(operation.source)
+                    else:
+                        platform_reason = "legacy_repo_scan_without_verified_payer"
                 else:
                     user_id = record.billing_user_id
                     platform_reason = record.billing_platform_reason
@@ -418,6 +408,61 @@ def billable_record(feature: str):
         return wrapped
 
     return decorate
+
+
+async def admit_scan_billing(db, scan) -> None:
+    """Freeze scan payer and charging policy in the submission transaction."""
+    from sqlalchemy import select
+
+    from backend.models.telegram_models import TelegramUser
+    from backend.services.billing_service import BillingService
+
+    payer = None
+    reason = "scheduled_or_unbound_repo_scan"
+    trigger = scan.triggered_by or ""
+    if scan.trigger_type == "manual" and trigger.startswith(("webui:", "api:")):
+        try:
+            actor_id = int(trigger.rsplit(":", 1)[-1])
+        except ValueError:
+            actor_id = None
+        exists = (
+            await db.execute(select(TelegramUser.id).where(TelegramUser.id == actor_id))
+        ).scalar_one_or_none()
+        if exists is not None:
+            # Wallet precedes the user lock, as in quota admission. Only the
+            # locked current role decides ownership, before the queue commit.
+            await BillingService(db).get_wallet(actor_id)
+        actor = (
+            await db.execute(
+                select(TelegramUser)
+                .where(
+                    TelegramUser.id == actor_id,
+                    TelegramUser.is_active,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if actor is not None:
+            if (actor.role or "").strip().lower() in {"admin", "super_admin"}:
+                reason = "administrator_repo_scan"
+            else:
+                payer, reason = actor.id, None
+    scan.billing_operation_id = str(uuid4())
+    await db.flush()
+    await BillingService(db).register_operation(
+        payer,
+        scan.billing_operation_id,
+        "repo_scan",
+        source={"repo_full_name": scan.repo_name, "scan_id": scan.id},
+        platform_reason=reason,
+    )
+    logger.bind(
+        scan_id=scan.id,
+        billing_operation_id=scan.billing_operation_id,
+        payer_user_id=payer,
+        platform_reason=reason,
+    ).info("Scan billing admission staged")
 
 
 def billable_platform(feature: str, reason: str):
