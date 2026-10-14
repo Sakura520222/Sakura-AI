@@ -96,7 +96,9 @@ async def test_completion_includes_actual_hook_changes_before_durable_result(
         "-m",
         "baseline",
     )
-    unusual_name = "generated/中文 file.txt" if os.name == "nt" else "generated/中文\tfile\n.txt"
+    unusual_name = (
+        "generated/中文 file.txt" if os.name == "nt" else "generated/中文\tfile\n.txt"
+    )
     hook_code = (
         "from pathlib import Path; import subprocess; "
         "Path('tracked.txt').write_text('formatted\\n'); "
@@ -209,7 +211,8 @@ async def test_completion_accounting_failure_and_cancellation_are_durable(
     )
     running = asyncio.create_task(loop.run("complete", "complete", cancel_event=event))
     try:
-        await asyncio.wait_for(entered.wait(), 2)
+        # This guards progress through real SQL/logging I/O, not response latency.
+        await asyncio.wait_for(entered.wait(), 10)
         if interruption == "task":
             running.cancel("shutdown during accounting")
         elif interruption == "event":

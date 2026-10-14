@@ -273,8 +273,9 @@ async def test_issue_lease_loss_converges_exact_record_and_preserves_terminal_ro
     from tests.test_billing_usage_attribution import DurableSQLSession
 
     module, limiter, engine, _ = real_capacity
-    limiter.lease_seconds = 0.12
+    limiter.lease_seconds = 30
     limiter.heartbeat_seconds = 0.025
+    analyzing = asyncio.Event()
     with Session(engine) as session:
         session.add_all(
             [
@@ -302,6 +303,7 @@ async def test_issue_lease_loss_converges_exact_record_and_preserves_terminal_ro
     )
 
     async def lost(_lease):
+        await analyzing.wait()
         return False
 
     monkeypatch.setattr(limiter, "renew", lost)
@@ -316,7 +318,8 @@ async def test_issue_lease_loss_converges_exact_record_and_preserves_terminal_ro
         )
         worker._bind_execution(key, task_id, execution)
         async with limiter.slot("issue_analysis", cancel_event):
-            await asyncio.sleep(1)
+            analyzing.set()
+            await asyncio.Event().wait()
 
     monkeypatch.setattr(worker, "_run_issue_analysis", running)
     payload = {
@@ -325,7 +328,8 @@ async def test_issue_lease_loss_converges_exact_record_and_preserves_terminal_ro
         "task_id": "lease-loss",
     }
     with pytest.raises(module.ServiceExecutionLeaseLost):
-        await type(worker).process_issue_analysis.__wrapped__(worker, payload)
+        async with asyncio.timeout(10):
+            await type(worker).process_issue_analysis.__wrapped__(worker, payload)
     with Session(engine) as session:
         assert session.get(IssueAnalysis, 901).status == (
             "failed" if previous == "analyzing" else previous
@@ -345,14 +349,19 @@ async def test_pr_lease_loss_is_failed_before_financial_terminal_write(
     from backend.workers import review_worker
 
     module, limiter, _, _ = real_capacity
-    limiter.lease_seconds = 0.12
+    limiter.lease_seconds = 30
     limiter.heartbeat_seconds = 0.025
+    analyzing = asyncio.Event()
 
     async def lost(_lease):
+        # Inject a running-work failure after Activity admission, rather than
+        # accidentally failing an earlier SQL dispatch under slow CI I/O.
+        await analyzing.wait()
         return False
 
     async def analyze(_payload):
-        await asyncio.sleep(1)
+        analyzing.set()
+        await asyncio.Event().wait()
 
     monkeypatch.setattr(limiter, "renew", lost)
     worker = review_worker.ReviewWorker.__new__(review_worker.ReviewWorker)
@@ -374,7 +383,9 @@ async def test_pr_lease_loss_is_failed_before_financial_terminal_write(
         "repo_name": "repo",
     }
     with pytest.raises(module.ServiceExecutionLeaseLost):
-        await type(worker).process_review_task.__wrapped__(worker, payload)
+        async with asyncio.timeout(10):
+            await type(worker).process_review_task.__wrapped__(worker, payload)
+    assert analyzing.is_set()
     finish.assert_awaited_once_with("failed")
     execution.finish.assert_awaited_once_with("failed", error_message=None)
     assert not worker._cancel_events
@@ -385,14 +396,17 @@ async def test_agent_lease_loss_marks_failure_and_cleans_event(
     real_capacity, monkeypatch
 ):
     module, limiter, _, _ = real_capacity
-    limiter.lease_seconds = 0.12
+    limiter.lease_seconds = 30
     limiter.heartbeat_seconds = 0.025
+    loading = asyncio.Event()
 
     async def lost(_lease):
+        await loading.wait()
         return False
 
     async def load_task(_task_id):
-        await asyncio.sleep(1)
+        loading.set()
+        await asyncio.Event().wait()
 
     monkeypatch.setattr(limiter, "renew", lost)
     worker = agent_module.AgentTeamWorker()
@@ -400,7 +414,8 @@ async def test_agent_lease_loss_marks_failure_and_cleans_event(
     worker._update_task = AsyncMock()
     worker._expire_pending_prompts_if_terminal = AsyncMock()
     with pytest.raises(module.ServiceExecutionLeaseLost):
-        await type(worker).process_task.__wrapped__(worker, 848)
+        async with asyncio.timeout(10):
+            await type(worker).process_task.__wrapped__(worker, 848)
     assert worker._update_task.await_args.kwargs["status"] == "failed"
     assert 848 not in agent_module._cancel_events
 

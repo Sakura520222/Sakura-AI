@@ -510,11 +510,9 @@ class ServiceExecutionCapacity:
             except Exception as exc:
                 if hold_state.failure is None:
                     hold_state.failure = exc
-                logger.error(
-                    "Service execution ownership lost for {} token {}",
-                    feature,
-                    resource.token,
-                )
+                logger.bind(
+                    service_feature=feature, service_resource_id=resource.token
+                ).opt(exception=True).error("Service execution ownership lost")
                 if not heartbeat_stop.is_set():
                     owner.cancel()
 
