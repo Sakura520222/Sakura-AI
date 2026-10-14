@@ -175,7 +175,9 @@ def _is_admin(user: dict) -> bool:
 
 def _can_access_task(user: dict, task: AgentTeamTask) -> bool:
     username = (user.get("sub") or "").casefold()
-    return _is_admin(user) or bool(username and (task.started_by or "").casefold() == username)
+    return _is_admin(user) or bool(
+        username and (task.started_by or "").casefold() == username
+    )
 
 
 def _build_task_owner_filter(user: dict):
@@ -1175,8 +1177,12 @@ async def retry_task(
     csrf_token: str = Depends(require_csrf),
 ):
     """重试失败或卡住的任务。"""
-    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id)
-        .with_for_update().execution_options(populate_existing=True))
+    result = await db.execute(
+        select(AgentTeamTask)
+        .where(AgentTeamTask.id == task_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     task = result.scalar_one_or_none()
     if task is None:
         return JSONResponse(

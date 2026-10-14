@@ -89,7 +89,7 @@ async def test_scan_manual_retry_uses_new_operation_and_verified_requester(
     from backend.models.scan_models import RepoScan
     from backend.models.telegram_models import TelegramUser
     from backend.services.ai_usage_service import ProviderUsageMeter
-    from backend.services.billing_context import billable_record
+    from backend.services.billing_context import admit_scan_billing, billable_record
     from tests.test_billing_usage_attribution import complete_usage, fund_and_price
 
     factory, engine, _ = sql_runtime
@@ -107,6 +107,7 @@ async def test_scan_manual_retry_uses_new_operation_and_verified_requester(
                 status="pending",
             )
         )
+        await admit_scan_billing(db, await db.get(RepoScan, 1))
         await db.commit()
 
     class Worker:
@@ -168,7 +169,7 @@ async def test_trusted_scan_resume_keeps_operation_and_cumulative_usage(
     from backend.models.billing_models import BillingOperation, BillingTransaction
     from backend.models.scan_models import RepoScan
     from backend.services.ai_usage_service import ProviderUsageMeter
-    from backend.services.billing_context import billable_record
+    from backend.services.billing_context import admit_scan_billing, billable_record
     from tests.test_billing_usage_attribution import complete_usage, fund_and_price
 
     factory, engine, _ = sql_runtime
@@ -184,6 +185,7 @@ async def test_trusted_scan_resume_keeps_operation_and_cumulative_usage(
                 status="pending",
             )
         )
+        await admit_scan_billing(db, await db.get(RepoScan, 1))
         await db.commit()
 
     class Worker:

@@ -33,6 +33,9 @@ from tests.test_unified_client_fallback import _candidate
 
 
 class _AsyncSession(_ScanSession):
+    async def get(self, model, value, **kwargs):
+        return self.scan if model is RepoScan else None
+
     """Support the composed billing entrypoint without performing provider calls."""
 
     def __init__(self, scan):

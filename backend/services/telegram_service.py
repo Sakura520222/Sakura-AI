@@ -46,49 +46,97 @@ def _is_github_username_unique_error(exc: IntegrityError) -> bool:
 class _RateAdmissionRejected(Exception):
     """Rollback only the admission savepoint, preserving earlier caller work."""
 
+    def __init__(self, reason, *, quota_notice=None):
+        super().__init__(reason)
+        self.quota_notice = quota_notice
+
 
 class TelegramService:
     @staticmethod
     def _quota_denial_reason(user, kind):
-        prefix, label = {"review": ("", ""), "issue": ("issue_", "Issue "), "agent": ("agent_", "Agent ")}[kind]
-        for period, period_label in (("daily", "每日"), ("weekly", "每周"), ("monthly", "每月")):
+        prefix, label = {
+            "review": ("", ""),
+            "issue": ("issue_", "Issue "),
+            "agent": ("agent_", "Agent "),
+        }[kind]
+        for period, period_label in (
+            ("daily", "每日"),
+            ("weekly", "每周"),
+            ("monthly", "每月"),
+        ):
             used = getattr(user, f"{prefix}{period}_used")
             limit = getattr(user, f"{prefix}{period}_quota")
             if used >= limit:
                 return f"{label}{period_label}配额已用完 ({used}/{limit})"
         return f"{label}配额已用完"
 
-    async def _notify_quota_exhausted(self, user, kind):
-        if self.session.info.get("notification_outbox") is not True:
+    async def _notify_quota_exhausted(self, user, kind, *, notice=None, commit=True):
+        if getattr(self.session, "info", {}).get("notification_outbox") is not True:
             return
         from backend.services.notification_events import emit_event
 
-        prefix = {"review": "", "issue": "issue_", "agent": "agent_"}[kind]
-        period = next((name for name in ("daily", "weekly", "monthly") if
-                       getattr(user, f"{prefix}{name}_used") >= getattr(user, f"{prefix}{name}_quota")), "daily")
-        reset = getattr(user, f"last_reset_{prefix}{period}")
-        reset_key = format_rfc3339(reset) if reset else get_time_service().to_app_timezone(now_utc()).date().isoformat()
-        limit = getattr(user, f"{prefix}{period}_quota")
-
-        user_id = user.id
-        try:
-            await emit_event(
-                self.session, event_type="quota.exceeded", resource_type="user", resource_id=user_id,
-                run_key=f"{kind}:{period}:{reset_key}:{limit}", title="Quota exhausted",
-                content=f"Your {kind} quota is exhausted. Review quota settings.",
-                recipient_ids=[user_id], severity="warning", sensitive=True, detail_url="/billing",
+        if notice is None:
+            prefix = {"review": "", "issue": "issue_", "agent": "agent_"}[kind]
+            period = next(
+                (
+                    name
+                    for name in ("daily", "weekly", "monthly")
+                    if getattr(user, f"{prefix}{name}_used")
+                    >= getattr(user, f"{prefix}{name}_quota")
+                ),
+                "daily",
             )
-            await self.session.commit()
+            reset = getattr(user, f"last_reset_{prefix}{period}")
+            reset_key = (
+                format_rfc3339(reset)
+                if reset
+                else get_time_service().to_app_timezone(now_utc()).date().isoformat()
+            )
+            limit = getattr(user, f"{prefix}{period}_quota")
+            user_id = user.id
+        else:
+            user_id, period, reset_key, limit = (
+                notice[key] for key in ("user_id", "period", "reset_key", "limit")
+            )
+        try:
+            values = {
+                "event_type": "quota.exceeded",
+                "resource_type": "user",
+                "resource_id": user_id,
+                "run_key": f"{kind}:{period}:{reset_key}:{limit}",
+                "title": "Quota exhausted",
+                "content": f"Your {kind} quota is exhausted. Review quota settings.",
+                "recipient_ids": [user_id],
+                "severity": "warning",
+                "sensitive": True,
+                "detail_url": "/billing",
+            }
+            if commit:
+                await emit_event(self.session, **values)
+                await self.session.commit()
+            else:
+                async with self.session.begin_nested():
+                    await emit_event(self.session, **values)
+                    await self.session.flush()
         except Exception as exc:
             # The quota UPDATE already denied admission. An optional alert
             # must not change that result or leave this session poisoned.
-            try:
-                await self.session.rollback()
-            except Exception as rollback_exc:
-                logger.warning("Quota alert rollback failed (user_id={}, kind={}, category={})",
-                    user_id, kind, type(rollback_exc).__name__)
-            logger.warning("Quota alert persistence failed (user_id={}, kind={}, category={})",
-                user_id, kind, type(exc).__name__)
+            if commit:
+                try:
+                    await self.session.rollback()
+                except Exception as rollback_exc:
+                    logger.warning(
+                        "Quota alert rollback failed (user_id={}, kind={}, category={})",
+                        user_id,
+                        kind,
+                        type(rollback_exc).__name__,
+                    )
+            logger.warning(
+                "Quota alert persistence failed (user_id={}, kind={}, category={})",
+                user_id,
+                kind,
+                type(exc).__name__,
+            )
 
     """Telegram Bot 服务类"""
 
@@ -183,7 +231,13 @@ class TelegramService:
                 if not allowed:
                     raise _RateAdmissionRejected(reason)
         except _RateAdmissionRejected as exc:
-            return False, str(exc)
+            reason = str(exc)
+            if exc.quota_notice is not None:
+                notice = exc.quota_notice
+                await self._notify_quota_exhausted(
+                    None, notice["kind"], notice=notice, commit=commit
+                )
+            return False, reason
         if commit:
             await self.session.commit()
         else:
@@ -294,7 +348,28 @@ class TelegramService:
                 used = getattr(user, f"{prefix}{period}_used")
                 if used >= limits[index]:
                     detail = f"{label} {title}次数限流已达到 ({used}/{limits[index]})"
-                    return False, detail
+                    # Capture primitive evidence before admission rollback expires
+                    # ORM objects. Publish outside the failed admission savepoint.
+                    reset = getattr(user, f"last_reset_{prefix}{period}")
+                    raise _RateAdmissionRejected(
+                        detail,
+                        quota_notice={
+                            "user_id": user.id,
+                            "kind": {
+                                "pr_review": "review",
+                                "issue_analysis": "issue",
+                                "agent": "agent",
+                            }[feature],
+                            "period": period,
+                            "reset_key": format_rfc3339(reset)
+                            if reset
+                            else get_time_service()
+                            .to_app_timezone(now_utc())
+                            .date()
+                            .isoformat(),
+                            "limit": limits[index],
+                        },
+                    )
             return False, f"{label} 次数限流已达到"
         if previous is None:
             self.session.add(

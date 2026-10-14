@@ -1,7 +1,6 @@
 """API v1 扫描管理端点"""
 
 import asyncio
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
@@ -262,9 +261,11 @@ async def retry_scan(
     scan.error_message = None
     # An explicit authenticated retry is a new execution. Preserve the old
     # operation, provider costs and financial evidence under its original ID.
-    scan.billing_operation_id = str(uuid4())
     scan.trigger_type = "manual"
     scan.triggered_by = f"api:{user['user_id']}"
+    from backend.services.billing_context import admit_scan_billing
+
+    await admit_scan_billing(db, scan)
     await db.commit()
 
     try:

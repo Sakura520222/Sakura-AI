@@ -187,45 +187,68 @@ class EmbeddingService:
                     f"正在处理批次 {batch_num}/{total_batches}: {len(batch)} 个文本"
                 )
 
-                async with ProviderUsageMeter(
-                    provider_id=self.provider,
-                    model_id=settings.embedding_model,
-                    protocol_family="openai-compatible",
-                    call_kind="embedding",
-                    role="embedding",
-                    logical_call_id=logical_call_id or str(uuid4()),
-                    input_only=True,
-                ) as usage_meter:
-                    if observer is not None and context is not None:
-                        response, _ = await observer.send_embedding(
-                            lambda batch=batch: self.client.embeddings.create(
+                with sensitive_log_scope(
+                    getattr(self.client, "api_key", None),
+                    getattr(settings, "embedding_api_key", None),
+                ):
+                    async with ProviderUsageMeter(
+                        provider_id=self.provider,
+                        model_id=settings.embedding_model,
+                        protocol_family="openai-compatible",
+                        call_kind="embedding",
+                        role="embedding",
+                        logical_call_id=logical_call_id or str(uuid4()),
+                        input_only=True,
+                    ) as usage_meter:
+                        if observer is not None and context is not None:
+                            response, _ = await observer.send_embedding(
+                                lambda batch=batch: self.client.embeddings.create(
+                                    model=settings.embedding_model,
+                                    input=batch,
+                                ),
+                                logical_call_id=logical_call_id or str(uuid4()),
+                                requested={
+                                    "provider_id": self.provider,
+                                    "model_id": settings.embedding_model,
+                                    "protocol_family": "openai-compatible",
+                                    "endpoint_url": settings.embedding_base_url,
+                                },
+                                effective={
+                                    "provider_id": self.provider,
+                                    "model_id": settings.embedding_model,
+                                    "protocol_family": "openai-compatible",
+                                    "endpoint_url": settings.embedding_base_url,
+                                },
+                            )
+                        else:
+                            response = await self.client.embeddings.create(
                                 model=settings.embedding_model,
                                 input=batch,
-                            ),
-                            logical_call_id=logical_call_id or str(uuid4()),
-                            requested={
-                                "provider_id": self.provider,
-                                "model_id": settings.embedding_model,
-                                "protocol_family": "openai-compatible",
-                                "endpoint_url": settings.embedding_base_url,
-                            },
-                            effective={
-                                "provider_id": self.provider,
-                                "model_id": settings.embedding_model,
-                                "protocol_family": "openai-compatible",
-                                "endpoint_url": settings.embedding_base_url,
-                            },
-                        )
-                    else:
-                        response = await self.client.embeddings.create(
-                            model=settings.embedding_model,
-                            input=batch,
-                        )
+                            )
 
-                    usage_meter.usage = getattr(response, "usage", None)
-
-                # 提取嵌入向量
-                batch_embeddings = [item.embedding for item in response.data]
+                        usage_meter.usage = getattr(response, "usage", None)
+                        data = getattr(response, "data", None)
+                        if not isinstance(data, list) or len(data) != len(batch):
+                            raise ValueError("Malformed embedding batch count")
+                        batch_embeddings = []
+                        dimensions = len(all_embeddings[0]) if all_embeddings else None
+                        for item in data:
+                            vector = getattr(item, "embedding", None)
+                            if (
+                                not isinstance(vector, list)
+                                or not vector
+                                or any(
+                                    type(value) not in (float, int)
+                                    or not math.isfinite(value)
+                                    for value in vector
+                                )
+                                or (
+                                    dimensions is not None and len(vector) != dimensions
+                                )
+                            ):
+                                raise ValueError("Malformed embedding vector")
+                            dimensions = len(vector)
+                            batch_embeddings.append(vector)
                 all_embeddings.extend(batch_embeddings)
 
             logger.debug("✅ 成功生成 {} 个嵌入向量", len(all_embeddings))

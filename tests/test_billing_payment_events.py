@@ -27,6 +27,15 @@ from tests.test_billing_entitlements import db as real_database_fixture
 db = real_database_fixture
 
 
+@pytest.fixture(autouse=True)
+def proportional_policy(monkeypatch):
+    # These tests exercise the explicitly enabled proportional-refund policy.
+    monkeypatch.setattr(
+        "backend.services.payment_event_service.get_dynamic_config",
+        AsyncMock(return_value="proportional_unused_credits"),
+    )
+
+
 async def paid_order(db, name):
     user = TelegramUser(github_username=name, role="super_admin")
     plan = Plan(

@@ -1,9 +1,10 @@
 """Notification failures preserve critical state and optional-alert boundaries."""
+
 from unittest.mock import AsyncMock
 
 import pytest
 from loguru import logger
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from backend.core.time_service import now_utc
 from backend.models import database as db_module
 from backend.models.agent_team_models import AgentTeamTask
 from backend.models.notification_models import NotificationEvent
+from backend.models.payment_models import Plan
 from backend.models.scan_models import RepoScan
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services import (
@@ -111,10 +113,14 @@ async def consume(source, kind):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["review", "issue", "agent"])
 @pytest.mark.parametrize("failure", ["insert", "commit"])
-async def test_quota_denial_survives_alert_failure_and_expired_user(event_db, monkeypatch, kind, failure):
+async def test_quota_denial_survives_alert_failure_and_expired_user(
+    event_db, monkeypatch, kind, failure
+):
     engine, _ = event_db
     exhaust_quotas(engine)
-    monkeypatch.setattr(telegram_service, "is_payment_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        telegram_service, "is_payment_enabled", AsyncMock(return_value=False)
+    )
     original_emit = notification_events.emit_event
     secret = "must-not-appear-in-alert-failure-log"
 
@@ -144,7 +150,10 @@ async def test_quota_denial_survives_alert_failure_and_expired_user(event_db, mo
 
             source.get_user_by_github_username = lookup
             ok, reason = await consume(source, kind)
-            assert (ok, reason) == (False, f"{ {'review': '', 'issue': 'Issue ', 'agent': 'Agent '}[kind]}每日配额已用完 (10/10)")
+            assert (ok, reason) == (
+                False,
+                f"{ {'review': 'PR', 'issue': 'Issue', 'agent': 'Agent'}[kind] } 每日次数限流已达到 (10/10)",
+            )
             assert inspect(captured[0]).expired  # no user access after rollback
     finally:
         logger.remove(sink)
@@ -154,7 +163,11 @@ async def test_quota_denial_survives_alert_failure_and_expired_user(event_db, mo
         assert db.query(NotificationEvent).count() == 0
         assert db.query(QuotaUsageLog).count() == 0
         user = db.get(TelegramUser, 1)
-        assert (user.daily_used, user.issue_daily_used, user.agent_daily_used) == (10, 10, 10)
+        assert (user.daily_used, user.issue_daily_used, user.agent_daily_used) == (
+            10,
+            10,
+            10,
+        )
 
 
 @pytest.mark.asyncio
@@ -191,3 +204,50 @@ async def test_successful_quota_denial_alert_is_persisted_and_deduplicated(event
     with Session(engine) as db:
         assert db.query(NotificationEvent).one().event_type == "quota.exceeded"
         assert db.query(QuotaUsageLog).count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alert_failure", [False, True])
+async def test_caller_owned_quota_denial_preserves_transaction_and_scoped_alert(
+    event_db, monkeypatch, alert_failure
+):
+    engine, _ = event_db
+    exhaust_quotas(engine)
+    monkeypatch.setattr(
+        telegram_service, "is_payment_enabled", AsyncMock(return_value=False)
+    )
+    with Session(engine) as db:
+        db.add(
+            Plan(
+                id=646, name="Original caller plan", plan_type="one_time", price_cents=0
+            )
+        )
+        db.commit()
+    original_emit = notification_events.emit_event
+
+    async def fail_after_insert(*args, **kwargs):
+        await original_emit(*args, **kwargs)
+        raise RuntimeError("optional alert failure")
+
+    if alert_failure:
+        monkeypatch.setattr(notification_events, "emit_event", fail_after_insert)
+    async with AsyncDB(engine, outbox=True) as db:
+        plan = await db.get(Plan, 646)
+        plan.name = "Unrelated caller change"
+        await db.flush()
+        source = TelegramService(db)
+        ok, reason = await source.check_and_consume_agent_quota("alice", commit=False)
+        assert ok is False
+        assert "次数限流" in reason
+        assert plan.name == "Unrelated caller change"
+        staged = (await db.execute(select(NotificationEvent))).scalars().all()
+        assert len(staged) == (0 if alert_failure else 1)
+        if alert_failure:
+            await db.commit()
+        else:
+            await db.rollback()
+    with Session(engine) as db:
+        assert db.get(Plan, 646).name == (
+            "Unrelated caller change" if alert_failure else "Original caller plan"
+        )
+        assert db.query(NotificationEvent).count() == 0

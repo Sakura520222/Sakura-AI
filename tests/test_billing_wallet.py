@@ -27,6 +27,9 @@ class AsyncNested(AbstractAsyncContextManager):
 
 
 class SQLSession:
+    def get_bind(self):
+        return self.session.get_bind()
+
     """Async-shaped adapter executing the real SQLAlchemy unit of work."""
 
     def __init__(self, session):

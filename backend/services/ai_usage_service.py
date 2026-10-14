@@ -1254,9 +1254,20 @@ async def fetch_usage_summary(
         filters.append(AIUsageRecord.operation_id == operation_id)
     if feature is not None:
         filters.append(AIUsageRecord.feature == feature)
+    counter_names = (
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "cache_creation_tokens",
+        "reasoning_tokens",
+    )
     statement = (
         select(
             *dimensions,
+            *(
+                func.count(getattr(AIUsageRecord, field)).label("_known_" + field)
+                for field in counter_names
+            ),
             func.count(AIUsageRecord.id).label("calls"),
             func.sum(AIUsageRecord.input_tokens).label("input_tokens"),
             func.sum(AIUsageRecord.output_tokens).label("output_tokens"),
@@ -1285,4 +1296,129 @@ async def fetch_usage_summary(
         .offset(offset)
         .limit(limit)
     )
-    return [dict(row) for row in (await db.execute(statement)).mappings().all()]
+    rows = [dict(row) for row in (await db.execute(statement)).mappings().all()]
+    if not rows:
+        return rows
+    from sqlalchemy import and_, or_
+
+    from backend.models.billing_models import (
+        BillingCallAttempt,
+        BillingReconciliationEvent,
+    )
+    from backend.services.billing_usage_evidence import late_reference, reviewed_shadow
+
+    dimension_names = tuple(column.key for column in dimensions)
+    grouped = {tuple(row[name] for name in dimension_names): row for row in rows}
+    operation_ids = {
+        row["operation_id"] for row in rows if row["operation_id"] is not None
+    }
+    operation_filter = AIUsageRecord.operation_id.in_(operation_ids)
+    if any(row["operation_id"] is None for row in rows):
+        operation_filter = or_(operation_filter, AIUsageRecord.operation_id.is_(None))
+    after_id = 0
+    while True:
+        candidates = (
+            (
+                await db.execute(
+                    select(AIUsageRecord)
+                    .outerjoin(
+                        BillingCallAttempt,
+                        BillingCallAttempt.call_id == AIUsageRecord.actual_call_id,
+                    )
+                    .where(
+                        *filters,
+                        operation_filter,
+                        AIUsageRecord.id > after_id,
+                        or_(
+                            AIUsageRecord.role == "late_actual",
+                            and_(
+                                AIUsageRecord.actual_call_id.is_not(None),
+                                BillingCallAttempt.usage_record_key
+                                != AIUsageRecord.record_key,
+                            ),
+                        ),
+                    )
+                    .order_by(AIUsageRecord.id)
+                    .limit(200)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not candidates:
+            break
+        after_id = candidates[-1].id
+        candidates = [
+            record
+            for record in candidates
+            if tuple(getattr(record, name) for name in dimension_names) in grouped
+        ]
+        refs = {record.id: late_reference(record) for record in candidates}
+        call_ids = {
+            record.actual_call_id or (refs[record.id] or {}).get("call_id")
+            for record in candidates
+        } - {None}
+        if not call_ids:
+            continue
+        attempts = {
+            item.call_id: item
+            for item in (
+                await db.execute(
+                    select(BillingCallAttempt).where(
+                        BillingCallAttempt.call_id.in_(call_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+        keys = {
+            item.usage_record_key for item in attempts.values() if item.usage_record_key
+        }
+        keys.update(
+            ref["original_usage_record_key"]
+            for ref in refs.values()
+            if ref and ref.get("original_usage_record_key")
+        )
+        evidence = {
+            item.record_key: item
+            for item in (
+                await db.execute(
+                    select(AIUsageRecord).where(AIUsageRecord.record_key.in_(keys))
+                )
+            )
+            .scalars()
+            .all()
+        }
+        events = (
+            (
+                await db.execute(
+                    select(BillingReconciliationEvent).where(
+                        BillingReconciliationEvent.call_id.in_(call_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for record in candidates:
+            call_id = record.actual_call_id or (refs[record.id] or {}).get("call_id")
+            attempt = attempts.get(call_id)
+            selected = evidence.get(attempt.usage_record_key) if attempt else None
+            if not reviewed_shadow(
+                record, attempt, selected, events, evidence, user_id=user_id
+            ):
+                continue
+            row = grouped[tuple(getattr(record, name) for name in dimension_names)]
+            row["calls"] -= 1
+            row["unknown_calls"] -= int(record.usage_reported is False)
+            row["incomplete_calls"] -= int(record.usage_complete is False)
+            for field in counter_names:
+                value = getattr(record, field)
+                if value is not None:
+                    row["_known_" + field] -= 1
+                    row[field] = row[field] - value if row["_known_" + field] else None
+    for row in rows:
+        for field in counter_names:
+            row.pop("_known_" + field, None)
+    return rows

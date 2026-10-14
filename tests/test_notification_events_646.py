@@ -1,4 +1,5 @@
 """Integration tests use actual SQL transactions, uniqueness and lease updates."""
+
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
@@ -55,8 +56,13 @@ class AsyncDB:
     async def scalar(self, statement, *args, **kwargs):
         return self.session.scalar(statement, *args, **kwargs)
 
-    async def refresh(self, row):
-        self.session.refresh(row)
+    async def refresh(self, row, **kwargs):
+        self.session.refresh(row, **kwargs)
+
+    def begin_nested(self):
+        from tests.test_billing_entitlements import _AsyncSQLiteSession
+
+        return _AsyncSQLiteSession(self.session).begin_nested()
 
     async def flush(self):
         self.session.flush()

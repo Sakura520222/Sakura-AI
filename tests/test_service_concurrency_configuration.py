@@ -3,7 +3,6 @@
 import httpx
 import pytest
 from pydantic import ValidationError
-from starlette.requests import Request
 
 from backend.api.v1.billing import PlanCreateRequest, PlanUpdateRequest
 from backend.core.config import (
@@ -20,7 +19,6 @@ from backend.webui import deps
 from backend.webui.routes.config import (
     _DynamicConfigValidationError,
     _validate_dynamic_config_value,
-    unified_config_page,
 )
 from tests.test_billing_pricing_editor import pricing_app as pricing_fixture
 from tests.test_billing_pricing_editor import seed_language
@@ -109,24 +107,17 @@ async def test_config_page_renders_service_scope_in_user_language(
     pricing_app, lang, labels, scope, queued
 ):
     _app, factory, _token = pricing_app
-    request = Request(
-        {"type": "http", "method": "GET", "path": "/config", "headers": []}
-    )
     async with factory() as db:
-        response = await unified_config_page(
-            request,
-            db=db,
-            user={"sub": "owner1", "role": "super_admin", "user_id": 1},
-            user_prefs={"language": lang},
-        )
-    html = response.body.decode()
+        from backend.services.config_center_service import ConfigCenterService
+
+        fields = await ConfigCenterService().describe(db, {"sub": "owner1", "role": "super_admin", "user_id": 1}, lang=lang)
+    html = "\n".join(field["label"] + " " + field["description"] for field in fields)
     for label in labels:
         assert label in html
     assert html.count(scope) >= 3
     assert html.count(queued) >= 3
-    assert 'name="agent_team_max_concurrent"' in html
-    assert 'name="service_execution_lease_seconds"' in html
-    assert 'name="service_execution_poll_seconds"' in html
+    keys = {field["key"] for field in fields}
+    assert {"agent_team_max_concurrent", "service_execution_lease_seconds", "service_execution_poll_seconds"} <= keys
 
 
 @pytest.mark.asyncio

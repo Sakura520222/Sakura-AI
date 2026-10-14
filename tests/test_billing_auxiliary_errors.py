@@ -35,6 +35,57 @@ sql_runtime = runtime_fixture
 @pytest.mark.asyncio
 @pytest.mark.parametrize("charge_failed", [False, True])
 @pytest.mark.parametrize(
+    "data",
+    [
+        None,
+        [],
+        [None],
+        [SimpleNamespace(embedding="bad")],
+        [SimpleNamespace(embedding=[1.0])],
+        [SimpleNamespace(embedding=[])] * 2,
+        [SimpleNamespace(embedding=[float("nan")])] * 2,
+        [SimpleNamespace(embedding=[True])] * 2,
+        [SimpleNamespace(embedding=[1.0]), SimpleNamespace(embedding=[1.0, 2.0])],
+    ],
+)
+async def test_malformed_embeddings_retain_failed_usage(
+    sql_runtime, monkeypatch, charge_failed, data
+):
+    factory, engine, policy = sql_runtime
+    policy["billing_charge_failed_calls"] = charge_failed
+    await fund_and_price(factory, kinds=("embedding",), provider="openai", model="aux")
+    monkeypatch.setattr(
+        embedding_service,
+        "get_settings",
+        lambda: SimpleNamespace(embedding_model="aux", embedding_batch_size=2),
+    )
+    response = SimpleNamespace(
+        data=data, usage={"prompt_tokens": 1000, "total_tokens": 1000}
+    )
+    service = embedding_service.EmbeddingService.__new__(
+        embedding_service.EmbeddingService
+    )
+    service.provider = "openai"
+    service.client = SimpleNamespace(
+        embeddings=SimpleNamespace(create=AsyncMock(return_value=response))
+    )
+    context = BillingContext(1, str(uuid4()), "pr_review")
+    with bind_billing_context(context):
+        with pytest.raises(ValueError, match="Malformed"):
+            await service._embed_via_openai_api(["first", "second"])
+        await finish_billing_operation("completed")
+    with Session(engine) as db:
+        usage = db.scalar(select(AIUsageRecord))
+        assert usage.outcome == "failed"
+        assert usage.input_tokens == 1000
+        assert db.get(BillingOperation, context.operation_id).settled_units == (
+            200_000 if charge_failed else 0
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("charge_failed", [False, True])
+@pytest.mark.parametrize(
     ("ranking", "strict"),
     [
         ({}, False),
