@@ -103,7 +103,7 @@ async def test_live_gateway_expiration_emits_once_and_rolls_back_with_its_event(
     from backend.services.payment_service import PaymentService
 
     async with live_db(info={"notification_outbox": False}) as db:
-        db.add(Plan(id=1, name="Plan", price_cents=100))
+        db.add(Plan(id=1, name="Plan", plan_type="one_time", price_cents=100))
         await db.flush()
         db.add_all([Order(id=number, order_no=f"EXPIRE_{number}", user_id=1, plan_id=1,
             amount_cents=100, currency="USD", status="pending", payment_provider="stripe") for number in (646, 647)])
