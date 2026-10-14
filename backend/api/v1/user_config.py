@@ -48,9 +48,7 @@ async def update_user_config(
     if not body.configs or set(body.configs) - USER_DYNAMIC_CONFIG_KEYS:
         return error_response("unknown_field")
     try:
-        await config_center_service.save_preferences(
-            db, user, {key: value or None for key, value in body.configs.items()}
-        )
+        await config_center_service.save_preferences(db, user, body.configs)
     except ConfigError as exc:
         await db.rollback()
         logger.opt(exception=True).warning("User preference validation failed")

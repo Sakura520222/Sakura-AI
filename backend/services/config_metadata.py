@@ -41,7 +41,7 @@ PERSONAL_OPTIONS = {
     "language": ["zh-CN", "en"],
     "items_per_page": [10, 20, 50, 100],
     "theme": ["system", "light", "dark"],
-    "output_language": ["zh-CN", "en"],
+    "output_language": ["", "zh-CN", "en"],
 }
 AI_STRATEGY_RANGES = {
     "ai_api_timeout_seconds": (1.0, 3600.0),
@@ -179,7 +179,7 @@ def _setting_field(key: str, category: str, group: str) -> ConfigField:
         type=kind,
         default=default,
         sensitive=sensitive,
-        resettable=not sensitive and default is not None,
+        resettable=not sensitive,
         requires_restart=key in RESTART_KEYS,
         advanced=group
         not in {"review_basic", "issue_analysis", "ai_strategy", "application"},

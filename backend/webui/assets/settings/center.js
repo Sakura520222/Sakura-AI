@@ -117,6 +117,10 @@ function renderField(field, parent) {
     input = el("select");
     for (const option of field.constraints.enum) {
       const node = el("option", String(option));
+      if (field.key === "output_language" && option === "") {
+        node.dataset.centerText = "follow_request_language";
+        node.textContent = t("follow_request_language");
+      }
       node.value = String(option);
       input.append(node);
     }

@@ -276,12 +276,12 @@ async def save_settings(
 
     await config_center_service.save_preferences(db, user, {
         "items_per_page": items_per_page, "language": language,
-        "output_language": normalized_output_language or None,
+        "output_language": normalized_output_language,
     })
 
     logger.info(
         f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, "
-        f"language={language}, output_language={normalized_output_language or 'inherit'}"
+        f"language={language}, output_language={normalized_output_language or 'request/UI'}"
     )
     return toast_redirect(
         "/settings/",

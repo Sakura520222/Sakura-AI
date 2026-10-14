@@ -278,8 +278,7 @@ Windows 支持 Agent 工作区跨进程读写锁，以及安全的普通文件�
 传统 pip 方式（无 uv）：
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 

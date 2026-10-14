@@ -36,6 +36,10 @@ async def config_db(tmp_path):
 
     from sqlalchemy.engine import make_url
 
+    from backend.core.config import (
+        invalidate_dynamic_config_cache,
+        invalidate_user_dynamic_config_cache,
+    )
     from backend.models.telegram_models import TelegramUser
     from backend.services.config_runtime import config_runtime_sync
 
@@ -80,12 +84,16 @@ async def config_db(tmp_path):
     old_explicit_fields = set(get_settings().model_fields_set)
     config_runtime_sync.pending.clear()
     config_runtime_sync.seen.clear()
+    invalidate_dynamic_config_cache()
+    invalidate_user_dynamic_config_cache()
     yield sessions
     for key, value in old.items():
         setattr(get_settings(), key, value)
     get_settings().__pydantic_fields_set__ = old_explicit_fields
     config_runtime_sync.pending.clear()
     config_runtime_sync.seen.clear()
+    invalidate_dynamic_config_cache()
+    invalidate_user_dynamic_config_cache()
     clear_section_store()
     await engine.dispose()
 
@@ -97,16 +105,28 @@ async def field(service, db, field_id, user=ADMIN):
 
 
 @pytest_asyncio.fixture
-async def config_http(config_db):
-    from backend.api.v1 import config, settings
+async def config_http(config_db, monkeypatch):
+    from backend.api.v1 import config, settings, user_config
     from backend.api.v1.deps import require_api_super_admin
+    from backend.models import database
+    from backend.webui import deps
+    from backend.webui.routes import settings as legacy_settings
 
     app = FastAPI()
-    for router in (config.router, settings.router, config_center.router):
+    for router in (
+        config.router,
+        settings.router,
+        user_config.router,
+        config_center.router,
+    ):
         app.include_router(router, prefix="/api/v1")
+    app.include_router(legacy_settings.router)
     app.dependency_overrides[require_api_auth] = lambda: USER
     app.dependency_overrides[require_api_super_admin] = lambda: ADMIN
     app.dependency_overrides[require_csrf_header] = lambda: "valid"
+    app.dependency_overrides[deps.require_auth] = lambda: USER
+    app.dependency_overrides[deps.require_csrf] = lambda: "valid"
+    monkeypatch.setattr(database, "async_session", config_db)
 
     async def session():
         async with config_db() as db:
@@ -117,6 +137,157 @@ async def config_http(config_db):
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["center", "legacy_api", "legacy_form"])
+async def test_empty_personal_language_is_an_override_until_explicit_reset(
+    config_db, config_http, writer
+):
+    from backend.core.config import get_user_dynamic_config
+
+    service = ConfigCenterService()
+    async with config_db() as db:
+        await service.save_app_updates(db, {"output_language": "en"})
+        db.add_all(
+            [
+                UserConfig(
+                    user_id=USER["user_id"],
+                    config_key="output_language",
+                    config_value="",
+                ),
+                UserConfig(
+                    user_id=ADMIN["user_id"],
+                    config_key="output_language",
+                    config_value="zh-CN",
+                ),
+            ]
+        )
+        await db.commit()
+
+    async def state():
+        response = await config_http.get("/api/v1/config-center?category=personal")
+        return next(
+            item
+            for item in response.json()["fields"]
+            if item["id"] == "personal/output_language"
+        )
+
+    existing = await state()
+    assert existing["value"] == "" and existing["inheritedValue"] == "en"
+    assert existing["source"] == "user" and existing["overridden"]
+    legacy = (await config_http.get("/api/v1/user-config")).json()["data"]["configs"][0]
+    assert legacy["user_value"] == legacy["effective_value"] == ""
+    assert await get_user_dynamic_config("output_language", USER["user_id"]) == ""
+
+    async with config_db() as db:
+        await service.save_preferences(db, USER, {"output_language": "zh-CN"})
+    if writer == "center":
+        current = await state()
+        response = await config_http.patch(
+            "/api/v1/config-center",
+            json={"field": current["id"], "version": current["version"], "value": ""},
+        )
+        assert response.status_code == 200
+    elif writer == "legacy_api":
+        response = await config_http.patch(
+            "/api/v1/user-config", json={"configs": {"output_language": ""}}
+        )
+        assert response.status_code == 200 and response.json()["success"]
+    else:
+        response = await config_http.post(
+            "/settings/",
+            data={"items_per_page": 20, "language": "zh-CN", "output_language": ""},
+        )
+        assert response.status_code == 302
+    current = await state()
+    assert current["value"] == "" and current["source"] == "user"
+    assert await get_user_dynamic_config("output_language", USER["user_id"]) == ""
+    for invalid in (False, 0):
+        response = await config_http.patch(
+            "/api/v1/user-config", json={"configs": {"output_language": invalid}}
+        )
+        assert not response.json()["success"]
+    assert (await state())["value"] == ""
+    response = await config_http.post(
+        "/api/v1/config-center/reset",
+        json={"field": current["id"], "version": current["version"]},
+    )
+    assert response.status_code == 200
+    inherited = await state()
+    assert inherited["value"] == "en" and inherited["source"] == "database"
+    assert not inherited["overridden"]
+    assert await get_user_dynamic_config("output_language", USER["user_id"]) == "en"
+    # The legacy API has a distinct explicit deletion value as well.
+    await config_http.patch(
+        "/api/v1/user-config", json={"configs": {"output_language": ""}}
+    )
+    await config_http.patch(
+        "/api/v1/user-config", json={"configs": {"output_language": None}}
+    )
+    assert (await state())["value"] == "en"
+    async with config_db() as db:
+        rows = (await db.execute(select(UserConfig))).scalars().all()
+        assert [(row.user_id, row.config_value) for row in rows] == [
+            (ADMIN["user_id"], "zh-CN")
+        ]
+        assert (await field(service, db, "global/output_language"))["value"] == "en"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "value", "environment"),
+    [
+        ("smtp_host", "smtp.saved.example", "smtp.inherited.example"),
+        ("smtp_username", "saved-user", "inherited-user"),
+        ("smtp_from", "saved@example.com", "inherited@example.com"),
+        ("github_app_id", "123456", "654321"),
+        ("bot_username", "saved_bot", "inherited_bot"),
+    ],
+)
+async def test_nullable_scalar_reset_restores_none_or_environment(
+    config_db, monkeypatch, key, value, environment
+):
+    monkeypatch.delenv(key.upper(), raising=False)
+    service = ConfigCenterService()
+    async with config_db() as db:
+        await service.save_app_updates(db, {"review_timeout_seconds": 456})
+        for inherited in (None, environment):
+            if inherited is not None:
+                monkeypatch.setenv(key.upper(), inherited)
+            current = await field(service, db, "global/" + key)
+            assert current["default"] is None and current["resettable"]
+            running = getattr(get_settings(), key)
+            saved = await service.mutate(
+                db, ADMIN, current["id"], version=current["version"], value=value
+            )
+            assert saved["value"] == value
+            reset = await service.mutate(
+                db, ADMIN, current["id"], version=saved["version"], reset=True
+            )
+            assert reset["value"] == inherited
+            assert reset["source"] == (
+                "builtin" if inherited is None else "environment"
+            )
+            assert not reset["overridden"]
+            assert getattr(get_settings(), key) == (
+                running if reset["requiresRestart"] else inherited
+            )
+            assert get_settings().review_timeout_seconds == 456
+            assert (
+                await db.execute(select(AppConfig).where(AppConfig.key_name == key))
+            ).scalar_one_or_none() is None
+        secret = await field(service, db, "global/smtp_password")
+        assert not secret["resettable"]
+        with pytest.raises(ConfigError, match="not_resettable"):
+            await service.mutate(
+                db,
+                ADMIN,
+                secret["id"],
+                version=secret["version"],
+                reset=True,
+                confirmed=True,
+            )
 
 
 @pytest.mark.asyncio
