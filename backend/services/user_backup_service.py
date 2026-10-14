@@ -700,7 +700,7 @@ def _validate_notification_endpoints(raw: Any, index: int) -> list[dict[str, Any
         if name is not None:
             _validate_string(name, f"{label} name", 100)
         version = item.get("config_version", 1)
-        if type(version) is not int or version != 1:
+        if type(version) is not int or version < 1:
             raise UserBackupError(f"{label}配置版本无效")
         encrypted = item.get("secret_encrypted")
         if encrypted is not None:
