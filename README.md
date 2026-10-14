@@ -324,8 +324,7 @@ uv run python -m backend.main
 **传统 pip 方式（无 uv）**：
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
@@ -373,7 +372,7 @@ AI 审查引擎 ── read_file · list_dir · search_files · git_info · comm
 ## 开发指南
 
 ```bash
-uv sync                              # 安装依赖(uv;传统 pip 方式:pip install -r requirements.txt 且 pip install -e './updater[dev]')
+uv sync                              # 安装依赖(uv;传统 pip 方式:python -m pip install -r requirements-dev.txt，含 updater[dev] 与测试驱动)
 uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查

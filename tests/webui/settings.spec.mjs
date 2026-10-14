@@ -177,6 +177,110 @@ for (const theme of ["dark", "light", "system"]) {
   });
 }
 
+test("empty personal language follows the request and reset inherits the global value", async ({
+  page,
+  browser,
+}) => {
+  const globalState = await (
+    await page.request.get("/api/v1/config-center")
+  ).json();
+  const globalField = globalState.fields.find(
+    (field) => field.id === "global/output_language",
+  );
+  const forced = await page.request.patch("/api/v1/config-center", {
+    headers: { "X-CSRF-Token": globalState.csrf },
+    data: { field: globalField.id, version: globalField.version, value: "en" },
+  });
+  expect(forced.status()).toBe(200);
+  const context = await browser.newContext();
+  await context.addCookies([
+    { name: "test-role", value: "user", domain: "127.0.0.1", path: "/" },
+  ]);
+  const personal = await context.newPage();
+  try {
+    await ready(personal, "personal");
+    const language = row(personal, "personal/output_language");
+    await expect(language.locator("select")).toHaveValue("en");
+    await expect(language.locator('option[value=""]')).toHaveText(
+      /跟随请求\/界面语言|Follow request\/UI language/,
+    );
+    await language.locator("select").selectOption("");
+    await expect(language.locator("[role=status]")).toContainText(
+      /已保存|Saved/,
+    );
+    const saved = (
+      await (
+        await personal.request.get("/api/v1/config-center?category=personal")
+      ).json()
+    ).fields.find((field) => field.id === "personal/output_language");
+    expect(saved).toMatchObject({
+      value: "",
+      source: "user",
+      overridden: true,
+      inheritedValue: "en",
+    });
+    await ready(personal, "personal");
+    await expect(language.locator("select")).toHaveValue("");
+    await language
+      .getByRole("button", { name: /恢复默认|Restore default/ })
+      .click();
+    await expect(language.locator("[role=status]")).toContainText(
+      /已保存|Saved/,
+    );
+    await expect(language.locator("select")).toHaveValue("en");
+    const reset = (
+      await (
+        await personal.request.get("/api/v1/config-center?category=personal")
+      ).json()
+    ).fields.find((field) => field.id === "personal/output_language");
+    expect(reset).toMatchObject({
+      value: "en",
+      source: "database",
+      overridden: false,
+    });
+  } finally {
+    await context.close();
+    const committed = (await forced.json()).field;
+    await page.request.post("/api/v1/config-center/reset", {
+      headers: { "X-CSRF-Token": globalState.csrf },
+      data: { field: committed.id, version: committed.version },
+    });
+  }
+});
+
+test("nullable system scalars expose a working independent reset", async ({
+  page,
+}) => {
+  await ready(page, "system");
+  const host = row(page, "global/smtp_host");
+  await host
+    .locator("xpath=ancestor::details")
+    .evaluateAll((nodes) => nodes.forEach((node) => (node.open = true)));
+  const initial = await (
+    await page.request.get("/api/v1/config-center?category=system")
+  ).json();
+  const original = initial.fields.find(
+    (field) => field.id === "global/smtp_host",
+  );
+  const port = initial.fields.find((field) => field.id === "global/smtp_port");
+  expect(original.resettable).toBe(true);
+  await host.locator("input").fill("smtp.browser.example");
+  await expect(host.locator("[role=status]")).toContainText(/已保存|Saved/);
+  await host.getByRole("button", { name: /恢复默认|Restore default/ }).click();
+  await expect(host.locator("input")).toHaveValue(
+    original.inheritedValue ?? "",
+  );
+  const reset = await (
+    await page.request.get("/api/v1/config-center?category=system")
+  ).json();
+  expect(reset.fields.find((field) => field.id === original.id).value).toBe(
+    original.inheritedValue,
+  );
+  expect(reset.fields.find((field) => field.id === port.id).value).toBe(
+    port.value,
+  );
+});
+
 for (const viewport of [
   { width: 1440, height: 1000 },
   { width: 820, height: 1100 },

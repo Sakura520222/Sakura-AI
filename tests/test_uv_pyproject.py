@@ -13,14 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def _requirements_entries() -> list[str]:
+def _requirements_entries(filename: str = "requirements.txt") -> list[str]:
     """解析 requirements.txt,剥离行内注释与空行后的需求条目列表。
 
     Parse requirements.txt into requirement specifiers with inline
     comments and blank lines stripped.
     """
     entries: list[str] = []
-    for raw in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+    for raw in (ROOT / filename).read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if line:
             entries.append(" ".join(line.split()))  # 归一化空白 / normalize whitespace
@@ -57,6 +57,18 @@ def test_dev_group_installs_updater_editable() -> None:
     assert source["path"] == "updater"
 
 
+def test_classic_pip_dev_requirements_match_uv_group() -> None:
+    """Both documented development installs provide the same test dependencies."""
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    group = set(data["dependency-groups"]["dev"])
+    group.remove("sakura-ai-updater[dev]")
+    assert set(_requirements_entries("requirements-dev.txt")) == {
+        "-r requirements.txt",
+        "-e ./updater[dev]",
+        *group,
+    }
+
+
 def test_uv_lock_declares_supported_environments() -> None:
     """锁文件显式限定 Windows、Linux 与 Apple Silicon macOS 平台范围。
 
@@ -75,9 +87,11 @@ def test_uv_lock_declares_supported_environments() -> None:
         assert "sys_platform == 'linux'" in markers
         assert "sys_platform == 'win32'" in markers
         assert "platform_machine == 'arm64' and sys_platform == 'darwin'" in markers
-    assert not any("x86_64' and sys_platform == 'darwin'" in e or
-                   "darwin' and platform_machine == 'x86_64'" in e
-                   for e in environments)
+    assert not any(
+        "x86_64' and sys_platform == 'darwin'" in e
+        or "darwin' and platform_machine == 'x86_64'" in e
+        for e in environments
+    )
 
 
 def test_development_cheatsheet_pip_annotation_includes_updater() -> None:
@@ -87,7 +101,10 @@ def test_development_cheatsheet_pip_annotation_includes_updater() -> None:
     sakura_ai_updater;pip 环境缺少 `pip install -e './updater[dev]'`
     时会在收集期直接失败。
     """
-    for name, heading in (("README.md", "## 开发指南"), ("README_EN.md", "## Development")):
+    for name, heading in (
+        ("README.md", "## 开发指南"),
+        ("README_EN.md", "## Development"),
+    ):
         text = (ROOT / name).read_text(encoding="utf-8")
         section = text.split(heading, 1)[1].split("\n## ", 1)[0]
         assert "updater[dev]" in section, name

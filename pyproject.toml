@@ -88,10 +88,10 @@ dependencies = [
 
 [dependency-groups]
 # 根测试套件递归发现 updater/tests,需要 updater 可导入且自带测试依赖
-# (pytest-asyncio / httpx);与 pip 流程的 `pip install -e './updater[dev]'` 对应。
+# (pytest-asyncio / httpx);与 requirements-dev.txt 的 pip 开发环境保持一致。
 # The root test suite discovers updater/tests recursively, so updater must be
 # importable with its own test deps (pytest-asyncio / httpx); mirrors
-# `pip install -e './updater[dev]'` from the pip workflow.
+# `pip install -r requirements-dev.txt` from the pip workflow.
 dev = [
     "aiosqlite>=0.22.1",
     "sakura-ai-updater[dev]",

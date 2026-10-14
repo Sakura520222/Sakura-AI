@@ -324,8 +324,7 @@ When no deployment mode or image-build marker is present, the `backend.main` lau
 **Classic pip (without uv)**:
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
@@ -373,7 +372,7 @@ Full architecture diagram, data flow, code structure, and interactive knowledge 
 ## Development
 
 ```bash
-uv sync                              # Install dependencies (uv; classic pip: pip install -r requirements.txt plus pip install -e './updater[dev]')
+uv sync                              # Install dependencies (uv; classic pip: python -m pip install -r requirements-dev.txt, including updater[dev] and test drivers)
 uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
 python run_ruff.py                   # Lint + fix + format
 python run_ruff.py --check           # Read-only check
