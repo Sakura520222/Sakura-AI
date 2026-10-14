@@ -161,6 +161,9 @@ class ScanWorker:
                     status=ScanStatus.PENDING.value,
                 )
                 session.add(scan)
+                from backend.services.billing_context import admit_scan_billing
+
+                await admit_scan_billing(session, scan)
                 await session.commit()
                 await session.refresh(scan)
                 return scan.id

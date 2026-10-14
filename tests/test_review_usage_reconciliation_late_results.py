@@ -15,7 +15,7 @@ from backend.models.billing_models import (
     BillingUsageCharge,
     BillingWallet,
 )
-from backend.services.ai_usage_service import finish_ai_call
+from backend.services.ai_usage_service import fetch_usage_summary, finish_ai_call
 from backend.services.billing_context import BillingContext, bind_billing_context
 from backend.services.billing_reconciliation_service import resolve_billing_call
 from backend.services.billing_service import BillingService
@@ -28,6 +28,55 @@ from tests.test_review_usage_reconciliation_liveness import (
 )
 
 sql_runtime = runtime_fixture
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["event", "call", "selected", "original"])
+async def test_usage_totals_do_not_trust_unvalidated_late_labels(sql_runtime, change):
+    from copy import deepcopy
+
+    factory, _engine, _ = sql_runtime
+    await reviewed_call(factory)
+    await finish_result(factory, usage=complete_usage(input_tokens=2000))
+    async with factory() as db:
+        valid = (
+            await db.execute(
+                select(AIUsageRecord).where(AIUsageRecord.role == "late_actual")
+            )
+        ).scalar_one()
+        source = deepcopy(valid.source)
+        reference = source["billing_late_result"]
+        if change == "event":
+            reference["reconciliation_event_id"] = True
+        elif change == "call":
+            reference["call_id"] = "another-call"
+        elif change == "selected":
+            reference["selected_usage_record_key"] = "missing-selection"
+        else:
+            reference["original_usage_record_key"] = "missing-original"
+        db.add(
+            AIUsageRecord(
+                record_key="forged-label",
+                operation_id=valid.operation_id,
+                user_id=valid.user_id,
+                feature=valid.feature,
+                provider_id=valid.provider_id,
+                account_id=valid.account_id,
+                model_id=valid.model_id,
+                call_kind=valid.call_kind,
+                protocol_family=valid.protocol_family,
+                role="late_actual",
+                input_tokens=7,
+                output_tokens=3,
+                usage_reported=True,
+                source=source,
+            )
+        )
+        await db.commit()
+        rows = await fetch_usage_summary(db, user_id=1, operation_id="review-operation")
+        assert rows[0]["calls"] == 2
+        assert rows[0]["input_tokens"] == 1007
+        assert rows[0]["output_tokens"] == 103
 
 
 async def finish_result(
@@ -107,6 +156,14 @@ async def test_late_actual_result_preserves_reviewed_selection_and_one_charge(
     usage = complete_usage(input_tokens=late_input)
     assert await finish_result(factory, usage=usage)
     assert not await finish_result(factory, usage=usage)
+    async with factory() as db:
+        totals = await fetch_usage_summary(
+            db, user_id=1, operation_id="review-operation"
+        )
+        assert len(totals) == 1
+        assert totals[0]["calls"] == 1
+        assert totals[0]["input_tokens"] == 1000
+        assert totals[0]["output_tokens"] == 100
     async with factory() as db:
         assert (await resolve_billing_call(db, **evidence())).id == event_id
         service = BillingService(db)

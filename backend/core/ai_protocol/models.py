@@ -99,6 +99,9 @@ class ModelCapabilitySet:
     vision: bool = False
     tools: bool = True
     streaming: bool = True
+    stream_usage: bool = (
+        True  # OpenAI-compatible include_usage; configurable for incompatible endpoints
+    )
     reasoning_content: bool = False  # DeepSeek-R1 风格 / DeepSeek-R1 style
     thinking: bool = False  # Anthropic adaptive thinking
     effort: bool = False  # effort 参数 / effort parameter
@@ -502,6 +505,7 @@ class UnifiedRequest:
     thinking: dict[str, Any] | None = None
     effort: str | None = None
     stream: bool = False
+    include_stream_usage: bool = True
 
 
 @dataclass

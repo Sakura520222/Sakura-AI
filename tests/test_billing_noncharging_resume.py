@@ -156,6 +156,10 @@ async def test_persisted_worker_continuation_retains_disabled_operation(
             )
         )
         session.add(record)
+        if feature == "repo_scan":
+            from backend.services.billing_context import admit_scan_billing
+
+            await admit_scan_billing(session, record)
         await session.commit()
 
     class Worker:

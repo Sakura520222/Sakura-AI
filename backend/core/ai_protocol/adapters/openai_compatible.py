@@ -227,6 +227,8 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             body["tool_choice"] = self._serialize_tool_choice(request.tool_choice)
         if request.stream:
             body["stream"] = True
+            if request.include_stream_usage:
+                body["stream_options"] = {"include_usage": True}
         # thinking / effort 等通过 extra body 透传给支持的兼容端点（少数厂商支持）。
         # Chat Completions 的 wire 字段是 reasoning_effort，而不是内部字段名 effort。
         if request.thinking is not None:
@@ -490,6 +492,8 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
         body["stream"] = True
+        if request.include_stream_usage:
+            body["stream_options"] = {"include_usage": True}
         headers = self.build_headers(credential, endpoint)
         headers["Accept"] = "text/event-stream"
         try:

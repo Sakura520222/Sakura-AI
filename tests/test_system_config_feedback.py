@@ -1,7 +1,6 @@
 """System configuration HTTP feedback follows the authenticated user's locale."""
 
 import json
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -13,12 +12,10 @@ from backend.core import config as core_config
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.database import AppConfig, WebUIConfig
 from backend.webui import deps
-from backend.webui.deps import get_db, get_templates, require_csrf, require_super_admin
+from backend.webui.deps import get_db, require_csrf, require_super_admin
 from backend.webui.i18n import i18n
 from backend.webui.routes import system_config as routes
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
-from tests.test_webui_config_save_feedback import _run_save_feedback
-from tests.test_webui_modal_system import _extract_inline_scripts
 
 sql_runtime = runtime_fixture
 
@@ -201,94 +198,3 @@ async def test_system_ajax_success_and_no_change_are_json(system_http_app, monke
     async with factory() as db:
         assert (await db.execute(select(AppConfig.key_value))).scalar_one() == "INFO"
         assert len((await db.execute(select(AdminActionLog))).scalars().all()) == 1
-
-
-def _system_script(lang):
-    source = (
-        Path(__file__).parents[1] / "backend/webui/templates/system_config.html"
-    ).read_text(encoding="utf-8")
-    script = next(
-        script
-        for script in _extract_inline_scripts(source)
-        if "function systemConfig()" in script
-    )
-    return (
-        get_templates()
-        .env.from_string(script)
-        .render(
-            _=lambda key, **params: i18n.t(key, lang=lang, **params),
-            csrf_token="isolated-csrf",
-            database_reset_confirmation="RESET TEST DATABASE",
-        )
-    )
-
-
-def test_system_save_javascript_preserves_failure_input_and_retry():
-    _run_save_feedback(
-        "vm.runInThisContext("
-        + json.dumps(_system_script("zh-CN"))
-        + ");\n"
-        + """
-nodes.set('systemConfigForm', form);
-root.setAttribute('x-data', 'systemConfig()');
-root.setAttribute('data-config-document-scroll', '');
-section.setAttribute('data-config-tab', 'email');
-control.name = 'smtp_port'; control.value = 'not-a-number';
-form.action = '/system-config/save';
-const settings = systemConfig();
-Alpine.$data = () => settings;
-settings.init();
-assert.equal(form.noValidate, true);
-let fetches = 0;
-global.fetch = async (url, options) => {
-    fetches += 1;
-    assert.equal(url, '/system-config/save');
-    assert.equal(options.headers.Accept, 'application/json');
-    return response;
-};
-response = {ok: false, status: 400, json: async () => ({ok: false,
-    toast: 'SMTP端口必须是有效数值', errors: [
-        {field: 'smtp_port', message: 'SMTP端口必须是有效数值'}]})};
-await settings.saveConfig({target: form});
-assert.equal(control.value, 'not-a-number');
-assert.equal(control.getAttribute('aria-invalid'), 'true');
-assert.equal(document.activeElement, control);
-assert.equal(settings.activeTab, 'email');
-assert.equal(control.scrolled, true);
-assert.equal(window.location.href, '');
-assert.equal(settings.saving, false);
-response = {ok: true, status: 200, json: async () => ({ok: true,
-    toast: '系统配置已保存', errors: []})};
-control.value = '587';
-await settings.saveConfig({target: form});
-assert.equal(control.getAttribute('aria-invalid'), null);
-assert.match(window.location.href, /_toast_type=success/);
-assert.equal(fetches, 2);
-"""
-    )
-
-
-@pytest.mark.parametrize(
-    "lang,expected", [("zh-CN", "不能超过"), ("en", "must not exceed")]
-)
-def test_system_native_validation_uses_page_language(lang, expected):
-    _run_save_feedback(
-        "vm.runInThisContext("
-        + json.dumps(_system_script(lang))
-        + ");\n"
-        + f"""
-nodes.set('systemConfigForm', form);
-const settings = systemConfig(); settings.init();
-control.validity = {{valid: false, rangeOverflow: true}};
-control.max = '65535';
-global.fetch = () => {{throw new Error('invalid input must not be sent');}};
-await settings.saveConfig({{target: form}});
-assert.equal(form.noValidate, true);
-assert.match(allText(summary), /{expected}/);
-assert.match(allText(summary), /65535/);
-assert.equal(document.activeElement, control);
-assert.equal(form.nativeReported, undefined);
-assert.equal(window.location.href, '');
-""",
-        lang=lang,
-    )

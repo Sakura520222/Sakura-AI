@@ -118,6 +118,13 @@ def validate_field(item: ConfigField, value: Any, *, strict=True) -> Any:
     if item.type == "number" and not math.isfinite(value):
         raise ConfigError("invalid_type", field_id=item.id)
     constraints = item.constraints
+    if item.key.endswith("_currency") and isinstance(value, str):
+        from backend.core.config import validate_currency_config_value
+
+        try:
+            value = validate_currency_config_value(item.key, value)
+        except ValueError:
+            raise ConfigError("invalid_choice", field_id=item.id) from None
     if "enum" in constraints and value not in constraints["enum"]:
         raise ConfigError("invalid_choice", field_id=item.id)
     for name, valid in (
@@ -579,6 +586,13 @@ class ConfigCenterService:
                     ]
                 )
         revision = versions.get(self.unit(item, user), 0)
+        if item.key.endswith("_currency") and isinstance(effective, str):
+            from backend.core.config import validate_currency_config_value
+
+            try:
+                effective = validate_currency_config_value(item.key, effective)
+            except ValueError:
+                pass  # Keep unsupported historical evidence visible without rewriting it.
         if item.key in DEPLOYMENT_KEYS:
             effective = getattr(get_settings(), item.key, None)
             source = "deployment"
@@ -854,6 +868,8 @@ class ConfigCenterService:
                             if pruned is _PRUNED
                             else json.dumps(pruned, ensure_ascii=False)
                         )
+                        if item.storage == "binding":
+                            await self.validate_app_combination(db, {item.key: raw})
                         await self._write_app(db, item.key, raw)
                         committed[item.key] = raw
                     else:
@@ -926,6 +942,16 @@ class ConfigCenterService:
         return result
 
     async def validate_app_combination(self, db, updates):
+        from backend.services.billing_configuration_service import (
+            BillingConfigurationError,
+            validate_billing_configuration,
+        )
+        from backend.services.billing_service import BillingError
+
+        try:
+            await validate_billing_configuration(db, updates)
+        except (BillingConfigurationError, BillingError) as exc:
+            raise ConfigError("invalid_value", detail="Invalid billing configuration") from exc
         result = await db.execute(
             select(AppConfig)
             .where(AppConfig.key_name.in_(Settings.model_fields))

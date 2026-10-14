@@ -42,6 +42,9 @@ TEST_PRICE = {
 
 
 class APISQLSession(SQLSession):
+    def get_bind(self):
+        return self.session.get_bind()
+
     async def __aenter__(self):
         return self
 

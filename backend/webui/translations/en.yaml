@@ -959,6 +959,7 @@ config:
   ai_model_vision: "Supports Image Input"
   ai_model_effort_supported: "Supports effort"
   ai_model_reasoning_content: "Supports reasoning_content"
+  ai_model_stream_usage: "Request stream usage (disable for incompatible endpoints)"
   ai_model_temperature_supported: "Supports temperature"
   ai_model_top_p_supported: "Supports top_p"
   ai_model_top_k_supported: "Supports top_k"
@@ -3083,6 +3084,7 @@ config_center:
   deployment: Deployment configuration
   deployment_owned: Connections are owned by connection.json or deployment environment variables. Edit deployment configuration and restart; runtime database overrides cannot move the live connection.
   field:
+    stream_usage: "Request stream usage (disable for incompatible endpoints)"
     approve: "Approve"
     approve_threshold: "Approve threshold"
     auto_create: "Auto create"

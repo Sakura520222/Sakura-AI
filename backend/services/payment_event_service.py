@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from backend.core.config import get_dynamic_config
 from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.time_service import now_utc
 from backend.models.billing_models import BillingTransaction
@@ -1059,6 +1060,76 @@ class PaymentEventService:
                     BillingTransaction, source.conversion_transaction_id
                 )
         items = evidence["refund_items"]
+        # A complete cash refund can contain several native partial refunds.
+        # Validate the entire bundle and subtract already-applied identities
+        # before deciding whether this receipt requires partial-refund policy.
+        incoming = {}
+        for item in items:
+            identity, amount = item.get("id"), item.get("amount_cents")
+            currency = str(item.get("currency") or evidence["currency"]).upper()
+            if (
+                not isinstance(identity, str)
+                or not identity
+                or len(identity) > 191
+                or type(amount) is not int
+                or amount <= 0
+                or item.get("status") != "succeeded"
+            ):
+                raise PaymentError(
+                    "Refund identity/amount/outcome needs review",
+                    code="refund_evidence_incomplete",
+                )
+            if currency != str(gateway_currency).upper():
+                raise PaymentError(
+                    "Refund currency differs from checkout",
+                    code="refund_currency_mismatch",
+                )
+            value = (amount, currency)
+            if identity in incoming and incoming[identity] != value:
+                raise PaymentError(
+                    "Refund identity conflicts within receipt",
+                    code="refund_reference_conflict",
+                )
+            incoming[identity] = value
+        applied = (
+            (
+                await self.session.execute(
+                    select(PaymentRefundReference)
+                    .where(
+                        PaymentRefundReference.provider == record.provider,
+                        PaymentRefundReference.reference_id.in_(incoming),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for previous in applied:
+            if (previous.order_id, previous.amount_cents, previous.currency) != (
+                order.id,
+                *incoming[previous.reference_id],
+            ):
+                raise PaymentError(
+                    "Refund reference conflicts with prior financial effect",
+                    code="refund_reference_conflict",
+                )
+        applied_ids = {previous.reference_id for previous in applied}
+        original_cash = metadata.get("refunded_gateway_amount_cents", 0)
+        if type(original_cash) is not int or original_cash < 0:
+            raise PaymentError(
+                "Refund cash provenance needs review", code="refund_credit_mismatch"
+            )
+        final_cash = original_cash + sum(
+            amount
+            for identity, (amount, _) in incoming.items()
+            if identity not in applied_ids
+        )
+        if final_cash > gateway_total:
+            raise PaymentError(
+                "Refund exceeds original payment", code="refund_overflow"
+            )
+        full_receipt = final_cash == gateway_total
         for item in items:
             refund_id = item.get("id")
             amount = item.get("amount_cents")
@@ -1157,11 +1228,25 @@ class PaymentEventService:
                     raise PaymentError(
                         "Refund exceeds original payment", code="refund_overflow"
                     )
+                if (
+                    not full_receipt
+                    and cumulative != gateway_total
+                    and await get_dynamic_config("payment_partial_refund_policy")
+                    != "proportional_unused_credits"
+                ):
+                    raise PaymentError(
+                        "Partial refund policy requires operator reconciliation",
+                        code="partial_refund_unsupported",
+                    )
                 prior_units = 0
                 if purchase:
-                    if cumulative != gateway_total and not PaymentService(
-                        self.session
-                    )._is_credits_only_snapshot(order.plan_snapshot):
+                    if (
+                        not full_receipt
+                        and cumulative != gateway_total
+                        and not PaymentService(self.session)._is_credits_only_snapshot(
+                            order.plan_snapshot
+                        )
+                    ):
                         raise PaymentError(
                             "Partial refunds require a Credits-only purchased snapshot",
                             code="partial_refund_unsupported",
@@ -1210,7 +1295,7 @@ class PaymentEventService:
                             },
                         )
                         ledger_id = transaction.id
-                elif cumulative != gateway_total:
+                elif not full_receipt and cumulative != gateway_total:
                     raise PaymentError(
                         "Legacy partial entitlement refund requires review",
                         code="legacy_refund_policy_required",

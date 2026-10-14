@@ -104,6 +104,9 @@ def _parse_metadata_overrides(
                 vision=bool(raw_caps.get("vision", default_caps.vision)),
                 tools=bool(raw_caps.get("tools", default_caps.tools)),
                 streaming=bool(raw_caps.get("streaming", default_caps.streaming)),
+                stream_usage=raw_caps.get("stream_usage", default_caps.stream_usage)
+                if type(raw_caps.get("stream_usage", default_caps.stream_usage)) is bool
+                else default_caps.stream_usage,
                 reasoning_content=bool(
                     raw_caps.get("reasoning_content", default_caps.reasoning_content)
                 ),

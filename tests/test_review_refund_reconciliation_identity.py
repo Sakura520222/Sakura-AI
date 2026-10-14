@@ -21,6 +21,11 @@ from backend.services.payment_event_service import PaymentEventService
 from backend.services.payment_service import PaymentError, PaymentService
 from tests.test_billing_entitlements import db as real_database_fixture
 from tests.test_billing_payment_events import paid_order
+from tests.test_billing_payment_events import (
+    proportional_policy as proportional_fixture,
+)
+
+proportional_policy = proportional_fixture
 
 db = real_database_fixture
 

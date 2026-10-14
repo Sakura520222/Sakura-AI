@@ -368,6 +368,11 @@ async def _upsert_app_config(
                 )
                 if error:
                     raise ValueError("Invalid account binding")
+            from backend.services.billing_configuration_service import (
+                validate_billing_configuration,
+            )
+
+            await validate_billing_configuration(session, {key: value})
             if row is None:
                 session.add(
                     AppConfig(key_name=key, key_value=value, description=description)
@@ -408,6 +413,11 @@ async def _delete_app_config(key: str) -> bool:
                     for assignment in [binding.primary, *binding.fallback]
                 ):
                     return False
+        from backend.services.billing_configuration_service import (
+            validate_billing_configuration,
+        )
+
+        await validate_billing_configuration(session, {key: None})
         result = await session.execute(
             delete(AppConfig).where(AppConfig.key_name == key)
         )
@@ -478,13 +488,17 @@ async def save_account(account: ProviderAccount) -> ProviderAccount:
         account.created_at = now
     expected_updated_at = account.updated_at
     account.updated_at = now
-    account.revision = await _upsert_app_config(
-        f"{_ACCOUNT_PREFIX}{account.id}",
-        json.dumps(account.to_dict(), ensure_ascii=False),
-        description=f"AI provider account {account.name}",
-        expected_updated_at=expected_updated_at,
-        expected_revision=account.revision,
-    )
+    try:
+        account.revision = await _upsert_app_config(
+            f"{_ACCOUNT_PREFIX}{account.id}",
+            json.dumps(account.to_dict(), ensure_ascii=False),
+            description=f"AI provider account {account.name}",
+            expected_updated_at=expected_updated_at,
+            expected_revision=account.revision,
+        )
+    except BaseException:
+        account.updated_at = expected_updated_at
+        raise
     return account
 
 

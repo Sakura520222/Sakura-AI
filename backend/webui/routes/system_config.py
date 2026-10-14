@@ -270,8 +270,8 @@ async def save_system_config(
         changed, needs_restart = await system_config_service.save_configs(db, updates)
 
         if not changed and getattr(changed, "effect", "live") != "pending":
-            return toast_redirect(
-                "/system-config/",
+            return _system_save_feedback(
+                request,
                 "toast.config_no_change",
                 lang=lang,
             )

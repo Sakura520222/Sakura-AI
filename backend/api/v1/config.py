@@ -30,6 +30,7 @@ from backend.core.config_sections import SECTION_REGISTRY
 from backend.core.setup_service import setup_service
 from backend.models.database import AppConfig
 from backend.services.billing_configuration_service import BillingConfigurationError
+from backend.services.billing_service import BillingError
 from backend.services.label_service import label_service
 from backend.services.section_config_service import (
     SectionConfigValidationError,
@@ -314,6 +315,11 @@ async def save_ai_account(
         )
         try:
             saved = await account_store.save_account(account)
+        except BillingError as exc:
+            from backend.webui.routes.config import _billing_issues
+
+            issues = _billing_issues(exc, await config_api_language(db, user))
+            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.code, "errors": issues})
         except account_store.AccountConflictError:
             return error_response(
                 "Account changed; reload before saving",
@@ -497,6 +503,14 @@ async def put_ai_strategy_settings(
     try:
         changes = await config_center_service.save_app_updates(db, payload, strict=True)
     except ConfigError as exc:
+        from backend.services.billing_service import BillingError
+
+        if isinstance(exc.__cause__, BillingError):
+            from backend.webui.routes.config import _billing_issues
+
+            lang = await config_api_language(db, user)
+            issues = _billing_issues(exc.__cause__, lang)
+            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.__cause__.code, "errors": issues})
         return error_response(exc.code)
     logger.info(
         f"AI 调用策略已更新 / ai strategy saved: {list(payload.keys())}, by={user['sub']}"
@@ -527,6 +541,7 @@ class ModelOverrideRequest(BaseModel):
     thinking_mode: str | None = None
     effort_enabled: bool | None = None
     reasoning_content: bool | None = None
+    stream_usage: bool | None = None
     temperature_enabled: bool | None = None
     top_p_enabled: bool | None = None
     top_k_enabled: bool | None = None
@@ -585,6 +600,7 @@ async def put_model_override(
         "thinking": ("capabilities", "thinking"),
         "effort_enabled": ("capabilities", "effort"),
         "reasoning_content": ("capabilities", "reasoning_content"),
+        "stream_usage": ("capabilities", "stream_usage"),
         "temperature_enabled": ("capabilities", "temperature"),
         "top_p_enabled": ("capabilities", "top_p"),
         "top_k_enabled": ("capabilities", "top_k"),
@@ -697,6 +713,17 @@ async def update_general_config(
     try:
         changes = await config_center_service.save_app_updates(db, configs)
     except ConfigError as exc:
+        from backend.services.billing_service import BillingError
+        from backend.webui.routes.config import _billing_issues
+
+        lang = await config_api_language(db, user)
+        if isinstance(exc.__cause__, BillingError):
+            issues = _billing_issues(exc.__cause__, lang)
+            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.__cause__.code, "errors": issues})
+        field = exc.field_id.removeprefix("global/")
+        if field.endswith("_currency"):
+            issue = config_issue(lang=lang, field=field, code="invalid_currency", message_key="billing.validation.currency")
+            return JSONResponse(status_code=400, content={"success": False, "error": issue["message"], "code": "invalid_currency", "errors": [issue]})
         return error_response(exc.code)
 
     logger.info(f"API 更新全局配置: {list(configs.keys())}, by={user['sub']}")

@@ -959,6 +959,7 @@ config:
   ai_model_vision: "支持图片多模态"
   ai_model_effort_supported: "支持 effort"
   ai_model_reasoning_content: "支持 reasoning_content"
+  ai_model_stream_usage: "请求流式用量（兼容端点不支持时关闭）"
   ai_model_temperature_supported: "支持 temperature"
   ai_model_top_p_supported: "支持 top_p"
   ai_model_top_k_supported: "支持 top_k"
@@ -3077,6 +3078,7 @@ config_center:
   deployment: 部署配置
   deployment_owned: 部署连接由 connection.json 或环境变量管理。请在部署配置中修改并重启；运行中不写入无效的数据库覆盖。
   field:
+    stream_usage: "请求流式用量（兼容端点不支持时关闭）"
     approve: "批准模板"
     approve_threshold: "批准阈值"
     auto_create: "自动创建"

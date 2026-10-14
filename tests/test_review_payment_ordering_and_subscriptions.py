@@ -222,7 +222,11 @@ async def test_webhook_drains_busy_receipt_after_payment_commit_and_on_redeliver
 
 
 @pytest.mark.asyncio
-async def test_two_early_partial_refunds_replay_cumulatively(db):
+async def test_two_early_partial_refunds_replay_cumulatively(db, monkeypatch):
+    monkeypatch.setattr(
+        "backend.services.payment_event_service.get_dynamic_config",
+        AsyncMock(return_value="proportional_unused_credits"),
+    )
     user, _, order = await pending_checkout(db, "partial-early")
     service = PaymentEventService(db)
     for index, amount in enumerate((30, 70)):

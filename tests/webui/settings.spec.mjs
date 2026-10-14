@@ -115,7 +115,9 @@ test("personal permissions, language autosave and dark mode", async ({
   const page = await context.newPage();
   await ready(page, "personal");
   expect(await page.locator("[data-category-link]").count()).toBe(1);
-  expect((await page.request.get("/notifications/settings")).status()).toBe(200);
+  expect((await page.request.get("/notifications/settings")).status()).toBe(
+    200,
+  );
   await row(page, "personal/language").locator("select").selectOption("en");
   await expect(page.locator("h1")).toHaveText("Configuration centre");
   await row(page, "personal/theme").locator("select").selectOption("dark");
@@ -398,6 +400,34 @@ test("AI account creation stays explicit and bindings autosave without exposing 
     .getByRole("button", { name: /恢复默认|Restore default/ })
     .click();
   await expect(vision.locator("input")).not.toBeChecked();
+  const streamUsage = row(
+    page,
+    "model/openai/test-model/capabilities/stream_usage",
+  );
+  await expect(streamUsage.locator("input")).toBeChecked();
+  await streamUsage.locator("input").uncheck();
+  await expect(streamUsage.locator("[role=status]")).toContainText(
+    /已保存|Saved/,
+  );
+  const savedModel = await page.request.get(
+    "/api/v1/config-center?category=ai&provider=openai&model=test-model",
+  );
+  const fields = (await savedModel.json()).fields;
+  expect(
+    fields.find((field) => field.id.endsWith("/capabilities/stream_usage"))
+      .value,
+  ).toBe(false);
+  await page.screenshot({
+    path: "test-results/billing-stream-usage.png",
+    fullPage: true,
+  });
+  await streamUsage.screenshot({
+    path: "test-results/billing-stream-usage-row.png",
+  });
+  await streamUsage
+    .getByRole("button", { name: /恢复默认|Restore default/ })
+    .click();
+  await expect(streamUsage.locator("input")).toBeChecked();
 });
 
 test("legacy section bookmarks select and expand their new category", async ({

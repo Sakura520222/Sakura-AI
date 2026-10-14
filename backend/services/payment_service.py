@@ -1119,7 +1119,12 @@ class PaymentService:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
         # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
         # webhook 回调时用实际 trade_no 覆盖，两者不一致不能用作 WHERE 条件
-        stmt = select(Order).where(Order.order_no == order_no).with_for_update().execution_options(populate_existing=True)
+        stmt = (
+            select(Order)
+            .where(Order.order_no == order_no)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
             raise PaymentError(f"Order not found: {order_no}")
@@ -1213,7 +1218,12 @@ class PaymentService:
         success because the desired end-state (order not active) is already
         reached.
         """
-        stmt = select(Order).where(Order.order_no == order_no).with_for_update().execution_options(populate_existing=True)
+        stmt = (
+            select(Order)
+            .where(Order.order_no == order_no)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
             logger.info(
@@ -1245,10 +1255,16 @@ class PaymentService:
 
         try:
             await emit_event(
-                self.session, event_type="payment.failed", resource_type="payment",
-                resource_id=order.id, run_key=str(order.id), title="Payment failed",
+                self.session,
+                event_type="payment.failed",
+                resource_type="payment",
+                resource_id=order.id,
+                run_key=str(order.id),
+                title="Payment failed",
                 content=f"Account transaction #{order.id}: payment.failed.",
-                recipient_ids=[order.user_id], sensitive=True, severity="error",
+                recipient_ids=[order.user_id],
+                sensitive=True,
+                severity="error",
                 detail_url="/billing",
             )
         except BaseException:
@@ -1276,12 +1292,17 @@ class PaymentService:
 
     async def cancel_order(self, order_no: str, user_id: int) -> Order:
         """用户主动取消 pending 订单，同时通知网关"""
-        stmt = select(Order).where(
-            and_(
-                Order.order_no == order_no,
-                Order.user_id == user_id,
+        stmt = (
+            select(Order)
+            .where(
+                and_(
+                    Order.order_no == order_no,
+                    Order.user_id == user_id,
+                )
             )
-        ).with_for_update().execution_options(populate_existing=True)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
             raise PaymentError(f"Order not found: {order_no}")
