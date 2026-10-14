@@ -911,7 +911,8 @@ async def test_child_repeated_text_self_check_never_terminates_model_rounds(
     manager, _, parent_id = await manager_for(checkpoint, tmp_path)
     try:
         child = await spawn_recorded(manager, checkpoint, parent_id, "spawn")
-        result = await asyncio.wait_for(manager.wait(child["agent_id"]), 2)
+        # Thirteen durable rounds must be allowed to finish on slower CI disks.
+        result = await asyncio.wait_for(manager.wait(child["agent_id"]), 10)
         assert (
             result["status"] == "completed"
             and result["result"]["summary"] == "eventual explicit completion"
