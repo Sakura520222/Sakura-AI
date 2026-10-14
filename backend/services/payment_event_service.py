@@ -997,6 +997,9 @@ class PaymentEventService:
                         )
                     attempt.status = "failed"
                     attempt.active_order_id = None
+                await PaymentService(self.session)._reconcile_refund_request(
+                    attempt, order
+                )
             await self.session.flush()
             return
         if not evidence.get("refund_evidence_complete") or not evidence.get(
@@ -1218,7 +1221,7 @@ class PaymentEventService:
                     )
                 if attempt.status != "succeeded":
                     attempt.status = "upstream_succeeded"
-                    await PaymentService(self.session)._finalize_refund(attempt, order)
+                await PaymentService(self.session)._finalize_refund(attempt, order)
                 metadata = json.loads(order.metadata_json or "{}")
             else:
                 # Cash totals are independent from a rounded display in order currency.

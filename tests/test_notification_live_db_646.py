@@ -21,7 +21,14 @@ from backend.models.announcement_models import (
     AnnouncementRead,
     NotificationDelivery,
 )
-from backend.models.billing_models import BillingWallet
+from backend.models.billing_models import (
+    BillingCreditDebt,
+    BillingCreditHold,
+    BillingCreditLot,
+    BillingDebtFunding,
+    BillingTransaction,
+    BillingWallet,
+)
 from backend.models.database import AppConfig, IssueAnalysis, UserConfig, WebUIConfig
 from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.legacy_entitlement_models import (
@@ -84,6 +91,8 @@ async def live_db(monkeypatch):
         Order, PaymentLog, Plan, RedeemCode,
         BillingWallet, LegacyEntitlement, LegacyEntitlementEvent, RateLimitAdmission,
         QuotaUsageLog, AppConfig,
+        BillingTransaction, BillingCreditLot, BillingCreditHold, BillingCreditDebt,
+        BillingDebtFunding,
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
@@ -107,6 +116,65 @@ async def live_db(monkeypatch):
         async with engine.begin() as conn:
             await conn.run_sync(lambda db: Base.metadata.drop_all(db, tables=tables))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["commit", "rollback", "event_failure"])
+async def test_live_low_balance_event_and_ledger_share_the_transaction(live_db, monkeypatch, outcome):
+    from decimal import Decimal
+
+    from backend.services.billing_service import BillingService
+
+    async with live_db() as db:
+        billing = BillingService(db)
+        await billing.set_low_balance_threshold(1, "5")
+        await billing.grant(1, "10", "live-balance:fund")
+        await db.commit()
+        if outcome == "event_failure":
+            monkeypatch.setattr(notification_events, "emit_event", AsyncMock(side_effect=RuntimeError("TEST outbox unavailable")))
+            with pytest.raises(RuntimeError, match="outbox unavailable"):
+                await billing.adjust(1, Decimal(-7), idempotency_key="live-balance:debit", actor_id=1, reason="TEST")
+            await db.commit()
+        else:
+            await billing.adjust(1, Decimal(-7), idempotency_key="live-balance:debit", actor_id=1, reason="TEST")
+            if outcome == "commit":
+                await db.commit()
+            else:
+                await db.rollback()
+    async with live_db() as db:
+        wallet = await db.get(BillingWallet, 1)
+        events = (await db.execute(select(NotificationEvent))).scalars().all()
+        transactions = (await db.execute(select(BillingTransaction))).scalars().all()
+        assert wallet.balance_units == (3_000_000 if outcome == "commit" else 10_000_000)
+        assert wallet.low_balance_notified is (outcome == "commit")
+        assert len(events) == (1 if outcome == "commit" else 0)
+        assert len(transactions) == (2 if outcome == "commit" else 1)
+        if events:
+            assert events[0].event_type == "billing.low_balance" and events[0].sensitive
+
+
+@pytest.mark.asyncio
+async def test_live_concurrent_debits_emit_one_low_balance_episode(live_db):
+    from decimal import Decimal
+
+    from backend.services.billing_service import BillingService
+
+    async with live_db() as db:
+        billing = BillingService(db)
+        await billing.set_low_balance_threshold(1, "5")
+        await billing.grant(1, "10", "concurrent-balance:fund")
+        await db.commit()
+
+    async def debit(number):
+        async with live_db() as db:
+            await BillingService(db).adjust(1, Decimal(-3), idempotency_key=f"concurrent-balance:{number}", actor_id=1, reason="TEST")
+            await db.commit()
+
+    await asyncio.gather(*(debit(number) for number in range(3)))
+    async with live_db() as db:
+        assert (await db.get(BillingWallet, 1)).balance_units == 1_000_000
+        assert len((await db.execute(select(NotificationEvent))).scalars().all()) == 1
+        assert len((await db.execute(select(BillingTransaction))).scalars().all()) == 4
 
 
 @pytest.mark.asyncio

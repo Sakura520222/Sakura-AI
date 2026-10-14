@@ -18,7 +18,7 @@ from typing import Any, Self
 
 import httpx
 from loguru import logger
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -396,9 +396,16 @@ async def fetch_global_token_totals(db: AsyncSession) -> GlobalTokenTotals:
     """Return global Token totals exclusively from the provider-usage ledger."""
 
     accounted_record = AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS)
+    possible_shadow = or_(
+        AIUsageRecord.actual_call_id.is_not(None), AIUsageRecord.role == "late_actual"
+    )
     row = (
         await db.execute(
             select(
+                func.max(AIUsageRecord.id).label("_through_id"),
+                func.coalesce(func.sum(case((possible_shadow, 1), else_=0)), 0).label(
+                    "_possible_shadows"
+                ),
                 func.coalesce(func.sum(AIUsageRecord.input_tokens), 0).label(
                     "input_tokens"
                 ),
@@ -426,12 +433,22 @@ async def fetch_global_token_totals(db: AsyncSession) -> GlobalTokenTotals:
             ).where(accounted_record)
         )
     ).one()
-    return GlobalTokenTotals(
-        input_tokens=int(row.input_tokens or 0),
-        output_tokens=int(row.output_tokens or 0),
-        recorded_calls=int(row.recorded_calls or 0),
-        unreported_usage_calls=int(row.unreported_usage_calls or 0),
+    input_tokens, output_tokens = (
+        int(row.input_tokens or 0),
+        int(row.output_tokens or 0),
     )
+    calls, unknown = int(row.recorded_calls or 0), int(row.unreported_usage_calls or 0)
+    if row._possible_shadows:
+        from backend.services.billing_usage_evidence import reviewed_usage_shadows
+
+        async for record in reviewed_usage_shadows(
+            db, filters=[accounted_record], through_id=row._through_id
+        ):
+            input_tokens -= record.input_tokens or 0
+            output_tokens -= record.output_tokens or 0
+            calls -= 1
+            unknown -= int(record.usage_reported is False)
+    return GlobalTokenTotals(input_tokens, output_tokens, calls, unknown)
 
 
 __all__ = [

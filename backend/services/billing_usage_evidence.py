@@ -2,6 +2,11 @@
 
 import hashlib
 
+from sqlalchemy import and_, or_, select
+
+from backend.models.ai_usage_models import AIUsageRecord
+from backend.models.billing_models import BillingCallAttempt, BillingReconciliationEvent
+
 
 def late_reference(record):
     if record.role != "late_actual" or record.actual_call_id is not None:
@@ -73,3 +78,102 @@ def reviewed_shadow(record, attempt, selected, events, originals, *, user_id):
     ):
         return False
     return any(event.id == ref["reconciliation_event_id"] for event in matching)
+
+
+async def reviewed_usage_shadows(db, *, filters, through_id):
+    """Yield validated audit observations in bounded batches, never trust a role alone."""
+    if through_id is None:
+        return
+    after_id = 0
+    while True:
+        records = (
+            (
+                await db.execute(
+                    select(AIUsageRecord)
+                    .outerjoin(
+                        BillingCallAttempt,
+                        BillingCallAttempt.call_id == AIUsageRecord.actual_call_id,
+                    )
+                    .where(
+                        *filters,
+                        AIUsageRecord.id > after_id,
+                        AIUsageRecord.id <= through_id,
+                        or_(
+                            AIUsageRecord.role == "late_actual",
+                            and_(
+                                AIUsageRecord.actual_call_id.is_not(None),
+                                BillingCallAttempt.usage_record_key
+                                != AIUsageRecord.record_key,
+                            ),
+                        ),
+                    )
+                    .order_by(AIUsageRecord.id)
+                    .limit(200)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not records:
+            return
+        after_id = records[-1].id
+        refs = {record.id: late_reference(record) for record in records}
+        call_ids = {
+            record.actual_call_id or (refs[record.id] or {}).get("call_id")
+            for record in records
+        } - {None}
+        if not call_ids:
+            continue
+        attempts = {
+            item.call_id: item
+            for item in (
+                await db.execute(
+                    select(BillingCallAttempt).where(
+                        BillingCallAttempt.call_id.in_(call_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+        keys = {
+            item.usage_record_key for item in attempts.values() if item.usage_record_key
+        }
+        keys.update(
+            ref["original_usage_record_key"]
+            for ref in refs.values()
+            if ref and ref.get("original_usage_record_key")
+        )
+        evidence = {
+            item.record_key: item
+            for item in (
+                await db.execute(
+                    select(AIUsageRecord).where(AIUsageRecord.record_key.in_(keys))
+                )
+            )
+            .scalars()
+            .all()
+        }
+        events = (
+            (
+                await db.execute(
+                    select(BillingReconciliationEvent).where(
+                        BillingReconciliationEvent.call_id.in_(call_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for record in records:
+            call_id = record.actual_call_id or (refs[record.id] or {}).get("call_id")
+            attempt = attempts.get(call_id)
+            selected = evidence.get(attempt.usage_record_key) if attempt else None
+            # A selection appended after the aggregate snapshot must not remove
+            # an original whose replacement was not included in that snapshot.
+            if selected is not None and selected.id > through_id:
+                continue
+            if reviewed_shadow(
+                record, attempt, selected, events, evidence, user_id=record.user_id
+            ):
+                yield record

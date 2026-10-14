@@ -28,12 +28,14 @@ EVENT_TYPES = (
     "agent.started", "agent.completed", "agent.failed", "agent.cancelled", "agent.action_required",
     "announcement.published", "security.changed", "security.lockout",
     "quota.exceeded", "payment.completed", "payment.failed", "refund.requested",
+    "billing.low_balance",
     "refund.completed", "refund.rejected", "refund.failed", "system.failed", "endpoint.test",
 )
+SENSITIVE_EVENT_PREFIXES = ("security.", "payment.", "refund.", "quota.", "billing.")
 
 
 def is_sensitive_event(event):
-    return bool(event.sensitive) or event.event_type.startswith(("security.", "payment.", "refund.", "quota."))
+    return bool(event.sensitive) or event.event_type.startswith(SENSITIVE_EVENT_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ async def emit_event(
         raise ValueError("Unknown notification event type or severity")
     if audience not in {"users", "all", "admins"}:
         raise ValueError("Invalid notification audience")
-    sensitive = bool(sensitive) or event_type.startswith(("security.", "payment.", "refund.", "quota."))
+    sensitive = bool(sensitive) or event_type.startswith(SENSITIVE_EVENT_PREFIXES)
     if sensitive and audience == "all":
         raise ValueError("Sensitive notifications require a scoped audience")
     if detail_url and not (detail_url.startswith("/") and not detail_url.startswith("//")):

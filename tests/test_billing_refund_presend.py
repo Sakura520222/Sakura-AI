@@ -174,7 +174,9 @@ async def test_second_refund_request_during_io_sees_durable_intent_and_cannot_se
         assert not db._session.in_transaction()
         started.set()
         await finish.wait()
-        return RefundResult(success=True, status="succeeded", refund_id="re_inflight")
+        return RefundResult(
+            success=True, status="succeeded", refund_id="re_inflight", amount_cents=100
+        )
 
     gateway.refund.side_effect = refund
     factory = AsyncMock(return_value=gateway)

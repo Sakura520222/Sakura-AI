@@ -1,9 +1,54 @@
 """Billing WebUI route helpers tests"""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
 
 from backend.core.config import DYNAMIC_CONFIG_LABELS
 from backend.webui.routes.billing import _parse_page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,level",
+    [("pending", "warning"), ("approved", "success"), ("failed", "error")],
+)
+@pytest.mark.parametrize("language", ["zh-CN", "en"])
+async def test_refund_approval_toast_represents_the_verified_lifecycle(
+    monkeypatch, status, level, language
+):
+    from backend.webui.routes import billing
+
+    service = SimpleNamespace(
+        approve_refund_request=AsyncMock(
+            return_value=SimpleNamespace(
+                status=status,
+                order=None,
+                amount_cents=100,
+                error_message="TEST provider reconciliation",
+            )
+        )
+    )
+    monkeypatch.setattr(billing, "PaymentService", lambda db: service)
+    monkeypatch.setattr(billing, "log_admin_action", AsyncMock())
+    response = await billing.admin_approve_refund_request(
+        request_id=1,
+        request=None,
+        db=AsyncMock(),
+        user={"user_id": 3},
+        user_prefs={"language": language},
+        csrf_token="TEST",
+        review_note="TEST",
+    )
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["_toast_type"] == [level]
+    if status == "pending":
+        assert ("核对" if language == "zh-CN" else "reconciliation") in query["_toast"][
+            0
+        ]
 
 
 class SettingsStub:

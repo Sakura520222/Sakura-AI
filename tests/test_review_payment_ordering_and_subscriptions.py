@@ -3,6 +3,7 @@
 import json
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import mysql, postgresql
 from starlette.requests import Request
 
+from backend.core.time_service import now_utc
 from backend.models.billing_models import BillingTransaction, BillingWallet
 from backend.models.legacy_entitlement_models import (
     LegacyEntitlement,
@@ -404,3 +406,91 @@ async def test_external_full_refund_reconciles_remaining_same_plan_periods(
     assert (await db.get(BillingWallet, user.id)).balance_units == (
         periods - 1
     ) * 5_000_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refunded_index", [0, 1, 2])
+async def test_refund_removes_a_period_without_leaving_a_paid_subscription_gap(
+    db, monkeypatch, refunded_index
+):
+    at = now_utc()
+    monkeypatch.setattr("backend.services.payment_service.now_utc", lambda: at)
+    monkeypatch.setattr(
+        "backend.services.legacy_entitlement_service.now_utc", lambda: at
+    )
+    plan = Plan(
+        name="Queued TEST subscription",
+        plan_type="subscription",
+        duration_days=30,
+        price_cents=100,
+        pr_quota_bonus=3,
+        pr_daily_add=2,
+        credit_grant=Decimal(5),
+    )
+    db.add(plan)
+    await db.flush()
+    inbox = PaymentEventService(db)
+    orders, user = [], None
+    for index in range(3):
+        user, _, order = await pending_checkout(
+            db, f"chain-{index}", plan=plan, user=user
+        )
+        await inbox.accept(
+            "stripe",
+            checkout_event(order, f"chain-{index}"),
+            payload_hash=f"chain-{index}",
+        )
+        await db.commit()
+        orders.append(order)
+    entries = (
+        (
+            await db.execute(
+                select(LegacyEntitlement).order_by(LegacyEntitlement.starts_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    snapshots = {entry.id: deepcopy(entry.snapshot) for entry in entries}
+    assert [entry.starts_at for entry in entries] == [
+        at + timedelta(days=30 * index) for index in range(3)
+    ]
+    order = orders[refunded_index]
+    event = WebhookEvent(
+        event_type=WebhookEventType.PAYMENT_REFUNDED,
+        event_id="chain-refund",
+        order_no=order.order_no,
+        currency="CNY",
+        original_amount_cents=100,
+        refund_evidence_complete=True,
+        refund_items=[
+            {
+                "id": "re_chain",
+                "amount_cents": 100,
+                "currency": "CNY",
+                "status": "succeeded",
+            }
+        ],
+    )
+    assert (
+        await inbox.accept("stripe", event, payload_hash="chain-refund")
+    ).status == "processed"
+    await db.commit()
+    for entry in entries:
+        await db.refresh(entry)
+        assert entry.snapshot == snapshots[entry.id]
+    survivors = [entry for entry in entries if entry.revoked_at is None]
+    assert [entry.starts_at for entry in survivors] == [at, at + timedelta(days=30)]
+    assert [entry.expires_at for entry in survivors] == [
+        at + timedelta(days=30),
+        at + timedelta(days=60),
+    ]
+    assert all(entry.pr_remaining == 3 for entry in survivors)
+    from backend.services.legacy_entitlement_service import LegacyEntitlementService
+
+    rights = LegacyEntitlementService(db)
+    assert (await rights.remaining(user.id))["pr"] == 3
+    assert (await rights.effective_limits(user, "pr_review"))[0] == user.daily_quota + 2
+    active = await PaymentService(db).get_active_subscription(user.id)
+    assert active is not None and active.expires_at == at + timedelta(days=60)
+    assert (await db.get(BillingWallet, user.id)).balance_units == 10_000_000

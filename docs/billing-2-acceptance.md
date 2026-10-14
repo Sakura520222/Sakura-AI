@@ -758,3 +758,34 @@ run_ruff.py --check 和 git diff --check 再次通过。夹具另补齐 AppConfi
 停止旧发放Worker再切换；购买Credits不随订阅到期清空；回滚不能删除流水或
 重新启用旧bonus加法。命令、失败政策与清单见 [Billing 2.0](billing-2.md) 和
 [旧权益迁移](billing-legacy-migration.md)。
+
+## 2026-10-14 PR #660 六项后续审查（基线 5416e587）
+
+| 审查问题 | 修复与证据 |
+| --- | --- |
+| 成功退款响应金额与意图不同 | test_review_refund_amount_and_requests 验证不同/缺失/非整数金额保留 hold、原生 ID 与 unknown 审计；以冻结网关金额而非订单显示币种比较，重试不发送第二次退款 |
+| 未知退款把审核申请标成 failed | 同文件覆盖 pending、requires_action、失败响应、超时、金额冲突、人工确认成功/未退款，以及迟到成功/失败回调与幂等重投递。真实 aiosqlite 会话验证 rollback 后当前读取，申请保持 pending 并禁止驳回；终态同步请求 |
+| JSON minor units 被强制转换 | test_billing_credits_api 的布尔/字符串/浮点反例均在进入退款服务前拒绝，整数和 null 全额请求仍可用 |
+| 早期订阅退款留下权益空档 | test_review_payment_ordering_and_subscriptions 验证三期中的首期、中期或末期退款，保留购买快照、剩余额度及已开始周期，以原时长前移未来周期并追加审计；同时核实实际权益、限流、摘要及 Credits |
+| 余额提醒未进入通知中心 | test_review_billing_notifications 验证事务原子性、事件失败后的调用方 commit、幂等/补足后重启、合法 Email/私有 Telegram 与 WebUI 路由，拒绝 Webhook、未验证/停用端点及其他用户，包括遗漏敏感标记的反例。历史 BillingNotice 读取兼容；新事件不另建收件箱 |
+| 全局 Token 与趋势图重复计数 | test_review_global_usage_reconciliation 覆盖原始未知/部分观测、审核替代、迟到 Usage、应用时区/夏令时及图表范围外的审核记录；既有迟到结果测试增加全局统计断言，错误审核引用不因标签而被隐藏 |
+
+test_billing_webui 覆盖两种语言、pending/approved/failed 三种结果的提示，
+待核对显示 warning。控制台和 JSON Lines 实际 sink 验证退款日志中的
+request/task/order/refund-attempt/payer ID 与金额差异，不复制提供商消息。
+原生 notification 数据库文件增加扣费/事件 commit、rollback、事件故障及
+并发跨阈值测试，使用既有 localhost 隔离数据库工作流，未连接真实提供商。
+
+本地联合回归首次 254 passed，唯一剩余项是旧成功网关替身未填写退款金额；
+补齐其实际 100 minor units 后，相关退款/接口文件为 35 passed。全局/时间
+回归 43 passed，退款及日志回归 40 passed，审核 WebUI 回归 14 passed。
+通知浏览器脚本和隔离计费 UI 页面均在原生 Edge 上通过，无浏览器错误；
+截图见 billing-low-balance-en.png、billing-low-balance-zh.png 和
+billing-notification-history.png。完整测试、原生 CI 及最终提交的结果记录在
+PR 的验证部分；不把本地模拟或历史部署证据描述为当前真实网关验收。
+首次全仓为 6532 passed、259 环境/平台 skip，三项旧约定随后对齐：未知
+申请改为 pending，两项累计舍入成功替身补齐实际 1 minor unit；重放次数、
+累计现金/整数 Credits、未发送第二次请求及钱包重建断言均保留。
+
+没有新增数据库列、配置键或依赖。未来周期修改和事件与退款结算同事务，
+历史购买/审计数据保留；没有修改商业价格、生产余额或发送真实通知/退款。
