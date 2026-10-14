@@ -104,6 +104,83 @@ async def field(service, db, field_id, user=ADMIN):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("family", ["review", "issue"])
+@pytest.mark.parametrize("writer", ["field", "legacy"])
+async def test_local_commit_poll_preserves_the_active_semaphore(
+    config_db, monkeypatch, family, writer
+):
+    from importlib import import_module
+    from unittest.mock import AsyncMock
+
+    from backend.models import database
+    from backend.services import config_runtime
+
+    module = import_module(f"backend.workers.{family}_worker")
+    monkeypatch.setattr(database, "async_session", config_db)
+    monkeypatch.setattr(module, f"_{family}_semaphore", None)
+    key = f"max_concurrent_{family}s"
+    setattr(get_settings(), key, 3)
+    service = ConfigCenterService()
+    async with config_db() as db:
+        if writer == "field":
+            current = await field(service, db, "global/" + key)
+            await service.mutate(
+                db, ADMIN, current["id"], version=current["version"], value=1
+            )
+        else:
+            await service.save_app_updates(db, {key: 1})
+        semaphore = await getattr(module, f"_get_{family}_semaphore")()
+        await semaphore.acquire()
+        try:
+            apply = AsyncMock(wraps=config_runtime.apply_config_values)
+            monkeypatch.setattr(config_runtime, "apply_config_values", apply)
+            await config_runtime.config_runtime_sync.refresh(db)
+            apply.assert_not_awaited()
+            assert await getattr(module, f"_get_{family}_semaphore")() is semaphore
+            assert semaphore.locked()
+            assert config_runtime.config_runtime_sync.seen["app/" + key] == 1
+        finally:
+            semaphore.release()
+
+
+@pytest.mark.asyncio
+async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
+    config_db, monkeypatch
+):
+    from backend.models import database
+    from backend.services import config_center_service, config_runtime
+    from backend.workers import review_worker
+
+    monkeypatch.setattr(database, "async_session", config_db)
+    monkeypatch.setattr(review_worker, "_review_semaphore", None)
+    get_settings().max_concurrent_reviews = 3
+    original_apply = config_center_service.apply_config_values
+
+    async def apply_then_fail(values):
+        await original_apply(values)
+        raise RuntimeError("later runtime effect failed")
+
+    monkeypatch.setattr(config_center_service, "apply_config_values", apply_then_fail)
+    async with config_db() as db:
+        changes = await ConfigCenterService().save_app_updates(
+            db, {"max_concurrent_reviews": 1}
+        )
+        assert changes.status()["effect"] == "pending"
+        assert (
+            "app/max_concurrent_reviews" not in config_runtime.config_runtime_sync.seen
+        )
+        semaphore = await review_worker._get_review_semaphore()
+        await semaphore.acquire()
+        try:
+            await config_runtime.config_runtime_sync.refresh(db)
+            assert await review_worker._get_review_semaphore() is semaphore
+            assert semaphore.locked()
+            assert not config_runtime.config_runtime_sync.pending
+        finally:
+            semaphore.release()
+
+
 @pytest_asyncio.fixture
 async def config_http(config_db, monkeypatch):
     from backend.api.v1 import config, settings, user_config
@@ -111,6 +188,7 @@ async def config_http(config_db, monkeypatch):
     from backend.models import database
     from backend.webui import deps
     from backend.webui.routes import settings as legacy_settings
+    from backend.webui.routes import system_config
 
     app = FastAPI()
     for router in (
@@ -121,10 +199,12 @@ async def config_http(config_db, monkeypatch):
     ):
         app.include_router(router, prefix="/api/v1")
     app.include_router(legacy_settings.router)
+    app.include_router(system_config.router)
     app.dependency_overrides[require_api_auth] = lambda: USER
     app.dependency_overrides[require_api_super_admin] = lambda: ADMIN
     app.dependency_overrides[require_csrf_header] = lambda: "valid"
     app.dependency_overrides[deps.require_auth] = lambda: USER
+    app.dependency_overrides[deps.require_super_admin] = lambda: ADMIN
     app.dependency_overrides[deps.require_csrf] = lambda: "valid"
     monkeypatch.setattr(database, "async_session", config_db)
 
@@ -137,6 +217,51 @@ async def config_http(config_db, monkeypatch):
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
+
+
+@pytest.mark.asyncio
+async def test_legacy_api_returns_committed_pending_and_retries_unchanged_value(
+    config_db, config_http, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from backend.services import config_center_service, config_runtime
+
+    original_apply = config_center_service.apply_config_values
+    monkeypatch.setattr(
+        config_center_service,
+        "apply_config_values",
+        AsyncMock(side_effect=RuntimeError("private-runtime-failure")),
+    )
+    payload = {"configs": {"max_concurrent_reviews": "2"}}
+    response = await config_http.patch("/api/v1/config/general", json=payload)
+    assert response.status_code == 200 and response.json()["success"]
+    assert response.json()["data"] == {
+        "persisted": True,
+        "effect": "pending",
+        "pending_fields": ["max_concurrent_reviews"],
+    }
+    assert "private-runtime-failure" not in response.text
+    async with config_db() as db:
+        row = (await db.execute(select(AppConfig))).scalar_one()
+        assert row.key_value == "2"
+        current = await field(
+            ConfigCenterService(), db, "global/max_concurrent_reviews"
+        )
+        assert current["effect"] == "pending"
+    monkeypatch.setattr(config_center_service, "apply_config_values", original_apply)
+    response = await config_http.patch("/api/v1/config/general", json=payload)
+    assert response.json()["data"] == {
+        "persisted": True,
+        "effect": "live",
+        "pending_fields": [],
+    }
+    assert not config_runtime.config_runtime_sync.pending
+    assert config_runtime.config_runtime_sync.seen["app/max_concurrent_reviews"] == 1
+    async with config_db() as db:
+        assert (
+            await field(ConfigCenterService(), db, "global/max_concurrent_reviews")
+        )["version"] == current["version"]
 
 
 @pytest.mark.asyncio
@@ -683,6 +808,53 @@ async def test_runtime_reconciliation_reloads_deletion_and_restart(config_db):
         assert (
             get_settings().review_timeout_seconds == Settings().review_timeout_seconds
         )
+
+
+@pytest.mark.asyncio
+async def test_legacy_system_form_reports_pending_without_reapplying(
+    config_db, config_http, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from backend.services import config_center_service, config_runtime
+    from backend.webui.routes import system_config
+
+    original_apply = config_center_service.apply_config_values
+    original_toast = system_config.toast_redirect
+    toasts = []
+
+    def toast(url, key, *args, **kwargs):
+        toasts.append(key)
+        return original_toast(url, key, *args, **kwargs)
+
+    monkeypatch.setattr(system_config, "toast_redirect", toast)
+    monkeypatch.setattr(
+        config_center_service,
+        "apply_config_values",
+        AsyncMock(side_effect=RuntimeError("runtime unavailable")),
+    )
+    original_timeout = get_settings().notification_send_timeout_seconds
+    for _ in range(2):
+        response = await config_http.post(
+            "/system-config/save", data={"notification_send_timeout_seconds": "12"}
+        )
+        assert response.is_redirect
+        assert toasts[-1] == "toast.config_saved_pending"
+        assert get_settings().notification_send_timeout_seconds == original_timeout
+    async with config_db() as db:
+        row = (await db.execute(select(AppConfig))).scalar_one()
+        assert float(row.key_value) == 12
+    monkeypatch.setattr(config_center_service, "apply_config_values", original_apply)
+    response = await config_http.post(
+        "/system-config/save", data={"notification_send_timeout_seconds": "12"}
+    )
+    assert response.is_redirect
+    assert get_settings().notification_send_timeout_seconds == 12
+    assert not config_runtime.config_runtime_sync.pending
+    assert (
+        config_runtime.config_runtime_sync.seen["app/notification_send_timeout_seconds"]
+        == 1
+    )
 
 
 @pytest.mark.asyncio

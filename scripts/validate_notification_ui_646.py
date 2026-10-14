@@ -4,6 +4,7 @@ Run with uv run --with playwright python scripts/validate_notification_ui_646.py
 after playwright install chromium. Provider/platform delivery is not simulated
 as a successful external send by this browser test.
 """
+import os
 import subprocess
 import sys
 import time
@@ -28,17 +29,18 @@ try:
     else:
         raise RuntimeError("Notification browser fixture did not start")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(channel=os.environ.get("PLAYWRIGHT_CHANNEL", "chromium"))
         page = browser.new_page(viewport={"width": 1440, "height": 1080})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto("http://127.0.0.1:8646/settings/?lang=en")
+        endpoint_settings = page.locator('[x-data="notificationPreferences()"]')
         expect(page.get_by_label("Endpoint name").first).to_have_value("Personal email")
         page.get_by_label("Endpoint name").first.fill("My verified email")
-        page.get_by_role("button", name="Save", exact=True).nth(1).click()
+        endpoint_settings.get_by_role("button", name="Save", exact=True).first.click()
         expect(page.get_by_label("Endpoint name").first).to_have_value("My verified email")
         page.get_by_role("button", name="Send test", exact=True).click()
-        expect(page.get_by_role("status")).to_contain_text("Test queued")
+        expect(endpoint_settings.get_by_role("status")).to_contain_text("Test queued")
         page.get_by_label("Event type").select_option("review.completed")
         page.get_by_label("Target endpoint").select_option("1")
         page.get_by_label("Repository scope (owner/repo, optional)").fill("alice/Sakura-AI")
@@ -64,16 +66,14 @@ try:
         assert page.evaluate("window.agentTeamState.selectedTaskId") == "646"
         page.screenshot(path=str(output / "agent-deep-link-en.png"), full_page=True)
         page.goto("http://127.0.0.1:8646/system-config/?lang=en")
-        page.get_by_role("button", name="Notification Scheduling", exact=True).click()
-        webhook_control = page.locator('select[name="notification_webhook_enabled"]')
-        expect(webhook_control).to_have_value("false")
+        webhook_control = page.locator('input[name="notification_webhook_enabled"]')
+        expect(webhook_control).not_to_be_checked()
+        webhook_control.locator("xpath=ancestor::details").evaluate_all("nodes => nodes.forEach(node => node.open = true)")
         page.locator('input[name="notification_send_timeout_seconds"]').fill("12")
-        with page.expect_response(lambda response: response.url.endswith("/system-config/save") and response.request.method == "POST") as saved:
-            page.locator('#systemConfigForm button[type="submit"]').click()
-        assert saved.value.status == 302, saved.value.status
+        expect(page.locator('[data-field="global/notification_send_timeout_seconds"] [role="status"]')).to_have_text("Saved")
         page.goto("http://127.0.0.1:8646/system-config/?lang=en")
-        page.get_by_role("button", name="Notification Scheduling", exact=True).click()
-        expect(webhook_control).to_have_value("false")
+        expect(webhook_control).not_to_be_checked()
+        webhook_control.locator("xpath=ancestor::details").evaluate_all("nodes => nodes.forEach(node => node.open = true)")
         expect(page.locator('input[name="notification_send_timeout_seconds"]')).to_have_value("12")
         page.screenshot(path=str(output / "system-config-disabled-webhook.png"), full_page=True)
         assert not errors, errors

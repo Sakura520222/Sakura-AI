@@ -4,12 +4,15 @@ Run uv run python -m tests.notification_ui_app_646. Authentication is explicitly
 a local test double. No AI/GitHub/SMTP/Telegram or production database is used.
 """
 import asyncio
+import os
 
 import uvicorn
 from fastapi import FastAPI, Request
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from backend.api.v1 import config_center as config_center_api
+from backend.api.v1.deps import require_api_auth
 from backend.core.config import get_settings
 from backend.models import Base
 from backend.models import database as db_module
@@ -27,6 +30,7 @@ from backend.webui.deps import (
 from backend.webui.routes import (
     agent_team,
     announcements,
+    config_center,
     notifications,
     settings,
     system_config,
@@ -36,6 +40,7 @@ from tests.test_notification_events_646 import AsyncDB
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 Base.metadata.create_all(engine)
 db_module.async_session = lambda: AsyncDB(engine)
+os.environ["NOTIFICATION_WEBHOOK_ENABLED"] = "false"
 get_settings().notification_webhook_enabled = False
 
 
@@ -60,6 +65,8 @@ app.include_router(announcements.router)
 app.include_router(notifications.router)
 app.include_router(agent_team.router)
 app.include_router(system_config.router)
+app.include_router(config_center.router)
+app.include_router(config_center_api.router, prefix="/api/v1")
 
 
 async def identity():
@@ -76,6 +83,7 @@ async def database():
 
 
 app.dependency_overrides[require_auth] = identity
+app.dependency_overrides[require_api_auth] = identity
 app.dependency_overrides[require_super_admin] = identity
 app.dependency_overrides[get_user_preferences] = preferences
 app.dependency_overrides[get_db] = database

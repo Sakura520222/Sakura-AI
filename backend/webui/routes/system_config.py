@@ -217,7 +217,7 @@ async def save_system_config(
         # 通过 Service 层写入数据库
         changed, needs_restart = await system_config_service.save_configs(db, updates)
 
-        if not changed:
+        if not changed and getattr(changed, "effect", "live") != "pending":
             return toast_redirect(
                 "/system-config/",
                 "toast.config_no_change",
@@ -237,6 +237,11 @@ async def save_system_config(
             db, user["user_id"], "config_save", "system_core", None, log_changed
         )
 
+        if getattr(changed, "effect", "live") == "pending":
+            return toast_redirect(
+                "/system-config/", "toast.config_saved_pending", "warning",
+                lang=detect_language(),
+            )
         if needs_restart:
             return toast_redirect(
                 "/system-config/",

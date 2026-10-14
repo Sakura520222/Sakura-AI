@@ -37,6 +37,7 @@ def register_scan_scheduler(scheduler):
 async def apply_config_values(values: dict) -> None:
     """Apply committed values, including inheritance after deletion."""
     invalidate_dynamic_config_cache(list(values))
+    changed_runtime_keys = set()
     for key, value in values.items():
         if key in SECTION_REGISTRY:
             if value:
@@ -51,15 +52,18 @@ async def apply_config_values(values: dict) -> None:
 
                 label_service.reload_labels()
         elif key in Settings.model_fields and key not in RESTART_KEYS:
+            before = getattr(get_settings(), key)
             if value is None:
                 restore_settings_field(key)
             else:
                 update_settings_field(key, value)
-    if "max_concurrent_reviews" in values:
+            if before != getattr(get_settings(), key):
+                changed_runtime_keys.add(key)
+    if "max_concurrent_reviews" in changed_runtime_keys:
         from backend.workers.review_worker import reset_review_semaphore
 
         reset_review_semaphore()
-    if "max_concurrent_issues" in values:
+    if "max_concurrent_issues" in changed_runtime_keys:
         from backend.workers.issue_worker import reset_issue_semaphore
 
         reset_issue_semaphore()
@@ -87,6 +91,15 @@ class ConfigRuntimeSync:
         self.seen: dict[str, int] = {}
         self.pending: set[str] = set()
         self.lock = asyncio.Lock()
+
+    def record_applied(self, revisions: dict[str, int]) -> None:
+        """Acknowledge only committed revisions whose local effects completed.
+
+        Writers and the poller hold ``lock`` while applying/acknowledging values.
+        Capture integer revisions before committing or rolling back the ORM session.
+        """
+        self.seen.update(revisions)
+        self.pending.difference_update(revisions)
 
     async def refresh(self, db):
         async with self.lock:

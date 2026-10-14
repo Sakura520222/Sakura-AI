@@ -77,7 +77,7 @@ Short provider-budget waits drain inside a bounded, lease-fenced worker. Recover
 
 Announcement fanout locks lifecycle before event, matching publication/withdrawal ordering and preserving immutable archived outcomes. Routing is reread after each recipient batch is locked, using current locking reads on MySQL REPEATABLE READ. GitHub owner/author/initiator and legacy repository names match case-insensitively. Runtime endpoint retirement, backup restore, OAuth email rotation and Telegram rebinding cancel exact old endpoint queues; binding operations serialize on the user row.
 
-Settings defaults are the only source of defaults. All `notification_*` controls are in `app_config` and the existing system configuration page. Recovery batches, concurrency, polling, timeouts, retry budget/backoff, response size and verification limits are configurable there.
+Settings defaults are the only source of defaults. All `notification_*` controls are in `app_config` and `/settings-center/system`; `/system-config/` redirects there. Recovery batches, concurrency, polling, timeouts, retry budget/backoff, response size and verification limits use the shared typed fields and autosave/reset contract. Endpoint and subscription operations remain in the personal category with their dedicated authorization and verification flows; `/settings/` remains a compatible redirect.
 
 ## Endpoint and Webhook operations
 
