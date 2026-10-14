@@ -69,19 +69,7 @@ DEDICATED_KEYS = {
     "agent_team_mcp_io_timeout_seconds",
 }
 DEPLOYMENT_KEYS = frozenset({"database_url", "redis_url"})
-RESTART_KEYS = RESTART_REQUIRED_KEYS | {
-    "app_port",
-    "chroma_persist_dir",
-    "embedding_model",
-    "embedding_provider",
-    "embedding_base_url",
-    "embedding_api_key",
-    "embedding_dimension",
-    "rerank_model",
-    "rerank_provider",
-    "rerank_base_url",
-    "rerank_api_key",
-}
+RESTART_KEYS = RESTART_REQUIRED_KEYS
 GROUP_CATEGORY = {
     "review_basic": "review",
     "review_strategy": "review",

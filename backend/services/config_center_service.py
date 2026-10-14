@@ -21,6 +21,7 @@ from backend.core.config import (
     Settings,
     _cast_config_type,
     _get_field_type,
+    effective_log_level,
     get_settings,
     invalidate_user_dynamic_config_cache,
 )
@@ -489,9 +490,13 @@ class ConfigCenterService:
             identity = [getattr(row, "updated_at", None), raw]
         else:
             inherited = getattr(deployment, item.key)
+            if item.key == "log_level":
+                inherited = effective_log_level(deployment)
             source = (
                 "environment" if item.key in deployment.model_fields_set else "builtin"
             )
+            if item.key == "log_level" and deployment.is_development:
+                source = "environment"
             row = app.get(item.key)
             override = row.key_value if row else None
             effective = (
@@ -523,9 +528,12 @@ class ConfigCenterService:
             identity = [bool(effective), revision]
         pending = self.unit(item, user) in config_runtime_sync.pending
         if revision and item.storage == "app" and not item.requires_restart:
-            pending = pending or effective != getattr(
-                get_settings(), item.key, effective
+            current = (
+                effective_log_level(get_settings())
+                if item.key == "log_level"
+                else getattr(get_settings(), item.key, effective)
             )
+            pending = pending or effective != current
         return {
             "value": None if item.sensitive else effective,
             "default": None if item.sensitive else deepcopy(item.default),

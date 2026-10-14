@@ -526,6 +526,7 @@ function highlight() {
   target.querySelector("input,select,textarea")?.focus({ preventScroll: true });
 }
 function applyTheme(theme) {
+  window.dispatchEvent(new CustomEvent("sakura-theme", { detail: theme }));
   localStorage.setItem("theme", theme);
   document.documentElement.classList.toggle(
     "dark",
