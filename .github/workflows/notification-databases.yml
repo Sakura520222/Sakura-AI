@@ -63,3 +63,11 @@ jobs:
         run: uv run pytest tests/test_notification_live_db_646.py -q
         env:
           NOTIFICATION_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
+      - name: MySQL exact pricing identities and immutable upgrade
+        run: uv run pytest tests/test_billing_price_identity_live_db.py -q
+        env:
+          BILLING_IDENTITY_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
+      - name: PostgreSQL exact pricing identities
+        run: uv run pytest tests/test_billing_price_identity_live_db.py -q
+        env:
+          BILLING_IDENTITY_TEST_DATABASE_URL: postgresql+asyncpg://postgres@127.0.0.1:5432/sakura_notification_test

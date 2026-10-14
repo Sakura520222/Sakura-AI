@@ -569,6 +569,22 @@ class BillingService:
         )
         self.session.add(transaction)
         await self.session.flush()
+        if kind == "adjustment" and actor_id is not None:
+            # This path runs only for a new immutable financial event. Replays
+            # return above, and the savepoint rolls back audit and money together.
+            from backend.services.billing_view_service import add_billing_admin_audit
+
+            add_billing_admin_audit(
+                self.session,
+                actor_id=actor_id,
+                action="billing_adjust_wallet",
+                target_id=str(wallet.user_id),
+                detail={
+                    "transaction_id": transaction.id,
+                    "credits": units_to_credits(units),
+                    "reason": reason,
+                },
+            )
         debt_units = sum(
             item["units"] for item in details.get("allocations", []) if item.get("debt")
         )

@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.v1.deps import require_api_auth, require_api_super_admin
+from backend.api.v1.deps import (
+    require_api_auth,
+    require_api_super_admin,
+    require_cookie_csrf,
+)
 from backend.core.time_service import format_rfc3339
 from backend.services.billing_service import BillingError, BillingService
 from backend.services.billing_view_service import (
@@ -823,17 +827,6 @@ async def adjust_wallet(
             actor_id=user["user_id"],
             reason=req.reason,
         )
-        add_billing_admin_audit(
-            db,
-            actor_id=user["user_id"],
-            action="billing_adjust_wallet",
-            target_id=str(user_id),
-            detail={
-                "transaction_id": transaction.id,
-                "credits": str(req.credits),
-                "reason": req.reason,
-            },
-        )
         await db.commit()
         return {
             "transaction_id": transaction.id,
@@ -931,7 +924,9 @@ async def list_pending_payment_events(
     return await pending_payment_events(db, limit=limit, offset=offset)
 
 
-@router.post("/admin/payment-events/{event_id}/replay")
+@router.post(
+    "/admin/payment-events/{event_id}/replay", dependencies=[Depends(require_cookie_csrf)]
+)
 async def replay_payment_event(
     event_id: int,
     db: AsyncSession = Depends(get_db),

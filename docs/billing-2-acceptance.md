@@ -789,3 +789,27 @@ PR 的验证部分；不把本地模拟或历史部署证据描述为当前真�
 
 没有新增数据库列、配置键或依赖。未来周期修改和事件与退款结算同事务，
 历史购买/审计数据保留；没有修改商业价格、生产余额或发送真实通知/退款。
+
+## 2026-10-14 PR #660 控制与身份审查（基线 bbf56420）
+
+- Cookie 付款事件重放的缺失/表单 CSRF 场景在旧实现中返回 200 并到达重放
+  入口。test_review_payment_replay_csrf 复现四项攻击组合，修复后均为 403 且
+  无财务调用或审核日志；有效 CSRF、非空 bearer、查询令牌控制继续成功，
+  无效非空 bearer 仍为 401。空 bearer 与实际 cookie 回退分类一致，不再绕过。
+  独立只读调查和候选复核另覆盖重复头、空白、scheme 和 cookie/query 优先级。
+- MySQL 定价身份采用 NO PAD binary 字符串，默认数据库仍可使用 unicode_ci。
+  test_review_pricing_identity_schema 验证 MySQL/MariaDB/SQLite/PostgreSQL DDL，
+  迁移保留宽度、NULL/default/comment，读取有效继承排序规则并在任何 DDL 前
+  验证所有列。新增原生文件 test_billing_price_identity_live_db 验证精确 provider/
+  account/model 及尾部空格/Unicode 身份、旧 ci 表误选重现、两次启动迁移、历史
+  行完全不变和不可变触发器，复用 localhost 隔离 CI 数据库。
+- 钱包调整审计移入新流水的保存点，两个界面不再自行追加。原网络重试测试
+  在旧实现中得到两条审核记录；修复后仅一条。同会话重放及调用方 rollback
+  验证财务与审核一致；历史日志不删除或改写。
+
+安全/接口兼容初始回归 22 passed；定价/既有 schema 回归 38 passed；后续
+安全、精确类型、钱包及 API 联合回归 53 passed，扩大相关回归为 125 passed。
+前一提交 bbf56420 的全部 CI 已通过，本轮完整及新增原生 CI 结果见 PR 验证段。
+修复没有新列或依赖，
+包含原定价表的 COLLATION ALTER（需表 ALTER 权限）；没有改生产配置/报价
+或连接真实 AI/支付服务。

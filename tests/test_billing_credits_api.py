@@ -366,6 +366,18 @@ async def test_adjustment_is_real_idempotent_and_audited(billing_client):
     assert first.json()["transaction_id"] == second.json()["transaction_id"]
     assert second.json()["wallet"]["balance"] == "83.000001"
     async with sessions() as db:
+        audits = (
+            (
+                await db.execute(
+                    select(AdminActionLog).where(
+                        AdminActionLog.action == "billing_adjust_wallet"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(audits) == 1
         rows = (
             (
                 await db.execute(

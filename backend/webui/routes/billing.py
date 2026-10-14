@@ -2224,23 +2224,12 @@ async def admin_adjust_credits(
             lang=detect_language(),
         )
     try:
-        transaction = await BillingService(db).adjust(
+        await BillingService(db).adjust(
             target_user_id,
             credits,
             idempotency_key=idempotency_key,
             actor_id=user["user_id"],
             reason=reason,
-        )
-        add_billing_admin_audit(
-            db,
-            actor_id=user["user_id"],
-            action="billing_adjust_wallet",
-            target_id=str(target_user_id),
-            detail={
-                "transaction_id": transaction.id,
-                "credits": str(credits),
-                "reason": reason,
-            },
         )
         await db.commit()
         return toast_redirect(
