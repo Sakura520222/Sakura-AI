@@ -15,6 +15,7 @@ from backend.core.config import (
     invalidate_user_dynamic_config_cache,
     reload_label_config,
     reload_strategy_config,
+    restore_settings_field,
     update_settings_field,
 )
 from backend.core.config_sections import (
@@ -50,9 +51,10 @@ async def apply_config_values(values: dict) -> None:
 
                 label_service.reload_labels()
         elif key in Settings.model_fields and key not in RESTART_KEYS:
-            update_settings_field(
-                key, value if value is not None else getattr(Settings(), key)
-            )
+            if value is None:
+                restore_settings_field(key)
+            else:
+                update_settings_field(key, value)
     if "max_concurrent_reviews" in values:
         from backend.workers.review_worker import reset_review_semaphore
 

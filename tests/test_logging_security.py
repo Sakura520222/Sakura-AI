@@ -407,6 +407,32 @@ def test_configured_secret_is_removed_even_without_a_field_name(
     )
 
 
+@pytest.mark.asyncio
+async def test_field_reset_restores_unconfigured_development_level_in_both_sinks(
+    secured_logs, monkeypatch
+):
+    from backend.core.config import effective_log_level
+    from backend.services.config_runtime import apply_config_values
+
+    console, path, _ = secured_logs
+    settings = get_settings()
+    monkeypatch.setenv("SAKURA_ENV", "development")
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(settings, "sakura_env", "development")
+    monkeypatch.setattr(
+        settings, "__pydantic_fields_set__", set(settings.model_fields_set)
+    )
+    await apply_config_values({"log_level": "ERROR"})
+    logger.debug("reset-filtered-debug-marker")
+    await apply_config_values({"log_level": None})
+    assert effective_log_level(settings) == "DEBUG"
+    assert "log_level" not in settings.model_fields_set
+    logger.debug("reset-inherited-debug-marker")
+    for output in (console.getvalue(), path.read_text(encoding="utf-8")):
+        assert "reset-filtered-debug-marker" not in output
+        assert "reset-inherited-debug-marker" in output
+
+
 def test_no_loguru_exc_info_regression():
     for path in Path("backend").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))

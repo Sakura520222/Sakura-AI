@@ -294,7 +294,7 @@ def _patch_record(record: dict) -> None:
 
 
 def _sink_filter(record: dict) -> bool:
-    from backend.core.config import Settings, get_settings
+    from backend.core.config import Settings, effective_log_level, get_settings
 
     # Read the cached Settings singleton on each record: DB loading, WebUI saves
     # and backup restores all take effect without sink replacement/file churn.
@@ -303,11 +303,7 @@ def _sink_filter(record: dict) -> bool:
     except Exception:
         settings = None
     default_level = Settings.model_fields["log_level"].default
-    level = getattr(settings, "log_level", default_level).upper()
-    if getattr(settings, "is_development", False) and "log_level" not in getattr(
-        settings, "model_fields_set", set()
-    ):
-        level = "DEBUG"
+    level = effective_log_level(settings)
     try:
         minimum = logger.level(level).no
     except ValueError:

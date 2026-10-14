@@ -119,6 +119,15 @@ test("personal permissions, language autosave and dark mode", async ({
   await expect(page.locator("h1")).toHaveText("Configuration centre");
   await row(page, "personal/theme").locator("select").selectOption("dark");
   await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.locator("[data-theme-toggle]").click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await row(page, "personal/theme").locator("select").selectOption("system");
+  await expect(
+    row(page, "personal/theme").locator("[role=status]"),
+  ).toContainText(/Saved/);
+  await page.reload();
+  await expect(page.locator("html")).toHaveClass(/dark/);
   const forbidden = await page.request.get(
     "/api/v1/config-center?category=system",
   );
@@ -164,12 +173,12 @@ for (const viewport of [
     ).toBe(true);
     await secret.locator("input").fill("");
     await page.evaluate(() => window.scrollTo(0, 0));
-    if (viewport.width === 1440)
+    if (process.env.UPDATE_SETTINGS_SCREENSHOTS && viewport.width === 1440)
       await page.screenshot({
         path: "../../docs/images/settings-center-desktop.png",
         fullPage: true,
       });
-    if (viewport.width === 390)
+    if (process.env.UPDATE_SETTINGS_SCREENSHOTS && viewport.width === 390)
       await page.screenshot({
         path: "../../docs/images/settings-center-mobile.png",
         fullPage: true,

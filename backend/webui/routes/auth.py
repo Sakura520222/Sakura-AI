@@ -764,6 +764,6 @@ async def set_theme(
     theme: str = Form(...),
 ):
     """HTMX 调用的主题切换接口"""
-    if theme not in ("light", "dark"):
+    if theme not in ("light", "dark", "system"):
         return HTMLResponse(status_code=400)
     return HTMLResponse(status_code=204)

@@ -1051,6 +1051,27 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def effective_log_level(settings: Settings | None) -> str:
+    """Shared consumer value, including the unconfigured development default."""
+    level = getattr(
+        settings, "log_level", Settings.model_fields["log_level"].default
+    ).upper()
+    if getattr(settings, "is_development", False) and "log_level" not in getattr(
+        settings, "model_fields_set", set()
+    ):
+        return "DEBUG"
+    return level
+
+
+def restore_settings_field(key: str, defaults: Settings | None = None) -> None:
+    """Restore inherited value AND explicitness, without retaining a DB override."""
+    defaults = defaults if defaults is not None else Settings()
+    settings = get_settings()
+    setattr(settings, key, getattr(defaults, key))
+    if key not in defaults.model_fields_set:
+        settings.model_fields_set.discard(key)
+
+
 @lru_cache
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
