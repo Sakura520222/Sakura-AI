@@ -5,6 +5,8 @@ or database result is mocked, and price samples are test-only configuration.
 """
 
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -39,6 +41,44 @@ TEST_PRICE = {
     "input_price": "2",
     "output_price": "3",
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount", [True, False, "1", "1.0", 1.0, 1.5])
+async def test_admin_refund_api_rejects_coerced_minor_units(
+    billing_client, monkeypatch, amount
+):
+    client, _ = billing_client
+    refund = AsyncMock(side_effect=AssertionError("Coerced money reached the service"))
+    monkeypatch.setattr(
+        "backend.services.payment_service.PaymentService.process_refund", refund
+    )
+    response = await client.post(
+        "/api/v1/billing/orders/1/refund",
+        headers={"x-test-identity": "operator"},
+        json={"amount_cents": amount, "idempotency_key": "strict-refund"},
+    )
+    assert response.status_code == 422
+    refund.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount", [1, None])
+async def test_admin_refund_api_keeps_exact_integer_and_full_refund_requests(
+    billing_client, monkeypatch, amount
+):
+    client, _ = billing_client
+    refund = AsyncMock(return_value=SimpleNamespace(order_no="TEST", status="refunded"))
+    monkeypatch.setattr(
+        "backend.services.payment_service.PaymentService.process_refund", refund
+    )
+    response = await client.post(
+        "/api/v1/billing/orders/1/refund",
+        headers={"x-test-identity": "operator"},
+        json={"amount_cents": amount, "idempotency_key": "exact-refund"},
+    )
+    assert response.status_code == 200
+    assert refund.call_args.kwargs["amount_cents"] == amount
 
 
 class APISQLSession(SQLSession):
@@ -632,7 +672,8 @@ async def test_balance_notices_are_own_only_and_read_idempotently(billing_client
         assert (await db.get(BillingNotice, 10)).read_at == first_read_at
     page = await client.get("/billing/credits")
     assert page.status_code == 200
-    assert "Balance notifications" in page.text and "Read" in page.text
+    assert "Earlier balance notifications" in page.text and "Read" in page.text
+    assert "New low balance alerts appear in Notification Center" in page.text
 
 
 @pytest.mark.asyncio

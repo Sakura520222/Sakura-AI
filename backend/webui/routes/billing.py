@@ -748,16 +748,12 @@ async def admin_approve_refund_request(
                 "error_message": refund_request.error_message,
             },
         )
-        toast_key = (
-            "toast.refund_failed"
-            if refund_request.status == RefundRequestStatus.FAILED.value
-            else "toast.refund_approved"
-        )
-        toast_type = (
-            "error"
-            if refund_request.status == RefundRequestStatus.FAILED.value
-            else "success"
-        )
+        if refund_request.status == RefundRequestStatus.APPROVED.value:
+            toast_key, toast_type = "toast.refund_approved", "success"
+        elif refund_request.status == RefundRequestStatus.PENDING.value:
+            toast_key, toast_type = "toast.refund_pending_reconciliation", "warning"
+        else:
+            toast_key, toast_type = "toast.refund_failed", "error"
         return toast_redirect(
             "/billing/admin/refund-requests",
             toast_key,

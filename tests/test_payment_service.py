@@ -1025,7 +1025,7 @@ class TestRefundRequests:
         assert result.status == RefundRequestStatus.FAILED.value
         assert result.error_message == "gateway down"
 
-    async def test_reject_refund_request(self, svc):
+    async def test_reject_refund_request(self, svc, mock_session):
         refund_request = RefundRequest(
             id=1,
             order_id=1,
@@ -1035,6 +1035,9 @@ class TestRefundRequests:
         )
         svc.get_refund_request = AsyncMock(return_value=refund_request)
         svc.process_refund = AsyncMock()
+        current_attempt = MagicMock()
+        current_attempt.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = current_attempt
 
         result = await svc.reject_refund_request(
             request_id=1,

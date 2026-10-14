@@ -157,7 +157,10 @@ async def test_representable_cumulative_refunds_round_once_and_replay_without_io
         assert not db._session.in_transaction()
         assert kwargs["amount_cents"] == 1
         return RefundResult(
-            success=True, status="succeeded", refund_id=kwargs["idempotency_key"]
+            success=True,
+            status="succeeded",
+            refund_id=kwargs["idempotency_key"],
+            amount_cents=1,
         )
 
     gateway.refund.side_effect = refund
@@ -192,7 +195,7 @@ async def test_full_refund_of_one_gateway_unit_still_succeeds(db, monkeypatch):
     await db.commit()
     gateway = AsyncMock()
     gateway.refund.return_value = RefundResult(
-        success=True, status="succeeded", refund_id="TEST-one-unit"
+        success=True, status="succeeded", refund_id="TEST-one-unit", amount_cents=1
     )
     monkeypatch.setattr(
         "backend.services.payment.get_gateway", AsyncMock(return_value=gateway)
