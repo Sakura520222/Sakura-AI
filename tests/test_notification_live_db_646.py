@@ -21,8 +21,14 @@ from backend.models.announcement_models import (
     AnnouncementRead,
     NotificationDelivery,
 )
+from backend.models.billing_models import BillingWallet
 from backend.models.database import IssueAnalysis, UserConfig, WebUIConfig
 from backend.models.identity_models import NotificationEndpoint, UserIdentity
+from backend.models.legacy_entitlement_models import (
+    LegacyEntitlement,
+    LegacyEntitlementEvent,
+    RateLimitAdmission,
+)
 from backend.models.notification_models import (
     NotificationAudit,
     NotificationEvent,
@@ -32,6 +38,7 @@ from backend.models.notification_models import (
 from backend.models.payment_models import Order, PaymentLog, Plan, RedeemCode
 from backend.models.scan_models import RepoScan
 from backend.models.telegram_models import (
+    QuotaUsageLog,
     TelegramUser,
     UserRecoveryCode,
     UserWebAuthnCredential,
@@ -75,6 +82,8 @@ async def live_db(monkeypatch):
         UserConfig, WebUIConfig, UserIdentity, UserRecoveryCode, UserWebAuthnCredential, NotificationAudit,
         NotificationLockoutRound, AnnouncementPublicationHistory, AnnouncementDeliveryHistory, AnnouncementRead,
         Order, PaymentLog, Plan, RedeemCode,
+        BillingWallet, LegacyEntitlement, LegacyEntitlementEvent, RateLimitAdmission,
+        QuotaUsageLog,
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:

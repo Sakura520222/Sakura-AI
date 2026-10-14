@@ -151,12 +151,14 @@ function systemConfig() {
             const form = document.getElementById('systemConfigForm');
             // Only disable browser-language bubbles after translated validation
             // has been installed. Traditional forms retain native validation.
-            form.noValidate = true;
-            form.querySelectorAll('[data-config-field]').forEach(function (row) {
-                row.querySelectorAll('input,select,textarea').forEach(function (control) {
-                    control.setAttribute('data-config-label', row.getAttribute('data-config-label'));
+            if (form) {
+                form.noValidate = true;
+                form.querySelectorAll('[data-config-field]').forEach(function (row) {
+                    row.querySelectorAll('input,select,textarea').forEach(function (control) {
+                        control.setAttribute('data-config-label', row.getAttribute('data-config-label'));
+                    });
                 });
-            });
+            }
             const params = new URLSearchParams(window.location.search);
             const serializedErrors = params.get('_errors');
             if (serializedErrors) {
