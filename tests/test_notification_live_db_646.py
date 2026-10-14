@@ -22,7 +22,7 @@ from backend.models.announcement_models import (
     NotificationDelivery,
 )
 from backend.models.billing_models import BillingWallet
-from backend.models.database import IssueAnalysis, UserConfig, WebUIConfig
+from backend.models.database import AppConfig, IssueAnalysis, UserConfig, WebUIConfig
 from backend.models.identity_models import NotificationEndpoint, UserIdentity
 from backend.models.legacy_entitlement_models import (
     LegacyEntitlement,
@@ -83,7 +83,7 @@ async def live_db(monkeypatch):
         NotificationLockoutRound, AnnouncementPublicationHistory, AnnouncementDeliveryHistory, AnnouncementRead,
         Order, PaymentLog, Plan, RedeemCode,
         BillingWallet, LegacyEntitlement, LegacyEntitlementEvent, RateLimitAdmission,
-        QuotaUsageLog,
+        QuotaUsageLog, AppConfig,
     ))
     tables = [table for table in Base.metadata.sorted_tables if table.name in table_names]
     async with engine.begin() as conn:
@@ -94,6 +94,7 @@ async def live_db(monkeypatch):
     monkeypatch.setattr(db_module, "async_session", factory)
     monkeypatch.setattr(get_settings(), "notification_rate_limit_seconds", 0)
     async with factory() as db:
+        db.add(AppConfig(key_name="billing_enabled", key_value="false"))
         db.add(TelegramUser(id=1, github_username="alice", is_active=True))
         await db.flush()
         db.add(NotificationEndpoint(id=1, user_id=1, provider="email", address="a@example.org", verified=True, enabled=True))
