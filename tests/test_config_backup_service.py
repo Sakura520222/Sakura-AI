@@ -670,7 +670,8 @@ async def test_runtime_restore_rejects_database_url_with_setup_guidance():
 
 
 @pytest.mark.asyncio
-async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it():
+@pytest.mark.parametrize("include_redis", [True, False])
+async def test_runtime_restore_protects_both_connection_anchors(include_redis):
     database = AppConfig(
         key_name="database_url",
         key_value="mysql+asyncmy://current/db",
@@ -684,6 +685,8 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
     session = _FakeSession([database, redis])
     sections = {
         SYSTEM_SECTION: [BackupRecord("redis_url", "redis://new:6379/0", "redis_url")]
+        if include_redis
+        else []
     }
 
     result = await restore_config_backup(
@@ -692,9 +695,12 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
         allow_database_url=False,
     )
 
-    assert result.updated == 1
+    assert result.updated == 0
     assert session.deleted == []
     assert database.key_value == "mysql+asyncmy://current/db"
+    assert redis.key_value == "redis://old:6379/0"
+    assert "redis_url" not in result.imported_values
+    assert "redis_url" not in result.deleted_keys
 
 
 class _BackupUpload:

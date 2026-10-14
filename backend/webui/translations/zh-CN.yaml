@@ -1961,6 +1961,7 @@ toast:
   agent_skill_installed: "Skill 安装成功"
   agent_skill_install_failed: "Skill 安装失败"
   config_saved_live: "全局配置已保存并即时生效"
+  config_saved_pending: "配置已保存，正在等待运行时生效，系统将自动重试。"
   config_backup_export_failed: "配置备份导出失败：{reason}"
   config_backup_invalid: "备份文件无效：{reason}"
   config_backup_import_failed: "配置备份导入失败，当前配置未变更"

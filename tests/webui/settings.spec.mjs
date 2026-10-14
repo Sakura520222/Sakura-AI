@@ -115,6 +115,7 @@ test("personal permissions, language autosave and dark mode", async ({
   const page = await context.newPage();
   await ready(page, "personal");
   expect(await page.locator("[data-category-link]").count()).toBe(1);
+  expect((await page.request.get("/notifications/settings")).status()).toBe(200);
   await row(page, "personal/language").locator("select").selectOption("en");
   await expect(page.locator("h1")).toHaveText("Configuration centre");
   await row(page, "personal/theme").locator("select").selectOption("dark");

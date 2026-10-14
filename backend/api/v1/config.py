@@ -438,13 +438,13 @@ async def put_ai_strategy_settings(
     )
 
     try:
-        await config_center_service.save_app_updates(db, payload, strict=True)
+        changes = await config_center_service.save_app_updates(db, payload, strict=True)
     except ConfigError as exc:
         return error_response(exc.code)
     logger.info(
         f"AI 调用策略已更新 / ai strategy saved: {list(payload.keys())}, by={user['sub']}"
     )
-    return success_response(data=payload)
+    return success_response(data={**payload, "config_status": changes.status()})
 
 
 # =========================================================================
@@ -638,12 +638,12 @@ async def update_general_config(
     )
 
     try:
-        await config_center_service.save_app_updates(db, configs)
+        changes = await config_center_service.save_app_updates(db, configs)
     except ConfigError as exc:
         return error_response(exc.code)
 
     logger.info(f"API 更新全局配置: {list(configs.keys())}, by={user['sub']}")
-    return success_response(message="配置已更新")
+    return success_response(message="配置已更新", data=changes.status())
 
 
 @router.get("/strategies")

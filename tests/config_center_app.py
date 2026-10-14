@@ -29,7 +29,7 @@ from backend.webui.deps import (
 )
 from backend.webui.routes import config as legacy_config
 from backend.webui.routes import config_center as pages
-from backend.webui.routes import settings, system_config
+from backend.webui.routes import notifications, settings, system_config
 
 temporary = tempfile.TemporaryDirectory(prefix="sakura-settings-e2e-")
 engine = create_async_engine(
@@ -42,6 +42,7 @@ sessions = async_sessionmaker(engine, expire_on_commit=False)
 async def lifespan(app):
     from backend.models.admin_action_log import AdminActionLog
     from backend.models.identity_models import NotificationEndpoint
+    from backend.models.notification_models import NotificationSubscription
     from backend.models.telegram_models import (
         TelegramUser,
         UserRecoveryCode,
@@ -58,6 +59,7 @@ async def lifespan(app):
         UserRecoveryCode.__table__,
         UserWebAuthnCredential.__table__,
         NotificationEndpoint.__table__,
+        NotificationSubscription.__table__,
     ]
     async with engine.begin() as connection:
         await connection.run_sync(
@@ -100,6 +102,7 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(notifications.router)
 app.include_router(pages.router)
 app.include_router(legacy_config.router)
 app.include_router(settings.router)

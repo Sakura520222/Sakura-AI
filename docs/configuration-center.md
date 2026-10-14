@@ -1,6 +1,7 @@
 # Unified configuration centre / 统一配置中心
 
-Issue #677 is implemented against `develop` at `5e379ade` (checked 2026-10-13).
+Issue #677 is rebased onto `develop` at `5bf656f6` (checked 2026-10-14), including
+the #646 notification centre's endpoint, subscription and delivery controls.
 #622 consolidated navigation domains; #638 remains an open React migration epic.
 This baseline has no `web/`, React Settings, Vite, or frontend test project. The
 shipping centre therefore uses the existing shell with framework-independent ES
@@ -79,6 +80,10 @@ polls durable revisions using `config_sync_interval_seconds` (Settings default:
 2 seconds), restricted to registered runtime keys and cached users. This is
 bounded eventual propagation across replicas, not an instantaneous fleet switch.
 Failed application returns `pending` and is retried by the supervised worker.
+Successful local applications acknowledge their exact committed revisions, so the
+poller does not repeat their effects. Reapplying the same concurrency limit also
+preserves the active semaphore. Legacy saves report persisted/pending outcomes
+and retain an unchanged-value retry path after a post-commit runtime failure.
 Missed notifications require no Redis recovery. The worker is restart-only under
 source hot reload so active synchronization state is not replaced.
 
@@ -110,6 +115,8 @@ source hot reload so active synchronization state is not replaced.
   the active connection or connection.json. The centre directs administrators to
   deployment configuration and restart rather than reporting an ineffective
   runtime write as success. Imports continue protecting deployment connections.
+  Runtime backup imports preserve both database and Redis anchors, whether their
+  entries are present in or omitted from the imported system section.
 
 ## Browser behaviour and validation
 
@@ -342,7 +349,7 @@ settings. Account and model storage formats remain compatible.
 
 **notifications** — `app`
 
-`notification_max_concurrency`, `notification_retry_max_attempts`, `notification_retry_initial_delay_seconds`, `notification_retry_backoff_factor`, `notification_rate_limit_seconds`。
+`notification_max_concurrency`, `notification_retry_max_attempts`, `notification_retry_initial_delay_seconds`, `notification_retry_backoff_factor`, `notification_rate_limit_seconds`, `notification_poll_seconds`, `notification_batch_size`, `notification_send_timeout_seconds`, `notification_webhook_enabled`, `notification_webhook_timeout_seconds`, `notification_webhook_response_max_bytes`, `notification_webhook_allowed_hosts`, `notification_email_verification_ttl_seconds`, `notification_verification_max_attempts`。
 
 **application** — `app`
 

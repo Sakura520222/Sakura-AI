@@ -1345,7 +1345,10 @@ async def save_general_config(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
         return toast_redirect(
-            "/config", "toast.config_saved_live", lang=detect_language()
+            "/config",
+            "toast.config_saved_pending" if getattr(changed, "effect", "live") == "pending" else "toast.config_saved_live",
+            "warning" if getattr(changed, "effect", "live") == "pending" else "success",
+            lang=detect_language(),
         )
 
     except ValueError:

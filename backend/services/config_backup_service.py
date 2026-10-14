@@ -710,6 +710,8 @@ async def restore_config_backup(
     A running deployment must opt out: a database transaction and a filesystem
     replacement cannot be made one atomic operation, so silently importing a
     new URL would leave the next restart pointed at the wrong database.
+    Opting out also preserves the active Redis anchor, including when the backup
+    supplies a replacement or omits that key during an exact system restore.
     """
     if not sections or not set(sections).issubset(
         {
@@ -778,7 +780,7 @@ async def restore_config_backup(
         # deployment before the explicit Setup values are persisted.
         protected_restore_keys = set(protected_keys or ())
         if not allow_database_url:
-            protected_restore_keys.add("database_url")
+            protected_restore_keys.update({"database_url", "redis_url"})
         applied_imported = {
             key: record
             for key, record in imported.items()
