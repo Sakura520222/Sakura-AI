@@ -22,7 +22,6 @@ from backend.core.config import (
     Settings,
     _get_field_type,
     get_all_dynamic_config_keys,
-    get_settings,
     invalidate_dynamic_config_cache,
     reload_strategy_config,
     update_settings_field,
@@ -888,10 +887,11 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
         and (key in result.deleted_keys or result.imported_values.get(key) is None)
     }
     defaults = Settings() if reset_keys else None
-    settings = get_settings()
     for key in reset_keys:
         if key in Settings.model_fields:
-            setattr(settings, key, getattr(defaults, key))
+            from backend.core.config import restore_settings_field
+
+            restore_settings_field(key, defaults)
 
     for key, value in result.imported_values.items():
         # Restart-required settings (notably app_timezone) are persisted and

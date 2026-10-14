@@ -45,12 +45,15 @@ RESTART_REQUIRED_KEYS = frozenset(
     {
         "database_url",
         "redis_url",
+        "github_app_id",
         "github_private_key",
         "telegram_enabled",
         "telegram_bot_token",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_timezone",
+        "app_port",
+        "chroma_persist_dir",
     }
 )
 

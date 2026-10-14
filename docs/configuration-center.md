@@ -73,7 +73,8 @@ and deletion checks role references again inside the same database lock.
 
 Post-commit effects invalidate caches, update live Settings, reload strategy and
 label facades, reset review/Issue semaphores, and reconcile scan/Star Aid schedules.
-Restart-only fields do not mutate the active process. Each application process
+Embedding/reranker clients retain their existing live refresh. Frozen listener,
+GitHub identity and Chroma directory bindings require restart. Restart-only fields do not mutate the active process. Each application process
 polls durable revisions using `config_sync_interval_seconds` (Settings default:
 2 seconds), restricted to registered runtime keys and cached users. This is
 bounded eventual propagation across replicas, not an instantaneous fleet switch.
@@ -348,4 +349,3 @@ settings. Account and model storage formats remain compatible.
 **preferences** — `preference`
 
 `language`, `items_per_page`, `theme`, `output_language`。
-

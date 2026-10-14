@@ -77,11 +77,13 @@ async def config_db(tmp_path):
         )
         await db.commit()
     old = get_settings().model_dump()
+    old_explicit_fields = set(get_settings().model_fields_set)
     config_runtime_sync.pending.clear()
     config_runtime_sync.seen.clear()
     yield sessions
     for key, value in old.items():
         setattr(get_settings(), key, value)
+    get_settings().__pydantic_fields_set__ = old_explicit_fields
     config_runtime_sync.pending.clear()
     config_runtime_sync.seen.clear()
     clear_section_store()
@@ -606,3 +608,30 @@ async def test_account_delete_rechecks_binding_under_database_lock(
     monkeypatch.setattr(account_store, "get_role_bindings", stale_precheck)
     assert not await account_store.delete_account(saved.id)
     assert await account_store.get_account(saved.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["embedding_model", "rerank_model"])
+async def test_existing_provider_client_refresh_remains_live(config_db, key):
+    service = ConfigCenterService()
+    async with config_db() as db:
+        current = await field(service, db, "global/" + key)
+        saved = await service.mutate(
+            db, ADMIN, current["id"], version=current["version"], value="changed-model"
+        )
+        assert not saved["requiresRestart"] and saved["effect"] == "live"
+        assert getattr(get_settings(), key) == "changed-model"
+
+
+@pytest.mark.asyncio
+async def test_frozen_listener_and_github_identity_require_restart(config_db):
+    service = ConfigCenterService()
+    original = get_settings().app_port
+    async with config_db() as db:
+        current = await field(service, db, "global/app_port")
+        saved = await service.mutate(
+            db, ADMIN, current["id"], version=current["version"], value=original + 1
+        )
+        assert saved["effect"] == "restart_required"
+        assert get_settings().app_port == original
+        assert (await field(service, db, "global/github_app_id"))["requiresRestart"]
