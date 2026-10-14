@@ -740,8 +740,17 @@ Windows 的打包 Chromium 无法启动，本地改用已安装的 Edge 完成�
 缺少钱包/旧权益表、退役系统表单的空对象初始化已修正。配置/通知/准入回归
 83 passed，系统反馈/通知配置 19 passed；Edge 上真实通知浏览器流程通过，
 包括双语渲染、偏好保存、已读和停用 Webhook 的配置提交。全仓 Ruff、
-run_ruff.py --check 和 git diff --check 再次通过；原生数据库 CI 重跑后
-另行记录结果。
+run_ruff.py --check 和 git diff --check 再次通过。夹具另补齐 AppConfig，并
+显式持久化关闭计费的测试策略；通知失败路径回归为 31 passed，20 项本地
+原生数据库环境 skip 由下述 CI 执行。
+
+实现提交 `3521c7b7` 的原生 CI：配置中心在 MySQL 和 PostgreSQL 上各为
+53 passed（[CI](https://github.com/Sakura520222/Sakura-AI/actions/runs/38518221242)）；
+通知事务、失败回滚与并发领取在两种数据库上各为 20 passed，真实通知
+浏览器流程通过（[通知集成](https://github.com/Sakura520222/Sakura-AI/actions/runs/38518221339)）；
+[sandbox 检查](https://github.com/Sakura520222/Sakura-AI/actions/runs/38518221222)
+通过。这些结果验证配置/通知数据库边界，不替代原生支付网关或财务并发
+部署验收；未访问真实第三方收件人。
 
 六阶段本地代码已接通，MySQL账本保护已按授权安装并实测验证，其余原生数据库
 验收仍待完成，因此不能把本地测试称为Issue的全部部署验收。配置正式商业
