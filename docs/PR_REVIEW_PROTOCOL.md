@@ -2,7 +2,7 @@
 
 > `<SAKURA_REVIEW>` tagged review output contract: envelope, validation, multi-round repair, and safe degradation.
 
-← [Documentation Index](README.md) · [README](../README.md)
+← [Documentation Index](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

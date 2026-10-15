@@ -55,7 +55,7 @@ Hook 的独立参数 `{workspace}` 由所选执行后端展开：本地是实际
 
 每次实际压缩记录压缩前后 token **估计**和保留证据标识，保留当前任务、真实用户指导、最近完整工具批次和未解决错误。审计不存放秘密、原始工具参数或完整正文，也不成为新的模型/用户消息。usage 持久化失败不会被压缩 fallback 吞掉后继续请求模型。
 
-本地和模拟验证的确切边界见[验收记录](AGENT_HARNESS_2_ACCEPTANCE.md)。真实 provider 完成率、生产 MySQL 竞争、多主机执行和实际 Docker 部署不能由 SQLite、HTTP fixture 或生成的容器命令推断。
+本地和模拟验证的确切边界见[验收记录](https://github.com/Sakura520222/Sakura-AI/blob/develop/docs/AGENT_HARNESS_2_ACCEPTANCE.md)。真实 provider 完成率、生产 MySQL 竞争、多主机执行和实际 Docker 部署不能由 SQLite、HTTP fixture 或生成的容器命令推断。
 
 ## English summary
 

@@ -2,7 +2,7 @@
 
 > 从 Claude Code Skills 系统提取的设计说明与 Python 参考实现，覆盖 Skill 加载、调用、搜索、权限与安全边界。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

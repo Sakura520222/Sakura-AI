@@ -2,7 +2,7 @@
 
 > AI 模型上下文窗口识别、安全预算、大型 PR compact diff 与对话历史自动压缩。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

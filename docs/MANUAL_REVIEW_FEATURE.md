@@ -2,7 +2,7 @@
 
 > 在 GitHub PR 中发布 `/full-review` 评论触发审查，通过 GitHub、WebUI 或 API 查看结果。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
