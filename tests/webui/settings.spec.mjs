@@ -8,6 +8,353 @@ async function ready(page, category = "review") {
     "false",
   );
 }
+async function expand(item) {
+  await item
+    .locator("xpath=ancestor::details")
+    .evaluateAll((nodes) => nodes.forEach((node) => (node.open = true)));
+}
+async function configuration(page, category) {
+  return await (
+    await page.request.get(`/api/v1/config-center?category=${category}`)
+  ).json();
+}
+const saved = async (item) =>
+  expect(item.locator(".settings-status")).toContainText(/已保存|Saved/);
+
+test("fallback buttons add, order, remove and reload account/model rows without JSON", async ({
+  page,
+}) => {
+  await ready(page, "ai");
+  const state = await configuration(page, "ai");
+  const accountIds = [];
+  for (const suffix of ["one", "two"]) {
+    const response = await page.request.post("/api/v1/config/ai/accounts", {
+      headers: { "X-CSRF-Token": state.csrf },
+      data: {
+        name: `Fallback ${suffix}`,
+        provider_id: "openai",
+        api_key: "isolated-editor-test-key",
+        default_model: `model-${suffix}`,
+        models: [`model-${suffix}`],
+        enabled: true,
+      },
+    });
+    const result = await response.json();
+    expect(result.success).toBe(true);
+    accountIds.push(result.data.account.id);
+  }
+  await ready(page, "ai");
+  const binding = row(page, "binding/main");
+  await expand(binding);
+  await binding
+    .locator('[data-assignment="primary"] select')
+    .selectOption(accountIds[0]);
+  await saved(binding);
+  const patches = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH") patches.push(request.postDataJSON());
+  });
+  await binding.getByRole("button", { name: /添加回退|Add fallback/ }).click();
+  await page.waitForTimeout(800);
+  expect(patches).toHaveLength(0);
+  await expect(binding.locator("textarea")).toHaveCount(0);
+  let fallback = binding.locator('[data-assignment="fallback"]');
+  await page.route(
+    "**/api/v1/config-center",
+    (route) =>
+      route.request().method() === "PATCH" ? route.abort() : route.continue(),
+    { times: 1 },
+  );
+  await fallback
+    .first()
+    .getByRole("combobox", { name: /AI 账号|AI account/, exact: true })
+    .selectOption(accountIds[1]);
+  await expect(binding.locator(".settings-status")).toContainText(
+    /保存失败|Save failed/,
+  );
+  await expect(fallback.first().locator("select")).toHaveValue(accountIds[1]);
+  await binding.getByRole("button", { name: /^重试$|^Retry$/ }).click();
+  await saved(binding);
+  await binding.getByRole("button", { name: /添加回退|Add fallback/ }).click();
+  await fallback.last().locator("select").selectOption(accountIds[0]);
+  await saved(binding);
+  await fallback
+    .last()
+    .getByRole("button", { name: /上移|Move up/ })
+    .click();
+  await expect(fallback.first().locator("select")).toHaveValue(accountIds[0]);
+  await saved(binding);
+  const current = (await configuration(page, "ai")).fields.find(
+    (field) => field.id === "binding/main",
+  );
+  expect(current.value).toEqual({
+    primary: { account: accountIds[0], model: "model-one" },
+    fallback: [
+      { account: accountIds[0], model: "model-one" },
+      { account: accountIds[1], model: "model-two" },
+    ],
+  });
+  await fallback
+    .first()
+    .getByRole("button", { name: /删除回退|Remove fallback/ })
+    .click();
+  await expect(fallback).toHaveCount(1);
+  await saved(binding);
+  await page.reload();
+  await expect(
+    binding.locator('[data-assignment="fallback"] select'),
+  ).toHaveValue(accountIds[1]);
+  await expect(
+    binding.locator('[data-assignment="fallback"] input'),
+  ).toHaveValue("model-two");
+  const summary = row(page, "binding/summary");
+  await expand(summary);
+  const summaryAccount = summary.locator('[data-assignment="primary"] select');
+  await summaryAccount.selectOption("main");
+  await saved(summary);
+  await expect(
+    summary.locator('[data-assignment="primary"] input'),
+  ).toBeDisabled();
+  await expect(
+    summary.locator('[data-assignment="primary"] input'),
+  ).toHaveValue(/跟随主角色|Follow main/);
+  await summaryAccount.selectOption("");
+  await expect(summaryAccount).toHaveValue("");
+  await summaryAccount.selectOption("main");
+  await expect(summary.locator(".settings-status")).not.toContainText(
+    /失败|failed/,
+  );
+  await page.screenshot({
+    path: "test-results/settings-fallback-form.png",
+    fullPage: true,
+  });
+  await binding.screenshot({
+    path: "test-results/settings-fallback-desktop.png",
+  });
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await page.reload();
+  await expect(
+    binding.locator('[data-assignment="fallback"] input'),
+  ).toHaveValue("model-two");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await binding.screenshot({
+    path: "test-results/settings-fallback-mobile.png",
+  });
+  await binding
+    .getByRole("button", { name: /删除回退|Remove fallback/ })
+    .click();
+  await expect(binding.locator('[data-assignment="fallback"]')).toHaveCount(0);
+  await saved(binding);
+});
+
+test("list buttons save typed values and reset only that list", async ({
+  page,
+}) => {
+  await ready(page);
+  const item = row(page, "section/strategy.file_filters/skip_extensions");
+  await expand(item);
+  const original = (await configuration(page, "review")).fields.find(
+    (field) => field.id === "section/strategy.file_filters/skip_extensions",
+  );
+  const inputs = item.locator("input");
+  await item.getByRole("button", { name: /添加一项|Add item/ }).click();
+  await expect(inputs).toHaveCount(original.value.length + 1);
+  await inputs.last().fill(".editor-test");
+  await saved(item);
+  const changed = (await configuration(page, "review")).fields.find(
+    (field) => field.id === original.id,
+  );
+  expect(changed.value).toEqual([...original.value, ".editor-test"]);
+  await item
+    .locator(".settings-editor-row")
+    .last()
+    .getByRole("button", { name: /删除|Remove/ })
+    .click();
+  await saved(item);
+  expect(
+    (await configuration(page, "review")).fields.find(
+      (field) => field.id === original.id,
+    ).value,
+  ).toEqual(original.value);
+  await expect(item.locator("textarea")).toHaveCount(0);
+});
+
+test("category forms retain historical custom fields, zero and false", async ({
+  page,
+}) => {
+  await ready(page, "issue");
+  const state = await configuration(page, "issue");
+  const current = state.fields.find(
+    (field) => field.id === "section/strategy.issue_analysis/categories",
+  );
+  const categories = structuredClone(current.value);
+  categories[0].custom = { counter: 0, enabled: false, text: "keep me" };
+  const response = await page.request.patch("/api/v1/config-center", {
+    headers: { "X-CSRF-Token": state.csrf },
+    data: { field: current.id, version: current.version, value: categories },
+  });
+  expect(response.status()).toBe(200);
+  await ready(page, "issue");
+  const item = row(page, current.id);
+  await expand(item);
+  const first = item.locator(".settings-editor-list > details").first();
+  await first.locator(":scope > summary").click();
+  await first
+    .getByRole("textbox", { name: /说明|Description/, exact: true })
+    .fill("Edited through the category form");
+  await saved(item);
+  const result = (await configuration(page, "issue")).fields.find(
+    (field) => field.id === current.id,
+  ).value;
+  expect(result[0].custom).toEqual(categories[0].custom);
+  expect(result[0].keywords).toEqual(categories[0].keywords);
+  expect(result[0].description).toBe("Edited through the category form");
+  await page.screenshot({
+    path: "test-results/settings-category-form.png",
+    fullPage: true,
+  });
+});
+
+test("label map and thinking controls create typed values without JSON", async ({
+  page,
+}) => {
+  await ready(page, "labels");
+  const labels = row(page, "section/label.definitions");
+  await expand(labels);
+  await labels
+    .getByRole("button", { name: /添加条目: 标签定义|Add entry: Definitions/ })
+    .first()
+    .click();
+  const entry = labels.locator(".settings-editor-object > details").last();
+  await entry
+    .getByRole("textbox", { name: /标签名称|Label name/ })
+    .fill("editor-test-label");
+  await entry
+    .getByRole("textbox", { name: /颜色|Color/, exact: true })
+    .fill("aabbcc");
+  await saved(labels);
+  await entry
+    .getByRole("textbox", { name: /说明|Description/, exact: true })
+    .fill("Form-created label");
+  await saved(labels);
+  expect(
+    (await configuration(page, "labels")).fields.find(
+      (field) => field.id === "section/label.definitions",
+    ).value["editor-test-label"],
+  ).toEqual({ color: "aabbcc", description: "Form-created label" });
+  await ready(page, "ai");
+  await page
+    .getByText(/模型能力覆盖|Model capability overrides/, { exact: true })
+    .click();
+  await page
+    .locator('input[aria-label="模型 ID"], input[aria-label="Model ID"]')
+    .last()
+    .fill("editor-model");
+  await page
+    .getByRole("button", { name: /打开模型设置|Open model settings/ })
+    .click();
+  const thinking = row(
+    page,
+    "model/openai/editor-model/reasoning_params/thinking",
+  );
+  await thinking.locator("select").first().selectOption("1");
+  await saved(thinking);
+  await thinking.locator("select").last().selectOption("disabled");
+  await saved(thinking);
+  await thinking.locator("select").first().selectOption("0");
+  await saved(thinking);
+  const data = await (
+    await page.request.get(
+      "/api/v1/config-center?category=ai&provider=openai&model=editor-model",
+    )
+  ).json();
+  expect(
+    data.fields.find((field) => field.id.endsWith("/reasoning_params/thinking"))
+      .value,
+  ).toBeNull();
+});
+
+test("plugin page defaults to forms and saves MCP headers and hooks with explicit submit", async ({
+  page,
+}) => {
+  await page.goto("/agent-plugins/");
+  await expect(
+    page.locator("#plugin-form-editor .settings-value-editor"),
+  ).toBeVisible();
+  await expect(page.locator("#plugin-json")).not.toBeVisible();
+  const servers = page.locator('[data-editor-path="/mcp/servers"]');
+  await servers.getByRole("button", { name: /添加一项|Add item/ }).click();
+  const server = servers.locator(".settings-editor-row").first();
+  await server
+    .getByRole("textbox", { name: /标识|ID/, exact: true })
+    .fill("form-server");
+  await server
+    .getByRole("textbox", { name: /服务地址|Service URL/, exact: true })
+    .fill("https://mcp.example.com/mcp");
+  await server
+    .locator(
+      'select[aria-label$="添加配置项"], select[aria-label$="Add setting"]',
+    )
+    .selectOption("headers");
+  await server.getByRole("button", { name: /添加配置项|Add setting/ }).click();
+  const headers = server.locator('[data-editor-path="/mcp/servers/0/headers"]');
+  await headers.getByRole("button", { name: /添加条目|Add entry/ }).click();
+  await headers
+    .getByRole("textbox", { name: /名称|Name/ })
+    .fill("Authorization");
+  await headers
+    .locator('input[type="password"]')
+    .fill("isolated-plugin-editor-secret");
+  const hooks = page.locator('[data-editor-path="/hooks"]');
+  await hooks.getByRole("button", { name: /添加一项|Add item/ }).click();
+  await hooks
+    .getByRole("textbox", { name: /标识|ID/, exact: true })
+    .fill("form-audit");
+  await hooks
+    .getByRole("combobox", { name: /执行方式|Action kind/, exact: true })
+    .selectOption("audit");
+  const submits = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") submits.push(request);
+  });
+  await page.waitForTimeout(800);
+  expect(submits).toHaveLength(0);
+  await page.getByRole("button", { name: /保存插件|Save plugins/ }).click();
+  await expect(
+    page.locator("#plugin-form-editor .settings-value-editor"),
+  ).toBeVisible();
+  const stored = await (await page.request.get("/agent-plugins/config")).json();
+  expect(stored.plugins.mcp.servers[0].id).toBe("form-server");
+  expect(stored.plugins.mcp.servers[0].headers.Authorization).toBe(
+    "[UNCHANGED SECRET]",
+  );
+  expect(stored.plugins.hooks[0].kind).toBe("audit");
+  expect(await page.content()).not.toContain("isolated-plugin-editor-secret");
+  await page
+    .getByRole("button", { name: /高级：原始 JSON|Advanced raw JSON/ })
+    .click();
+  await expect(page.locator("#plugin-json")).toBeVisible();
+  const imported = JSON.parse(await page.locator("#plugin-json").inputValue());
+  imported.mcp.servers[0].timeout_seconds = 47;
+  await page.locator("#plugin-json").fill(JSON.stringify(imported));
+  await page.getByRole("button", { name: /表单编辑|Form editor/ }).click();
+  await page.getByRole("button", { name: /保存插件|Save plugins/ }).click();
+  const updated = await (
+    await page.request.get("/agent-plugins/config")
+  ).json();
+  expect(updated.plugins.mcp.servers[0].timeout_seconds).toBe(47);
+  expect(updated.plugins.mcp.servers[0].headers.Authorization).toBe(
+    "[UNCHANGED SECRET]",
+  );
+  await page.screenshot({
+    path: "test-results/settings-plugin-form.png",
+    fullPage: true,
+  });
+});
 
 test("autosave toggle and debounced number persist without navigation, then reset one field", async ({
   page,

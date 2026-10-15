@@ -16,8 +16,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.config import (
-    DYNAMIC_CONFIG_GROUPS,
-    DYNAMIC_CONFIG_LABELS,
     Settings,
     _cast_config_type,
     _get_field_type,
@@ -631,11 +629,27 @@ class ConfigCenterService:
     def _text(item, lang):
         from backend.webui.i18n import i18n
 
+        aliases = {
+            "enable_context_compression": "ai_enable_context_compression",
+            "context_compression_threshold": "ai_context_compression_threshold",
+            "activity_reasoning_capture_enabled": "ai_capture_reasoning",
+            "activity_request_response_capture_enabled": "ai_capture_request_response",
+            "activity_reasoning_provider_allowlist": "ai_reasoning_provider_allowlist",
+            "activity_reasoning_protocol_allowlist": "ai_reasoning_protocol_allowlist",
+            "activity_artifact_retention_days": "ai_artifact_retention_days",
+            "activity_artifact_encryption_key_id": "ai_artifact_key_id",
+            "activity_artifact_super_admin_read_enabled": "ai_super_admin_artifact_access",
+        }
         candidates = [
+            f"config_center.label.{item.key}",
             f"config.label.{item.key}",
             f"system_config.key_{item.key}",
             f"config.{item.key}",
         ]
+        if item.key in aliases:
+            candidates.insert(0, f"config.{aliases[item.key]}")
+        if item.storage == "section" and not item.path:
+            candidates.insert(0, f"config_center.group.{item.key}")
         if item.scope == "user":
             candidates.insert(0, f"settings.{item.key}")
         label = (
@@ -647,25 +661,34 @@ class ConfigCenterService:
                 label = translated
                 break
         if item.path:
-            leaf_label = i18n.t(f"config_center.field.{item.path[-1]}", lang=lang)
-            if leaf_label.startswith("config_center."):
-                leaf_label = item.path[-1].replace("_", " ")
-            label = " / ".join([*item.path[:-1], leaf_label])
+            parts = []
+            for part in item.path:
+                key = f"config_center.field.{part}"
+                translated = i18n.t(key, lang=lang)
+                parts.append(
+                    part.replace("_", " ") if translated == key else translated
+                )
+            label = " / ".join(parts)
             if item.storage == "binding":
                 label = i18n.t(f"config.ai_role_{item.path[0]}", lang=lang)
-        elif lang == "zh-CN" and label == item.key.replace("_", " "):
-            label = DYNAMIC_CONFIG_LABELS.get(item.key, label)
-        desc_key = (
-            f"config.desc.{item.key}"
-            if item.category != "system"
-            else f"system_config.key_{item.key}_desc"
-        )
-        description = i18n.t(desc_key, lang=lang)
-        if description == desc_key:
-            description = ""
-            for group in DYNAMIC_CONFIG_GROUPS.values():
-                if item.key in group["keys"] and lang == "zh-CN":
-                    description = group.get("descriptions", {}).get(item.key, "")
+        desc_keys = [
+            "config_center.help." + ".".join([item.key, *item.path]),
+            f"config.desc.{item.key}",
+            f"system_config.key_{item.key}_desc",
+            f"config.{item.key}_desc",
+        ]
+        if item.path:
+            desc_keys.insert(1, f"config_center.help.{item.path[-1]}")
+        if item.storage == "binding":
+            desc_keys.insert(0, "config_center.binding_help")
+        if item.key.startswith("activity_"):
+            desc_keys.append("config.ai_observability_capture_desc")
+        description = ""
+        for key in desc_keys:
+            translated = i18n.t(key, lang=lang)
+            if translated != key:
+                description = translated
+                break
         if (
             item.key == "strategy.issue_analysis"
             and item.path
@@ -677,6 +700,9 @@ class ConfigCenterService:
     async def describe(
         self, db, user, *, category=None, lang="zh-CN", search=False, model=None
     ):
+        from backend.services.config_form_schema import form_schema
+        from backend.webui.i18n import i18n
+
         allowed = self.allowed_fields(user)
         if model:
             if user.get("role") != "super_admin":
@@ -719,6 +745,21 @@ class ConfigCenterService:
                 "advanced": item.advanced,
                 "submission": "confirmed" if item.sensitive else "automatic",
             }
+            view["editorSchema"] = form_schema(item)
+            view["optionLabels"] = {}
+            for option in item.constraints.get("enum", []):
+                option_key = f"config_center.option.{option}"
+                translated = i18n.t(option_key, lang=lang)
+                if option == "" and item.key in {
+                    "output_language",
+                    "star_aid_summary_language",
+                }:
+                    translated = i18n.t(
+                        "config_center.follow_request_language", lang=lang
+                    )
+                view["optionLabels"][str(option)] = (
+                    str(option) if translated == option_key else translated
+                )
             if snapshot is not None:
                 view.update(self._state(item, user, snapshot, deployment))
             result.append(view)
@@ -951,7 +992,9 @@ class ConfigCenterService:
         try:
             await validate_billing_configuration(db, updates)
         except (BillingConfigurationError, BillingError) as exc:
-            raise ConfigError("invalid_value", detail="Invalid billing configuration") from exc
+            raise ConfigError(
+                "invalid_value", detail="Invalid billing configuration"
+            ) from exc
         result = await db.execute(
             select(AppConfig)
             .where(AppConfig.key_name.in_(Settings.model_fields))

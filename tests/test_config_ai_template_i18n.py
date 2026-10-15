@@ -128,5 +128,9 @@ def test_config_ai_model_selects_match_account_provider_controls():
     controller = (TEMPLATE_PATH.parent.parent / "assets/settings/center.js").read_text(
         encoding="utf-8"
     )
-    assert "function bindingEditor" in controller
-    assert "accounts.find(" in controller
+    assert 'from "./binding-editor.js"' in controller
+    editor = (
+        TEMPLATE_PATH.parent.parent / "assets/settings/binding-editor.js"
+    ).read_text(encoding="utf-8")
+    assert "function createBindingEditor" in editor
+    assert "accounts.find(" in editor

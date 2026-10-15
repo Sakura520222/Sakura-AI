@@ -24,6 +24,19 @@ are loaded. Search uses a role-filtered, value-free index of names, descriptions
 and keys in both languages. Groups collapse and advanced settings are initially
 closed. Business pages (tasks, Skills, billing, repositories, users) stay separate.
 Plugin permissions/credentials retain their dedicated editor, linked from Agent.
+AI role bindings use account/model rows with Add fallback, Remove and ordering
+buttons. Lists, Issue categories, label maps and repository overrides use typed
+forms; model thinking uses a mode selector. Incomplete rows stay local until
+valid, including when an earlier save completes. Existing values and unknown
+historical properties survive unrelated form edits. Built-in map names stay fixed
+because omitted built-ins inherit their defaults rather than deleting them.
+The dedicated plugin page also uses typed MCP, Hook, argument, header and scope
+forms. Its optional raw JSON editor is initially hidden; saving still requires
+the existing explicit submit, authorization, CSRF and masked-credential checks.
+
+| Desktop / 桌面 | Mobile / 手机 |
+| --- | --- |
+| ![AI fallback form on desktop](images/settings-fallback-desktop.png) | ![AI fallback form on mobile](images/settings-fallback-mobile.png) |
 
 Old GET routes redirect with their query parameters; old section bookmarks map to
 categories/groups. POST/API routes remain and use shared persistence services.
@@ -40,6 +53,9 @@ continues sharing system/section validation.
 from Settings definitions, existing registries, section defaults and model
 metadata. `backend/webui/assets/settings/contract.d.ts` documents the browser
 projection. Sensitive `value`, `default` and `inheritedValue` are always null;
+`editorSchema` describes complex controls and `optionLabels` localizes enum
+display text without changing the stored values. Schema hints derive from
+immutable defaults or the existing domain model and do not replace validation.
 `hasValue` conveys presence. Ordinary users receive no administrator descriptors.
 
 Authenticated endpoints:

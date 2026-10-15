@@ -33,11 +33,16 @@ export class FieldController {
     this.inflight = false;
     this.generation = 0;
     this.error = null;
+    this.localError = null;
     this.conflict = false;
     this.resetting = false;
   }
   get dirty() {
-    return this.resetting || !same(this.draft, this.saved);
+    return (
+      Boolean(this.localError) ||
+      this.resetting ||
+      !same(this.draft, this.saved)
+    );
   }
   notify() {
     this.changed(this);
@@ -46,6 +51,7 @@ export class FieldController {
     this.draft = value;
     this.generation++;
     this.error = null;
+    this.localError = null;
     this.resetting = false;
     this.cancel(this.timer);
     this.timer = null;
@@ -55,10 +61,21 @@ export class FieldController {
     if (immediate) void this.flush();
     else this.timer = this.schedule(() => this.flush(), this.debounce);
   }
+  invalidate(code) {
+    this.cancel(this.timer);
+    this.timer = null;
+    this.generation++;
+    this.draft = { invalidDraft: this.generation };
+    this.resetting = false;
+    this.localError = { code, local: true };
+    this.error = this.conflict ? this.error : this.localError;
+    this.state = this.conflict ? "failed" : "unsaved";
+    this.notify();
+  }
   composition(active) {
     this.composing = active;
     if (active) this.cancel(this.timer);
-    else this.edit(this.draft);
+    else if (!this.localError) this.edit(this.draft);
   }
   async flush({ confirmed = false } = {}) {
     this.cancel(this.timer);
@@ -67,6 +84,7 @@ export class FieldController {
       this.composing ||
       this.inflight ||
       this.conflict ||
+      (this.localError && !this.resetting) ||
       !this.dirty ||
       (this.field.sensitive && !confirmed)
     )
@@ -89,18 +107,20 @@ export class FieldController {
       );
       this.field = response;
       this.saved = response.value;
-      this.error = null;
+      this.error = this.localError;
       if (generation === this.generation) {
         this.draft = response.value;
         this.resetting = false;
       }
-      this.state = this.dirty
+      this.state = this.localError
         ? "unsaved"
-        : response.effect === "live"
-          ? "saved"
-          : response.effect;
+        : this.dirty
+          ? "unsaved"
+          : response.effect === "live"
+            ? "saved"
+            : response.effect;
     } catch (error) {
-      this.error = error;
+      this.error = error.status === 409 ? error : this.localError || error;
       this.conflict = error.status === 409;
       this.state = "failed";
     } finally {
@@ -111,8 +131,10 @@ export class FieldController {
     }
   }
   async reset() {
-    if (!this.field.resettable || this.inflight) return;
+    if (!this.field.resettable) return;
     this.generation++;
+    this.localError = null;
+    this.error = null;
     this.resetting = true;
     await this.flush();
   }
@@ -146,10 +168,12 @@ export class FieldController {
     this.resetting = false;
     this.conflict = false;
     this.error = null;
+    this.localError = null;
     this.state = "unchanged";
     this.notify();
   }
   retry() {
+    if (this.localError) return Promise.resolve();
     this.error = null;
     return this.flush({ confirmed: this.field.sensitive });
   }

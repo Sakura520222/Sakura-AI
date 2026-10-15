@@ -21,7 +21,15 @@ ASSET_DIR = Path(__file__).parent.parent / "assets" / "settings"
 
 @router.get("/settings-assets/{name}", include_in_schema=False)
 async def settings_asset(name: str):
-    if name not in {"center.js", "field-controller.js", "client.js", "center.css"}:
+    if name not in {
+        "center.js",
+        "field-controller.js",
+        "client.js",
+        "center.css",
+        "value-editor.js",
+        "binding-editor.js",
+        "plugin-editor.js",
+    }:
         raise HTTPException(404)
     return FileResponse(
         ASSET_DIR / name,

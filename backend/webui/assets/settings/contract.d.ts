@@ -18,6 +18,9 @@ export interface ConfigField {
   type: "boolean" | "integer" | "number" | "string" | "array" | "object";
   label: string;
   description: string;
+  /** Presentation-only JSON schema for an existing atomic value. */
+  editorSchema: Record<string, unknown> | null;
+  optionLabels: Record<string, string>;
   scope: "global" | "user";
   permission: "super_admin" | "authenticated";
   sensitive: boolean;

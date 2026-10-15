@@ -19,6 +19,87 @@ const deferred = () => {
   });
   return { promise, resolve, reject };
 };
+test("an incomplete structured row cannot save when an older request completes", async () => {
+  const pending = deferred(),
+    payloads = [];
+  const c = new FieldController(
+    { ...field },
+    {
+      save: (payload) => {
+        payloads.push(payload());
+        return payloads.length === 1
+          ? pending.promise
+          : Promise.resolve({
+              ...field,
+              value: payload().value,
+              version: "v3",
+            });
+      },
+    },
+  );
+  c.edit("valid", true);
+  c.invalidate("binding_incomplete");
+  c.composition(true);
+  c.composition(false);
+  pending.resolve({ ...field, value: "valid", version: "v2" });
+  await new Promise(setImmediate);
+  await c.flush();
+  await c.retry();
+  assert.equal(payloads.length, 1);
+  assert.equal(c.saved, "valid");
+  assert.equal(c.dirty, true);
+  assert.equal(c.state, "unsaved");
+  assert.equal(c.error.code, "binding_incomplete");
+  c.edit("complete", true);
+  await new Promise(setImmediate);
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[1].value, "complete");
+});
+test("reset and adopting the server value can recover an invalid local draft", async () => {
+  let reset = false;
+  const c = new FieldController(
+    { ...field },
+    {
+      save: async (_payload, resetting) => {
+        reset = resetting;
+        return { ...field, value: "default" };
+      },
+    },
+  );
+  c.invalidate("editor_duplicate_key");
+  await c.reset();
+  assert.equal(reset, true);
+  assert.equal(c.dirty, false);
+  assert.equal(c.localError, null);
+  c.invalidate("invalid_type");
+  c.acceptServer({ ...field });
+  assert.equal(c.dirty, false);
+  assert.equal(c.error, null);
+});
+test("choosing inheritance during a save queues reset with the committed version", async () => {
+  const pending = deferred(),
+    calls = [];
+  const c = new FieldController(
+    { ...field },
+    {
+      save: (payload, resetting) => {
+        calls.push({ ...payload(), resetting });
+        return calls.length === 1
+          ? pending.promise
+          : Promise.resolve({ ...field, value: "default", version: "v3" });
+      },
+    },
+  );
+  c.edit("selected mode", true);
+  await c.reset();
+  pending.resolve({ ...field, value: "selected mode", version: "v2" });
+  await new Promise(setImmediate);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].resetting, true);
+  assert.equal(calls[1].version, "v2");
+  assert.equal(c.saved, "default");
+  assert.equal(c.dirty, false);
+});
 test("debounce coalesces edits and IME never saves intermediate composition", async () => {
   let scheduled,
     calls = 0;

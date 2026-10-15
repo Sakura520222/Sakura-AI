@@ -14,6 +14,9 @@
   --setting-accent: #f9a8d4;
   color: #f1f5f9;
 }
+#configuration-center [hidden] {
+  display: none !important;
+}
 .settings-heading {
   display: flex;
   justify-content: space-between;
@@ -134,6 +137,93 @@
 .settings-controls {
   min-width: 0;
 }
+.settings-field-structured {
+  grid-template-columns: minmax(0, 1fr);
+}
+.settings-value-editor,
+.settings-binding-editor,
+.settings-editor-value,
+.settings-editor-object,
+.settings-fallback-list {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.settings-editor-row,
+.settings-editor-property,
+.settings-assignment {
+  min-width: 0;
+  border: 1px solid var(--setting-border);
+  border-radius: 0.5rem;
+  padding: 0.8rem;
+}
+.settings-editor-row:not(details) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.6rem;
+}
+.settings-editor-list {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 32rem;
+  overflow: auto;
+  padding: 0.2rem;
+}
+.settings-editor-property > label,
+.settings-editor-property > .settings-editor-value,
+.settings-assignment h4 {
+  margin-bottom: 0.5rem;
+}
+.settings-editor-property > summary,
+.settings-editor-row > summary {
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.settings-editor-property[open] > summary,
+.settings-editor-row[open] > summary {
+  margin-bottom: 0.8rem;
+}
+.settings-assignment-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.settings-assignment-fields label > input,
+.settings-assignment-fields label > select {
+  margin-top: 0.4rem;
+}
+.settings-editor-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+#configuration-center .settings-editor-button {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--setting-border);
+  border-radius: 0.35rem;
+  color: var(--setting-accent);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+}
+#configuration-center .settings-editor-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--setting-accent) 8%, transparent);
+}
+#configuration-center .settings-editor-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-editor-hint {
+  color: var(--setting-muted);
+  font-size: 0.8rem;
+}
+.settings-editor-property input[aria-invalid="true"],
+.settings-assignment [aria-invalid="true"] {
+  border-color: #be123c !important;
+}
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
@@ -206,6 +296,10 @@
   }
 }
 @media (max-width: 600px) {
+  .settings-assignment-fields,
+  .settings-editor-row:not(details) {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .settings-field {
     grid-template-columns: 1fr;
     gap: 0.8rem;

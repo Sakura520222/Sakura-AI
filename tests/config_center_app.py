@@ -27,9 +27,9 @@ from backend.webui.deps import (
     require_auth,
     require_super_admin,
 )
+from backend.webui.routes import agent_plugins, notifications, settings, system_config
 from backend.webui.routes import config as legacy_config
 from backend.webui.routes import config_center as pages
-from backend.webui.routes import notifications, settings, system_config
 
 temporary = tempfile.TemporaryDirectory(prefix="sakura-settings-e2e-")
 engine = create_async_engine(
@@ -81,6 +81,9 @@ async def lifespan(app):
 
     with (
         patch.object(
+            agent_plugins.AgentSkillService, "list_skills", AsyncMock(return_value=[])
+        ),
+        patch.object(
             legacy_config,
             "read_sandbox_capability_status",
             AsyncMock(return_value={"available": False, "egress_capability": "none"}),
@@ -107,6 +110,7 @@ app.include_router(pages.router)
 app.include_router(legacy_config.router)
 app.include_router(settings.router)
 app.include_router(system_config.router)
+app.include_router(agent_plugins.router)
 app.include_router(config_center.router, prefix="/api/v1")
 app.include_router(config.router, prefix="/api/v1")
 
