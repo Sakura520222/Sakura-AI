@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sakura AI">
+  <defs>
+    <linearGradient id="petal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffbed6"/>
+      <stop offset="1" stop-color="#d45d9a"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="57" fill="#fff1f7"/>
+  <g fill="url(#petal)" stroke="#c75e94" stroke-width="1.5">
+    <ellipse cx="64" cy="40" rx="16" ry="27"/>
+    <ellipse cx="64" cy="40" rx="16" ry="27" transform="rotate(72 64 64)"/>
+    <ellipse cx="64" cy="40" rx="16" ry="27" transform="rotate(144 64 64)"/>
+    <ellipse cx="64" cy="40" rx="16" ry="27" transform="rotate(216 64 64)"/>
+    <ellipse cx="64" cy="40" rx="16" ry="27" transform="rotate(288 64 64)"/>
+  </g>
+  <circle cx="64" cy="64" r="11" fill="#fff8d7" stroke="#e7af61" stroke-width="2"/>
+  <circle cx="64" cy="64" r="4" fill="#db9a49"/>
+</svg>
