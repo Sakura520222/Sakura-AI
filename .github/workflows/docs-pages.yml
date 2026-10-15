@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sakura-ai-docs-pages
+  group: sakura-ai-docs-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -26,17 +26,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
       - name: Install VitePress
-        run: npm install --prefix docs --no-audit --no-fund
+        run: npm ci --prefix docs --no-audit --no-fund
 
       - name: Build static site
         run: npm run build --prefix docs
@@ -52,6 +52,9 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: sakura-ai-docs-pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -2,7 +2,7 @@
 
 > Claude Code Agent 工具系统的 Python 实现参考与最佳实践。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

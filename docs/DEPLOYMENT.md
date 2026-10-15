@@ -2,7 +2,7 @@
 
 > Sakura AI 完整部署流程：Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard 与 Host Updater 守护进程。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
@@ -21,6 +21,8 @@
 ---
 
 ## 一、Docker 部署
+
+<a id="full-deployment"></a>
 
 ### 1.1 全量部署（MySQL + Redis 一并拉起）
 
@@ -122,6 +124,8 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f doc
 macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新，也不具备 Linux Agent OS 沙箱；请手动拉取目标镜像并重新运行 Compose。当前生产 Compose 需要 `SAKURA_SANDBOX_WORKSPACE_ROOT` 等由 `start.sh` 生成的部署身份，因此跨平台手工 Compose 仅适合 Agent 功能关闭的部署。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机；sandboxd 完整生命周期采用相同平台边界，且 Host Updater 要求 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
 首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。
+
+<a id="web-only-deployment"></a>
 
 ### 1.2 仅运行 Web 镜像（MySQL/Redis 自备）
 

@@ -2,7 +2,7 @@
 
 > Complete API reference for Android developers. All endpoints prefixed with `/api/v1`.
 
-← [Documentation Index](README.md) · [README](../README.md)
+← [Documentation Index](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

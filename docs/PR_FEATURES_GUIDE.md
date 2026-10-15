@@ -2,7 +2,7 @@
 
 > Sakura AI 与 Pull Request 内容增强和审查稳定性相关的功能说明，覆盖变更总结、依赖图、自动审查开关、compact diff 和 AI API 超时治理。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

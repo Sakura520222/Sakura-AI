@@ -2,7 +2,7 @@
 
 > Sakura AI 全部配置项的位置、键名与说明。普通动态配置可即时生效；应用时区等重启键保存后必须重启。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

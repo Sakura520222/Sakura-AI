@@ -2,7 +2,7 @@
 
 > Sakura AI 用户配额（PR 审查 / Issue 分析 / Agent 任务）的统计维度、UTC 自动重置机制与管理方式。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

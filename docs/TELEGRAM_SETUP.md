@@ -2,7 +2,7 @@
 
 > Telegram 是[统一通知中心](NOTIFICATION_CENTER.md)的可选 Provider 和一次性私聊绑定入口，支持按偏好投递业务事件及公告。账号登录、GitHub 身份、角色权限、配额、仓库和系统配置均在 WebUI 中管理。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
