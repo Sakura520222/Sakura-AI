@@ -129,21 +129,42 @@ async def test_waiting_cancel_does_not_acquire_or_consume_slot(capacity_db):
 
 
 @pytest.mark.asyncio
-async def test_nested_slot_is_reentrant_only_in_the_same_task(capacity_db):
+async def test_nested_slot_is_reentrant_only_in_the_same_task(capacity_db, monkeypatch):
     _, limiter, _, _ = capacity_db
+    # This checks task identity, not expiry after a slow CI scheduling interval.
+    instant = now_utc()
+    limiter.clock = lambda: instant
     entered = asyncio.Event()
-    async with limiter.slot("issue_analysis"):
-        async with limiter.slot("issue_analysis"):
+    child_attempted = asyncio.Event()
+    real_acquire = limiter.try_acquire
 
-            async def child():
-                async with limiter.slot("issue_analysis"):
-                    entered.set()
+    async def observe_acquisition(feature):
+        lease = await real_acquire(feature)
+        child_attempted.set()
+        return lease
 
-            task = asyncio.create_task(child())
-            await asyncio.sleep(0.03)
-            assert not entered.is_set()
-    await asyncio.wait_for(task, 1)
-    assert entered.is_set()
+    task = None
+    try:
+        async with limiter.slot("issue_analysis") as outer:
+            async with limiter.slot("issue_analysis") as nested:
+                assert nested is outer
+                monkeypatch.setattr(limiter, "try_acquire", observe_acquisition)
+
+                async def child():
+                    async with limiter.slot("issue_analysis"):
+                        entered.set()
+                        # Also wake the assertion if child reentry bypasses SQL.
+                        child_attempted.set()
+
+                task = asyncio.create_task(child())
+                await asyncio.wait_for(child_attempted.wait(), 10)
+                assert not entered.is_set()
+        await asyncio.wait_for(task, 10)
+        assert entered.is_set()
+    finally:
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

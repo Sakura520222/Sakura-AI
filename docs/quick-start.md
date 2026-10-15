@@ -10,13 +10,15 @@
 
 **适用场景：** 拥有可使用 Docker 与 systemd 的 Linux 服务器，希望部署 Web、MySQL、Redis、Host Updater 及 Agent 沙箱等完整能力。
 
+**宿主机要求：** Linux x86_64/arm64、glibc ≥ 2.36（如 Debian 12+、Ubuntu 24.04+），已安装 Docker，且 systemd 作为 PID 1 正常运行。Ubuntu 20.04/22.04、Debian 11 和 Alpine 不满足此全量部署的 Host Updater 要求；这些宿主机可在支持官方镜像的 Docker 环境中使用[仅 Web 容器方案](DEPLOYMENT.md#web-only-deployment)，并手动更新镜像。其他 CPU 架构需改用受支持的 x86_64/arm64 主机。
+
 运行前请先检查安装脚本内容，并了解它需要管理员权限。以下命令与仓库 [README](https://github.com/Sakura520222/Sakura-AI#readme) 中的稳定频道部署入口一致：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-安装过程包含镜像检查、数据库与沙箱组件的准备，不能等同于简单的单容器启动。需要手动下载并检查脚本时，使用[部署指南中的分步方式](DEPLOYMENT.md#11-全量部署mysql--redis-一并拉起)。
+安装过程包含镜像检查、数据库与沙箱组件的准备，不能等同于简单的单容器启动。需要手动下载并检查脚本时，使用[部署指南中的分步方式](DEPLOYMENT.md#full-deployment)。
 
 ::: tip 版本选择
 上述命令部署正式（stable）频道。开发版可能包含未发布或仍在变更的功能，生产环境应优先选用正式版。
@@ -24,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 ## 方式三：使用已有数据库
 
-已有 MySQL 和 Redis、只需要 Web 服务，或需要在 Windows/macOS 上运行的读者，请阅读[其他 Docker 方案](DEPLOYMENT.md#12-仅运行-web-镜像mysqlredis-自备)。
+已有 MySQL 和 Redis、只需要 Web 服务，或需要在 Windows/macOS 上运行的读者，请阅读[其他 Docker 方案](DEPLOYMENT.md#web-only-deployment)。
 
 单独运行 Web 容器不等于完整 Agent 沙箱部署。Windows/macOS 的仅容器环境不提供 Linux sandboxd 和 Host Updater。
 

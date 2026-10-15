@@ -440,7 +440,7 @@ ORM 监听不能拦截原始 SQL 或批量更新。
 [MySQL 官方说明](https://dev.mysql.com/doc/refman/8.4/en/stored-programs-logging.html)
 解释了 binlog 下的额外创建权限要求。
 
-仓库提供 [预安装 SQL](billing-mysql-guards.sql)，覆盖 12 张不可变表的 UPDATE /
+仓库提供 <a href="./billing-mysql-guards.sql" download>预安装 SQL</a>，覆盖 12 张不可变表的 UPDATE /
 DELETE，共 24 个触发器。导出脚本仅生成 SQL，不读取部署连接或连接数据库：
 
 ```bash
@@ -663,4 +663,4 @@ tests/test_billing_* 使用真实 SQL 持久化及独立连接并发，覆盖钱
 部署前还需在隔离 MySQL/PostgreSQL 运行迁移、触发器安装与锁等待验收，
 SQLite 并发证据不能当生产数据库实测证据。
 
-完整本地场景映射、命令和验证边界见 [验收证据](billing-2-acceptance.md)。
+完整本地场景映射、命令和验证边界见 [验收证据](https://github.com/Sakura520222/Sakura-AI/blob/develop/docs/billing-2-acceptance.md)。
