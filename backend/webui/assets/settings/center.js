@@ -1,5 +1,7 @@
 import { SettingsClient } from "./client.js";
 import { FieldController } from "./field-controller.js";
+import { createValueEditor } from "./value-editor.js";
+import { createBindingEditor } from "./binding-editor.js";
 
 const root = document.getElementById("configuration-center");
 const bootstrap = JSON.parse(
@@ -7,6 +9,7 @@ const bootstrap = JSON.parse(
 );
 const client = new SettingsClient(bootstrap.csrf);
 const controllers = new Map();
+const editors = new Map();
 let refreshGeneration = 0,
   modelGeneration = 0,
   languageGeneration = 0,
@@ -62,30 +65,18 @@ const dirty = () =>
   [...controllers.values()].some((c) => c.dirty || c.inflight);
 
 function readInput(input, field) {
+  if (input.settingsEditor) return input.settingsEditor.read();
   if (field.type === "boolean") return input.checked;
   if (field.type === "integer" || field.type === "number") {
     if (!input.value.trim() || !input.checkValidity())
       throw new Error("invalid_type");
     return Number(input.value);
   }
-  if (["array", "object"].includes(field.type)) {
-    try {
-      const value = JSON.parse(input.value);
-      if (
-        field.type === "array"
-          ? !Array.isArray(value)
-          : !value || typeof value !== "object" || Array.isArray(value)
-      )
-        throw new Error();
-      return value;
-    } catch {
-      throw new Error("invalid_json");
-    }
-  }
   return input.value;
 }
 function writeInput(input, field, value) {
-  if (field.type === "boolean") input.checked = Boolean(value);
+  if (input.settingsEditor) input.settingsEditor.write(value);
+  else if (field.type === "boolean") input.checked = Boolean(value);
   else
     input.value = field.sensitive
       ? ""
@@ -102,6 +93,7 @@ function renderField(field, parent) {
   article.dataset.field = field.id;
   const explanation = el("div");
   const label = el("label", field.label);
+  label.id = `label-${field.id}`;
   label.htmlFor = `input-${field.id}`;
   const description = el("p", field.description);
   description.id = `description-${field.id}`;
@@ -113,10 +105,34 @@ function renderField(field, parent) {
   explanation.append(source);
   const controls = el("div", null, "settings-controls");
   let input;
-  if (field.constraints.enum) {
+  if (
+    field.id.startsWith("binding/") ||
+    ["array", "object"].includes(field.type)
+  ) {
+    const editor = field.id.startsWith("binding/")
+      ? createBindingEditor({ field, accounts, t, label: field.label })
+      : createValueEditor({
+          value: field.value,
+          schema: field.editorSchema,
+          t,
+          label: field.label,
+          disabled: !field.writable,
+        });
+    input = editor.element;
+    input.settingsEditor = editor;
+    editors.set(field.id, editor);
+    input.setAttribute("aria-labelledby", label.id);
+    label.addEventListener("click", () =>
+      input.querySelector("input,select,textarea")?.focus(),
+    );
+    article.classList.add("settings-field-structured");
+  } else if (field.constraints.enum) {
     input = el("select");
     for (const option of field.constraints.enum) {
-      const node = el("option", String(option));
+      const node = el(
+        "option",
+        field.optionLabels?.[String(option)] || String(option),
+      );
       if (field.key === "output_language" && option === "") {
         node.dataset.centerText = "follow_request_language";
         node.textContent = t("follow_request_language");
@@ -128,7 +144,7 @@ function renderField(field, parent) {
     input = el("input");
     input.type = "checkbox";
   } else if (
-    ["array", "object"].includes(field.type) ||
+    /prompt|template/.test(field.path.at(-1) || "") ||
     (typeof field.value === "string" &&
       (field.value.includes("\n") || field.value.length > 160))
   )
@@ -245,10 +261,10 @@ function renderField(field, parent) {
       submit.textContent = t("confirmed");
       status.dataset.state = state.state;
       status.textContent = state.error
-        ? `${t("failed")}: ${t(state.error.code || "network")}${state.error.detail ? " " + state.error.detail : ""}`
+        ? `${t(state.error.local ? "unsaved" : "failed")}: ${t(state.error.code || "network")}${state.error.detail ? " " + state.error.detail : ""}`
         : t(state.state);
       input.setAttribute("aria-invalid", state.error ? "true" : "false");
-      retry.hidden = !state.error || state.conflict;
+      retry.hidden = !state.error || state.conflict || state.error.local;
       reload.hidden = !state.conflict;
       reset.disabled =
         state.inflight ||
@@ -269,18 +285,19 @@ function renderField(field, parent) {
     try {
       const value =
         field.sensitive && !input.value ? null : readInput(input, field);
+      if (value === null && field.type === "object" && field.default === null) {
+        void controller.reset();
+        return;
+      }
       controller.edit(
         value,
         event.type === "change" &&
-          (field.type === "boolean" || input.tagName === "SELECT"),
+          (field.type === "boolean" ||
+            event.target?.tagName === "SELECT" ||
+            event.target?.type === "checkbox"),
       );
     } catch (error) {
-      controller.cancel(controller.timer);
-      controller.draft = input.value;
-      controller.generation++;
-      controller.error = { code: error.message };
-      controller.state = "failed";
-      controller.notify();
+      controller.invalidate(error.message);
     }
   };
   input.addEventListener("input", edit);
@@ -292,11 +309,10 @@ function renderField(field, parent) {
     controller.composing = false;
     edit({ type: "input" });
   });
-  input.addEventListener("blur", () => {
+  input.addEventListener("focusout", (event) => {
+    if (input.contains(event.relatedTarget)) return;
     if (!controller.error) void controller.flush();
   });
-  if (field.id.startsWith("binding/"))
-    bindingEditor(controls, input, controller);
   if (field.key === "star_aid_github_app_slug") {
     actions.append(
       button(t("fetch_slug"), async () => {
@@ -348,106 +364,6 @@ function renderField(field, parent) {
       }),
     );
   }
-}
-
-function bindingEditor(controls, input, controller) {
-  input.hidden = true;
-  const editor = el("div"),
-    primary = el("div"),
-    account = el("select"),
-    model = el("input"),
-    fallback = el("textarea");
-  account.setAttribute("aria-label", t("account"));
-  account.dataset.bindingAccount = controller.field.id;
-  model.setAttribute("aria-label", t("model_id"));
-  fallback.setAttribute("aria-label", t("fallback"));
-  const empty = el("option", t("select_account"));
-  empty.value = "";
-  account.append(empty);
-  if (controller.field.id !== "binding/main") {
-    const option = el("option", t("follow_main"));
-    option.value = "main";
-    account.append(option);
-  }
-  for (const item of accounts) {
-    const option = el("option", item.name);
-    option.value = item.id;
-    account.append(option);
-  }
-  const datalist = el("datalist");
-  datalist.id = `models-${controller.field.id}`;
-  model.setAttribute("list", datalist.id);
-  const sync = (value) => {
-    const v = value || {};
-    account.value = v.primary?.account || "";
-    model.value = v.primary?.model || "";
-    fallback.value = JSON.stringify(v.fallback || [], null, 2);
-  };
-  sync(controller.draft);
-  const options = () => {
-    datalist.replaceChildren();
-    for (const value of accounts.find((item) => item.id === account.value)
-      ?.models || []) {
-      const option = el("option");
-      option.value = value;
-      datalist.append(option);
-    }
-  };
-  options();
-  const change = (immediate) => {
-    try {
-      const list = JSON.parse(fallback.value);
-      if (!Array.isArray(list)) throw new Error();
-      const value = {
-        primary: { account: account.value, model: model.value },
-        fallback: list,
-      };
-      input.value = JSON.stringify(value);
-      controller.edit(value, immediate);
-    } catch {
-      controller.cancel(controller.timer);
-      controller.error = { code: "invalid_json" };
-      controller.state = "failed";
-      controller.draft = input.value + " ";
-      controller.notify();
-    }
-  };
-  account.addEventListener("change", () => {
-    model.value =
-      account.value === "main"
-        ? "follow"
-        : accounts.find((item) => item.id === account.value)?.default_model ||
-          "";
-    options();
-    change(true);
-  });
-  for (const node of [model, fallback]) {
-    node.addEventListener("input", () => change(false));
-    node.addEventListener("compositionstart", () =>
-      controller.composition(true),
-    );
-    node.addEventListener("compositionend", () => {
-      controller.composing = false;
-      change(false);
-    });
-    node.addEventListener("blur", () => {
-      if (!controller.error) void controller.flush();
-    });
-  }
-  const notify = controller.changed;
-  controller.changed = (state) => {
-    notify(state);
-    if (!state.dirty && !state.composing) sync(state.saved);
-  };
-  primary.append(
-    el("p", t("account")),
-    account,
-    el("p", t("model_id")),
-    model,
-    datalist,
-  );
-  editor.append(primary, el("p", t("fallback")), fallback);
-  controls.prepend(editor);
 }
 
 function renderFields(fields, target) {
@@ -527,7 +443,11 @@ function highlight() {
     if (parent.tagName === "DETAILS") parent.open = true;
   target.classList.add("highlight");
   target.scrollIntoView({ block: "center" });
-  target.querySelector("input,select,textarea")?.focus({ preventScroll: true });
+  target
+    .querySelector(
+      "input:not([disabled]),select:not([disabled]),textarea:not([disabled])",
+    )
+    ?.focus({ preventScroll: true });
 }
 function applyTheme(theme) {
   window.dispatchEvent(new CustomEvent("sakura-theme", { detail: theme }));
@@ -594,9 +514,12 @@ async function changeLanguage(value) {
     const controller = controllers.get(field.id);
     if (!controller) continue;
     controller.field.label = field.label;
-    document
-      .getElementById(`input-${field.id}`)
-      ?.labels?.forEach((label) => (label.textContent = field.label));
+    const label = document.getElementById(`label-${field.id}`);
+    if (label) label.textContent = field.label;
+    const input = document.getElementById(`input-${field.id}`);
+    for (const option of input?.options || []) {
+      option.textContent = field.optionLabels?.[option.value] || option.value;
+    }
     const description = document.getElementById(`description-${field.id}`);
     if (description) description.textContent = field.description;
     controller.notify();
@@ -696,19 +619,7 @@ document.addEventListener("configuration-accounts-changed", async () => {
       credentials: "same-origin",
     });
     accounts = (await response.json()).data?.accounts || [];
-    for (const select of document.querySelectorAll("[data-binding-account]")) {
-      const selected = select.value;
-      select.replaceChildren();
-      const options = [{ id: "", name: t("select_account") }];
-      if (select.dataset.bindingAccount !== "binding/main")
-        options.push({ id: "main", name: t("follow_main") });
-      for (const item of [...options, ...accounts]) {
-        const option = el("option", item.name);
-        option.value = item.id;
-        select.append(option);
-      }
-      select.value = selected;
-    }
+    for (const editor of editors.values()) editor.setAccounts?.(accounts);
   } catch (error) {
     showError(error);
   }

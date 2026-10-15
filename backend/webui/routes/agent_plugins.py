@@ -11,6 +11,7 @@ from backend.core.config import get_settings
 from backend.models.database import AppConfig
 from backend.services.agent_team.capability_policy import PermissionProfile
 from backend.services.agent_team.plugin_config import (
+    HarnessPluginConfig,
     PluginConfigError,
     public_plugin_config,
     read_plugin_config,
@@ -27,7 +28,7 @@ from backend.webui.deps import (
     toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import detect_language, i18n
 
 router = APIRouter(prefix="/agent-plugins", tags=["WebUI Agent Plugins"])
 
@@ -58,6 +59,25 @@ async def plugins_page(
     except PluginConfigError:
         raise HTTPException(503, "plugin_configuration_unavailable") from None
     skills = await AgentSkillService().list_skills(db)
+    schema = HarnessPluginConfig.model_json_schema()
+    server_fields = schema["$defs"]["MCPServerConfig"]["properties"]
+    server_fields["timeout_seconds"]["default"] = (
+        get_settings().agent_team_mcp_io_timeout_seconds
+    )
+    server_fields["headers"]["additionalProperties"]["format"] = "password"
+    for key in ("id", "url"):
+        server_fields[key]["minLength"] = 1
+    schema["$defs"]["HookConfig"]["properties"]["id"]["minLength"] = 1
+    lang = detect_language(user_prefs)
+    scopes = schema["properties"]["mcp_repository_scopes"]
+    scopes["x-keyLabel"] = "editor_server_id"
+    scopes["description"] = i18n.t("agent_plugins.scope_help", lang=lang)
+    for choice, key in zip(
+        scopes["additionalProperties"]["anyOf"],
+        ("scope_selected", "scope_all"),
+        strict=True,
+    ):
+        choice["x-label"] = i18n.t(f"agent_plugins.{key}", lang=lang)
     return render_template(
         "agent_plugins.html",
         request,
@@ -66,6 +86,15 @@ async def plugins_page(
         active_page="agent_plugins",
         csrf_token=get_csrf_serializer().dumps({}),
         plugin_json=json.dumps(state["plugins"], indent=2, ensure_ascii=False),
+        plugin_editor={
+            "value": state["plugins"],
+            "schema": schema,
+            "label": i18n.t("agent_plugins.editor", lang=lang),
+            "messages": {
+                **i18n.namespace("config_center", lang),
+                **i18n.namespace("agent_plugins.form", lang),
+            },
+        },
         plugins=state["plugins"],
         profile=state["profile"],
         profiles=[p.value for p in PermissionProfile],
