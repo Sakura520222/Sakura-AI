@@ -77,7 +77,6 @@ deploy_key
 deploy.py
 .deploy_state.json
 .claude/
-CLAUDE.md
 node_modules/
 tests/webui/test-results/
 tests/webui/playwright-report/
