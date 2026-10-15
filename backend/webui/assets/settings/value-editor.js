@@ -22,6 +22,31 @@ const invalid = (code = "editor_incomplete", input) => {
   throw error;
 };
 
+/** Keep translation updates on live nodes, without replacing editable controls. */
+const translationUpdates = Symbol("settingsEditorTranslations");
+export function createEditorLocalizer(root) {
+  const bind = (element, update) => {
+    (element[translationUpdates] ||= []).push(update);
+    update();
+    return element;
+  };
+  return {
+    text: (element, read) => {
+      const text = document.createTextNode("");
+      element.append(text);
+      return bind(element, () => {
+        text.data = read();
+      });
+    },
+    attribute: (element, name, read) =>
+      bind(element, () => element.setAttribute(name, read())),
+    refresh: (element = root) => {
+      for (const node of [element, ...element.querySelectorAll("*")])
+        for (const update of node[translationUpdates] || []) update();
+    },
+  };
+}
+
 export function createValueEditor({
   value,
   schema = {},
@@ -31,8 +56,11 @@ export function createValueEditor({
 }) {
   const element = node("div", null, "settings-value-editor");
   const prefix = `value-editor-${editorSequence++}`;
+  const localizer = createEditorLocalizer(element);
+  const localized = (tag, read, className) =>
+    localizer.text(node(tag, null, className), read);
   element.setAttribute("role", "group");
-  element.setAttribute("aria-label", label);
+  localizer.attribute(element, "aria-label", () => label);
   const definitions = schema.$defs || {};
   let sequence = 0;
   const resolve = (spec) =>
@@ -56,11 +84,12 @@ export function createValueEditor({
   };
   const emit = () =>
     element.dispatchEvent(new Event("input", { bubbles: true }));
-  const action = (key, run, name = "") => {
-    const button = node("button", t(key), "settings-editor-button");
+  const action = (key, run, name) => {
+    const button = localized("button", () => t(key), "settings-editor-button");
     button.type = "button";
     button.disabled = disabled;
-    if (name) button.setAttribute("aria-label", `${t(key)}: ${name}`);
+    if (name)
+      localizer.attribute(button, "aria-label", () => `${t(key)}: ${name()}`);
     button.addEventListener("click", () => {
       run();
       emit();
@@ -112,12 +141,17 @@ export function createValueEditor({
     if (choices) {
       const select = node("select"),
         body = node("div");
-      select.setAttribute("aria-label", `${name}: ${t("editor_value_type")}`);
+      localizer.attribute(
+        select,
+        "aria-label",
+        () => `${name()}: ${t("editor_value_type")}`,
+      );
       select.disabled = disabled;
       choices.forEach((choice, index) => {
-        const option = node(
+        const option = localized(
           "option",
-          resolve(choice)["x-label"] ||
+          () =>
+            resolve(choice)["x-label"] ||
             t(`editor_type_${resolve(choice).type || "object"}`),
         );
         option.value = String(index);
@@ -154,7 +188,7 @@ export function createValueEditor({
     const type = spec.type || kind(current);
     if (type === "null") {
       container.append(
-        node("span", t("editor_not_set"), "settings-editor-hint"),
+        localized("span", () => t("editor_not_set"), "settings-editor-hint"),
       );
       return { element: container, read: () => null };
     }
@@ -179,20 +213,20 @@ export function createValueEditor({
         );
         if (object) {
           rowElement.open = opened;
-          const summary = node(
+          let title = entry?.name || entry?.id;
+          const ordinal = rows.length + 1;
+          const summary = localized(
             "summary",
-            entry?.name ||
-              entry?.id ||
-              `${t("editor_item")} ${rows.length + 1}`,
+            () =>
+              title ||
+              `${t("editor_item")} ${rows.findIndex((row) => row.element === rowElement) + 1 || ordinal}`,
           );
           rowElement.append(summary);
           rowElement.addEventListener("input", () => {
             try {
               const v = child.read();
-              summary.textContent =
-                v.name ||
-                v.id ||
-                `${t("editor_item")} ${rows.indexOf(row) + 1}`;
+              title = v.name || v.id;
+              localizer.refresh(summary);
             } catch {
               /* Keep the draft title. */
             }
@@ -215,7 +249,8 @@ export function createValueEditor({
             ...child,
             read: () => {
               const value = child.read();
-              if (pending && !value.trim()) invalid();
+              if (pending && typeof value === "string" && !value.trim())
+                invalid();
               pending = false;
               return value;
             },
@@ -247,7 +282,11 @@ export function createValueEditor({
         list.append(rowElement);
         update();
       };
-      const empty = node("p", t("editor_empty"), "settings-editor-hint");
+      const empty = localized(
+        "p",
+        () => t("editor_empty"),
+        "settings-editor-hint",
+      );
       const addButton = action(
         "editor_add",
         () => {
@@ -281,28 +320,31 @@ export function createValueEditor({
         let summary;
         if (dynamic) {
           rowElement.open = opened;
-          summary = node("summary", key || t("editor_new_entry"));
-          rowElement.append(summary);
-          const keyLabel = node("label", t(spec["x-keyLabel"] || "editor_key"));
           keyInput.value = key;
+          summary = localized(
+            "summary",
+            () => keyInput.value || t("editor_new_entry"),
+          );
+          rowElement.append(summary);
+          const keyLabel = localized("label", () =>
+            t(spec["x-keyLabel"] || "editor_key"),
+          );
           keyInput.required = true;
           keyInput.disabled = disabled || spec["x-fixedKeys"]?.includes(key);
-          keyInput.setAttribute(
+          localizer.attribute(
+            keyInput,
             "aria-label",
-            `${name}: ${t(spec["x-keyLabel"] || "editor_key")}`,
+            () => `${name()}: ${t(spec["x-keyLabel"] || "editor_key")}`,
           );
           keyInput.addEventListener("input", () => {
-            summary.textContent = keyInput.value || t("editor_new_entry");
+            localizer.refresh(summary);
           });
           keyLabel.append(keyInput);
           rowElement.append(keyLabel);
         }
-        const label = dynamic ? null : node("label", text(key));
-        const child = build(
-          entry,
-          property,
-          `${path}/${key}`,
-          dynamic ? key || name : text(key),
+        const label = dynamic ? null : localized("label", () => text(key));
+        const child = build(entry, property, `${path}/${key}`, () =>
+          dynamic ? keyInput.value || name() : text(key),
         );
         if (label) {
           const input = child.element.matches("input,select,textarea")
@@ -328,7 +370,7 @@ export function createValueEditor({
                 rowElement.remove();
                 updateOptions();
               },
-              dynamic ? key || name : text(key),
+              () => (dynamic ? keyInput.value || name() : text(key)),
             ),
           );
         }
@@ -337,14 +379,18 @@ export function createValueEditor({
         return row;
       };
       const optional = node("select");
-      optional.setAttribute("aria-label", `${name}: ${t("editor_add_field")}`);
+      localizer.attribute(
+        optional,
+        "aria-label",
+        () => `${name()}: ${t("editor_add_field")}`,
+      );
       optional.disabled = disabled;
       const updateOptions = () => {
         optional.replaceChildren();
         for (const key of Object.keys(properties).filter(
           (key) => !rows.some((row) => row.key === key),
         )) {
-          const option = node("option", text(key));
+          const option = localized("option", () => text(key));
           option.value = key;
           optional.append(option);
         }
@@ -415,7 +461,7 @@ export function createValueEditor({
     if (spec.enum || "const" in spec) {
       input = node("select");
       for (const value of spec.enum || [spec.const]) {
-        const option = node("option", optionText(value));
+        const option = localized("option", () => optionText(value));
         option.value = String(value);
         input.append(option);
       }
@@ -451,7 +497,7 @@ export function createValueEditor({
       if (spec.format === "password") input.autocomplete = "new-password";
     }
     input.disabled = disabled || "const" in spec;
-    input.setAttribute("aria-label", name);
+    localizer.attribute(input, "aria-label", name);
     input.dataset.editorPath = path;
     return {
       element: input,
@@ -488,9 +534,17 @@ export function createValueEditor({
         /* A reset replaces invalid drafts. */
       }
     }
-    root = build(value, schema, "", label);
+    root = build(value, schema, "", () => label);
     element.replaceChildren(root.element);
   };
   write(value);
-  return { element, read: () => root.read(), write };
+  return {
+    element,
+    read: () => root.read(),
+    write,
+    relabel: (nextLabel = label) => {
+      label = nextLabel;
+      localizer.refresh();
+    },
+  };
 }

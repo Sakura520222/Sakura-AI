@@ -1,4 +1,6 @@
 /** Account/model rows edit one versioned role binding, including its ordered fallbacks. */
+import { createEditorLocalizer } from "./value-editor.js";
+
 export function createBindingEditor({ field, accounts, t, label }) {
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
@@ -7,8 +9,11 @@ export function createBindingEditor({ field, accounts, t, label }) {
     return node;
   };
   const element = el("div", null, "settings-binding-editor");
+  const localizer = createEditorLocalizer(element);
+  const localized = (tag, read, className) =>
+    localizer.text(el(tag, null, className), read);
   element.setAttribute("role", "group");
-  element.setAttribute("aria-label", label);
+  localizer.attribute(element, "aria-label", () => label);
   const followAllowed = field.id !== "binding/main";
   let sequence = 0,
     primary,
@@ -17,7 +22,7 @@ export function createBindingEditor({ field, accounts, t, label }) {
   const emit = () =>
     element.dispatchEvent(new Event("input", { bubbles: true }));
   const action = (key, run) => {
-    const node = el("button", t(key), "settings-editor-button");
+    const node = localized("button", () => t(key), "settings-editor-button");
     node.type = "button";
     node.addEventListener("click", () => {
       run();
@@ -36,13 +41,15 @@ export function createBindingEditor({ field, accounts, t, label }) {
   function assignment(entry, fallback = false) {
     const row = el("div", null, "settings-assignment");
     row.dataset.assignment = fallback ? "fallback" : "primary";
-    const title = el("h4", t("primary_assignment")),
+    const title = fallback
+        ? el("h4")
+        : localized("h4", () => t("primary_assignment")),
       account = el("select"),
       model = el("input"),
       datalist = el("datalist");
     datalist.id = `binding-models-${field.id}-${sequence++}`;
     model.setAttribute("list", datalist.id);
-    model.placeholder = t("model_id");
+    localizer.attribute(model, "placeholder", () => t("model_id"));
     let initialized = false;
     const options = () => {
       const selected = initialized
@@ -82,10 +89,10 @@ export function createBindingEditor({ field, accounts, t, label }) {
       model.disabled = selected === "main";
       if (selected === "main") model.value = t("follow_main");
     };
-    const accountLabel = el("label", t("account")),
-      modelLabel = el("label", t("model_id"));
-    account.setAttribute("aria-label", t("account"));
-    model.setAttribute("aria-label", t("model_id"));
+    const accountLabel = localized("label", () => t("account")),
+      modelLabel = localized("label", () => t("model_id"));
+    localizer.attribute(account, "aria-label", () => t("account"));
+    localizer.attribute(model, "aria-label", () => t("model_id"));
     accountLabel.append(account);
     modelLabel.append(model);
     model.value = entry.model || "";
@@ -140,7 +147,11 @@ export function createBindingEditor({ field, accounts, t, label }) {
     }
     return result;
   }
-  const empty = el("p", t("fallback_empty"), "settings-editor-hint");
+  const empty = localized(
+    "p",
+    () => t("fallback_empty"),
+    "settings-editor-hint",
+  );
   const add = action("add_fallback", () => {
     const row = assignment({}, true);
     fallbacks.push(row);
@@ -160,8 +171,8 @@ export function createBindingEditor({ field, accounts, t, label }) {
     list.replaceChildren(...fallbacks.map((row) => row.element));
     element.replaceChildren(
       primary.element,
-      el("h4", t("fallback")),
-      el("p", t("fallback_help"), "settings-editor-hint"),
+      localized("h4", () => t("fallback")),
+      localized("p", () => t("fallback_help"), "settings-editor-hint"),
       empty,
       list,
       add,
@@ -172,6 +183,13 @@ export function createBindingEditor({ field, accounts, t, label }) {
   return {
     element,
     write,
+    relabel: (nextLabel = label) => {
+      label = nextLabel;
+      localizer.refresh();
+      primary.options();
+      fallbacks.forEach((row) => row.options());
+      update();
+    },
     setAccounts: (next) => {
       accounts = next;
       primary.options();

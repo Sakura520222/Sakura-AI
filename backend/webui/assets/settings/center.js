@@ -517,6 +517,7 @@ async function changeLanguage(value) {
     const label = document.getElementById(`label-${field.id}`);
     if (label) label.textContent = field.label;
     const input = document.getElementById(`input-${field.id}`);
+    editors.get(field.id)?.relabel(field.label);
     for (const option of input?.options || []) {
       option.textContent = field.optionLabels?.[option.value] || option.value;
     }
