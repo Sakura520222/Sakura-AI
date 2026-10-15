@@ -21,6 +21,258 @@ async function configuration(page, category) {
 const saved = async (item) =>
   expect(item.locator(".settings-status")).toContainText(/已保存|Saved/);
 
+test("language changes relabel nested editors without replacing incomplete drafts", async ({
+  page,
+}) => {
+  const locales = {};
+  for (const language of ["zh-CN", "en"]) {
+    const read = async (query) =>
+      (
+        await page.request.get(
+          `/api/v1/config-center?${query}&language=${language}`,
+        )
+      ).json();
+    const [issue, ai, model] = await Promise.all([
+      read("category=issue"),
+      read("category=ai"),
+      read("category=ai&provider=openai&model=locale-test"),
+    ]);
+    const categories = issue.fields.find(
+      (field) => field.id === "section/strategy.issue_analysis/categories",
+    );
+    const binding = ai.fields.find((field) => field.id === "binding/summary");
+    const thinking = model.fields.find((field) =>
+      field.id.endsWith("/reasoning_params/thinking"),
+    );
+    locales[language] = {
+      messages: ai.messages,
+      groups: { ...issue.groups, ...ai.groups, ...model.groups },
+      fields: [
+        {
+          ...categories,
+          value: [
+            {
+              name: "Existing category",
+              description: "Existing description",
+              keywords: [],
+            },
+          ],
+        },
+        {
+          ...binding,
+          value: {
+            primary: { account: "main", model: "follow" },
+            fallback: [{ account: "main", model: "follow" }],
+          },
+        },
+        { ...thinking, value: { type: "adaptive" } },
+      ],
+    };
+  }
+  // Exercise a mixed settings surface using real descriptors and the real language save.
+  // The current personal page normally contains scalars only.
+  await page.route("**/api/v1/config-center?**", async (route) => {
+    const request = route.request(),
+      url = new URL(request.url());
+    if (
+      request.method() !== "GET" ||
+      url.searchParams.get("category") !== "personal"
+    )
+      return route.continue();
+    const response = await route.fetch(),
+      data = await response.json();
+    const locale = locales[url.searchParams.get("language") || "zh-CN"];
+    await route.fulfill({
+      response,
+      json: {
+        ...data,
+        groups: { ...data.groups, ...locale.groups },
+        fields: [...data.fields, ...locale.fields],
+      },
+    });
+  });
+  await ready(page, "personal");
+  const categories = row(page, "section/strategy.issue_analysis/categories");
+  const binding = row(page, "binding/summary");
+  const thinking = row(
+    page,
+    "model/openai/locale-test/reasoning_params/thinking",
+  );
+  await expand(categories);
+  await expand(binding);
+  await expand(thinking);
+  await categories
+    .getByRole("button", { name: /添加一项|Add item/ })
+    .first()
+    .click();
+  const category = categories.locator(".settings-editor-list > details").last();
+  await category
+    .getByRole("textbox", { name: "说明", exact: true })
+    .fill("未完成的分类草稿");
+  await binding.getByRole("button", { name: /添加回退|Add fallback/ }).click();
+  const fallback = binding.locator('[data-assignment="fallback"]').last();
+  await fallback.locator("input").fill("unfinished/custom-model");
+  const categoryInput = await category
+    .getByRole("textbox", { name: "说明", exact: true })
+    .elementHandle();
+  const modelInput = await fallback.locator("input").elementHandle();
+  await fallback
+    .locator("input")
+    .evaluate((node) => node.setSelectionRange(2, 7));
+  const writes = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH") writes.push(request.postDataJSON().field);
+  });
+  const language = row(page, "personal/language").locator("select");
+  for (const code of ["en", "zh-CN"]) {
+    const { messages, fields } = locales[code];
+    await language.selectOption(code);
+    await expect(page.locator("html")).toHaveAttribute("lang", code);
+    await expect(
+      binding.getByRole("button", { name: messages.add_fallback, exact: true }),
+    ).toBeVisible();
+    await expect(
+      category.getByRole("textbox", {
+        name: messages["field.description"],
+        exact: true,
+      }),
+    ).toHaveValue("未完成的分类草稿");
+    await expect(category.locator(":scope > summary")).toHaveText(
+      `${messages.editor_item} 2`,
+    );
+    await expect(
+      category.getByRole("button", {
+        name: `${messages.editor_add}: ${messages["field.keywords"]}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      category.getByText(messages.editor_empty, { exact: true }),
+    ).toBeVisible();
+    await expect(thinking.locator('option[value="adaptive"]')).toHaveText(
+      messages["option.adaptive"],
+    );
+    await expect(thinking.locator('option[value="0"]')).toHaveText(
+      messages.editor_type_null,
+    );
+    await expect(thinking.locator("select").first()).toHaveAttribute(
+      "aria-label",
+      `${fields[2].label}: ${messages.editor_value_type}`,
+    );
+    await expect(fallback.locator("input")).toHaveAttribute(
+      "placeholder",
+      messages.model_id,
+    );
+    await expect(fallback.locator("input")).toHaveAttribute(
+      "aria-label",
+      messages.model_id,
+    );
+    await expect(fallback.locator('option[value=""]')).toHaveText(
+      messages.select_account,
+    );
+    await expect(
+      fallback.getByRole("button", {
+        name: messages.remove_fallback,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      binding.locator('[data-assignment="primary"] input'),
+    ).toHaveValue(messages.follow_main);
+    await expect(fallback.locator("input")).toHaveValue(
+      "unfinished/custom-model",
+    );
+    await expect(category).toHaveAttribute("open", "");
+    expect(await categoryInput.evaluate((node) => node.isConnected)).toBe(true);
+    expect(await modelInput.evaluate((node) => node.isConnected)).toBe(true);
+    await expect(fallback.locator("input")).toBeFocused();
+    expect(
+      await modelInput.evaluate((node) => [
+        node.selectionStart,
+        node.selectionEnd,
+      ]),
+    ).toEqual([2, 7]);
+  }
+  await page.waitForTimeout(800);
+  expect(writes).toEqual(["personal/language", "personal/language"]);
+});
+
+test("untyped array rows persist every non-string type and still reject blank drafts", async ({
+  page,
+}) => {
+  await ready(page);
+  const overrides = row(page, "section/strategy.review_policy/repo_overrides");
+  await expand(overrides);
+  await overrides.getByRole("button", { name: /添加条目|Add entry/ }).click();
+  const repo = overrides
+    .locator(
+      ".settings-value-editor > .settings-editor-value > .settings-editor-object > details",
+    )
+    .last();
+  await repo.locator(":scope > label > input").fill("review/typed-values");
+  const repoBody = repo.locator(":scope > .settings-editor-value");
+  await repoBody.getByRole("button", { name: /添加条目|Add entry/ }).click();
+  const property = repoBody
+    .locator(":scope > .settings-editor-object > details")
+    .last();
+  await property.locator(":scope > label > input").fill("values");
+  await property
+    .locator(":scope > .settings-editor-value > select")
+    .selectOption("3");
+  await saved(overrides);
+  const array = property.locator(
+    ":scope > .settings-editor-value > div > .settings-editor-value",
+  );
+  const expected = [];
+  for (const [type, value] of [
+    ["1", 0],
+    ["2", false],
+    ["4", {}],
+    ["3", []],
+    ["5", null],
+  ]) {
+    await array.locator(":scope > button").click();
+    const item = array
+      .locator(":scope > .settings-editor-list > .settings-editor-row")
+      .last();
+    await item
+      .locator(":scope > .settings-editor-value > select")
+      .selectOption(type);
+    await saved(overrides);
+    expected.push(value);
+    const fields = (await configuration(page, "review")).fields;
+    expect(
+      fields.find(
+        (field) => field.id === "section/strategy.review_policy/repo_overrides",
+      ).value["review/typed-values"].values,
+    ).toEqual(expected);
+  }
+  await array.locator(":scope > button").click();
+  const input = array
+    .locator(":scope > .settings-editor-list > .settings-editor-row")
+    .last()
+    .locator("input");
+  await input.fill("   ");
+  await page.waitForTimeout(800);
+  await expect(overrides.locator(".settings-status")).toContainText(
+    /尚未保存|Unsaved/,
+  );
+  const fields = (await configuration(page, "review")).fields;
+  expect(
+    fields.find(
+      (field) => field.id === "section/strategy.review_policy/repo_overrides",
+    ).value["review/typed-values"].values,
+  ).toEqual(expected);
+  await input.fill("complete");
+  await saved(overrides);
+  const reloaded = (await configuration(page, "review")).fields;
+  expect(
+    reloaded.find(
+      (field) => field.id === "section/strategy.review_policy/repo_overrides",
+    ).value["review/typed-values"].values,
+  ).toEqual([...expected, "complete"]);
+});
+
 test("fallback buttons add, order, remove and reload account/model rows without JSON", async ({
   page,
 }) => {
