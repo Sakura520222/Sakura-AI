@@ -103,3 +103,4 @@ updater/build/.pyinstaller/
 .deploy/*
 !.deploy/deployment.env.example
 .codex/
+docs/.vitepress/
