@@ -17,6 +17,10 @@ def real_capacity(tmp_path, monkeypatch):
 
     runtime = capacity_db.__wrapped__(tmp_path)
     module, limiter, engine, path = next(runtime)
+    # These tests cover worker admission and cancellation. Lease expiry is
+    # covered separately and must not depend on a slow runner's scheduling.
+    instant = limiter.clock()
+    limiter.clock = lambda: instant
     monkeypatch.setattr(module, "service_execution_slot", limiter.slot)
     monkeypatch.setattr(agent_module, "service_execution_slot", limiter.slot)
     try:
