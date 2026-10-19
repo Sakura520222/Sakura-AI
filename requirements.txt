@@ -9,7 +9,7 @@ PyGithub>=2.10.0
 cryptography>=50.0.1
 
 # AI集成
-openai>=3.26.1
+openai>=3.31.0
 httpx>=0.28.1
 aiohttp>=3.14.3,<4.0.0
 
@@ -22,7 +22,7 @@ jsonschema>=4.26.0,<5.0.0
 sqlalchemy[asyncio]>=2.1.1,<2.2
 asyncmy>=0.2.15
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
-alembic>=1.19.2
+alembic>=1.20.0
 
 # 任务队列
 redis>=8.1.0
