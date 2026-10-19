@@ -36,7 +36,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.1.1,<2.2",
     "asyncmy>=0.2.15",
     "asyncpg>=0.31.0",
-    "alembic>=1.19.2",
+    "alembic>=1.20.0",
 
     # 任务队列
     "redis>=8.1.0",
