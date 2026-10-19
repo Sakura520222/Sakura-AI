@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from backend.core import time_service
 from backend.core.time_service import monotonic, now_utc
 from backend.models.database import AppConfig, Base
 from tests.test_billing_wallet import SQLSession
@@ -71,16 +72,37 @@ def capacity_db(tmp_path):
     engine = create_engine(
         f"sqlite:///{path}", connect_args={"autocommit": False, "timeout": 0.2}
     )
-    Base.metadata.create_all(engine)
-    factory = RealSQLFactory(engine)
-    limiter = module.ServiceExecutionCapacity(
-        session_factory=factory,
-        max_concurrency=1,
-        lease_seconds=2,
-        poll_seconds=0.005,
-    )
-    yield module, limiter, engine, path
-    engine.dispose()
+    try:
+        Base.metadata.create_all(engine)
+        factory = RealSQLFactory(engine)
+        system_time = time_service.get_time_service()
+        instant = system_time.now_utc()
+        limiter = module.ServiceExecutionCapacity(
+            session_factory=factory,
+            max_concurrency=1,
+            lease_seconds=2,
+            poll_seconds=0.005,
+            clock=lambda: instant,
+        )
+
+        class CapacityClock:
+            def now_utc(self):
+                return limiter.clock()
+
+            def monotonic(self):
+                return system_time.monotonic()
+
+        # Every consumer, including billing admission and ORM timestamp
+        # defaults, observes the same logical instant. Expiry/renewal tests
+        # advance limiter.clock explicitly; actual watchdogs keep real time.
+        scoped_time = time_service.TimeService(
+            system_time.resolved_timezone, CapacityClock()
+        )
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(time_service, "_time_service", scoped_time)
+            yield module, limiter, engine, path
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
