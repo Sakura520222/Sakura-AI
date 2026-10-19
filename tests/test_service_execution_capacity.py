@@ -249,7 +249,7 @@ async def test_database_configuration_limits_each_feature_without_billing(capaci
         await limiter.release(lease)
 
 
-def capacity_process(path, queue, ready, release):
+def capacity_process(path, queue, ready, release, instant):
     module = core()
     engine = create_engine(
         f"sqlite:///{path}", connect_args={"autocommit": False, "timeout": 0.2}
@@ -262,6 +262,9 @@ def capacity_process(path, queue, ready, release):
             lease_seconds=2,
             poll_seconds=0.005,
         )
+        # All processes share one domain instant: this test measures SQL
+        # admission, while dedicated tests advance time to verify expiration.
+        limiter.clock = lambda: instant
         await asyncio.to_thread(ready.wait, 20)
         async with limiter.slot("pr_review"):
             queue.put(("enter", monotonic()))
@@ -283,8 +286,11 @@ def test_multiple_processes_share_one_database_capacity(capacity_db):
     queue = ctx.Queue()
     ready = ctx.Barrier(6)
     release = ctx.Event()
+    instant = now_utc()
     workers = [
-        ctx.Process(target=capacity_process, args=(path, queue, ready, release))
+        ctx.Process(
+            target=capacity_process, args=(path, queue, ready, release, instant)
+        )
         for _ in range(5)
     ]
     events = []
@@ -297,8 +303,14 @@ def test_multiple_processes_share_one_database_capacity(capacity_db):
         ready.wait(timeout=20)
         events = [queue.get(timeout=20) for _ in range(2)]
         assert all(kind == "enter" for kind, _ in events)
-        with pytest.raises(Empty):
-            queue.get(timeout=0.1)
+        try:
+            unexpected = queue.get(timeout=0.1)
+        except Empty:
+            pass
+        else:
+            pytest.fail(
+                f"Worker emitted an event while both slots were held: {unexpected!r}"
+            )
     finally:
         release.set()
         for worker in workers:
