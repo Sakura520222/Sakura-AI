@@ -19,6 +19,7 @@ from backend.models.telegram_models import TelegramUser
 from backend.services.ai_usage_service import finish_billing_operation
 from backend.services.billing_context import BillingContext, bind_billing_context
 from backend.services.billing_service import BillingError, BillingService
+from tests.test_service_execution_capacity import ASYNC_COMPLETION_TIMEOUT
 from tests.test_service_execution_capacity import capacity_db as capacity_fixture
 
 capacity_db = capacity_fixture
@@ -76,11 +77,12 @@ async def test_global_waiting_counts_user_headroom_before_any_ai_request(
     with bind_billing_context(first):
         async with limiter.slot("agent"):
             task = asyncio.create_task(waiting())
-            for _ in range(100):
-                with Session(engine) as db:
-                    if db.get(BillingOperation, second.operation_id):
-                        break
-                await asyncio.sleep(0.005)
+            async with asyncio.timeout(ASYNC_COMPLETION_TIMEOUT):
+                while True:
+                    with Session(engine) as db:
+                        if db.get(BillingOperation, second.operation_id):
+                            break
+                    await asyncio.sleep(0.005)
             with Session(engine) as db:
                 queued = db.get(BillingOperation, second.operation_id)
                 assert queued is not None and queued.outcome is None
@@ -103,7 +105,7 @@ async def test_global_waiting_counts_user_headroom_before_any_ai_request(
                     )
             cancellation.set()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, 1)
+                await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
             with Session(engine) as db:
                 assert (
                     db.get(BillingOperation, second.operation_id).outcome == "cancelled"
