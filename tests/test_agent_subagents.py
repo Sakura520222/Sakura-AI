@@ -27,6 +27,10 @@ from backend.services.agent_team.workspace_service import AgentTeamWorkspaceServ
 from backend.utils.message_utils import tool_call_to_dict
 from tests.test_billing_wallet import AsyncNested
 
+# Real SQLite commits and filesystem admission can exceed two seconds on CI.
+# This bounds stalled lifecycle waits without imposing a startup speed target.
+ASYNC_COMPLETION_TIMEOUT = 20
+
 
 def call(name, ident="call_1", **args):
     return SimpleNamespace(
@@ -314,7 +318,7 @@ async def test_live_slots_queue_without_lifetime_spawn_or_model_caps(
             )
             for i in range(3)
         ]
-        await asyncio.wait_for(two_started.wait(), 2)
+        await asyncio.wait_for(two_started.wait(), ASYNC_COMPLETION_TIMEOUT)
         with Session(engine) as db:
             states = [
                 db.get(models.AgentTeamSession, child["agent_id"]).status
@@ -323,15 +327,19 @@ async def test_live_slots_queue_without_lifetime_spawn_or_model_caps(
         assert states.count("running") == 2 and states.count("queued") == 1
         release.set()
         for child in children:
-            outcome = await asyncio.wait_for(manager.wait(child["agent_id"]), 2)
+            outcome = await asyncio.wait_for(
+                manager.wait(child["agent_id"]), ASYNC_COMPLETION_TIMEOUT
+            )
             assert outcome["status"] == "completed" and outcome["result"]["success"]
         for index in range(12):
             child = await spawn_recorded(
                 manager, checkpoint, parent_id, f"next-{index}"
             )
-            assert (await asyncio.wait_for(manager.wait(child["agent_id"]), 2))[
-                "status"
-            ] == "completed"
+            assert (
+                await asyncio.wait_for(
+                    manager.wait(child["agent_id"]), ASYNC_COMPLETION_TIMEOUT
+                )
+            )["status"] == "completed"
         assert started == 15 and peak == 2
     finally:
         release.set()
@@ -423,9 +431,11 @@ async def test_cancel_active_and_queued_children_drains_model_and_records_result
     manager, _, parent_id = await manager_for(checkpoint, tmp_path, concurrency=1)
     first = await spawn_recorded(manager, checkpoint, parent_id, "first")
     second = await spawn_recorded(manager, checkpoint, parent_id, "second")
-    await asyncio.wait_for(started.wait(), 2)
+    await asyncio.wait_for(started.wait(), ASYNC_COMPLETION_TIMEOUT)
     assert (await manager.cancel(second["agent_id"]))["status"] == "cancelled"
-    result = await asyncio.wait_for(manager.cancel(first["agent_id"]), 2)
+    result = await asyncio.wait_for(
+        manager.cancel(first["agent_id"]), ASYNC_COMPLETION_TIMEOUT
+    )
     assert drained.is_set() and result["result"]["error"] == "cancelled"
     await manager.close()
     with Session(engine) as db:
@@ -489,7 +499,7 @@ async def test_wait_tool_releases_workspace_for_parent_write_and_child_read(
     waiting = None
     try:
         child = await spawn_recorded(manager, checkpoint, parent_id, "spawn")
-        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(entered.wait(), ASYNC_COMPLETION_TIMEOUT)
         waiting = asyncio.create_task(
             ctx.executor.execute_raw("wait_agent", {"agent_id": child["agent_id"]}, ctx)
         )
@@ -500,11 +510,11 @@ async def test_wait_tool_releases_workspace_for_parent_write_and_child_read(
             ctx.executor.execute_raw(
                 "write_file", {"file_path": "new.txt", "content": "parent write"}, ctx
             ),
-            2,
+            ASYNC_COMPLETION_TIMEOUT,
         )
         assert writer.success
         release.set()
-        result = await asyncio.wait_for(waiting, 2)
+        result = await asyncio.wait_for(waiting, ASYNC_COMPLETION_TIMEOUT)
         assert result.success and result.output["status"] == "completed"
     finally:
         release.set()
@@ -530,7 +540,9 @@ async def test_cancelling_child_before_its_coroutine_starts_still_persists_cance
         # Give the slot worker one turn to allocate a child task. The child
         # coroutine is queued behind this task and has not entered its try yet.
         await asyncio.sleep(0)
-        result = await asyncio.wait_for(manager.cancel(child["agent_id"]), 2)
+        result = await asyncio.wait_for(
+            manager.cancel(child["agent_id"]), ASYNC_COMPLETION_TIMEOUT
+        )
         assert (
             result["status"] == "cancelled" and result["result"]["error"] == "cancelled"
         )
@@ -629,7 +641,9 @@ async def test_resume_reuses_inflight_child_and_replays_same_spawn_identity(
         await manager.start()
         replay = await manager.spawn("spawn", "Inspect evidence")
         assert replay["agent_id"] == child.session_id
-        result = await asyncio.wait_for(manager.wait(child.session_id), 2)
+        result = await asyncio.wait_for(
+            manager.wait(child.session_id), ASYNC_COMPLETION_TIMEOUT
+        )
         assert result["result"]["summary"] == "durable findings"
         with Session(engine) as db:
             assert len(list(db.scalars(select(models.AgentTeamSubagent)))) == 1
@@ -639,8 +653,9 @@ async def test_resume_reuses_inflight_child_and_replays_same_spawn_identity(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ending", ["cancel", "finish", "error"])
+@pytest.mark.parametrize("startup_delay", [0, 2.1])
 async def test_parent_ending_cancels_and_awaits_actual_children(
-    persistence, tmp_path, model_factory, monkeypatch, ending
+    persistence, tmp_path, model_factory, monkeypatch, ending, startup_delay
 ):
     from backend.core import config
 
@@ -650,6 +665,7 @@ async def test_parent_ending_cancels_and_awaits_actual_children(
 
     async def model(messages, **kwargs):
         if messages[0]["content"].startswith("You are Sakura's read-only subagent"):
+            await asyncio.sleep(startup_delay)
             child_entered.set()
             try:
                 await asyncio.Event().wait()
@@ -678,18 +694,18 @@ async def test_parent_ending_cancels_and_awaits_actual_children(
         tmp_path, AgentTeamWorkspaceService(tmp_path), checkpoint, parent.id
     )
     running = asyncio.create_task(agent.execute("parent", "main objective"))
-    await asyncio.wait_for(child_entered.wait(), 2)
+    await asyncio.wait_for(child_entered.wait(), ASYNC_COMPLETION_TIMEOUT)
     if ending == "cancel":
         running.cancel()
     if ending == "error":
         with pytest.raises(RuntimeError, match="upstream"):
-            await asyncio.wait_for(running, 2)
+            await asyncio.wait_for(running, ASYNC_COMPLETION_TIMEOUT)
     elif ending == "cancel":
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(running, 2)
+            await asyncio.wait_for(running, ASYNC_COMPLETION_TIMEOUT)
         assert running.cancelled()
     else:
-        result = await asyncio.wait_for(running, 2)
+        result = await asyncio.wait_for(running, ASYNC_COMPLETION_TIMEOUT)
         assert result.outcome == "success"
     assert child_drained.is_set()
     with Session(engine) as db:
@@ -857,11 +873,11 @@ async def test_cancellation_after_durable_child_completion_keeps_completed_resul
     manager, _, parent_id = await manager_for(checkpoint, tmp_path)
     try:
         child = await spawn_recorded(manager, checkpoint, parent_id, "spawn")
-        await asyncio.wait_for(published.wait(), 2)
+        await asyncio.wait_for(published.wait(), ASYNC_COMPLETION_TIMEOUT)
         cancellation = asyncio.create_task(manager.cancel(child["agent_id"]))
         await asyncio.sleep(0)
         release.set()
-        result = await asyncio.wait_for(cancellation, 2)
+        result = await asyncio.wait_for(cancellation, ASYNC_COMPLETION_TIMEOUT)
         assert result["status"] == "completed" and result["result"]["success"] is True
     finally:
         release.set()
@@ -1004,9 +1020,9 @@ async def test_shutdown_never_starts_queued_model_while_another_child_drains(
     try:
         for ident in ("first-child", "second-child", "queued-child"):
             await spawn_recorded(manager, checkpoint, parent_id, ident, ident)
-        await asyncio.wait_for(both_running.wait(), 2)
+        await asyncio.wait_for(both_running.wait(), ASYNC_COMPLETION_TIMEOUT)
         closing = asyncio.create_task(manager.close())
-        await asyncio.wait_for(first_draining.wait(), 2)
+        await asyncio.wait_for(first_draining.wait(), ASYNC_COMPLETION_TIMEOUT)
         finish_second.set()
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(third_created.wait(), 0.1)
@@ -1014,7 +1030,7 @@ async def test_shutdown_never_starts_queued_model_while_another_child_drains(
         finish_second.set()
         release_first.set()
         if closing:
-            await asyncio.wait_for(closing, 2)
+            await asyncio.wait_for(closing, ASYNC_COMPLETION_TIMEOUT)
         else:
             await manager.close()
 
@@ -1054,7 +1070,7 @@ async def test_owned_child_cleanup_survives_spawn_permission_revocation(
         )
         assert created.success
         child_id = created.output["agent_id"]
-        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(entered.wait(), ASYNC_COMPLETION_TIMEOUT)
         profile = "read_only"
         names = {
             schema["function"]["name"]
@@ -1077,7 +1093,7 @@ async def test_owned_child_cleanup_survives_spawn_permission_revocation(
                 ctx.executor.execute_raw(
                     f"{cleanup}_agent", {"agent_id": child_id}, ctx
                 ),
-                2,
+                ASYNC_COMPLETION_TIMEOUT,
             )
             assert result.success and result.output["status"] == (
                 "completed" if cleanup == "wait" else "cancelled"

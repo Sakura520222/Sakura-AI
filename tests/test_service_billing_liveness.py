@@ -1,5 +1,6 @@
 """Recovery respects live workers and the gap before financial finalization."""
 
+import asyncio
 from datetime import timedelta
 from uuid import uuid4
 
@@ -29,6 +30,14 @@ capacity_db = capacity_fixture
 @pytest.fixture
 def billing_capacity(capacity_db, monkeypatch):
     _, limiter, engine, _ = capacity_db
+    # Recovery compares the owner's lease with billing timestamps. Keep both
+    # on one domain instant so slow SQL setup cannot expire a live fixture.
+    instant = limiter.clock()
+    limiter.clock = lambda: instant
+    monkeypatch.setattr("backend.services.billing_service.now_utc", limiter.clock)
+    monkeypatch.setattr(
+        "backend.services.service_execution_capacity.now_utc", limiter.clock
+    )
     with Session(engine) as db:
         db.add(TelegramUser(id=1, github_username="owner"))
         db.commit()
@@ -49,8 +58,9 @@ def billing_capacity(capacity_db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("recovery_delay", [0, 2.1])
 async def test_recovery_does_not_fail_expired_billing_with_live_owner(
-    billing_capacity, running
+    billing_capacity, running, recovery_delay
 ):
     limiter, engine = billing_capacity
     context = BillingContext(1, str(uuid4()), "agent", {})
@@ -59,6 +69,7 @@ async def test_recovery_does_not_fail_expired_billing_with_live_owner(
         ownership = await limiter.acquire_ownership("agent")
         if running:
             assert await limiter.renew_ownership(ownership, running=True)
+        await asyncio.sleep(recovery_delay)
         with Session(engine) as db:
             db.get(BillingOperation, context.operation_id).expires_at = (
                 now_utc() - timedelta(days=1)
