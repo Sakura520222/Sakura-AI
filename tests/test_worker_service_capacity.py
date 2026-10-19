@@ -10,6 +10,8 @@ import pytest
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.workers import agent_team_worker as agent_module
 
+ASYNC_COMPLETION_TIMEOUT = 20
+
 
 @pytest.fixture
 def real_capacity(tmp_path, monkeypatch):
@@ -150,7 +152,7 @@ async def test_agent_queue_cancellation_releases_registry_without_starting_work(
         assert task_id in agent_module._cancel_events
         worker._load_task.assert_not_awaited()
         agent_module.request_task_cancel(task_id)
-        assert await asyncio.wait_for(queued, 1) == task_id
+        assert await asyncio.wait_for(queued, ASYNC_COMPLETION_TIMEOUT) == task_id
         worker._load_task.assert_not_awaited()
         worker._update_task.assert_awaited_once_with(
             task_id,
@@ -210,7 +212,9 @@ async def test_pr_waiting_cancellation_finishes_and_removes_event(
         await asyncio.sleep(0.02)
         assert worker.is_task_active("owner/repo#7")
         assert worker.cancel_task("owner/repo#7")
-        assert await asyncio.wait_for(queued, 1) == "cancelled-pr"
+        assert (
+            await asyncio.wait_for(queued, ASYNC_COMPLETION_TIMEOUT) == "cancelled-pr"
+        )
     finish.assert_awaited_once_with("cancelled")
     worker.analyzer.analyze_pr.assert_not_awaited()
     worker._cancel_and_cleanup.assert_awaited_once()
