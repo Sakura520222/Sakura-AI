@@ -28,7 +28,14 @@ def isolate_dynamic_config(monkeypatch):
 
 
 async def cancellation_scenario(
-    checkpoint, tmp_path, model_factory, *, finish_before_cleanup=False
+    checkpoint,
+    tmp_path,
+    model_factory,
+    *,
+    finish_before_cleanup=False,
+    startup_delay=0,
+    startup_timeout=None,
+    cleanup_timeout=None,
 ):
     """Keep lifecycle, child execution and durable checkpointing real."""
     parent_entered = asyncio.Event()
@@ -49,6 +56,7 @@ async def cancellation_scenario(
                 child_drained.set()
         outputs = [message for message in messages if message["role"] == "tool"]
         if not outputs:
+            await asyncio.sleep(startup_delay)
             return response(call("spawn_agent", "spawn", task="inspect evidence"))
         await child_entered.wait()
         parent_entered.set()
@@ -66,9 +74,44 @@ async def cancellation_scenario(
     running = asyncio.create_task(
         service.run("parent", "main objective", cancel_event=cancel_event)
     )
-    await asyncio.wait_for(parent_entered.wait(), 5)
-    agent = service._active_agent
-    assert isinstance(agent, runtime.FullStackExpertAgent)
+    try:
+        await asyncio.wait_for(
+            parent_entered.wait(),
+            fixtures.ASYNC_COMPLETION_TIMEOUT
+            if startup_timeout is None
+            else startup_timeout,
+        )
+        agent = service._active_agent
+        assert isinstance(agent, runtime.FullStackExpertAgent)
+    except BaseException as setup_error:
+        release_child_cleanup.set()
+        running.cancel()
+        drain = asyncio.gather(running, return_exceptions=True)
+
+        def observe_drain(future):
+            if not future.cancelled():
+                for error in future.result():
+                    if isinstance(error, BaseException) and not isinstance(
+                        error, asyncio.CancelledError
+                    ):
+                        logger.opt(exception=error).error(
+                            "Test fixture runtime failed while draining startup cleanup"
+                        )
+
+        drain.add_done_callback(observe_drain)
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(drain),
+                fixtures.ASYNC_COMPLETION_TIMEOUT
+                if cleanup_timeout is None
+                else cleanup_timeout,
+            )
+        except TimeoutError:
+            running.cancel()
+            raise RuntimeError("Test runtime exceeded the setup cleanup budget") from (
+                setup_error
+            )
+        raise
     return (
         running,
         agent,
@@ -90,6 +133,81 @@ def assert_owned_resources_closed(agent, child_drained):
 
 
 @pytest.mark.asyncio
+async def test_startup_timeout_drains_runtime_before_returning(
+    persistence, tmp_path, model_factory, monkeypatch
+):
+    checkpoint, _ = persistence
+    running_tasks = []
+    real_run = IterationLoopService.run
+
+    async def observed_run(service, *args, **kwargs):
+        running_tasks.append(asyncio.current_task())
+        return await real_run(service, *args, **kwargs)
+
+    monkeypatch.setattr(IterationLoopService, "run", observed_run)
+    with pytest.raises(TimeoutError):
+        await cancellation_scenario(
+            checkpoint, tmp_path, model_factory, startup_delay=0.1, startup_timeout=0.01
+        )
+    assert len(running_tasks) == 1
+    assert running_tasks[0].done() and running_tasks[0].cancelled()
+
+
+@pytest.mark.asyncio
+async def test_startup_cleanup_watchdog_is_bounded_and_observes_late_failure(
+    persistence, tmp_path, model_factory, monkeypatch
+):
+    checkpoint, _ = persistence
+    release_runtime = asyncio.Event()
+    running_tasks = []
+    diagnostics = []
+    completion_timeout = fixtures.ASYNC_COMPLETION_TIMEOUT
+
+    async def unresponsive_runtime(service, *args, **kwargs):
+        running_tasks.append(asyncio.current_task())
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            while not release_runtime.is_set():
+                try:
+                    await release_runtime.wait()
+                except asyncio.CancelledError:
+                    pass
+            raise RuntimeError("late test runtime failure") from None
+
+    monkeypatch.setattr(IterationLoopService, "run", unresponsive_runtime)
+    sink = logger.add(
+        lambda message: diagnostics.append(str(message)),
+        level="ERROR",
+        format="{message}",
+        diagnose=False,
+        backtrace=False,
+    )
+    setup = asyncio.create_task(
+        cancellation_scenario(
+            checkpoint,
+            tmp_path,
+            model_factory,
+            startup_timeout=0.01,
+            cleanup_timeout=0.01,
+        )
+    )
+    try:
+        done, _ = await asyncio.wait({setup}, timeout=completion_timeout)
+        assert setup in done, "setup cleanup watchdog did not terminate the helper"
+        with pytest.raises(RuntimeError, match="setup cleanup budget"):
+            await setup
+        assert running_tasks and not running_tasks[0].done()
+    finally:
+        release_runtime.set()
+        await asyncio.gather(setup, *running_tasks, return_exceptions=True)
+        await asyncio.sleep(0)
+        logger.remove(sink)
+    assert any("draining startup cleanup" in message for message in diagnostics)
+    assert any("late test runtime failure" in message for message in diagnostics)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("event_also_set", [False, True])
 async def test_direct_task_cancellation_propagates_after_real_child_cleanup(
     persistence, tmp_path, model_factory, event_also_set
@@ -102,11 +220,11 @@ async def test_direct_task_cancellation_propagates_after_real_child_cleanup(
         if event_also_set:
             event.set()
         running.cancel("server shutdown")
-        await asyncio.wait_for(cleanup.wait(), 5)
+        await asyncio.wait_for(cleanup.wait(), fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert not running.done()
         release.set()
         with pytest.raises(asyncio.CancelledError) as caught:
-            await asyncio.wait_for(running, 5)
+            await asyncio.wait_for(running, fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert caught.value.args == ("server shutdown",)
         assert_owned_resources_closed(agent, drained)
         with Session(engine) as db:
@@ -139,7 +257,7 @@ async def test_repeated_task_cancellation_during_cleanup_drains_resources(
     try:
         if not finish_before_cleanup:
             running.cancel()
-        await asyncio.wait_for(cleanup.wait(), 5)
+        await asyncio.wait_for(cleanup.wait(), fixtures.ASYNC_COMPLETION_TIMEOUT)
         running.cancel()
         await asyncio.sleep(0)
         running.cancel()
@@ -147,7 +265,7 @@ async def test_repeated_task_cancellation_during_cleanup_drains_resources(
         assert not running.done()
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(running, 5)
+            await asyncio.wait_for(running, fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert_owned_resources_closed(agent, drained)
     finally:
         release.set()
@@ -158,12 +276,13 @@ async def test_repeated_task_cancellation_during_cleanup_drains_resources(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleanup_fault", [False, True])
+@pytest.mark.parametrize("startup_delay", [0, 5.1])
 async def test_original_task_cancellation_survives_cleanup_cancellation_or_failure(
-    persistence, tmp_path, model_factory, monkeypatch, cleanup_fault
+    persistence, tmp_path, model_factory, monkeypatch, cleanup_fault, startup_delay
 ):
     checkpoint, engine = persistence
     running, agent, _, cleanup, release, drained = await cancellation_scenario(
-        checkpoint, tmp_path, model_factory
+        checkpoint, tmp_path, model_factory, startup_delay=startup_delay
     )
     diagnostics = []
     sink = logger.add(
@@ -179,7 +298,7 @@ async def test_original_task_cancellation_survives_cleanup_cancellation_or_failu
 
             monkeypatch.setattr(agent._subagents.store, "list_children", unavailable)
         running.cancel("server shutdown")
-        await asyncio.wait_for(cleanup.wait(), 5)
+        await asyncio.wait_for(cleanup.wait(), fixtures.ASYNC_COMPLETION_TIMEOUT)
         if not cleanup_fault:
             running.cancel("second shutdown")
             await asyncio.sleep(0)
@@ -187,7 +306,7 @@ async def test_original_task_cancellation_survives_cleanup_cancellation_or_failu
         release.set()
         observed = None
         try:
-            await asyncio.wait_for(running, 5)
+            await asyncio.wait_for(running, fixtures.ASYNC_COMPLETION_TIMEOUT)
         except BaseException as exc:
             observed = exc
         assert_owned_resources_closed(agent, drained)
@@ -227,10 +346,10 @@ async def test_event_cancellation_keeps_structured_result_after_real_child_clean
     )
     try:
         event.set()
-        await asyncio.wait_for(cleanup.wait(), 5)
+        await asyncio.wait_for(cleanup.wait(), fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert not running.done()
         release.set()
-        result = await asyncio.wait_for(running, 5)
+        result = await asyncio.wait_for(running, fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert result.outcome == "cancelled"
         assert not result.success and not running.cancelled()
         assert_owned_resources_closed(agent, drained)

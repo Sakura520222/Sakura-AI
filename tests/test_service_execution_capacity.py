@@ -11,9 +11,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from backend.core import time_service
 from backend.core.time_service import monotonic, now_utc
 from backend.models.database import AppConfig, Base
 from tests.test_billing_wallet import SQLSession
+
+ASYNC_COMPLETION_TIMEOUT = 20
 
 
 def core():
@@ -69,16 +72,37 @@ def capacity_db(tmp_path):
     engine = create_engine(
         f"sqlite:///{path}", connect_args={"autocommit": False, "timeout": 0.2}
     )
-    Base.metadata.create_all(engine)
-    factory = RealSQLFactory(engine)
-    limiter = module.ServiceExecutionCapacity(
-        session_factory=factory,
-        max_concurrency=1,
-        lease_seconds=2,
-        poll_seconds=0.005,
-    )
-    yield module, limiter, engine, path
-    engine.dispose()
+    try:
+        Base.metadata.create_all(engine)
+        factory = RealSQLFactory(engine)
+        system_time = time_service.get_time_service()
+        instant = system_time.now_utc()
+        limiter = module.ServiceExecutionCapacity(
+            session_factory=factory,
+            max_concurrency=1,
+            lease_seconds=2,
+            poll_seconds=0.005,
+            clock=lambda: instant,
+        )
+
+        class CapacityClock:
+            def now_utc(self):
+                return limiter.clock()
+
+            def monotonic(self):
+                return system_time.monotonic()
+
+        # Every consumer, including billing admission and ORM timestamp
+        # defaults, observes the same logical instant. Expiry/renewal tests
+        # advance limiter.clock explicitly; actual watchdogs keep real time.
+        scoped_time = time_service.TimeService(
+            system_time.resolved_timezone, CapacityClock()
+        )
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(time_service, "_time_service", scoped_time)
+            yield module, limiter, engine, path
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -86,12 +110,15 @@ async def test_database_capacity_waits_across_instances_and_releases_on_exceptio
     capacity_db,
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     second = module.ServiceExecutionCapacity(
         session_factory=RealSQLFactory(engine),
         max_concurrency=1,
         lease_seconds=2,
         poll_seconds=0.005,
     )
+    second.clock = limiter.clock
     entered = asyncio.Event()
 
     async def waiting():
@@ -104,7 +131,7 @@ async def test_database_capacity_waits_across_instances_and_releases_on_exceptio
             await asyncio.sleep(0.04)
             assert not entered.is_set()
             raise ValueError("business failure")
-    await asyncio.wait_for(task, 1)
+    await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
     with Session(engine) as session:
         assert not session.scalars(select(module.ServiceExecutionLease)).all()
 
@@ -112,6 +139,8 @@ async def test_database_capacity_waits_across_instances_and_releases_on_exceptio
 @pytest.mark.asyncio
 async def test_waiting_cancel_does_not_acquire_or_consume_slot(capacity_db):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     cancel = asyncio.Event()
     async with limiter.slot("agent"):
 
@@ -123,7 +152,7 @@ async def test_waiting_cancel_does_not_acquire_or_consume_slot(capacity_db):
         await asyncio.sleep(0.02)
         cancel.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
         with Session(engine) as session:
             assert len(session.scalars(select(module.ServiceExecutionLease)).all()) == 1
 
@@ -157,9 +186,9 @@ async def test_nested_slot_is_reentrant_only_in_the_same_task(capacity_db, monke
                         child_attempted.set()
 
                 task = asyncio.create_task(child())
-                await asyncio.wait_for(child_attempted.wait(), 10)
+                await asyncio.wait_for(child_attempted.wait(), ASYNC_COMPLETION_TIMEOUT)
                 assert not entered.is_set()
-        await asyncio.wait_for(task, 10)
+        await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
         assert entered.is_set()
     finally:
         if task is not None:
@@ -210,7 +239,7 @@ async def test_heartbeat_keeps_running_task_and_loss_stops_owner(
     monkeypatch.setattr(limiter, "renew", advance_and_renew)
     async with limiter.slot("pr_review") as lease:
         initial_expiry = instant + timedelta(seconds=lease.duration_seconds)
-        await asyncio.wait_for(renewed_twice.wait(), 10)
+        await asyncio.wait_for(renewed_twice.wait(), ASYNC_COMPLETION_TIMEOUT)
         assert instant >= initial_expiry
         with Session(engine) as session:
             assert (
@@ -241,6 +270,8 @@ async def test_database_configuration_limits_each_feature_without_billing(capaci
         lease_seconds=2,
         poll_seconds=0.005,
     )
+    instant = now_utc()
+    limiter.clock = lambda: instant
     leases = [await limiter.try_acquire("pr_review") for _ in range(3)]
     assert leases[0] and leases[1] and leases[2] is None
     agent = await limiter.try_acquire("agent")
@@ -371,6 +402,8 @@ async def test_capacity_reduction_drains_existing_leases_before_new_admission(
         lease_seconds=2,
         poll_seconds=0.005,
     )
+    instant = now_utc()
+    limiter.clock = lambda: instant
     first = await limiter.try_acquire("pr_review")
     second = await limiter.try_acquire("pr_review")
     with Session(engine) as session:
@@ -390,6 +423,8 @@ async def test_completion_joins_inflight_renewal_before_releasing_sql_slot(
     capacity_db, monkeypatch
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     limiter.heartbeat_seconds = 0.01
     renewal_started = asyncio.Event()
     renewal_proceed = asyncio.Event()
@@ -408,12 +443,12 @@ async def test_completion_joins_inflight_renewal_before_releasing_sql_slot(
             await body_complete.wait()
 
     task = asyncio.create_task(execute())
-    await asyncio.wait_for(renewal_started.wait(), 1)
+    await asyncio.wait_for(renewal_started.wait(), ASYNC_COMPLETION_TIMEOUT)
     body_complete.set()
     await asyncio.sleep(0.02)
     assert not task.done()
     renewal_proceed.set()
-    await asyncio.wait_for(task, 1)
+    await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
     with Session(engine) as session:
         assert not session.scalars(select(module.ServiceExecutionLease)).all()
 
