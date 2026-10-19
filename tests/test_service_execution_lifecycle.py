@@ -1,6 +1,7 @@
 """Durable worker liveness and cancellation windows use actual SQL state."""
 
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -16,12 +17,16 @@ from tests.test_service_execution_capacity import capacity_db as capacity_db_fix
 
 capacity_db = capacity_db_fixture
 
+ASYNC_COMPLETION_TIMEOUT = 20
+
 
 @pytest.mark.asyncio
 async def test_repeated_cancellation_during_heartbeat_join_still_releases(
     capacity_db, monkeypatch
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     limiter.heartbeat_seconds = 0.01
     started = asyncio.Event()
     proceed = asyncio.Event()
@@ -40,7 +45,7 @@ async def test_repeated_cancellation_during_heartbeat_join_still_releases(
             await body_done.wait()
 
     task = asyncio.create_task(work())
-    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.wait_for(started.wait(), ASYNC_COMPLETION_TIMEOUT)
     body_done.set()
     await asyncio.sleep(0.01)
     task.cancel()
@@ -48,7 +53,7 @@ async def test_repeated_cancellation_during_heartbeat_join_still_releases(
     task.cancel()
     proceed.set()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 1)
+        await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
     with Session(engine) as session:
         assert not session.scalars(select(module.ServiceExecutionLease)).all()
 
@@ -122,6 +127,8 @@ async def test_queued_billing_execution_has_renewable_ownership_without_slot(
     monkeypatch,
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     limiter.lease_seconds = 2
     limiter.heartbeat_seconds = 0.02
     blocker = await limiter.try_acquire("agent")
@@ -139,10 +146,12 @@ async def test_queued_billing_execution_has_renewable_ownership_without_slot(
     expiries = []
 
     async def capture_renewal(resource, **kwargs):
+        nonlocal instant
         with Session(engine) as session:
             previous = session.get(
                 module.ServiceExecutionOwnership, resource.token
             ).expires_at
+        instant += timedelta(seconds=resource.duration_seconds / 4)
         result = await real_renew(resource, **kwargs)
         if result:
             with Session(engine) as session:
@@ -162,7 +171,7 @@ async def test_queued_billing_execution_has_renewable_ownership_without_slot(
 
     task = asyncio.create_task(waiting())
     try:
-        await asyncio.wait_for(renewed.wait(), 10)
+        await asyncio.wait_for(renewed.wait(), ASYNC_COMPLETION_TIMEOUT)
         assert expiries and all(current > previous for previous, current in expiries)
         with Session(engine) as session:
             row = session.scalar(
@@ -171,11 +180,11 @@ async def test_queued_billing_execution_has_renewable_ownership_without_slot(
                     == context.operation_id
                 )
             )
-            assert row.state == "queued" and row.expires_at > now_utc()
+            assert row.state == "queued" and row.expires_at > instant
             assert len(session.scalars(select(module.ServiceExecutionLease)).all()) == 1
         async with RealSQLFactory(engine)() as session:
             assert await module.has_live_service_execution_ownership(
-                session, context.operation_id
+                session, context.operation_id, instant=instant
             )
     finally:
         task.cancel()
@@ -200,6 +209,8 @@ async def test_cancel_after_sql_commit_keeps_resource_for_release(
     capacity_db, monkeypatch, method
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     committed = asyncio.Event()
     proceed = asyncio.Event()
     original = getattr(limiter, method)
@@ -219,13 +230,13 @@ async def test_cancel_after_sql_commit_keeps_resource_for_release(
                 pytest.fail("cancelled acquisition must never dispatch work")
 
     task = asyncio.create_task(work())
-    await asyncio.wait_for(committed.wait(), 1)
+    await asyncio.wait_for(committed.wait(), ASYNC_COMPLETION_TIMEOUT)
     task.cancel()
     await asyncio.sleep(0.01)
     task.cancel()
     proceed.set()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 1)
+        await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
     with Session(engine) as session:
         assert not session.scalars(select(module.ServiceExecutionLease)).all()
         ownership = session.scalar(
@@ -271,6 +282,8 @@ async def test_ownership_heartbeat_loss_cancels_queued_owner_before_expiry(
     capacity_db, monkeypatch
 ):
     module, limiter, engine, _ = capacity_db
+    instant = now_utc()
+    limiter.clock = lambda: instant
     limiter.heartbeat_seconds = 0.01
     blocker = await limiter.try_acquire("agent")
     context = BillingContext(None, str(uuid4()), "agent", {}, "isolated_loss_test")
@@ -283,7 +296,10 @@ async def test_ownership_heartbeat_loss_cancels_queued_owner_before_expiry(
     with bind_billing_context(context):
         with pytest.raises(module.ServiceExecutionLeaseLost):
             try:
-                async with limiter.slot("agent"):
+                async with (
+                    asyncio.timeout(ASYNC_COMPLETION_TIMEOUT),
+                    limiter.slot("agent"),
+                ):
                     pytest.fail("queued work must not dispatch after ownership loss")
             except module.ServiceExecutionLeaseLost as error:
                 observed.append(error)
@@ -306,9 +322,12 @@ async def test_long_queued_owner_and_short_new_slot_keep_independent_heartbeats(
     monkeypatch,
 ):
     module, limiter, engine, _ = capacity_db
-    # Preserve the 5:1 duration ratio without requiring real SQL/logging I/O to
-    # finish inside a 20 ms renewal budget on a loaded Windows runner.
+    # Keep real independent heartbeat loops, advancing domain time only when
+    # SQL renewals run so disk/scheduler latency cannot expire the test rows.
     long_duration, short_duration = 6.0, 1.2
+    instant = now_utc()
+    limiter.clock = lambda: instant
+    clock_step = timedelta(seconds=short_duration / 4)
     limiter.lease_seconds = long_duration
     limiter.heartbeat_seconds = None
     blocker = await limiter.try_acquire("agent")
@@ -321,6 +340,7 @@ async def test_long_queued_owner_and_short_new_slot_keep_independent_heartbeats(
     owner_renewed = asyncio.Event()
     slot_renewed = asyncio.Event()
     periods = {}
+    initial_expiries = {}
     real_acquire_owner = limiter.acquire_ownership
     real_renew_owner = limiter.renew_ownership
     real_renew_slot = limiter.renew
@@ -328,16 +348,25 @@ async def test_long_queued_owner_and_short_new_slot_keep_independent_heartbeats(
 
     async def acquire_owner(feature):
         ownership = await real_acquire_owner(feature)
+        with Session(engine) as session:
+            initial_expiries["owner"] = session.get(
+                module.ServiceExecutionOwnership, ownership.token
+            ).expires_at
         owner_acquired.set()
         return ownership
 
     async def renew_owner(resource, **kwargs):
+        nonlocal instant
+        if not kwargs.get("running"):
+            instant += clock_step
         renewed = await real_renew_owner(resource, **kwargs)
         if renewed and not kwargs.get("running"):
             owner_renewed.set()
         return renewed
 
     async def renew_slot(resource):
+        nonlocal instant
+        instant += clock_step
         renewed = await real_renew_slot(resource)
         if renewed:
             slot_renewed.set()
@@ -357,17 +386,22 @@ async def test_long_queued_owner_and_short_new_slot_keep_independent_heartbeats(
         with bind_billing_context(context):
             async with limiter.slot("agent") as lease:
                 assert lease.duration_seconds == short_duration
+                with Session(engine) as session:
+                    initial_expiries["slot"] = session.get(
+                        module.ServiceExecutionLease, lease.token
+                    ).expires_at
                 entered.set()
                 await complete.wait()
 
     task = asyncio.create_task(work())
     try:
-        await asyncio.wait_for(owner_acquired.wait(), 10)
+        await asyncio.wait_for(owner_acquired.wait(), ASYNC_COMPLETION_TIMEOUT)
         limiter.lease_seconds = short_duration
         await limiter.release(blocker)
-        await asyncio.wait_for(entered.wait(), 10)
+        await asyncio.wait_for(entered.wait(), ASYNC_COMPLETION_TIMEOUT)
         await asyncio.wait_for(
-            asyncio.gather(owner_renewed.wait(), slot_renewed.wait()), 10
+            asyncio.gather(owner_renewed.wait(), slot_renewed.wait()),
+            ASYNC_COMPLETION_TIMEOUT,
         )
         assert not task.done()
         assert periods == pytest.approx(
@@ -378,10 +412,15 @@ async def test_long_queued_owner_and_short_new_slot_keep_independent_heartbeats(
         )
         async with RealSQLFactory(engine)() as session:
             assert await module.has_live_service_execution_ownership(
-                session, context.operation_id
+                session, context.operation_id, instant=instant
             )
+        with Session(engine) as session:
+            owner = session.scalar(select(module.ServiceExecutionOwnership))
+            lease = session.scalar(select(module.ServiceExecutionLease))
+            assert owner.expires_at > initial_expiries["owner"]
+            assert lease.expires_at > initial_expiries["slot"]
         complete.set()
-        await asyncio.wait_for(task, 10)
+        await asyncio.wait_for(task, ASYNC_COMPLETION_TIMEOUT)
     finally:
         if not task.done():
             task.cancel()
