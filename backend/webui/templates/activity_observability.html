@@ -170,6 +170,13 @@
                             >
                                 <i class="fas fa-sliders-h mr-1"></i>{{ _('activity.diagnostics') }}
                             </button>
+                            {% if current_user.role == 'super_admin' %}
+                            <a :href="'/activity/observability/api/sessions/' + selectedSessionId + '/logs'"
+                               target="_blank" rel="noopener"
+                               class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-medium text-gray-600 hover:text-sakura-600 dark:border-gray-700 dark:text-gray-300">
+                                {{ _('activity.operational_logs') }}
+                            </a>
+                            {% endif %}
                         </div>
 
                         <div class="activity-scroll mt-3 flex items-center gap-2 overflow-x-auto pb-0.5">

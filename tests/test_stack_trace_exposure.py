@@ -27,8 +27,11 @@ class _FakeUserConfigDb:
 
 
 @pytest.fixture
-def loguru_capture():
+def loguru_capture(monkeypatch):
     """捕获 loguru 日志到 StringIO，供断言 traceback 与消息内容。"""
+    from backend.core.logging_bridge import _patch_record
+
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
     buf = io.StringIO()
     handler_id = logger.add(
         buf,
@@ -75,8 +78,8 @@ async def test_user_config_invalid_value_sanitizes_response_and_logs_traceback(
 
     # loguru 必须记录完整 traceback（回归守护点）
     assert "Traceback" in log_output
-    assert "ValueError" in log_output
-    assert "output_language 仅允许为空、zh-CN 或 en" in log_output
+    assert "ConfigError" in log_output
+    assert "invalid_choice" in log_output
 
 
 @pytest.mark.asyncio
@@ -117,7 +120,8 @@ async def test_chromadb_connection_failure_sanitizes_response_and_logs_traceback
     # loguru 必须保留完整 traceback 与原始异常细节，供服务端排查
     assert "Traceback" in log_output
     assert "RuntimeError" in log_output
-    assert sensitive_detail in log_output
+    assert "chromadb internal error: host=10.0.0.1" in log_output
+    assert "secret-token" not in log_output
 
 
 @pytest.mark.asyncio
@@ -134,6 +138,12 @@ async def test_user_config_unexpected_error_logs_traceback_and_sanitizes(
     from backend.api.v1.user_config import update_user_config
 
     db = AsyncMock()
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    db.get_bind = Mock(
+        return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
     db.execute = AsyncMock(
         side_effect=RuntimeError("db connection lost: pool exhausted, host=internal-db")
     )

@@ -447,10 +447,9 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             )
             return
 
-        # ``full_access`` is the only policy that may run untrusted package
-        # hooks online.  The sandbox runner maps this policy to its fixed
-        # server-owned egress capability; no deployment network name is read
-        # or accepted by this Backend service.
+        # Dependency executions may use temporary egress under web_tools or
+        # full_access. The runner authorizes every request against fresh policy;
+        # no deployment network name is read or accepted by this service.
         egress_capability = getattr(executor, "egress_capability", None)
         if egress_capability != "egress":
             raise ExecutionError(
@@ -504,8 +503,8 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
 
         # sandboxd runner images are Linux OCI images even when the Web
         # process is developed on Windows; use the container-visible path.
-        # The daemon maps this full-access dependency request to its
-        # server-owned egress network.  No request or model field can select
+        # The Backend maps this authorized dependency request to the daemon's
+        # server-owned egress mode. No request or model field can select
         # or widen that network.
         pip_cmd = "/workspace/.venv/sandbox/bin/pip"
         # A pyproject.toml that is not installable (no [build-system], or
@@ -937,18 +936,26 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
         """读取当前工作区未提交变更的逐文件行数统计。"""
         executor = TrustedGitRunner(workspace, self.workspace_service)
         numstat = await self._run_checked_args(
-            executor, ["git", "diff", "--numstat", "HEAD"], "diff numstat"
+            executor, ["git", "diff", "--numstat", "-z", "HEAD"], "diff numstat"
         )
         status = await self._run_checked_args(
-            executor, ["git", "status", "--short"], "status short"
+            executor,
+            ["git", "status", "--short", "-z", "--untracked-files=all"],
+            "status short",
         )
-        return self.parse_changed_file_stats(numstat.stdout, status.stdout)
+        return self.parse_changed_file_stats(
+            numstat.stdout, status.stdout, nul_terminated=True
+        )
 
     @staticmethod
     def parse_changed_file_stats(
-        numstat_output: str, status_output: str
+        numstat_output: str, status_output: str, *, nul_terminated: bool = False
     ) -> dict[str, dict]:
         """解析 git numstat 和 status 输出为 UI 可展示的变更统计。"""
+        if nul_terminated:
+            return AgentTeamGitWorkspaceService._parse_nul_changed_file_stats(
+                numstat_output, status_output
+            )
         stats: dict[str, dict] = {}
         for line in numstat_output.splitlines():
             parts = line.split("\t")
@@ -968,6 +975,42 @@ class AgentTeamGitWorkspaceService(DependencyVenvLifecycleMixin):
             status_code = line[:2]
             raw_path = line[3:].strip()
             file_path = _normalize_git_path(raw_path.split(" -> ")[-1])
+            item = stats.setdefault(file_path, {"additions": 0, "deletions": 0})
+            item["change_type"] = _map_git_status_to_change_type(status_code)
+        return stats
+
+    @staticmethod
+    def _parse_nul_changed_file_stats(
+        numstat_output: str, status_output: str
+    ) -> dict[str, dict]:
+        """Machine records preserve literal filenames and rename destinations."""
+
+        def records(output):
+            if output and not output.endswith("\0"):
+                raise ValueError("Incomplete Git change records")
+            return iter(output.split("\0")[:-1])
+
+        stats = {}
+        numstat_records = records(numstat_output)
+        for record in numstat_records:
+            additions, deletions, file_path = record.split("\t", 2)
+            if not file_path:
+                # --numstat -z emits old/new names as two following records.
+                next(numstat_records)
+                file_path = next(numstat_records)
+            stats[file_path] = {
+                "additions": _parse_numstat_count(additions),
+                "deletions": _parse_numstat_count(deletions),
+                "change_type": "modify",
+            }
+        status_records = records(status_output)
+        for record in status_records:
+            if len(record) < 4 or record[2] != " ":
+                raise ValueError("Invalid Git status record")
+            status_code, file_path = record[:2], record[3:]
+            if "R" in status_code or "C" in status_code:
+                # Porcelain -z puts the destination first, then the source.
+                next(status_records)
             item = stats.setdefault(file_path, {"additions": 0, "deletions": 0})
             item["change_type"] = _map_git_status_to_change_type(status_code)
         return stats

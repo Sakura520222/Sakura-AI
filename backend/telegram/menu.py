@@ -405,7 +405,7 @@ async def _handle_exec(query, target: str, telegram_id: int, context) -> None:
     try:
         await handler(mock_update, mock_ctx)
     except Exception as e:
-        logger.error(f"exec 命令执行失败: {target}, error={e}", exc_info=True)
+        logger.opt(exception=True).error(f"exec 命令执行失败: {target}, error={e}")
         await query.message.reply_text(f"❌ 执行失败: {e}")
 
 
@@ -461,7 +461,7 @@ async def handle_force_reply(
     try:
         await _execute_input_command(target, user_input, update, context)
     except Exception as e:
-        logger.error(f"执行按钮命令失败: {target}, error={e}", exc_info=True)
+        logger.opt(exception=True).error(f"执行按钮命令失败: {target}, error={e}")
         await update.message.reply_text(f"❌ 执行失败: {e}")
 
 

@@ -5,28 +5,28 @@
 保存 handler），既有 POST 端点保留，旧 GET 页面统一 302 到 /config。
 """
 
+import json
 import math
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
 from backend.core.config import (
-    BASIC_CONFIG_KEYS,
     get_dynamic_config_fresh,
     get_settings,
 )
-from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import filename_timestamp
-from backend.models.database import AppConfig, _settings_default_to_str
 from backend.services.agent_team.network_policy import (
     AgentTeamNetworkPolicy,
+    NetworkCapability,
     get_agent_team_network_policy_state,
+    network_mode_for_policy,
 )
 from backend.services.agent_team.sandbox_client import (
     read_sandbox_capability_status,
@@ -51,12 +51,11 @@ from backend.services.user_backup_service import (
     restore_user_backup,
     serialize_user_backup,
 )
+from backend.webui.config_feedback import config_issue, config_save_response
 from backend.webui.deps import (
-    get_csrf_serializer,
     get_db,
     get_templates,
     get_user_preferences,
-    render_template,
     require_csrf,
     require_csrf_header,
     require_super_admin,
@@ -106,10 +105,21 @@ async def save_strategies_section(
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
     section: str = Form(...),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存策略配置的某个 section（统一节配置存储）"""
+    lang = _config_language(request, user_prefs)
     try:
         form = await request.form()
+        numeric_errors = _section_number_issues(form, section, lang)
+        if numeric_errors:
+            return config_save_response(
+                request,
+                "/config",
+                "toast.config_fields_invalid",
+                lang=lang,
+                errors=numeric_errors,
+            )
         section_key = _STRATEGY_SECTION_KEYS.get(section)
         if section_key is None:
             raise HTTPException(status_code=400, detail=f"未知 section: {section}")
@@ -177,9 +187,7 @@ async def save_strategies_section(
                     "max_files_to_search": int(
                         float(form.get("sif_max_files_to_search", 100))
                     ),
-                    "concurrency": int(
-                        float(form.get("sif_concurrency", 8))
-                    ),
+                    "concurrency": int(float(form.get("sif_concurrency", 8))),
                     "max_file_bytes": int(
                         float(form.get("sif_max_file_bytes", 2_097_152))
                     ),
@@ -343,27 +351,33 @@ async def save_strategies_section(
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"配置验证失败: {e}")
-        return toast_redirect(
+        logger.warning(
+            "策略配置验证失败: section={} error_type={}", section, type(e).__name__
+        )
+        return config_save_response(
+            request,
             f"/config?section={section}",
-            "toast.config_validation_failed",
-            "error",
-            lang=detect_language(),
-            error=str(e),
+            "toast.config_fields_invalid",
+            lang=lang,
+            errors=[
+                _section_issue(e, _STRATEGY_SECTION_KEYS.get(section, ""), form, lang)
+            ],
         )
     except Exception as e:
-        logger.error(f"策略配置保存异常: {e}", exc_info=True)
-        return toast_redirect(
+        logger.opt(exception=True).error(f"策略配置保存异常: {e}")
+        return config_save_response(
+            request,
             f"/config?section={section}",
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )
 
-    return toast_redirect(
+    return config_save_response(
+        request,
         f"/config?section={section}",
         "toast.strategy_saved",
-        lang=detect_language(),
+        lang=lang,
         section=section,
     )
 
@@ -384,8 +398,10 @@ async def save_labels_definitions(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存标签定义（全量覆盖，统一节配置存储）"""
+    lang = _config_language(request, user_prefs)
     try:
         form = await request.form()
 
@@ -402,7 +418,20 @@ async def save_labels_definitions(
                         .lstrip("#")
                     )
                     if not color:
-                        raise ValueError(f"标签颜色不能为空: {name}")
+                        return config_save_response(
+                            request,
+                            "/config",
+                            "toast.config_fields_invalid",
+                            lang=lang,
+                            errors=[
+                                config_issue(
+                                    f"label_color_{idx}",
+                                    "label_color",
+                                    "section_validation.label_color",
+                                    lang=lang,
+                                )
+                            ],
+                        )
                     desc = str(form.get(f"label_desc_{idx}", "")).strip()
                     labels[name] = {"color": color, "description": desc}
 
@@ -419,27 +448,29 @@ async def save_labels_definitions(
         )
 
     except ValueError as e:
-        logger.warning(f"标签验证失败: {e}")
-        return toast_redirect(
+        logger.warning("标签验证失败: error_type={}", type(e).__name__)
+        return config_save_response(
+            request,
             "/config?section=labels",
-            "toast.label_validation_failed",
-            "error",
-            lang=detect_language(),
-            error=str(e),
+            "toast.config_fields_invalid",
+            lang=lang,
+            errors=[_section_issue(e, "label.definitions", form, lang)],
         )
     except Exception as e:
         logger.error(f"标签定义保存失败: {e}")
-        return toast_redirect(
+        return config_save_response(
+            request,
             "/config?section=labels",
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )
 
-    return toast_redirect(
+    return config_save_response(
+        request,
         "/config?section=labels",
         "toast.labels_saved",
-        lang=detect_language(),
+        lang=lang,
         count=len(labels),
     )
 
@@ -453,14 +484,39 @@ async def save_recommendation_settings(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存标签推荐设置"""
+    lang = _config_language(request, user_prefs)
     try:
         form = await request.form()
+        numeric_errors = _section_number_issues(form, "recommendation", lang)
+        if numeric_errors:
+            return config_save_response(
+                request,
+                "/config",
+                "toast.config_fields_invalid",
+                lang=lang,
+                errors=numeric_errors,
+            )
 
         confidence_threshold = float(form.get("confidence_threshold", 0.7))
         if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(f"置信度阈值必须在 0.0-1.0 之间: {confidence_threshold}")
+            return config_save_response(
+                request,
+                "/config",
+                "toast.config_fields_invalid",
+                lang=lang,
+                errors=[
+                    config_issue(
+                        "confidence_threshold",
+                        "invalid_config_value",
+                        "toast.value_range",
+                        lang=lang,
+                        params={"min_v": 0, "max_v": 1},
+                    )
+                ],
+            )
 
         data = {
             "enabled": form.get("rec_enabled") is not None,
@@ -473,25 +529,26 @@ async def save_recommendation_settings(
         await log_admin_action(db, user["user_id"], "config_save", "recommendation")
 
     except ValueError as e:
-        logger.error(f"推荐设置验证失败: {e}")
-        return toast_redirect(
+        logger.warning("推荐设置验证失败: error_type={}", type(e).__name__)
+        return config_save_response(
+            request,
             "/config?section=labels",
-            "toast.label_settings_validation_failed",
-            "error",
-            lang=detect_language(),
-            error=str(e),
+            "toast.config_fields_invalid",
+            lang=lang,
+            errors=[_section_issue(e, "label.recommendation", form, lang)],
         )
     except Exception as e:
-        logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
-        return toast_redirect(
+        logger.opt(exception=True).error(f"标签推荐设置保存失败: {e}")
+        return config_save_response(
+            request,
             "/config?section=labels",
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )
 
-    return toast_redirect(
-        "/config?section=labels", "toast.label_settings_saved", lang=detect_language()
+    return config_save_response(
+        request, "/config?section=labels", "toast.label_settings_saved", lang=lang
     )
 
 
@@ -504,8 +561,10 @@ async def save_conflict_rules(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存标签冲突规则"""
+    lang = _config_language(request, user_prefs)
     try:
         form = await request.form()
 
@@ -537,27 +596,29 @@ async def save_conflict_rules(
         )
 
     except ValueError as e:
-        logger.warning(f"冲突规则验证失败: {e}")
-        return toast_redirect(
+        logger.warning("冲突规则验证失败: error_type={}", type(e).__name__)
+        return config_save_response(
+            request,
             "/config?section=labels",
-            "toast.conflict_rules_validation_failed",
-            "error",
-            lang=detect_language(),
-            error=str(e),
+            "toast.config_fields_invalid",
+            lang=lang,
+            errors=[_section_issue(e, "label.conflict_rules", form, lang)],
         )
     except Exception as e:
-        logger.error(f"冲突规则保存失败: {e}", exc_info=True)
-        return toast_redirect(
+        logger.opt(exception=True).error(f"冲突规则保存失败: {e}")
+        return config_save_response(
+            request,
             "/config?section=labels",
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )
 
-    return toast_redirect(
+    return config_save_response(
+        request,
         "/config?section=labels",
         "toast.conflict_rules_saved",
-        lang=detect_language(),
+        lang=lang,
         count=len(conflict_rules),
     )
 
@@ -568,8 +629,10 @@ async def save_conflict_rules(
 class _FormOnlyRequest:
     """save-all 复用既有保存 handler；handler 仅使用 request.form() 接口。"""
 
-    def __init__(self, fields: FormData) -> None:
+    def __init__(self, fields: FormData, *, language=None) -> None:
         self._fields = fields
+        self.config_language = language
+        self.config_ajax = True
 
     async def form(self) -> FormData:
         return self._fields
@@ -595,6 +658,195 @@ class _DynamicConfigValidationError(ValueError):
         self.context = context
 
 
+def _config_language(request, user_prefs=None):
+    carried = getattr(request, "config_language", None)
+    if carried in {"zh-CN", "en"}:
+        return carried
+    return (
+        detect_language(user_prefs)
+        if isinstance(user_prefs, dict)
+        else detect_language()
+    )
+
+
+def _dynamic_issue(exc, lang):
+    params = dict(exc.context)
+    field = params.pop("field_key", "")
+    return config_issue(
+        field, "invalid_config_value", exc.toast_key, lang=lang, params=params
+    )
+
+
+def _billing_issues(exc, lang):
+    errors = [config_issue(lang=lang, **issue) for issue in exc.issues]
+    for error in errors:
+        if error.get("details"):
+            localized = []
+            for route in error["details"]:
+                kind = route.rsplit("/", 1)[-1]
+                key = "billing.form." + kind
+                label = i18n.t(key, lang=lang)
+                localized.append(route + " — " + label if label != key else route)
+            error["details"] = localized
+    return errors
+
+
+def _section_number_issues(form, section, lang):
+    fields = set()
+    if section == "strategies":
+        fields = {
+            f"strategy_{tier}_{name}"
+            for tier in STRATEGY_KEYS
+            for name in ("max_files", "max_lines")
+        }
+    elif section == "context_enhancement":
+        from backend.services.section_config_service import _CE_INT_FIELDS
+
+        fields = set(_CE_INT_FIELDS) | {
+            "sif_default_context_lines",
+            "sif_default_max_results",
+            "sif_max_files_to_search",
+            "sif_concurrency",
+            "sif_max_file_bytes",
+            "sif_max_total_scan_bytes",
+            "sif_max_matches_per_file",
+            "sif_max_output_chars",
+            "gt_default_branch_count",
+            "gt_default_commit_count",
+            "sakura_consolidation_interval",
+            "sakura_max_memory_chars",
+            "sakura_max_sakura_chars",
+            "sakura_min_reflections",
+        }
+    elif section == "review_policy":
+        fields = {"approve_threshold", "block_threshold", "max_major_issues"}
+    elif section == "issue_analysis":
+        fields = {"max_linked_issues_in_prompt"}
+    elif section == "recommendation":
+        fields = {"confidence_threshold"}
+    issues = []
+    for field in sorted(fields):
+        if field not in form:
+            continue
+        try:
+            amount = Decimal(str(form[field]))
+            if not amount.is_finite() or (
+                field != "confidence_threshold" and amount != amount.to_integral_value()
+            ):
+                raise ValueError
+        except InvalidOperation, ValueError, TypeError:
+            issues.append(
+                config_issue(
+                    field, "invalid_number", "toast.numeric_required", lang=lang
+                )
+            )
+    return issues
+
+
+def _section_field(path, section, form):
+    """Map service paths to existing controls, without reflecting arbitrary keys."""
+    path = path.removeprefix(section.split(".")[-1] + ".")
+    if section == "strategy.strategies":
+        bits = path.split(".")
+        if bits[0] in STRATEGY_KEYS:
+            return f"strategy_{bits[0]}_{bits[-1]}"
+    if section == "strategy.context_enhancement":
+        if path.startswith("search_in_files."):
+            return "sif_" + path.rsplit(".", 1)[-1]
+        if path.startswith("git_tools."):
+            return "gt_" + path.rsplit(".", 1)[-1]
+    if section == "strategy.review_policy" and path.startswith("review_templates."):
+        return "template_" + path.rsplit(".", 1)[-1]
+    if section == "strategy.pr_dependency_graph":
+        return "pr_dependency_graph_mode" if path == "mode" else "depgraph_" + path
+    if section == "strategy.pr_summary":
+        return "pr_summary_" + path
+    if section == "strategy.scan":
+        return "scan_" + path
+    if section == "strategy.issue_analysis":
+        if path.startswith("categories"):
+            return "cat_name"
+        if path in {"system_prompt", "comment_template", "comment_template_en"}:
+            return "issue_" + path
+    if section in {"label.definitions", "label.conflict_rules"}:
+        import re
+
+        from backend.core.config_sections import get_section_defaults
+
+        definitions = section == "label.definitions"
+        prefix = "label_name_" if definitions else "conflict_source_"
+        submitted = {}
+        for field in form:
+            matched = re.fullmatch(re.escape(prefix) + r"([0-9]+)", field)
+            if matched is None:
+                continue
+            row = matched[1]
+            name = str(form[field]).strip()
+            if not name:
+                continue
+            if not definitions:
+                blocked = str(form.get(f"conflict_blocked_{row}", "")).strip()
+                if not any(part.strip() for part in blocked.split(",")):
+                    continue
+            # Match the handlers' keyed map: the final duplicate owns the value,
+            # while its insertion position remains unchanged for deep merging.
+            submitted[name] = row
+
+        effective_keys = list(
+            dict.fromkeys([*get_section_defaults(section), *submitted])
+        )
+        indexed = re.fullmatch(r"\[([0-9]+)\](.*)", path)
+        if indexed:
+            index = int(indexed[1])
+            if index >= len(effective_keys):
+                return ""
+            name, suffix = effective_keys[index], indexed[2]
+        else:
+            matched = next(
+                (
+                    (name, path[len(name) :])
+                    for name in effective_keys
+                    if path == name
+                    or path.startswith(name + ".")
+                    or (not definitions and path.startswith(name + "["))
+                ),
+                None,
+            )
+            if matched is None:
+                return ""
+            name, suffix = matched
+        row = submitted.get(name)
+        if row is None:
+            return ""
+        if definitions:
+            control = (
+                "label_color_"
+                if suffix == ".color"
+                else "label_desc_"
+                if suffix == ".description"
+                else "label_name_"
+            )
+        else:
+            control = "conflict_source_" if suffix == ".name" else "conflict_blocked_"
+        # Dynamic names remain local; only a known control and numeric row id
+        # cross the response boundary, including custom and invalid label names.
+        return control + row
+    return path if path in form else ""
+
+
+def _section_issue(exc, section, form, lang):
+    from backend.services.section_config_service import SectionConfigValidationError
+
+    if isinstance(exc, SectionConfigValidationError):
+        field = _section_field(exc.path, section, form)
+        return config_issue(
+            field, exc.code, exc.translation_key, lang=lang, params=exc.params
+        )
+    return config_issue(
+        "", "invalid_config", "section_validation.invalid_config", lang=lang
+    )
+
+
 def _validate_dynamic_config_value(
     key: str,
     raw: object,
@@ -611,11 +863,19 @@ def _validate_dynamic_config_value(
     value = "" if raw is None else str(raw).strip()
 
     if key in select_options:
+        from backend.core.config import MONETARY_CURRENCY_CONFIG_KEYS
+        from backend.services.payment.currency_units import normalize_currency
+
+        if key in MONETARY_CURRENCY_CONFIG_KEYS:
+            try:
+                value = normalize_currency(value)
+            except ValueError:
+                raise _DynamicConfigValidationError(
+                    "toast.value_invalid", field_key=key
+                ) from None
         valid_values = [option["value"] for option in select_options[key]]
         if value not in valid_values:
-            raise _DynamicConfigValidationError(
-                "toast.value_invalid", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.value_invalid", field_key=key)
         return value
 
     numeric_value: int | float | None = None
@@ -630,35 +890,29 @@ def _validate_dynamic_config_value(
         }
         normalized_bool = bool_values.get(value.lower())
         if normalized_bool is None:
-            raise _DynamicConfigValidationError(
-                "toast.value_invalid", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.value_invalid", field_key=key)
         return normalized_bool
     if expected_type is int:
         try:
             numeric_value = int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             raise _DynamicConfigValidationError(
                 "toast.numeric_required", field_key=key
             ) from None
     elif expected_type is float:
         try:
             numeric_value = float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             raise _DynamicConfigValidationError(
                 "toast.numeric_required", field_key=key
             ) from None
         if not math.isfinite(numeric_value):
-            raise _DynamicConfigValidationError(
-                "toast.numeric_required", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.numeric_required", field_key=key)
 
     if key in ranges:
         min_value, max_value = ranges[key]
         if numeric_value is None:
-            raise _DynamicConfigValidationError(
-                "toast.numeric_required", field_key=key
-            )
+            raise _DynamicConfigValidationError("toast.numeric_required", field_key=key)
         if numeric_value < min_value or (
             max_value is not None and numeric_value > max_value
         ):
@@ -684,6 +938,7 @@ async def save_all_config(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf_header),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """统一保存页右上角唯一保存按钮：一次请求按页面顺序保存全部表单。
 
@@ -691,10 +946,27 @@ async def save_all_config(
     从其 toast_redirect 的 Location 提取 _toast/_toast_type 判定成败，
     聚合为单条 toast 返回 JSON；部分失败时逐项透出结果供前端定位分区。
     """
-    body = await request.json()
+    lang = _config_language(request, user_prefs)
+    try:
+        body = await request.json()
+    except ValueError, TypeError:
+        raise HTTPException(
+            status_code=400, detail=i18n.t("toast.config_payload_invalid", lang=lang)
+        ) from None
     items = body.get("requests") if isinstance(body, dict) else None
     if not isinstance(items, list):
-        raise HTTPException(status_code=400, detail="requests 必须是数组")
+        raise HTTPException(
+            status_code=400, detail=i18n.t("toast.config_payload_invalid", lang=lang)
+        )
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("fields") or {}, dict)
+        or (item.get("anchor") is not None and not isinstance(item.get("anchor"), str))
+        for item in items
+    ):
+        raise HTTPException(
+            status_code=400, detail=i18n.t("toast.config_payload_invalid", lang=lang)
+        )
 
     # 在函数内解析模块属性，保证可测试性（monkeypatch 生效）
     handlers = {
@@ -708,7 +980,10 @@ async def save_all_config(
     results: list[dict] = []
     for item in items:
         if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail="requests 项必须是对象")
+            raise HTTPException(
+                status_code=400,
+                detail=i18n.t("toast.config_payload_invalid", lang=lang),
+            )
         action = str(item.get("action", ""))
         anchor = item.get("anchor")
         handler = handlers.get(action)
@@ -718,7 +993,16 @@ async def save_all_config(
                     "action": action,
                     "anchor": anchor,
                     "ok": False,
-                    "toast": f"未知保存目标: {action}",
+                    "toast": i18n.t("toast.config_unknown_save_target", lang=lang),
+                    "errors": [
+                        config_issue(
+                            "",
+                            "unknown_save_target",
+                            "toast.config_unknown_save_target",
+                            lang=lang,
+                            anchor=anchor,
+                        )
+                    ],
                 }
             )
             continue
@@ -731,22 +1015,30 @@ async def save_all_config(
         )
         try:
             response = await handler(
-                _FormOnlyRequest(form),
+                _FormOnlyRequest(form, language=lang),
                 db=db,
                 user=user,
                 csrf_token=csrf_token,
                 **kwargs,
             )
-            query = dict(
-                parse_qsl(urlsplit(response.headers.get("location", "/")).query)
-            )
-            toast_type = query.get("_toast_type", "success")
+            if isinstance(response, JSONResponse):
+                feedback = json.loads(response.body)
+            else:
+                query = dict(
+                    parse_qsl(urlsplit(response.headers.get("location", "/")).query)
+                )
+                feedback = {
+                    "ok": query.get("_toast_type", "success") != "error",
+                    "toast": query.get("_toast", ""),
+                    "errors": json.loads(query.get("_errors", "[]")),
+                }
             results.append(
                 {
                     "action": action,
                     "anchor": anchor,
-                    "ok": toast_type != "error",
-                    "toast": query.get("_toast", ""),
+                    "ok": bool(feedback.get("ok")) and response.status_code < 400,
+                    "toast": feedback.get("toast", ""),
+                    "errors": feedback.get("errors", []),
                 }
             )
         except HTTPException as exc:
@@ -755,33 +1047,64 @@ async def save_all_config(
                     "action": action,
                     "anchor": anchor,
                     "ok": False,
-                    "toast": f"HTTP {exc.status_code}: {exc.detail}",
+                    "toast": i18n.t(
+                        "toast.config_save_http_failed",
+                        lang=lang,
+                        status=exc.status_code,
+                    ),
+                    "errors": [
+                        config_issue(
+                            "",
+                            "save_request_failed",
+                            "toast.config_save_http_failed",
+                            lang=lang,
+                            params={"status": exc.status_code},
+                            anchor=anchor,
+                        )
+                    ],
                 }
             )
         except Exception as exc:
             # 批量保存不因单项异常中断：记录失败并继续后续分区
-            logger.error(f"save-all [{action}] 保存异常: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"save-all [{action}] 保存异常: {exc}")
             results.append(
                 {
                     "action": action,
                     "anchor": anchor,
                     "ok": False,
-                    "toast": i18n.t("toast.save_failed", lang=detect_language()),
+                    "toast": i18n.t("toast.save_failed", lang=lang),
+                    "errors": [
+                        config_issue(
+                            "",
+                            "save_failed",
+                            "toast.save_failed",
+                            lang=lang,
+                            anchor=anchor,
+                        )
+                    ],
                 }
             )
 
-    lang = detect_language()
+    errors = [issue for result in results for issue in result.get("errors", [])]
     failed = [result for result in results if not result["ok"]]
     if failed:
         message = i18n.t(
             "toast.save_all_partial",
             lang=lang,
             count=len(failed),
-            error=failed[0]["toast"],
+            error=(
+                failed[0]["errors"][0]["message"]
+                if failed[0].get("errors")
+                else failed[0]["toast"]
+            ),
         )
-        return JSONResponse({"ok": False, "toast": message, "results": results})
+        return JSONResponse(
+            {"ok": False, "toast": message, "results": results, "errors": errors}
+        )
     message = i18n.t("toast.save_all_success", lang=lang, count=len(results))
-    return JSONResponse({"ok": True, "toast": message, "results": results})
+    return JSONResponse(
+        {"ok": True, "toast": message, "results": results, "errors": []}
+    )
 
 
 # ========== GET: AI 账号配置页 ==========
@@ -793,18 +1116,10 @@ async def ai_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """AI 提供商账号配置页（多厂商持久化、随时切换、故障转移链）."""
-    from backend.webui.routes.auth import APP_VERSION
+    from fastapi.responses import RedirectResponse
 
-    return render_template(
-        "config_ai.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_ai",
-        app_version=APP_VERSION,
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/ai" + query, status_code=302)
 
 
 # ========== 配置备份与恢复 ==========
@@ -816,15 +1131,10 @@ async def config_backup_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """配置备份页面。"""
-    return render_template(
-        "config_backup.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_backup",
-    )
+    from fastapi.responses import RedirectResponse
+
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/backup" + query, status_code=302)
 
 
 @router.post("/backup/export/users")
@@ -832,8 +1142,10 @@ async def download_user_backup(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """下载全部用户及个人配置、两步验证和通行密钥的 JSON 备份。"""
+    lang = _config_language(None, user_prefs)
     try:
         document = await export_user_backup(db)
         content = serialize_user_backup(document)
@@ -882,16 +1194,16 @@ async def download_user_backup(
             "/config/backup",
             "toast.user_backup_export_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("用户信息备份导出失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("用户信息备份导出失败: {}", exc)
         return toast_redirect(
             "/config/backup",
             "toast.user_backup_export_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason="internal error",
         )
 
@@ -902,8 +1214,10 @@ async def download_config_backup(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """下载全局、AI、系统配置或完整的版本化 JSON 备份。"""
+    lang = _config_language(None, user_prefs)
     try:
         document = await export_config_backup(db, scope)
         content = serialize_config_backup(document)
@@ -942,16 +1256,16 @@ async def download_config_backup(
             "/config/backup",
             "toast.config_backup_export_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("配置备份导出失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("配置备份导出失败: {}", exc)
         return toast_redirect(
             "/config/backup",
             "toast.config_backup_export_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason="internal error",
         )
 
@@ -962,8 +1276,10 @@ async def upload_config_backup(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """校验并精确恢复备份中包含的配置分类。"""
+    lang = _config_language(None, user_prefs)
     result = None
     try:
         content = await backup_file.read(BACKUP_MAX_BYTES + 1)
@@ -981,10 +1297,9 @@ async def upload_config_backup(
             refresh_imported_runtime_config(result)
         except Exception as exc:
             runtime_refresh_ok = False
-            logger.error(
+            logger.opt(exception=True).error(
                 "配置已导入，但运行时配置刷新失败，需重启应用: {}",
                 exc,
-                exc_info=True,
             )
 
         safe_filename = Path(backup_file.filename or "backup.json").name[:255]
@@ -1014,7 +1329,6 @@ async def upload_config_backup(
             result.updated,
             result.deleted,
         )
-        lang = detect_language()
         from backend.webui.i18n import i18n as _i18n
 
         section_names = ", ".join(
@@ -1044,17 +1358,17 @@ async def upload_config_backup(
             "/config/backup",
             "toast.config_backup_invalid",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("配置备份导入失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("配置备份导入失败: {}", exc)
         if result is not None:
             return toast_redirect(
                 "/config/backup",
                 "toast.config_backup_imported_restart",
                 "error",
-                lang=detect_language(),
+                lang=lang,
                 sections=", ".join(result.sections),
                 created=result.created,
                 updated=result.updated,
@@ -1066,7 +1380,7 @@ async def upload_config_backup(
             "/config/backup",
             "toast.config_backup_import_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
         )
     finally:
         await backup_file.close()
@@ -1078,8 +1392,10 @@ async def upload_user_backup(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """校验并合并全部用户及其受支持的安全信息。"""
+    lang = _config_language(None, user_prefs)
     try:
         content = await backup_file.read(USER_BACKUP_MAX_BYTES + 1)
         document = parse_user_backup(content)
@@ -1123,7 +1439,6 @@ async def upload_user_backup(
             result.passkeys_imported,
             result.recovery_codes_portable,
         )
-        lang = detect_language()
         message_key = (
             "toast.user_backup_imported"
             if result.recovery_codes_portable
@@ -1146,126 +1461,20 @@ async def upload_user_backup(
             "/config/backup",
             "toast.user_backup_invalid",
             "error",
-            lang=detect_language(),
+            lang=lang,
             reason=str(exc),
         )
     except Exception as exc:
-        logger.error("用户信息备份导入失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("用户信息备份导入失败: {}", exc)
         await db.rollback()
         return toast_redirect(
             "/config/backup",
             "toast.user_backup_import_failed",
             "error",
-            lang=detect_language(),
+            lang=lang,
         )
     finally:
         await backup_file.close()
-
-
-async def _build_dynamic_groups(db: AsyncSession, lang: str) -> list[dict]:
-    """读取 AppConfig 并组装动态配置分组数据（平铺键卡片渲染上下文）。
-
-    Build dynamic config group context shared by the unified config page
-    (labels/descriptions resolve via i18n with DYNAMIC_* fallbacks).
-    """
-    from backend.core.config import (
-        DYNAMIC_CONFIG_GROUPS,
-        DYNAMIC_CONFIG_LABELS,
-        DYNAMIC_CONFIG_RANGES,
-        DYNAMIC_CONFIG_SELECT_OPTIONS,
-        DYNAMIC_CONFIG_SENSITIVE_KEYS,
-        _get_field_type,
-        get_dynamic_config_input_type,
-        get_settings,
-        mask_sensitive_value,
-    )
-    from backend.webui.i18n import i18n as _i18n
-
-    result = await db.execute(select(AppConfig).order_by(AppConfig.id))
-    configs = result.scalars().all()
-    config_map = {c.key_name: c.key_value for c in configs}
-
-    settings = get_settings()
-    dynamic_groups = []
-    for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
-        items = []
-        for key in group_data["keys"]:
-            default_val = _settings_default_to_str(getattr(settings, key, ""))
-            value = config_map.get(key, default_val)
-            input_type = get_dynamic_config_input_type(key)
-            is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
-
-            display_value = (
-                mask_sensitive_value(value) if (is_sensitive and value) else value
-            )
-
-            # Translate select options via i18n
-            raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
-            translated_options = []
-            for opt in raw_options:
-                opt_key = f"config.option.{key}_{opt['value']}"
-                opt_label = _i18n.t(opt_key, lang=lang)
-                # Fallback to original label if key not found
-                translated_options.append(
-                    {
-                        "value": opt["value"],
-                        "label": opt_label if opt_key != opt_label else opt["label"],
-                    }
-                )
-
-            items.append(
-                {
-                    "key": key,
-                    "label": (
-                        translated_label
-                        if (
-                            translated_label := _i18n.t(
-                                f"config.label.{key}", lang=lang
-                            )
-                        )
-                        != f"config.label.{key}"
-                        else DYNAMIC_CONFIG_LABELS.get(key, key)
-                    ),
-                    "description": (
-                        ""
-                        if not group_data.get("descriptions", {}).get(key)
-                        else (
-                            translated
-                            if (translated := _i18n.t(f"config.desc.{key}", lang=lang))
-                            != f"config.desc.{key}"
-                            else group_data["descriptions"][key]
-                        )
-                    ),
-                    "input_type": input_type,
-                    "step": "any" if _get_field_type(key) is float else "1",
-                    "value": display_value,
-                    "default": mask_sensitive_value(default_val)
-                    if (is_sensitive and default_val)
-                    else default_val,
-                    "sensitive": is_sensitive,
-                    "select_options": translated_options,
-                    "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
-                    "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
-                }
-            )
-        dynamic_groups.append(
-            {
-                "id": group_id,
-                "label": (
-                    translated_group
-                    if (
-                        translated_group := _i18n.t(
-                            f"config.group.{group_id}", lang=lang
-                        )
-                    )
-                    != f"config.group.{group_id}"
-                    else group_data["label"]
-                ),
-                "icon": group_data.get("icon", ""),
-                "fields": items,
-            }
-        )
-    return dynamic_groups
 
 
 @router.get("")
@@ -1275,35 +1484,10 @@ async def unified_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """全局配置页：平铺动态配置组 + 策略/标签节表单单页呈现。"""
-    lang = detect_language(user_prefs)
-    dynamic_groups = await _build_dynamic_groups(db, lang)
+    from fastapi.responses import RedirectResponse
 
-    strategy_data = get_sections_for_target("strategy")
-    pr_dependency_graph = dict(strategy_data.get("pr_dependency_graph", {}))
-    pr_dependency_graph["mode"] = await section_config_service.resolve_depgraph_mode()
-    label_data = get_sections_for_target("label")
-
-    return render_template(
-        "config_unified.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="config_unified",
-        dynamic_groups=dynamic_groups,
-        strategies=strategy_data.get("strategies", {}),
-        file_filters=strategy_data.get("file_filters", {}),
-        context_enhancement=strategy_data.get("context_enhancement", {}),
-        review_policy=strategy_data.get("review_policy", {}),
-        pr_dependency_graph=pr_dependency_graph,
-        issue_analysis=strategy_data.get("issue_analysis", {}),
-        pr_summary=strategy_data.get("pr_summary", {}),
-        scan=strategy_data.get("scan", {}),
-        labels=label_data.get("labels", {}),
-        recommendation=label_data.get("recommendation", {}),
-        conflict_rules=label_data.get("conflict_rules", {}),
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/review" + query, status_code=302)
 
 
 @router.get("/agent-network-status", response_class=JSONResponse)
@@ -1320,9 +1504,7 @@ async def agent_network_status(
     del user
     try:
         policy_state = await get_agent_team_network_policy_state()
-        backend_value = await get_dynamic_config_fresh(
-            "agent_team_execution_backend"
-        )
+        backend_value = await get_dynamic_config_fresh("agent_team_execution_backend")
         backend = validate_execution_backend(
             str(backend_value or ""),
             deploy_mode=str(getattr(get_settings(), "sakura_deploy_mode", "unknown")),
@@ -1342,6 +1524,9 @@ async def agent_network_status(
                 "policy_revision": "unavailable",
                 "full_access_risk": False,
                 "local_host_network": False,
+                "agent_network_mode": "unavailable",
+                "dependency_network_mode": "unavailable",
+                "dependency_egress_available": False,
             },
             status_code=503,
         )
@@ -1355,12 +1540,16 @@ async def agent_network_status(
     # failure.
     egress_capability = "not_applicable" if local_host_network else "unavailable"
     egress_available: bool | None = None if local_host_network else False
+    agent_network_mode = "not_applicable"
+    dependency_network_mode = "not_applicable"
     if backend == "sandbox":
+        agent_network_mode = network_mode_for_policy(
+            policy, capability=NetworkCapability.NONE
+        )
+        dependency_network_mode = network_mode_for_policy(policy, profile="dependency")
         sandbox_status = await read_sandbox_capability_status()
         sandbox_ready = bool(sandbox_status.get("available"))
-        egress_capability = str(
-            sandbox_status.get("egress_capability", "unavailable")
-        )
+        egress_capability = str(sandbox_status.get("egress_capability", "unavailable"))
         egress_available = egress_capability == "egress"
 
     if backend == "local":
@@ -1382,6 +1571,13 @@ async def agent_network_status(
             "policy_revision": policy_state.revision,
             "full_access_risk": policy is AgentTeamNetworkPolicy.FULL_ACCESS,
             "local_host_network": local_host_network,
+            "agent_network_mode": agent_network_mode,
+            "dependency_network_mode": dependency_network_mode,
+            "dependency_egress_available": bool(
+                sandbox_ready
+                and egress_available
+                and dependency_network_mode == "egress"
+            ),
         }
     )
 
@@ -1402,15 +1598,30 @@ async def save_general_config(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存全局配置页的全部平铺键（通用逐键 upsert 循环）。
 
     review_basic / web_search 等原手写键段已注册进 DYNAMIC_CONFIG_GROUPS，
-    与其余动态组共用同一循环；bool 未勾选时表单不提交，按 Settings
-    字段类型回填 "false"（与既有 checkbox 语义一致）。
+    与其余动态组共用同一校验服务；仅修改明确提交的字段。
+    旧客户端关闭开关时需明确提交 false，缺省字段始终保持不变。
     """
+    lang = _config_language(request, user_prefs)
     try:
         form = await request.form()
+        # Plugins are only writable through the typed, credential-preserving route.
+        # Reject the whole generic form before any row can be changed.
+        if {
+            "agent_team_harness_plugins",
+            "agent_team_permission_profile",
+            "agent_team_mcp_io_timeout_seconds",
+        } & set(form):
+            return toast_redirect(
+                "/config",
+                "agent_plugins.use_plugin_page",
+                "error",
+                lang=detect_language(),
+            )
 
         # ========== 动态配置保存（覆盖全部 DYNAMIC 组键） ==========
         from backend.core.config import (
@@ -1427,6 +1638,7 @@ async def save_general_config(
         # 先完成整张表单的纯校验与标准化。任何字段失败都在数据库查询、
         # ORM 对象修改、缓存失效和 Settings/信号量热加载之前返回。
         validated_values: list[tuple[str, str, bool]] = []
+        errors = []
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
                 is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
@@ -1439,12 +1651,7 @@ async def save_general_config(
 
                 raw = form.get(key)
                 if raw is None:
-                    # boolean 字段未勾选时表单不提交
-                    # 从 Settings 获取类型判断
-                    if _get_field_type(key) is bool:
-                        raw = "false"
-                    else:
-                        continue
+                    continue
 
                 try:
                     val = _validate_dynamic_config_value(
@@ -1455,90 +1662,28 @@ async def save_general_config(
                         select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
                     )
                 except _DynamicConfigValidationError as exc:
-                    return toast_redirect(
-                        "/config",
-                        exc.toast_key,
-                        "error",
-                        lang=detect_language(),
-                        **exc.context,
-                    )
+                    errors.append(_dynamic_issue(exc, lang))
+                    continue
 
                 validated_values.append((key, val, is_sensitive))
 
-        changed = {}
-        for key, val, is_sensitive in validated_values:
-            # 保存
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == key)
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg is None:
-                # 首次创建
-                cfg = AppConfig(key_name=key, key_value=val, description=key)
-                db.add(cfg)
-                changed[key] = {
-                    "old": "(无)",
-                    "new": _mask(val) if is_sensitive else val,
-                    "raw_new": val,
-                }
-            elif cfg.key_value != val:
-                if is_sensitive:
-                    changed[key] = {
-                        "old": _mask(cfg.key_value),
-                        "new": _mask(val),
-                        "raw_new": val,
-                    }
-                else:
-                    changed[key] = {
-                        "old": cfg.key_value,
-                        "new": val,
-                        "raw_new": val,
-                    }
-                cfg.key_value = val
-
-        if not changed:
-            return toast_redirect(
-                "/config",
-                "toast.config_saved_restart",
-                lang=detect_language(),
-            )
-
-        await db.commit()
-
-        # 清除动态配置缓存 + 同步 Settings 单例
-        from backend.core.config import (
-            get_all_dynamic_config_keys,
-            invalidate_dynamic_config_cache,
-            update_settings_field,
+        from backend.services.billing_configuration_service import (
+            BillingConfigurationError,
+            validate_billing_configuration,
         )
+        from backend.services.billing_service import BillingError
+        from backend.services.config_center_service import config_center_service
 
-        all_dynamic_keys = get_all_dynamic_config_keys()
-        invalidate_dynamic_config_cache(all_dynamic_keys)
-
-        # 即时更新 Settings 单例，无需重启
-        for key, change in changed.items():
-            if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
-                update_settings_field(key, change.get("raw_new", change["new"]))
-
-        # 即时重置信号量，使并发配置立即生效
-        if "max_concurrent_issues" in changed:
-            # 延迟导入避免 config ↔ worker 循环引用
-            from backend.workers.issue_worker import reset_issue_semaphore
-
-            reset_issue_semaphore()
-
-        if "max_concurrent_reviews" in changed:
-            # 延迟导入避免 config ↔ worker 循环引用
-            from backend.workers.review_worker import reset_review_semaphore
-
-            reset_review_semaphore()
-
-        if "star_aid_scheduler_enabled" in changed:
-            from backend.services.star_aid_scheduler import get_star_aid_scheduler
-
-            star_sched = get_star_aid_scheduler()
-            if star_sched is not None:
-                star_sched.restart_if_needed()
+        updates = {key: val for key, val, _ in validated_values}
+        try:
+            await validate_billing_configuration(db, updates)
+        except (BillingConfigurationError, BillingError) as exc:
+            errors.extend(_billing_issues(exc, lang))
+        if errors:
+            return config_save_response(request, "/config", "toast.config_fields_invalid", lang=lang, errors=errors)
+        changed = await config_center_service.save_app_updates(
+            db, updates
+        )
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
@@ -1552,22 +1697,31 @@ async def save_general_config(
         await log_admin_action(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
-        return toast_redirect(
-            "/config", "toast.config_saved_live", lang=detect_language()
+        return config_save_response(
+            request, "/config",
+            "toast.config_saved_pending" if getattr(changed, "effect", "live") == "pending" else "toast.config_saved_live",
+            lang=lang,
         )
 
     except ValueError:
-        return toast_redirect(
+        return config_save_response(
+            request,
             "/config",
-            "toast.invalid_param",
-            "error",
-            lang=detect_language(),
+            "toast.config_fields_invalid",
+            lang=lang,
+            errors=[
+                config_issue(
+                    "", "invalid_config_value", "toast.invalid_param", lang=lang
+                )
+            ],
         )
     except Exception as e:
-        logger.error(f"全局配置保存失败: {e}", exc_info=True)
-        return toast_redirect(
+        logger.opt(exception=True).error(f"全局配置保存失败: {e}")
+        await db.rollback()
+        return config_save_response(
+            request,
             "/config",
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )

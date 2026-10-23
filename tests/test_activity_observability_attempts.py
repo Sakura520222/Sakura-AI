@@ -1,9 +1,12 @@
 """Task 4 tests for authoritative attempts, tools, and native artifacts."""
 
+import asyncio
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import create_engine, event, select
@@ -28,6 +31,8 @@ from backend.core.ai_protocol.models import (
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
+from backend.core.log_context import get_log_context, log_context
+from backend.core.logging_bridge import InterceptHandler, _patch_record
 from backend.models.activity_observability_models import (
     ActivityArtifactAccessLog,
     ActivityCanonicalContextRevision,
@@ -847,6 +852,127 @@ async def test_observed_embedding_success_persists_usage_and_embedding_purpose(
 
 async def _completed(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "error", "cancelled", "unavailable"])
+async def test_embedding_provider_logs_keep_attempt_and_restore_caller(
+    monkeypatch, outcome
+):
+    from loguru import logger
+
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
+    context = SimpleNamespace(
+        session_id=11, invocation_id=22, work_unit_id=33, thread_id=None
+    )
+    service = SimpleNamespace()
+    service.fail = AsyncMock()
+    service.finish = AsyncMock()
+    sender = ObservedEmbeddingSender(service, context=context)
+    attempt_id = None if outcome == "unavailable" else 123
+
+    async def begin(**kwargs):
+        if outcome == "unavailable":
+            raise RuntimeError("Activity database is unavailable")
+        return SimpleNamespace(id=attempt_id)
+
+    monkeypatch.setattr(sender, "begin", begin)
+    records = []
+    sink = logger.add(lambda message: records.append(message.record))
+    failure = (
+        asyncio.CancelledError("cancelled")
+        if outcome == "cancelled"
+        else RuntimeError("provider failed")
+    )
+
+    async def create():
+        assert get_log_context()["attempt_id"] == attempt_id
+        logger.info("embedding-provider-log")
+        record = logging.LogRecord(
+            "embedding.sdk",
+            logging.INFO,
+            "/sdk/embed.py",
+            8,
+            "embedding-sdk-log",
+            (),
+            None,
+            func="create",
+        )
+        InterceptHandler().emit(record)
+        if outcome in {"error", "cancelled"}:
+            raise failure
+        return SimpleNamespace(usage=None)
+
+    try:
+        with log_context(clear=True, request_id="embedding-request", attempt_id=999):
+            if outcome in {"error", "cancelled"}:
+                with pytest.raises(type(failure)) as caught:
+                    await sender.send_embedding(
+                        create,
+                        logical_call_id="embedding-call",
+                        requested={},
+                        effective={},
+                    )
+                assert caught.value is failure
+                assert failure._log_correlation["attempt_id"] == attempt_id
+                assert failure._log_correlation["session_id"] == 11
+                service.fail.assert_awaited_once()
+            else:
+                _, actual_attempt_id = await sender.send_embedding(
+                    create, logical_call_id="embedding-call", requested={}, effective={}
+                )
+                assert actual_attempt_id == attempt_id
+                if attempt_id is not None:
+                    service.finish.assert_awaited_once()
+                else:
+                    service.finish.assert_not_awaited()
+            assert get_log_context()["attempt_id"] == 999
+    finally:
+        logger.remove(sink)
+    provider_logs = [record for record in records if record["message"].endswith("-log")]
+    assert len(provider_logs) == 2
+    for record in provider_logs:
+        assert record["extra"]["attempt_id"] == attempt_id
+        assert record["extra"]["session_id"] == 11
+        assert record["extra"]["logical_call_id"] == "embedding-call"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_embedding_attempt_contexts_are_isolated(monkeypatch):
+    service = SimpleNamespace(finish=AsyncMock())
+    sender = ObservedEmbeddingSender(
+        service,
+        context=SimpleNamespace(
+            session_id=11, invocation_id=22, work_unit_id=33, thread_id=None
+        ),
+    )
+    arrived = asyncio.Event()
+    seen = []
+
+    async def begin(*, logical_call_id, **kwargs):
+        return SimpleNamespace(id=int(logical_call_id))
+
+    monkeypatch.setattr(sender, "begin", begin)
+
+    async def run(attempt_id):
+        async def create():
+            seen.append(get_log_context())
+            if len(seen) == 2:
+                arrived.set()
+            await arrived.wait()
+            assert get_log_context()["attempt_id"] == attempt_id
+            assert get_log_context()["logical_call_id"] == str(attempt_id)
+            return SimpleNamespace(usage=None)
+
+        return await sender.send_embedding(
+            create, logical_call_id=str(attempt_id), requested={}, effective={}
+        )
+
+    with log_context(clear=True, attempt_id=999):
+        results = await asyncio.gather(run(123), run(456))
+        assert get_log_context()["attempt_id"] == 999
+    assert {result[1] for result in results} == {123, 456}
+    assert {state["attempt_id"] for state in seen} == {123, 456}
 
 
 @pytest.mark.asyncio
@@ -1727,3 +1853,153 @@ async def test_embedding_service_without_context_uses_fake_sdk_production_path(
     service = module.EmbeddingService()
     assert await service.embed_texts(["hello"]) == [[0.1, 0.2]]
     assert service.client.max_retries == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+async def test_real_provider_attempt_logs_match_durable_activity_ids(
+    db_session, chain, monkeypatch, streaming, fails
+):
+    """SQLite Activity + real adapter + mock HTTP, including stream failure."""
+    import httpx
+    from loguru import logger
+
+    from backend.core.ai_protocol.adapters.openai_compatible import (
+        OpenAICompatibleAdapter,
+    )
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.log_context import get_log_context, log_context
+    from backend.core.logging_bridge import _patch_record
+    from backend.core.time_service import now_utc
+
+    session, thread, work_unit, _ = chain
+    revision = ActivityCanonicalContextRevision(
+        thread_id=thread.id,
+        revision_number=1,
+        message_manifest_json="[]",
+        content_hash="logging-test",
+        reason="test",
+    )
+    db_session.add(revision)
+    db_session.flush()
+    thread.current_revision_id = revision.id
+    db_session.commit()
+    context = InvocationContext(
+        session_id=session.id,
+        invocation_id=work_unit.invocation_id,
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        role_snapshot=RoleConfigSnapshot(
+            role="reviewer",
+            requested_provider="stream-provider",
+            requested_model="stream-model",
+            requested_thinking_mode=None,
+            candidate_chain=(("stream-provider", "stream-model"),),
+            account_id="account",
+            protocol_family="openai_compatible",
+            endpoint_fingerprint="a" * 64,
+            config_snapshot_version=1,
+            captured_at=now_utc(),
+        ),
+    )
+    sender = ObservedModelSender(
+        AttemptService(_AsyncAdapter(db_session)), context=context
+    )
+    captured = []
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
+    sink = logger.add(lambda message: captured.append(message.record), catch=False)
+
+    def upstream(request):
+        assert request.headers["authorization"] == "Bearer credential"
+        if fails:
+            return httpx.Response(
+                401, json={"error": {"message": "rejected credential"}}
+            )
+        if streaming:
+            chunk = {
+                "choices": [
+                    {"index": 0, "delta": {"content": "ok"}, "finish_reason": None}
+                ]
+            }
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text="data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n",
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            with log_context(
+                request_id="http-request", task_id="issue-task", worker="issue"
+            ):
+
+                async def send():
+                    kwargs = {
+                        "logical_call_id": "logged-call",
+                        "context_revision_id": revision.id,
+                    }
+                    request = UnifiedRequest(
+                        model="stream-model", messages=[], max_tokens=10
+                    )
+                    if streaming:
+                        async for _ in sender.send_stream(
+                            OpenAICompatibleAdapter(),
+                            client,
+                            _stream_candidate(),
+                            request,
+                            **kwargs,
+                        ):
+                            assert "attempt_id" not in get_log_context()
+                    else:
+                        await sender.send_chat(
+                            OpenAICompatibleAdapter(),
+                            client,
+                            _stream_candidate(),
+                            request,
+                            **kwargs,
+                        )
+
+                if fails:
+                    with pytest.raises(AIError):
+                        await send()
+                else:
+                    await send()
+                assert get_log_context() == {
+                    "request_id": "http-request",
+                    "task_id": "issue-task",
+                    "worker": "issue",
+                }
+        attempt = db_session.scalars(
+            select(ActivityModelAttempt).where(
+                ActivityModelAttempt.logical_call_id == "logged-call"
+            )
+        ).one()
+        assert attempt.status == ("failed" if fails else "completed")
+        observed = [r for r in captured if r["extra"].get("attempt_id") == attempt.id]
+        assert observed
+        for record in observed:
+            fields = record["extra"]
+            assert fields["session_id"] == session.id
+            assert fields["invocation_id"] == work_unit.invocation_id
+            assert fields["work_unit_id"] == work_unit.id
+            assert fields["logical_call_id"] == "logged-call"
+            assert fields["task_id"] == "issue-task"
+            assert fields["request_id"] == "http-request"
+            assert "rejected credential" not in record["message"]
+        if fails:
+            assert any("Traceback" in r["message"] for r in observed)
+    finally:
+        logger.remove(sink)

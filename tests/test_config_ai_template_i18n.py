@@ -104,7 +104,7 @@ def test_config_ai_has_no_raw_chinese_js_state_or_unsafe_html_message_path():
     ):
         assert hardcoded not in script
 
-    assert "p.textContent = message" in script
+    assert "new CustomEvent('show-toast'" in script
     # Issue #625：原生 confirm() 已替换为统一 Sakura.confirm 公共 API
     # （danger variant 承载删除确认），生产模板禁止再出现原生 confirm 调用。
     assert "window.Sakura.confirm({" in script
@@ -118,14 +118,19 @@ def test_config_ai_model_selects_match_account_provider_controls():
     source = TEMPLATE_PATH.read_text(encoding="utf-8")
 
     assert source.count('x-model="form.default_model"') == 1
-    assert source.count('x-model="bindings[role].primary.model"') == 1
-    assert source.count('x-model="fb.model"') == 1
-    assert source.count('option value="" hidden') == 3
+    assert source.count('option value="" hidden') == 1
     assert source.count('@change="form.default_model = $event.target.value;') == 1
-    assert source.count('@change="bindings[role].primary.model = $event.target.value;') == 1
-    assert source.count('@change="fb.model = $event.target.value;') == 1
-    assert "toggleModelPicker" not in source
-    assert "modelPickerOpen" not in source
-    assert '<option value="" selected>' not in source
-    assert "accountModels(bindings[role].primary.account, bindings[role].primary.model)" in source
-    assert "accountModels(fb.account, fb.model)" in source
+    from backend.services.config_metadata import field_catalog
+
+    fields = field_catalog()
+    assert fields["binding/main"].storage == "binding"
+    assert fields["binding/summary"].type == "object"
+    controller = (TEMPLATE_PATH.parent.parent / "assets/settings/center.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'from "./binding-editor.js"' in controller
+    editor = (
+        TEMPLATE_PATH.parent.parent / "assets/settings/binding-editor.js"
+    ).read_text(encoding="utf-8")
+    assert "function createBindingEditor" in editor
+    assert "accounts.find(" in editor

@@ -6,12 +6,14 @@ import os
 import subprocess
 from pathlib import Path
 
+from tests.platform_support import posix_bash
+
 ROOT = Path(__file__).parents[1]
 
 
 def _run_bash(command: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=command.encode("utf-8"),
@@ -1172,7 +1174,7 @@ fi
     assert "UNEXPECTED_MATCH" not in result.stdout
 
 
-def test_current_setup_token_uses_verified_web_container_current_start_only():
+def test_current_setup_token_reads_private_file_from_verified_web_container():
     result = _run_bash(
         r'''
 set -euo pipefail
@@ -1189,23 +1191,22 @@ docker() {
         printf '%s\n' "$container_id"
     elif [[ "$*" == *'{{json .}}'* ]]; then
         printf '%s\n' '{"Name":"/sakura-ai","Config":{"Labels":{"com.docker.compose.project":"sakura-ai","com.docker.compose.service":"web"}}}'
-    elif [[ "$*" == *'{{.State.StartedAt}}'* ]]; then
-        printf '%s\n' '2026-09-01T04:00:00.000000000Z'
-    elif [[ "$1" == logs ]]; then
-        printf '%s\n' 'old Token: invalid' "  Token: $expected_token"
+    elif [[ "$1" == exec && "$3 $4" == 'cat /app/config/.setup-token' ]]; then
+        printf '%s\n' "$expected_token"
     else
         return 1
     fi
 }
 [[ "$(current_setup_token)" == "$expected_token" ]]
-grep -Fq 'logs --since 2026-09-01T04:00:00.000000000Z' "$docker_calls"
+grep -Fq 'cat /app/config/.setup-token' "$docker_calls"
+! grep -q '^logs ' "$docker_calls"
 '''
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_current_setup_token_rejects_wrong_compose_identity_before_reading_logs():
+def test_current_setup_token_rejects_wrong_compose_identity_before_reading_token():
     result = _run_bash(
         r'''
 set -euo pipefail

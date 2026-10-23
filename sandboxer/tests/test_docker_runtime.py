@@ -67,6 +67,33 @@ def _config(root: Path, **overrides: object) -> SandboxdConfig:
     return SandboxdConfig(**values)
 
 
+def test_readonly_inspection_pins_binary_and_all_workspace_mounts(tmp_path):
+    """OCI argv evidence only; this test does not use Docker."""
+    root, key = _workspace(tmp_path)
+    workspace = root / "owner/repo/worktrees/42-feature"
+    adapter = DockerRuntimeAdapter(_config(root))
+    plan = _GitMountPlan(root / "repo.git/worktrees/task", root / "repo.git")
+    request = _request(
+        key,
+        command=None,
+        argv=["grep", "-rl", "-Z", "-I", "--", "^", "."],
+        profile="read_only",
+    )
+    argv = adapter.build_create_argv(
+        request,
+        workspace=workspace,
+        container_name="readonly-test",
+        git_mount_plan=plan,
+    )
+    mounts = [argv[index + 1] for index, item in enumerate(argv) if item == "--mount"]
+    assert len(mounts) == 3 and all(",readonly," in mount for mount in mounts)
+    assert argv[argv.index("--network") + 1] == "none"
+    assert argv[argv.index(IMAGE) + 1] == "/usr/bin/grep"
+    env = [argv[index + 1] for index, item in enumerate(argv) if item == "--env"]
+    assert "PATH=/usr/bin:/bin" in env
+    assert not any(item.startswith("VIRTUAL_ENV=") for item in env)
+
+
 @pytest.mark.parametrize("value", [b"container-42\v", b"container-42\f"])
 def test_decode_container_id_rejects_non_crlf_control_framing(value: bytes):
     with pytest.raises(RuntimeUnavailableError):
@@ -122,6 +149,11 @@ async def test_docker_lifecycle_uses_only_fixed_server_owned_argv(tmp_path: Path
         "rm",
     ]
     create = calls[0]
+    assert create[create.index("--log-driver") + 1] == "json-file"
+    assert {create[i + 1] for i, value in enumerate(create) if value == "--log-opt"} == {
+        "max-size=50m",
+        "max-file=3",
+    }
     assert "--network" in create and create[create.index("--network") + 1] == "none"
     assert "--read-only" in create
     assert create[create.index("--user") + 1] == "65532:65532"
@@ -637,9 +669,12 @@ async def test_workspace_handoff_is_reused_after_venv_creation(tmp_path: Path, m
     monkeypatch.setattr(adapter, "_handoff_workspace_to_runner", fake_handoff)
     await adapter._ensure_workspace_handoff(snapshot, None)
     (workspace / ".venv" / "sandbox" / "bin").mkdir(parents=True)
-    (workspace / ".venv" / "sandbox" / "bin" / "python").symlink_to(
-        "/usr/bin/python3"
-    )
+    launcher = workspace / ".venv" / "sandbox" / "bin" / "python"
+    if os.name == "nt":
+        # Handoff reuse depends on the snapshot, not launcher link semantics.
+        launcher.write_bytes(b"sandbox interpreter")
+    else:
+        launcher.symlink_to("/usr/bin/python3")
     await adapter._ensure_workspace_handoff(snapshot, None)
 
     assert calls == [workspace]

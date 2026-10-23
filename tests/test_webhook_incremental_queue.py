@@ -5,6 +5,9 @@ import pytest
 
 from backend.api import webhook
 from backend.core.config import get_settings
+from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
+
+sql_runtime = runtime_fixture
 
 
 class _FakeSession:
@@ -27,7 +30,10 @@ class _FakeTelegramService:
     async def get_user_by_github_username(self, github_username):
         return _FakeUser()
 
-    async def check_and_consume_quota(self, github_username, repo_name, pr_number):
+    async def check_and_consume_quota(
+        self, github_username, repo_name, pr_number, *, operation_id=None
+    ):
+        assert isinstance(operation_id, str) and operation_id
         return True, "ok"
 
     async def get_repo_subscribers(self, repo_full_name):
@@ -86,6 +92,7 @@ def _patch_common(monkeypatch):
 @pytest.mark.asyncio
 async def test_synchronize_active_review_queues_incremental_without_submitting(
     monkeypatch,
+    sql_runtime,
 ):
     settings = get_settings()
     old_auto_review, old_bot_username = _enable_auto_review(settings)
@@ -96,6 +103,33 @@ async def test_synchronize_active_review_queues_incremental_without_submitting(
     class _QueueService:
         async def enqueue_from_webhook(self, pr_info, delivery_id=None):
             queued.append((pr_info.copy(), delivery_id))
+            from backend.models.database import PRReviewIncrementalQueue
+            from backend.models.telegram_models import TelegramUser
+            from backend.services.billing_service import BillingService
+
+            async with sql_runtime[0]() as db:
+                db.add(TelegramUser(id=42, telegram_id=4242, github_username="alice"))
+                await db.flush()
+                await BillingService(db).grant(42, "10", "TEST-increment-ack-fund")
+                context = pr_info["billing_context"]
+                await BillingService(db).register_operation(
+                    context["user_id"],
+                    context["operation_id"],
+                    context["feature"],
+                    source=context["source"],
+                )
+                db.add(
+                    PRReviewIncrementalQueue(
+                        id=1,
+                        repo_owner=pr_info["repo_owner"],
+                        repo_name=pr_info["repo_name"],
+                        repo_full_name=pr_info["repo_full_name"],
+                        pr_number=pr_info["pr_number"],
+                        head_sha=pr_info["head_sha"],
+                        billing_context=pr_info["billing_context"],
+                    )
+                )
+                await db.commit()
             return SimpleNamespace(id=1)
 
     async def fake_submit_review_task(pr_info):
@@ -107,6 +141,9 @@ async def test_synchronize_active_review_queues_incremental_without_submitting(
 
     try:
         _patch_common(monkeypatch)
+        # Verified delivery admission has a real persisted receipt; GitHub and
+        # queue effects remain mocked at their external boundaries.
+        monkeypatch.setattr(webhook, "get_async_session", sql_runtime[0])
         monkeypatch.setattr(webhook, "submit_review_task", fake_submit_review_task)
         monkeypatch.setattr(
             webhook,
@@ -186,7 +223,7 @@ async def test_synchronize_without_active_review_submits_new_task(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_closed_event_cancels_pending_incremental_queue(monkeypatch):
+async def test_closed_event_cancels_pending_incremental_queue(monkeypatch, sql_runtime):
     """PR closed 事件应清理该 PR 的 pending 增量队列，避免永久残留 / 重开污染。"""
     settings = get_settings()
     old_auto_review, old_bot_username = _enable_auto_review(settings)
@@ -212,6 +249,7 @@ async def test_closed_event_cancels_pending_incremental_queue(monkeypatch):
 
     try:
         _patch_common(monkeypatch)
+        monkeypatch.setattr(webhook, "get_async_session", sql_runtime[0])
         import backend.workers.review_worker as rw
 
         monkeypatch.setattr(rw, "ReviewWorker", _FakeWorker)

@@ -1,0 +1,9 @@
+{% macro currency_select(name, value='', id='', required=false, class='', label='') %}
+{% set normalized = value|trim|upper %}
+{% set selection = normalized if normalized in currency_codes else value %}
+{% set unsupported = selection and selection not in currency_codes %}
+<select name="{{ name }}" {% if id %}id="{{ id }}"{% endif %} {% if required %}required{% endif %} {% if label %}data-config-label="{{ label }}"{% endif %} class="{{ class }}">
+    <option value="" {% if not selection or unsupported %}selected{% endif %} {% if unsupported %}disabled{% endif %}>{% if unsupported %}{{ value }} · {{ _('billing.unsupported_currency') }}{% else %}{{ _('billing.choose_currency') }}{% endif %}</option>
+    {% for code in currency_codes %}<option value="{{ code }}" {% if selection == code %}selected{% endif %}>{{ code }}</option>{% endfor %}
+</select>
+{% endmacro %}

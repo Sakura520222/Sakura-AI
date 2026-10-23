@@ -1,50 +1,65 @@
 # Sakura AI 文档
 
-> 完整文档索引。入门请先读 [README](../README.md)，部署参考 [部署指南](DEPLOYMENT.md)。
+欢迎使用 Sakura AI 官方文档。本站从当前仓库的 `docs/` 目录构建，文档内容与 Markdown 源文件保持同步。
 
----
+- [文档站首页](index.md)
+- [快速开始](quick-start.md)
+- [项目仓库](https://github.com/Sakura520222/Sakura-AI)
+- [报告文档问题](https://github.com/Sakura520222/Sakura-AI/issues/new/choose)
 
-## 快速上手
+## 开始使用
 
-| 文档 | 说明 |
-|---|---|
-| [部署指南](DEPLOYMENT.md) | Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard、WebUI 应用更新与 Host Updater 管理 |
-| [配置参考](CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
-| [技术架构](ARCHITECTURE.md) | 整体架构图、技术栈、代码结构、客户端、交互式知识图谱 |
+| 文档 | 内容 |
+| --- | --- |
+| [快速开始](quick-start.md) | 在线体验、自行部署与初始化流程 |
+| [部署指南](DEPLOYMENT.md) | Docker、源码、GitHub App、数据库、Updater 与 Agent 沙箱 |
+| [配置参考](CONFIGURATION.md) | WebUI 配置项、优先级与生效方式 |
+| [统一配置中心](configuration-center.md) | 配置项组织、默认值、变更生效与回滚机制 |
 
-## 功能详解
+## 主要功能
 
-| 文档 | 说明 |
-|---|---|
-| [审查协议规范](PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 标签化审查输出协议、字段校验与修复降级 |
-| [审查批准功能](APPROVAL_FEATURE_SUMMARY.md) | 智能审查批准系统详细说明 |
-| [手动审查功能](MANUAL_REVIEW_FEATURE.md) | GitHub PR 评论 `/full-review` 触发全量审查，WebUI/API 查看结果 |
-| [模型上下文管理](MODEL_CONTEXT_FEATURE.md) | AI 模型上下文和压缩功能 |
-| [PR 功能指南](PR_FEATURES_GUIDE.md) | PR 变更总结与依赖图配置说明 |
-| [项目记忆系统使用指南](SAKURA_MEMORY_GUIDE.md) | `.sakura/` 目录结构、生命周期与配置说明 |
-| [Agent Skills 实现](agent-skills-python-implementation.md) | Skills 安装、索引、启停与工具集成说明 |
-| [Agent 文件工具实现](agent-file-tools-python-implementation.md) | Agent 工作区文件工具、安全边界与实现细节 |
-| [Agent OS 沙箱设计](superpowers/specs/2026-08-25-agent-os-sandbox-design.md) | Agent 执行信任域、sandboxd 协议、OCI 隔离与部署决策 |
-| [Agent OS 沙箱实施计划](superpowers/plans/2026-08-25-agent-os-sandbox-implementation.md) | 分片实现、测试矩阵、退出条件与 Linux 验收门 |
+| 文档 | 内容 |
+| --- | --- |
+| [PR 功能指南](PR_FEATURES_GUIDE.md) | PR 摘要、自动审查、依赖图 |
+| [手动审查](MANUAL_REVIEW_FEATURE.md) | 评论命令及显式触发流程 |
+| [审查批准](APPROVAL_FEATURE_SUMMARY.md) | 智能审查批准能力 |
+| [审查协议](PR_REVIEW_PROTOCOL.md) | 审查输出协议与校验 |
+| [模型上下文](MODEL_CONTEXT_FEATURE.md) | 上下文窗口与压缩 |
+| [项目记忆（旧版参考）](SAKURA_MEMORY_GUIDE.md) | 历史记忆机制，使用时请结合当前运行代码核对 |
 
-## 集成与运维
+## Agent
 
-| 文档 | 说明 |
-|---|---|
-| [Telegram Bot 集成指南](TELEGRAM_SETUP.md) | Bot 设置、权限体系、命令参考 |
-| [安全与 MFA 指南](SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
-| [API v1 参考文档](api-v1-reference.md) | RESTful API v1 接口文档（移动端 OAuth、MFA、SSE、Billing） |
-| [配额系统指南](QUOTA_SYSTEM_GUIDE.md) | PR / Issue 配额统计与自动重置机制 |
+| 文档 | 内容 |
+| --- | --- |
+| [Harness 2.0 运行机制](AGENT_HARNESS_RUNTIME.md) | 完成语义、并发、安全边界和持久化 |
+| [仓库上下文和 Skills](AGENT_REPOSITORY_CONTEXT.md) | 仓库指令、技能和上下文 |
+| [Agent 插件](AGENT_PLUGINS.md) | 插件能力与使用约束 |
+| [Skills Python 实现参考](agent-skills-python-implementation.md) | 开发实现参考 |
+| [文件操作工具实现参考](agent-file-tools-python-implementation.md) | 文件工具和操作边界 |
 
-## 其他
+## 集成、账务与安全
 
-| 文档 | 说明 |
-|---|---|
-| [改名迁移指南](RENAME_MIGRATION_GUIDE.md) | 项目品牌改名与配置迁移说明 |
-| [贡献者约定](../AGENTS.md) | 自动化代理与贡献者项目约定（根目录） |
+| 文档 | 内容 |
+| --- | --- |
+| [统一通知中心](NOTIFICATION_CENTER.md) | WebUI、邮件、Telegram 与 Webhook 通知 |
+| [Telegram 接入](TELEGRAM_SETUP.md) | Bot Token、绑定及通知端点 |
+| [安全与 MFA](SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkey |
+| [配额系统](QUOTA_SYSTEM_GUIDE.md) | 配额统计与重置 |
+| [Billing 2.0](billing-2.md) | 价格、权益、对账与迁移 |
+| [旧权益迁移](billing-legacy-migration.md) | 历史权益和支付恢复 |
 
----
+## 开发者参考
 
-> `superpowers/` 目录是开发流程工作产物（设计稿、实施计划），不属于用户文档。
+| 文档 | 内容 |
+| --- | --- |
+| [技术架构](ARCHITECTURE.md) | 系统架构、技术栈、模块和数据流 |
+| [API v1](api-v1-reference.md) | REST API、鉴权、MFA、SSE |
+| [重命名迁移](RENAME_MIGRATION_GUIDE.md) | 老版本部署或品牌迁移 |
+| [贡献指南](https://github.com/Sakura520222/Sakura-AI/blob/develop/CONTRIBUTING.md) | Gitflow 和开发环境 |
+| [Agent 规则](https://github.com/Sakura520222/Sakura-AI/blob/develop/AGENTS.md) | 代码贡献和自动化 Agent 约定 |
 
-*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+## 历史设计与验收资料
+
+`docs/superpowers/` 中的设计和实施计划，以及部分研发验收记录属于开发工作产物，**保留在 GitHub 仓库中，但不参与公开文档站的页面生成和搜索索引**。可在 [GitHub docs 目录](https://github.com/Sakura520222/Sakura-AI/tree/develop/docs) 阅读它们。
+
+文档发现不准确或过期时，欢迎通过文章底部的“在 GitHub 上编辑本页”提交修改；新文档请遵循 [文档维护说明](DOCS_MAINTENANCE.md)。

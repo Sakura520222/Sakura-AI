@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -85,6 +85,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis** — Auto-classification, priority, label recommendation, duplicate detection, linked PR discovery
+- **Adaptive Analysis and Concise Comments** — Code investigation scales with validity, information, impact and complexity. Ads/spam, incomplete reports and simple questions receive brief handling; complex or high-risk issues retain evidence-based investigation. Chinese and English default comments lead with conclusions and recommended actions, fold metadata and hide empty suggestions. Existing custom templates remain supported; only `{summary}` and `{feasibility}` are required, and other supported variables may be omitted.
 - **Image Multimodal Analysis** — Screenshots in Issue bodies and comments are downloaded safely with GitHub credentials; images over 5 MiB are compressed toward 500 KiB before being fed to the AI as multimodal input (requires the per-model "supports image input" capability and the unified config toggle)
 - **Strict Issue Output Contract** — `<SAKURA_ISSUE_ANALYSIS>` envelope + multi-round repair + safe degradation
 - **Auto-labeling** — High-confidence labels applied automatically
@@ -92,20 +93,73 @@
 - **Title Rewriting** — Auto-improves vague or inaccurate titles
 - **Analysis Comment Publishing** — Auto-publishes results and reports status via user-scoped events
 - **PR-Issue Linking** — Parses Issue references and injects context
-- **Semantic Issue Linking** — Discovers related Issues via vector similarity
+- **Semantic PR-Issue Linking** — Recall open candidates from the shared Issue corpus, then independently verify the human description, actual patch and Issue requirements. Complete fixes emit `Closes`; partial relationships emit `Related to`. Successful verification replaces or clears the old machine link block while preserving human references. Retrieval, reranking or verification failures never infer new links.
+- **Issue Relationship Pre-analysis** — Before main analysis, compare open Issues as `duplicate` / `related` / `none`. Only when no open duplicate is verified, compare closed Issues as `previously_resolved`, `regression`, `duplicate_closed`, `previously_rejected` or `related` historical context. Independent occurrences such as different workflow executions cannot become duplicates on title similarity alone. Decisions require confidence, reason, similarities, differences and traceable source quotes. The main model cannot override verification. API responses, comments and detail pages expose additive `issue_relations`, retaining compatible `duplicate_of`.
+
+Relationship settings can be changed dynamically on the unified `/config` page. Settings supplies the defaults:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
+| `issue_include_comments` | `true` | Enable main-analysis comments and a fresh bounded comment sample for the relation model |
+| `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase, from 1 to 200; validated before source reads and retrieval |
+| `issue_relation_max_input_tokens` | `64000` | Estimated complete request input limit per open/historical phase, including bodies, comments, JSON, language and system instructions; all summary candidates context, output and reserve limits also apply. Exceeded or unknown budgets admit no duplicate, retain usage, and continue main analysis |
+| `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit for the current Issue and each candidate when `issue_include_comments` is enabled (the existing setting name is retained); inference receives provenance and omitted discussion bounds |
+| `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per current-Issue or candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
+| `issue_relation_similarity_threshold` | `0.75` | Issue relationship recall cosine threshold |
+| `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
+| `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
+| `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
+| `semantic_issue_similarity_threshold` | `0.65` | PR candidate cosine threshold; must be a finite number from 0 to 1, checked before retrieval |
+| `semantic_issue_max_links` | `5` | PR candidate limit, from 1 to 200; Settings and runtime admission enforce the same range before retrieval |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold; must be a finite number from 0 to 1 |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold; must be a finite number from 0 to 1 |
+| `pr_issue_max_files` | `128` | Lazy PR verification file limit; preserve existing links when exceeded or patches are incomplete |
+| `pr_issue_max_input_tokens` | `64000` | Estimated input token limit for the entire verification request (description, Issues, JSON, system prompt); also bounded by context, configured output, and protocol reserve of all summary-role candidates |
+| `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
+| `issue_corpus_batch_size` | `100` | Corpus embedding/write batch limit |
+| `issue_candidate_pool_multiplier` | `3` | From 1 to 10, checked before corpus reconciliation; the fixed recall pool is the candidate limit × this multiplier, capped by corpus count; exclusions never enlarge it or trigger paging refill |
+| `rerank_score_threshold` | `0.6` | PR/Issue relation reranking threshold; must be a finite number from 0 to 1; enabled reranking rejects an invalid threshold before the provider request |
+
+Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
+
+PR recall defaults to a cosine floor of `0.65` to help short PR descriptions recall Issues with longer bodies; candidates still require reranking and independent relation verification. Each successful retrieval, including an empty result, emits an INFO summary: `recalled` counts vector-pool rows, `eligible` counts rows passing identity and exclusion checks, `cosine_matches` counts rows meeting the cosine threshold, `hydrated` counts valid current GitHub facts, `candidates` counts reranked results, and `max_cosine` is the highest eligible score before cosine filtering (`none` when no score is available). The log contains no query, Issue title or body. It distinguishes an empty corpus, cosine filtering and reranking that yields no candidates.
+
+Existing `app_config` values and explicit environment settings override the new default. An upgrade does not automatically change a saved `0.8` to `0.65`. Existing deployments can set `semantic_issue_similarity_threshold` to `0.65` on the unified `/config` page, then use the INFO summary for further calibration. Lowering recall alone never establishes or closes a relation.
+
+Invalid PR confidence or semantic recall thresholds explicitly fail synchronization, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
+
+PR and Issue relation workflows each allow at most 200 target candidates and a multiplier of at most 10, so the initial recall pool contains at most 2,000 entries. Settings, dynamic configuration and runtime admission enforce the same bounds without silently clamping invalid values. Strict reranking validates the effective threshold before sending a request; failure preserves existing PR relations and records an Issue relation failure while main analysis continues. Explicitly disabled reranking and ordinary RAG's non-strict fallback retain their existing behavior.
+
+Calls to `IssueService.detect_duplicates` must supply a positive integer `current_issue_number` so the actual Issue source can be hydrated and revalidated. Omitting the argument or passing an invalid number such as `None` raises an error instead of returning a success-shaped empty list. Calls with a valid number retain their argument and duplicate-result formats.
+
+Relationship pre-analysis freshly reads the current Issue body, state, labels, closure reason and update version from GitHub and gives that exact source to the relation model. The caller payload and historical body used by main analysis remain intact. When comments are enabled, the current Issue and candidates use the existing `candidate_*` bounds for a newest-comment sample with IDs, bodies, creation/update versions, total counts and truncation context. After inference, current and accepted candidate sources are read again; a later historical phase rechecks earlier accepted open relations, and empty/none decisions still require current-source consistency. Changed sources return observable `stale_source`; missing, unavailable or malformed facts return `source_unavailable`. These failures admit no duplicate, retain token usage and leave main analysis running. The comparison holds at the return boundary; GitHub offers no atomic conditional write covering later remote publication.
+
+For legacy records with NULL Issue state, reanalysis checks database repository ownership before resolving the current GitHub state. Only a confirmed open Issue is queued; a closed source returns 409, and unavailable or malformed sources return an explicit safe error. Historical short and full repository names share owner-scoped analysis version numbering. The queued payload retains historical title, body and author, while the relation phase independently uses the fresh source above.
+
+PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Files explicitly reported by GitHub with zero additions and deletions may have absent or metadata-only patches, such as pure renames or mode changes. They still consume snapshot budgets but cannot supply changed-code evidence. Reported line changes still require complete matching hunks; missing, truncated, malformed or inconsistent patches fail synchronization and preserve existing links.
+
+Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
+
+Before installing the PR-Issue unique index, the database deduplicates historical links by repository, PR, Issue and link type, retaining the greatest-ID row and its evidence per group. The migration does not load the whole table into Python or delete duplicates one at a time. Distinct link types and repository scopes remain separate.
 
 ### Agent Expert Team
 
 - **Multi-entry Task Creation** — Super-admin manual launch, Issue `/agent` delegation, PR `/agent` one-click fix
 - **Multi-branch Parallel Workspaces** — Each task uses an isolated Git worktree, supporting parallel execution
-- **Two-agent Collaboration** — Full-stack expert plans and edits; professional reviewer does pre-push quality review
+- **Dynamic Read-only Subagents** — The main Agent implements changes and can delegate independent investigations, wait for or cancel children, and collect structured results
 - **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
-- **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with no network, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
+- **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with ordinary Shell offline under the default policy, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
+- **Temporary Dependency Egress** — The default `web_tools` policy allows controlled Web tools and implicit Dependency egress. `run_command` can explicitly set `network_capability=dependency_egress` for any current command and its package hooks to reach arbitrary public destinations, with no command or domain allowlist. Egress ends with that container execution; the next ordinary Shell remains offline. `offline` denies egress; `full_access` allows all runner egress. Local is source-only, requires `full_access`, and uses the host network without OS isolation. [Python, Node, Rust, Go, and JVM examples](docs/CONFIGURATION.md#agent-专家团队)
 - **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
 - **Dependency Install Recovery** — Transient network failures get up to 3 attempts by default, with 2- and 4-second backoff; permanent errors are not retried. Final failures retain sanitized diagnostics for the Agent to repair installation or continue static analysis and report tests it could not run. Attempts and delay are adjustable on the unified configuration page
 - **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
 - **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
+- **Unified Plugin Management** — Super admins manage MCP services, lifecycle hooks, runtime profiles and Skills at `/agent-plugins/`. Configuration lives in the database, credentials are masked, and ordinary execution needs no per-tool approval. See the [plugin configuration guide](docs/AGENT_PLUGINS.md#english-summary)
+- **Repository Instructions & Skills** — Load scoped `AGENTS.md` and Sakura rules, discover `.agents/skills` / `.sakura/skills`, and read bodies on demand. Historical workflow restrictions survive resume; see the [switch, scope, and size guide](docs/AGENT_REPOSITORY_CONTEXT.md#english-summary)
 - **Real-time Admin Intervention** — Inject guidance via WebUI Live View
+- **Completion & Recovery Contracts** — Only a successful `finish_task` completes a session. Model rounds and cumulative tool calls are unlimited. Ten identical calls or text responses trigger a strategy self-check without ending work, forcing a summary or switching models. Safe reads run in parallel; writes, Shell, Skill admission and finish are exclusive. Interrupted reads may retry, uncertain writes need reconciliation, and persisted completion is never replayed. Cancellation and fault recovery remain, with no per-tool manual approval.
+- **Agent Harness 2.0** — Read-only subagents, MCP, system hooks, capability boundaries and durable audit are wired into autonomous execution. See the [runtime guide](docs/AGENT_HARNESS_RUNTIME.md#english-summary) for deployment prerequisites, recovery and backend compatibility.
 - **Task Cancellation** — Cancel anytime with safe workspace cleanup
 - **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
 - **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas
@@ -139,14 +193,17 @@
 - **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
 - **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset
 - **Paid Quota System** — Plan and redeem code CRUD + admin manual grants
-- **External Payments & Refunds** — Stripe / Paddle / Alipay / NOWPayments / TRON USDT
+- **External Payments & Refunds** — Stripe / Paddle / Alipay (CNY) / NOWPayments / TRON USDT; order history and refunds remain available when purchases are disabled
 - **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
 - **Admin Action Audit** — Complete operation logs
 - **WebUI Dashboard** — Navigation grouped into Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings; the PR review page includes repository and date filters, with old review-log URLs redirecting to it
+- **Billing 2.0** — Credits wallets, actual AI Usage pricing, source-traced purchases/refunds and bills; model pricing selects configured AI accounts and discovers their models automatically, with one tariff for streaming and non-streaming calls and dropdown currency selection. Service execution capacity is shared across Workers; plans independently limit each user's admitted executions. Request counts and concurrency control admission. Low-balance alerts appear in Notification Center, with Email/private Telegram delivery by subscription; unknown refunds remain under reconciliation, and remaining subscription periods stay continuous after a refund. Charging defaults off while non-charging executions can still resume and continue automatically. Read the [configuration, migration and reconciliation guide](docs/billing-2.md) before enabling it.
+  Malformed reranks retain actual usage and follow the frozen failed-call policy; historical redemptions do not reissue benefits, early Stripe refunds replay automatically, and external full refunds reconcile remaining subscription entitlements.
+  Embeddings are validated before metering completes; scans freeze billing ownership at submission, streamed usage requests have a model compatibility switch, reconciled usage totals use the selected record, and external partial refunds follow the configured policy.
 - **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
 - **Health Check Endpoint** — `/health` + Docker Compose auto health detection
 - **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
-- **Optional Notification Channels** — Telegram remains an optional Provider for unified announcement delivery and can be enabled independently of Email/SMTP; Personal Settings supports one-time Telegram bind/unbind. Announcement notifications render Markdown on both channels, show the announcement type with a bold title, and the email sender display name is configurable (defaults to Sakura-AI). Telegram-only business messages for PR reviews, Issue analysis, scans, MFA, and refunds have been removed; this change does not implement a replacement business event notification layer
+- **Unified Notification Center** — PR reviews, Issue analysis, scans, Agent tasks, announcements, security, quotas, payments and refunds publish durable business events to WebUI, Email, Telegram and generic Webhooks. Personal Settings supports endpoint verification, names, enable/disable, tests and preferences by event, resource and severity. The Announcement Center includes inbox history, read state and administrator diagnostics. External business notifications require explicit subscriptions; sensitive account events use verified private destinations. Scan notifications require administrator access; Agent notifications are scoped to task initiators and authorized administrators, with details selecting the task in the console. See [notification architecture and migration](docs/NOTIFICATION_CENTER.md).
 - **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
 - **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
 
@@ -231,15 +288,15 @@ This mode does not include the Host Updater. It can report available releases, b
 
 `latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
 
-After first start, visit `http://localhost:8000/setup`. The app prints a one-time verification token in the startup log; enter it at `/setup/verify` to access the wizard (the token is regenerated on every restart). When `start.sh` waits in the foreground, it displays the current Setup Token immediately after a successful deployment. You can also reopen the main menu and choose **View current container logs** → **Web**:
+After first start, visit `http://localhost:8000/setup`. The verification token is regenerated on startup and handed to the local operator through the private `config/.setup-token` file. Setup completion immediately revokes it and attempts deletion. If a file lock prevents deletion, a cleanup warning is logged and completion/restart still succeeds. It never enters application or Docker logs. `start.sh` displays it after successful deployment; a local administrator can also run:
 
 ```bash
-# Alternatively, tail the Web container directly from /opt/sakura-ai
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
+# Source checkout: cat config/.setup-token (PowerShell: Get-Content config/.setup-token)
 ```
 
-The main menu's **View previous runtime logs** entry reads persisted DEBUG logs. For error filtering and more see [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+The main menu's **View previous runtime logs** entry reads persisted logs. For live log levels, correlation IDs and storage limits see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 ### Source Development
 
@@ -254,13 +311,23 @@ uv sync                # Creates .venv and installs all dependencies (incl. upda
 uv run python -m backend.main
 ```
 
+**Native Windows development (PowerShell)**: Install Git for Windows and uv, then run these commands from the repository root:
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+Dependency installation, backend development, and portable tests require neither WSL nor Git Bash. Running the application still requires MySQL/Redis; tests use service doubles. Windows CI runs the full pytest suite and Ruff. Platform-specific POSIX Bash deployment, systemd, and Linux Landlock/seccomp tests report explicit skips and remain covered by Linux CI. Symlink tests run only when the current account can create links (Windows Developer Mode is optional). See the [Deployment Guide](docs/DEPLOYMENT.md) for the Linux requirements of the Host Updater, sandboxd, and local read-only process isolation.
+
 When no deployment mode or image-build marker is present, the `backend.main` launcher automatically identifies its application child as `source`; a local `local` Agent backend does not need a separate `SAKURA_DEPLOY_MODE` setting. An explicit environment value always takes precedence, and image environments are never inferred to be source checkouts.
 
 **Classic pip (without uv)**:
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
@@ -308,7 +375,7 @@ Full architecture diagram, data flow, code structure, and interactive knowledge 
 ## Development
 
 ```bash
-uv sync                              # Install dependencies (uv; classic pip: pip install -r requirements.txt plus pip install -e './updater[dev]')
+uv sync                              # Install dependencies (uv; classic pip: python -m pip install -r requirements-dev.txt, including updater[dev] and test drivers)
 uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
 python run_ruff.py                   # Lint + fix + format
 python run_ruff.py --check           # Read-only check
@@ -316,9 +383,9 @@ uv run python -m pytest -q           # Run tests (pip envs: python -m pytest -q)
 tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
 ```
 
-First launch enters Bootstrap mode — a one-time verification token is printed to the terminal; enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks).
+First launch enters Bootstrap mode. Read the one-time verification token with `cat config/.setup-token` (PowerShell: `Get-Content config/.setup-token`), enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. The token never enters terminal logs. Windows files use a protected ACL granting access only to the process user and require an ACL-capable filesystem such as NTFS. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks); its default token path is `.sakura/dev/.setup-token`. With `SAKURA_CONNECTION_CONFIG_PATH`, the token lives beside that connection config.
 
-> Run logs are written to `logs/app_*.log` (one file per startup, 500 MB rotation, 10-day retention; passwords and tokens are auto-redacted). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
+> Run logs are written to `logs/app_*.log` (one JSON Lines file per startup, 50 MB rotation, 10-day retention and a 500 MiB history budget; both console and file obey the live WebUI log level, with redaction before output). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
 
 > The Updater is an independent Python 3.14+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development. Its release binaries are built on Bookworm (glibc 2.36) and require the host to run glibc ≥ 2.36 (Debian 12+ / Ubuntu 24.04+).
 
@@ -389,3 +456,12 @@ Made by [Sakura520222](https://github.com/Sakura520222)
 Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI/issues) · Email: <Sakura520222@outlook.com>
 
 </div>
+
+### Unified configuration centre
+
+The single Settings entry groups Personal, AI, PR, Issue, Agent, Labels/Scans,
+System and Backup. Ordinary fields save automatically with per-field status and
+reset by removing overrides; version conflicts preserve drafts. Credentials,
+account security, imports and dangerous operations retain dedicated confirmation.
+Existing configuration URLs and data remain compatible. Database/Redis connections
+stay deployment-owned. See the [configuration contract, migration and rollback guide](docs/configuration-center.md).

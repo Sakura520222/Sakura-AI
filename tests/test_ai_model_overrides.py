@@ -22,22 +22,45 @@ class _Result:
         return None
 
 
-class _DbStub:
-    """保存模型覆盖所需的最小异步会话桩 / Minimal async session stub."""
+from tests.config_sqlite_session import SQLiteConfigSession as _DbStub
 
-    def __init__(self):
-        self.added = []
-        self.commits = 0
 
-    async def execute(self, statement):
-        del statement
-        return _Result()
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [False, True])
+async def test_stream_usage_override_round_trips_to_candidate(flag):
+    db = _DbStub()
+    response = await put_model_override(
+        ModelOverrideRequest(provider="openai", model="test", stream_usage=flag),
+        db,
+        {"sub": "tester"},
+    )
+    saved = db.added[0]
+    payload = json.loads(response.body)["data"]
+    assert payload["capabilities"]["stream_usage"] is flag
+    meta = _parse_metadata_overrides({saved.key_name: saved.key_value})[
+        ("openai", "test")
+    ]
+    assert meta.capabilities.stream_usage is flag
 
-    def add(self, value):
-        self.added.append(value)
 
-    async def commit(self):
-        self.commits += 1
+@pytest.mark.asyncio
+async def test_older_model_override_client_preserves_disabled_stream_usage():
+    from backend.models.database import AppConfig
+
+    db = _DbStub()
+    cfg = AppConfig(
+        key_name="ai_model_override.openai.test",
+        key_value=json.dumps({"capabilities": {"stream_usage": False}}),
+    )
+    db.add(cfg)
+    await db.commit()
+    response = await put_model_override(
+        ModelOverrideRequest(provider="openai", model="test", max_output_tokens=4096),
+        db,
+        {"sub": "tester"},
+    )
+    assert json.loads(response.body)["data"]["capabilities"]["stream_usage"] is False
+    assert json.loads(cfg.key_value)["capabilities"]["stream_usage"] is False
 
 
 @pytest.mark.asyncio

@@ -88,7 +88,7 @@ class SearchToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"文档检索失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"文档检索失败: {e}")
             return {
                 "query": query,
                 "error": f"检索失败: {e!s}",
@@ -175,7 +175,7 @@ class SearchToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"代码上下文检索失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"代码上下文检索失败: {e}")
             return {
                 "query": query,
                 "error": f"检索失败: {e!s}",

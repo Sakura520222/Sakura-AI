@@ -67,6 +67,17 @@ class I18n:
 
         self._loaded = True
 
+    def namespace(self, prefix: str, lang: str) -> dict[str, str]:
+        """Public translation projection for API-driven WebUI components."""
+        self._ensure_loaded()
+        return {
+            key.removeprefix(prefix + "."): value
+            for key, value in self._translations.get(
+                lang, self._translations[DEFAULT_LANGUAGE]
+            ).items()
+            if key.startswith(prefix + ".")
+        }
+
     @staticmethod
     def _flatten(data: dict, prefix: str = "") -> dict[str, str]:
         """将嵌套字典展平为点分隔的键 / Flatten nested dict to dot-separated keys

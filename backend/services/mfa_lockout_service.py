@@ -57,6 +57,7 @@ async def record_mfa_failure(user_id: int) -> int:
     lock_ttl = _lock_ttl_seconds()
     count_key = f"{_FAIL_COUNT_PREFIX}{user_id}"
     lock_key = f"{_LOCK_PREFIX}{user_id}"
+    started_at = None
 
     try:
         redis = await get_async_redis()
@@ -68,16 +69,32 @@ async def record_mfa_failure(user_id: int) -> int:
 
         if count >= threshold:
             await redis.setex(lock_key, lock_ttl, "1")
+            started_at = now_utc()
             logger.warning(
                 "MFA account locked: user_id={}, failures={}, lock_ttl={}s",
                 user_id,
                 count,
                 lock_ttl,
             )
-        return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
-        return _record_mfa_failure_fallback(user_id, threshold, lock_ttl)
+        count = _record_mfa_failure_fallback(user_id, threshold, lock_ttl)
+        if count >= threshold:
+            started_at = _lock_fallback[user_id][1]
+    if count == threshold:
+        from backend.models import database as db_module
+        from backend.services.notification_business import emit_mfa_lockout_event
+
+        # Redis lockout and the SQL outbox cannot share a transaction. Lockout
+        # always takes effect; failure to record its alert remains observable.
+        if db_module.async_session is not None:
+            try:
+                async with db_module.async_session() as session:
+                    await emit_mfa_lockout_event(session, user_id, started_at, lock_ttl)
+                    await session.commit()
+            except Exception:
+                logger.warning("MFA lockout notification persistence unavailable: user_id={}", user_id)
+    return count
 
 
 def _cleanup_expired_fallbacks() -> None:
@@ -157,6 +174,17 @@ async def reset_mfa_failures(user_id: int) -> None:
         logger.warning("Redis MFA reset error, cleaning fallback: {}", exc)
     _fail_fallback.pop(user_id, None)
     _lock_fallback.pop(user_id, None)
+    reset_at = now_utc()
+    from backend.models import database as db_module
+    from backend.services.notification_business import reset_mfa_lockout_round
+
+    if db_module.async_session is not None:
+        try:
+            async with db_module.async_session() as session:
+                await reset_mfa_lockout_round(session, user_id, reset_at)
+                await session.commit()
+        except Exception:
+            logger.warning("MFA notification round reset unavailable: user_id={}", user_id)
 
 
 async def get_mfa_lockout_status(user_id: int) -> dict[str, Any]:

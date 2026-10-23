@@ -1,0 +1,86 @@
+name: uv 锁文件自动同步
+
+# Dependabot 的 pip 生态只更新 requirements.txt 与 pyproject.toml(镜像),
+# 不感知 uv.lock;而 CI 的 Windows uv 冒烟测试执行 `uv sync --locked`,
+# 要求锁文件与清单一致,因此依赖 PR 需要有人补一次 `uv lock` 结果。
+# 本工作流在 Dependabot PR 上自动重新生成锁文件并推送回 PR 分支:
+# - 触发器必须是 pull_request_target:Dependabot 触发的 pull_request 自
+#   2021-03 起 被 GitHub 视同 fork 运行(只读、无法访问仓库 secrets),
+#   MY_RELEASE_PAT 将永远为空,推送步骤只会走降级路径;
+# - 推送使用 MY_RELEASE_PAT(GITHUB_TOKEN 的推送不会触发 PR 的 CI 重跑,
+#   必需检查会永远停在"等待"状态;PAT 缺失时降级为警告跳过);
+# - 推送的锁文件提交只动 uv.lock,不命中下方 paths 过滤,不会自触发循环;
+# - Dependabot 后续 rebase/强推会触发 synchronize,本工作流随之重新补锁。
+# 安全契约由 tests/test_uv_lock_sync_workflow.py 锁定,修改前先读测试。
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches:
+      - develop
+      - main
+    paths:
+      - "requirements.txt"
+      - "pyproject.toml"
+
+concurrency:
+  group: uv-lock-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync-lock:
+    name: 同步 uv.lock 到依赖 PR
+    runs-on: ubuntu-latest
+    # 安全门禁(pull_request_target 在基分支上下文运行、可访问 secrets,
+    # 门禁必须收紧):仅 Dependabot 本尊且分支位于本仓库。
+    # Dependabot 的作者登录名在 REST/webhook 载荷中是 dependabot[bot],
+    # 在 GraphQL 中是 app/dependabot,两种形态都接受以防表示形式漂移;
+    # 两者均非人类账号可注册的形态,作为门禁是安全的。
+    # uv 生态的安全更新只改 uv.lock,不命中 paths,不会进入本作业。
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && contains(fromJSON('["dependabot[bot]", "app/dependabot"]'),
+      github.event.pull_request.user.login)
+    steps:
+      - name: 检出 PR 头部分支
+        uses: actions/checkout@v7
+        with:
+          # 显式检出 head SHA(pull_request_target 默认检出基分支),
+          # 检出即配置 PAT 凭据,后续 git push origin 直接复用;
+          # secret 缺失时 checkout 自动回退只读 GITHUB_TOKEN。
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.MY_RELEASE_PAT }}
+
+      - name: 设置 Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: 重新生成锁文件
+        run: uv lock
+
+      - name: 提交并推送锁文件变更
+        env:
+          RELEASE_PAT: ${{ secrets.MY_RELEASE_PAT }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if git diff --quiet uv.lock; then
+            echo "uv.lock 已与依赖清单同步,无需推送"
+            exit 0
+          fi
+          if [ -z "$RELEASE_PAT" ]; then
+            echo "::warning::缺少 MY_RELEASE_PAT secret,跳过锁文件推送(Windows uv 冒烟测试将保持失败)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore(deps): sync uv.lock for PR #${PR_NUMBER}"
+          git push origin "HEAD:refs/heads/${HEAD_BRANCH}"

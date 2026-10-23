@@ -9,6 +9,11 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import IssueAnalysis
+from backend.services.issues.reanalysis_admission import (
+    IssueReanalysisAdmissionError,
+    prepare_issue_reanalysis,
+    submit_issue_reanalysis,
+)
 from backend.webui.deps import (
     build_user_scope_filter,
     error_page,
@@ -20,6 +25,7 @@ from backend.webui.deps import (
     render_template,
     require_auth,
 )
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/issues", tags=["WebUI Issues"])
 templates = get_templates()
@@ -188,6 +194,16 @@ async def issue_detail_page(
     except json.JSONDecodeError, TypeError:
         pass
 
+    issue_relations = {}
+    try:
+        parsed = (
+            json.loads(analysis.issue_relations) if analysis.issue_relations else {}
+        )
+        if isinstance(parsed, dict):
+            issue_relations = parsed
+    except json.JSONDecodeError, TypeError:
+        pass
+
     return render_template(
         "issue_detail.html",
         request,
@@ -197,6 +213,7 @@ async def issue_detail_page(
         suggested_labels=suggested_labels,
         suggested_assignees=suggested_assignees,
         related_prs=related_prs,
+        issue_relations=issue_relations,
         active_page="issues",
     )
 
@@ -234,6 +251,7 @@ async def reanalyze_issue(
     issue_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """重新分析 Issue"""
     query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
@@ -248,15 +266,13 @@ async def reanalyze_issue(
             status_code=404,
         )
 
-    # 构造 issue_info
-    issue_info = {
-        "issue_number": analysis.issue_number,
-        "repo_name": analysis.repo_name,
-        "repo_owner": analysis.repo_owner,
-        "author": analysis.author,
-        "title": analysis.title,
-        "body": analysis.body,
-    }
+    try:
+        issue_info = await prepare_issue_reanalysis(analysis)
+    except IssueReanalysisAdmissionError as error:
+        return JSONResponse(
+            content={"success": False, "message": i18n.t(error.translation_key)},
+            status_code=error.status_code,
+        )
 
     # 计算分析版本号
     from backend.models.database import IssueAnalysis as IssueAnalysisModel
@@ -264,19 +280,35 @@ async def reanalyze_issue(
     max_version_result = await db.execute(
         select(func.max(IssueAnalysisModel.analysis_version)).where(
             IssueAnalysisModel.issue_number == analysis.issue_number,
-            IssueAnalysisModel.repo_name == analysis.repo_name,
+            IssueAnalysisModel.repo_owner == analysis.repo_owner,
+            IssueAnalysisModel.repo_name.in_(
+                [
+                    issue_info["repo_name"],
+                    f"{issue_info['repo_owner']}/{issue_info['repo_name']}",
+                ]
+            ),
         )
     )
     max_version = max_version_result.scalar() or 0
     issue_info["analysis_version"] = max_version + 1
 
     try:
-        from backend.workers.issue_worker import submit_issue_analysis_task
-
-        task_id = await submit_issue_analysis_task(issue_info)
+        task_id = await submit_issue_reanalysis(db, issue_info, user)
         return JSONResponse(content={"success": True, "task_id": task_id})
-    except Exception:
-        logger.exception("提交 Issue 重新分析任务失败")
+    except IssueReanalysisAdmissionError as error:
+        from backend.webui.i18n import detect_language
+
+        lang = detect_language(user_prefs if isinstance(user_prefs, dict) else None)
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "success": False,
+                "code": error.code,
+                "message": i18n.t(error.translation_key, lang=lang),
+            },
+        )
+    except Exception as exc:
+        logger.warning("Issue reanalysis submission failed: {}", type(exc).__name__)
         return JSONResponse(
             content={"success": False, "message": "提交重新分析任务失败，请稍后重试"},
             status_code=500,

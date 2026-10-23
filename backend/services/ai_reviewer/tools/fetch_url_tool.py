@@ -515,7 +515,7 @@ class FetchUrlToolHandler:
 
         except Exception as e:
             elapsed_ms = int((monotonic() - start_time) * 1000)
-            logger.error(f"URL 抓取失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"URL 抓取失败: {e}")
             self._audit_log(
                 url=self._sanitize_url_for_log(url),
                 resolved_ip=resolved_ip,

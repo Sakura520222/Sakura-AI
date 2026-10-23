@@ -102,6 +102,76 @@ async def test_runner_serializes_only_execution_contract(tmp_path: Path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_readonly_request_remains_offline_under_full_access(
+    tmp_path, monkeypatch
+):
+    runner, workspace, service = _runner(tmp_path)
+    payloads = []
+
+    async def policy():
+        return AgentTeamNetworkPolicyState(
+            AgentTeamNetworkPolicy.FULL_ACCESS, "readonly-test"
+        )
+
+    async def ready():
+        return SimpleNamespace(profiles=["agent", "dependency", "read_only"])
+
+    async def request(method, path, json_body=None, **kwargs):
+        payloads.append(json_body)
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "sandboxd_version": "test",
+            "data": {
+                "request_id": json_body["request_id"],
+                "exit_code": 0,
+                "stdout": "found",
+                "stderr": "",
+                "timed_out": False,
+                "cancelled": False,
+                "output_truncated": False,
+            },
+        }
+
+    monkeypatch.setattr(sandbox_client, "get_agent_team_network_policy_state", policy)
+    monkeypatch.setattr(runner, "_request", request)
+    monkeypatch.setattr(runner, "ensure_ready", ready)
+    await runner.execute(
+        ExecutionRequest(
+            workspace_key=execution_workspace_key(workspace, service),
+            profile=ExecutionProfile.READ_ONLY,
+            argv=("grep", "-rl", "-Z", "-I", "--", "^", "."),
+        )
+    )
+    assert payloads[0]["profile"] == "read_only"
+    assert payloads[0]["network_mode"] == "none"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profiles", [[], ["agent", "dependency"]])
+async def test_readonly_unsupported_daemon_does_not_receive_execute(tmp_path, monkeypatch, profiles):
+    runner, workspace, service = _runner(tmp_path)
+    called = False
+
+    async def ready():
+        return SimpleNamespace(profiles=profiles)
+
+    async def request(method, path, json_body=None, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("unsupported daemon received execution")
+
+    monkeypatch.setattr(runner, "ensure_ready", ready)
+    monkeypatch.setattr(runner, "_request", request)
+    with pytest.raises(SandboxPolicyError, match="read_only"):
+        await runner.execute(ExecutionRequest(
+            workspace_key=execution_workspace_key(workspace, service),
+            profile=ExecutionProfile.READ_ONLY,
+            argv=("grep", "-rl", "-Z", "-I", "--", "^", "."),
+        ))
+    assert not called
+
+
+@pytest.mark.asyncio
 async def test_runner_reads_network_policy_before_each_execution(
     tmp_path: Path,
     monkeypatch,

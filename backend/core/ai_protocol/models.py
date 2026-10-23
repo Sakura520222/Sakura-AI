@@ -99,6 +99,9 @@ class ModelCapabilitySet:
     vision: bool = False
     tools: bool = True
     streaming: bool = True
+    stream_usage: bool = (
+        True  # OpenAI-compatible include_usage; configurable for incompatible endpoints
+    )
     reasoning_content: bool = False  # DeepSeek-R1 风格 / DeepSeek-R1 style
     thinking: bool = False  # Anthropic adaptive thinking
     effort: bool = False  # effort 参数 / effort parameter
@@ -343,7 +346,9 @@ def images_from_mapping(raw: Any) -> list[UnifiedImagePart] | None:
         parts.append(
             UnifiedImagePart(
                 url=str(url) if url else None,
-                media_type=str(item.get("media_type")) if item.get("media_type") else None,
+                media_type=str(item.get("media_type"))
+                if item.get("media_type")
+                else None,
                 data=str(data) if data else None,
                 detail=str(item.get("detail")) if item.get("detail") else None,
             )
@@ -428,6 +433,7 @@ class UnifiedUsage:
     reasoning_tokens: int = 0
     reported_fields: frozenset[str] = field(default_factory=frozenset)
     details: dict[str, int] = field(default_factory=dict)
+    raw_usage: dict[str, Any] = field(default_factory=dict)
 
     @property
     def prompt_tokens(self) -> int:
@@ -455,6 +461,29 @@ class UnifiedUsage:
             },
         )
 
+    def merge_snapshot(self, other: UnifiedUsage) -> UnifiedUsage:
+        """Merge cumulative stream counters, preserving absent dimensions.
+
+        Anthropic start/delta messages report different fields; OpenAI/Gemini
+        updates report cumulative snapshots. Neither should be summed as deltas.
+        """
+        fields = self.reported_fields | other.reported_fields
+        return UnifiedUsage(
+            **{
+                name: getattr(other if name in other.reported_fields else self, name)
+                for name in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_creation_tokens",
+                    "reasoning_tokens",
+                )
+            },
+            reported_fields=fields,
+            details={**self.details, **other.details},
+            raw_usage={**self.raw_usage, **other.raw_usage},
+        )
+
 
 @dataclass
 class UnifiedRequest:
@@ -476,6 +505,7 @@ class UnifiedRequest:
     thinking: dict[str, Any] | None = None
     effort: str | None = None
     stream: bool = False
+    include_stream_usage: bool = True
 
 
 @dataclass
@@ -700,10 +730,14 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
         "output_tokens": ("output_tokens", "completion_tokens"),
         "cache_read_tokens": (
             "cache_read_tokens",
+            "cache_read_input_tokens",
             "cached_tokens",
             "prompt_cache_hit_tokens",
         ),
-        "cache_creation_tokens": ("cache_creation_tokens",),
+        "cache_creation_tokens": (
+            "cache_creation_tokens",
+            "cache_creation_input_tokens",
+        ),
         "reasoning_tokens": ("reasoning_tokens",),
     }
     fields: set[str] = set()
@@ -739,6 +773,23 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
         **parsed,
         reported_fields=frozenset(fields),
         details=details,
+        raw_usage={
+            key: value[key]
+            for key in {name for names in aliases.values() for name in names}
+            | {
+                "total_tokens",
+                "prompt_cache_miss_tokens",
+                "input_tokens_details",
+                "output_tokens_details",
+                "prompt_tokens_details",
+                "completion_tokens_details",
+            }
+            if key in value
+            and (
+                isinstance(value[key], dict)
+                or (type(value[key]) is int and value[key] >= 0)
+            )
+        },
     )
 
 

@@ -9,6 +9,7 @@ credentials never belong here.
 from __future__ import annotations
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -23,7 +24,7 @@ from backend.models.time_types import UTCDateTime
 
 
 class AIUsageRecord(Base):
-    """One idempotent usage record for a successful logical AI call."""
+    """Immutable result facts for one actual provider request, including unknowns."""
 
     __tablename__ = "ai_usage_records"
     __table_args__ = (
@@ -56,8 +57,22 @@ class AIUsageRecord(Base):
     call_kind = Column(String(32), nullable=False)
     role = Column(String(64), nullable=False)
     provider_id = Column(String(128), nullable=False)
+    account_id = Column(String(128), nullable=True)
     model_id = Column(String(255), nullable=False)
     protocol_family = Column(String(64), nullable=False)
+
+    # Ownership is captured from trusted worker context, not request bodies.
+    user_id = Column(Integer, nullable=True, index=True)
+    operation_id = Column(String(128), nullable=True, index=True)
+    feature = Column(String(64), nullable=True, index=True)
+    source = Column(JSON, nullable=True)
+    platform_reason = Column(String(255), nullable=True)
+    actual_call_id = Column(String(191), nullable=True, unique=True)
+    logical_call_id = Column(String(191), nullable=True, index=True)
+    raw_usage = Column(JSON, nullable=True)
+    usage_semantics = Column(JSON, nullable=True)
+    billing_units = Column(JSON, nullable=True)
+    outcome = Column(String(32), nullable=False, default="completed")
 
     # Cached and reasoning counters are dimensions of input/output usage.  They
     # are retained for diagnostics but MUST NOT be added to input/output again.
@@ -67,6 +82,7 @@ class AIUsageRecord(Base):
     cache_creation_tokens = Column(BigInteger, nullable=True)
     reasoning_tokens = Column(BigInteger, nullable=True)
     usage_reported = Column(Boolean, nullable=False, default=False)
+    usage_complete = Column(Boolean, nullable=True, default=True)
 
     occurred_at = Column(UTCDateTime, nullable=False, default=utc_now)
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)

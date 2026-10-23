@@ -271,7 +271,7 @@ async def test_sandbox_worker_prepares_before_dependency_policy_skip(
     )
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
-        lambda: _async_value(AgentTeamNetworkPolicy.WEB_TOOLS),
+        lambda: _async_value(AgentTeamNetworkPolicy.OFFLINE),
     )
     runner = SimpleNamespace(
         egress_capability="none",
@@ -566,6 +566,10 @@ async def test_dependency_installation_is_explicitly_skipped_for_offline_policy(
     monkeypatch.setattr(
         "backend.services.agent_team.git_workspace_service.get_dynamic_config",
         install_enabled,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.git_workspace_service.get_agent_team_network_policy",
+        lambda: _async_value(AgentTeamNetworkPolicy.OFFLINE),
     )
 
     git_service = AgentTeamGitWorkspaceService(workspace_service=service)

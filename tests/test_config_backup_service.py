@@ -563,28 +563,7 @@ class _ScalarResult:
         return self._rows
 
 
-class _FakeSession:
-    def __init__(self, rows: list[AppConfig]):
-        self.rows = rows
-        self.added: list[AppConfig] = []
-        self.deleted: list[AppConfig] = []
-        self.committed = False
-        self.rolled_back = False
-
-    async def execute(self, _query):
-        return _ScalarResult(self.rows)
-
-    def add(self, row: AppConfig) -> None:
-        self.added.append(row)
-
-    async def delete(self, row: AppConfig) -> None:
-        self.deleted.append(row)
-
-    async def commit(self) -> None:
-        self.committed = True
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 @pytest.mark.asyncio
@@ -691,7 +670,8 @@ async def test_runtime_restore_rejects_database_url_with_setup_guidance():
 
 
 @pytest.mark.asyncio
-async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it():
+@pytest.mark.parametrize("include_redis", [True, False])
+async def test_runtime_restore_protects_both_connection_anchors(include_redis):
     database = AppConfig(
         key_name="database_url",
         key_value="mysql+asyncmy://current/db",
@@ -705,6 +685,8 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
     session = _FakeSession([database, redis])
     sections = {
         SYSTEM_SECTION: [BackupRecord("redis_url", "redis://new:6379/0", "redis_url")]
+        if include_redis
+        else []
     }
 
     result = await restore_config_backup(
@@ -713,9 +695,12 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
         allow_database_url=False,
     )
 
-    assert result.updated == 1
+    assert result.updated == 0
     assert session.deleted == []
     assert database.key_value == "mysql+asyncmy://current/db"
+    assert redis.key_value == "redis://old:6379/0"
+    assert "redis_url" not in result.imported_values
+    assert "redis_url" not in result.deleted_keys
 
 
 class _BackupUpload:

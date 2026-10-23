@@ -665,7 +665,7 @@ class SakuraMemoryService:
             )
 
         except Exception as e:
-            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.opt(exception=True).error("反思失败 ({}): {}", repo_full_name, e)
 
     async def _post_reflection_checks(
         self,
@@ -689,13 +689,15 @@ class SakuraMemoryService:
             if since_last >= interval:
                 await self.consolidate(repo, repo_full_name, new_count)
         except Exception as e:
-            logger.error("合并失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.opt(exception=True).error("合并失败 ({}): {}", repo_full_name, e)
 
         # 2) 知识提取检查（独立于合并）/ Knowledge extraction (independent)
         try:
             await self._maybe_extract_knowledge(repo, repo_full_name, new_count, state)
         except Exception as e:
-            logger.error("知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.opt(exception=True).error(
+                "知识提取检查失败 ({}): {}", repo_full_name, e
+            )
 
     async def _count_pr_reflections(self, repo, pr_number: int) -> int:
         """统计某 PR 已有的反思文件数 / Count existing reflection files for a PR"""
@@ -891,7 +893,9 @@ class SakuraMemoryService:
             )
 
         except Exception as e:
-            logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.opt(exception=True).error(
+                "Issue 反思失败 ({}): {}", repo_full_name, e
+            )
 
     async def consolidate(self, repo, repo_full_name: str, total_count: int) -> None:
         """合并反思，更新 SAKURA.md 和 memory.md
@@ -1017,7 +1021,7 @@ class SakuraMemoryService:
                 )
 
         except Exception as e:
-            logger.error(f"合并记忆失败 ({repo_full_name}): {e}", exc_info=True)
+            logger.opt(exception=True).error(f"合并记忆失败 ({repo_full_name}): {e}")
 
     async def _get_new_reflection_files(
         self, repo, sakura_ref: str | None, consolidation_config: dict
@@ -1096,8 +1100,8 @@ class SakuraMemoryService:
             )
 
         except Exception as e:
-            logger.warning(
-                "[extract] 知识提取触发失败: {} - {}", repo_full_name, e, exc_info=True
+            logger.opt(exception=True).warning(
+                "[extract] 知识提取触发失败: {} - {}", repo_full_name, e
             )
 
     async def extract_and_save_knowledge(

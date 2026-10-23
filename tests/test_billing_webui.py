@@ -1,9 +1,54 @@
 """Billing WebUI route helpers tests"""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
 
 from backend.core.config import DYNAMIC_CONFIG_LABELS
 from backend.webui.routes.billing import _parse_page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,level",
+    [("pending", "warning"), ("approved", "success"), ("failed", "error")],
+)
+@pytest.mark.parametrize("language", ["zh-CN", "en"])
+async def test_refund_approval_toast_represents_the_verified_lifecycle(
+    monkeypatch, status, level, language
+):
+    from backend.webui.routes import billing
+
+    service = SimpleNamespace(
+        approve_refund_request=AsyncMock(
+            return_value=SimpleNamespace(
+                status=status,
+                order=None,
+                amount_cents=100,
+                error_message="TEST provider reconciliation",
+            )
+        )
+    )
+    monkeypatch.setattr(billing, "PaymentService", lambda db: service)
+    monkeypatch.setattr(billing, "log_admin_action", AsyncMock())
+    response = await billing.admin_approve_refund_request(
+        request_id=1,
+        request=None,
+        db=AsyncMock(),
+        user={"user_id": 3},
+        user_prefs={"language": language},
+        csrf_token="TEST",
+        review_note="TEST",
+    )
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["_toast_type"] == [level]
+    if status == "pending":
+        assert ("核对" if language == "zh-CN" else "reconciliation") in query["_toast"][
+            0
+        ]
 
 
 class SettingsStub:
@@ -31,7 +76,7 @@ def test_payment_config_labels_are_chinese():
     assert DYNAMIC_CONFIG_LABELS["payment_default_currency"] == "默认货币"
 
 
-def test_sidebar_hides_billing_links_when_payment_disabled():
+def test_sidebar_hides_purchase_links_but_keeps_pricing_setup_when_payment_disabled():
     from backend.webui.deps import get_templates
 
     template = get_templates().get_template("components/sidebar.html")
@@ -43,9 +88,12 @@ def test_sidebar_hides_billing_links_when_payment_disabled():
     )
 
     assert "套餐中心" not in rendered
-    assert "套餐管理" not in rendered
+    assert 'href="/billing/admin/plans"' in rendered
+    assert 'href="/billing/admin/pricing"' in rendered
     assert "兑换码管理" not in rendered
-    assert "退款审核" not in rendered
+    assert "退款审核" in rendered
+    assert 'href="/billing/"' in rendered
+    assert "订单记录" in rendered
 
 
 def test_sidebar_shows_billing_links_when_payment_enabled():
@@ -60,7 +108,7 @@ def test_sidebar_shows_billing_links_when_payment_enabled():
     )
 
     assert "套餐中心" in rendered
-    assert "套餐管理" in rendered
+    assert "套餐与价格" in rendered
     assert "兑换码管理" in rendered
     assert "退款审核" in rendered
 

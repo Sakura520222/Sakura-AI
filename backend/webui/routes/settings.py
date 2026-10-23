@@ -11,13 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.config import (
     get_settings,
     get_user_dynamic_config_state,
-    invalidate_user_dynamic_config_cache,
     validate_user_dynamic_config_value,
 )
 from backend.core.rate_limit import limiter
 from backend.core.redis import get_async_redis
 from backend.core.time_service import get_time_service, now_utc
-from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services.identity_service import (
     list_notification_endpoints,
@@ -46,7 +44,6 @@ from backend.webui.deps import (
     get_db,
     get_templates,
     get_user_preferences,
-    invalidate_user_prefs_cache,
     render_template,
     request_origin,
     require_auth,
@@ -136,7 +133,8 @@ async def _render_settings_page(
         "user_prefs": user_prefs,
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "settings",
+        "active_page": "config_center",
+        "category": "personal",
         "items_per_page": user_prefs["items_per_page"],
         "language": user_prefs["language"],
         "output_language_config": output_language_config,
@@ -179,8 +177,10 @@ async def settings_page(
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """渲染个人设置页面"""
-    return await _render_settings_page(request, db, user, user_prefs)
+    from fastapi.responses import RedirectResponse
+
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/personal" + query, status_code=302)
 
 
 @router.post("/telegram/bind")
@@ -246,7 +246,6 @@ async def save_settings(
     output_language: str = Form(default=""),
 ):
     """保存个人设置"""
-    user_id = int(user["user_id"])
 
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
@@ -273,47 +272,16 @@ async def save_settings(
             lang=detect_language({"language": language}),
         )
 
-    # Upsert 配置
-    result = await db.execute(select(WebUIConfig).where(WebUIConfig.user_id == user_id))
-    config = result.scalar_one_or_none()
-    if config:
-        config.items_per_page = items_per_page
-        config.language = language
-    else:
-        config = WebUIConfig(
-            user_id=user_id,
-            items_per_page=items_per_page,
-            language=language,
-        )
-        db.add(config)
+    from backend.services.config_center_service import config_center_service
 
-    result = await db.execute(
-        select(UserConfig).where(
-            UserConfig.user_id == user_id,
-            UserConfig.config_key == "output_language",
-        )
-    )
-    user_config = result.scalar_one_or_none()
-    if user_config:
-        user_config.config_value = normalized_output_language
-        user_config.description = "AI 输出语言"
-    else:
-        db.add(
-            UserConfig(
-                user_id=user_id,
-                config_key="output_language",
-                config_value=normalized_output_language,
-                description="AI 输出语言",
-            )
-        )
-    await db.commit()
-
-    invalidate_user_prefs_cache(user_id)
-    invalidate_user_dynamic_config_cache(user_id, ["output_language"])
+    await config_center_service.save_preferences(db, user, {
+        "items_per_page": items_per_page, "language": language,
+        "output_language": normalized_output_language,
+    })
 
     logger.info(
         f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, "
-        f"language={language}, output_language={normalized_output_language or 'inherit'}"
+        f"language={language}, output_language={normalized_output_language or 'request/UI'}"
     )
     return toast_redirect(
         "/settings/",

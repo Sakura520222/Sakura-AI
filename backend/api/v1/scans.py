@@ -244,7 +244,12 @@ async def retry_scan(
     """重试失败的扫描"""
     from backend.workers.scan_worker import ScanWorker
 
-    result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id))
+    result = await db.execute(
+        select(RepoScan)
+        .where(RepoScan.id == scan_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     scan = result.scalar_one_or_none()
     if not scan:
         return error_response("扫描记录不存在", status_code=404)
@@ -254,6 +259,13 @@ async def retry_scan(
     # 重置状态并重新执行
     scan.status = "pending"
     scan.error_message = None
+    # An explicit authenticated retry is a new execution. Preserve the old
+    # operation, provider costs and financial evidence under its original ID.
+    scan.trigger_type = "manual"
+    scan.triggered_by = f"api:{user['user_id']}"
+    from backend.services.billing_context import admit_scan_billing
+
+    await admit_scan_billing(db, scan)
     await db.commit()
 
     try:

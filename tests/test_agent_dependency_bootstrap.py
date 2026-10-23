@@ -254,9 +254,7 @@ async def test_execution_timeout_does_not_claim_network_failure(
         workspace,
         backend,
         [
-            ExecutionResult(
-                exit_code=-9, timed_out=True, stdout=stdout, stderr=stderr
-            ),
+            ExecutionResult(exit_code=-9, timed_out=True, stdout=stdout, stderr=stderr),
             ExecutionResult(exit_code=0),
         ],
         monkeypatch,
@@ -383,6 +381,10 @@ async def test_failed_setup_reaches_agent_and_is_saved_before_execution(
         assert session_id == 507
         saved.append(payload)
 
+    async def finish_session(session_id, outcome, payload):
+        assert outcome == "success"
+        await save_result(session_id, payload)
+
     async def execute(**kwargs):
         assert saved[0]["dependency_setup"]["status"] == "failed"
         received.append(kwargs["reference_context"])
@@ -393,7 +395,12 @@ async def test_failed_setup_reaches_agent_and_is_saved_before_execution(
     loop = IterationLoopService(
         workspace,
         service.workspace_service,
-        checkpoint=SimpleNamespace(save_session_result=save_result),
+        git_workspace_service=SimpleNamespace(
+            get_changed_file_stats=AsyncMock(return_value={})
+        ),
+        checkpoint=SimpleNamespace(
+            save_session_result=save_result, finish_session=finish_session
+        ),
     )
     monkeypatch.setattr(
         loop,
@@ -606,7 +613,9 @@ async def test_worker_enters_agent_execution_after_permanent_setup_failure(
     from backend.models.agent_team_models import AgentTeamTaskStatus
     from backend.services.agent_team.iteration_loop import IterationOutcome
     from backend.workers import agent_team_worker as worker_module
+    from tests.worker_capacity_support import install_unit_worker_capacity
 
+    install_unit_worker_capacity(monkeypatch)
     service, workspace, _settings = dependency_workspace
     runner, _requests = dependency_runner(
         service,
@@ -682,4 +691,18 @@ async def test_worker_enters_agent_execution_after_permanent_setup_failure(
     )
     assert not any(
         item.get("status") == AgentTeamTaskStatus.FAILED.value for item in updates
+    )
+
+
+@pytest.fixture(autouse=True)
+def worker_control_audit_store(monkeypatch):
+    """Worker orchestration uses fake tasks; persistence has separate SQLite tests."""
+    from unittest.mock import AsyncMock
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    monkeypatch.setattr(
+        ConversationCheckpointService, "record_control_event", AsyncMock()
     )

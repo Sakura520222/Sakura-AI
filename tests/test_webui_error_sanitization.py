@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from backend.core import github_app
 from backend.webui import i18n
 from backend.webui.routes import agent_team, auth, issues, repos, scans, setup
-from backend.workers import issue_worker, scan_worker
+from backend.workers import scan_worker
 
 _SECRET = "mysql+asyncmy://admin:super-secret@db/sakura"
 
@@ -163,17 +163,15 @@ async def test_issue_reanalysis_hides_worker_exception(monkeypatch):
         author="alice",
         title="title",
         body="body",
+        issue_state="open",
     )
     analysis_result = SimpleNamespace(scalar_one_or_none=lambda: analysis)
     version_result = SimpleNamespace(scalar=lambda: 2)
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[analysis_result, version_result])
     )
-    monkeypatch.setattr(
-        issue_worker,
-        "submit_issue_analysis_task",
-        AsyncMock(side_effect=RuntimeError(_SECRET)),
-    )
+    submit = AsyncMock(side_effect=RuntimeError(_SECRET))
+    monkeypatch.setattr(issues, "submit_issue_reanalysis", submit)
 
     response = await issues.reanalyze_issue(
         request=object(),
@@ -183,6 +181,7 @@ async def test_issue_reanalysis_hides_worker_exception(monkeypatch):
     )
 
     _assert_secret_is_hidden(response, "提交重新分析任务失败，请稍后重试")
+    submit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from loguru import logger
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import String, and_, case, cast, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,9 +88,7 @@ def _render_inline_html(value: str, *, telegram: bool = False) -> str:
                 or candidate.startswith("//")
             ):
                 return label
-            fragment = (
-                f'<a href="{html.escape(candidate, quote=True)}">{label}</a>'
-            )
+            fragment = f'<a href="{html.escape(candidate, quote=True)}">{label}</a>'
         else:
             href = _safe_href(match.group(2))
             fragment = (
@@ -180,9 +178,7 @@ def sanitize_markdown(markdown_text: str | None) -> str:
             if not in_ul:
                 output.append("<ul>")
                 in_ul = True
-            output.append(
-                f"<li>{_render_inline_html(unordered.group(1))}</li>"
-            )
+            output.append(f"<li>{_render_inline_html(unordered.group(1))}</li>")
         elif ordered:
             if in_ul:
                 output.append("</ul>")
@@ -221,7 +217,8 @@ _TELEGRAM_LINK_SCHEMES = {"http", "https", "mailto"}
 def announcement_type_label(value: object) -> str:
     """Map a stored announcement type to its notification display label."""
     return ANNOUNCEMENT_TYPE_LABELS.get(
-        str(value or "").strip().lower(), ANNOUNCEMENT_TYPE_LABELS[AnnouncementType.GENERAL.value]
+        str(value or "").strip().lower(),
+        ANNOUNCEMENT_TYPE_LABELS[AnnouncementType.GENERAL.value],
     )
 
 
@@ -249,9 +246,7 @@ def markdown_to_telegram_html(markdown_text: str | None) -> str:
             )
         elif unordered:
             ordered_counter = 0
-            lines.append(
-                f"• {_render_inline_html(unordered.group(1), telegram=True)}"
-            )
+            lines.append(f"• {_render_inline_html(unordered.group(1), telegram=True)}")
         elif ordered:
             ordered_counter += 1
             lines.append(
@@ -351,9 +346,7 @@ def announcement_to_dict(
         else None,
         "read": read,
         "delivery": delivery_stats.as_dict() if delivery_stats else None,
-        "publication_history": list(delivery_stats.history)
-        if delivery_stats
-        else [],
+        "publication_history": list(delivery_stats.history) if delivery_stats else [],
     }
 
 
@@ -448,10 +441,7 @@ async def update_announcement(
     if announcement is None:
         raise LookupError("公告不存在")
     publish_now = bool(publish if send is None else send)
-    if (
-        announcement.status == AnnouncementStatus.PUBLISHED.value
-        and not publish_now
-    ):
+    if announcement.status == AnnouncementStatus.PUBLISHED.value and not publish_now:
         raise ValueError("已发布公告不可直接修改，请先撤回")
 
     # Validate every requested field before archiving/resetting anything.  A
@@ -540,7 +530,7 @@ def _publication_version(value: Announcement | NotificationDelivery) -> int:
     """Return a valid publication version for old ORM/fake rows."""
     try:
         version = int(getattr(value, "publication_version", 1) or 1)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
     return max(1, version)
 
@@ -549,13 +539,17 @@ async def _current_delivery_rows(
     db: AsyncSession, announcement_id: int, publication_version: int
 ) -> list[NotificationDelivery]:
     return (
-        await db.execute(
-            select(NotificationDelivery).where(
-                NotificationDelivery.announcement_id == announcement_id,
-                NotificationDelivery.publication_version == publication_version,
+        (
+            await db.execute(
+                select(NotificationDelivery).where(
+                    NotificationDelivery.announcement_id == announcement_id,
+                    NotificationDelivery.publication_version == publication_version,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 async def _get_publication_snapshot(
@@ -605,6 +599,10 @@ def _delivery_state(row: NotificationDelivery) -> dict[str, Any]:
         "delivery_id": getattr(row, "id", None),
         "user_id": getattr(row, "user_id", None),
         "channel": str(getattr(row, "channel", "")),
+        "endpoint_id": getattr(row, "endpoint_id", None),
+        "endpoint_key": getattr(row, "endpoint_key", None),
+        "event_id": getattr(row, "event_id", None),
+        "error_category": getattr(row, "error_category", None),
         "status": str(getattr(row, "status", DeliveryStatus.PENDING.value)),
         "error_message": getattr(row, "error_message", None),
         "attempts": int(getattr(row, "attempts", 0) or 0),
@@ -632,9 +630,11 @@ async def _archive_publication(
                 publication_id=history.id,
                 user_id=getattr(row, "user_id", None),
                 channel=str(getattr(row, "channel", "")),
-                status=str(
-                    getattr(row, "status", DeliveryStatus.PENDING.value)
-                ),
+                endpoint_id=getattr(row, "endpoint_id", None),
+                endpoint_key=getattr(row, "endpoint_key", None),
+                event_id=getattr(row, "event_id", None),
+                error_category=getattr(row, "error_category", None),
+                status=str(getattr(row, "status", DeliveryStatus.PENDING.value)),
                 error_message=getattr(row, "error_message", None),
                 attempts=int(getattr(row, "attempts", 0) or 0),
                 sent_at=getattr(row, "sent_at", None),
@@ -671,24 +671,48 @@ async def _ensure_delivery_rows(
     announcement_id: int,
     publication_version: int | None = None,
 ) -> None:
+    # The outbox event is committed with publication, before external I/O.
+    if callable(getattr(db, "get_bind", None)):
+        from backend.services.notification_events import emit_event
+
+        announcement = await db.get(Announcement, announcement_id)
+        await emit_event(
+            db, event_type="announcement.published", resource_type="announcement",
+            resource_id=announcement_id, run_key=str(publication_version or 1),
+            title=announcement.title, content=announcement.content, audience="all",
+            severity="warning" if announcement.announcement_type == "important" else "info",
+            payload={"announcement_type": announcement.announcement_type},
+            detail_url=f"/announcements/{announcement_id}",
+        )
+        return
     users = (
-        await db.execute(select(TelegramUser).where(TelegramUser.is_active.is_(True)))
-    ).scalars().all()
+        (await db.execute(select(TelegramUser).where(TelegramUser.is_active.is_(True))))
+        .scalars()
+        .all()
+    )
     active_user_ids = {user.id for user in users}
     endpoints = (
-        await db.execute(
-            select(NotificationEndpoint)
-            .where(NotificationEndpoint.enabled.is_(True))
-            .order_by(NotificationEndpoint.id)
-        )
-    ).scalars().all()
-    existing = (
-        await db.execute(
-            select(NotificationDelivery).where(
-                NotificationDelivery.announcement_id == announcement_id
+        (
+            await db.execute(
+                select(NotificationEndpoint)
+                .where(NotificationEndpoint.enabled.is_(True))
+                .order_by(NotificationEndpoint.id)
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+    existing = (
+        (
+            await db.execute(
+                select(NotificationDelivery).where(
+                    NotificationDelivery.announcement_id == announcement_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     existing_by_key = {(row.user_id, row.channel): row for row in existing}
     existing_keys = set(existing_by_key)
     target_version = publication_version or 1
@@ -728,7 +752,13 @@ async def _ensure_delivery_rows(
             reset_for_current_round(existing_by_key[key])
     for endpoint in endpoints:
         channel = str(endpoint.provider).lower()
-        if channel not in {"email", "telegram"} or endpoint.user_id not in active_user_ids:
+        from backend.services.notification_service import notification_registry
+
+        if (
+            channel not in notification_registry.channels()
+            or channel == "web"
+            or endpoint.user_id not in active_user_ids
+        ):
             continue
         key = (endpoint.user_id, channel)
         if key in existing_keys:
@@ -820,6 +850,11 @@ async def _pending_announcement_recovery_candidates(
         .where(
             Announcement.status == AnnouncementStatus.PUBLISHED.value,
             NotificationDelivery.status == DeliveryStatus.PENDING.value,
+            NotificationDelivery.event_id.is_(None),
+            or_(
+                NotificationDelivery.next_retry_at.is_(None),
+                NotificationDelivery.next_retry_at <= now_utc(),
+            ),
             NotificationDelivery.publication_version
             == Announcement.publication_version,
         )
@@ -830,11 +865,9 @@ async def _pending_announcement_recovery_candidates(
         normalized_id = int(announcement_id)
         try:
             normalized_version = max(1, int(publication_version or 1))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             normalized_version = 1
-        active_until = _active_delivery_claim_until(
-            claim_token, claim_until, now=now
-        )
+        active_until = _active_delivery_claim_until(claim_token, claim_until, now=now)
         current = candidates.get(normalized_id)
         if current is None:
             candidates[normalized_id] = (normalized_version, active_until)
@@ -881,6 +914,11 @@ async def _recover_one_announcement(
                     Announcement.publication_version == expected_version,
                     NotificationDelivery.publication_version == expected_version,
                     NotificationDelivery.status == DeliveryStatus.PENDING.value,
+                    NotificationDelivery.event_id.is_(None),
+                    or_(
+                        NotificationDelivery.next_retry_at.is_(None),
+                        NotificationDelivery.next_retry_at <= now_utc(),
+                    ),
                 )
             )
             rows = result.all()
@@ -906,7 +944,7 @@ async def _recover_one_announcement(
             earliest = min(active_claims)
             try:
                 delay = max(0.0, (earliest - now).total_seconds())
-            except (AttributeError, TypeError, ValueError):
+            except AttributeError, TypeError, ValueError:
                 delay = _ANNOUNCEMENT_RECOVERY_POLL_SECONDS
             await asyncio.sleep(
                 min(max(delay, _ANNOUNCEMENT_RECOVERY_POLL_SECONDS), 30.0)
@@ -914,7 +952,7 @@ async def _recover_one_announcement(
             continue
 
         async with session_factory() as session:
-            await notification_service.broadcast_announcement(
+            outcome = await notification_service.broadcast_announcement(
                 session,
                 announcement_id,
                 expected_version=expected_version,
@@ -923,7 +961,13 @@ async def _recover_one_announcement(
         # A competing recovery may have won the claim while this iteration
         # was between its read and broadcast calls.  Yield before re-querying
         # so the winner can commit its terminal state.
-        await asyncio.sleep(0)
+        if (
+            outcome is not None
+            and not outcome.get("sent")
+            and not outcome.get("failed")
+        ):
+            return
+        await asyncio.sleep(_ANNOUNCEMENT_RECOVERY_POLL_SECONDS)
 
 
 async def _announcement_recovery_worker(
@@ -992,9 +1036,7 @@ async def recover_pending_announcement_deliveries() -> None:
             len(ordered_candidates),
         )
         workers = [
-            asyncio.create_task(
-                _announcement_recovery_worker(queue, session_factory)
-            )
+            asyncio.create_task(_announcement_recovery_worker(queue, session_factory))
             for _ in range(worker_count)
         ]
         try:
@@ -1064,9 +1106,7 @@ async def publish_announcement(
     return announcement
 
 
-async def withdraw_announcement(
-    db: AsyncSession, announcement_id: int
-) -> Announcement:
+async def withdraw_announcement(db: AsyncSession, announcement_id: int) -> Announcement:
     announcement = await _get_lifecycle_announcement(db, announcement_id)
     if announcement is None:
         raise LookupError("公告不存在")
@@ -1109,10 +1149,7 @@ async def delete_announcement(db: AsyncSession, announcement_id: int) -> bool:
     has_publication_history = (
         await db.execute(
             select(AnnouncementPublicationHistory.id)
-            .where(
-                AnnouncementPublicationHistory.announcement_id
-                == announcement.id
-            )
+            .where(AnnouncementPublicationHistory.announcement_id == announcement.id)
             .limit(1)
         )
     ).scalar_one_or_none() is not None
@@ -1170,28 +1207,28 @@ async def list_announcements(
 def _normalize_page(value: int | None) -> int:
     try:
         return max(1, int(value or 1))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
 
 
 def _normalize_page_size(value: int | None) -> int:
     try:
         return max(1, min(int(value or 100), 100))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 100
 
 
 def _normalize_legacy_limit(value: int | None) -> int:
     try:
         return max(1, min(int(value or 100), 500))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 100
 
 
 def _normalize_offset(value: int | None) -> int:
     try:
         return max(0, int(value or 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -1203,18 +1240,41 @@ def _announcement_filters(
 ) -> list[Any]:
     filters: list[Any] = []
     if not include_drafts:
-        filters.append(
-            Announcement.status == AnnouncementStatus.PUBLISHED.value
-        )
+        filters.append(Announcement.status == AnnouncementStatus.PUBLISHED.value)
     if unread_only and user_id is not None:
-        read_exists = select(AnnouncementRead.id).where(
-            AnnouncementRead.user_id == user_id,
-            AnnouncementRead.announcement_id == Announcement.id,
-            func.coalesce(AnnouncementRead.publication_version, 1)
-            == Announcement.publication_version,
-        ).exists()
+        read_exists = (
+            select(AnnouncementRead.id)
+            .where(
+                AnnouncementRead.user_id == user_id,
+                AnnouncementRead.announcement_id == Announcement.id,
+                func.coalesce(AnnouncementRead.publication_version, 1)
+                == Announcement.publication_version,
+            )
+            .exists()
+        )
         filters.append(~read_exists)
+        filters.append(_announcement_web_preference(user_id))
     return filters
+
+
+def _announcement_web_preference(user_id: int):
+    """Keep toast/unread queries consistent with the event's WebUI routing.
+
+    The full announcement archive stays readable; preferences only affect
+    unread notifications. Apply this in SQL before pagination/counting.
+    """
+    from backend.models.notification_models import NotificationSubscription as Rule
+
+    relevant = [Rule.user_id == user_id, Rule.event_type.in_(["*", "announcement.*", "announcement.published"])]
+    any_rule = select(Rule.id).where(*relevant).exists()
+    matching = select(Rule.id).where(*relevant,
+        Rule.enabled.is_(True), Rule.endpoint_id.is_(None),
+        or_(Rule.repo_name.is_(None), Rule.repo_name == ""),
+        or_(Rule.resource_type.is_(None), Rule.resource_type == "announcement"),
+        or_(Rule.resource_id.is_(None), Rule.resource_id == cast(Announcement.id, String)),
+        or_(Rule.min_severity == "info", and_(Rule.min_severity == "warning", Announcement.announcement_type == "important")),
+    ).exists()
+    return or_(~any_rule, matching)
 
 
 def _announcement_ordering() -> tuple[Any, ...]:
@@ -1235,16 +1295,18 @@ async def _fetch_announcement_rows(
     offset: int,
     unread_only: bool,
 ) -> list[tuple[Announcement, bool]]:
-    query = select(Announcement).where(
-        *_announcement_filters(
-            user_id=user_id,
-            include_drafts=include_drafts,
-            unread_only=unread_only,
+    query = (
+        select(Announcement)
+        .where(
+            *_announcement_filters(
+                user_id=user_id,
+                include_drafts=include_drafts,
+                unread_only=unread_only,
+            )
         )
-    ).order_by(*_announcement_ordering())
-    rows = (
-        await db.execute(query.offset(offset).limit(limit))
-    ).scalars().all()
+        .order_by(*_announcement_ordering())
+    )
+    rows = (await db.execute(query.offset(offset).limit(limit))).scalars().all()
     if user_id is None or not rows:
         return [(row, False) for row in rows]
     read_rows = (
@@ -1285,9 +1347,7 @@ async def paginate_announcements(
         include_drafts=include_drafts,
         unread_only=unread_only,
     )
-    total_result = await db.execute(
-        select(func.count(Announcement.id)).where(*filters)
-    )
+    total_result = await db.execute(select(func.count(Announcement.id)).where(*filters))
     total = int(total_result.scalar() or 0)
     total_pages = max(1, (total + page_size - 1) // page_size)
     current_page = min(requested_page, total_pages)
@@ -1309,16 +1369,21 @@ async def paginate_announcements(
 
 
 async def unread_count(db: AsyncSession, user_id: int) -> int:
-    read_exists = select(AnnouncementRead.id).where(
-        AnnouncementRead.user_id == user_id,
-        AnnouncementRead.announcement_id == Announcement.id,
-        func.coalesce(AnnouncementRead.publication_version, 1)
-        == Announcement.publication_version,
-    ).exists()
+    read_exists = (
+        select(AnnouncementRead.id)
+        .where(
+            AnnouncementRead.user_id == user_id,
+            AnnouncementRead.announcement_id == Announcement.id,
+            func.coalesce(AnnouncementRead.publication_version, 1)
+            == Announcement.publication_version,
+        )
+        .exists()
+    )
     result = await db.execute(
         select(func.count(Announcement.id)).where(
             Announcement.status == AnnouncementStatus.PUBLISHED.value,
             ~read_exists,
+            _announcement_web_preference(user_id),
         )
     )
     return int(result.scalar() or 0)
@@ -1334,9 +1399,7 @@ def _is_announcement_read_conflict(error: IntegrityError) -> bool:
     MySQL as well as the diagnostic text emitted by SQLite.
     """
     original = getattr(error, "orig", None)
-    sqlstate = getattr(original, "sqlstate", None) or getattr(
-        original, "pgcode", None
-    )
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
     diagnostic = getattr(original, "diag", None)
     constraint_name = getattr(diagnostic, "constraint_name", None)
     if str(constraint_name).lower() == "uq_announcement_read":
@@ -1347,11 +1410,7 @@ def _is_announcement_read_conflict(error: IntegrityError) -> bool:
         args = getattr(original, "args", ())
         if args and isinstance(args[0], int):
             errno = args[0]
-    text = " ".join(
-        part.lower()
-        for part in (str(error), str(original))
-        if part
-    )
+    text = " ".join(part.lower() for part in (str(error), str(original)) if part)
     # PostgreSQL's async drivers do not all expose ``diag`` consistently;
     # MySQL commonly reports only ``for key`` in the text.  Require either
     # our exact constraint name or both columns of the known unique key.  A
@@ -1369,10 +1428,7 @@ def _is_announcement_read_conflict(error: IntegrityError) -> bool:
         "announcement_reads" in text
         and "announcement_id" in text
         and "user_id" in text
-        and any(
-            marker in text
-            for marker in ("unique", "duplicate", "already exists")
-        )
+        and any(marker in text for marker in ("unique", "duplicate", "already exists"))
     )
 
 
@@ -1431,7 +1487,10 @@ async def _advance_announcement_read(
 
 async def mark_read(db: AsyncSession, user_id: int, announcement_id: int) -> bool:
     announcement = await get_announcement(db, announcement_id)
-    if announcement is None or announcement.status != AnnouncementStatus.PUBLISHED.value:
+    if (
+        announcement is None
+        or announcement.status != AnnouncementStatus.PUBLISHED.value
+    ):
         return False
     publication_version = _publication_version(announcement)
 
@@ -1502,7 +1561,7 @@ def _session_dialect_name(db: AsyncSession) -> str:
 def _read_version(value: object) -> int:
     try:
         return max(1, int(value or 1))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
 
 
@@ -1574,9 +1633,7 @@ async def _bulk_mark_announcement_reads(
             where=newer,
         )
         dialect = _session_dialect(db)
-        supports_returning = bool(
-            getattr(dialect, "insert_returning", True)
-        )
+        supports_returning = bool(getattr(dialect, "insert_returning", True))
         if not supports_returning:
             existing_versions = await _existing_read_versions(
                 db,
@@ -1598,9 +1655,7 @@ async def _bulk_mark_announcement_reads(
         from sqlalchemy.dialects.mysql import insert as dialect_insert
 
         announcement_ids = [announcement_id for announcement_id, _ in announcements]
-        existing_versions = await _existing_read_versions(
-            db, user_id, announcement_ids
-        )
+        existing_versions = await _existing_read_versions(db, user_id, announcement_ids)
 
         statement = dialect_insert(AnnouncementRead).values(values)
         inserted = statement.inserted
@@ -1737,14 +1792,15 @@ async def delivery_stats_many(
         )
     ).all()
     counts_by_announcement: dict[int, dict[str, int]] = {
-        announcement_id: {}
-        for announcement_id in by_id
+        announcement_id: {} for announcement_id in by_id
     }
     for announcement_id, version, status, count in current_grouped:
         normalized_id = int(announcement_id)
         try:
-            is_current_version = version is not None and int(version) == current_versions[normalized_id]
-        except (KeyError, TypeError, ValueError):
+            is_current_version = (
+                version is not None and int(version) == current_versions[normalized_id]
+            )
+        except KeyError, TypeError, ValueError:
             is_current_version = False
         if normalized_id in current_versions and is_current_version:
             counts_by_announcement[normalized_id][str(status)] = int(count)
@@ -1754,18 +1810,21 @@ async def delivery_stats_many(
     # publication, but its existence makes a legacy/inconsistent row unsafe to
     # delete and is therefore needed for ``deletable_ids``.
     all_snapshots = (
-        await db.execute(
-            select(AnnouncementPublicationHistory)
-            .where(AnnouncementPublicationHistory.announcement_id.in_(ids))
-            .order_by(
-                AnnouncementPublicationHistory.announcement_id,
-                AnnouncementPublicationHistory.publication_version.desc(),
+        (
+            await db.execute(
+                select(AnnouncementPublicationHistory)
+                .where(AnnouncementPublicationHistory.announcement_id.in_(ids))
+                .order_by(
+                    AnnouncementPublicationHistory.announcement_id,
+                    AnnouncementPublicationHistory.publication_version.desc(),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     snapshots_by_announcement: dict[int, list[AnnouncementPublicationHistory]] = {
-        announcement_id: []
-        for announcement_id in by_id
+        announcement_id: [] for announcement_id in by_id
     }
     all_snapshot_announcement_ids: set[int] = set()
     history_ids: list[int] = []
@@ -1822,9 +1881,7 @@ async def delivery_stats_many(
                 (snapshot.id, DeliveryStatus.PENDING.value), 0
             ),
             "sent": history_counts.get((snapshot.id, DeliveryStatus.SENT.value), 0),
-            "failed": history_counts.get(
-                (snapshot.id, DeliveryStatus.FAILED.value), 0
-            ),
+            "failed": history_counts.get((snapshot.id, DeliveryStatus.FAILED.value), 0),
         }
 
     values: dict[int, AnnouncementDeliveryStats] = {}

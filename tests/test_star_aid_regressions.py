@@ -491,7 +491,7 @@ def test_public_repository_search_attribute_does_not_create_event_handlers():
             if tag == "article" and self.attributes is None:
                 self.attributes = dict(attrs)
 
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
+    source = Path("backend/webui/templates/star_aid/index.html").read_text(encoding="utf-8")
     article = next(line for line in source.splitlines() if "<article x-show=" in line)
     rendered = Environment(autoescape=True).from_string(article).render(
         repo={
@@ -518,7 +518,7 @@ def test_admin_repository_search_treats_like_wildcards_as_literals():
 
 
 def test_admin_pagination_links_keep_both_filter_states():
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
+    source = Path("backend/webui/templates/star_aid/index.html").read_text(encoding="utf-8")
     admin_markup = source.split('{% if state.is_admin %}', 1)[1].split('{% endif %}\n    </section>', 1)[0]
     state = SimpleNamespace(
         admin_repository_page={
@@ -560,7 +560,7 @@ def test_admin_pagination_links_keep_both_filter_states():
 
 
 def test_member_filter_submission_keeps_repository_state():
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
+    source = Path("backend/webui/templates/star_aid/index.html").read_text(encoding="utf-8")
     admin_markup = source.split('{% if state.is_admin %}', 1)[1].split('{% endif %}\n    </section>', 1)[0]
     state = SimpleNamespace(
         admin_repository_page={
@@ -603,7 +603,7 @@ def test_member_filter_submission_keeps_repository_state():
 
 
 def test_admin_filter_navigation_preserves_other_panel_params():
-    script = Path("backend/webui/templates/star_aid/index.html").read_text().split("<script>", 1)[1].split("</script>", 1)[0]
+    script = Path("backend/webui/templates/star_aid/index.html").read_text(encoding="utf-8").split("<script>", 1)[1].split("</script>", 1)[0]
     program = r"""
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

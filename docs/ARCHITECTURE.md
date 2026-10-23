@@ -2,7 +2,7 @@
 
 > Sakura AI 的整体架构、技术栈、代码结构与客户端生态。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

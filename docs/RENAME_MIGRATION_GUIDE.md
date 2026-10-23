@@ -2,7 +2,7 @@
 
 > 项目从 Sakura-AI-Reviewer 重命名为 Sakura AI 的运维步骤。改名已完成，本文档面向从旧版升级的维护者保留作历史参考。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

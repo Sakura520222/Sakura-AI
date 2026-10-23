@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import math
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -17,6 +16,7 @@ from backend.core.config import (
     get_settings,
     get_strategy_config,
 )
+from backend.core.config_sections import get_section_defaults
 from backend.core.github_app import GitHubAppClient
 from backend.core.time_service import now_utc
 from backend.models.database import (
@@ -24,6 +24,10 @@ from backend.models.database import (
     IssueAnalysisQueue,
     IssueAnalysisStatus,
     PRIssueLink,
+)
+from backend.services.notification_business import (
+    emit_task_event,
+    notification_outbox_enabled,
 )
 
 
@@ -157,9 +161,7 @@ class IssueService:
                 IssueAnalysis.issue_number == issue_info["issue_number"],
             ]
             if issue_info.get("repo_owner"):
-                conditions.append(
-                    IssueAnalysis.repo_owner == issue_info["repo_owner"]
-                )
+                conditions.append(IssueAnalysis.repo_owner == issue_info["repo_owner"])
             if "analysis_version" in issue_info:
                 conditions.append(
                     IssueAnalysis.analysis_version == issue_info["analysis_version"]
@@ -229,6 +231,11 @@ class IssueService:
                 ),
                 suggested_milestone=analysis_data.get("suggested_milestone"),
                 duplicate_of=analysis_data.get("duplicate_of"),
+                issue_relations=(
+                    json.dumps(analysis_data["issue_relations"], ensure_ascii=False)
+                    if analysis_data.get("issue_relations") is not None
+                    else None
+                ),
                 related_prs=json.dumps(
                     analysis_data.get("related_prs", []), ensure_ascii=False
                 ),
@@ -241,6 +248,10 @@ class IssueService:
             )
         )
 
+        if getattr(update_result, "rowcount", None) != 0:
+            # The conditional write holds the row lock until this transaction
+            # commits. Read the persisted result metadata for the event snapshot.
+            await emit_task_event(db, "issue", record, "completed", refresh=True)
         await db.commit()
         if getattr(update_result, "rowcount", None) == 0:
             # The row was cancelled/closed by another transaction after the
@@ -343,31 +354,44 @@ class IssueService:
         if not identity:
             return {"cancelled": 0, "state_updated": 0}
 
-        cancelled_result = await db.execute(
+        active_conditions = [*identity, IssueAnalysis.status.in_(
+            [IssueAnalysisStatus.PENDING.value, IssueAnalysisStatus.ANALYZING.value]
+        )]
+        cancelled_records = []
+        outbox = notification_outbox_enabled(db)
+        returning = outbox and db.get_bind().dialect.update_returning
+        if outbox and not returning:
+            # MySQL lacks UPDATE RETURNING. Lock the active snapshot so each
+            # event describes a transition performed by this transaction.
+            cancelled_records = (await db.execute(select(IssueAnalysis).where(
+                and_(*active_conditions)
+            ).with_for_update())).scalars().all()
+        cancel_statement = (
             update(IssueAnalysis)
-            .where(
-                and_(
-                    *identity,
-                    IssueAnalysis.status.in_(
-                        [
-                            IssueAnalysisStatus.PENDING.value,
-                            IssueAnalysisStatus.ANALYZING.value,
-                        ]
-                    ),
-                )
-            )
+            .where(and_(*active_conditions))
             .values(
                 status=IssueAnalysisStatus.CANCELLED.value,
                 issue_state="closed",
             )
         )
+        if returning:
+            # RETURNING describes the rows actually transitioned, including
+            # tasks inserted after an earlier lifecycle read on PostgreSQL.
+            cancelled_result = await db.execute(cancel_statement.returning(IssueAnalysis))
+            cancelled_records = cancelled_result.scalars().all()
+            cancelled_count = len(cancelled_records)
+        else:
+            cancelled_result = await db.execute(cancel_statement)
+            cancelled_count = int(getattr(cancelled_result, "rowcount", 0) or 0)
         state_result = await db.execute(
             update(IssueAnalysis).where(and_(*identity)).values(issue_state="closed")
         )
+        for record in cancelled_records:
+            await emit_task_event(db, "issue", record, "cancelled")
         await db.commit()
 
         return {
-            "cancelled": int(getattr(cancelled_result, "rowcount", 0) or 0),
+            "cancelled": cancelled_count,
             "state_updated": int(getattr(state_result, "rowcount", 0) or 0),
         }
 
@@ -390,9 +414,7 @@ class IssueService:
             return {"state_updated": 0}
 
         state_result = await db.execute(
-            update(IssueAnalysis)
-            .where(and_(*identity))
-            .values(issue_state="open")
+            update(IssueAnalysis).where(and_(*identity)).values(issue_state="open")
         )
         await db.commit()
 
@@ -449,7 +471,13 @@ class IssueService:
                 if analysis.suggested_labels
                 else []
             )
-            labels = [f"`{label['name']}`" for label in labels_data[:5]]
+            labels = [
+                f"`{label['name'].strip()}`"
+                for label in labels_data[:5]
+                if isinstance(label, dict)
+                and isinstance(label.get("name"), str)
+                and label["name"].strip()
+            ]
         except json.JSONDecodeError, TypeError:
             pass
 
@@ -460,7 +488,13 @@ class IssueService:
                 if analysis.suggested_assignees
                 else []
             )
-            assignees = [f"@{a['username']}" for a in assignees_data[:3]]
+            assignees = [
+                f"@{a['username'].strip()}"
+                for a in assignees_data[:3]
+                if isinstance(a, dict)
+                and isinstance(a.get("username"), str)
+                and a["username"].strip()
+            ]
         except json.JSONDecodeError, TypeError:
             pass
 
@@ -468,20 +502,43 @@ class IssueService:
             no_feasibility = "No assessment"
             no_summary = "No summary"
             no_suggestion = "No suggestions"
-            duplicate_hint = "\n⚠️ Possibly related to #{}\n"
+            duplicate_hint = "\n⚠️ Verified open duplicate of #{}\n"
             related_prs_label = "Related PRs"
             suggested_title_label = "Suggested title"
         else:
             no_feasibility = "暂无评估"
             no_summary = "暂无摘要"
             no_suggestion = "无建议"
-            duplicate_hint = "\n⚠️ 可能与 #{} 相关\n"
+            duplicate_hint = "\n⚠️ 已验证与开放 Issue #{} 重复\n"
             related_prs_label = "相关 PR"
             suggested_title_label = "建议标题"
 
         related_info = ""
         if analysis.duplicate_of:
             related_info += duplicate_hint.format(analysis.duplicate_of)
+        relation_section = ""
+        try:
+            from backend.webui.i18n import i18n
+
+            raw = getattr(analysis, "issue_relations", None)
+            relations = json.loads(raw) if raw else {}
+            if isinstance(relations, dict):
+                language = "en" if is_english else "zh-CN"
+                entries = (
+                    [relations["primary"]] if relations.get("primary") else []
+                ) + relations.get("related", [])
+                if entries:
+                    relation_section = (
+                        "\n### " + i18n.t("issue.relations", lang=language) + "\n"
+                    )
+                    for relation in entries:
+                        label = i18n.t(
+                            "issue.relation_" + relation["relation"], lang=language
+                        )
+                        relation_section += f"- **{label} #{relation['number']}**: {relation['reason']}\n"
+                    related_info += relation_section
+        except json.JSONDecodeError, TypeError, KeyError:
+            pass
         try:
             prs = json.loads(analysis.related_prs) if analysis.related_prs else []
             if prs:
@@ -495,16 +552,47 @@ class IssueService:
                 f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
             )
 
-        return template.format(
-            category=analysis.category or "unknown",
-            priority=analysis.priority or "unknown",
-            feasibility=analysis.feasibility or no_feasibility,
-            summary=analysis.summary or no_summary,
-            labels=", ".join(labels) if labels else no_suggestion,
-            assignees=", ".join(assignees) if assignees else no_suggestion,
-            related_info=related_info,
-            suggested_title_section=suggested_title_section,
-        )
+        values = {
+            "category": analysis.category or "unknown",
+            "priority": analysis.priority or "unknown",
+            "feasibility": analysis.feasibility or no_feasibility,
+            "summary": analysis.summary or no_summary,
+            "labels": ", ".join(labels) if labels else no_suggestion,
+            "assignees": ", ".join(assignees) if assignees else no_suggestion,
+            "related_info": related_info,
+            "suggested_title_section": suggested_title_section,
+        }
+        defaults = get_section_defaults("strategy.issue_analysis")
+        if template in (defaults["comment_template"], defaults["comment_template_en"]):
+            # Conditional layout belongs to the built-in templates. Historical
+            # custom templates keep their exact formatting and fallback values.
+            values.update(
+                summary=(analysis.summary or "").strip(),
+                feasibility=(analysis.feasibility or "").strip()
+                or ("Unable to assess yet" if is_english else "暂无法评估"),
+                labels=", ".join(labels),
+                assignees=", ".join(assignees),
+                related_info=related_info.strip(),
+                suggested_title_section=suggested_title_section.strip()
+                if (analysis.suggested_title or "").strip()
+                else "",
+            )
+            empty_fields = {name for name, value in values.items() if not value}
+            lines = []
+            for line in template.splitlines():
+                if any("{" + name + "}" in line for name in empty_fields):
+                    continue
+                if not line.strip() and lines and not lines[-1].strip():
+                    continue
+                lines.append(line)
+            # Normalize only the layout before substitution: code fences and
+            # intentional whitespace inside the analysis must remain intact.
+            template = "\n".join(lines)
+
+        rendered = template.format(**values)
+        if "{related_info}" not in template:
+            rendered += relation_section
+        return rendered
 
     async def apply_suggested_labels(
         self,
@@ -652,6 +740,7 @@ class IssueService:
         Returns:
             {"applied": [], "suggested": [], "failed": []}
         """
+
         def checkpoint() -> None:
             if cancellation_checkpoint is not None:
                 cancellation_checkpoint()
@@ -760,100 +849,34 @@ class IssueService:
         repo_name: str,
         title: str,
         body: str,
-        current_issue_number: int | None = None,
+        current_issue_number: int,
     ) -> list[dict[str, Any]]:
-        """检测重复 Issue（优先语义检索，回退到 GitHub Search API）"""
-        # 优先使用 IssueEmbeddingService 语义检索
-        try:
-            exclude_numbers = [current_issue_number] if current_issue_number else []
-            results = await self.issue_embedding_service.search_related_issues(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                pr_title=title,
-                pr_body=body or "",
-                exclude_numbers=exclude_numbers,
-                top_k=5,
-                similarity_threshold=0.75,
-            )
-            if results:
-                return [
-                    {
-                        "issue_number": r["number"],
-                        "title": r["title"],
-                        "state": r.get("state", "open"),
-                        "similarity": r.get("similarity", 0),
-                    }
-                    for r in results
-                ]
-        except Exception as e:
-            logger.warning(f"语义检索查重失败，回退到 GitHub Search API: {e}")
+        """Return only a verified open duplicate for an existing Issue.
 
-        # Fallback: GitHub Search API + cosine similarity（搜索 open + closed）
-        keywords = title.split()[:5]
-        query = " ".join(keywords)
-        open_issues, closed_issues = await asyncio.gather(
-            asyncio.to_thread(
-                self.github_app.search_issues, repo_owner, repo_name, query, "open", 5
-            ),
-            asyncio.to_thread(
-                self.github_app.search_issues, repo_owner, repo_name, query, "closed", 5
-            ),
+        A positive Issue number is required for source hydration and revalidation;
+        missing or invalid identity is a caller error, not a negative decision.
+        """
+        if type(current_issue_number) is not int or current_issue_number <= 0:
+            raise ValueError("current_issue_number must be a positive integer")
+
+        from backend.services.issues.candidate_retriever import IssueCandidateRetriever
+        from backend.services.issues.relation_analyzer import IssueRelationAnalyzer
+
+        result = await IssueRelationAnalyzer(
+            retriever=IssueCandidateRetriever(self.issue_embedding_service)
+        ).analyze(
+            repo_owner,
+            repo_name,
+            {
+                "issue_number": current_issue_number,
+                "title": title,
+                "body": body or "",
+                "state": "open",
+            },
         )
-        issues = open_issues + closed_issues
-
-        candidates = [
-            issue
-            for issue in issues
-            if not (current_issue_number and issue.number == current_issue_number)
-        ]
-
-        if not candidates:
+        if result.duplicate_of is None:
             return []
-
-        try:
-            from backend.services.embedding_service import get_embedding_service
-
-            embedding_service = get_embedding_service()
-
-            current_text = f"{title}\n{body or ''}"
-            candidate_texts = [f"{c.title}\n{c.body or ''}" for c in candidates]
-
-            all_texts = [current_text] + candidate_texts
-            embeddings = await embedding_service.embed_texts(all_texts)
-            current_emb = embeddings[0]
-
-            results = []
-            for i, candidate in enumerate(candidates):
-                sim = self._cosine_similarity(current_emb, embeddings[i + 1])
-                if sim >= 0.75:
-                    results.append(
-                        {
-                            "issue_number": candidate.number,
-                            "title": candidate.title,
-                            "state": candidate.state,
-                            "similarity": round(sim, 3),
-                        }
-                    )
-
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            return results[:5]
-
-        except Exception as e:
-            logger.warning(f"AI 重复检测失败，回退到关键词匹配: {e}")
-            return [
-                {"issue_number": c.number, "title": c.title, "state": c.state}
-                for c in candidates[:5]
-            ]
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        """计算两个向量的余弦相似度"""
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(x * x for x in b))
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
+        return [{**result.primary, "issue_number": result.duplicate_of}]
 
     async def find_related_prs(
         self,

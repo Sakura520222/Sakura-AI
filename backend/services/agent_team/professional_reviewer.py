@@ -25,6 +25,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.log_context import agent_log_fields, traced_operation
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import compress_agent_team_messages
 from backend.services.agent_team.conversation_checkpoint import (
@@ -208,6 +209,7 @@ class ProfessionalReviewAgent:
             extra=extra,
         )
 
+    @traced_operation(agent_log_fields)
     async def review(
         self,
         task_title: str,

@@ -7,7 +7,7 @@
     <link rel="icon" href="data:,">
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-    <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
+    <script>window.sakuraThemeIsDark = value => value === 'dark' || (value === 'system' && matchMedia('(prefers-color-scheme: dark)').matches); if(window.sakuraThemeIsDark(localStorage.getItem('theme'))){document.documentElement.classList.replace('light','dark')}</script>
     <script>
         // Server-resolved IANA zone is authoritative; browser defaults are not.
         window.SAKURA_APP_TIMEZONE = {{ app_timezone | default('UTC') | tojson }};
@@ -63,7 +63,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     <link id="hljs-light" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css">
     <link id="hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github-dark.min.css" disabled>
-    <script>if(localStorage.getItem('theme')==='dark'){document.getElementById('hljs-light').disabled=true;document.getElementById('hljs-dark').disabled=false}</script>
+    <script>if(window.sakuraThemeIsDark(localStorage.getItem('theme'))){document.getElementById('hljs-light').disabled=true;document.getElementById('hljs-dark').disabled=false}</script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js"></script>
     <!-- i18n: 注入 JS 翻译对象 -->
     <script>
@@ -711,7 +711,7 @@
           theme: localStorage.getItem('theme') || 'light',
           toggleTheme() {
               const apply = () => {
-                  this.theme = this.theme === 'light' ? 'dark' : 'light';
+                  this.theme = window.sakuraThemeIsDark(this.theme) ? 'light' : 'dark';
                   // Alpine 的响应式更新是异步批处理，等 DOM 更新完成后再截取新主题快照
                   return this.$nextTick();
               };
@@ -738,17 +738,18 @@
               }).catch(() => {});
           }
       }"
+      @sakura-theme.window="theme = $event.detail"
       x-init="$watch('theme', val => {
-          document.documentElement.classList.toggle('dark', val === 'dark');
-          document.getElementById('hljs-light').disabled = val === 'dark';
-          document.getElementById('hljs-dark').disabled = val !== 'dark';
+          document.documentElement.classList.toggle('dark', window.sakuraThemeIsDark(val));
+          document.getElementById('hljs-light').disabled = window.sakuraThemeIsDark(val);
+          document.getElementById('hljs-dark').disabled = !window.sakuraThemeIsDark(val);
           localStorage.setItem('theme', val);
           fetch('/auth/api/theme', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': '{{ csrf_token }}' },
               body: 'theme=' + val
           }).catch(() => {});
-      }); document.documentElement.classList.toggle('dark', theme === 'dark');">
+      }); document.documentElement.classList.toggle('dark', window.sakuraThemeIsDark(theme));">
 
     <!-- 樱花飘落装饰 -->
     <div class="sakura-petals" aria-hidden="true">

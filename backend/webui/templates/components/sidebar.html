@@ -39,9 +39,10 @@
         {% endif %}
 
         {% if current_user %}
-            {% call domain(_('nav.agent_team'), ['agent_team', 'agent_skills']) %}
+            {% call domain(_('nav.agent_team'), ['agent_team', 'agent_skills', 'agent_plugins']) %}
                 {{ link('/agent-team/', _('nav.agent_tasks'), 'agent_team') }}
                 {% if current_user.role == 'super_admin' %}
+                    {{ link('/agent-plugins/', _('agent_plugins.title'), 'agent_plugins') }}
                     {{ link('/agent-skills/', _('nav.agent_skills'), 'agent_skills') }}
                 {% endif %}
             {% endcall %}
@@ -55,15 +56,20 @@
             {% endif %}
         {% endcall %}
 
-        {% if settings.payment_enabled %}
-            {% call domain(_('nav.billing_center'), ['billing', 'billing_admin_plans', 'billing_admin_codes', 'billing_admin_refunds']) %}
-                {{ link('/billing/', _('nav.billing_overview'), 'billing') }}
+        {% if current_user %}
+            {% call domain(_('nav.billing_center') if settings.payment_enabled else _('billing.credits_title'), ['billing', 'billing_credits', 'billing_admin_codes', 'billing_admin_refunds']) %}
+                {{ link('/billing/', _('nav.billing_overview') if settings.payment_enabled else _('billing.order_history'), 'billing') }}
+                {{ link('/billing/credits', _('billing.credits_title'), 'billing_credits') }}
                 {% if current_user and current_user.role == 'super_admin' %}
-                    {{ link('/billing/admin/plans', _('nav.plan_management'), 'billing_admin_plans') }}
-                    {{ link('/billing/admin/codes', _('nav.redemption_codes'), 'billing_admin_codes') }}
+                    {% if settings.payment_enabled %}{{ link('/billing/admin/codes', _('nav.redemption_codes'), 'billing_admin_codes') }}{% endif %}
                     {{ link('/billing/admin/refund-requests', _('nav.refund_reviews'), 'billing_admin_refunds') }}
                 {% endif %}
             {% endcall %}
+        {% endif %}
+
+        {% if current_user and current_user.role == 'super_admin' %}
+            {{ link('/billing/admin/pricing', _('billing.model_pricing'), 'billing_admin_pricing') }}
+            {{ link('/billing/admin/plans', _('billing.plan_pricing'), 'billing_admin_plans') }}
         {% endif %}
 
         {% if current_user and current_user.role in ('admin', 'super_admin') %}
@@ -75,15 +81,7 @@
             {% endcall %}
         {% endif %}
 
-        {% call domain(_('nav.settings_domain'), ['settings', 'config_unified', 'config_ai', 'config_backup', 'system_config']) %}
-            {{ link('/settings/', _('nav.personal_settings'), 'settings') }}
-            {% if current_user and current_user.role == 'super_admin' %}
-                {{ link('/config', _('nav.review_config'), 'config_unified') }}
-                {{ link('/config/ai', _('nav.ai_config'), 'config_ai') }}
-                {{ link('/system-config/', _('nav.system_config'), 'system_config') }}
-                {{ link('/config/backup', _('nav.config_backup'), 'config_backup') }}
-            {% endif %}
-        {% endcall %}
+        {{ link('/settings-center/personal', _('config_center.title'), 'config_center') }}
     </nav>
 </aside>
 

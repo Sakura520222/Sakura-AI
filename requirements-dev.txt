@@ -1,0 +1,4 @@
+# Classic pip development environment; mirrors pyproject.toml's dev group.
+-r requirements.txt
+aiosqlite>=0.22.1
+-e ./updater[dev]

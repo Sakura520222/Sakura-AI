@@ -69,3 +69,54 @@ def test_request_accepts_only_constrained_network_capabilities(network_mode):
 def test_request_rejects_docker_network_names_and_arguments(network_mode):
     with pytest.raises(ValidationError):
         ExecutionRequest.model_validate(_request(network_mode=network_mode))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"command": "git status"},
+        {"command": None, "argv": ["/workspace/git", "status"]},
+        {"command": None, "argv": ["git", "status"], "network_mode": "egress"},
+    ],
+)
+def test_readonly_wire_rejects_shell_binary_shadow_and_egress(overrides):
+    with pytest.raises(ValidationError, match="read-only"):
+        ExecutionRequest.model_validate(_request(profile="read_only", **overrides))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["grep", "-rn", "-F", "--", "secret", "."],
+        ["grep", "-rl", "-Z", "-I", "--", "secret", "."],
+        ["grep", "-rl", "-Z", "-I", "--", "^", "/etc"],
+    ],
+)
+def test_readonly_wire_rejects_content_or_keyword_dependent_search(argv):
+    with pytest.raises(ValidationError, match="read-only"):
+        ExecutionRequest.model_validate(
+            _request(profile="read_only", command=None, argv=argv)
+        )
+
+
+def test_readonly_wire_accepts_fixed_text_candidate_enumeration():
+    request = ExecutionRequest.model_validate(
+        _request(
+            profile="read_only",
+            command=None,
+            argv=[
+                "grep",
+                "-rl",
+                "-Z",
+                "-I",
+                "--include",
+                "*.py",
+                "--exclude-dir",
+                ".git",
+                "--",
+                "^",
+                ".",
+            ],
+        )
+    )
+    assert request.network_mode is NetworkMode.NONE

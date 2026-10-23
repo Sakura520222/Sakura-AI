@@ -53,6 +53,7 @@ class RepoScan(Base):
     __tablename__ = "repo_scans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_operation_id = Column(String(128), nullable=True, index=True)
     repo_name = Column(String(255), nullable=False, index=True)
     repo_owner = Column(String(100), nullable=False)
 
@@ -70,6 +71,7 @@ class RepoScan(Base):
     status = Column(
         String(50), default=ScanStatus.PENDING.value, nullable=False, index=True
     )
+    execution_round = Column(Integer, nullable=False, default=0)
     progress = Column(Integer, default=0)  # 0-100
     current_phase = Column(
         String(50), nullable=True

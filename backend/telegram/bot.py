@@ -48,7 +48,7 @@ async def _telegram_error_handler(update: object, context) -> None:
     ):
         logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
     else:
-        logger.error(f"❌ Telegram Bot 未预期的错误: {error}", exc_info=error)
+        logger.opt(exception=error).error(f"❌ Telegram Bot 未预期的错误: {error}")
 
 
 async def start_telegram_bot():

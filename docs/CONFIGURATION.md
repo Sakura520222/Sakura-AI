@@ -2,7 +2,7 @@
 
 > Sakura AI 全部配置项的位置、键名与说明。普通动态配置可即时生效；应用时区等重启键保存后必须重启。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
@@ -202,7 +202,9 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | WebUI 配置管理 | `max_concurrent_issues` | 同时进行的最大 Issue 分析任务数，超出排队 |
 | WebUI 配置管理 | `issue_auto_rewrite_title` | Issue 标题自动改写 |
 | WebUI 配置管理 | `enable_semantic_issue_linking` | 语义 Issue 关联开关 |
-| WebUI 配置管理 | `semantic_issue_similarity_threshold` | 语义相似度阈值 |
+| WebUI 配置管理 | `semantic_issue_similarity_threshold` | PR 召回余弦下限，默认 `0.65`；关系仍由后续重排及验证决定 |
+
+已有数据库配置不会随默认值调整而覆盖；若当前有效值仍为 `0.8`，需在统一 `/config` 页显式保存 `0.65`。检索的 INFO 摘要会显示有效 `threshold`、阈值前 `max_cosine`、`cosine_matches` 与重排后的 `candidates`，可据此区分入口过滤和后续过滤。
 
 ---
 
@@ -229,14 +231,21 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | 全局配置页「Agent 专家团队」组 | `agent_team_dependency_install_attempts` | 瞬时依赖网络故障的最大安装尝试次数（含首次），默认 3，范围 1–5；版本冲突、确实缺包及未知错误不重试 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_dependency_retry_delay_seconds` | 重试初始等待秒数，默认 2，范围 0–60；指数退避，默认等待 2、4 秒，可随任务取消中断 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_execution_backend` | `sandbox` 为默认执行后端；`local` 只允许显式源码开发模式，镜像或未知部署模式会 fail-closed |
-| 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 完全隔离；`web_tools`（默认）仅授权受控 Web 工具；`full_access` 允许 Agent/Dependency runner 使用 sandboxd 的固定出口 |
+| 全局配置页「Agent 专家团队」组 | `agent_team_network_policy` | `offline` 禁止出网；`web_tools`（默认）授权受控 Web 工具与单次依赖出口，普通 Shell 离线；`full_access` 允许所有 runner 使用 sandboxd 的固定出口 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_closed_loop_enabled` | PR 审查闭环开关 |
-| 全局配置页「Agent 专家团队」组 | `agent_team_max_iterations_per_task` | 单任务最大自动迭代次数 |
 | 全局配置页「Agent 专家团队」组 | `agent_team_pr_review_pass_score` | PR 审查通过分数线 |
-| 全局配置页「Agent Skills」组 | `agent_team_skills_enabled` | Agent 是否可加载技能 |
-| 全局配置页「Agent Skills」组 | `agent_team_skills_root` | 技能本地存储根目录 |
+| 全局配置页「Agent」组 | `agent_team_skills_enabled` | 控制 DB 与仓库 Skills 的发现、上下文和正文调用；关闭不影响独立的 AGENTS.md 等仓库规则 |
+| 全局配置页「Agent」组 | `agent_team_skills_root` | 管理员安装 Skills 的本地存储根目录，不改变仓库 Skills 的两个固定发现目录 |
+| 全局配置页「Agent」组 | `agent_team_subagent_concurrency` | 同时运行的只读子 Agent 数，默认 4；其余排队，不是累计调用或任务预算 |
+| Agent 插件页 `/agent-plugins/` | `agent_team_permission_profile` | 默认 `autonomous`；`read_only`、`workspace_write`、`full_access` 收窄/选择既有运行边界，无逐工具审批 |
+| Agent 插件页 `/agent-plugins/` | `agent_team_harness_plugins` | 版本化 MCP/Hooks 配置；现有 Skills 管理入口也在该页，凭据只用于 transport |
+| Settings / 单个 MCP 配置 | `agent_team_mcp_io_timeout_seconds` / `timeout_seconds` | HTTP I/O 空闲默认 300 秒；不限制活跃工具调用总时长。SDK discovery 握手另有协议探测超时 |
 
-> Agent Team 的 AI 调用固定使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、grep 和依赖 hook 使用 `AGENT` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+规则优先级、目录作用域、开关与恢复、选择器兼容、按需读取及已移除的新增限制详见[仓库规则与 Skills](AGENT_REPOSITORY_CONTEXT.md)。这些设置不引入运行时人工授权或审批流程；#604 的临时依赖出网机制保持不变。
+
+> Agent Team 的主/子 Agent 均使用 `agent_team` 角色绑定，上下文压缩使用 `summary` 角色绑定，**不支持**独立 endpoint、API Key 或模型配置。普通用户入口校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额；`/agent` 评论可从已分析 Issue 或扫描报告 Issue 创建任务。模型驱动的 shell、只读搜索/Git 检查和依赖 hook 分别使用 `AGENT` / `READ_ONLY` / `DEPENDENCY` profile 进入 sandboxd；clone、fetch、worktree、commit 和 push 保持为固定 argv 的可信 Git 控制面。
+
+Harness 后端和恢复要求见[运行指南](AGENT_HARNESS_RUNTIME.md)。本地只读进程要求 Linux Landlock ABI ≥ 3、libseccomp；`check_changes` 要求所选后端 Git 支持 `--no-lazy-fetch`（上游 2.45+），旧 Git 返回明确工具前置条件错误，不移除保护参数重试。部署 `workspace_write` 时 Shell 始终断网，不能被更宽的网络配置覆盖。
 
 下列设置属于部署安全边界，不通过 WebUI 或数据库动态修改：
 
@@ -253,13 +262,44 @@ WebUI「配置管理 → 备份」支持按节导出/恢复 `app_config`：
 | `AGENT_TEAM_SANDBOX_MAX_OUTPUT_BYTES` | 1 MiB | stdout + stderr 合计字节上限 |
 
 `agent_team_network_policy` 每次 Agent 工具或 sandbox 调用都会从数据库 fresh 读取，保存后
-下一次调用立即生效：`offline` 禁止受控 Web 工具且 runner 为 `network none`；`web_tools`
-（默认）只允许 `search_web`/`fetch_url`（仍受既有开关和 SSRF/域名策略约束），runner 仍为
-`network none`；`full_access` 同时把 Agent 与 Dependency runner 映射为 UDS `network_mode=egress`。
-请求只携带 `none|egress` 能力，不携带 Docker 网络名。sandboxd 服务端固定使用
-`SAKURA_SANDBOX_EGRESS_NETWORK`（默认 Docker `bridge`），因此全权限模式在全新 Docker
+下一次调用立即生效：`offline` 禁止受控 Web 工具和所有 runner 出网，自动依赖安装会明确跳过，
+显式申请 `dependency_egress` 会被拒绝；`web_tools`（默认）允许 `search_web`/`fetch_url`
+（仍受既有开关和 SSRF/域名策略约束），普通 Agent Shell 使用 `network_mode=none`，
+Dependency profile 自动申请临时出口。Shell 工具 `run_command` 也可显式设置
+`network_capability=dependency_egress`，为当前命令的依赖安装或构建/测试依赖解析申请出口。
+`full_access` 使所有 Agent 与 Dependency 执行使用 `network_mode=egress`。
+
+临时出口持续整个一次性容器执行，可访问任意公网目标；包安装钩子、构建脚本及其子进程也共享
+该出口。`dependency_egress` 是显式能力请求，不做命令分类或命令/包仓库/域名/IP 白名单检查，
+可用于任意 Shell 命令；它不保证命令只访问包仓库。执行结束后容器销毁，`web_tools` 下
+下一次未指定该能力的普通 Shell 命令仍离线。例如，以下每次 `run_command` 调用均显式申请能力：
+
+| 生态 | `command` 示例 | `network_capability` |
+|---|---|---|
+| Python | `python -m pip install -r requirements.txt` | `dependency_egress` |
+| Node.js | `npm ci` | `dependency_egress` |
+| Rust | `cargo test` | `dependency_egress` |
+| Go | `go test ./...` | `dependency_egress` |
+| JVM | `./gradlew test` 或 `mvn test` | `dependency_egress` |
+
+```json
+{"command": "cargo test", "network_capability": "dependency_egress"}
+```
+
+随后普通调用 `{"command": "pytest -q"}` 的能力默认是 `none`，在 `web_tools` 下恢复离线。
+示例表示工具参数，不是宿主机命令；项目所需工具链仍须由 runner 镜像提供。
+
+Backend 将授权能力映射为 sandboxd UDS 的 `none|egress`，请求不携带 Docker 网络名。
+sandboxd 服务端固定使用 `SAKURA_SANDBOX_EGRESS_NETWORK`（默认 Docker `bridge`），全新 Docker
 环境无需额外创建网络即可出网；若配置 named network，该网络必须由部署管理员预先管理。
-`local` backend 无法兑现 `offline` 的 OS 隔离要求，会明确拒绝执行，不会静默降级。
+`local` 仅限源码开发且要求 `full_access`，使用宿主网络，不提供 OS 隔离或单次沙箱出口；
+`offline` 与 `web_tools` 下均拒绝 local 执行，不会静默降级。
+
+全局配置页的网络状态保留原有后端就绪信息，并分别显示普通 Shell 与临时依赖的授权模式。
+`/config/agent-network-status` 的 `agent_network_mode`、`dependency_network_mode` 表示策略授权；
+`dependency_egress_available` 只有在策略允许、sandboxd 就绪且广告 `egress` 能力时才为 true。
+缺少出口不会影响 `web_tools` 的普通离线执行就绪状态。local 的两个模式为 `not_applicable`、
+临时依赖出口为 false，宿主网络由原有 `local_host_network` 字段单独说明。
 
 生产 sandboxd 的镜像、runner 镜像、Docker 参数、网络、mount、UID/GID、capabilities、资源限制和宿主 workspace root 均由部署侧控制，不能由模型请求或 Web 动态配置覆盖。Web 与 runner 不挂载 Docker socket；只有独立 sandboxd 容器持有该 socket。
 
@@ -369,4 +409,4 @@ Bot 设置、通知端点绑定与命令参考详见 [Telegram Bot 集成指南]
 
 ---
 
-*最后更新：2026-10-2 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-4 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

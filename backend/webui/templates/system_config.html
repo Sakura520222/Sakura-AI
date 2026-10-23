@@ -1,300 +1,9 @@
-{% extends "base.html" %}
-
-{% block title %}{{ _('system_config.title') }} - Sakura AI{% endblock %}
-
+{% extends "config_center.html" %}
 {% from "components/modal.html" import modal_shell %}
-
-{% block content %}
-<div x-data="systemConfig()" x-init="init()" class="space-y-4">
-    <!-- 页面标题 -->
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ _('system_config.title') }}</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('system_config.description') }}</p>
-        </div>
-        <div class="flex items-center gap-2">
-            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-                </svg>
-                {{ _('system_config.warning_badge') }}
-            </span>
-        </div>
-    </div>
-
-    <!-- 安全警告提示 -->
-    <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-xl p-4">
-        <div class="flex items-start gap-3">
-            <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-            </svg>
-            <div>
-                <h3 class="text-sm font-semibold text-amber-800 dark:text-amber-300">{{ _('system_config.warning_title') }}</h3>
-                <p class="text-sm text-amber-700 dark:text-amber-400 mt-1">{{ _('system_config.warning_desc') }}</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- 应用时间上下文：只展示/修改应用层时区，不触碰宿主机时钟或系统时区。 -->
-    <section class="rounded-xl border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-900/60 dark:bg-blue-950/20"
-             aria-labelledby="application-time-title">
-        <h2 id="application-time-title" class="text-sm font-semibold text-blue-900 dark:text-blue-200">
-            {{ _('system_config.time_title') }}
-        </h2>
-        <div class="mt-2 grid gap-2 text-xs text-blue-800 dark:text-blue-300 sm:grid-cols-2">
-            <div><span class="font-medium">{{ _('system_config.time_configured') }}：</span>{{ time_status.configured_timezone }}</div>
-            <div><span class="font-medium">{{ _('system_config.time_resolved') }}：</span>{{ time_status.resolved_timezone }}</div>
-            <div><span class="font-medium">{{ _('system_config.time_system') }}：</span>{{ time_status.system_timezone }}</div>
-            <div><span class="font-medium">{{ _('system_config.time_utc') }}：</span>{{ time_status.current_utc }}</div>
-            <div class="sm:col-span-2"><span class="font-medium">{{ _('system_config.time_local') }}：</span>{{ time_status.current_local }}</div>
-        </div>
-        <p class="mt-2 text-xs text-blue-700 dark:text-blue-300">{{ _('system_config.time_restart_hint') }}</p>
-    </section>
-
-    <!-- Tab 导航 -->
-    <div class="border-b border-gray-200 dark:border-gray-700">
-        <nav class="flex flex-wrap -mb-px gap-1" role="tablist">
-            {% for group in groups %}
-            <button @click="activeTab = '{{ group.id }}'"
-                    :class="activeTab === '{{ group.id }}' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
-                    class="whitespace-nowrap py-3 px-3 border-b-2 font-medium text-sm transition-colors">
-                {{ _('system_config.group_' + group.id) }}
-            </button>
-            {% endfor %}
-        </nav>
-    </div>
-
-    <!-- 配置表单 -->
-    <form method="POST" action="/system-config/save" id="systemConfigForm">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-        {% for group in groups %}
-        <div x-show="activeTab === '{{ group.id }}'" x-cloak class="space-y-4">
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
-                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                    {{ _('system_config.group_' + group.id) }}
-                </h3>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                    {{ _('system_config.group_' + group.id + '_desc') }}
-                </p>
-                <div class="space-y-5">
-                    {% for item in group.fields %}
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                    {{ _('system_config.key_' + item.key) }}
-                                </h4>
-                                {% if item.sensitive %}
-                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">{{ _('common.sensitive') }}</span>
-                                {% endif %}
-                                {% if item.requires_restart %}
-                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">{{ _('system_config.restart_required') }}</span>
-                                {% endif %}
-                            </div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                {{ _('system_config.key_' + item.key + '_desc') }}
-                            </p>
-                        </div>
-                        <div class="flex-shrink-0 flex items-center gap-2">
-                            {% if item.sensitive %}
-                            <!-- 敏感字段：password input + _changed hidden -->
-                            <input type="password"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   placeholder="{{ _('common.enter_new_value') }}"
-                                   x-ref="{{ item.key }}_input"
-                                   x-on:input="$refs.{{ item.key }}_changed.value = 'true'"
-                                   class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
-                            <input type="hidden" name="{{ item.key }}_changed" value="false" x-ref="{{ item.key }}_changed">
-                            {% elif item.key == 'app_port' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" max="65535"
-                                   step="1"
-                                   inputmode="numeric"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'telegram_bind_token_expire_seconds' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="30" max="3600" step="1"
-                                   inputmode="numeric"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'smtp_port' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" max="65535" step="1"
-                                   inputmode="numeric"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'notification_max_concurrency' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" max="100" step="1"
-                                   inputmode="numeric"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'notification_retry_max_attempts' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" max="20" step="1"
-                                   inputmode="numeric"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'notification_retry_initial_delay_seconds' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="0" step="any"
-                                   inputmode="decimal"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'notification_retry_backoff_factor' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" step="any"
-                                   inputmode="decimal"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'notification_rate_limit_seconds' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="0" step="any"
-                                   inputmode="decimal"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'app_timezone' %}
-                            <input type="text"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   placeholder="system / Area/City"
-                                   autocomplete="off"
-                                   class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
-                            {% elif item.key == 'star_aid_github_app_slug' %}
-                            <input type="text"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   autocomplete="off"
-                                   x-ref="githubAppSlugInput"
-                                   x-on:input="$refs.star_aid_github_app_slug_changed.value = 'true'"
-                                   class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
-                            <input type="hidden"
-                                   name="star_aid_github_app_slug_changed"
-                                   value="false"
-                                   x-ref="star_aid_github_app_slug_changed">
-                            {% elif item.key == 'star_aid_github_app_discovery_timeout_seconds' %}
-                            <input type="number"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   min="1" max="120" step="1"
-                                   inputmode="decimal"
-                                   required
-                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                            {% elif item.key == 'smtp_security' %}
-                            <select name="{{ item.key }}"
-                                    class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <option value="ssl" {% if item.value == 'ssl' %}selected{% endif %}>{{ _('system_config.smtp_security_ssl') }}</option>
-                                <option value="starttls" {% if item.value == 'starttls' %}selected{% endif %}>{{ _('system_config.smtp_security_starttls') }}</option>
-                                <option value="none" {% if item.value == 'none' %}selected{% endif %}>{{ _('system_config.smtp_security_none') }}</option>
-                            </select>
-                            {% elif item.key == 'log_level' %}
-                            <select name="{{ item.key }}"
-                                    class="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <option value="DEBUG" {% if item.value == 'DEBUG' %}selected{% endif %}>DEBUG</option>
-                                <option value="INFO" {% if item.value == 'INFO' %}selected{% endif %}>INFO</option>
-                                <option value="WARNING" {% if item.value == 'WARNING' %}selected{% endif %}>WARNING</option>
-                                <option value="ERROR" {% if item.value == 'ERROR' %}selected{% endif %}>ERROR</option>
-                                <option value="CRITICAL" {% if item.value == 'CRITICAL' %}selected{% endif %}>CRITICAL</option>
-                            </select>
-                            {% else %}
-                            <input type="text"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   class="w-72 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono">
-                            {% endif %}
-
-                            <!-- 测试连接按钮（仅数据库和 Redis） -->
-                            {% if item.key == 'database_url' %}
-                            <button type="button"
-                                    @click="testConnection('database', document.querySelector('[name=database_url]')?.value)"
-                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
-                                    :disabled="testing"
-                                    :class="testing ? 'opacity-50 cursor-not-allowed' : ''">
-                                <span x-show="!testing">{{ _('system_config.test_connection') }}</span>
-                                <span x-show="testing" class="flex items-center gap-1">
-                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    {{ _('common.loading') }}
-                                </span>
-                            </button>
-                            {% elif item.key == 'redis_url' %}
-                            <button type="button"
-                                    @click="testConnection('redis', document.querySelector('[name=redis_url]')?.value)"
-                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
-                                    :disabled="testing"
-                                    :class="testing ? 'opacity-50 cursor-not-allowed' : ''">
-                                <span x-show="!testing">{{ _('system_config.test_connection') }}</span>
-                                <span x-show="testing" class="flex items-center gap-1">
-                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    {{ _('common.loading') }}
-                                </span>
-                            </button>
-                            {% elif item.key == 'star_aid_github_app_slug' %}
-                            <button type="button"
-                                    @click="fetchGithubAppSlug($refs.githubAppSlugInput)"
-                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
-                                    :disabled="fetchingGithubAppSlug"
-                                    :class="fetchingGithubAppSlug ? 'opacity-50 cursor-not-allowed' : ''">
-                                <span x-show="!fetchingGithubAppSlug">{{ _('system_config.auto_fetch_github_app_slug') }}</span>
-                                <span x-show="fetchingGithubAppSlug" class="flex items-center gap-1">
-                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    {{ _('common.loading') }}
-                                </span>
-                            </button>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% if not loop.last %}
-                    <div class="border-t border-gray-100 dark:border-gray-700"></div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-
-        <!-- 保存按钮 -->
-        <div class="flex items-center justify-between mt-4">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
-                <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                {{ _('system_config.save_hint') }}
-            </p>
-            <button type="submit"
-                    class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                {{ _('common.save') }}
-            </button>
-        </div>
-    </form>
-
+{% set category = "system" %}
+{% block center_operations %}
+<div x-data="systemConfig()" class="space-y-6">
+<button type="button" @click="restartApplication()" class="px-4 py-2 border rounded-lg">{{ _("config_center.restart") }}</button>
     <!-- 数据库危险操作区 -->
     <section class="rounded-xl border-2 border-red-200 bg-red-50/70 p-5 shadow-sm dark:border-red-900/70 dark:bg-red-950/20"
              aria-labelledby="database-reset-title">
@@ -415,10 +124,12 @@
 <style>
     [x-cloak] { display: none !important; }
 </style>
+{% include 'components/config_save_feedback.html' %}
 <script>
 function systemConfig() {
     return {
         activeTab: 'database',
+        saving: false,
         testing: false,
         fetchingGithubAppSlug: false,
         testResult: null,
@@ -437,7 +148,77 @@ function systemConfig() {
         },
 
         init() {
-            // 默认选中第一个 tab
+            const form = document.getElementById('systemConfigForm');
+            // Only disable browser-language bubbles after translated validation
+            // has been installed. Traditional forms retain native validation.
+            if (form) {
+                form.noValidate = true;
+                form.querySelectorAll('[data-config-field]').forEach(function (row) {
+                    row.querySelectorAll('input,select,textarea').forEach(function (control) {
+                        control.setAttribute('data-config-label', row.getAttribute('data-config-label'));
+                    });
+                });
+            }
+            const params = new URLSearchParams(window.location.search);
+            const serializedErrors = params.get('_errors');
+            if (serializedErrors) {
+                try {
+                    const errors = JSON.parse(serializedErrors);
+                    if (Array.isArray(errors)) SakuraConfigFeedback.render({errors: errors});
+                } catch (error) {
+                    // Invalid URL feedback cannot affect saved configuration.
+                }
+                params.delete('_errors');
+                history.replaceState(null, '', window.location.pathname +
+                    (params.toString() ? '?' + params.toString() : '') + window.location.hash);
+            }
+        },
+
+        async saveConfig(event) {
+            if (this.saving) return;
+            const form = event.target;
+            SakuraConfigFeedback.clear();
+            const errors = SakuraConfigFeedback.nativeErrors([form]);
+            if (errors.length) {
+                SakuraConfigFeedback.render({errors: errors});
+                this.showSaveToast(errors[0].message, 'error');
+                return;
+            }
+            this.saving = true;
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json'},
+                    body: new FormData(form),
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    window.location.href = '/system-config/?_toast=' +
+                        encodeURIComponent(data.toast) + '&_toast_type=success';
+                    return;
+                }
+                SakuraConfigFeedback.render(data);
+                this.showSaveToast(data.toast, 'error');
+            } catch (error) {
+                const message = {{ _('config.save_request_failed') | tojson }};
+                SakuraConfigFeedback.render({toast: message});
+                this.showSaveToast(message, 'error');
+            } finally {
+                this.saving = false;
+            }
+        },
+
+        showSaveToast(message, type) {
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: {message: message, type: type, duration: 8000},
+            }));
+        },
+
+        async restartApplication() {
+            if (!await Sakura.confirm({message: '{{ _("system_config.saved_restart_required") }}', variant: 'danger'})) return;
+            const response = await fetch('/system-config/restart', {method: 'POST', headers: {'X-CSRF-Token': this.csrfToken}});
+            const data = await response.json();
+            this.testResult = {success: response.ok, message: data.message || '{{ _("system_config.test_failed") }}'};
         },
 
         /* 将统一 Modal 的 persistent 与 resetting 状态同步：

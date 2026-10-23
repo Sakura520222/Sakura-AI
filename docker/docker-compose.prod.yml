@@ -9,6 +9,11 @@ services:
     image: ${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}
     container_name: sakura-ai
     restart: unless-stopped
+    logging: &bounded-logging
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     ports:
       - "8000:8000"
     env_file:
@@ -63,6 +68,7 @@ services:
     image: mysql:8.4
     container_name: sakura-ai-mysql
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       MYSQL_DATABASE: sakura_ai
       MYSQL_USER: sakura
@@ -91,6 +97,7 @@ services:
     image: redis:7-alpine
     container_name: sakura-ai-redis
     restart: unless-stopped
+    logging: *bounded-logging
     volumes:
       - redis_data:/data
     healthcheck:

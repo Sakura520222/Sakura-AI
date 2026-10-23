@@ -412,16 +412,68 @@ class FileToolHandler:
 
             # GitHub API returns a list when the path is a directory
             if isinstance(content_file, list):
-                return {
+                result: dict[str, Any] = {
                     "file_path": file_path,
-                    "error": "该路径是目录而非文件，请使用 list_directory 工具",
-                    "hint": f"目录包含 {len(content_file)} 个项目",
                     "branch_requested": branch_requested,
                     "branch_used": branch_used,
                     "tried_branches": tried_branches,
                     "ref_used": fetch.ref_used,
                     "tried_refs": fetch.tried_refs,
                 }
+                if search_pattern and not (pr is not None and branch_used == "base"):
+                    # 目录搜索意图：结构化 recovery 指向 search_in_files 等价调用
+                    retry_arguments: dict[str, Any] = {
+                        "keyword": search_pattern,
+                        "directory": file_path,
+                    }
+                    if context_lines is not None:
+                        # 透传钳制后的值；search_in_files 自身不校验 context_lines，
+                        # 负值会使其扫描窗口计算失败
+                        retry_arguments["context_lines"] = effective_context_lines
+                    if pr is None and branch_used:
+                        retry_arguments["branch"] = branch_used
+                    result.update(
+                        {
+                            "error": ("该路径是目录而非文件，read_file 不支持目录搜索"),
+                            "hint": (
+                                f"目录包含 {len(content_file)} 个项目。在目录或"
+                                "整个仓库中搜索关键词请改用 search_in_files"
+                                "（recovery.retry_arguments 已给出等价参数）；"
+                                "如需浏览目录结构请使用 list_directory。"
+                            ),
+                            "recovery": {
+                                "action": "retry_search_in_files",
+                                "automatic_retry": False,
+                                "reason": "path_is_directory",
+                                "retry_arguments": retry_arguments,
+                            },
+                        }
+                    )
+                elif search_pattern:
+                    # 目录仅存在于 base 分支（被本 PR 删除/重命名）：PR 场景下
+                    # search_in_files 只搜索 PR HEAD，按等价参数重试只会零匹配，
+                    # 不提供该 recovery
+                    result.update(
+                        {
+                            "error": (
+                                "该路径是目录而非文件，且该目录在 PR HEAD 分支中"
+                                "不存在（仅在 base 分支中找到）"
+                            ),
+                            "hint": (
+                                "目录可能已被本 PR 删除或重命名。PR 场景下"
+                                " search_in_files 仅搜索 PR HEAD，无法搜索 base 中"
+                                "的该目录；请基于 PR diff 审查相关变更。"
+                            ),
+                        }
+                    )
+                else:
+                    result.update(
+                        {
+                            "error": "该路径是目录而非文件，请使用 list_directory 工具",
+                            "hint": f"目录包含 {len(content_file)} 个项目",
+                        }
+                    )
+                return result
 
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
@@ -680,9 +732,7 @@ class FileToolHandler:
                     search_start_idx = start_line - 1
                     search_end_idx = min(end_line, total_lines)
                     if search_start_idx >= total_lines:
-                        retry_start_line = max(
-                            1, total_lines - (end_line - start_line)
-                        )
+                        retry_start_line = max(1, total_lines - (end_line - start_line))
                         retry_arguments: dict[str, Any] = {
                             "file_path": file_path,
                             "start_line": retry_start_line,
@@ -927,7 +977,9 @@ class FileToolHandler:
             return result
 
         except Exception as e:
-            logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(
+                f"读取文件 {file_path} 时发生未预期的错误: {e}"
+            )
             return {
                 "file_path": file_path,
                 "error": f"读取文件时发生错误: {e!s}",
@@ -1051,7 +1103,9 @@ class FileToolHandler:
                 }
 
         except Exception as e:
-            logger.error(f"列出目录 {directory} 时发生未预期的错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(
+                f"列出目录 {directory} 时发生未预期的错误: {e}"
+            )
             return {
                 "directory": directory,
                 "error": f"列出目录时发生错误: {e!s}",

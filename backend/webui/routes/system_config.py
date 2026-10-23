@@ -15,10 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.config import get_settings
 from backend.core.time_service import (
     InvalidTimezoneError,
-    format_rfc3339,
-    get_localzone_name,
-    get_time_service,
-    now_utc,
     resolve_timezone,
 )
 from backend.services.database_reset_runtime_service import (
@@ -35,11 +31,10 @@ from backend.services.system_config_service import (
     SystemConfigValidationError,
     system_config_service,
 )
+from backend.webui.config_feedback import config_issue, config_save_response
 from backend.webui.deps import (
-    get_csrf_serializer,
     get_db,
     get_user_preferences,
-    render_template,
     require_csrf,
     require_csrf_header,
     require_super_admin,
@@ -65,6 +60,14 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
         "notification_retry_initial_delay_seconds",
         "notification_retry_backoff_factor",
         "notification_rate_limit_seconds",
+        "notification_poll_seconds",
+        "notification_batch_size",
+        "notification_send_timeout_seconds",
+        "notification_webhook_enabled",
+        "notification_webhook_timeout_seconds",
+        "notification_webhook_response_max_bytes",
+        "notification_email_verification_ttl_seconds",
+        "notification_verification_max_attempts",
         "app_port",
         "app_timezone",
         "smtp_security",
@@ -76,7 +79,59 @@ _SYSTEM_TYPED_VALUE_KEYS = frozenset(
 # These optional text fields support an explicit clear action.  An empty value
 # is submitted only when the browser marks that field as user-changed; an
 # untouched empty field keeps the historical "leave unchanged" behavior.
-_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug"})
+_SYSTEM_CLEARABLE_VALUE_KEYS = frozenset({"star_aid_github_app_slug", "notification_webhook_allowed_hosts"})
+
+
+def _system_save_feedback(request, toast_key, *, lang, errors=None, **context):
+    """Keep traditional form redirects while returning structured AJAX feedback."""
+    headers = getattr(request, "headers", {})
+    wants_json = "application/json" in headers.get("accept", "") or getattr(
+        request, "config_ajax", False
+    )
+    if errors or wants_json:
+        return config_save_response(
+            request, "/system-config/", toast_key, lang=lang, errors=errors, **context
+        )
+    return toast_redirect("/system-config/", toast_key, lang=lang, **context)
+
+
+def _system_config_issue(exc: SystemConfigValidationError, lang: str) -> dict:
+    """Translate validation codes and safe bounds rather than raw exception text."""
+    message_key = exc.toast_key
+    params = {
+        key: value
+        for key, value in exc.context.items()
+        if key in {"field_key", "min_v", "max_v"}
+    }
+    if message_key == "toast.config_validation_failed":
+        constraints = dict(system_config_service._numeric_constraints(exc.key))
+        if "min_v" in params:
+            message_key = (
+                "system_config.value_greater_than"
+                if "gt" in constraints
+                else "toast.value_min_required"
+            )
+        elif "max_v" in params:
+            message_key = (
+                "system_config.value_less_than"
+                if "lt" in constraints
+                else "system_config.value_max_required"
+            )
+        else:
+            message_key = "toast.value_invalid"
+    group = next(
+        (group["id"] for group in SYSTEM_CONFIG_GROUPS if exc.key in group["keys"]),
+        None,
+    )
+    return config_issue(
+        exc.key,
+        "system_config_validation",
+        message_key,
+        lang=lang,
+        params=params,
+        field_label_key="system_config.key_" + exc.key,
+        anchor="section-system-" + group if group else None,
+    )
 
 
 @router.get("/")
@@ -86,32 +141,10 @@ async def system_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """渲染系统核心配置页面"""
-    groups, _ = await system_config_service.load_grouped_configs(db)
-    time_service = get_time_service()
-    try:
-        detected_system_timezone = get_localzone_name()
-    except Exception:
-        detected_system_timezone = "unavailable"
-    time_status = {
-        "configured_timezone": get_settings().app_timezone,
-        "resolved_timezone": time_service.resolved_timezone,
-        "system_timezone": detected_system_timezone,
-        "current_utc": format_rfc3339(now_utc()),
-        "current_local": time_service.format_display(now_utc()),
-    }
+    from fastapi.responses import RedirectResponse
 
-    return render_template(
-        "system_config.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="system_config",
-        groups=groups,
-        database_reset_confirmation=DATABASE_RESET_CONFIRMATION,
-        time_status=time_status,
-    )
+    query = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse("/settings-center/system" + query, status_code=302)
 
 
 @router.post("/save")
@@ -120,8 +153,14 @@ async def save_system_config(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """保存系统核心配置"""
+    lang = (
+        detect_language(user_prefs)
+        if isinstance(user_prefs, dict)
+        else detect_language()
+    )
     try:
         form = await request.form()
 
@@ -163,11 +202,10 @@ async def save_system_config(
                         "postgresql://",
                     )
                 ):
-                    return toast_redirect(
-                        "/system-config/",
-                        "system_config.invalid_db_url",
-                        "error",
-                        lang=detect_language(),
+                    raise SystemConfigValidationError(
+                        key,
+                        "database URL format",
+                        toast_key="system_config.invalid_db_url",
                     )
 
             # 端口号验证
@@ -178,33 +216,28 @@ async def save_system_config(
                         raise ValueError
                     val = str(port)
                 except ValueError, TypeError:
-                    return toast_redirect(
-                        "/system-config/",
-                        "system_config.invalid_port",
-                        "error",
-                        lang=detect_language(),
-                    )
+                    raise SystemConfigValidationError(
+                        key, "port range", toast_key="system_config.invalid_port"
+                    ) from None
 
             # SMTP 安全模式验证（ssl=隐式 TLS / starttls / none=明文）
             if key == "smtp_security":
                 val = val.lower()
                 if val not in ("ssl", "starttls", "none"):
-                    return toast_redirect(
-                        "/system-config/",
-                        "system_config.invalid_smtp_security",
-                        "error",
-                        lang=detect_language(),
+                    raise SystemConfigValidationError(
+                        key,
+                        "SMTP security mode",
+                        toast_key="system_config.invalid_smtp_security",
                     )
 
             # 日志级别验证
             if key == "log_level":
                 valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
                 if val.upper() not in valid_levels:
-                    return toast_redirect(
-                        "/system-config/",
-                        "system_config.invalid_log_level",
-                        "error",
-                        lang=detect_language(),
+                    raise SystemConfigValidationError(
+                        key,
+                        "log level",
+                        toast_key="system_config.invalid_log_level",
                     )
                 val = val.upper()
 
@@ -212,12 +245,11 @@ async def save_system_config(
                 try:
                     resolve_timezone(val)
                 except InvalidTimezoneError:
-                    return toast_redirect(
-                        "/system-config/",
-                        "system_config.invalid_timezone",
-                        "error",
-                        lang=detect_language(),
-                    )
+                    raise SystemConfigValidationError(
+                        key,
+                        "timezone",
+                        toast_key="system_config.invalid_timezone",
+                    ) from None
 
             updates[key] = val
 
@@ -228,20 +260,20 @@ async def save_system_config(
         updates = system_config_service.validate_updates(updates)
 
         if not updates:
-            return toast_redirect(
-                "/system-config/",
+            return _system_save_feedback(
+                request,
                 "toast.config_no_change",
-                lang=detect_language(),
+                lang=lang,
             )
 
         # 通过 Service 层写入数据库
         changed, needs_restart = await system_config_service.save_configs(db, updates)
 
-        if not changed:
-            return toast_redirect(
-                "/system-config/",
+        if not changed and getattr(changed, "effect", "live") != "pending":
+            return _system_save_feedback(
+                request,
                 "toast.config_no_change",
-                lang=detect_language(),
+                lang=lang,
             )
 
         # 同步 Settings 单例
@@ -257,42 +289,48 @@ async def save_system_config(
             db, user["user_id"], "config_save", "system_core", None, log_changed
         )
 
-        if needs_restart:
+        if getattr(changed, "effect", "live") == "pending":
             return toast_redirect(
-                "/system-config/",
-                "system_config.saved_restart_required",
+                "/system-config/", "toast.config_saved_pending", "warning",
                 lang=detect_language(),
             )
-        return toast_redirect(
-            "/system-config/",
+        if needs_restart:
+            return _system_save_feedback(
+                request,
+                "system_config.saved_restart_required",
+                lang=lang,
+            )
+        return _system_save_feedback(
+            request,
             "system_config.saved",
-            lang=detect_language(),
+            lang=lang,
         )
 
     except SystemConfigValidationError as exc:
-        context = dict(exc.context)
-        context.setdefault("error", str(exc))
-        return toast_redirect(
-            "/system-config/",
-            exc.toast_key,
-            "error",
-            lang=detect_language(),
-            **context,
+        issue = _system_config_issue(exc, lang)
+        return _system_save_feedback(
+            request,
+            "toast.config_validation_failed",
+            lang=lang,
+            errors=[issue],
+            error=issue["message"],
         )
     except ValueError:
-        return toast_redirect(
-            "/system-config/",
+        return _system_save_feedback(
+            request,
             "toast.invalid_param",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[
+                config_issue("", "invalid_config", "toast.invalid_param", lang=lang)
+            ],
         )
     except Exception as e:
-        logger.error(f"系统核心配置保存失败: {e}", exc_info=True)
-        return toast_redirect(
-            "/system-config/",
+        logger.opt(exception=True).error(f"系统核心配置保存失败: {e}")
+        return _system_save_feedback(
+            request,
             "toast.save_failed",
-            "error",
-            lang=detect_language(),
+            lang=lang,
+            errors=[config_issue("", "save_failed", "toast.save_failed", lang=lang)],
         )
 
 
@@ -310,10 +348,18 @@ async def test_connection(
         # 延迟导入：避免模块级别循环依赖
         from backend.core.setup_service import setup_service
 
+        url = body.get("url", "")
+        if body.get("use_saved") is True and not url:
+            # Tests use the active connection; credentials never return to the browser.
+            url = getattr(
+                get_settings(),
+                "database_url" if test_type == "database" else "redis_url",
+                "",
+            )
         if test_type == "database":
-            result = await setup_service.test_database_connection(body.get("url", ""))
+            result = await setup_service.test_database_connection(url)
         else:
-            result = await setup_service.test_redis_connection(body.get("url", ""))
+            result = await setup_service.test_redis_connection(url)
         return {
             "success": result.get("success", False),
             "message": result.get("message", ""),
@@ -363,11 +409,7 @@ async def fetch_github_app_slug(
     except Exception:
         body = None
 
-    client_id = (
-        str(body.get("clientId", "")).strip()
-        if isinstance(body, dict)
-        else ""
-    )
+    client_id = str(body.get("clientId", "")).strip() if isinstance(body, dict) else ""
     if not client_id:
         return {
             "success": False,

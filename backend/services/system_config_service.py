@@ -24,7 +24,7 @@ from backend.core.config import (
     update_settings_field,
 )
 from backend.core.time_service import InvalidTimezoneError, resolve_timezone
-from backend.models.database import AppConfig
+from backend.models.database import AppConfig, _settings_default_to_str
 
 # 敏感键（在页面显示时脱敏）
 SYSTEM_SENSITIVE_KEYS = frozenset(
@@ -45,12 +45,15 @@ RESTART_REQUIRED_KEYS = frozenset(
     {
         "database_url",
         "redis_url",
+        "github_app_id",
         "github_private_key",
         "telegram_enabled",
         "telegram_bot_token",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_timezone",
+        "app_port",
+        "chroma_persist_dir",
     }
 )
 
@@ -116,6 +119,15 @@ SYSTEM_CONFIG_GROUPS = [
             "notification_retry_initial_delay_seconds",
             "notification_retry_backoff_factor",
             "notification_rate_limit_seconds",
+            "notification_poll_seconds",
+            "notification_batch_size",
+            "notification_send_timeout_seconds",
+            "notification_webhook_enabled",
+            "notification_webhook_timeout_seconds",
+            "notification_webhook_response_max_bytes",
+            "notification_webhook_allowed_hosts",
+            "notification_email_verification_ttl_seconds",
+            "notification_verification_max_attempts",
         ],
     },
     {
@@ -272,7 +284,7 @@ class SystemConfigService:
                 )
             try:
                 numeric_value = float(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 raise SystemConfigValidationError(
                     key,
                     "必须是有限数值",
@@ -292,14 +304,10 @@ class SystemConfigService:
             lower = constraints.get("ge", constraints.get("gt"))
             upper = constraints.get("le", constraints.get("lt"))
             lower_invalid = lower is not None and (
-                numeric_value < lower
-                if "ge" in constraints
-                else numeric_value <= lower
+                numeric_value < lower if "ge" in constraints else numeric_value <= lower
             )
             upper_invalid = upper is not None and (
-                numeric_value > upper
-                if "le" in constraints
-                else numeric_value >= upper
+                numeric_value > upper if "le" in constraints else numeric_value >= upper
             )
             if lower_invalid or upper_invalid:
                 if lower is not None and upper is not None:
@@ -421,12 +429,21 @@ class SystemConfigService:
             group_id = group_def["id"]
             items = []
             for key in group_def["keys"]:
-                value = config_map.get(key) or str(getattr(settings, key, "") or "")
+                default_value = getattr(settings, key, None)
+                effective_value = config_map.get(key)
+                if effective_value is None:
+                    effective_value = default_value
+                field_type = _get_field_type(key)
+
+                value = "" if effective_value is None else _settings_default_to_str(effective_value)
+                if field_type is bool:
+                    value = value.lower()
                 is_sensitive = key in SYSTEM_SENSITIVE_KEYS
                 display_value = (
                     mask_sensitive_value(value) if (is_sensitive and value) else value
                 )
-                default_val = str(getattr(settings, key, "") or "")
+                builtin_default = Settings.model_fields[key].get_default(call_default_factory=True)
+                default_val = "" if builtin_default is None else _settings_default_to_str(builtin_default)
                 items.append(
                     {
                         "key": key,
@@ -438,6 +455,7 @@ class SystemConfigService:
                         ),
                         "sensitive": is_sensitive,
                         "requires_restart": key in RESTART_REQUIRED_KEYS,
+                        "field_type": field_type.__name__,
                     }
                 )
             groups.append({"id": group_id, "fields": items})
@@ -458,56 +476,20 @@ class SystemConfigService:
         Returns:
             (changed, needs_restart): 变更日志和是否需要重启
         """
-        # This must stay a pure phase.  In particular, do not query or mutate
-        # ORM rows, commit, invalidate caches, or update the Settings singleton
-        # until every item in the batch has passed type and bound validation.
+        from backend.services.config_center_service import config_center_service
+
         validated_updates = self.validate_updates(updates)
         if not validated_updates:
             return {}, False
-
-        # Read all current rows before mutating any of them.  A later query
-        # failure therefore cannot leave an earlier item partially changed in
-        # the current transaction/session.
-        current_rows: dict[str, AppConfig | None] = {}
-        for key in validated_updates:
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == key)
-            )
-            current_rows[key] = result.scalar_one_or_none()
-
-        changed: dict[str, dict[str, Any]] = {}
-        for key, val in validated_updates.items():
-            is_sensitive = key in SYSTEM_SENSITIVE_KEYS
-            cfg = current_rows[key]
-
-            if cfg is None:
-                changed[key] = {
-                    "old": "(无)",
-                    "new": self._mask(val, is_sensitive),
-                    "raw_new": val,
-                }
-            elif cfg.key_value != val:
-                changed[key] = {
-                    "old": self._mask(cfg.key_value, is_sensitive),
-                    "new": self._mask(val, is_sensitive),
-                    "raw_new": val,
-                }
-
-        # Apply the already validated batch as one mutation phase.
-        for key, val in validated_updates.items():
-            cfg = current_rows[key]
-            if cfg is None:
-                db.add(AppConfig(key_name=key, key_value=val, description=key))
-            elif key in changed:
-                cfg.key_value = val
-
-        if changed:
-            await db.commit()
-
+        changed = await config_center_service.save_app_updates(db, validated_updates)
         return changed, bool(set(changed) & RESTART_REQUIRED_KEYS)
 
     async def apply_live_settings(self, changed: dict[str, dict[str, str]]) -> None:
         """将变更同步到 Settings 单例"""
+        from backend.services.config_center_service import ConfigChanges
+
+        if isinstance(changed, ConfigChanges):
+            return  # Shared save service already applied or scheduled these effects.
         all_dynamic_keys = get_all_dynamic_config_keys()
         invalidate_dynamic_config_cache(all_dynamic_keys)
         for key, change in changed.items():

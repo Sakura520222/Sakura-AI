@@ -1,9 +1,10 @@
 """API v1 Pydantic 请求/响应模型"""
 
+import json
 from datetime import datetime
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -168,6 +169,7 @@ class IssueAnalysisResponse(BaseModel):
     suggested_labels: str | None = None
     suggested_milestone: str | None = None
     duplicate_of: int | None = None
+    issue_relations: dict[str, Any] | None = None
     related_prs: str | None = None
     analysis_detail: str | None = None
     status: str | None = None
@@ -180,6 +182,16 @@ class IssueAnalysisResponse(BaseModel):
     completed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("issue_relations", mode="before")
+    @classmethod
+    def decode_issue_relations(cls, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+        return value if isinstance(value, dict) else None
 
 
 class IssueStatsResponse(BaseModel):

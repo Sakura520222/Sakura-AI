@@ -1,0 +1,73 @@
+name: Notification database integration
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  notification-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run --with playwright python -m playwright install --with-deps chromium
+      - run: sudo apt-get install -y fonts-noto-cjk
+      - run: uv run --with playwright python scripts/validate_notification_ui_646.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: notification-browser-screenshots
+          path: test-results/notifications
+  notification-databases:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: sakura_notification_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: sakura_notification_test
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - name: PostgreSQL transactions and concurrent claims
+        run: uv run pytest tests/test_notification_live_db_646.py -q
+        env:
+          NOTIFICATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres@127.0.0.1:5432/sakura_notification_test
+      - name: MySQL transactions and concurrent claims
+        run: uv run pytest tests/test_notification_live_db_646.py -q
+        env:
+          NOTIFICATION_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
+      - name: MySQL exact pricing identities and immutable upgrade
+        run: uv run pytest tests/test_billing_price_identity_live_db.py -q
+        env:
+          BILLING_IDENTITY_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
+      - name: PostgreSQL exact pricing identities
+        run: uv run pytest tests/test_billing_price_identity_live_db.py -q
+        env:
+          BILLING_IDENTITY_TEST_DATABASE_URL: postgresql+asyncpg://postgres@127.0.0.1:5432/sakura_notification_test

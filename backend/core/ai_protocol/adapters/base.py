@@ -30,6 +30,7 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
     UnifiedResponse,
     UnifiedStreamEvent,
+    UnifiedUsage,
 )
 
 
@@ -109,6 +110,10 @@ class ProtocolAdapter(ABC):
         netloc = f"{hostname}:{port}" if port is not None else hostname
         return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
+    def reported_error_usage(self, body: Any) -> UnifiedUsage | None:
+        """Protocol adapters may preserve counters actually present in errors."""
+        return None
+
     def ensure_success_status(
         self,
         response: httpx.Response,
@@ -124,12 +129,17 @@ class ProtocolAdapter(ABC):
         details = f"status={response.status_code}"
         if location:
             details += f" location={location}"
+        try:
+            body = response.json()
+        except ValueError, httpx.ResponseNotRead:
+            body = None
         raise self.raise_error(
             AIErrorCategory.UNKNOWN,
             f"{operation} 返回非成功 HTTP 状态: {details}",
             status_code=response.status_code,
             provider=endpoint.base_url,
             model=model,
+            usage=self.reported_error_usage(body),
         )
 
     def ensure_sse_response(
@@ -153,9 +163,14 @@ class ProtocolAdapter(ABC):
                 status_code=response.status_code,
                 provider=endpoint.base_url,
                 model=model,
+                usage=self.reported_error_usage(body),
             )
         content_type = response.headers.get("content-type", "").lower()
         if "text/event-stream" not in content_type:
+            try:
+                body = response.json()
+            except ValueError, httpx.ResponseNotRead:
+                body = None
             raise self.raise_error(
                 AIErrorCategory.UNKNOWN,
                 f"{operation} 返回非 SSE 内容: status={response.status_code} "
@@ -163,6 +178,7 @@ class ProtocolAdapter(ABC):
                 status_code=response.status_code,
                 provider=endpoint.base_url,
                 model=model,
+                usage=self.reported_error_usage(body),
             )
 
     def parse_json_response(
@@ -218,6 +234,8 @@ class ProtocolAdapter(ABC):
         provider: str = "",
         model: str = "",
         cause: BaseException | None = None,
+        usage: Any = None,
+        usage_complete: bool = True,
     ) -> AIError:
         """构造并可直接 raise 的 AIError / Build an AIError ready to raise."""
         return AIError(
@@ -227,4 +245,6 @@ class ProtocolAdapter(ABC):
             provider=provider,
             model=model,
             cause=cause,
+            usage=usage,
+            usage_complete=usage_complete,
         )

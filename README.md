@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.2.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -85,6 +85,7 @@
 ### Issue 分析
 
 - **Issue 智能分析** — 自动分类、优先级、标签推荐、重复检测、关联 PR 发现
+- **自适应分析与简洁评论** — 按有效性、信息完整度、影响和复杂度决定代码调查深度；广告/垃圾、信息不足和简单问答轻量处理，复杂或高风险问题保留实证调查。默认中英文评论先给结论与处理建议，折叠元信息并隐藏空建议；历史自定义模板继续有效，模板只强制保留 `{summary}` 与 `{feasibility}`，其余已支持的变量可省略。
 - **图片多模态分析** — Issue 正文与评论中的截图经 GitHub 凭据安全下载，超过 5 MiB 时优先压缩至 500 KiB，再作为多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"，并在统一配置页开启）
 - **严格 Issue 输出契约** — `<SAKURA_ISSUE_ANALYSIS>` 协议 + 多轮修复 + 安全降级
 - **Issue 自动打标** — 高置信度标签自动应用
@@ -92,20 +93,73 @@
 - **Issue 标题改写** — 自动优化模糊标题
 - **分析评论发布** — 自动发布结果并报告状态
 - **PR-Issue 关联** — 解析 Issue 引用注入上下文
-- **语义 Issue 关联** — 向量相似度发现并关联相关 Issue
+- **PR 语义 Issue 关联** — 共享 Issue 语料召回开放候选，再用独立协议核验人工描述、实际补丁与 Issue 要求。完整修复输出 `Closes`，部分关联输出 `Related to`；成功验证会替换或清空旧机器关联区块，保留人工引用。检索、重排或验证失败不推断新关联。
+- **Issue 关系预分析** — 主分析前先判断开放 Issue 的 `duplicate` / `related` / `none`；只有未验证出开放重复项时才分析关闭 Issue 的 `previously_resolved`、`regression`、`duplicate_closed`、`previously_rejected`、`related` 历史关系。不同工作流执行等独立事件不会仅凭相似标题成为重复；关系需要置信度、原因、相同点、差异及可追溯原文引用。主模型不能覆盖验证结果，历史关系保存在 `issue_relations` 并展示于 API、评论和详情页，兼容保留 `duplicate_of`。
+
+关系配置可在统一 `/config` 页面动态修改，默认值来自 Settings：
+
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
+| `issue_include_comments` | `true` | 启用主分析评论与关系模型的新鲜有界评论样本 |
+| `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限，允许 1–200；运行时在读取来源和检索前校验 |
+| `issue_relation_max_input_tokens` | `64000` | 开放与历史阶段完整请求的估算输入上限，包含正文、评论、JSON、语言和系统提示；同时受全部摘要候选上下文、输出及协议预留限制。超限或未知时无重复结论，保留已用 token 并继续主分析 |
+| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时当前 Issue 与每个候选惰性读取的最新评论上限（保留原配置名），提示中标注来源及省略范围 |
+| `issue_relation_candidate_comment_max_chars` | `4000` | 当前 Issue 与候选每条评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
+| `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
+| `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
+| `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
+| `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
+| `semantic_issue_similarity_threshold` | `0.65` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
+| `semantic_issue_max_links` | `5` | PR 候选上限，允许 1–200；Settings 与检索前运行时校验保持一致 |
+| `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
+| `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
+| `pr_issue_max_files` | `128` | PR 关系验证的惰性文件读取上限；超限或补丁不完整时保留原关联 |
+| `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
+| `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
+| `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
+| `issue_candidate_pool_multiplier` | `3` | 允许 1–10，语料同步前校验；固定召回池为候选上限 × 此倍数（不超过语料数量），排除项不会扩大查询或补翻页 |
+| `rerank_score_threshold` | `0.6` | PR/Issue 关系重排阈值，须为 0–1 的有限数值；启用重排时，无效阈值在提供商请求前失败 |
+
+语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
+
+PR 召回默认采用 `0.65` 的余弦下限，便于短 PR 描述召回正文较长的 Issue；候选仍须通过重排和独立关系验证。每次成功检索（含空结果）会输出一条 INFO 摘要：`recalled` 为向量池返回数量，`eligible` 为通过身份和排除检查的数量，`cosine_matches` 为达到余弦阈值的数量，`hydrated` 为当前 GitHub 事实有效的数量，`candidates` 为重排后的候选数，`max_cosine` 为余弦过滤前的最大 eligible 分数（无可比较候选时为 `none`）。日志不包含查询、Issue 标题或正文。这样可以区分语料为空、余弦过滤为空和重排后为空。
+
+已有 `app_config` 值及显式环境配置会覆盖新默认值，升级不会自动把保存的 `0.8` 改成 `0.65`。已有部署可在统一 `/config` 页将 `semantic_issue_similarity_threshold` 调整为 `0.65`，再结合 INFO 摘要校准；降低召回阈值不会直接建立或关闭关系。
+
+非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
+
+PR 与 Issue 关系流程的目标候选数均不超过 200，召回倍数不超过 10，因此初步候选池最多 2,000 条。数量和倍数在 Settings、动态配置及运行时采用相同上限，不会把非法值静默截断。严格重排在发送请求前校验有效阈值；失败会保留已有 PR 关系，Issue 关系阶段记录失败并继续主分析。显式关闭重排和普通 RAG 的非严格降级行为保持不变。
+
+调用 `IssueService.detect_duplicates` 时必须提供正整数 `current_issue_number`，以便读取和复核真实 Issue 来源。省略参数或传入 `None` 等无效编号会直接报错，不再返回看似成功的空列表；传入有效编号的调用方式和重复项结果格式保持不变。
+
+关系预分析会重新读取当前 Issue 的 GitHub 正文、状态、标签、关闭原因和更新时间，关系模型使用这一确切源；不会改写调用者 payload 或主分析的历史正文。启用评论时，当前 Issue 与候选均按上述 `candidate_*` 配置读取最新评论样本，并保留评论 ID、正文、创建/更新时间、总数及截断范围。模型返回后再次读取当前 Issue 和已接受候选；后续历史阶段也会复查先前开放关系，空/none 判断仍需当前源一致。源变化返回可观察的 `stale_source`，缺失、不可用或畸形事实返回 `source_unavailable`；不输出重复结论，保留已用 token 并继续主分析。这是返回边界上的源比较，GitHub 不提供覆盖之后远程发布的原子条件写入。
+
+旧记录的 Issue 状态为 NULL 时，重新分析入口先在数据库校验仓库归属，再读取 GitHub 当前状态；仅明确开放时入队，关闭返回 409，不可用或畸形源返回显式安全错误。短仓库名与完整仓库名的历史记录按同一所有者作用域计算分析版本。入队 payload 保留历史标题、正文和作者，关系阶段独立使用上述新鲜源。
+
+PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。GitHub 明确报告新增、删除均为零的文件允许空补丁或纯元数据补丁，例如纯重命名或权限变化；这些文件仍计入快照预算，但不能提供代码修复证据。报告有代码行变更时，缺失、截断、畸形或行数不符的补丁仍使同步失败并保留已有链接。
+
+已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
+
+安装 PR-Issue 唯一索引前，历史重复关联由数据库按仓库、PR、Issue 和关联类型分组去重，保留每组 ID 最大的记录及证据；无需将整表加载进 Python 或逐条删除。不同关联类型及仓库范围保持独立。
 
 ### Agent 专家团队
 
 - **多入口任务创建** — 超级管理员手动启动、Issue 评论 `/agent` 委派、PR 评论 `/agent` 一键修复
 - **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
-- **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
+- **动态只读子 Agent** — 主 Agent 负责实现，可按需委派独立上下文的只读调查，并等待、取消和汇总结果
 - **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认策略下普通 Shell 断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
+- **单次依赖出口** — 默认 `web_tools` 允许受控 Web 工具及 Dependency 自动依赖出口；`run_command` 可显式指定 `network_capability=dependency_egress`，为任意当前命令及包安装钩子开放公网出口，不设命令或域名白名单。容器执行结束出口即结束，下一次普通 Shell 仍离线。`offline` 禁止出口，`full_access` 允许全部 runner 出网；local 仅源码开发且要求 `full_access`，使用宿主网络而无 OS 隔离。[Python、Node、Rust、Go 与 JVM 示例](docs/CONFIGURATION.md#agent-专家团队)
 - **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
 - **依赖安装容错** — 瞬时网络故障默认最多尝试 3 次，按 2、4 秒退避；永久错误不重试。最终失败会保留脱敏诊断并交给 Agent 修复或继续静态分析，明确报告无法运行的测试；可在统一配置页调整重试次数和等待时间
 - **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
 - **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
+- **统一插件管理** — 超级管理员通过 `/agent-plugins/` 管理 MCP 服务、生命周期 Hooks、运行时权限配置和 Skills；配置保存在数据库，凭据遮罩，常规执行无需逐工具审批。见[插件配置说明](docs/AGENT_PLUGINS.md)
+- **仓库规则与 Skills** — 读取分层 `AGENTS.md` 与 Sakura rules，发现 `.agents/skills` / `.sakura/skills`，正文按需加载；历史工作流限制在恢复后仍有效，开关、作用域与恢复行为见[使用说明](docs/AGENT_REPOSITORY_CONTEXT.md)
 - **实时管理员干预** — WebUI Live View 注入指导意见
+- **完成与恢复约束** — 仅成功的 `finish_task` 能完成会话；模型轮次和工具累计次数不限。连续 10 次完全相同的调用或文本只触发策略自检，任务继续执行，不强制总结或切换模型。安全只读工具并行，写入、Shell、Skill 加载和完成独占工作区。中断读取可重试，不确定的写入须核对副作用，已持久化完成不会重放；保留取消和故障恢复，无逐工具人工授权。
+- **Agent Harness 2.0** — 动态只读子 Agent、MCP、系统 Hooks、能力边界和持久审计接入自主执行链；部署要求、恢复语义和后端兼容范围见 [运行指南](docs/AGENT_HARNESS_RUNTIME.md)。
 - **任务取消支持** — 随时取消并安全释放工作区
 - **PR 创建闭环** — Draft PR + Sakura PR 审查 + 人工反馈迭代，不自动合并
 - **普通用户权限控制** — 仓库白名单 + 独立 Agent 配额
@@ -139,14 +193,17 @@
 - **SSE 实时推送** — 基于 Redis Pub/Sub 的多进程实时通信
 - **配额制访问控制** — 用户自注册 + UTC 日 / 周 / 月自动重置
 - **付费配额系统** — 套餐计划与兑换码 CRUD + 管理员手动充值
-- **外部支付与退款** — Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT 直收
+- **外部支付与退款** — Stripe / Paddle / 支付宝（CNY）/ NOWPayments / TRON USDT 直收；关闭购买后仍可查看订单和处理退款
 - **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
 - **管理员操作审计** — 完整操作日志
 - **WebUI 管理界面** — 按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口；PR 审查页统一提供仓库与日期筛选，旧审查日志地址重定向至 PR 页面
+- **Billing 2.0** — Credits 钱包、真实 AI Usage 定价、来源可追踪的购买/退款与账单；模型按已配置 AI 账号定价并自动获取列表，流式与非流式共用报价，金额币种使用下拉选择。服务执行容量在多 Worker 间共享，套餐单独限制每用户已登记执行；次数与并发只负责限流。低余额提醒进入通知中心，邮件/私有 Telegram 按订阅发送；未知退款继续待核对，退款后剩余订阅周期连续衔接。正式收费默认关闭，不妨碍非收费执行的恢复和自动续轮；启用前请阅读[配置、迁移与对账](docs/billing-2.md)。
+  畸形重排保留真实用量并按冻结的失败调用政策结算；历史兑换不重复发放，Stripe 早到退款自动重放，外部全额退款同步剩余订阅权益。
+  嵌入结果也在计量结束前校验；扫描提交时冻结计费归属，流式用量请求支持模型级兼容开关，审核后的用量汇总保留唯一选中记录，外部部分退款遵守配置政策。
 - **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
 - **健康检查端点** — `/health` + Docker Compose 自动健康检测
 - **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
-- **可选通知渠道** — Telegram 作为统一公告投递的可选 Provider，与 Email/SMTP 可独立启停；个人设置支持一次性绑定/解绑 Telegram。公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）。PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除；本次变更未实现替代的业务事件通知层
+- **统一通知中心** — PR 审查、Issue 分析、扫描、Agent、公告、安全、配额、支付及退款通过持久化业务事件统一投递至 WebUI、Email、Telegram 和通用 Webhook。个人设置支持端点验证、命名、启停、测试及按事件、资源和严重程度配置偏好；公告中心整合站内历史、未读状态及管理员诊断。外部业务通知需要显式订阅，敏感账户事件仅允许已验证的私人目标；扫描通知限管理员，Agent 通知限任务发起者及授权管理员，详情可直接定位控制台任务。详见[通知中心架构与迁移](docs/NOTIFICATION_CENTER.md)。
 - **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
 - **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
 
@@ -231,15 +288,15 @@ docker run -d -p 8000:8000 \
 
 `latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
 
-首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）。`start.sh` 在前台等待的部署成功后会直接显示当前 Setup Token；也可在主菜单选择“查看容器当前日志”→“Web”重新查看：
+首次启动后访问 `http://localhost:8000/setup`。验证 Token 每次启动重新生成，保存在本机私有文件 `config/.setup-token`，完成 Setup 后立即失效并尝试删除，不写入日志。文件被占用无法删除时会记录清理警告，不影响配置完成或重启。`start.sh` 在部署成功后读取并显示 Token；也可由本机管理员执行：
 
 ```bash
-# 也可在 /opt/sakura-ai 下直接跟踪 Web 容器日志
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml logs -f --tail=200 web
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
+# 源码运行：cat config/.setup-token（PowerShell：Get-Content config/.setup-token）
 ```
 
-主菜单的“查看往期运行日志”可读取持久化 DEBUG 日志；错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+主菜单的“查看往期运行日志”可读取持久化日志；日志级别热更新、关联 ID 与容量控制见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 ### 源码开发
 
@@ -254,13 +311,23 @@ uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
 ```
 
+**Windows 原生开发（PowerShell）**：安装 Git for Windows 和 uv 后，在仓库根目录运行：
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+依赖安装、后端开发与通用测试无需 WSL 或 Git Bash；启动应用时仍需 MySQL/Redis，测试使用模拟服务。Windows CI 执行完整 pytest 和 Ruff。POSIX Bash 部署、systemd、Linux Landlock/seccomp 等平台专用测试会明确跳过，继续由 Linux CI 验证；符号链接测试仅在当前账户具备创建权限时运行（可选开启 Windows 开发者模式）。Host Updater、sandboxd 与本地只读进程隔离的 Linux 平台要求见[部署指南](docs/DEPLOYMENT.md)。
+
 `backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
 
 **传统 pip 方式（无 uv）**：
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
@@ -308,17 +375,17 @@ AI 审查引擎 ── read_file · list_dir · search_files · git_info · comm
 ## 开发指南
 
 ```bash
-uv sync                              # 安装依赖(uv;传统 pip 方式:pip install -r requirements.txt 且 pip install -e './updater[dev]')
+uv sync                              # 安装依赖(uv;传统 pip 方式:python -m pip install -r requirements-dev.txt，含 updater[dev] 与测试驱动)
 uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
 python run_ruff.py                   # 代码检查 + 修复 + 格式化
 python run_ruff.py --check           # 只读检查
 uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
-tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
+tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新结构化运行日志
 ```
 
-首次启动进入 Bootstrap 模式，终端会打印一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
+首次启动进入 Bootstrap 模式，用 `cat config/.setup-token`（PowerShell：`Get-Content config/.setup-token`）读取一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。Token 不写入终端日志；Windows 文件使用仅允许进程用户访问的受保护 ACL，需使用支持 ACL 的文件系统（如 NTFS）。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务），默认 Token 位于 `.sakura/dev/.setup-token`；指定 `SAKURA_CONNECTION_CONFIG_PATH` 时位于对应连接配置旁。
 
-> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
+> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、JSON Lines 格式、50 MB 轮转、保留 10 天并限制历史总量 500 MiB；控制台和文件共同遵循 WebUI 的日志级别，写入前统一脱敏）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
 
 > Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
@@ -389,3 +456,11 @@ Made by [Sakura520222](https://github.com/Sakura520222)
 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
 
 </div>
+
+### 统一配置中心
+
+侧边栏的「配置中心」按个人、AI、PR、Issue、Agent、标签与扫描、系统、备份分类。
+普通字段自动保存，逐项显示状态并可删除覆盖以恢复继承值；版本冲突保留草稿。
+凭据、账号安全、导入和危险操作保留专用确认。旧配置 URL 与已有数据保持兼容。
+数据库/Redis 连接由部署配置管理，不通过运行时覆盖切换。详见
+[配置契约、迁移与回滚说明](docs/configuration-center.md)。

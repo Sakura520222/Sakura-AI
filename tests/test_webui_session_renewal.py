@@ -312,6 +312,7 @@ def _install_api_db(monkeypatch, mfa_required: bool):
 @pytest.mark.asyncio
 async def test_require_api_auth_queues_cookie_renewal_after_mfa_passes(monkeypatch):
     _install_api_db(monkeypatch, mfa_required=False)
+
     async def refresh_claims(_payload):
         return _token_payload(role="admin")
 
@@ -329,11 +330,14 @@ async def test_require_api_auth_queues_cookie_renewal_after_mfa_passes(monkeypat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dependency_name", ["require_api_admin", "require_api_super_admin"])
+@pytest.mark.parametrize(
+    "dependency_name", ["require_api_admin", "require_api_super_admin"]
+)
 async def test_api_admin_dependencies_enforce_mfa_before_renewal(
     monkeypatch, dependency_name
 ):
     _install_api_db(monkeypatch, mfa_required=True)
+
     async def refresh_claims(_payload):
         return _token_payload(role="super_admin")
 
@@ -356,18 +360,22 @@ async def test_api_admin_dependencies_enforce_mfa_before_renewal(
         lambda token: _Request(query_token=token),
     ],
 )
-async def test_api_non_cookie_modes_keep_stateless_claims(monkeypatch, request_factory):
+async def test_api_non_cookie_modes_refresh_claims_without_cookie_renewal(
+    monkeypatch, request_factory
+):
     token = auth.create_access_token(_token_payload(role="admin"))
 
-    async def unexpected_refresh(_payload):
-        pytest.fail("non-cookie API clients must not refresh database claims")
+    async def refreshed(_payload):
+        assert _payload["role"] == "admin"
+        return _token_payload(role="user", sub="renamed-user")
 
-    monkeypatch.setattr(api_deps, "refresh_login_claims", unexpected_refresh)
+    monkeypatch.setattr(api_deps, "refresh_login_claims", refreshed)
     request = request_factory(token)
 
     user = await api_deps.get_api_current_user(request)
 
-    assert user["role"] == "admin"
+    assert user["role"] == "user" and user["sub"] == "renamed-user"
+    assert not getattr(request.state, api_deps.API_COOKIE_AUTH_STATE_KEY, False)
     assert not hasattr(request.state, auth.WEBUI_TOKEN_RENEWAL_STATE_KEY)
 
 
@@ -377,9 +385,7 @@ def _http_request(cookie_token: str | None = None) -> FastAPIRequest:
         headers.append(
             (b"cookie", f"{auth.WEBUI_TOKEN_COOKIE_NAME}={cookie_token}".encode())
         )
-    return FastAPIRequest(
-        {"type": "http", "headers": headers, "query_string": b""}
-    )
+    return FastAPIRequest({"type": "http", "headers": headers, "query_string": b""})
 
 
 @pytest.mark.asyncio
@@ -398,9 +404,9 @@ async def test_login_page_clears_stale_but_signed_cookie(monkeypatch):
 
     assert response.status_code == 200
     set_cookie_values = _set_cookie_values(response)
-    assert any(
-        value.startswith('webui_token=""') for value in set_cookie_values
-    ), set_cookie_values
+    assert any(value.startswith('webui_token=""') for value in set_cookie_values), (
+        set_cookie_values
+    )
 
 
 @pytest.mark.asyncio

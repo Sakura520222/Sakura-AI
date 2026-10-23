@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -93,6 +94,11 @@ async def test_iteration_loop_passes_cancel_check_to_expert(monkeypatch, tmp_pat
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
     )
+    monkeypatch.setattr(
+        AgentTeamGitWorkspaceService,
+        "get_changed_file_stats",
+        AsyncMock(return_value={}),
+    )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
     workspace = workspace_service.ensure_workspace("owner", "repo")
@@ -160,6 +166,11 @@ async def test_iteration_loop_without_cancel_check(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
+    )
+    monkeypatch.setattr(
+        AgentTeamGitWorkspaceService,
+        "get_changed_file_stats",
+        AsyncMock(return_value={}),
     )
 
     workspace_service = AgentTeamWorkspaceService(tmp_path)
@@ -243,7 +254,7 @@ async def test_agent_stops_before_model_call_when_guidance_callback_fails(
     client = _NoCallAIClient()
     monkeypatch.setattr(
         "backend.services.agent_team.fullstack_expert.create_agent_team_client",
-        lambda: _fake_agent_client(client),
+        lambda **kwargs: _fake_agent_client(client),
     )
     workspace_service = AgentTeamWorkspaceService(tmp_path)
     workspace = workspace_service.ensure_workspace("owner", "repo")
@@ -271,10 +282,13 @@ async def test_agent_stops_before_model_call_when_guidance_checkpoint_fails(
     client = _NoCallAIClient()
     monkeypatch.setattr(
         "backend.services.agent_team.fullstack_expert.create_agent_team_client",
-        lambda: _fake_agent_client(client),
+        lambda **kwargs: _fake_agent_client(client),
     )
 
     class FailingCheckpoint:
+        async def append_message(self, *args, **kwargs):
+            pass
+
         async def append_guidance_message(self, *args, **kwargs):
             raise RuntimeError("checkpoint unavailable")
 
@@ -309,7 +323,7 @@ async def test_agent_stops_before_model_call_when_guidance_ack_fails(
     client = _NoCallAIClient()
     monkeypatch.setattr(
         "backend.services.agent_team.fullstack_expert.create_agent_team_client",
-        lambda: _fake_agent_client(client),
+        lambda **kwargs: _fake_agent_client(client),
     )
     workspace_service = AgentTeamWorkspaceService(tmp_path)
     workspace = workspace_service.ensure_workspace("owner", "repo")
@@ -806,8 +820,7 @@ async def test_install_workspace_dependencies_falls_back_to_requirements_for_vir
     workspace = workspace_service.ensure_workspace("owner", "repo")
     # Write a virtual-project pyproject.toml (no build-system, uv package=false)
     (workspace / "pyproject.toml").write_text(
-        "[project]\nname = 'sakura-ai'\nversion = '0.1'\n"
-        "\n[tool.uv]\npackage = false\n"
+        "[project]\nname = 'sakura-ai'\nversion = '0.1'\n\n[tool.uv]\npackage = false\n"
     )
     (workspace / "requirements.txt").write_text("example-package\n")
 

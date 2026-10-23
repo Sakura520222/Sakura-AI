@@ -4,6 +4,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Column,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     event,
     text,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT, MEDIUMTEXT, TINYTEXT
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -259,6 +261,9 @@ class PRReviewIncrementalQueue(Base):
     base_sha = Column(String(64), nullable=True)
     head_sha = Column(String(64), nullable=False, index=True)
     delivery_id = Column(String(128), nullable=True, index=True)
+    billing_context = Column(JSON, nullable=True)
+    dispatch_token = Column(String(36), nullable=True)
+    dispatch_expires_at = Column(UTCDateTime, nullable=True)
     # New activity-observability bridge fields. Nullable for pre-migration rows.
     observability_session_id = Column(Integer, nullable=True, index=True)
     observability_trigger_id = Column(Integer, nullable=True, unique=True, index=True)
@@ -428,6 +433,15 @@ class AppConfig(Base):
 
     def __repr__(self):
         return f"<AppConfig(key={self.key_name})>"
+
+
+class ConfigRevision(Base):
+    """Durable write locks/revisions; retained when an override is deleted."""
+
+    __tablename__ = "config_revisions"
+
+    scope_key = Column(String(255), primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
 
 
 class UserConfig(Base):
@@ -605,8 +619,9 @@ class IssueAnalysis(Base):
     suggested_labels = Column(Text, nullable=True)
     suggested_milestone = Column(String(255), nullable=True)
     duplicate_of = Column(BigInteger, nullable=True, index=True)
+    issue_relations = Column(Text().with_variant(LONGTEXT(), "mysql"), nullable=True)
     related_prs = Column(Text, nullable=True)
-    analysis_detail = Column(Text, nullable=True)
+    analysis_detail = Column(Text().with_variant(LONGTEXT(), "mysql"), nullable=True)
 
     # 版本
     analysis_version = Column(Integer, default=1, nullable=False)
@@ -644,6 +659,15 @@ class PRIssueLink(Base):
     """PR-Issue 关联表"""
 
     __tablename__ = "pr_issue_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "repo_name",
+            "pr_id",
+            "issue_number",
+            "link_type",
+            name="uq_pr_issue_link_key",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pr_id = Column(BigInteger, nullable=False, index=True)
@@ -743,26 +767,27 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
-    import backend.models.activity_observability_models
-    import backend.models.agent_skill_models
-    import backend.models.agent_team_models
-    import backend.models.ai_usage_models
-    import backend.models.announcement_models
-    import backend.models.identity_models
-    import backend.models.payment_models
-    import backend.models.star_aid_models
-    import backend.models.telegram_models  # noqa: F401
+    from backend.models import (  # noqa: F401 - imports register SQLAlchemy models
+        activity_observability_models,
+        agent_skill_models,
+        agent_team_models,
+        ai_usage_models,
+        announcement_models,
+        billing_models,
+        identity_models,
+        legacy_entitlement_models,
+        notification_models,
+        payment_models,
+        service_execution_models,
+        star_aid_models,
+        telegram_models,
+        webhook_execution_models,
+    )
 
 
-# app_config 默认行的单一来源说明：
-# - 键值一律从 Settings 单例派生（_build_default_configs），同步/异步建库
-#   路径共用同一份定义，禁止再手抄数值。
-# - 仅收录不在 DYNAMIC_CONFIG_GROUPS 中的基础键；动态组已注册的键（如
-#   issue_auto_assign）由
-#   _append_dynamic_config_defaults 从 Settings 统一补插，保持每键单源。
-# - app_version 暂为模块级字面量：单一来源化（backend/__version__ 派生）
-#   列入后续路线（docs/plans/2026-08-16-unified-config-store.md §6）。
-APP_VERSION_DEFAULT = "3.2.4"
+# Startup seeds only the version marker. Dynamic defaults remain inherited;
+# the definition-only helper below is retained for migration/calibration tooling.
+APP_VERSION_DEFAULT = "3.2.5"
 
 
 def _settings_default_to_str(value: object) -> str:
@@ -777,14 +802,7 @@ def _settings_default_to_str(value: object) -> str:
 
 
 def _build_default_configs() -> list:
-    """构建 app_config 种子默认行（同步/异步建库路径共用的单一来源）。
-
-    Values are derived from the Settings singleton so DB seed rows can never
-    drift from code defaults. This replaces the two hand-copied tables that
-    previously disagreed on ``review_timeout_seconds`` (600/300),
-    ``web_search_enabled`` (true/false) and ``web_search_*`` limits — Settings
-    现值（异步路径语义）为准。
-    """
+    """Seed the version marker only; never materialize runtime defaults."""
     return [
         AppConfig(
             key_name="app_version",
@@ -795,20 +813,21 @@ def _build_default_configs() -> list:
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
-    """向 default_configs 列表追加动态配置默认值"""
+    """Build immutable definition rows for tooling, not for startup insertion."""
     try:
         _ensure_model_modules_imported()
 
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
             DYNAMIC_CONFIG_LABELS,
-            get_settings,
+            Settings,
         )
 
-        settings = get_settings()
         for group_data in DYNAMIC_CONFIG_GROUPS.values():
             for key in group_data["keys"]:
-                default_val = _settings_default_to_str(getattr(settings, key, ""))
+                default_val = _settings_default_to_str(
+                    Settings.model_fields[key].get_default(call_default_factory=True)
+                )
                 default_configs.append(
                     AppConfig(
                         key_name=key,
@@ -835,7 +854,7 @@ async def insert_default_configs_async():
     default_configs = _build_default_configs()
 
     # 从 config 模块追加动态配置默认值
-    _append_dynamic_config_defaults(default_configs)
+    # Defaults are inherited, never materialized as database overrides.
 
     try:
         async with async_session() as session:
@@ -911,7 +930,7 @@ def init_database(database_url: str):
             default_configs = _build_default_configs()
 
             # 从 config 模块追加动态配置默认值
-            _append_dynamic_config_defaults(default_configs)
+            # Defaults are inherited, never materialized as database overrides.
 
             added = 0
             for cfg in default_configs:
@@ -956,6 +975,9 @@ def init_async_db(database_url: str):
     logger = logging.getLogger(__name__)
 
     try:
+        from backend.services.notification_business import install_notification_outbox
+
+        install_notification_outbox()
         database_url = normalize_database_url(database_url)
 
         logger.info("初始化异步数据库引擎")
@@ -965,6 +987,14 @@ def init_async_db(database_url: str):
         # 通过 pool_recycle 定期回收连接来保证连接可用性
         async_engine = create_async_engine(
             database_url,
+            # sqlite3 legacy transaction mode can commit a released SAVEPOINT
+            # outside an outer transaction; financial rollback requires modern
+            # transaction control (Python 3.14 is the supported runtime).
+            **(
+                {"connect_args": {"autocommit": False}}
+                if database_url.startswith("sqlite")
+                else {}
+            ),
             echo=False,
             pool_pre_ping=False,
             pool_size=10,
@@ -981,7 +1011,8 @@ def init_async_db(database_url: str):
 
         # 创建异步会话工厂
         async_session = async_sessionmaker(
-            async_engine, class_=AsyncSession, expire_on_commit=False
+            async_engine, class_=AsyncSession, expire_on_commit=False,
+            info={"notification_outbox": True},
         )
 
         logger.info("✅ 异步数据库引擎初始化成功")
@@ -1009,9 +1040,9 @@ class WebUIConfig(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, unique=True, nullable=False)
-    theme = Column(String(10), default="light")  # light / dark
-    language = Column(String(10), default="zh-CN")
-    items_per_page = Column(Integer, default=20)
+    theme = Column(String(10), nullable=True)  # light / dark
+    language = Column(String(10), nullable=True)
+    items_per_page = Column(Integer, nullable=True)
 
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -1300,6 +1331,55 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
             )
 
 
+async def _ensure_issue_analysis_longtext_columns(conn, logger) -> bool:
+    """Expand legacy MySQL Issue evidence columns without repeated ALTERs.
+
+    Relation proofs are retained both in issue_relations and analysis_detail.
+    A verified excerpt can exceed TEXT's byte limit, including when the
+    relation alone fits but the complete analysis does not. Missing columns
+    are added by the normal additive migration before this helper runs.
+    """
+    if conn.dialect.name != "mysql":
+        return False
+    from sqlalchemy import inspect
+
+    table_name = "issue_analyses"
+
+    def _columns(sync_conn):
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table_name):
+            return {}
+        return {column["name"]: column for column in inspector.get_columns(table_name)}
+
+    columns = await conn.run_sync(_columns)
+    changed = False
+    for name in ("issue_relations", "analysis_detail"):
+        column = columns.get(name)
+        if column is None:
+            continue
+        current_type = column["type"]
+        if isinstance(current_type, LONGTEXT):
+            continue
+        if not isinstance(current_type, (Text, TINYTEXT, MEDIUMTEXT)):
+            raise RuntimeError(
+                f"cannot expand {table_name}.{name}: expected a legacy text column"
+            )
+        expanded_type = LONGTEXT(
+            charset=getattr(current_type, "charset", None),
+            collation=getattr(current_type, "collation", None),
+        ).compile(dialect=conn.dialect)
+        nullability = "NULL" if column["nullable"] else "NOT NULL"
+        await conn.execute(
+            text(
+                f"ALTER TABLE `{table_name}` MODIFY COLUMN `{name}` "
+                f"{expanded_type} {nullability}"
+            )
+        )
+        changed = True
+        logger.info("[auto-migrate] 扩展列为 LONGTEXT: %s.%s", table_name, name)
+    return changed
+
+
 async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
     """Allow GitHub-only users on old MySQL schemas.
 
@@ -1334,23 +1414,73 @@ async def _ensure_legacy_telegram_id_nullable(conn, logger) -> None:
         return
     if dialect_name in {"mysql", "mariadb"}:
         statement = (
-            "ALTER TABLE `telegram_users` "
-            "MODIFY COLUMN `telegram_id` BIGINT NULL"
+            "ALTER TABLE `telegram_users` MODIFY COLUMN `telegram_id` BIGINT NULL"
         )
     else:
         statement = (
-            'ALTER TABLE "telegram_users" '
-            'ALTER COLUMN "telegram_id" DROP NOT NULL'
+            'ALTER TABLE "telegram_users" ALTER COLUMN "telegram_id" DROP NOT NULL'
         )
     await conn.execute(text(statement))
     logger.info("[auto-migrate] telegram_users.telegram_id 已改为可为空")
+
+
+async def _ensure_pr_issue_link_unique_index(conn, logger) -> bool:
+    """Preserve latest exact-key row and install uniqueness on legacy schemas."""
+    from sqlalchemy import func, inspect, select
+
+    table = PRIssueLink.__table__
+    keys = ("repo_name", "pr_id", "issue_number", "link_type")
+
+    def ensure(sync_conn):
+        inspector = inspect(sync_conn)
+        if not inspector.has_table(table.name):
+            return False
+        unique_sets = [
+            tuple(i.get("column_names") or ())
+            for i in inspector.get_indexes(table.name)
+            if i.get("unique")
+        ]
+        unique_sets += [
+            tuple(c.get("column_names") or ())
+            for c in inspector.get_unique_constraints(table.name)
+        ]
+        if keys in unique_sets:
+            return False
+        if any(
+            i.get("name") == "uq_pr_issue_link_key"
+            for i in inspector.get_indexes(table.name)
+        ):
+            raise RuntimeError(
+                "uq_pr_issue_link_key already exists but is not unique on the required key"
+            )
+        # Keep the greatest id using database key/collation semantics. Grouping
+        # stays on the server, so neither history nor duplicate ids reach Python.
+        # The aggregate derived table cannot be merged by MySQL/MariaDB: this
+        # extra SELECT layer avoids their target-table restriction (error 1093).
+        latest = (
+            select(func.max(table.c.id).label("id"))
+            .group_by(*(table.c[k] for k in keys))
+            .subquery("latest_pr_issue_links")
+        )
+        sync_conn.execute(table.delete().where(table.c.id.not_in(select(latest.c.id))))
+        index = Index("uq_pr_issue_link_key", *(table.c[k] for k in keys), unique=True)
+        try:
+            index.create(sync_conn, checkfirst=True)
+        finally:
+            table.indexes.discard(index)
+        return True
+
+    created = await conn.run_sync(ensure)
+    if created:
+        logger.info("[auto-migrate] Created pr_issue_links exact-key unique index")
+    return created
 
 
 async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
     用 Inspector 对比 SQLAlchemy 模型定义与数据库实际列，
-    自动 ALTER TABLE 添加缺失的列（仅 ADD COLUMN，不做 DROP 或 MODIFY）。
+    自动 ALTER TABLE 添加缺失的列，并执行显式、兼容的历史 schema 升级。
     """
     import logging
 
@@ -1405,13 +1535,34 @@ async def _auto_migrate():
             await conn.execute(text(sql))
             _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
 
+        from backend.models.billing_schema import ensure_billing_schema
+
+        billing_schema_changed = await conn.run_sync(ensure_billing_schema)
+
+        issue_storage_changed = await _ensure_issue_analysis_longtext_columns(
+            conn, _logger
+        )
+
         await _ensure_legacy_telegram_id_nullable(conn, _logger)
+
+        from backend.services.notification_migration import upgrade_notification_schema
+
+        notification_storage_changed = await conn.run_sync(upgrade_notification_schema)
 
         unique_index_created = await _ensure_observability_trigger_unique_index(
             conn, _logger
         )
 
-        if not missing and not unique_index_created:
+        pr_link_index_created = await _ensure_pr_issue_link_unique_index(conn, _logger)
+
+        if (
+            not missing
+            and not billing_schema_changed
+            and not unique_index_created
+            and not pr_link_index_created
+            and not issue_storage_changed
+            and not notification_storage_changed
+        ):
             return
 
         # 记录迁移版本

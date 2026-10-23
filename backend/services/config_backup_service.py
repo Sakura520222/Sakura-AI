@@ -22,7 +22,6 @@ from backend.core.config import (
     Settings,
     _get_field_type,
     get_all_dynamic_config_keys,
-    get_settings,
     invalidate_dynamic_config_cache,
     reload_strategy_config,
     update_settings_field,
@@ -122,6 +121,8 @@ def _normalize_imported_smtp_security(value: str) -> str:
     if lowered in ("ssl", "starttls", "none"):
         return lowered
     raise ConfigBackupError("配置项 smtp_security 的值无效")
+
+
 _POSITIVE_INTEGER_KEYS = {
     "max_concurrent_reviews",
     "review_timeout_seconds",
@@ -709,6 +710,8 @@ async def restore_config_backup(
     A running deployment must opt out: a database transaction and a filesystem
     replacement cannot be made one atomic operation, so silently importing a
     new URL would leave the next restart pointed at the wrong database.
+    Opting out also preserves the active Redis anchor, including when the backup
+    supplies a replacement or omits that key during an exact system restore.
     """
     if not sections or not set(sections).issubset(
         {
@@ -753,6 +756,9 @@ async def restore_config_backup(
         conditions.append(AppConfig.key_name.in_(LABEL_CONFIG_KEYS))
 
     try:
+        from backend.services.config_store import lock_config
+
+        await lock_config(db, "validation/global")
         result = await db.execute(select(AppConfig).where(or_(*conditions)))
         existing_rows = result.scalars().all()
         existing = {row.key_name: row for row in existing_rows}
@@ -774,12 +780,17 @@ async def restore_config_backup(
         # deployment before the explicit Setup values are persisted.
         protected_restore_keys = set(protected_keys or ())
         if not allow_database_url:
-            protected_restore_keys.add("database_url")
+            protected_restore_keys.update({"database_url", "redis_url"})
         applied_imported = {
             key: record
             for key, record in imported.items()
             if key not in protected_restore_keys
         }
+        for key in sorted(
+            (set(existing) | set(applied_imported)) - protected_restore_keys
+        ):
+            revision = await lock_config(db, "app/" + key)
+            revision.revision += 1
 
         created = 0
         updated = 0
@@ -878,10 +889,11 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
         and (key in result.deleted_keys or result.imported_values.get(key) is None)
     }
     defaults = Settings() if reset_keys else None
-    settings = get_settings()
     for key in reset_keys:
         if key in Settings.model_fields:
-            setattr(settings, key, getattr(defaults, key))
+            from backend.core.config import restore_settings_field
+
+            restore_settings_field(key, defaults)
 
     for key, value in result.imported_values.items():
         # Restart-required settings (notably app_timezone) are persisted and

@@ -1,9 +1,9 @@
 """Announcements, read markers, and provider delivery state.
 
-The current delivery rows intentionally retain their historical unique key
-(``announcement_id``, ``user_id``, ``channel``).  A publication version makes
-those rows reusable for a new send round while the archive models preserve the
-content and delivery state of the previous round.
+NotificationDelivery remains here as an import compatibility facade. Its
+optional announcement identity permits business events in the same table.
+New events deduplicate per concrete endpoint; publication versions and archives
+preserve the content, read markers and outcomes of historical announcement rounds.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text, UniqueConstrai
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base, utc_now
-from backend.models.time_types import UTCDateTime
+from backend.models.time_types import UTCDateTime, UTCMicrosecondDateTime
 
 
 class AnnouncementType(str, enum.Enum):
@@ -35,6 +35,7 @@ class DeliveryStatus(str, enum.Enum):
     PENDING = "pending"
     SENT = "sent"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class Announcement(Base):
@@ -43,9 +44,15 @@ class Announcement(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(500), nullable=False)
     content = Column(Text, nullable=False)
-    announcement_type = Column("type", String(50), default=AnnouncementType.GENERAL.value, nullable=False)
-    status = Column(String(50), default=AnnouncementStatus.DRAFT.value, nullable=False, index=True)
-    created_by = Column(Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True)
+    announcement_type = Column(
+        "type", String(50), default=AnnouncementType.GENERAL.value, nullable=False
+    )
+    status = Column(
+        String(50), default=AnnouncementStatus.DRAFT.value, nullable=False, index=True
+    )
+    created_by = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     published_at = Column(UTCDateTime, nullable=True, index=True)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -54,8 +61,14 @@ class Announcement(Base):
     publication_version = Column(Integer, default=1, nullable=False, index=True)
 
     creator = relationship("TelegramUser", foreign_keys=[created_by])
-    reads = relationship("AnnouncementRead", cascade="all, delete-orphan", back_populates="announcement")
-    deliveries = relationship("NotificationDelivery", cascade="all, delete-orphan", back_populates="announcement")
+    reads = relationship(
+        "AnnouncementRead", cascade="all, delete-orphan", back_populates="announcement"
+    )
+    deliveries = relationship(
+        "NotificationDelivery",
+        cascade="all, delete-orphan",
+        back_populates="announcement",
+    )
     publication_history = relationship(
         "AnnouncementPublicationHistory",
         cascade="all, delete-orphan",
@@ -68,8 +81,12 @@ class AnnouncementRead(Base):
     __tablename__ = "announcement_reads"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    announcement_id = Column(Integer, ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False)
+    announcement_id = Column(
+        Integer, ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
+    )
     read_at = Column(UTCDateTime, default=utc_now, nullable=False)
     # A marker belongs to the publication round that the user actually saw.
     # Existing installations receive ``1`` through the additive schema
@@ -79,21 +96,39 @@ class AnnouncementRead(Base):
 
     announcement = relationship("Announcement", back_populates="reads")
     user = relationship("TelegramUser", foreign_keys=[user_id])
-    __table_args__ = (UniqueConstraint("announcement_id", "user_id", name="uq_announcement_read"),)
+    __table_args__ = (
+        UniqueConstraint("announcement_id", "user_id", name="uq_announcement_read"),
+    )
 
 
 class NotificationDelivery(Base):
     __tablename__ = "notification_deliveries"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    announcement_id = Column(Integer, ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    announcement_id = Column(
+        Integer,
+        ForeignKey("announcements.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("telegram_users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     channel = Column(String(50), nullable=False)
-    status = Column(String(50), default=DeliveryStatus.PENDING.value, nullable=False, index=True)
+    event_id = Column(String(36), ForeignKey("notification_events.id", ondelete="CASCADE"), nullable=True, index=True)
+    endpoint_id = Column(Integer, ForeignKey("notification_endpoints.id", ondelete="SET NULL"), nullable=True)
+    endpoint_key = Column(String(100), nullable=False, default="legacy")
+    status = Column(
+        String(50), default=DeliveryStatus.PENDING.value, nullable=False, index=True
+    )
     error_message = Column(Text, nullable=True)
+    error_category = Column(String(50), nullable=True)
     attempts = Column(Integer, default=0, nullable=False)
     sent_at = Column(UTCDateTime, nullable=True)
-    next_retry_at = Column(UTCDateTime, nullable=True)
+    next_retry_at = Column(UTCMicrosecondDateTime, nullable=True)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
     publication_version = Column(Integer, default=1, nullable=False, index=True)
@@ -106,7 +141,12 @@ class NotificationDelivery(Base):
 
     announcement = relationship("Announcement", back_populates="deliveries")
     user = relationship("TelegramUser", foreign_keys=[user_id])
-    __table_args__ = (UniqueConstraint("announcement_id", "user_id", "channel", name="uq_notification_delivery"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "announcement_id", "publication_version", "user_id", "channel", "endpoint_key", name="uq_notification_delivery_target"
+        ),
+        UniqueConstraint("event_id", "user_id", "endpoint_key", name="uq_notification_event_target"),
+    )
 
 
 class AnnouncementPublicationHistory(Base):
@@ -176,6 +216,10 @@ class AnnouncementDeliveryHistory(Base):
         index=True,
     )
     channel = Column(String(50), nullable=False)
+    endpoint_id = Column(Integer, nullable=True)
+    endpoint_key = Column(String(100), nullable=True)
+    event_id = Column(String(36), nullable=True)
+    error_category = Column(String(50), nullable=True)
     status = Column(String(50), nullable=False)
     error_message = Column(Text, nullable=True)
     attempts = Column(Integer, default=0, nullable=False)

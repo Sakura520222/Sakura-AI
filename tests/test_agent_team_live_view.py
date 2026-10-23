@@ -49,7 +49,7 @@ def test_base_markdown_code_blocks_have_theme_appropriate_foreground_colors():
 def test_live_view_incremental_processes_tool_updates_without_new_messages():
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
-    assert "data.tool_calls.length === 0" in template
+    assert "this._loadStreamPages(this._lastMsgId, 50)" in template
     assert "this._processStreamData(data);" in template
     assert "!data.messages || data.messages.length === 0) return" not in template
 

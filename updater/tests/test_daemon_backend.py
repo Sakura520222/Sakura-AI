@@ -217,7 +217,11 @@ def _patch_runtime_lstat(monkeypatch, target: Path, target_mode: int):
         result = real_lstat(path)
         if stat.S_ISDIR(result.st_mode):
             mode = stat.S_IMODE(result.st_mode)
-            if mode & 0o022:
+            if os.name == "nt" and absolute == os.path.dirname(normalized_target):
+                # Windows cannot represent the fixture parent's POSIX 0700
+                # mode; model it while preserving the unsafe target verbatim.
+                mode = 0o700
+            elif mode & 0o022:
                 # The pytest temporary root is intentionally shared-writable;
                 # model its ancestors as trusted private directories.
                 mode = 0o755
@@ -506,6 +510,7 @@ def test_resolve_executable_uses_binary_when_executable(tmp_path, monkeypatch):
     assert identity == "sakura-ai-updater"
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_resolve_executable_rejects_symlink_even_when_target_is_executable(
     tmp_path, monkeypatch
 ):
@@ -737,6 +742,20 @@ def test_trusted_directory_chain_allows_root_as_existing_ancestor(monkeypatch):
     assert DaemonBackend._check_trusted_directory_chain(root, "fixture") == root
 
 
+def test_ensure_runtime_tmp_rejects_file_after_admitting_fixture_parent(tmp_path, monkeypatch):
+    backend = _make_backend(tmp_path)
+    state = Path(backend.state_dir)
+    state.mkdir(mode=0o700)
+    target = Path(backend.runtime_tmp_path)
+    target.write_text("canary")
+    _patch_runtime_lstat(monkeypatch, target, stat.S_IFREG | 0o600)
+    chmod = []
+    monkeypatch.setattr(daemon_mod.os, "chmod", lambda *args: chmod.append(args))
+    with pytest.raises(UnsafeDeploymentPathError, match="must be a directory"):
+        backend.ensure_runtime_tmp()
+    assert target.read_text() == "canary" and not chmod
+
+
 def test_ensure_runtime_tmp_rejects_symlink_without_touching_canary(
     tmp_path, monkeypatch
 ):
@@ -768,6 +787,7 @@ def test_ensure_runtime_tmp_rejects_symlink_without_touching_canary(
     assert not any(path == os.path.abspath(runtime_tmp) for path, _ in chmod_calls)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX group/other directory mode bits")
 def test_ensure_runtime_tmp_rejects_shared_writable_target_without_chmod(
     tmp_path, monkeypatch
 ):
@@ -1357,6 +1377,7 @@ def test_ensure_run_dir_accepts_previously_managed_directory(tmp_path, monkeypat
     assert chmod_calls == []
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_ensure_run_dir_refuses_symlinked_entry(tmp_path, monkeypatch):
     """run_dir 路径上是 symlink → 拒绝（不跟随、不接管）。"""
     real_dir = tmp_path / "real"
@@ -1573,6 +1594,12 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
 
     生产模式 socket uid=0、gid=9472（root:sakura-ai）。
     """
+    extraction_dir = tmp_path / "_MEIparent"
+    extraction_dir.mkdir()
+    injected_path = os.pathsep.join((str(extraction_dir), "/opt/host/lib"))
+    monkeypatch.setenv("LD_LIBRARY_PATH", injected_path)
+    monkeypatch.setenv("SAKURA_HOST_MARKER", "required")
+    monkeypatch.setattr(daemon_mod.sys, "_MEIPASS", str(extraction_dir), raising=False)
     binary = tmp_path / "sakura-ai-updater"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
@@ -1607,6 +1634,11 @@ def test_start_binary_mode_passes_serve_args(tmp_path, monkeypatch):
     gid_idx = argv.index("--socket-gid")
     assert argv[gid_idx + 1] == str(daemon_mod.DEFAULT_GID)
     assert popen_kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    # The new bootloader adds its own extraction path. Keeping this parent's
+    # path would reintroduce bundled libraries during startup recovery.
+    assert popen_kwargs["env"]["LD_LIBRARY_PATH"] == "/opt/host/lib"
+    assert popen_kwargs["env"]["SAKURA_HOST_MARKER"] == "required"
+    assert os.environ["LD_LIBRARY_PATH"] == injected_path
     assert popen_kwargs["cwd"] == os.path.abspath(os.sep)
 
 
@@ -1645,7 +1677,7 @@ def test_pid_file_path_derives_from_socket_directory(tmp_path):
     assert backend.pid_file_path == str(tmp_path / "run" / "updater.pid")
     assert (
         daemon_mod.pid_file_path("/run/sakura-ai/updater.sock")
-        == "/run/sakura-ai/updater.pid"
+        == os.path.join(os.path.abspath("/run/sakura-ai"), "updater.pid")
     )
 
 
@@ -1662,13 +1694,15 @@ def test_write_pid_file_content_mode_and_atomic_replace(tmp_path, monkeypatch):
     backend._write_pid_file(4242)
     pid_path = Path(backend.pid_file_path)
     assert pid_path.read_bytes() == b"4242\n"
-    assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
     geteuid = getattr(os, "geteuid", None)
     if geteuid is not None:  # Windows 无 geteuid，仅断言 mode
         assert pid_path.stat().st_uid == geteuid()
     assert calls and os.path.basename(calls[0][0]).startswith(".")
 
 
+@pytest.mark.usefixtures("symlink_support")
 def test_write_pid_file_replaces_preplanted_symlink(tmp_path):
     """run dir 是 0770 group-writable 且无 sticky：原子替换绝不跟随预置 symlink。"""
     backend = _make_backend(tmp_path)

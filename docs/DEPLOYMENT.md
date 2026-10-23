@@ -2,7 +2,7 @@
 
 > Sakura AI 完整部署流程：Docker 镜像、源码部署、GitHub App、数据库、Setup Wizard 与 Host Updater 守护进程。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
@@ -21,6 +21,8 @@
 ---
 
 ## 一、Docker 部署
+
+<a id="full-deployment"></a>
 
 ### 1.1 全量部署（MySQL + Redis 一并拉起）
 
@@ -65,16 +67,22 @@ sudo ./start.sh sandboxd stop
 
 生产 workspace 使用宿主 bind 目录（默认 `/opt/sakura-ai/workplace`），Web 内仍显示为 `/app/workplace`。`SAKURA_SANDBOX_WORKSPACE_ROOT` 是宿主路径身份，必须由 `start.sh` 计算和注入，不要手工改成容器路径。sandboxd 的稳定 instance ID、双镜像 digest、release version、固定 egress 网络和 workspace identity 保存在 `.deploy/deployment.env`；不要提交该文件。
 
-Agent 网络访问由 WebUI 超级管理员配置 `agent_team_network_policy` 控制。`offline` 和 `web_tools` 的 Agent/Dependency runner 均使用 `network none`；`web_tools` 仅授权 `search_web`/`fetch_url`，并继续服从既有 Web 开关与 SSRF 防护。`full_access` 才会把两类 runner 映射为 UDS `network_mode=egress`。sandboxd 将该能力映射到部署侧固定的 `SAKURA_SANDBOX_EGRESS_NETWORK`，默认是 Docker 内置 `bridge`，因此全新 Docker 环境无需额外创建网络即可实际出网。若管理员需要独立出口或包仓库 allowlist，可配置一个 named network，例如：
+Agent 网络访问由 WebUI 超级管理员配置 `agent_team_network_policy` 控制。`offline` 禁止 runner 出网，跳过自动依赖安装并拒绝显式出口请求。`web_tools`（默认）允许受控 `search_web`/`fetch_url`（继续服从既有开关与 SSRF 防护），普通 Shell 保持 `network_mode=none`；Dependency profile 隐式申请出口，`run_command` 可显式设置 `network_capability=dependency_egress`，使当前一次性执行使用 `network_mode=egress`。`full_access` 允许所有 runner 出网。
+
+临时出口可访问任意公网目标，不设命令分类、命令/域名/IP/包仓库白名单；任意显式申请能力的 Shell 命令及包安装钩子、构建脚本、子进程均共享本次出口。执行结束即销毁容器，`web_tools` 下后续普通 Shell 仍离线。Python `pip install`、Node `npm ci`、Rust `cargo test`、Go `go test ./...` 和 JVM `./gradlew test`/`mvn test` 的显式工具参数示例见[配置文档](CONFIGURATION.md#agent-专家团队)。
+
+sandboxd 将已授权的 `egress` 映射到部署侧固定的 `SAKURA_SANDBOX_EGRESS_NETWORK`，默认是 Docker 内置 `bridge`，因此全新 Docker 环境无需额外创建网络即可实际出网。若管理员需要独立出口，可配置一个预先管理的 named network；网络名本身不会提供域名白名单，例如：
 
 ```bash
 docker network create sakura-ai-egress
 sudo env SAKURA_SANDBOX_EGRESS_NETWORK=sakura-ai-egress ./start.sh --prod
 ```
 
-网络名只允许 `bridge` 或符合 sandboxd 校验的 named network（字母/数字、`.`、`_`、`-`，最长 63 个字符）；`host`、`container:*`、`ns:*`、路径/选项字符串及空值均拒绝。脚本会将它持久化并纳入 sandboxd 容器 label/identity drift 检查；不存在的 named network 会使 sandboxd 启动失败。请求和模型不能改变任何网络策略或 Docker 参数。旧版本的 `SAKURA_SANDBOX_DEPENDENCY_NETWORK` 仅作 deployment.env 迁移兼容，不应作为新配置入口。
+网络名只允许 `bridge` 或符合 sandboxd 校验的 named network（字母/数字、`.`、`_`、`-`，最长 63 个字符）；`host`、`container:*`、`ns:*`、路径/选项字符串及空值均拒绝。脚本会将它持久化并纳入 sandboxd 容器 label/identity drift 检查；不存在的 named network 会使 sandboxd 启动失败。模型只能请求抽象执行能力，不能改变管理员策略、Docker 网络名或其他运行参数。旧版本的 `SAKURA_SANDBOX_DEPENDENCY_NETWORK` 仅作 deployment.env 迁移兼容，不应作为新配置入口。
 
-源码开发只有在 `SAKURA_DEPLOY_MODE=source` 且显式选择 `agent_team_execution_backend=local` 时才允许本地执行，此模式**不提供 OS 隔离**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
+源码开发只有在 `SAKURA_DEPLOY_MODE=source`、显式选择 `agent_team_execution_backend=local` 且网络策略为 `full_access` 时才允许本地执行，此模式使用宿主网络，**不提供 OS 隔离或临时沙箱出口**。`image`、`production`、`unknown` 或缺失部署模式均拒绝 local。macOS/Windows 的仅容器部署没有 Linux sandboxd，若启用 Agent 执行会明确失败，而不会降级到 Web 宿主进程。
+
+WebUI 分别显示普通执行就绪与临时依赖出口可用；后者要求 sandboxd 就绪且提供 `egress`，仅策略授权不代表出口可用。local 显示授权模式不适用、临时依赖出口不可用，并单独提示宿主网络。
 
 Agent 依赖环境只使用每个任务工作区内固定的 `.venv/local` 和
 `.venv/sandbox` 路径。这两个目录是 Agent 内部的临时目录，不承载用户数据；切换执行后端时，
@@ -116,6 +124,8 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai -f doc
 macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能从 WebUI 执行更新，也不具备 Linux Agent OS 沙箱；请手动拉取目标镜像并重新运行 Compose。当前生产 Compose 需要 `SAKURA_SANDBOX_WORKSPACE_ROOT` 等由 `start.sh` 生成的部署身份，因此跨平台手工 Compose 仅适合 Agent 功能关闭的部署。Host Updater 当前仅支持 Linux `amd64`/`arm64` 宿主机；sandboxd 完整生命周期采用相同平台边界，且 Host Updater 要求 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
 
 首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。
+
+<a id="web-only-deployment"></a>
 
 ### 1.2 仅运行 Web 镜像（MySQL/Redis 自备）
 
@@ -256,11 +266,23 @@ uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
 uv run python -m backend.main
 ```
 
+**Windows PowerShell 开发与测试**：安装 Git for Windows、uv 后，在仓库根目录执行：
+
+```powershell
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run python -m backend.main
+```
+
+上述流程使用 Windows 原生 Python 3.14，不依赖 WSL/Git Bash。测试使用模拟数据库、Redis、GitHub 和 AI 服务；实际启动后端时需要准备 MySQL/Redis，再通过 Setup Wizard 配置连接。Windows CI 运行完整 pytest 与 Ruff；POSIX Bash、systemd、Linux Landlock/seccomp 和真实 Linux 容器隔离用例按平台能力明确跳过，Linux CI 保留这些检查。符号链接测试按当前账户的实际权限判断；不要求管理员运行 pytest，可选开启 Windows 开发者模式增加这部分覆盖。
+
+Windows 支持 Agent 工作区跨进程读写锁，以及安全的普通文件、仓库规则和 Skill 读取。Host Updater 的 systemd 生命周期、sandboxd 和本地只读 Git/grep 的 Landlock/seccomp 隔离仍需 Linux，相关生产部署边界保持上述说明。
+
 传统 pip 方式（无 uv）：
 
 ```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
+python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
@@ -290,17 +312,14 @@ py scripts/dev_bootstrap.py --reset
 
 ### 安全验证
 
-首次启动时应用会生成一个随机 Token 并打印到启动日志中。访问 `/setup` 前需先在 `/setup/verify` 页面输入此 Token 完成验证：
+首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；本机管理员读取 `config/.setup-token`（Linux 权限 `0600`，Windows 在创建文件时设置仅允许进程用户访问的受保护 ACL，要求文件系统支持 ACL），或由 `start.sh` 在部署成功后读取并显示：
 
-```
-============================================================
-Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
-  Token: <随机字符串>
-请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。
-============================================================
+```bash
+docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
+  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
 ```
 
-> Token 在每次应用启动时重新生成，仅当前部署会话有效。`start.sh` 的前台日志跟随会在后台部署进程结束时自动返回；部署成功后，脚本会从经身份校验的 Web 容器“当前启动”日志中提取并直接显示 Setup Token。如果提前按 `Ctrl+C` 退出了日志跟随，可从主菜单的“查看容器当前日志”→“Web”查看。
+每次进程启动会原子替换该文件，旧 Token 失效；Setup 完成后立即撤销内存凭据并尝试删除文件。文件被占用时记录清理警告，配置完成与重启仍正常进行；本机管理员解除占用后可清理残留文件，其内容已不能用于验证。源码部署用 `cat config/.setup-token`；PowerShell 用 `Get-Content config/.setup-token`。设置 `SAKURA_CONNECTION_CONFIG_PATH` 时，Token 文件位于该连接配置旁。保护配置目录的本机访问权限。
 
 ### 配置步骤
 
@@ -328,7 +347,7 @@ WebUI：`https://your-domain.com/`
 
 ## 八、查看运行日志
 
-应用使用 Loguru 输出日志：控制台（stdout）记录 `INFO` 及以上级别，落盘文件记录 `DEBUG` 及以上级别。控制台适合实时排障，文件适合详细回溯。
+应用使用 Loguru 输出日志。控制台和文件共同遵循 Settings / WebUI `log_level`，保存后立即生效，无需重启或创建新日志文件。生产默认 `INFO`；未显式配置级别的本地开发环境默认 `DEBUG`；已有数据库配置始终优先。两种环境均关闭异常局部变量诊断、统一脱敏，保留文件、函数、行号、异常链与错误类型。
 
 `start.sh` 主菜单提供两个直接入口：
 
@@ -339,10 +358,14 @@ WebUI：`https://your-domain.com/`
 
 - **源码部署**：项目根目录 `logs/app_<启动时间戳>_pid<PID>.log`
 - **Docker 部署**：容器内 `/app/logs/`，对应生产 Compose 的 `logs_data` 命名卷
-- 每次进程启动新建一个以「时间戳 + PID」命名的文件；单文件达到 **500 MB** 自动轮转；超过 **10 天** 的 `app_*.log` 自动清理
-- URL 中的密码与 Telegram Bot Token 在写入前自动脱敏，可安全分享日志
+- 每次进程启动新建一个以「时间戳 + PID」命名的文件；单文件达到 **50 MB** 自动轮转；启动和轮转时清理超过 **10 天** 的文件，并按最旧优先将历史文件压至 **500 MiB**；当前写入文件最多额外占一个轮转段
+- 新文件为 JSON Lines，每行包含 `text` 和结构化 `record`；旧文本文件保留至正常到期。异常文本位于 `record.extra.exception`，不会序列化原始异常或帧内变量。
+- HTTP 凭据、OAuth 参数、API Key、已配置密钥和 Provider 调用凭据在输出前脱敏。业务信息、路径等仍可能敏感，分享前检查范围。
+- HTTP 响应返回服务器生成的 `X-Request-ID`。日志中的 `request_id`、`task_id`、Activity `session_id` / `invocation_id` / `work_unit_id`、`logical_call_id`、`attempt_id` 和 `tool_call_id` 贯通调用链。Agent 旧会话使用 `agent:<id>`，避免和 Activity 会话混淆；无 Activity 的直接 Provider 请求使用 `send-<uuid>` attempt。
+- 超级管理员可在 Activity 会话点“近期日志”，读取当前实例最多 4 MiB 中最新 200 条匹配记录。权限仍校验会话范围，响应不缓存；不提供跨副本或过期日志搜索。多副本请用关联 ID 在各实例日志或既有日志采集系统查询。
+- Compose 为 Web / MySQL / Redis，以及 start.sh 管理的 sandboxd 与任务 runner 启用 Docker `json-file` 轮转：每份 `50m`、最多 `3` 份，约 150 MB/容器。更新配置后需重新创建容器；Docker 自动淘汰旧段，不要直接删除活跃的 Docker 日志文件。旧容器日志在旧容器删除时回收，避免同时保留大量已停止容器。
 
-### 实时跟踪控制台（INFO 及以上）
+### 实时跟踪控制台
 
 ```bash
 # 源码部署：直接运行会在当前终端实时输出
@@ -361,9 +384,9 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai `
   -f docker/docker-compose.prod.yml logs -f --tail=200 web
 ```
 
-### 查看落盘 DEBUG 日志
+### 查看落盘结构化日志
 
-控制台只显示 INFO；需要 DEBUG 细节或历史记录时读取文件。跟踪最新一次启动的文件：
+需要 DEBUG 细节时先在 WebUI 设置日志级别。历史详情可读取文件；可用 `jq -r .text` 将新 JSON Lines 日志还原为堆栈文本。跟踪最新一次启动的文件：
 
 ```bash
 # 源码部署
@@ -379,7 +402,7 @@ docker run --rm -v sakura-ai_logs_data:/logs alpine \
   sh -c 'tail -f "$(ls -t /logs/app_*.log | head -n1)"'
 ```
 
-### 过滤错误与提取首次部署 Token
+### 过滤错误与读取首次部署 Token
 
 ```bash
 # 统一设置 compose 调用（在 /opt/sakura-ai 下执行）
@@ -389,7 +412,7 @@ COMPOSE="docker compose --env-file .deploy/deployment.env --project-name sakura-
 $COMPOSE logs --tail=1000 web | grep -iE "error|exception|critical|traceback"
 
 # 提取 Setup Wizard 首次部署验证 Token（每次启动重新生成）
-$COMPOSE logs web | grep -A6 "Setup Wizard"
+$COMPOSE exec web cat /app/config/.setup-token
 ```
 
 > WebUI 的「审查日志」(`/logs`) 与「操作日志」(`/logs/actions`) 存于数据库，分别记录 PR 审查历史和管理员审计操作，与本节的应用运行日志文件不同。
@@ -553,4 +576,4 @@ check/preflight 比较三个目标 digest、共同 revision、deployment.env 以
 
 ---
 
-*最后更新：2026-9-27 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*
+*最后更新：2026-10-12 · 发现错误？[提 Issue](https://github.com/Sakura520222/Sakura-AI/issues)*

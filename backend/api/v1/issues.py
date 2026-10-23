@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,11 +16,17 @@ from backend.api.v1.responses import (
 )
 from backend.api.v1.schemas import IssueAnalysisResponse
 from backend.models.database import IssueAnalysis
+from backend.services.issues.reanalysis_admission import (
+    IssueReanalysisAdmissionError,
+    prepare_issue_reanalysis,
+    submit_issue_reanalysis,
+)
 from backend.webui.deps import (
     build_user_scope_filter,
     get_db,
     paginate,
 )
+from backend.webui.i18n import i18n
 
 router = APIRouter(prefix="/issues", tags=["Issues"])
 
@@ -111,6 +118,58 @@ async def issue_stats(
     return success_response(data=stats)
 
 
+@router.get("/tasks/{task_id}")
+async def get_reanalysis_task_status(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    from backend.services.issues.reanalysis_dispatch import reanalysis_task_status
+    from backend.webui.config_feedback import config_api_language
+
+    result = await reanalysis_task_status(db, user, task_id)
+    if result is None:
+        return error_response(
+            i18n.t(
+                "issue.reanalyze_task_unavailable",
+                lang=await config_api_language(db, user),
+            ),
+            status_code=404,
+        )
+    return success_response(data=result)
+
+
+@router.post("/tasks/{task_id}/retry")
+async def retry_reanalysis_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    from backend.services.billing_service import BillingError
+    from backend.services.issues.reanalysis_dispatch import retry_reanalysis_dispatch
+    from backend.webui.config_feedback import config_api_language
+
+    try:
+        returned = await retry_reanalysis_dispatch(db, user, task_id)
+        return success_response(data={"task_id": returned})
+    except (BillingError, IssueReanalysisAdmissionError) as error:
+        await db.rollback()
+        status = 404 if error.code == "reanalysis_task_unavailable" else 503
+        return JSONResponse(
+            {
+                "success": False,
+                "code": error.code,
+                "error": i18n.t(
+                    "issue.reanalyze_task_unavailable"
+                    if status == 404
+                    else "issue.reanalyze_handoff_unconfirmed",
+                    lang=await config_api_language(db, user),
+                ),
+            },
+            status_code=status,
+        )
+
+
 @router.get("/{issue_id}")
 async def get_issue(
     issue_id: int,
@@ -152,31 +211,49 @@ async def reanalyze_issue(
     if not analysis:
         return error_response("记录不存在或无权访问", status_code=404)
 
-    # 构造 issue_info
-    issue_info = {
-        "issue_number": analysis.issue_number,
-        "repo_name": analysis.repo_name,
-        "repo_owner": analysis.repo_owner,
-        "author": analysis.author,
-        "title": analysis.title,
-        "body": analysis.body,
-    }
+    try:
+        issue_info = await prepare_issue_reanalysis(analysis)
+    except IssueReanalysisAdmissionError as error:
+        return error_response(
+            i18n.t(error.translation_key), status_code=error.status_code
+        )
 
     # 计算分析版本号
     max_version_result = await db.execute(
         select(func.max(IssueAnalysis.analysis_version)).where(
             IssueAnalysis.issue_number == analysis.issue_number,
-            IssueAnalysis.repo_name == analysis.repo_name,
+            IssueAnalysis.repo_owner == analysis.repo_owner,
+            IssueAnalysis.repo_name.in_(
+                [
+                    issue_info["repo_name"],
+                    f"{issue_info['repo_owner']}/{issue_info['repo_name']}",
+                ]
+            ),
         )
     )
     max_version = max_version_result.scalar() or 0
     issue_info["analysis_version"] = max_version + 1
 
     try:
-        from backend.workers.issue_worker import submit_issue_analysis_task
-
-        task_id = await submit_issue_analysis_task(issue_info)
+        task_id = await submit_issue_reanalysis(db, issue_info, user)
         return success_response(data={"task_id": task_id})
-    except Exception:
-        logger.exception("提交 Issue 分析任务失败 / submit issue analysis failed")
+    except IssueReanalysisAdmissionError as error:
+        from backend.webui.config_feedback import config_api_language
+
+        try:
+            lang = await config_api_language(db, {"user_id": user.get("user_id")})
+        except Exception:
+            from backend.webui.i18n import detect_language
+
+            lang = detect_language()
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "success": False,
+                "code": error.code,
+                "error": i18n.t(error.translation_key, lang=lang),
+            },
+        )
+    except Exception as exc:
+        logger.warning("Issue reanalysis submission failed: {}", type(exc).__name__)
         return error_response("提交分析任务失败，请稍后重试", status_code=500)

@@ -1757,9 +1757,19 @@ sandbox_instance_id() {
         return 0
     fi
     if command -v openssl >/dev/null 2>&1; then
-        value="sandbox-$(openssl rand -hex 16 2>/dev/null || true)"
-    elif command -v python3 >/dev/null 2>&1; then
-        value="sandbox-$(python3 -c 'import secrets; print(secrets.token_hex(16))' 2>/dev/null || true)"
+        if ! value=$(openssl rand -hex 16) || [[ ! "$value" =~ ^[a-f0-9]{32}$ ]]; then
+            warn "openssl instance id generation failed; trying python3" >&2
+            value=""
+        else
+            value="sandbox-$value"
+        fi
+    fi
+    if [[ -z "$value" ]] && command -v python3 >/dev/null 2>&1; then
+        if value=$(python3 -c 'import secrets; print(secrets.token_hex(16))'); then
+            value="sandbox-$value"
+        else
+            value=""
+        fi
     fi
     [[ "$value" =~ ^sandbox-[a-z0-9-]{8,55}$ ]] || {
         fail "cannot create stable sandboxd instance id" >&2
@@ -2468,6 +2478,9 @@ sandbox_start_container() {
     sandbox_prepare_directories || return 1
     sandbox_ensure_egress_network_exists || return 1
     instance=$(sandbox_instance_id) || return 1
+    # Command substitution runs in a subshell; retain its result before
+    # persisting the deployment identity in the parent shell.
+    SANDBOX_CONFIGURED_INSTANCE_ID="$instance"
     runner_ref=$(sandbox_runner_reference) || return 1
     daemon_ref=$(sandbox_daemon_reference) || return 1
     sandbox_persist_runtime_identity || return 1
@@ -2521,6 +2534,9 @@ sandbox_start_container() {
         docker run --detach
         --name "$SANDBOX_CONTAINER_NAME" \
         --restart unless-stopped \
+        --log-driver json-file \
+        --log-opt max-size=50m \
+        --log-opt max-file=3 \
         --label ai.sakura.managed-by=sandboxd-daemon \
         --label "ai.sakura.instance-id=$instance" \
         --label "ai.sakura.protocol-version=$SANDBOX_PROTOCOL_VERSION" \
@@ -5478,13 +5494,10 @@ sandbox_controller_id_for_logs() {
 }
 
 current_setup_token() {
-    local id="" started_at="" token=""
+    local id="" token=""
     id=$(compose_service_container_id "sakura-ai" "web") || return 1
-    started_at=$(docker inspect --type container --format '{{.State.StartedAt}}' "$id" 2>/dev/null) || return 1
-    [[ -n "$started_at" && "$started_at" != "0001-01-01T00:00:00Z" ]] || return 1
-    token=$(docker logs --since "$started_at" "$id" 2>&1 \
-        | sed -nE 's/^.*Token:[[:space:]]*([A-Za-z0-9_-]{43})[[:space:]]*.*$/\1/p' \
-        | tail -n 1)
+    # Explicit local operator access; docker exec stdout is not a container log.
+    token=$(docker exec "$id" cat /app/config/.setup-token 2>/dev/null) || return 1
     [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]] || return 1
     printf '%s\n' "$token"
 }

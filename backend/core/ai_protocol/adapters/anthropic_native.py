@@ -36,6 +36,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 _ANTHROPIC_VERSION = "2023-06-01"
 
@@ -266,7 +267,10 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                         }
                     )
             if blocks:
-                return {"role": role if role in ("user", "assistant") else "user", "content": blocks}
+                return {
+                    "role": role if role in ("user", "assistant") else "user",
+                    "content": blocks,
+                }
         # 普通文本消息 / plain text
         return {
             "role": role if role in ("user", "assistant") else "user",
@@ -356,6 +360,10 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         self._raise_for_status(resp, endpoint)
         return resp
 
+    def reported_error_usage(self, body: Any) -> UnifiedUsage | None:
+        raw = body.get("usage") if isinstance(body, dict) else None
+        return self._parse_usage(raw) if isinstance(raw, dict) else None
+
     def _raise_for_status(
         self, resp: httpx.Response, endpoint: ResolvedEndpoint
     ) -> None:
@@ -371,6 +379,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             message,
             status_code=resp.status_code,
             provider=endpoint.base_url,
+            usage=self.reported_error_usage(body),
         )
 
     def translate_error(
@@ -410,6 +419,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             return body
         return ""
 
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -446,9 +456,11 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                 "Anthropic 端点返回空响应",
                 provider=endpoint.base_url,
                 model=request.model,
+                usage=response.usage,
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,
@@ -467,6 +479,14 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
+                if (
+                    not 200 <= resp.status_code < 300
+                    or "text/event-stream"
+                    not in resp.headers.get("content-type", "").lower()
+                ):
+                    # httpx streaming responses must be read before JSON error
+                    # parsing can retain authoritative returned Usage.
+                    await resp.aread()
                 self.ensure_sse_response(
                     resp,
                     endpoint,
