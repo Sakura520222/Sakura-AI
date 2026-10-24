@@ -6,6 +6,7 @@
 import os
 import secrets
 import signal
+from asyncio import Lock
 from collections.abc import Collection, Mapping
 from inspect import isawaitable
 from typing import Any
@@ -13,7 +14,8 @@ from typing import Any
 import httpx
 from loguru import logger
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.core.ai_providers import (
@@ -23,7 +25,11 @@ from backend.core.ai_providers import (
 from backend.core.bootstrap import (
     mark_setup_completed,
 )
+from backend.core.log_sanitizer import sanitize_exception_text, sensitive_log_scope
+from backend.core.setup_database import DatabaseSetupError, check_database
 from backend.core.time_service import now_utc
+
+_database_setup_lock = Lock()
 
 # 环境变量字段（大写） → Settings 字段名（小写）
 # 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步。
@@ -297,18 +303,42 @@ class SetupService:
         normalized_url = normalize_database_url(database_url)
 
         try:
-            engine = create_async_engine(normalized_url)
-            async with engine.connect() as conn:
-                await conn.execute(select(1))
-            await engine.dispose()
-            return {"success": True, "message": "数据库连接成功"}
-        except Exception as e:
-            error_msg = str(e)
-            # 脱敏：不暴露完整连接字符串（原始与规范化后的都需脱敏）
-            for secret in (database_url, normalized_url):
-                if secret and secret in error_msg:
-                    error_msg = error_msg.replace(secret, "***")
-            return {"success": False, "message": f"连接失败: {error_msg}"}
+            password = make_url(normalized_url).password
+        except (ArgumentError, ValueError):
+            return {
+                "success": False, "connected": False, "schema_ready": None,
+                "initialized": False, "stage": "connection",
+                "code": "database_connection_failed", "message": "数据库连接字符串无效",
+            }
+        engine = None
+        with sensitive_log_scope(
+            database_url, normalized_url, password
+        ):
+            try:
+                engine = create_async_engine(normalized_url, hide_parameters=True)
+                async with engine.connect() as conn:
+                    await conn.execute(select(1))
+                return {
+                    "success": True,
+                    "connected": True,
+                    "schema_ready": None,
+                    "initialized": False,
+                    "stage": "connection",
+                    "code": "database_connection_ready",
+                    "message": "数据库连接成功；尚未执行 Schema 能力预检",
+                }
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "connected": False,
+                    "schema_ready": None,
+                    "stage": "connection",
+                    "code": "database_connection_failed",
+                    "message": f"连接失败: {sanitize_exception_text(exc)}",
+                }
+            finally:
+                if engine is not None:
+                    await engine.dispose()
 
     async def test_redis_connection(self, redis_url: str) -> dict[str, Any]:
         """测试 Redis 连接"""
@@ -632,17 +662,78 @@ class SetupService:
         """
         from backend.models import database as db_module
         from backend.models.database import (
-            create_tables_async,
             init_async_db,
             insert_default_configs_async,
             migrate_schema_async,
+            normalize_database_url,
+        )
+        from backend.models.schema_state import (
+            record_schema_checkpoint,
+            schema_is_current,
         )
 
-        if db_module.async_engine is None:
-            init_async_db(database_url)
-            await create_tables_async()
-        await migrate_schema_async()
-        await insert_default_configs_async()
+        normalized_url = normalize_database_url(database_url)
+        with sensitive_log_scope(
+            database_url, normalized_url, make_url(normalized_url).password
+        ):
+            async with _database_setup_lock:
+                # This must precede engine replacement, create_all, legacy-table
+                # cleanup, every migration, defaults, and the Setup marker.
+                report = await check_database(database_url)
+                if not report["success"]:
+                    raise DatabaseSetupError(report)
+                previous_engine = db_module.async_engine
+                previous_session = db_module.async_session
+                previous_url = getattr(previous_engine, "url", None)
+                replacing = previous_engine is None or (
+                    previous_url is not None
+                    and previous_url != make_url(normalized_url)
+                )
+                stage = "ddl"
+                try:
+                    if replacing:
+                        init_async_db(database_url)
+                    if await schema_is_current(db_module.async_engine):
+                        logger.info("数据库结构已是当前版本，跳过重复初始化")
+                    else:
+                        stage = "migration"
+                        # migrate_schema_async already creates missing tables.
+                        await migrate_schema_async()
+                        stage = "defaults"
+                        await insert_default_configs_async()
+                        await record_schema_checkpoint(db_module.async_engine)
+                except BaseException as exc:
+                    if replacing:
+                        failed_engine = db_module.async_engine
+                        db_module.async_engine = previous_engine
+                        db_module.async_session = previous_session
+                        if (
+                            failed_engine is not None
+                            and failed_engine is not previous_engine
+                        ):
+                            await failed_engine.dispose()
+                    if not isinstance(exc, Exception):
+                        raise
+                    from backend.core.setup_database import _fail
+
+                    logger.bind(database_type=report["dialect"], setup_stage=stage).opt(
+                        exception=exc
+                    ).error("Setup database initialization failed")
+                    report["partial_schema"] = True
+                    report["schema_changes_started"] = True
+                    from backend.models.billing_schema import (
+                        BillingSchemaPermissionError,
+                    )
+
+                    code = (
+                        "billing_schema_privilege_required"
+                        if isinstance(exc, BillingSchemaPermissionError)
+                        else "database_initialization_failed"
+                    )
+                    _fail(report, code, stage=stage, error=exc)
+                    raise DatabaseSetupError(report) from None
+                if replacing and previous_engine is not None:
+                    await previous_engine.dispose()
 
     async def create_admin_user(
         self,
@@ -668,13 +759,6 @@ class SetupService:
         canonical_github_username = github_username.casefold()
 
         # 初始化数据库引擎（可能已经初始化过）
-        from backend.models import database as db_module
-        from backend.models.database import (
-            create_tables_async,
-            init_async_db,
-            insert_default_configs_async,
-            migrate_schema_async,
-        )
         from backend.models.identity_models import AuthProvider, UserIdentity
         from backend.models.telegram_models import TelegramUser
         from backend.services.identity_service import (
@@ -682,11 +766,7 @@ class SetupService:
             stage_notification_endpoint,
         )
 
-        if db_module.async_engine is None:
-            init_async_db(database_url)
-            await create_tables_async()
-        await migrate_schema_async()
-        await insert_default_configs_async()
+        await self.init_database(database_url)
 
         # 创建管理员记录
         from backend.models.database import async_session
@@ -1087,11 +1167,11 @@ class SetupService:
                     "unchanged": import_result.unchanged,
                 }
             return response
+        except DatabaseSetupError as exc:
+            return exc.report
         except Exception as e:
-            logger.error(f"Setup 完成失败: {e}")
-            error_message = str(e)
-            if database_url and database_url in error_message:
-                error_message = error_message.replace(database_url, "***")
+            logger.exception("Setup 完成失败")
+            error_message = sanitize_exception_text(e, secrets=(database_url,))
             return {"success": False, "message": f"配置失败: {error_message}"}
 
     def trigger_restart(self) -> None:

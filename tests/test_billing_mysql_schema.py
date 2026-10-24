@@ -133,6 +133,7 @@ def test_mysql_guard_export_is_offline_fixed_and_does_not_elevate(tmp_path):
     )
     assert run.returncode == 0, run.stderr
     sql = target.read_text()
+    assert sql == (script.parent.parent / "docs/billing-mysql-guards.sql").read_text()
     assert sql.count("CREATE TRIGGER IF NOT EXISTS") == 24
     assert sql.count("SIGNAL SQLSTATE '45000'") == 24
     assert "DROP " not in sql

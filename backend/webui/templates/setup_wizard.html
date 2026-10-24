@@ -188,29 +188,80 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
                             {{ _("setup.db_conn_help") }}
                         </p>
-                        <input type="text" x-model="form.database_url"
+                        <input type="text" x-model="form.database_url" @input="resetDatabaseReport()" :disabled="databaseBusy"
                                placeholder="mysql+asyncmy://user:password@localhost:3306/sakura_ai"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                            {{ _("setup.db_conn_format") }}
-                        </p>
                     </div>
 
-                    <button @click="testConnection('database')"
-                            :disabled="!form.database_url || testing"
-                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        <span x-show="!testing">{{ _("setup.test_connection") }}</span>
-                        <span x-show="testing" class="flex items-center gap-2">
-                            <span class="pulse-dot">●</span> {{ _("setup.testing") }}
-                        </span>
+                    <button @click="checkDatabase()" :disabled="!form.database_url || databaseBusy"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-pink-300 text-pink-700 dark:text-pink-300 disabled:opacity-50">
+                        <span x-text="databaseBusy ? I18N('setup.db_working') : I18N('setup.db_recheck')"></span>
                     </button>
 
-                    <!-- 测试结果 -->
-                    <div x-show="testResults.database" x-cloak
-                         class="p-3 rounded-lg text-sm"
-                         :class="testResults.database?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
-                         x-text="testResults.database?.message">
-                    </div>
+                    <section x-show="databaseReport" x-cloak data-testid="database-report"
+                             class="rounded-lg border p-4 text-sm space-y-4"
+                             :class="databaseReport?.success ? 'border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10' : 'border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10'">
+                        <p role="status" class="font-medium"
+                           :class="databaseReport?.success ? 'text-green-700 dark:text-green-300' : 'text-amber-800 dark:text-amber-200'"
+                           x-text="databaseBusy ? I18N('setup.db_working') : databaseMessage(databaseReport)"></p>
+
+                        <div x-show="databaseRepairOpen" x-ref="databaseRepairPanel" data-testid="database-auto-repair" class="space-y-3">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label class="block text-gray-700 dark:text-gray-300">{{ _("setup.db_admin_username") }}
+                                    <input type="text" x-model="databaseAdminUsername" x-ref="databaseAdminUserInput" autocomplete="off" placeholder="root"
+                                           :disabled="databaseBusy" class="mt-1 w-full p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
+                                </label>
+                                <label class="block text-gray-700 dark:text-gray-300">{{ _("setup.db_admin_password") }}
+                                    <input type="password" x-model="databaseAdminPassword" autocomplete="new-password"
+                                           :disabled="databaseBusy" class="mt-1 w-full p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
+                                </label>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button @click="repairDatabase()" :disabled="databaseBusy || !databaseAdminUsername.trim()"
+                                        class="px-4 py-2 rounded-lg bg-pink-600 text-white font-medium hover:bg-pink-700 disabled:opacity-50">
+                                    {{ _("setup.db_run_repair") }}
+                                </button>
+                                <span class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.db_admin_help") }}</span>
+                            </div>
+                        </div>
+
+                        <details data-testid="database-technical-details" class="text-xs text-gray-500 dark:text-gray-400">
+                            <summary class="cursor-pointer select-none">{{ _("setup.db_details") }}</summary>
+                            <div class="mt-3 space-y-3">
+                                <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 break-words">
+                                    <div>{{ _("setup.db_phase") }}: <span x-text="databaseReport?.stage"></span></div>
+                                    <div>{{ _("setup.db_error_code") }}: <span x-text="databaseReport?.database_error_code ?? '—'"></span></div>
+                                    <div>{{ _("setup.db_object") }}: <span x-text="databaseReport?.failed_object || '—'"></span></div>
+                                    <div>{{ _("setup.db_version") }}: <span x-text="databaseReport?.version || databaseReport?.dialect"></span></div>
+                                    <div>{{ _("setup.db_current_account") }}: <span x-text="databaseReport?.identity || '—'"></span></div>
+                                    <div>{{ _("setup.db_privileges") }}: <span x-text="databaseReport?.privileges?.join(', ') || I18N('setup.db_unknown')"></span></div>
+                                    <div>log_bin: <span x-text="databaseReport?.log_bin ?? I18N('setup.db_unknown')"></span></div>
+                                    <div>log_bin_trust_function_creators: <span x-text="databaseReport?.log_bin_trust_function_creators ?? I18N('setup.db_unknown')"></span></div>
+                                </dl>
+                                <p x-show="databaseReport?.partial_schema">{{ _("setup.db_resume_help") }}</p>
+                                <pre x-show="databaseReport?.cleanup_sql" x-text="databaseReport?.cleanup_sql" class="overflow-x-auto"></pre>
+                                <template x-for="warning in (databaseReport?.warnings || [])" :key="warning.code + warning.object">
+                                    <p x-text="I18N('setup.db_warning_' + warning.code) + ': ' + warning.object"></p>
+                                </template>
+                                <details x-show="databaseReport?.guards?.length">
+                                    <summary class="cursor-pointer">{{ _("setup.db_guard_details") }}</summary>
+                                    <ul class="mt-2 space-y-1 break-all">
+                                        <template x-for="guard in (databaseReport?.guards || [])" :key="guard.name">
+                                            <li x-text="guard.name + ' · ' + guard.status + (guard.definer ? ' · DEFINER ' + guard.definer : '')"></li>
+                                        </template>
+                                    </ul>
+                                </details>
+                                <details x-show="databaseReport?.repair_sql">
+                                    <summary class="cursor-pointer">{{ _("setup.db_manual_repair") }}</summary>
+                                    <p class="my-2">{{ _("setup.db_sql_help") }}</p>
+                                    <textarea readonly rows="6" :value="databaseReport?.repair_sql" aria-label="{{ _('setup.db_repair_sql') }}"
+                                              class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-xs font-mono p-2"></textarea>
+                                    <button type="button" @click="copyDatabaseSql()" class="mr-4 text-pink-600 dark:text-pink-300">{{ _("setup.db_copy_sql") }}</button>
+                                    <button type="button" @click="downloadDatabaseSql()" class="text-pink-600 dark:text-pink-300">{{ _("setup.db_download_sql") }}</button>
+                                </details>
+                            </div>
+                        </details>
+                    </section>
 
                     <hr class="border-gray-200 dark:border-gray-700">
 
@@ -219,8 +270,7 @@
                             {{ _("setup.redis_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            {{ _("setup.redis_help_1") }} <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>
-                            {{ _("setup.redis_help_2") }} <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>。
+                            {{ _("setup.redis_help") }}
                         </p>
                         <input type="text" x-model="form.redis_url"
                                placeholder="redis://127.0.0.1:6379/0"
@@ -620,6 +670,12 @@ function setupWizard() {
             testResults: {},
             _availableModels: [],
         testing: false,
+        databaseBusy: false,
+        databaseReport: null,
+        databaseAdminUsername: '',
+        databaseAdminPassword: '',
+        databaseRepairOpen: false,
+        databasePendingStep: null,
         completing: false,
         restarting: false,
         restartError: false,
@@ -645,9 +701,10 @@ function setupWizard() {
         prefilledConnection: null,
 
         get canProceed() {
+            if (this.databaseBusy) return false;
             switch (this.currentStep) {
                 case 0: return true;
-                case 1: return this.form.database_url.trim() !== '' && this.testResults.database?.success && this.form.redis_url.trim() !== '' && this.testResults.redis?.success;
+                case 1: return this.form.database_url.trim() !== '' && this.databaseReport?.success && this.testResults.database?.success && this.form.redis_url.trim() !== '' && this.testResults.redis?.success;
                 case 2: return this.form.github_app_id.trim() !== '' && this.form.github_private_key.trim() !== '' && this.form.github_webhook_secret.trim() !== '' && this.testResults.github?.success;
                 // Notification providers are optional.  The wizard may finish
                 // with neither Telegram nor SMTP configured.
@@ -816,17 +873,19 @@ function setupWizard() {
         },
 
         prevStep() {
+            if (this.databaseBusy) return;
             if (this.currentStep > 0) {
                 this.currentStep--;
             }
         },
 
         async nextStep() {
-            if (!this.canProceed) return;
+            if (!this.canProceed || this.databaseBusy) return;
 
             // 保存当前步骤配置
             const envMap = this._getStepEnvMap();
             if (Object.keys(envMap).length > 0) {
+                this.databaseBusy = true;
                 try {
                     const resp = await fetch('/setup/api/save-step', {
                         method: 'POST',
@@ -834,16 +893,131 @@ function setupWizard() {
                         body: JSON.stringify({ values: envMap }),
                     });
                     const data = await resp.json();
-                    if (!data.success) {
-                        this.error = data.message;
+                    if (!resp.ok || !data.success) {
+                        if (data.stage) this.acceptDatabaseReport(data);
+                        else this.error = data.message;
                         return;
                     }
                 } catch (e) {
                     this.error = I18N('setup.save_failed');
                     return;
+                } finally {
+                    this.databaseBusy = false;
                 }
             }
             this.currentStep++;
+        },
+
+        resetDatabaseReport() {
+            this.databaseReport = null;
+            this.testResults.database = null;
+            this.databaseAdminUsername = '';
+            this.databaseAdminPassword = '';
+            this.databaseRepairOpen = false;
+            this.databasePendingStep = null;
+        },
+
+        acceptDatabaseReport(report) {
+            this.databaseReport = report;
+            this.error = '';
+            this.testResults.database = {
+                success: report.connected === true,
+                message: I18N('setup.db_connection_only'),
+            };
+            const repairable = !report.success &&
+                (report.code === 'billing_schema_privilege_required' || report.stage === 'repair') &&
+                (report.dialect === 'mysql' || report.dialect === 'mariadb');
+            this.databaseRepairOpen = repairable;
+            if (repairable && this.currentStep === 1) {
+                this.databasePendingStep = { step: this.currentStep, url: this.form.database_url };
+                this.$nextTick?.(() => {
+                    this.$refs.databaseRepairPanel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    this.$refs.databaseAdminUserInput?.focus({ preventScroll: true });
+                });
+            } else if (report.success) {
+                this.databasePendingStep = null;
+            }
+        },
+
+        databaseMessage(report) {
+            if (!report) return '';
+            const key = 'setup.db_status_' + report.code;
+            const translated = I18N(key);
+            return translated === key ? I18N('setup.db_status_database_preflight_failed') : translated;
+        },
+
+        async checkDatabase() {
+            if (this.databaseBusy) return;
+            const url = this.form.database_url;
+            this.databaseBusy = true;
+            this.error = '';
+            try {
+                const resp = await fetch('/setup/api/database-preflight', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url }),
+                });
+                const report = await resp.json();
+                if (url === this.form.database_url) {
+                    this.acceptDatabaseReport(report);
+                }
+            } catch {
+                this.error = I18N('setup.db_status_database_preflight_failed');
+            } finally {
+                this.databaseBusy = false;
+            }
+        },
+
+        async repairDatabase() {
+            if (this.databaseBusy || !this.databaseAdminUsername.trim()) return;
+            const url = this.form.database_url;
+            const pendingStep = this.databasePendingStep;
+            let resume = false;
+            // These fields are outside form/backup/config maps and are cleared
+            // before the request can finish. Only this request owns the secret.
+            const body = JSON.stringify({
+                url, username: this.databaseAdminUsername.trim(),
+                password: this.databaseAdminPassword, confirmed: true,
+            });
+            this.databaseAdminUsername = '';
+            this.databaseAdminPassword = '';
+            this.databaseBusy = true;
+            this.error = '';
+            try {
+                const resp = await fetch('/setup/api/database-repair', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+                });
+                const report = await resp.json();
+                if (url === this.form.database_url) {
+                    this.acceptDatabaseReport(report);
+                    if (resp.ok && report.success) {
+                        resume = pendingStep?.step === this.currentStep && pendingStep?.url === url;
+                    }
+                }
+            } catch {
+                this.error = I18N('setup.db_status_database_repair_failed');
+            } finally {
+                this.databaseBusy = false;
+            }
+            if (resume) await this.nextStep();
+        },
+
+        async copyDatabaseSql() {
+            try {
+                await navigator.clipboard.writeText(this.databaseReport?.repair_sql || '');
+            } catch {
+                this.error = I18N('setup.db_copy_failed');
+            }
+        },
+
+        downloadDatabaseSql() {
+            const blob = new Blob([this.databaseReport?.repair_sql || ''], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'sakura-billing-mysql-repair.sql';
+            link.click();
+            URL.revokeObjectURL(url);
         },
 
         async testConnection(type) {
@@ -874,6 +1048,9 @@ function setupWizard() {
                     body: JSON.stringify(body),
                 });
                 this.testResults[type] = await resp.json();
+                if (type === 'database' && this.testResults[type]?.success) {
+                    this.testResults[type].message = I18N('setup.db_connection_only');
+                }
                 // GitHub App 测试成功时自动获取 bot_username
                 if (type === 'github' && this.testResults[type]?.success && this.testResults[type]?.bot_username) {
                     this.form.bot_username = this.testResults[type].bot_username;

@@ -426,6 +426,21 @@ class BootstrapMiddleware:
             await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)
             return
 
+        # API clients use the same bootstrap credential as the wizard. Keep
+        # Setup APIs reachable during bootstrap without opening other APIs.
+        if path == "/api/v1/setup" or path.startswith("/api/v1/setup/"):
+            from starlette.datastructures import Headers
+
+            token = Headers(scope=scope).get("x-setup-token", "")
+            if not (_has_valid_setup_cookie(scope) or validate_setup_token(token)):
+                await JSONResponse(
+                    {"success": False, "error": "Setup authorization required"},
+                    status_code=403,
+                )(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
         # Setup Wizard 路径分层处理
         if path.startswith(self.SETUP_PREFIX):
             # verify 页面本身不需要 Token（Token 输入入口）
