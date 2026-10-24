@@ -571,6 +571,7 @@ async def test_admin_failure_masks_opaque_credentials_in_actual_console_and_json
             path,
             format=logging_bridge._format_record,
             serialize=True,
+            encoding="utf-8",
             filter=logging_bridge._sink_filter,
             diagnose=False,
             backtrace=False,
@@ -603,11 +604,12 @@ async def test_admin_failure_masks_opaque_credentials_in_actual_console_and_json
             logger.remove(sink)
     assert not result["success"]
     assert not result.get("schema_changes_started")
-    for output in (console.getvalue(), path.read_text(), json.dumps(result)):
+    serialized = path.read_text(encoding="utf-8")
+    for output in (console.getvalue(), serialized, json.dumps(result)):
         assert "opaque-admin-credential" not in output
         assert "opaque-runtime-credential" not in output
     assert "RuntimeError" in console.getvalue()
-    assert "RuntimeError" in path.read_text()
+    assert "RuntimeError" in serialized
 
 
 @pytest.mark.asyncio
