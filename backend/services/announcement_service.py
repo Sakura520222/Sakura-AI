@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from loguru import logger
-from sqlalchemy import String, and_, case, cast, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, literal, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1265,13 +1265,16 @@ def _announcement_web_preference(user_id: int):
     """
     from backend.models.notification_models import NotificationSubscription as Rule
 
+    # CAST(id AS CHAR) uses MySQL's connection collation at the same priority
+    # as resource_id. Concatenating a literal lets the column's collation win.
+    announcement_resource_id = literal("").concat(Announcement.id)
     relevant = [Rule.user_id == user_id, Rule.event_type.in_(["*", "announcement.*", "announcement.published"])]
     any_rule = select(Rule.id).where(*relevant).exists()
     matching = select(Rule.id).where(*relevant,
         Rule.enabled.is_(True), Rule.endpoint_id.is_(None),
         or_(Rule.repo_name.is_(None), Rule.repo_name == ""),
         or_(Rule.resource_type.is_(None), Rule.resource_type == "announcement"),
-        or_(Rule.resource_id.is_(None), Rule.resource_id == cast(Announcement.id, String)),
+        or_(Rule.resource_id.is_(None), Rule.resource_id == announcement_resource_id),
         or_(Rule.min_severity == "info", and_(Rule.min_severity == "warning", Announcement.announcement_type == "important")),
     ).exists()
     return or_(~any_rule, matching)

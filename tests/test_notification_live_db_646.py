@@ -11,6 +11,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.core.config import get_settings
+from backend.core.time_service import now_utc
 from backend.models import Base
 from backend.models import database as db_module
 from backend.models.admin_action_log import AdminActionLog
@@ -52,6 +53,7 @@ from backend.models.telegram_models import (
     UserWebAuthnCredential,
 )
 from backend.services import notification_events, telegram_service
+from backend.services.announcement_service import paginate_announcements, unread_count
 from backend.services.issue_service import IssueService
 from backend.services.notification_business import install_notification_outbox
 from backend.services.notification_events import emit_event
@@ -118,6 +120,62 @@ async def live_db(monkeypatch):
         async with engine.begin() as conn:
             await conn.run_sync(lambda db: Base.metadata.drop_all(db, tables=tables))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("column_collation", "connection_collation"),
+    [("utf8mb4_general_ci", "utf8mb4_0900_ai_ci"), ("utf8mb4_0900_ai_ci", "utf8mb4_general_ci")],
+)
+async def test_live_unread_announcement_scopes_with_mixed_collations(
+    live_db, column_collation, connection_collation,
+):
+    async with live_db(info={"notification_outbox": False}) as db:
+        if db.bind.dialect.name in {"mysql", "mariadb"}:
+            # Reproduce a legacy database whose column and connection defaults differ.
+            await db.execute(text(
+                "ALTER TABLE notification_subscriptions MODIFY COLUMN "
+                f"resource_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE {column_collation} NULL"
+            ))
+            await db.execute(text(f"SET NAMES utf8mb4 COLLATE {connection_collation}"))
+        for announcement_id in (1, 12, 13):
+            db.add(Announcement(
+                id=announcement_id, title=f"Announcement {announcement_id}",
+                content="Body", status="published", published_at=now_utc(),
+            ))
+        await db.flush()
+        db.add(AnnouncementRead(user_id=1, announcement_id=13, publication_version=1))
+        await db.flush()
+
+        # Even the default (no announcement rules) must execute the whole predicate.
+        assert await unread_count(db, 1) == 2
+        rule = NotificationSubscription(
+            user_id=1, event_type="announcement.*", enabled=True,
+            resource_type="announcement", resource_id=None,
+        )
+        db.add(rule)
+        for resource_id, expected in (
+            (None, [12, 1]), ("1", [1]), ("12", [12]),
+            ("01", []), ("1junk", []), ("1.0", []), ("13", []),
+        ):
+            rule.resource_id = resource_id
+            await db.flush()
+            page = await paginate_announcements(
+                db, user_id=1, per_page=1, unread_only=True,
+            )
+            assert page.total == len(expected)
+            assert [row.id for row, _read in page.items] == expected[:1]
+            assert await unread_count(db, 1) == len(expected)
+            if len(expected) > 1:
+                second = await paginate_announcements(
+                    db, user_id=1, page=2, per_page=1, unread_only=True,
+                )
+                assert [row.id for row, _read in second.items] == expected[1:]
+        rule.resource_id = None
+        rule.enabled = False
+        await db.flush()
+        assert await unread_count(db, 1) == 0
+        assert (await paginate_announcements(db, user_id=1, unread_only=True)).total == 0
 
 
 @pytest.mark.asyncio
