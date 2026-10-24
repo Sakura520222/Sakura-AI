@@ -179,7 +179,7 @@ PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核�
 
 ### 管理与运维
 
-- **Setup Wizard** — 首次启动分步引导，支持断点续配
+- **Setup Wizard** — 首次启动分步引导，支持断点续配、迁移前数据库预检和临时管理员会话自动修复 Billing Guard
 - **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录；超级管理员可设置应用 IANA 时区（保存后重启）
 - **动态配置管理** — 普通 WebUI 配置修改即时生效；应用时区等重启键保存后按提示重启
 - **AI API 超时治理** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`

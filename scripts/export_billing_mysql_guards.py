@@ -12,6 +12,8 @@ from backend.models.billing_schema import IMMUTABLE_TABLES, mysql_guard_ddl
 def export_sql():
     header = (
         "-- Billing 2.0 immutable guards for MySQL 8.0.29+ / 8.4.\n"
+        "-- First-run Setup can preflight and install these guards using a temporary DBA session.\n"
+        "-- This offline guard-only export requires the application tables to exist first.\n"
         "-- Review and run as an authorized database administrator in the Sakura database.\n"
         "-- The installer account becomes DEFINER and must remain valid.\n"
         "-- Runtime accounts need table TRIGGER privileges for metadata verification.\n"

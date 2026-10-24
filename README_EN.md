@@ -179,7 +179,7 @@ Before installing the PR-Issue unique index, the database deduplicates historica
 
 ### Management & Operations
 
-- **Setup Wizard** — First-launch step-by-step guidance with resume support
+- **Setup Wizard** — First-launch guidance with resume support, database preflight before migration, and automatic Billing Guard repair through a temporary administrator session
 - **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged; super administrators can set an IANA application timezone (restart required)
 - **Dynamic Configuration** — Ordinary WebUI changes take effect immediately; restart-required keys such as the application timezone are applied after restart
 - **AI API Timeout Control** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`

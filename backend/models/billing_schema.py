@@ -21,6 +21,10 @@ IMMUTABLE_TABLES = (
     "payment_refund_references",
 )
 
+MYSQL_GUARD_BODY = (
+    "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Billing ledger is append-only'"
+)
+
 
 class BillingSchemaPermissionError(RuntimeError):
     """A DBA must install required guards before this deployment can start."""
@@ -28,6 +32,7 @@ class BillingSchemaPermissionError(RuntimeError):
     code = "billing_schema_privilege_required"
 
     def __init__(self, table_name, error_code):
+        self.table_name = table_name
         self.database_error_code = error_code
         super().__init__(
             f"{self.code}: MySQL rejected the immutable guard for {table_name} "
@@ -47,8 +52,19 @@ def mysql_guard_ddl(table_name: str, action: str, *, if_not_exists=False) -> str
     clause = "IF NOT EXISTS " if if_not_exists else ""
     return (
         f"CREATE TRIGGER {clause}{name} BEFORE {action} ON {table_name} "
-        "FOR EACH ROW SIGNAL SQLSTATE '45000' "
-        "SET MESSAGE_TEXT = 'Billing ledger is append-only'"
+        f"FOR EACH ROW {MYSQL_GUARD_BODY}"
+    )
+
+
+def mysql_probe_guard_ddl(table_name: str, action: str) -> str:
+    """Use the authoritative body only on a generated, disposable probe table."""
+    if not re.fullmatch(r"sakura_setup_probe_[0-9a-f]{32}", table_name):
+        raise ValueError("Unknown setup probe table")
+    if action not in {"UPDATE", "DELETE"}:
+        raise ValueError("Unknown billing immutable guard action")
+    return (
+        f"CREATE TRIGGER {table_name}_no_{action.lower()} BEFORE {action} "
+        f"ON {table_name} FOR EACH ROW {MYSQL_GUARD_BODY}"
     )
 
 
@@ -76,13 +92,13 @@ def _validate_mysql_guard(metadata, table_name, action):
         )
 
 
-def _ensure_mysql_guard(connection, table_name, action):
+def read_mysql_guard(connection, table_name, action):
     name = f"{table_name}_no_{action.lower()}"
-    installed = (
+    return (
         connection.execute(
             text(
                 "SELECT EVENT_OBJECT_TABLE, EVENT_MANIPULATION, ACTION_TIMING, "
-                "ACTION_ORIENTATION, ACTION_STATEMENT FROM information_schema.TRIGGERS "
+                "ACTION_ORIENTATION, ACTION_STATEMENT, DEFINER FROM information_schema.TRIGGERS "
                 "WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = :name"
             ),
             {"name": name},
@@ -90,6 +106,10 @@ def _ensure_mysql_guard(connection, table_name, action):
         .mappings()
         .one_or_none()
     )
+
+
+def _ensure_mysql_guard(connection, table_name, action):
+    installed = read_mysql_guard(connection, table_name, action)
     if installed is not None:
         _validate_mysql_guard(installed, table_name, action)
         return False
@@ -98,11 +118,20 @@ def _ensure_mysql_guard(connection, table_name, action):
     except DBAPIError as exc:
         args = getattr(exc.orig, "args", ())
         code = args[0] if args else None
+        if code == 1359:
+            installed = read_mysql_guard(connection, table_name, action)
+            if installed is not None:
+                _validate_mysql_guard(installed, table_name, action)
+                return False
         if code in {1419, 1142, 1227}:
             # Never retry with elevated credentials or relax server-wide policy.
             # Keep startup closed and omit potentially sensitive driver details.
             raise BillingSchemaPermissionError(table_name, code) from None
         raise
+    installed = read_mysql_guard(connection, table_name, action)
+    if installed is None:
+        raise BillingSchemaPermissionError(table_name, 1142)
+    _validate_mysql_guard(installed, table_name, action)
     return True
 
 

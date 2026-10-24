@@ -1,4 +1,6 @@
 -- Billing 2.0 immutable guards for MySQL 8.0.29+ / 8.4.
+-- First-run Setup can preflight and install these guards using a temporary DBA session.
+-- This offline guard-only export requires the application tables to exist first.
 -- Review and run as an authorized database administrator in the Sakura database.
 -- The installer account becomes DEFINER and must remain valid.
 -- Runtime accounts need table TRIGGER privileges for metadata verification.

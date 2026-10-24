@@ -756,7 +756,7 @@ async def create_tables_async():
             await conn.run_sync(Base.metadata.create_all)
             dropped = await conn.run_sync(_drop_legacy_activity_tables)
 
-        logger.info("✅ 数据库表创建成功")
+        logger.info("✅ 数据库表已就绪")
         if dropped:
             logger.info("✅ 已移除旧版实时监控表: %s", ", ".join(dropped))
 
@@ -1296,39 +1296,60 @@ async def _ensure_activity_publication_marker_column(conn, logger) -> None:
     )
 
 
-async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
+async def _ensure_agent_message_longtext_columns(conn, logger) -> bool:
     if conn.dialect.name != "mysql":
-        return
+        return False
     from sqlalchemy import inspect
+    from sqlalchemy.schema import CreateColumn
 
-    def _existing_tables(sync_conn):
-        insp = inspect(sync_conn)
-        return set(insp.get_table_names())
-
-    existing_tables = await conn.run_sync(_existing_tables)
-    columns = {
-        "agent_team_messages": {
-            "content": "LONGTEXT NULL",
-            "message_json": "LONGTEXT NOT NULL",
-        },
-        "agent_team_tool_calls": {
-            "arguments_json": "LONGTEXT NULL",
-        },
+    targets = {
+        "agent_team_messages": ("content", "message_json"),
+        "agent_team_tool_calls": ("arguments_json",),
     }
-    for table_name, table_columns in columns.items():
-        if table_name not in existing_tables:
-            continue
-        for column_name, column_type in table_columns.items():
+
+    def _columns(sync_conn):
+        inspector = inspect(sync_conn)
+        tables = set(inspector.get_table_names())
+        return {
+            name: {item["name"]: item for item in inspector.get_columns(name)}
+            for name in targets
+            if name in tables
+        }
+
+    reflected = await conn.run_sync(_columns)
+    changed = False
+    for table_name, names in targets.items():
+        for column_name in names:
+            column = reflected.get(table_name, {}).get(column_name)
+            if column is None or isinstance(column["type"], LONGTEXT):
+                continue
+            current_type = column["type"]
+            if not isinstance(current_type, (Text, TINYTEXT, MEDIUMTEXT)):
+                raise RuntimeError(f"Cannot expand {table_name}.{column_name}: expected text")
+            expanded = Column(
+                column_name,
+                LONGTEXT(
+                    charset=getattr(current_type, "charset", None),
+                    collation=getattr(current_type, "collation", None),
+                ),
+                quote=True,
+                nullable=column["nullable"],
+                server_default=text(column["default"]) if column.get("default") is not None else None,
+                comment=column.get("comment"),
+            )
+            definition = str(CreateColumn(expanded).compile(dialect=conn.dialect))
             await conn.execute(
                 text(
-                    f"ALTER TABLE `{table_name}` MODIFY COLUMN `{column_name}` {column_type}"
+                    f"ALTER TABLE `{table_name}` MODIFY COLUMN {definition}"
                 )
             )
+            changed = True
             logger.info(
                 "[auto-migrate] 扩展列为 LONGTEXT: %s.%s",
                 table_name,
                 column_name,
             )
+    return changed
 
 
 async def _ensure_issue_analysis_longtext_columns(conn, logger) -> bool:
@@ -1525,7 +1546,7 @@ async def _auto_migrate():
 
         missing = await conn.run_sync(_get_missing_columns)
 
-        await _ensure_agent_message_longtext_columns(conn, _logger)
+        agent_storage_changed = await _ensure_agent_message_longtext_columns(conn, _logger)
         await _ensure_activity_publication_marker_column(conn, _logger)
 
         # 执行 ALTER TABLE ADD COLUMN。标识符与类型均使用当前连接的方言，
@@ -1557,6 +1578,7 @@ async def _auto_migrate():
 
         if (
             not missing
+            and not agent_storage_changed
             and not billing_schema_changed
             and not unique_index_created
             and not pr_link_index_created

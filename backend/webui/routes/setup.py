@@ -20,6 +20,13 @@ from backend.core.bootstrap import (
     write_connection_config,
 )
 from backend.core.config import get_settings
+from backend.core.setup_database import (
+    DatabaseSetupError,
+    check_database,
+    has_setup_database_token,
+    repair_database,
+    setup_database_status,
+)
 from backend.core.setup_service import setup_service
 from backend.services.config_backup_service import (
     ConfigBackupError,
@@ -247,6 +254,43 @@ async def get_ai_providers(request: Request):
     return _legacy_ai_migration_response()
 
 
+@router.post("/api/database-preflight")
+@limiter.limit("10/minute")
+async def database_preflight(request: Request):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return JSONResponse(
+            {"success": False, "message": "Setup authorization required"},
+            status_code=403,
+        )
+    body = await request.json()
+    result = await check_database(body.get("url", ""))
+    return JSONResponse(result, status_code=setup_database_status(result))
+
+
+@router.post("/api/database-repair")
+@limiter.limit("3/minute")
+async def database_repair(request: Request):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return JSONResponse(
+            {"success": False, "message": "Setup authorization required"},
+            status_code=403,
+        )
+    body = await request.json()
+    try:
+        result = await repair_database(
+            body.get("url", ""),
+            body.get("username", ""),
+            body.get("password", ""),
+            confirmed=body.get("confirmed") is True,
+        )
+        return JSONResponse(result, status_code=setup_database_status(result))
+    except ValueError, TypeError, AttributeError:
+        return JSONResponse(
+            {"success": False, "message": "Invalid database repair request"},
+            status_code=400,
+        )
+
+
 @router.post("/api/ai-models")
 async def get_ai_models(request: Request):
     """旧供应商模型 API 的迁移响应。"""
@@ -336,7 +380,7 @@ async def save_step(request: Request):
             # 先验证数据库连接可用
             test_result = await setup_service.test_database_connection(database_url)
             if not test_result["success"]:
-                return JSONResponse(test_result)
+                return JSONResponse(test_result, status_code=400)
 
             # 初始化 DB 引擎并创建表
             await setup_service.init_database(database_url)
@@ -357,13 +401,21 @@ async def save_step(request: Request):
             await setup_service.save_configs_to_db(values)
 
         clear_bootstrap_cache()
-        return JSONResponse({"success": True, "message": "配置已保存"})
+        result = {"success": True, "message": "配置已保存"}
+        if database_url:
+            result.update(
+                stage="initialized", connected=True, schema_ready=True, initialized=True
+            )
+        return JSONResponse(result)
+    except DatabaseSetupError as exc:
+        return JSONResponse(exc.report, status_code=setup_database_status(exc.report))
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
     except Exception:
         logger.exception("保存配置失败")
         return JSONResponse(
-            {"success": False, "message": "保存失败，请检查输入或服务日志"}
+            {"success": False, "message": "保存失败，请检查输入或服务日志"},
+            status_code=500,
         )
 
 
@@ -412,4 +464,9 @@ async def complete_setup(request: Request):
 
         asyncio.create_task(_delayed_restart())
 
-    return JSONResponse(result)
+    return JSONResponse(
+        result,
+        status_code=setup_database_status(result)
+        if result.get("stage")
+        else (200 if result["success"] else 400),
+    )

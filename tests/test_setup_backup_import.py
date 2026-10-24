@@ -175,6 +175,7 @@ async def test_save_step_hides_unexpected_exception_details(monkeypatch):
         "success": False,
         "message": "保存失败，请检查输入或服务日志",
     }
+    assert response.status_code == 500
     assert secret.encode() not in response.body
 
 
@@ -199,7 +200,7 @@ async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
         )
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     call = complete.await_args
     assert "CONFIG_BACKUP" not in call.args[0]
     assert call.args[0]["DATABASE_URL"].startswith("mysql+asyncmy://override:")
