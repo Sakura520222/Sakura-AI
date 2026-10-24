@@ -17,6 +17,17 @@ from sqlalchemy import create_engine, inspect, text
 from backend.core.setup_service import SetupService
 
 
+@pytest.fixture(autouse=True)
+def isolate_schema_checkpoints(monkeypatch):
+    monkeypatch.setattr(
+        "backend.models.schema_state.schema_is_current",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "backend.models.schema_state.record_schema_checkpoint", AsyncMock()
+    )
+
+
 def _fake_engine_ok():
     """构造一个连接成功的假引擎，避免真实数据库连接。"""
     conn = MagicMock()
@@ -84,9 +95,13 @@ async def test_aiomysql_url_is_normalized_before_engine():
 
 
 @pytest.mark.asyncio
-async def test_setup_init_database_runs_schema_migration_after_create_tables():
+async def test_setup_init_database_does_not_duplicate_migrator_table_creation():
     service = SetupService()
     with (
+        patch(
+            "backend.core.setup_service.check_database",
+            AsyncMock(return_value={"success": True, "dialect": "mysql"}),
+        ),
         patch("backend.models.database.async_engine", object()),
         patch("backend.models.database.init_async_db") as init_async_db,
         patch(
@@ -102,7 +117,7 @@ async def test_setup_init_database_runs_schema_migration_after_create_tables():
     ):
         await service.init_database("mysql+asyncmy://u:p@host/db")
     init_async_db.assert_not_called()
-    create_tables.assert_not_called()
+    create_tables.assert_not_awaited()
     migrate.assert_awaited_once()
 
 
@@ -120,6 +135,11 @@ async def test_setup_create_admin_user_runs_migration_when_engine_exists():
     fake_session.execute = AsyncMock(return_value=result)
     fake_session.commit = AsyncMock()
     with (
+        patch(
+            "backend.core.setup_service.check_database",
+            AsyncMock(return_value={"success": True, "dialect": "mysql"}),
+        ),
+        patch("backend.models.database.create_tables_async", AsyncMock()),
         patch("backend.models.database.async_engine", object()),
         patch(
             "backend.models.database.async_session",

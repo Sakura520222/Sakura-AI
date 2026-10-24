@@ -325,12 +325,25 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
 
 验证通过后进入向导，分步完成：
 
-1. **数据库配置**：填写 MySQL 和 Redis 连接地址，提供在线连接测试
+1. **数据库配置**：填写连接地址，检查数据库并测试 Redis；需要时授权自动修复后继续
 2. **GitHub App 配置**：填写 App ID、私钥和 Webhook Secret，自动验证 App 连接
 3. **AI 模型与通知**：配置 AI API（支持自动获取模型列表）和 Telegram Bot Token
 4. **管理员与 OAuth**：设置管理员账户、应用域名和 GitHub OAuth 凭证
 
 > Setup Wizard 内置 RAG 嵌入与重排序模型配置（可折叠），可跳过后续在 WebUI 中配置。
+
+MySQL 安装能力检测失败时，先查看结果区的错误码、binlog 参数和 Guard 状态。
+Windows 源码、Docker MySQL、远程独立实例使用同一条预检与恢复流程：
+权限允许时自动安装；1419 或缺少 TRIGGER 时，可在结果区使用一次性的管理员
+会话自动建表、安装并验证账本 Guard、按需授予应用账号表级 TRIGGER，再重新
+检测。管理员凭据提交后清空，不保存到配置或日志；请使用持续有效的账号，
+该账号将成为触发器 DEFINER。
+
+共享/托管 MySQL 无足够管理员权限时，复制或下载当前数据库的修复 SQL 交给
+DBA/服务商。应用不自动修改实例全局参数、不授予 SUPER、不重建数据库。
+正确预装 Guard 后无需再次取得创建权限；修复后可以直接重试当前步骤，
+无需重填其他配置。MySQL 已提交的部分 DDL 会保留，失败不会写 Setup 完成标记。
+详细权限与清理说明见[计费文档 · MySQL 账本触发器预安装](billing-2.md#mysql-账本触发器预安装)。
 
 ---
 

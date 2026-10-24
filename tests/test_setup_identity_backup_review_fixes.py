@@ -26,6 +26,13 @@ from backend.services.identity_service import (
     migrate_legacy_identity_data,
 )
 from backend.services.notification_service import NotificationService
+
+
+@pytest.fixture(autouse=True)
+def isolate_database_initialization(monkeypatch):
+    # These tests exercise identity/backup behavior against their SQLite facade.
+    # Schema capability checks are covered in test_setup_database_preflight.py.
+    monkeypatch.setattr(SetupService, "init_database", AsyncMock())
 from backend.services.system_config_service import SystemConfigValidationError
 from backend.services.user_backup_service import parse_user_backup, restore_user_backup
 

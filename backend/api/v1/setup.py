@@ -1,8 +1,9 @@
 """API v1 Setup Wizard 端点（免认证，仅在 bootstrap 模式下可用）"""
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr, StrictBool
 
 from backend.api.v1.deps import limiter
 from backend.api.v1.responses import error_response, success_response
@@ -10,6 +11,13 @@ from backend.core.bootstrap import (
     get_current_step,
     get_missing_fields,
     is_bootstrap_mode,
+)
+from backend.core.setup_database import (
+    DatabaseSetupError,
+    check_database,
+    has_setup_database_token,
+    repair_database,
+    setup_database_status,
 )
 from backend.core.setup_service import setup_service
 
@@ -37,6 +45,56 @@ class SaveStepRequest(BaseModel):
     """保存配置步骤请求"""
 
     values: dict[str, str]
+
+
+class DatabasePreflightRequest(BaseModel):
+    database_url: str
+
+
+class DatabaseRepairRequest(DatabasePreflightRequest):
+    username: str
+    password: SecretStr
+    confirmed: StrictBool = False
+
+
+def _database_response(result):
+    if result["success"]:
+        return success_response(data=result)
+    return JSONResponse(
+        {
+            "success": False,
+            "error": result["message"],
+            "code": result.get("code", "database_connection_failed"),
+            "data": result,
+        },
+        status_code=setup_database_status(result),
+    )
+
+
+@router.post("/database-preflight")
+@limiter.limit("10/minute")
+async def database_preflight(request: Request, body: DatabasePreflightRequest):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return _database_response(await check_database(body.database_url))
+
+
+@router.post("/database-repair")
+@limiter.limit("3/minute")
+async def database_repair(request: Request, body: DatabaseRepairRequest):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    try:
+        return _database_response(
+            await repair_database(
+                body.database_url,
+                body.username,
+                body.password.get_secret_value(),
+                confirmed=body.confirmed,
+            )
+        )
+    except ValueError:
+        return error_response("Invalid database repair request", status_code=400)
 
 
 class CompleteSetupRequest(BaseModel):
@@ -141,6 +199,8 @@ async def test_connection(request: Request, body: TestConnectionRequest):
     else:
         return error_response(f"不支持的测试类型: {body.type}", status_code=400)
 
+    if not result["success"]:
+        return error_response(result["message"], status_code=400)
     return success_response(data=result)
 
 
@@ -178,10 +238,17 @@ async def save_step(body: SaveStepRequest):
             await setup_service.init_database(db_url)
 
         saved = await setup_service.save_configs_to_db(values)
+        result = {"saved_count": saved}
+        if "DATABASE_URL" in values:
+            result.update(
+                stage="initialized", connected=True, schema_ready=True, initialized=True
+            )
         return success_response(
-            data={"saved_count": saved},
+            data=result,
             message=f"已保存 {saved} 项配置",
         )
+    except DatabaseSetupError as exc:
+        return _database_response(exc.report)
     except ValueError as exc:
         return error_response(str(exc), status_code=400)
     except Exception:
@@ -208,4 +275,6 @@ async def complete_setup(request: Request, body: CompleteSetupRequest):
         asyncio.get_running_loop().call_later(2, setup_service.trigger_restart)
         return success_response(data=result, message=result["message"])
     else:
+        if result.get("stage"):
+            return _database_response(result)
         return error_response(result["message"], status_code=400)
