@@ -18,6 +18,7 @@ from backend.models.announcement_models import (
     AnnouncementRead,
     DeliveryStatus,
 )
+from backend.models.notification_models import NotificationSubscription
 from backend.models.telegram_models import TelegramUser
 from backend.services import announcement_service
 
@@ -105,6 +106,39 @@ async def test_unread_filter_is_applied_before_pagination_and_ids_break_ties(
     assert first.total == 3
     assert first.total_pages == 2
     assert all(not read for _row, read in first.items + second.items)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resource_id", "expected"),
+    [(None, [12, 1]), ("1", [1]), ("12", [12]), ("01", []), ("1junk", []), ("1.0", []), ("13", [])],
+)
+async def test_unread_subscription_resource_ids_keep_text_matching(
+    sqlite_session, resource_id, expected,
+):
+    db = sqlite_session
+    db.add(TelegramUser(id=1, telegram_id=1001, is_active=True))
+    published_at = announcement_service.now_utc()
+    for announcement_id in (1, 12, 13):
+        db.add(_published(announcement_id, published_at=published_at))
+    db.add(AnnouncementRead(user_id=1, announcement_id=13))
+    db.add(NotificationSubscription(
+        user_id=1, event_type="announcement.*", enabled=True,
+        resource_type="announcement", resource_id=resource_id,
+    ))
+    await db.commit()
+
+    first = await announcement_service.paginate_announcements(
+        db, user_id=1, page=1, per_page=1, unread_only=True,
+    )
+    assert first.total == len(expected)
+    assert [row.id for row, _read in first.items] == expected[:1]
+    assert await announcement_service.unread_count(db, 1) == len(expected)
+    if len(expected) > 1:
+        second = await announcement_service.paginate_announcements(
+            db, user_id=1, page=2, per_page=1, unread_only=True,
+        )
+        assert [row.id for row, _read in second.items] == expected[1:]
 
 
 @pytest.mark.asyncio
