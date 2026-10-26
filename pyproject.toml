@@ -46,7 +46,7 @@ dependencies = [
     "typing-extensions>=4.16.0",
     "pyyaml>=6.0.3",
     "pydantic>=2.14.0",
-    "pydantic-settings>=2.15.0",
+    "pydantic-settings>=2.16.1",
     "Pillow>=12.3.0",
     "tzlocal==5.4.4",
     "tzdata==2026.5",
