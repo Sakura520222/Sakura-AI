@@ -47,7 +47,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "pydantic>=2.14.0",
     "pydantic-settings>=2.15.0",
-    "Pillow>=12.3.0",
+    "Pillow>=13.0.0",
     "tzlocal==5.4.4",
     "tzdata==2026.5",
 
