@@ -34,7 +34,7 @@ pyyaml>=6.0.3
 pydantic>=2.14.0
 pydantic-settings>=2.15.0
 Pillow>=13.0.0
-tzlocal==5.4.4
+tzlocal==5.4.5
 tzdata==2026.5
 
 # 日志
