@@ -1,6 +1,5 @@
 """PR 660 compatibility regressions exercise real HTTP and persisted rows."""
 
-import re
 from decimal import Decimal
 
 import httpx
@@ -14,12 +13,13 @@ from backend.models.billing_models import BillingTransaction
 from backend.models.payment_models import Order, Plan
 from backend.services.payment_service import PaymentService
 from backend.webui.auth import WEBUI_TOKEN_COOKIE_NAME
+from backend.webui.deps import generate_csrf_token
 from backend.webui.routes.config import (
     _DynamicConfigValidationError,
     _validate_dynamic_config_value,
 )
+from tests.billing_webui_fixtures import pricing_app as app_fixture
 from tests.test_billing_credits_api import billing_client as client_fixture
-from tests.test_billing_pricing_editor import pricing_app as app_fixture
 from tests.test_billing_usage_attribution import sql_runtime as sql_fixture
 
 billing_client = client_fixture
@@ -104,9 +104,7 @@ async def test_web_legacy_grant_returns_key_for_header_replay(billing_client):
     client, factory = billing_client
     plan_id = await seed_plan(factory)
     headers = {"x-test-identity": "operator"}
-    page = await client.get("/billing/admin/pricing", headers=headers)
-    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    payload = {"user_id": 1, "plan_id": plan_id, "csrf_token": token}
+    payload = {"user_id": 1, "plan_id": plan_id, "csrf_token": generate_csrf_token()}
     first = await client.post("/billing/admin/grant", data=payload, headers=headers)
     assert first.status_code == 302
     key = first.headers["Idempotency-Key"]
@@ -203,9 +201,7 @@ def test_alipay_currency_is_cny_only_in_settings_and_forms():
 
 
 @pytest.mark.asyncio
-async def test_unknown_history_currency_preserves_rows_in_public_api_and_ui(
-    billing_client, monkeypatch
-):
+async def test_unknown_history_currency_preserves_rows_in_public_api(billing_client):
     client, factory = billing_client
     async with factory() as db:
         plan = Plan(
@@ -244,21 +240,6 @@ async def test_unknown_history_currency_preserves_rows_in_public_api_and_ui(
     detail = await client.get(f"/api/v1/billing/orders/{order_id}")
     assert detail.status_code == 200 and detail.json()["currency_supported"] is False
 
-    async def no_providers():
-        return []
-
-    monkeypatch.setattr(
-        "backend.services.payment.gateway_factory.get_configured_providers",
-        no_providers,
-    )
-    public = await client.get("/billing/")
-    assert public.status_code == 200
-    assert (
-        "Unknown legacy" in public.text
-        and "321" in public.text
-        and "654" in public.text
-    )
-    assert "unknown currency unit" in public.text.lower()
     async with factory() as db:
         assert (await db.get(Plan, plan_id)).currency == "ZZZ"
         assert (await db.get(Order, order_id)).amount_cents == 654

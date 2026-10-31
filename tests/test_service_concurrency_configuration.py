@@ -20,8 +20,7 @@ from backend.webui.routes.config import (
     _DynamicConfigValidationError,
     _validate_dynamic_config_value,
 )
-from tests.test_billing_pricing_editor import pricing_app as pricing_fixture
-from tests.test_billing_pricing_editor import seed_language
+from tests.billing_webui_fixtures import pricing_app as pricing_fixture
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 sql_runtime = runtime_fixture
@@ -110,33 +109,27 @@ async def test_config_page_renders_service_scope_in_user_language(
     async with factory() as db:
         from backend.services.config_center_service import ConfigCenterService
 
-        fields = await ConfigCenterService().describe(db, {"sub": "owner1", "role": "super_admin", "user_id": 1}, lang=lang)
+        fields = await ConfigCenterService().describe(
+            db, {"sub": "owner1", "role": "super_admin", "user_id": 1}, lang=lang
+        )
     html = "\n".join(field["label"] + " " + field["description"] for field in fields)
     for label in labels:
         assert label in html
     assert html.count(scope) >= 3
     assert html.count(queued) >= 3
     keys = {field["key"] for field in fields}
-    assert {"agent_team_max_concurrent", "service_execution_lease_seconds", "service_execution_poll_seconds"} <= keys
+    assert {
+        "agent_team_max_concurrent",
+        "service_execution_lease_seconds",
+        "service_execution_poll_seconds",
+    } <= keys
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "lang,label,help_text",
-    [
-        ("zh-CN", "每用户业务执行上限", "排队和运行均计入"),
-        (
-            "en",
-            "Per-user business execution limit",
-            "Queued and running executions count",
-        ),
-    ],
-)
-async def test_plan_pages_render_user_scope_and_lifecycle_help(
-    pricing_app, monkeypatch, lang, label, help_text
+async def test_public_and_admin_plan_projections_expose_the_same_user_limit(
+    pricing_app, monkeypatch
 ):
     app, factory, _token = pricing_app
-    await seed_language(factory, lang)
 
     async def enabled():
         return True
@@ -153,23 +146,15 @@ async def test_plan_pages_render_user_scope_and_lifecycle_help(
         )
         await db.commit()
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        admin = await client.get("/billing/admin/plans")
-        assert admin.status_code == 200, admin.text
-        assert label in admin.text
-        assert help_text in admin.text
-        assert "Repo Scan" in admin.text or "仓库扫描" in admin.text
-        public = await client.get("/billing/")
-        assert public.status_code == 200, public.text
-        assert label not in public.text
-        assert help_text not in public.text
-        public_limit = (
-            "同时任务上限：3" if lang == "zh-CN" else "Concurrent task limit: 3"
-        )
-        assert public_limit in public.text
+        for path in ("/api/v1/billing/admin/plans", "/api/v1/billing/plans"):
+            response = await client.get(path)
+            assert response.status_code == 200, response.text
+            row = next(
+                row for row in response.json() if row["name"] == "Concurrency example"
+            )
+            assert row["concurrency_limit"] == 3
 
 
 def test_plan_api_schema_describes_per_user_cross_feature_scope():

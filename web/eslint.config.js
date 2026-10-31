@@ -8,6 +8,16 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   { files: ['scripts/*.mjs'], languageOptions: { globals: { process: 'readonly', console: 'readonly' } } },
   {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': ['error', { name: 'confirm', message: 'Use the shared confirmation dialog.' }],
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use the shared confirmation dialog.' },
+        { object: 'globalThis', property: 'confirm', message: 'Use the shared confirmation dialog.' },
+      ],
+    },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     plugins: { 'react-hooks': hooks },
     rules: {

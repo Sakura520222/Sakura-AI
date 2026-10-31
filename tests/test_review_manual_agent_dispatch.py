@@ -20,9 +20,9 @@ from backend.services.agent_team.billing_admission import (
 from backend.services.billing_service import BillingService
 from backend.services.webhook_execution_reconciliation import reconcile_receipt
 from backend.webui.routes import agent_team as routes
+from tests.billing_webui_fixtures import pricing_app as pricing_fixture
 from tests.test_agent_webui_atomic_admission import agent_app as agent_fixture
 from tests.test_agent_webui_atomic_admission import prepare
-from tests.test_billing_pricing_editor import pricing_app as pricing_fixture
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 agent_app = agent_fixture
