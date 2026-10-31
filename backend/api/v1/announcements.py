@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.v1.deps import require_api_auth, require_api_super_admin
+from backend.api.v1.deps import (
+    require_api_auth,
+    require_api_super_admin,
+    require_cookie_csrf,
+)
+from backend.api.v1.private_routes import PrivateAPIRoute
 from backend.models.announcement_models import AnnouncementType
 from backend.services.announcement_service import (
     announcement_to_dict,
@@ -26,7 +31,12 @@ from backend.services.announcement_service import (
 )
 from backend.webui.deps import get_db
 
-router = APIRouter(prefix="/announcements", tags=["Announcements"])
+router = APIRouter(
+    prefix="/announcements",
+    tags=["Announcements"],
+    route_class=PrivateAPIRoute,
+    dependencies=[Depends(require_cookie_csrf)],
+)
 
 
 class AnnouncementCreateRequest(BaseModel):
@@ -49,7 +59,9 @@ class AnnouncementUpdateRequest(BaseModel):
     action: str | None = None
 
 
-def _request_publishes(body: AnnouncementCreateRequest | AnnouncementUpdateRequest) -> bool:
+def _request_publishes(
+    body: AnnouncementCreateRequest | AnnouncementUpdateRequest,
+) -> bool:
     """Accept both JSON booleans and UI-style action names."""
     if body.send is not None:
         return body.send
@@ -80,9 +92,7 @@ async def _user_announcements(
         per_page=per_page,
         unread_only=unread_only,
     )
-    items = [
-        announcement_to_dict(item, read=read) for item, read in result.items
-    ]
+    items = [announcement_to_dict(item, read=read) for item, read in result.items]
     metadata = {
         "page": result.page,
         "per_page": result.per_page,
@@ -297,3 +307,15 @@ async def admin_retry_announcement(
 
 
 __all__ = ["router"]
+
+
+@router.get("/{announcement_id}")
+async def announcement_detail(
+    announcement_id: int,
+    user: dict = Depends(require_api_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    announcement = await get_announcement(db, announcement_id)
+    if announcement is None or announcement.status != "published":
+        raise HTTPException(404, "announcement_not_found")
+    return announcement_to_dict(announcement)

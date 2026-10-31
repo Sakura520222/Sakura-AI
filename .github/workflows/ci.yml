@@ -48,31 +48,6 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
 
-      - name: 设置 Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: tests/webui/package-lock.json
-
-      - name: 验证配置中心前端与浏览器流程
-        working-directory: tests/webui
-        run: |
-          npm ci
-          npm run check
-          npm test
-          npx playwright install --with-deps chromium
-          npm run e2e
-        env:
-          SAKURA_E2E_PYTHON: python
-
-      - name: 保存浏览器诊断
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: settings-browser-results
-          path: tests/webui/test-results
-
   updater-quality:
     name: Updater 质量检查
     runs-on: ubuntu-latest

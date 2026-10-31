@@ -1,0 +1,13 @@
+Generated with the built-in image_gen tool.
+
+Initial generation prompt:
+Create a completely new, polished README cover banner for the open-source developer product Sakura AI.
+Use case: ads-marketing / product brand illustration.
+Output: a wide 2:1 landscape image, ideally 2048 by 1024 pixels, solid white background. This is an original illustrated brand cover, not a screenshot, not a website mockup.
+Art direction: the restraint, clarity and playful geometry of Google's official product launch artwork and Material Design. Very clean near-white canvas; large precise near-black typography; small, intentional accents of Google blue #4285F4, red #EA4335, yellow #FBBC05 and green #34A853. Crisp vector-like 2D artwork with only extremely subtle paper shadows. Spacious, confident, friendly, professionally art-directed.
+Composition: left half is typography with generous margins. Include a small familiar pink five-petal cherry blossom emoji symbol 🌸 just above the title, standing alone on white, without a colored tile. This is Sakura's existing blossom identity, not a redesigned logo. Main title is very large, perfectly spelled "Sakura AI" in a clean geometric sans-serif similar to Google Sans, near-black. Under it a smaller medium-gray single-line subtitle, exactly "Code review. Issue analysis. AI agents." Make text beautifully legible at thumbnail scale.
+Right half: one cohesive original geometric illustration representing an AI-assisted code review. A clean rounded white code-sheet with a few short abstract gray and blue code lines and two green check marks; a simple branching blue path with round connection nodes, framed by a cropped large pale-blue circle, a bold blue arc, one yellow semicircle, one short green rounded bar and a small red circle. Carefully balanced, slightly overlapping paper-like layers, understated depth and immaculate spacing. Let the illustration breathe. Keep all important artwork well inside the canvas.
+Only the exact title and subtitle may appear as readable words. No Google wordmark, no Google G logo, no extra slogans, no badges, no browser chrome, no dashboard screenshot, no UI panels filling the whole canvas, no charts or fake product metrics, no mascots, no people, no stock photography, no neon/glows, no ornamental gradients, no dark background, no watermark. Entire composition must feel like a bespoke modern Google-style cover for Sakura AI.
+
+Final edit prompt:
+Remove the pink cherry blossom above the title and fill its area with the same white background. Do not replace it with another icon. Preserve the Sakura AI title, subtitle, typography, positions, Google-style colored geometric illustration, shadows and 2:1 canvas. No flowers or petals anywhere.

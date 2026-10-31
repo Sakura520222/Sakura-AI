@@ -1,0 +1,138 @@
+name: Build and publish prebuilt WebUI
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      release_tag:
+        required: false
+        type: string
+        default: ''
+    outputs:
+      artifact_name:
+        value: ${{ jobs.build.outputs.artifact_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      packages_name: ${{ steps.identity.outputs.packages_name }}
+      revision: ${{ steps.identity.outputs.revision }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Build frontend once from the pinned backend revision
+        run: |
+          npm ci --prefix web
+          npm run build --prefix web
+          python -m scripts.package_webui --output "$RUNNER_TEMP/webui-release"
+      - name: Export build identity
+        id: identity
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          build = json.loads(Path('web/dist/webui-build.json').read_text())
+          revision, version = build['revision'], build['version']
+          if not re.fullmatch(r'[0-9a-f]{40}', revision):
+              raise SystemExit('Invalid WebUI revision')
+          if os.environ['RELEASE_TAG'] and os.environ['RELEASE_TAG'] != f'v{version}':
+              raise SystemExit('WebUI version does not match the release tag')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'revision={revision}\nversion={version}\n')
+              output.write(f'artifact_name=webui-dist-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}-{revision}\n')
+              output.write(f'packages_name=webui-packages-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}-{revision}\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.identity.outputs.packages_name }}
+          path: ${{ runner.temp }}/webui-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: webui-release-assets
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.packages_name }}
+          path: webui-release
+      - name: Publish immutable archives, then their manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REVISION: ${{ needs.build.outputs.revision }}
+          VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tag="webui-builds-v$VERSION"
+          error_file="$RUNNER_TEMP/webui-release-error"
+          if ! gh api "repos/$GH_REPO/releases/tags/$build_tag" > "$RUNNER_TEMP/webui-release.json" 2> "$error_file"; then
+            if ! grep -q 'HTTP 404' "$error_file"; then
+              echo 'Cannot read the WebUI artifact release' >&2
+              exit 1
+            fi
+            printf '%s\n' 'Prebuilt WebUI bundles keyed by their complete source commit. Stable users can also obtain the bundle from the matching versioned Release.' > "$RUNNER_TEMP/webui-notes.txt"
+            gh release create "$build_tag" --target "$REVISION" --prerelease --latest=false \
+              --title "WebUI v$VERSION builds" --notes-file "$RUNNER_TEMP/webui-notes.txt"
+          fi
+          # Never replace published bytes under an immutable version/commit name.
+          publish_file() {
+            local tag="$1" file="$2" name release_id remote_names existing
+            name="$(basename "$file")"
+            release_id="$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq .id)"
+            [[ "$release_id" =~ ^[0-9]+$ ]] || exit 1
+            remote_names="$(gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" --jq '.[].name')"
+            if grep -Fxq "$name" <<< "$remote_names"; then
+              existing="$(mktemp -d)"
+              gh release download "$tag" --pattern "$name" --dir "$existing"
+              cmp -- "$file" "$existing/$name" || {
+                echo "Refusing to overwrite a different WebUI artifact: $name" >&2
+                exit 1
+              }
+            else
+              gh release upload "$tag" "$file"
+            fi
+          }
+          publish_file "$build_tag" "webui-release/commit/sakura-ai-webui-$REVISION.zip"
+          publish_file "$build_tag" "webui-release/commit/webui-$REVISION.json"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            [[ "$RELEASE_TAG" == "v$VERSION" ]] || exit 1
+            publish_file "$RELEASE_TAG" "webui-release/stable/sakura-ai-webui-v$VERSION.zip"
+            publish_file "$RELEASE_TAG" webui-release/stable/webui-manifest.json
+          fi

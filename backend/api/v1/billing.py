@@ -320,6 +320,7 @@ async def create_order(
         checkout_url = getattr(order, "_checkout_url", "")
         return {
             "success": True,
+            "id": order.id,
             "order_no": order.order_no,
             "status": order.status,
             "amount_cents": order.amount_cents,
@@ -582,9 +583,10 @@ async def update_redeem_code(
     """编辑兑换码"""
     svc = PaymentService(db)
     try:
-        code = await svc.update_redeem_code(
-            code_id, **req.model_dump(exclude_none=True)
-        )
+        updates = req.model_dump(exclude_none=True)
+        if "expires_at" in req.model_fields_set:
+            updates["expires_at"] = req.expires_at
+        code = await svc.update_redeem_code(code_id, **updates)
         await db.commit()
         return {
             "success": True,

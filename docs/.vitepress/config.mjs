@@ -48,7 +48,8 @@ export default defineConfig({
           { text: '快速开始', link: '/quick-start' },
           { text: '部署指南', link: '/DEPLOYMENT' },
           { text: '配置参考', link: '/CONFIGURATION' },
-          { text: '配置中心', link: '/configuration-center' }
+          { text: '配置中心', link: '/configuration-center' },
+          { text: 'WebUI 2.0', link: '/webui-2' }
         ]
       },
       {

@@ -1,0 +1,64 @@
+.setup-workspace {
+  width: min(1100px, calc(100% - 40px));
+  margin: 20px auto 40px;
+  flex: 1;
+}
+.setup-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 35px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.setup-layout nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-layout nav button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  border-radius: 8px;
+}
+.setup-layout nav button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.setup-layout nav span {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+}
+.setup-layout .billing-form label,
+.public-auth-card .billing-form label {
+  display: grid;
+  gap: 7px;
+}
+@media (max-width: 760px) {
+  .setup-layout {
+    grid-template-columns: 1fr;
+    padding: 20px;
+    gap: 24px;
+  }
+  .setup-layout nav {
+    flex-direction: row;
+    overflow: auto;
+  }
+  .setup-layout nav button {
+    white-space: nowrap;
+  }
+  .setup-layout nav span {
+    display: none;
+  }
+}

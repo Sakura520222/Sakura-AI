@@ -59,6 +59,7 @@ RELOAD_BLOCKED_PREFIXES: frozenset[str] = frozenset(
         "backend.core.log_context",
         "backend.core.log_sanitizer",
         "backend.core.time_service",
+        "backend.core.webui_distribution",
         "backend.core.config",
         "backend.core.config_sections",
         "backend.core.config_section_defaults",

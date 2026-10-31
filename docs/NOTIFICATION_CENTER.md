@@ -2,6 +2,8 @@
 
 Implemented for [Issue #646](https://github.com/Sakura520222/Sakura-AI/issues/646), using the existing notification endpoint table, delivery table, Provider registry and announcement lifecycle. There is no new authentication system, Telegram business sender or message broker.
 
+The React WebUI uses versioned `/api/v1/notifications` adapters for the same endpoint, subscription, history and retry operations. These adapters retain the existing ownership checks, CSRF protection and delivery services; they do not create another event or sending pipeline. The bell opens the single React notification center at `/app/notifications`, with Messages, Announcements and Channels & preferences views. Saved announcement URLs redirect to `/app/notifications/announcements`; administrator publication controls remain in Administration. See [WebUI 2.0](webui-2.md).
+
 ## Architecture
 
 ```text
@@ -92,7 +94,7 @@ Personal Settings provides endpoint names, enabling/disabling, soft unbinding, t
 
 Disabling or unbinding an endpoint atomically cancels its pending deliveries and clears their lease/retry state; re-enabling it does not replay that queue. Sent/failed history and other endpoints remain unchanged. Telegram activation requires the existing binding handshake, preserving the single active chat; the generic endpoint API can edit or disable the current binding but cannot reactivate a retired one.
 
-The existing Announcement Center includes business inbox history/read markers and super-admin provider status, failure categories, statistics, controlled retries and audit records. Announcement rows are excluded in SQL before business-history pagination; legacy announcement reading remains independent. Agent details link to `/agent-team/?task_id=<id>`, validate the current task scope on entry and select the task in the existing console. Tests use the normal persisted event pipeline and the same permission/network policies. Users can inspect only their own endpoint delivery statuses. No channel gets an extra top-level navigation page.
+The unified Notification Center includes business inbox history/read markers and super-admin provider status, failure categories, statistics, controlled retries and audit records. Announcement rows are excluded in SQL before business-history pagination; legacy announcement reading remains independent. Agent details open `/app/agent/<id>` after the existing saved URL redirects; the page validates the current task scope. Tests use the normal persisted event pipeline and the same permission/network policies. Users can inspect only their own endpoint delivery statuses. No channel gets an extra top-level navigation page.
 
 Webhook endpoints require HTTPS on port 443, no URL credentials/query/fragment, and optional administrator-controlled host allowlisting. All DNS answers must be public; private/loopback/link-local/reserved/multicast/IPv4-mapped/transition addresses are denied. Validated addresses are pinned to the actual connection while TLS verifies the original host. Environment proxies and redirects are disabled. DNS, transport and response reads are bounded; response bodies never enter diagnostics. Internal targets are deliberately unsupported.
 

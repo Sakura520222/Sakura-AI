@@ -4,6 +4,20 @@ ARG SAKURA_BUILD_VERSION=unknown
 ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
 
+# Build the WebUI once; the runtime image never needs a Node.js service.
+FROM node:24-bookworm-slim AS web-builder
+ARG SAKURA_BUILD_VERSION=unknown
+ARG SAKURA_BUILD_REVISION=unknown
+ARG SAKURA_WEBUI_PREBUILT=0
+WORKDIR /web
+COPY web ./
+COPY backend/__init__.py /backend/__init__.py
+RUN if [ "$SAKURA_WEBUI_PREBUILT" = "1" ]; then \
+      node scripts/write-build-meta.mjs --verify; \
+    else \
+      npm ci && npm run build; \
+    fi
+
 # Stage 1: builder — Python 依赖构建（含编译头文件）
 FROM python:3.14-bookworm AS builder
 
@@ -71,6 +85,7 @@ WORKDIR /app
 COPY updater ./updater
 RUN pip install --no-cache-dir --no-deps ./updater
 COPY backend ./backend
+COPY --from=web-builder /web/dist ./web/dist
 COPY scripts ./scripts
 COPY res ./res
 COPY requirements.txt .

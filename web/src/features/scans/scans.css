@@ -1,0 +1,100 @@
+.scan-links {
+  display: flex;
+  gap: 20px;
+  padding-bottom: 15px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.scan-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 25px;
+  padding: 16px 20px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.scan-stats strong {
+  color: var(--text);
+  margin-left: 6px;
+  font-size: 17px;
+}
+.scan-stats a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.scan-progress {
+  display: block;
+  margin-top: 8px;
+  height: 4px;
+  max-width: 110px;
+  accent-color: var(--accent);
+}
+.scan-live {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 25px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.scan-live progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--accent);
+}
+.scan-error {
+  color: var(--danger);
+  padding: 15px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.scan-finding {
+  border-bottom: 1px solid var(--border);
+  padding: 23px 0;
+}
+.scan-finding:first-child {
+  padding-top: 10px;
+}
+.scan-finding header {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 10px;
+}
+.scan-finding > .muted {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.scan-details {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.scan-details > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 15px;
+}
+.scan-details dt {
+  color: var(--muted);
+}
+.scan-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .scan-stats {
+    gap: 15px;
+    padding: 14px;
+  }
+  .scan-finding header {
+    flex-wrap: wrap;
+    gap: 9px;
+  }
+}

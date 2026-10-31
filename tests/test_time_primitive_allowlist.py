@@ -69,21 +69,15 @@ FROMTIMESTAMP_ALLOWLIST = (
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:79",
+        "position": "backend/main.py:78",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },
     {
-        "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1560",
-        "category": "filesystem-metadata-boundary",
-        "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
-    },
-    {
-        "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1826",
-        "category": "filesystem-metadata-boundary",
-        "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
+        "file": "backend/core/time_service.py",
+        "position": "backend/core/time_service.py:335",
+        "category": "shared-epoch-metadata-boundary",
+        "reason": "Shared converter normalizes finite protocol/filesystem epoch metadata to aware UTC; routes do not construct their own timestamps.",
     },
     {
         "file": "backend/services/activity_observability/conversation_service.py",

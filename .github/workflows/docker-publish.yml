@@ -22,6 +22,10 @@ on:
         required: false
         type: boolean
         default: true
+      webui_artifact:
+        required: false
+        type: string
+        default: ''
     outputs:
       digest:
         value: ${{ jobs.build-and-publish.outputs.digest }}
@@ -34,6 +38,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
@@ -56,6 +61,13 @@ jobs:
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
+
+      - name: Download the matching prebuilt WebUI
+        if: inputs.webui_artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.webui_artifact }}
+          path: web/dist
 
       - name: 设置 QEMU（模拟编译多架构）
         uses: docker/setup-qemu-action@v4
@@ -152,6 +164,7 @@ jobs:
             SAKURA_BUILD_VERSION=${{ steps.tags.outputs.version }}
             SAKURA_BUILD_REVISION=${{ steps.tags.outputs.revision }}
             SAKURA_BUILD_CREATED=${{ steps.tags.outputs.created }}
+            SAKURA_WEBUI_PREBUILT=${{ inputs.webui_artifact != '' && '1' || '0' }}
           provenance: false
           cache-from: type=gha,scope=sakura-ai-${{ inputs.channel }}
           cache-to: type=gha,mode=max,scope=sakura-ai-${{ inputs.channel }}

@@ -1,0 +1,150 @@
+.management-nav {
+  display: flex;
+  gap: 22px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 24px;
+  overflow-x: auto;
+}
+.management-nav a {
+  color: var(--muted);
+  white-space: nowrap;
+  padding: 0 0 13px;
+  border-bottom: 2px solid transparent;
+}
+.management-nav a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.management-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.management-summary code {
+  overflow-wrap: anywhere;
+}
+.management-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 18px;
+  min-width: 0;
+}
+.management-item > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.management-item > header > div {
+  min-width: 0;
+  flex: 1;
+}
+.management-item h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.management-item header p,
+.management-worktrees p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.management-item > p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.management-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 9px;
+}
+.management-state {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.management-state.enabled {
+  color: var(--success);
+}
+.management-details {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+}
+.management-details > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+}
+.management-details dt {
+  color: var(--muted);
+}
+.management-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.management-file-list {
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px 15px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.management-form {
+  display: grid;
+  gap: 18px;
+}
+.management-form > label {
+  display: grid;
+  gap: 7px;
+  font-weight: 550;
+}
+.management-path {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.management-worktrees > div {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.management-worktrees > div > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .management-item {
+    padding: 16px;
+  }
+  .management-item > header {
+    flex-wrap: wrap;
+  }
+  .management-item > header > div {
+    min-width: 50%;
+  }
+  .management-summary {
+    flex-direction: column;
+  }
+  .management-details > div {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+}

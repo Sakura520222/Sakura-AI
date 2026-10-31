@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import (
@@ -23,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_dynamic_config
-from backend.core.time_service import format_rfc3339, now_utc
+from backend.core.time_service import format_rfc3339, from_unix_timestamp, now_utc
 from backend.models.agent_team_models import (
     AgentTeamConversationContext,
     AgentTeamIteration,
@@ -1494,7 +1493,7 @@ async def delete_workspace(
 
     service = AgentTeamWorkspaceService()
     try:
-        workspace = service.delete_workspace(repo_owner, repo_name)
+        workspace = await asyncio.to_thread(service.delete_workspace, repo_owner, repo_name)
     except ValueError:
         logger.exception("删除 Agent 仓库工作区失败：路径校验未通过")
         return JSONResponse(
@@ -1557,8 +1556,8 @@ async def worktree_list_fragment(
                 "file_count": w.file_count,
                 "total_size_bytes": w.total_size_bytes,
                 "size_label": _format_bytes(w.total_size_bytes),
-                "modified_at": datetime.fromtimestamp(w.modified_at, tz=UTC)
-                if w.modified_at
+                "modified_at": from_unix_timestamp(w.modified_at)
+                if w.modified_at is not None
                 else None,
                 "task_status": task_status,
                 "is_active": is_active,
@@ -1823,8 +1822,8 @@ def _workspace_info_to_dict(info) -> dict:
         "file_count": info.file_count,
         "total_size_bytes": info.total_size_bytes,
         "size_label": _format_bytes(info.total_size_bytes),
-        "modified_at": datetime.fromtimestamp(info.modified_at, tz=UTC)
-        if info.modified_at
+        "modified_at": from_unix_timestamp(info.modified_at)
+        if info.modified_at is not None
         else None,
         "has_git": info.has_git,
         "worktree_count": info.worktree_count,

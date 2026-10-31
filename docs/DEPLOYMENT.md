@@ -236,6 +236,8 @@ sudo mysql -e "FLUSH PRIVILEGES;"
 
 ## 五、源码部署 / 开发模式
 
+正式 Release 源码包和容器镜像已经包含对应的前端 dist。Git 安装及源码更新后的首次启动会自动获取并校验匹配的前端包，无需安装 Node.js 或手动构建前端；更新源码和 Python 依赖后重启应用即可。已有匹配资源可离线使用，下载失败不会覆盖现有文件。分发与缓存约定见 [WebUI 运行说明](webui-2.md#published-frontend-artifacts)。
+
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI

@@ -48,7 +48,6 @@ from backend.webui.auth import (
     decode_access_token,
 )
 from backend.webui.deps import (
-    error_page,
     is_webui_request,
     toast_redirect,
 )
@@ -550,6 +549,19 @@ async def lifespan(app: FastAPI):
             # Generate the private local Setup credential (never log its value).
             generate_setup_token()
 
+        # Warm the version-matched frontend before serving the first page.
+        # API/workers remain available if GitHub is temporarily unavailable;
+        # page requests retry the same artifact with a bounded backoff.
+        from backend.core.webui_distribution import (
+            WebUIDistributionError,
+            get_distribution,
+        )
+
+        try:
+            await get_distribution(settings.sakura_update_repo)
+        except WebUIDistributionError as exc:
+            logger.warning("前端预构建资源暂不可用，页面访问时将重试: {}", str(exc))
+
         # 记录启动完成时间
         _startup_finished_instant_utc = startup_clock.now_utc()
         _startup_finished_monotonic = startup_clock.monotonic()
@@ -703,7 +715,13 @@ async def health():
 
 
 # 注册路由
-app.include_router(setup_router)
+from fastapi import APIRouter
+
+setup_data_router = APIRouter()
+setup_data_router.routes.extend(
+    route for route in setup_router.routes if "/api/" in route.path
+)
+app.include_router(setup_data_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
 app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
@@ -774,22 +792,20 @@ def _get_webui_error_user(request: Request) -> dict | None:
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and is_webui_request(request):
-        response = RedirectResponse(url="/auth/login", status_code=302)
+        response = RedirectResponse(url="/app/login", status_code=302)
         # A rejected cookie must not bounce between login and the dashboard.
         response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response
     if exc.status_code == 428 and is_webui_request(request):
         return RedirectResponse(
-            url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            url="/app/security",
             status_code=302,
         )
     if is_webui_request(request):
-        return error_page(
-            request,
-            status_code=exc.status_code,
-            title="请求无法完成",
-            message=str(exc.detail),
-            user=_get_webui_error_user(request),
+        return RedirectResponse(
+            f"/app/error?status={exc.status_code}",
+            status_code=302,
+            headers={"Cache-Control": "no-store"},
         )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 

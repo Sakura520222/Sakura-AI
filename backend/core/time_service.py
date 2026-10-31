@@ -321,3 +321,17 @@ def now_utc() -> datetime:
 
 def monotonic() -> float:
     return get_time_service().monotonic()
+
+
+def from_unix_timestamp(value: float) -> datetime:
+    """Normalize an existing protocol/filesystem epoch instant to aware UTC.
+
+    This converts metadata; new domain timestamps still come from ``now_utc``.
+    Reject booleans and non-numeric inputs rather than guessing their meaning.
+    """
+    if type(value) not in (int, float):
+        raise ValueError("Unix timestamp must be a finite number")
+    try:
+        return datetime.fromtimestamp(value, tz=UTC)
+    except (ValueError, OverflowError, OSError):
+        raise ValueError("Unix timestamp must be a finite supported instant") from None

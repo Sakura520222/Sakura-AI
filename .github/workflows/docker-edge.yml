@@ -15,18 +15,31 @@ concurrency:
   cancel-in-progress: false  # serialize the final manifest/head commit
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
 jobs:
+  publish-webui:
+    name: Publish development WebUI
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || inputs.confirm_branch == 'develop')
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/webui-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+
   publish-edge:
     name: 发布 development 镜像
+    needs: publish-webui
     if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || inputs.confirm_branch == 'develop')
     uses: ./.github/workflows/docker-publish.yml
     with:
       source_ref: ${{ github.sha }}   # 必须用不可变 SHA，不能传 main
       channel: development
       sync_dockerhub: false
+      webui_artifact: ${{ needs.publish-webui.outputs.artifact_name }}
     secrets: inherit
 
   publish-sandbox-edge:

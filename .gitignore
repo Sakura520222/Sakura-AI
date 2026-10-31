@@ -80,6 +80,15 @@ deploy.py
 node_modules/
 tests/webui/test-results/
 tests/webui/playwright-report/
+web/test-results/
+web/playwright-report/
+web/*.tsbuildinfo
+web/bundle-report.md
+web/artifacts/
+web/.dist-cache/
+web/.dist-current.json
+web/.dist.lock
+web/.webui-stage-*/
 workplace/
 Skills/
 .venv/

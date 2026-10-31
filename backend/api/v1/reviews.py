@@ -22,11 +22,11 @@ from backend.core.time_service import (
 )
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
-    build_review_search_filter,
     build_user_scope_filter,
     get_db,
     paginate,
 )
+from backend.webui.routes.pr import apply_review_filters
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
@@ -40,6 +40,9 @@ async def list_reviews(
     search: str = Query("", description="搜索关键词"),
     status: str = Query("", description="按状态过滤"),
     decision: str = Query("", description="按决策过滤"),
+    repo: str = Query("", description="按仓库过滤"),
+    date_from: str = Query("", description="开始日期 (YYYY-MM-DD)"),
+    date_to: str = Query("", description="结束日期 (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
 ):
@@ -53,21 +56,16 @@ async def list_reviews(
         query = query.where(scope_filter)
         count_query = count_query.where(scope_filter)
 
-    # 搜索过滤
-    search_filter = build_review_search_filter(search)
-    if search_filter is not None:
-        query = query.where(search_filter)
-        count_query = count_query.where(search_filter)
-
-    # 状态过滤
-    if status:
-        query = query.where(PRReview.status == status)
-        count_query = count_query.where(PRReview.status == status)
-
-    # 决策过滤
-    if decision:
-        query = query.where(PRReview.decision == decision)
-        count_query = count_query.where(PRReview.decision == decision)
+    filters = {
+        "search": search,
+        "repo": repo,
+        "status": status,
+        "decision": decision,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    query = apply_review_filters(query, **filters)
+    count_query = apply_review_filters(count_query, **filters)
 
     query = query.order_by(desc(PRReview.created_at))
 
@@ -90,6 +88,9 @@ async def export_reviews_csv(
     search: str = Query("", description="搜索关键词"),
     status: str = Query("", description="按状态过滤"),
     decision: str = Query("", description="按决策过滤"),
+    repo: str = Query("", description="按仓库过滤"),
+    date_from: str = Query("", description="开始日期 (YYYY-MM-DD)"),
+    date_to: str = Query("", description="结束日期 (YYYY-MM-DD)"),
 ):
     """导出 PR 审查列表为 CSV"""
     query = select(PRReview)
@@ -98,14 +99,15 @@ async def export_reviews_csv(
     if scope_filter is not None:
         query = query.where(scope_filter)
 
-    search_filter = build_review_search_filter(search)
-    if search_filter is not None:
-        query = query.where(search_filter)
-
-    if status:
-        query = query.where(PRReview.status == status)
-    if decision:
-        query = query.where(PRReview.decision == decision)
+    query = apply_review_filters(
+        query,
+        search=search,
+        repo=repo,
+        status=status,
+        decision=decision,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     query = query.order_by(desc(PRReview.created_at)).limit(1000)
     result = await db.execute(query)
